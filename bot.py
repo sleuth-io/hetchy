@@ -1,5 +1,6 @@
 import json
 import os
+import re
 
 from anthropic import Anthropic
 from github import Auth, Github, GithubException
@@ -21,8 +22,7 @@ Respond with valid JSON only — no markdown fences, no extra text:
 }"""
 
 
-@app.event("message")
-def handle_message(event, client):
+def process_request(event, client):
     if event.get("bot_id") or event.get("thread_ts"):
         return
 
@@ -31,6 +31,11 @@ def handle_message(event, client):
     user = event["user"]
     text = event.get("text", "").strip()
 
+    if not text:
+        return
+
+    # Strip the @-mention prefix if present
+    text = re.sub(r"^<@[A-Z0-9]+>\s*", "", text).strip()
     if not text:
         return
 
@@ -70,6 +75,16 @@ def handle_message(event, client):
 
     except Exception as e:
         reply(f"<@{user}> Something went wrong: `{e}`")
+
+
+@app.event("message")
+def handle_message(event, client):
+    process_request(event, client)
+
+
+@app.event("app_mention")
+def handle_mention(event, client):
+    process_request(event, client)
 
 
 if __name__ == "__main__":
