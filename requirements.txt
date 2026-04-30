@@ -1,0 +1,4 @@
+anthropic
+slack-bolt
+PyGithub
+python-dotenv
