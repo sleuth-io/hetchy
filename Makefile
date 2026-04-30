@@ -1,4 +1,4 @@
-.PHONY: help build install test lint format clean tidy deps verify update-deps init prepush postpull bot dev daytona-up daytona-down daytona-logs snapshot push-snapshot
+.PHONY: help build install test lint format clean tidy deps verify update-deps init prepush postpull bot bot-tee logs dev daytona-up daytona-down daytona-logs snapshot push-snapshot
 
 # Default target
 help: ## Show this help message
@@ -19,6 +19,7 @@ DAYTONA_DIR   ?= $(HOME)/src/daytona
 SNAPSHOT_NAME ?= claude-playwright
 SNAPSHOT_TAG  ?= 1
 COMPOSE       = docker compose -f "$(DAYTONA_DIR)/docker/docker-compose.yaml"
+LOG_FILE      ?= /tmp/software-factory.log
 
 build: ## Build the binary
 	@echo "Building $(BINARY_NAME)..."
@@ -76,6 +77,15 @@ postpull: init ## Run after pulling (download dependencies)
 bot: build ## Build and run the Slack bot via doppler
 	@which doppler > /dev/null || (echo "doppler CLI not found. Install: https://docs.doppler.com/docs/install-cli" && exit 1)
 	@doppler run -- $(BUILD_DIR)/$(BINARY_NAME)
+
+bot-tee: build ## Run the bot, mirroring logs to $(LOG_FILE) so another shell can `make logs`
+	@which doppler > /dev/null || (echo "doppler CLI not found. Install: https://docs.doppler.com/docs/install-cli" && exit 1)
+	@echo "Logging to $(LOG_FILE) (tail with 'make logs')"
+	@doppler run -- $(BUILD_DIR)/$(BINARY_NAME) 2>&1 | tee $(LOG_FILE)
+
+logs: ## Tail the log file written by `make bot-tee` (LOG_FILE=$(LOG_FILE))
+	@touch $(LOG_FILE)
+	@tail -F $(LOG_FILE)
 
 dev: daytona-up bot ## Bring up Daytona, then run the bot in foreground
 

@@ -136,19 +136,34 @@ func (b *Bot) reply(channel, threadTS, msg string) {
 	}
 }
 
-func (b *Bot) sh(ctx context.Context, sb *daytona.Sandbox, cmd string, timeout time.Duration) (string, error) {
+func (b *Bot) sh(ctx context.Context, sb *daytona.Sandbox, step, cmd string, timeout time.Duration) (string, error) {
+	b.log.Info("sandbox step start", "sandbox", sb.ID, "step", step, "timeout", timeout, "cmd", cmd)
 	res, err := sb.Process.ExecuteCommand(ctx, cmd, options.WithExecuteTimeout(timeout))
 	if err != nil {
-		return "", fmt.Errorf("sandbox exec: %s: %w", cmd, err)
+		b.log.Error("sandbox step exec error", "sandbox", sb.ID, "step", step, "error", err)
+		return "", fmt.Errorf("step %q exec error: %w", step, err)
 	}
 	if res.ExitCode != 0 {
-		return "", fmt.Errorf("sandbox cmd failed (exit %d): %s\n%s", res.ExitCode, cmd, res.Result)
+		out := res.Result
+		if len(out) > 2000 {
+			out = "...(truncated)...\n" + out[len(out)-2000:]
+		}
+		b.log.Error("sandbox step failed", "sandbox", sb.ID, "step", step, "exit", res.ExitCode, "output", out)
+		return "", fmt.Errorf("step %q exit %d:\n%s", step, res.ExitCode, out)
 	}
+	b.log.Info("sandbox step ok", "sandbox", sb.ID, "step", step, "output_bytes", len(res.Result))
 	return res.Result, nil
 }
 
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
 }
 
 func (b *Bot) processRequest(ctx context.Context, ev incoming) {
@@ -167,6 +182,10 @@ func (b *Bot) processRequest(ctx context.Context, ev incoming) {
 	requestID := strings.ReplaceAll(ev.ts, ".", "")
 	reply := func(msg string) { b.reply(ev.channel, ev.ts, msg) }
 
+	b.log.Info("request received",
+		"request_id", requestID, "user", ev.user, "channel", ev.channel,
+		"text_len", len(text), "text_preview", truncate(text, 200),
+	)
 	reply(fmt.Sprintf("<@%s> Spinning up an isolated sandbox for your request...", ev.user))
 
 	sb, err := b.daytona.Create(ctx, types.SnapshotParams{
@@ -205,7 +224,7 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, userRequest, re
 	// Configure git to use the token for HTTPS github.com URLs via insteadOf
 	// rewriting so `git clone` and `git push` work without exposing the token
 	// in the stored remote URL.
-	if _, err := b.sh(ctx, sb,
+	if _, err := b.sh(ctx, sb, "git-auth-setup",
 		`git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"`,
 		60*time.Second,
 	); err != nil {
@@ -218,7 +237,7 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, userRequest, re
 			"&& git config user.name 'software-factory-bot'",
 		b.cfg.GitHubRepo, workdir, workdir, b.cfg.BaseBranch,
 	)
-	if _, err := b.sh(ctx, sb, cloneCmd, 180*time.Second); err != nil {
+	if _, err := b.sh(ctx, sb, "git-clone", cloneCmd, 180*time.Second); err != nil {
 		return "", err
 	}
 
@@ -226,7 +245,7 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, userRequest, re
 		b.cfg.GitHubRepo, workdir, b.cfg.BaseBranch,
 		userRequest, requestID, b.cfg.BaseBranch,
 	)
-	out, err := b.sh(ctx, sb,
+	out, err := b.sh(ctx, sb, "claude-run",
 		fmt.Sprintf("cd %s && claude --print %s", workdir, shellQuote(prompt)),
 		15*time.Minute,
 	)
