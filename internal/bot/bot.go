@@ -1,11 +1,12 @@
-package main
+// Package bot implements the Slack bot that turns natural-language requests
+// into pull requests via Claude Code running in a Daytona sandbox.
+package bot
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
-	"os"
+	"log/slog"
 	"regexp"
 	"strings"
 	"time"
@@ -13,7 +14,6 @@ import (
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/options"
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/types"
-	"github.com/joho/godotenv"
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
@@ -41,48 +41,12 @@ When you are done implementing the change:
   5. The very last line of your output MUST be just the PR URL — no other
      text on that line.`
 
-type config struct {
-	slackBotToken    string
-	slackSocketToken string
-	anthropicAPIKey  string
-	githubToken      string
-	githubRepo       string
-	baseBranch       string
-	snapshot         string
-	daytonaAPIURL    string
-}
-
-func mustGetenv(key string) string {
-	v := os.Getenv(key)
-	if v == "" {
-		log.Fatalf("missing required env var: %s", key)
-	}
-	return v
-}
-
-func getenvDefault(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
-}
-
-func loadConfig() config {
-	return config{
-		slackBotToken:    mustGetenv("SLACK_BOT_OAUTH_TOKEN"),
-		slackSocketToken: mustGetenv("SLACK_SOCKET_TOKEN"),
-		anthropicAPIKey:  mustGetenv("ANTHROPIC_API_KEY"),
-		githubToken:      mustGetenv("GITHUB_TOKEN"),
-		githubRepo:       mustGetenv("GITHUB_REPO"),
-		baseBranch:       getenvDefault("GITHUB_BASE_BRANCH", "main"),
-		snapshot:         getenvDefault("DAYTONA_SNAPSHOT", "claude-playwright:1"),
-		daytonaAPIURL:    os.Getenv("DAYTONA_API_URL"),
-	}
-}
-
-type bot struct {
-	cfg     config
+// Bot wires Slack, Daytona, and the agent loop together.
+type Bot struct {
+	cfg     Config
+	log     *slog.Logger
 	slack   *slack.Client
+	socket  *socketmode.Client
 	daytona *daytona.Client
 }
 
@@ -95,10 +59,87 @@ type incoming struct {
 	text     string
 }
 
-func (b *bot) sh(ctx context.Context, sb *daytona.Sandbox, cmd string, timeout time.Duration) (string, error) {
+// New constructs a Bot from config and a logger.
+func New(cfg Config, log *slog.Logger) (*Bot, error) {
+	daytonaCfg := &types.DaytonaConfig{}
+	if cfg.DaytonaAPIURL != "" {
+		daytonaCfg.APIUrl = cfg.DaytonaAPIURL
+	}
+	dc, err := daytona.NewClientWithConfig(daytonaCfg)
+	if err != nil {
+		return nil, fmt.Errorf("daytona client: %w", err)
+	}
+	if cfg.DaytonaAPIURL != "" {
+		log.Info("daytona configured", "mode", "local", "url", cfg.DaytonaAPIURL)
+	} else {
+		log.Info("daytona configured", "mode", "cloud", "url", "app.daytona.io")
+	}
+
+	api := slack.New(cfg.SlackBotToken, slack.OptionAppLevelToken(cfg.SlackSocketToken))
+	sm := socketmode.New(api)
+
+	return &Bot{cfg: cfg, log: log, slack: api, socket: sm, daytona: dc}, nil
+}
+
+// Run starts the Slack socket-mode listener and dispatches events. It blocks
+// until ctx is cancelled or the socket-mode client returns an error.
+func (b *Bot) Run(ctx context.Context) error {
+	go b.dispatch(ctx)
+	if err := b.socket.RunContext(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		return fmt.Errorf("socket mode run: %w", err)
+	}
+	return nil
+}
+
+func (b *Bot) dispatch(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case evt, ok := <-b.socket.Events:
+			if !ok {
+				return
+			}
+			if evt.Type != socketmode.EventTypeEventsAPI {
+				continue
+			}
+			payload, ok := evt.Data.(slackevents.EventsAPIEvent)
+			if !ok {
+				continue
+			}
+			b.socket.Ack(*evt.Request)
+			if payload.Type != slackevents.CallbackEvent {
+				continue
+			}
+			switch ev := payload.InnerEvent.Data.(type) {
+			case *slackevents.MessageEvent:
+				go b.processRequest(ctx, incoming{
+					channel: ev.Channel, user: ev.User, ts: ev.TimeStamp,
+					threadTS: ev.ThreadTimeStamp, botID: ev.BotID, text: ev.Text,
+				})
+			case *slackevents.AppMentionEvent:
+				go b.processRequest(ctx, incoming{
+					channel: ev.Channel, user: ev.User, ts: ev.TimeStamp,
+					threadTS: ev.ThreadTimeStamp, botID: ev.BotID, text: ev.Text,
+				})
+			}
+		}
+	}
+}
+
+func (b *Bot) reply(channel, threadTS, msg string) {
+	if _, _, err := b.slack.PostMessage(channel,
+		slack.MsgOptionText(msg, false),
+		slack.MsgOptionTS(threadTS),
+	); err != nil {
+		b.log.Error("slack post failed", "channel", channel, "error", err)
+	}
+}
+
+func (b *Bot) sh(ctx context.Context, sb *daytona.Sandbox, cmd string, timeout time.Duration) (string, error) {
 	res, err := sb.Process.ExecuteCommand(ctx, cmd, options.WithExecuteTimeout(timeout))
 	if err != nil {
-		return "", fmt.Errorf("sandbox cmd error: %s: %w", cmd, err)
+		return "", fmt.Errorf("sandbox exec: %s: %w", cmd, err)
 	}
 	if res.ExitCode != 0 {
 		return "", fmt.Errorf("sandbox cmd failed (exit %d): %s\n%s", res.ExitCode, cmd, res.Result)
@@ -106,20 +147,11 @@ func (b *bot) sh(ctx context.Context, sb *daytona.Sandbox, cmd string, timeout t
 	return res.Result, nil
 }
 
-func (b *bot) reply(channel, threadTS, msg string) {
-	if _, _, err := b.slack.PostMessage(channel,
-		slack.MsgOptionText(msg, false),
-		slack.MsgOptionTS(threadTS),
-	); err != nil {
-		log.Printf("slack post error: %v", err)
-	}
-}
-
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
-func (b *bot) processRequest(ev incoming) {
+func (b *Bot) processRequest(ctx context.Context, ev incoming) {
 	if ev.botID != "" || ev.threadTS != "" {
 		return
 	}
@@ -137,35 +169,37 @@ func (b *bot) processRequest(ev incoming) {
 
 	reply(fmt.Sprintf("<@%s> Spinning up an isolated sandbox for your request...", ev.user))
 
-	ctx := context.Background()
 	sb, err := b.daytona.Create(ctx, types.SnapshotParams{
 		SandboxBaseParams: types.SandboxBaseParams{
 			EnvVars: map[string]string{
-				"ANTHROPIC_API_KEY": b.cfg.anthropicAPIKey,
-				"GITHUB_TOKEN":      b.cfg.githubToken,
+				"ANTHROPIC_API_KEY": b.cfg.AnthropicAPIKey,
+				"GITHUB_TOKEN":      b.cfg.GitHubToken,
 			},
 		},
-		Snapshot: b.cfg.snapshot,
+		Snapshot: b.cfg.Snapshot,
 	})
 	if err != nil {
+		b.log.Error("sandbox create failed", "error", err)
 		reply(fmt.Sprintf("<@%s> Sandbox create failed: `%v`", ev.user, err))
 		return
 	}
+	b.log.Info("sandbox created", "id", sb.ID, "user", ev.user)
 	reply(fmt.Sprintf("<@%s> Sandbox `%s` ready — cloning repo and starting Claude Code.", ev.user, sb.ID))
 
 	prURL, runErr := b.runAgent(ctx, sb, text, requestID)
 	if runErr != nil {
+		b.log.Error("agent run failed", "sandbox", sb.ID, "error", runErr)
 		reply(fmt.Sprintf("<@%s> Something went wrong: `%v`\nSandbox `%s` was left running for debugging.", ev.user, runErr, sb.ID))
 		return
 	}
 
 	reply(fmt.Sprintf("<@%s> Done! :tada: %s", ev.user, prURL))
 	if err := sb.Delete(ctx); err != nil {
-		log.Printf("sandbox delete: %v", err)
+		b.log.Error("sandbox delete failed", "sandbox", sb.ID, "error", err)
 	}
 }
 
-func (b *bot) runAgent(ctx context.Context, sb *daytona.Sandbox, userRequest, requestID string) (string, error) {
+func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, userRequest, requestID string) (string, error) {
 	if _, err := b.sh(ctx, sb, "echo $GITHUB_TOKEN | gh auth login --with-token && gh auth setup-git", 60*time.Second); err != nil {
 		return "", err
 	}
@@ -174,15 +208,15 @@ func (b *bot) runAgent(ctx context.Context, sb *daytona.Sandbox, userRequest, re
 			"&& cd %s && git checkout %s "+
 			"&& git config user.email 'software-factory-bot@users.noreply.github.com' "+
 			"&& git config user.name 'software-factory-bot'",
-		b.cfg.githubRepo, workdir, workdir, b.cfg.baseBranch,
+		b.cfg.GitHubRepo, workdir, workdir, b.cfg.BaseBranch,
 	)
 	if _, err := b.sh(ctx, sb, cloneCmd, 180*time.Second); err != nil {
 		return "", err
 	}
 
 	prompt := fmt.Sprintf(agentPromptTemplate,
-		b.cfg.githubRepo, workdir, b.cfg.baseBranch,
-		userRequest, requestID, b.cfg.baseBranch,
+		b.cfg.GitHubRepo, workdir, b.cfg.BaseBranch,
+		userRequest, requestID, b.cfg.BaseBranch,
 	)
 	out, err := b.sh(ctx, sb,
 		fmt.Sprintf("cd %s && claude --print %s", workdir, shellQuote(prompt)),
@@ -201,60 +235,4 @@ func (b *bot) runAgent(ctx context.Context, sb *daytona.Sandbox, userRequest, re
 		return "", fmt.Errorf("no PR URL found in agent output. Tail:\n%s", tail)
 	}
 	return match, nil
-}
-
-func main() {
-	_ = godotenv.Load()
-	cfg := loadConfig()
-
-	daytonaCfg := &types.DaytonaConfig{}
-	if cfg.daytonaAPIURL != "" {
-		daytonaCfg.APIUrl = cfg.daytonaAPIURL
-	}
-	dc, err := daytona.NewClientWithConfig(daytonaCfg)
-	if err != nil {
-		log.Fatalf("daytona client: %v", err)
-	}
-	if cfg.daytonaAPIURL != "" {
-		log.Printf("Daytona: local @ %s", cfg.daytonaAPIURL)
-	} else {
-		log.Println("Daytona: cloud (app.daytona.io)")
-	}
-
-	api := slack.New(cfg.slackBotToken, slack.OptionAppLevelToken(cfg.slackSocketToken))
-	sm := socketmode.New(api)
-
-	b := &bot{cfg: cfg, slack: api, daytona: dc}
-
-	go func() {
-		for evt := range sm.Events {
-			if evt.Type != socketmode.EventTypeEventsAPI {
-				continue
-			}
-			payload, ok := evt.Data.(slackevents.EventsAPIEvent)
-			if !ok {
-				continue
-			}
-			sm.Ack(*evt.Request)
-			if payload.Type != slackevents.CallbackEvent {
-				continue
-			}
-			switch ev := payload.InnerEvent.Data.(type) {
-			case *slackevents.MessageEvent:
-				go b.processRequest(incoming{
-					channel: ev.Channel, user: ev.User, ts: ev.TimeStamp,
-					threadTS: ev.ThreadTimeStamp, botID: ev.BotID, text: ev.Text,
-				})
-			case *slackevents.AppMentionEvent:
-				go b.processRequest(incoming{
-					channel: ev.Channel, user: ev.User, ts: ev.TimeStamp,
-					threadTS: ev.ThreadTimeStamp, botID: ev.BotID, text: ev.Text,
-				})
-			}
-		}
-	}()
-
-	if err := sm.Run(); err != nil && !errors.Is(err, context.Canceled) {
-		log.Fatalf("socket mode run: %v", err)
-	}
 }
