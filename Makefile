@@ -1,7 +1,8 @@
 # Top-level orchestration for software-factory.
 #
 # Dev topology:
-#   - Daytona OSS stack runs locally via docker compose (under ./daytona).
+#   - Daytona OSS stack runs locally via docker compose (cloned on first
+#     `make daytona-up` into $(DAYTONA_DIR)).
 #   - The Slack bot runs at the host level (python bot.py) and talks to
 #     Daytona over its REST API.
 #
@@ -16,10 +17,14 @@
 #   DAYTONA_API_KEY, DAYTONA_API_URL
 #   [DAYTONA_SNAPSHOT]   default: claude-playwright:1
 
-PYTHON ?= python3
-PIP    ?= $(PYTHON) -m pip
+PYTHON        ?= python3
+PIP           ?= $(PYTHON) -m pip
+DAYTONA_DIR   ?= $(HOME)/src/daytona
+SNAPSHOT_NAME ?= claude-playwright
+SNAPSHOT_TAG  ?= 1
+COMPOSE       = docker compose -f "$(DAYTONA_DIR)/docker/docker-compose.yaml"
 
-.PHONY: help install daytona-up daytona-down daytona-logs snapshot push-snapshot bot dev example clean
+.PHONY: help install daytona-up daytona-down daytona-logs snapshot push-snapshot bot dev clean
 
 help:
 	@echo "Targets:"
@@ -31,34 +36,43 @@ help:
 	@echo "  push-snapshot   Build + push the snapshot to Daytona's registry"
 	@echo "  bot             Run the Slack bot (host-level)"
 	@echo "  dev             daytona-up, then run the bot in foreground"
-	@echo "  example         Run the daytona spawn smoke test"
 	@echo "  clean           Remove the local sandbox image"
 
 install:
 	$(PIP) install -r requirements.txt
 
 daytona-up:
-	$(MAKE) -C daytona up
+	@if [ ! -d "$(DAYTONA_DIR)" ]; then \
+	  echo ">> cloning daytonaio/daytona into $(DAYTONA_DIR)"; \
+	  git clone https://github.com/daytonaio/daytona.git "$(DAYTONA_DIR)"; \
+	fi
+	@echo ">> starting Daytona OSS stack (this pulls a lot on first run)"
+	$(COMPOSE) up -d
+	@echo ""
+	@echo "Once healthy:"
+	@echo "  Dashboard:      http://localhost:3000"
+	@echo "  Default login:  dev@daytona.io / password"
+	@echo ""
+	@echo "Next: log in, mint an API key, set DAYTONA_API_KEY in .env,"
+	@echo "      then 'make push-snapshot' and 'make bot'."
 
 daytona-down:
-	$(MAKE) -C daytona down
+	$(COMPOSE) down
 
 daytona-logs:
-	$(MAKE) -C daytona logs
+	$(COMPOSE) logs -f --tail=100
 
 snapshot:
-	$(MAKE) -C daytona build-snapshot
+	docker build --platform=linux/amd64 -t $(SNAPSHOT_NAME):$(SNAPSHOT_TAG) sandbox
 
-push-snapshot:
-	$(MAKE) -C daytona push-snapshot
+push-snapshot: snapshot
+	# Requires the `daytona` CLI to be logged in (`daytona login`).
+	daytona snapshot push $(SNAPSHOT_NAME):$(SNAPSHOT_TAG)
 
 bot:
 	$(PYTHON) bot.py
 
 dev: daytona-up bot
 
-example:
-	$(MAKE) -C daytona example
-
 clean:
-	$(MAKE) -C daytona clean
+	docker rmi $(SNAPSHOT_NAME):$(SNAPSHOT_TAG) || true
