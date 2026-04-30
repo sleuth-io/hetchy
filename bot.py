@@ -49,8 +49,7 @@ def sh(sb, cmd, timeout=120):
     return res.result
 
 
-@app.event("message")
-def handle_message(event, client):
+def process_request(event, client):
     if event.get("bot_id") or event.get("thread_ts"):
         return
     text = (event.get("text") or "").strip()
@@ -61,6 +60,11 @@ def handle_message(event, client):
     ts = event["ts"]
     user = event["user"]
     request_id = ts.replace(".", "")
+
+    # Strip the @-mention prefix if present
+    text = re.sub(r"^<@[A-Z0-9]+>\s*", "", text).strip()
+    if not text:
+        return
 
     def reply(msg):
         client.chat_postMessage(channel=channel, thread_ts=ts, text=msg)
@@ -111,6 +115,16 @@ def handle_message(event, client):
             f"<@{user}> Something went wrong: `{e}`\n"
             f"Sandbox `{sb.id}` was left running for debugging."
         )
+
+
+@app.event("message")
+def handle_message(event, client):
+    process_request(event, client)
+
+
+@app.event("app_mention")
+def handle_mention(event, client):
+    process_request(event, client)
 
 
 if __name__ == "__main__":
