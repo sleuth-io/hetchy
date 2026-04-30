@@ -3,7 +3,7 @@ import re
 import shlex
 import textwrap
 
-from daytona import CreateSandboxFromSnapshotParams, Daytona
+from daytona import CreateSandboxFromSnapshotParams, Daytona, DaytonaConfig
 from dotenv import load_dotenv
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
@@ -20,7 +20,10 @@ SANDBOX_SNAPSHOT = os.getenv("DAYTONA_SNAPSHOT", "claude-playwright:1")
 WORKDIR = "/home/daytona/work"
 
 app = App(token=SLACK_BOT_TOKEN)
-daytona = Daytona()
+
+_daytona_api_url = os.getenv("DAYTONA_API_URL")
+daytona = Daytona(DaytonaConfig(api_url=_daytona_api_url) if _daytona_api_url else None)
+print(f"Daytona: {'local @ ' + _daytona_api_url if _daytona_api_url else 'cloud (app.daytona.io)'}", flush=True)
 
 PR_URL_RE = re.compile(r"https://github\.com/[^\s]+/pull/\d+")
 
