@@ -16,7 +16,7 @@ ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
 GITHUB_TOKEN = os.environ["GITHUB_TOKEN"]
 GITHUB_REPO = os.environ["GITHUB_REPO"]
 BASE_BRANCH = os.getenv("GITHUB_BASE_BRANCH", "main")
-SANDBOX_SNAPSHOT = os.getenv("DAYTONA_SNAPSHOT", "claude-playwright:1")
+SANDBOX_SNAPSHOT = os.getenv("DAYTONA_SNAPSHOT", f"ghcr.io/{GITHUB_REPO}/sandbox:latest")
 WORKDIR = "/home/daytona/work"
 
 app = App(token=SLACK_BOT_TOKEN)
