@@ -25,8 +25,8 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
 
 # Playwright + browser system deps. --with-deps installs the apt packages
 # Chromium needs even on a privileged container.
-RUN npm install -g playwright @playwright/test \
- && npx -y playwright install --with-deps chromium
+#RUN npm install -g playwright @playwright/test \
+# && npx -y playwright install --with-deps chromium
 
 # Drop back to the unprivileged sandbox user the runner expects.
 USER daytona
