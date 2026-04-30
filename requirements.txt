@@ -1,4 +1,3 @@
-anthropic
+daytona
 slack-bolt
-PyGithub
 python-dotenv
