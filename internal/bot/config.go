@@ -37,14 +37,15 @@ func LoadConfig() (Config, error) {
 		return Config{}, fmt.Errorf("missing required env vars: %v", missing)
 	}
 
+	repo := os.Getenv("GITHUB_REPO")
 	return Config{
 		SlackBotToken:    os.Getenv("SLACK_BOT_OAUTH_TOKEN"),
 		SlackSocketToken: os.Getenv("SLACK_SOCKET_TOKEN"),
 		AnthropicAPIKey:  os.Getenv("ANTHROPIC_API_KEY"),
 		GitHubToken:      os.Getenv("GITHUB_TOKEN"),
-		GitHubRepo:       os.Getenv("GITHUB_REPO"),
+		GitHubRepo:       repo,
 		BaseBranch:       getenvDefault("GITHUB_BASE_BRANCH", "main"),
-		Snapshot:         getenvDefault("DAYTONA_SNAPSHOT", "claude-playwright:1"),
+		Snapshot:         getenvDefault("DAYTONA_SNAPSHOT", fmt.Sprintf("ghcr.io/%s/sandbox:latest", repo)),
 		DaytonaAPIURL:    os.Getenv("DAYTONA_API_URL"),
 	}, nil
 }
