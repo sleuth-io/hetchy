@@ -61,25 +61,36 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 		log.Info("daytona configured", "mode", "cloud", "url", "app.daytona.io")
 	}
 
-	api := slack.New(cfg.SlackBotToken, slack.OptionAppLevelToken(cfg.SlackSocketToken))
-	sm := socketmode.New(api)
-
-	return &Bot{cfg: cfg, log: log, slack: api, socket: sm, daytona: dc}, nil
+	b := &Bot{cfg: cfg, log: log, daytona: dc}
+	if !cfg.DisableSlack {
+		b.slack = slack.New(cfg.SlackBotToken, slack.OptionAppLevelToken(cfg.SlackSocketToken))
+		b.socket = socketmode.New(b.slack)
+	}
+	return b, nil
 }
 
-// Run starts both the Slack socket-mode listener and the web UI. It returns
-// the first error from either transport, cancelling the other.
+// Run starts the configured transports (Slack socket-mode + web UI by default;
+// web only when DISABLE_SLACK=1). It returns the first error from any
+// transport, cancelling the others.
 func (b *Bot) Run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	transports := 1 // web is always on
 	errCh := make(chan error, 2)
-	go func() { errCh <- b.runSlack(ctx) }()
 	go func() { errCh <- b.runWeb(ctx) }()
+	if !b.cfg.DisableSlack {
+		transports++
+		go func() { errCh <- b.runSlack(ctx) }()
+	} else {
+		b.log.Info("slack disabled (DISABLE_SLACK=1) — running web UI only")
+	}
 
 	err := <-errCh
 	cancel()
-	<-errCh
+	for range transports - 1 {
+		<-errCh
+	}
 	return err
 }
 

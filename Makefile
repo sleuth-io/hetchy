@@ -1,4 +1,4 @@
-.PHONY: help build install test lint format clean tidy deps verify update-deps init prepush postpull bot bot-tee logs dev daytona-up daytona-down daytona-logs snapshot push-snapshot
+.PHONY: help build install test lint format clean tidy deps verify update-deps init prepush postpull bot bot-tee web logs dev daytona-up daytona-down daytona-logs snapshot push-snapshot
 
 # Default target
 help: ## Show this help message
@@ -82,6 +82,10 @@ bot-tee: build ## Run the bot, mirroring logs to $(LOG_FILE) so another shell ca
 	@which doppler > /dev/null || (echo "doppler CLI not found. Install: https://docs.doppler.com/docs/install-cli" && exit 1)
 	@echo "Logging to $(LOG_FILE) (tail with 'make logs')"
 	@doppler run -- $(BUILD_DIR)/$(BINARY_NAME) 2>&1 | tee $(LOG_FILE)
+
+web: build ## Run only the web UI (skips Slack; http://localhost:$$WEB_PORT, default 8080)
+	@which doppler > /dev/null || (echo "doppler CLI not found. Install: https://docs.doppler.com/docs/install-cli" && exit 1)
+	@doppler run -- env DISABLE_SLACK=1 $(BUILD_DIR)/$(BINARY_NAME)
 
 logs: ## Tail the log file written by `make bot-tee` (LOG_FILE=$(LOG_FILE))
 	@touch $(LOG_FILE)

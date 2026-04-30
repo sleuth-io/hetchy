@@ -16,17 +16,23 @@ type Config struct {
 	Snapshot         string
 	DaytonaAPIURL    string
 	WebPort          string
+	DisableSlack     bool
 }
 
 // LoadConfig reads required and optional env vars. It returns an error listing
-// any required variables that are missing rather than fatal-exiting.
+// any required variables that are missing rather than fatal-exiting. Set
+// DISABLE_SLACK=1 to drop the Slack tokens from the required list and run the
+// web UI alone.
 func LoadConfig() (Config, error) {
+	disableSlack := os.Getenv("DISABLE_SLACK") != ""
+
 	required := []string{
-		"SLACK_BOT_OAUTH_TOKEN",
-		"SLACK_SOCKET_TOKEN",
 		"ANTHROPIC_API_KEY",
 		"GITHUB_TOKEN",
 		"GITHUB_REPO",
+	}
+	if !disableSlack {
+		required = append(required, "SLACK_BOT_OAUTH_TOKEN", "SLACK_SOCKET_TOKEN")
 	}
 	var missing []string
 	for _, key := range required {
@@ -49,6 +55,7 @@ func LoadConfig() (Config, error) {
 		Snapshot:         getenvDefault("DAYTONA_SNAPSHOT", fmt.Sprintf("ghcr.io/%s/sandbox:latest", repo)),
 		DaytonaAPIURL:    os.Getenv("DAYTONA_API_URL"),
 		WebPort:          getenvDefault("WEB_PORT", "8080"),
+		DisableSlack:     disableSlack,
 	}, nil
 }
 
