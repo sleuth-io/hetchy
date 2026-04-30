@@ -1,3 +1,0 @@
-daytona
-slack-bolt
-python-dotenv

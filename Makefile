@@ -3,7 +3,7 @@
 # Dev topology:
 #   - Daytona OSS stack runs locally via docker compose (cloned on first
 #     `make daytona-up` into $(DAYTONA_DIR)).
-#   - The Slack bot runs at the host level (python bot.py) and talks to
+#   - The Slack bot runs at the host level (go run .) and talks to
 #     Daytona over its REST API.
 #
 # Hosted topology:
@@ -17,18 +17,19 @@
 #   DAYTONA_API_KEY, DAYTONA_API_URL
 #   [DAYTONA_SNAPSHOT]   default: claude-playwright:1
 
-PYTHON        ?= python3
-PIP           ?= $(PYTHON) -m pip
+GO            ?= go
+BIN           ?= bin/software-factory
 DAYTONA_DIR   ?= $(HOME)/src/daytona
 SNAPSHOT_NAME ?= claude-playwright
 SNAPSHOT_TAG  ?= 1
 COMPOSE       = docker compose -f "$(DAYTONA_DIR)/docker/docker-compose.yaml"
 
-.PHONY: help install daytona-up daytona-down daytona-logs snapshot push-snapshot bot dev clean
+.PHONY: help tidy build daytona-up daytona-down daytona-logs snapshot push-snapshot bot dev clean
 
 help:
 	@echo "Targets:"
-	@echo "  install         Install Python deps for the bot"
+	@echo "  tidy            Sync go.mod / go.sum"
+	@echo "  build           Compile the bot to $(BIN)"
 	@echo "  daytona-up      Start the local Daytona OSS stack (docker compose)"
 	@echo "  daytona-down    Stop the local Daytona OSS stack"
 	@echo "  daytona-logs    Tail Daytona stack logs"
@@ -36,10 +37,13 @@ help:
 	@echo "  push-snapshot   Build + push the snapshot to Daytona's registry"
 	@echo "  bot             Run the Slack bot (host-level)"
 	@echo "  dev             daytona-up, then run the bot in foreground"
-	@echo "  clean           Remove the local sandbox image"
+	@echo "  clean           Remove built binary and the local sandbox image"
 
-install:
-	$(PIP) install -r requirements.txt
+tidy:
+	$(GO) mod tidy
+
+build:
+	$(GO) build -o $(BIN) .
 
 daytona-up:
 	@if [ ! -d "$(DAYTONA_DIR)" ]; then \
@@ -70,9 +74,10 @@ push-snapshot: snapshot
 	daytona snapshot push $(SNAPSHOT_NAME):$(SNAPSHOT_TAG)
 
 bot:
-	$(PYTHON) bot.py
+	$(GO) run .
 
 dev: daytona-up bot
 
 clean:
+	rm -f $(BIN)
 	docker rmi $(SNAPSHOT_NAME):$(SNAPSHOT_TAG) || true
