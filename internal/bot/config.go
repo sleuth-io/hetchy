@@ -15,6 +15,7 @@ type Config struct {
 	BaseBranch       string
 	Snapshot         string
 	DaytonaAPIURL    string
+	WebPort          string
 }
 
 // LoadConfig reads required and optional env vars. It returns an error listing
@@ -47,6 +48,7 @@ func LoadConfig() (Config, error) {
 		BaseBranch:       getenvDefault("GITHUB_BASE_BRANCH", "main"),
 		Snapshot:         getenvDefault("DAYTONA_SNAPSHOT", fmt.Sprintf("ghcr.io/%s/sandbox:latest", repo)),
 		DaytonaAPIURL:    os.Getenv("DAYTONA_API_URL"),
+		WebPort:          getenvDefault("WEB_PORT", "8080"),
 	}, nil
 }
 

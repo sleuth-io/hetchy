@@ -1,10 +1,9 @@
-// Package bot implements the Slack bot that turns natural-language requests
-// into pull requests via Claude Code running in a Daytona sandbox.
+// Package bot implements the Slack + web bot that turns natural-language
+// requests into pull requests via Claude Code running in a Daytona sandbox.
 package bot
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"regexp"
@@ -15,16 +14,12 @@ import (
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/options"
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/types"
 	"github.com/slack-go/slack"
-	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
 )
 
 const workdir = "/home/daytona/work"
 
-var (
-	prURLRe       = regexp.MustCompile(`https://github\.com/[^\s]+/pull/\d+`)
-	mentionPrefix = regexp.MustCompile(`^<@[A-Z0-9]+>\s*`)
-)
+var prURLRe = regexp.MustCompile(`https://github\.com/[^\s]+/pull/\d+`)
 
 const agentPromptTemplate = `You are working inside a fresh sandbox. The repo %s has been cloned
 to %s and %s is checked out. Your task is the user request below.
@@ -41,22 +36,13 @@ When you are done implementing the change:
   5. The very last line of your output MUST be just the PR URL — no other
      text on that line.`
 
-// Bot wires Slack, Daytona, and the agent loop together.
+// Bot wires Slack, the web UI, Daytona, and the agent loop together.
 type Bot struct {
 	cfg     Config
 	log     *slog.Logger
 	slack   *slack.Client
 	socket  *socketmode.Client
 	daytona *daytona.Client
-}
-
-type incoming struct {
-	channel  string
-	user     string
-	ts       string
-	threadTS string
-	botID    string
-	text     string
 }
 
 // New constructs a Bot from config and a logger.
@@ -81,58 +67,60 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 	return &Bot{cfg: cfg, log: log, slack: api, socket: sm, daytona: dc}, nil
 }
 
-// Run starts the Slack socket-mode listener and dispatches events. It blocks
-// until ctx is cancelled or the socket-mode client returns an error.
+// Run starts both the Slack socket-mode listener and the web UI. It returns
+// the first error from either transport, cancelling the other.
 func (b *Bot) Run(ctx context.Context) error {
-	go b.dispatch(ctx)
-	if err := b.socket.RunContext(ctx); err != nil && !errors.Is(err, context.Canceled) {
-		return fmt.Errorf("socket mode run: %w", err)
-	}
-	return nil
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	errCh := make(chan error, 2)
+	go func() { errCh <- b.runSlack(ctx) }()
+	go func() { errCh <- b.runWeb(ctx) }()
+
+	err := <-errCh
+	cancel()
+	<-errCh
+	return err
 }
 
-func (b *Bot) dispatch(ctx context.Context) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case evt, ok := <-b.socket.Events:
-			if !ok {
-				return
-			}
-			if evt.Type != socketmode.EventTypeEventsAPI {
-				continue
-			}
-			payload, ok := evt.Data.(slackevents.EventsAPIEvent)
-			if !ok {
-				continue
-			}
-			b.socket.Ack(*evt.Request)
-			if payload.Type != slackevents.CallbackEvent {
-				continue
-			}
-			switch ev := payload.InnerEvent.Data.(type) {
-			case *slackevents.MessageEvent:
-				go b.processRequest(ctx, incoming{
-					channel: ev.Channel, user: ev.User, ts: ev.TimeStamp,
-					threadTS: ev.ThreadTimeStamp, botID: ev.BotID, text: ev.Text,
-				})
-			case *slackevents.AppMentionEvent:
-				go b.processRequest(ctx, incoming{
-					channel: ev.Channel, user: ev.User, ts: ev.TimeStamp,
-					threadTS: ev.ThreadTimeStamp, botID: ev.BotID, text: ev.Text,
-				})
-			}
-		}
-	}
-}
+// HandleRequest is the shared core: it spins up a sandbox, runs Claude Code
+// inside it, opens a PR, and pipes each progress update through onUpdate.
+// Both the Slack and web transports call this with their own onUpdate.
+func (b *Bot) HandleRequest(ctx context.Context, text, requestID string, onUpdate func(string)) {
+	b.log.Info("request received",
+		"request_id", requestID,
+		"text_len", len(text),
+		"text_preview", truncate(text, 200),
+	)
+	onUpdate("Spinning up an isolated sandbox for your request...")
 
-func (b *Bot) reply(channel, threadTS, msg string) {
-	if _, _, err := b.slack.PostMessage(channel,
-		slack.MsgOptionText(msg, false),
-		slack.MsgOptionTS(threadTS),
-	); err != nil {
-		b.log.Error("slack post failed", "channel", channel, "error", err)
+	sb, err := b.daytona.Create(ctx, types.SnapshotParams{
+		SandboxBaseParams: types.SandboxBaseParams{
+			EnvVars: map[string]string{
+				"ANTHROPIC_API_KEY": b.cfg.AnthropicAPIKey,
+				"GITHUB_TOKEN":      b.cfg.GitHubToken,
+			},
+		},
+		Snapshot: b.cfg.Snapshot,
+	})
+	if err != nil {
+		b.log.Error("sandbox create failed", "error", err)
+		onUpdate(fmt.Sprintf("Sandbox create failed: `%v`", err))
+		return
+	}
+	b.log.Info("sandbox created", "id", sb.ID, "request_id", requestID)
+	onUpdate(fmt.Sprintf("Sandbox `%s` ready — cloning repo and starting Claude Code.", sb.ID))
+
+	prURL, runErr := b.runAgent(ctx, sb, text, requestID)
+	if runErr != nil {
+		b.log.Error("agent run failed", "sandbox", sb.ID, "error", runErr)
+		onUpdate(fmt.Sprintf("Something went wrong: `%v`\nSandbox `%s` was left running for debugging.", runErr, sb.ID))
+		return
+	}
+
+	onUpdate("Done! :tada: " + prURL)
+	if err := sb.Delete(ctx); err != nil {
+		b.log.Error("sandbox delete failed", "sandbox", sb.ID, "error", err)
 	}
 }
 
@@ -153,69 +141,6 @@ func (b *Bot) sh(ctx context.Context, sb *daytona.Sandbox, step, cmd string, tim
 	}
 	b.log.Info("sandbox step ok", "sandbox", sb.ID, "step", step, "output_bytes", len(res.Result))
 	return res.Result, nil
-}
-
-func shellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
-}
-
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "..."
-}
-
-func (b *Bot) processRequest(ctx context.Context, ev incoming) {
-	if ev.botID != "" || ev.threadTS != "" {
-		return
-	}
-	text := strings.TrimSpace(ev.text)
-	if text == "" {
-		return
-	}
-	text = strings.TrimSpace(mentionPrefix.ReplaceAllString(text, ""))
-	if text == "" {
-		return
-	}
-
-	requestID := strings.ReplaceAll(ev.ts, ".", "")
-	reply := func(msg string) { b.reply(ev.channel, ev.ts, msg) }
-
-	b.log.Info("request received",
-		"request_id", requestID, "user", ev.user, "channel", ev.channel,
-		"text_len", len(text), "text_preview", truncate(text, 200),
-	)
-	reply(fmt.Sprintf("<@%s> Spinning up an isolated sandbox for your request...", ev.user))
-
-	sb, err := b.daytona.Create(ctx, types.SnapshotParams{
-		SandboxBaseParams: types.SandboxBaseParams{
-			EnvVars: map[string]string{
-				"ANTHROPIC_API_KEY": b.cfg.AnthropicAPIKey,
-				"GITHUB_TOKEN":      b.cfg.GitHubToken,
-			},
-		},
-		Snapshot: b.cfg.Snapshot,
-	})
-	if err != nil {
-		b.log.Error("sandbox create failed", "error", err)
-		reply(fmt.Sprintf("<@%s> Sandbox create failed: `%v`", ev.user, err))
-		return
-	}
-	b.log.Info("sandbox created", "id", sb.ID, "user", ev.user)
-	reply(fmt.Sprintf("<@%s> Sandbox `%s` ready — cloning repo and starting Claude Code.", ev.user, sb.ID))
-
-	prURL, runErr := b.runAgent(ctx, sb, text, requestID)
-	if runErr != nil {
-		b.log.Error("agent run failed", "sandbox", sb.ID, "error", runErr)
-		reply(fmt.Sprintf("<@%s> Something went wrong: `%v`\nSandbox `%s` was left running for debugging.", ev.user, runErr, sb.ID))
-		return
-	}
-
-	reply(fmt.Sprintf("<@%s> Done! :tada: %s", ev.user, prURL))
-	if err := sb.Delete(ctx); err != nil {
-		b.log.Error("sandbox delete failed", "sandbox", sb.ID, "error", err)
-	}
 }
 
 func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, userRequest, requestID string) (string, error) {
@@ -262,4 +187,15 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, userRequest, re
 		return "", fmt.Errorf("no PR URL found in agent output. Tail:\n%s", tail)
 	}
 	return match, nil
+}
+
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
 }
