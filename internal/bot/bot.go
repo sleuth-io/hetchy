@@ -200,7 +200,15 @@ func (b *Bot) processRequest(ctx context.Context, ev incoming) {
 }
 
 func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, userRequest, requestID string) (string, error) {
-	if _, err := b.sh(ctx, sb, "echo $GITHUB_TOKEN | gh auth login --with-token && gh auth setup-git", 60*time.Second); err != nil {
+	// gh CLI picks up GITHUB_TOKEN from the env automatically. We can't run
+	// `gh auth login --with-token` while GITHUB_TOKEN is set (gh refuses).
+	// Configure git to use the token for HTTPS github.com URLs via insteadOf
+	// rewriting so `git clone` and `git push` work without exposing the token
+	// in the stored remote URL.
+	if _, err := b.sh(ctx, sb,
+		`git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"`,
+		60*time.Second,
+	); err != nil {
 		return "", err
 	}
 	cloneCmd := fmt.Sprintf(
