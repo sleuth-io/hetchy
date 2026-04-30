@@ -73,8 +73,9 @@ prepush: format lint test build ## Run before pushing (format, lint, test, build
 postpull: init ## Run after pulling (download dependencies)
 
 # Bot runtime
-bot: build ## Build and run the Slack bot
-	@$(BUILD_DIR)/$(BINARY_NAME)
+bot: build ## Build and run the Slack bot via doppler
+	@which doppler > /dev/null || (echo "doppler CLI not found. Install: https://docs.doppler.com/docs/install-cli" && exit 1)
+	@doppler run -- $(BUILD_DIR)/$(BINARY_NAME)
 
 dev: daytona-up bot ## Bring up Daytona, then run the bot in foreground
 

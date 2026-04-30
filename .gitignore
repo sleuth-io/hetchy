@@ -46,4 +46,8 @@ temp/
 .env
 .env.local
 .env.*.local
+
+# Doppler local state (per-user). The committed doppler.yaml pins the
+# project + config; .doppler.yaml is the local override that doppler
+# writes when a user runs `doppler setup` manually.
 .doppler.yaml
