@@ -1,12 +1,18 @@
 package bot
 
 import (
+	"context"
 	"errors"
 	"os/exec"
 	"strings"
 	"testing"
 
+	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
 	sdkerrors "github.com/daytonaio/daytona/libs/sdk-go/pkg/errors"
+	"github.com/daytonaio/daytona/libs/sdk-go/pkg/types"
+
+	"github.com/hetchyhq/hetchy/internal/convstore"
+	"github.com/hetchyhq/hetchy/internal/orgcfg"
 )
 
 func TestIsTransientError(t *testing.T) {
@@ -26,6 +32,8 @@ func TestIsTransientError(t *testing.T) {
 		{"not found 404", sdkerrors.NewDaytonaNotFoundError("not found", nil), false},
 		{"bad request 400", sdkerrors.NewDaytonaError("bad request", 400, nil), false},
 		{"unauthorized 401", sdkerrors.NewDaytonaError("unauthorized", 401, nil), false},
+		{"forbidden 403", sdkerrors.NewDaytonaError("forbidden", 403, nil), false},
+		{"rate limit 429 via DaytonaError", sdkerrors.NewDaytonaError("rate limited", 429, nil), true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -93,6 +101,53 @@ func TestShellQuote_RoundTrip(t *testing.T) {
 	}
 }
 
+// TestHandleRequest_CallbackRouting verifies that bot status messages go to
+// onNotify (not onUpdate) and that onError fires when sandbox creation
+// fails. Raw sandbox output isn't exercised here because no sandbox is
+// created — that path is covered by integration tests.
+func TestHandleRequest_CallbackRouting(t *testing.T) {
+	b := &Bot{
+		log:          discardLogger(),
+		cfg:          Config{AnthropicAPIKey: "ant"},
+		convs:        convstore.New(nil),
+		retryBackoff: 0,
+	}
+	b.createFn = func(context.Context, any) (*daytona.Sandbox, error) {
+		return nil, sdkerrors.NewDaytonaError("forced failure", 401, nil)
+	}
+
+	oc := orgcfg.Config{OrgID: "org_test", GitHubToken: "ghp", GitHubRepo: "owner/repo"}
+
+	var updates, notifies []string
+	var errored bool
+	b.HandleRequest(context.Background(), oc, "do something", "req-1", "thread-1",
+		func(msg string) { updates = append(updates, msg) },
+		func(msg string) { notifies = append(notifies, msg) },
+		func(msg string) { t.Errorf("unexpected onComplete: %s", msg) },
+		func(string) { errored = true },
+	)
+
+	if !errored {
+		t.Fatal("expected onError to fire when sandbox creation fails")
+	}
+
+	foundInNotify := false
+	for _, m := range notifies {
+		if strings.Contains(m, "Spinning up") {
+			foundInNotify = true
+		}
+	}
+	if !foundInNotify {
+		t.Errorf("expected 'Spinning up' in onNotify, got notifies=%v", notifies)
+	}
+
+	for _, m := range updates {
+		if strings.Contains(m, "Spinning up") {
+			t.Errorf("'Spinning up' should not appear in onUpdate, got: %s", m)
+		}
+	}
+}
+
 func TestTruncate(t *testing.T) {
 	cases := []struct {
 		name string
@@ -114,6 +169,48 @@ func TestTruncate(t *testing.T) {
 			}
 			if len(tc.s) > tc.n && !strings.HasSuffix(got, "...") {
 				t.Errorf("truncated output should end with '...': got %q", got)
+			}
+		})
+	}
+}
+
+func TestRetryLoop(t *testing.T) {
+	err503 := sdkerrors.NewDaytonaError("service unavailable", 503, nil)
+	err401 := sdkerrors.NewDaytonaError("unauthorized", 401, nil)
+	err429 := sdkerrors.NewDaytonaError("rate limited", 429, nil)
+
+	cases := []struct {
+		name      string
+		returns   []error
+		wantCalls int
+		wantErr   bool
+	}{
+		{name: "succeeds on first attempt", returns: []error{nil}, wantCalls: 1},
+		{name: "retries transient error and succeeds", returns: []error{err503, err503, nil}, wantCalls: 3},
+		{name: "gives up after max retries", returns: []error{err503, err503, err503}, wantCalls: 3, wantErr: true},
+		{name: "does not retry permanent error", returns: []error{err401}, wantCalls: 1, wantErr: true},
+		{name: "429 via DaytonaError triggers retry", returns: []error{err429, nil}, wantCalls: 2},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			b := &Bot{
+				log:          discardLogger(),
+				retryBackoff: 0,
+			}
+			b.createFn = func(_ context.Context, _ any) (*daytona.Sandbox, error) {
+				err := tc.returns[calls]
+				calls++
+				return nil, err
+			}
+
+			_, err := b.createSandboxWithRetry(context.Background(), types.SnapshotParams{})
+			if (err != nil) != tc.wantErr {
+				t.Errorf("wantErr=%v, got err=%v", tc.wantErr, err)
+			}
+			if calls != tc.wantCalls {
+				t.Errorf("wantCalls=%d, got calls=%d", tc.wantCalls, calls)
 			}
 		})
 	}

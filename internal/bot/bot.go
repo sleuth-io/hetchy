@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 	"time"
 
@@ -43,6 +44,10 @@ type Bot struct {
 	convs   *convstore.Store
 	auth    *auth.Service
 	slack   *slackManager
+
+	// createFn is called by createSandboxWithRetry; overridable in tests.
+	createFn     func(context.Context, any) (*daytona.Sandbox, error)
+	retryBackoff time.Duration
 }
 
 // New constructs a Bot from config and a logger. It opens the database
@@ -72,6 +77,7 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 
 	cipher, err := secrets.New(cfg.SecretsEncryptionKey)
 	if err != nil {
+		store.Close()
 		return nil, fmt.Errorf("secrets cipher: %w", err)
 	}
 
@@ -93,13 +99,17 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 	}
 
 	b := &Bot{
-		cfg:     cfg,
-		log:     log,
-		daytona: dc,
-		store:   store,
-		orgs:    orgcfg.New(store, cipher),
-		convs:   convstore.New(store),
-		auth:    authSvc,
+		cfg:          cfg,
+		log:          log,
+		daytona:      dc,
+		store:        store,
+		orgs:         orgcfg.New(store, cipher),
+		convs:        convstore.New(store),
+		auth:         authSvc,
+		retryBackoff: initialBackoff,
+	}
+	b.createFn = func(ctx context.Context, params any) (*daytona.Sandbox, error) {
+		return dc.Create(ctx, params)
 	}
 	b.slack = newSlackManager(log, b.orgs, b.handleSlackEvent)
 	return b, nil
@@ -131,8 +141,18 @@ func (b *Bot) Run(ctx context.Context) error {
 
 // HandleRequest is the shared core. It expects an already-resolved org
 // config — callers (web/slack) pull oc from the principal's org id (web)
-// or the slack team id (slack) and pass it in.
-func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, requestID, threadID string, onUpdate func(string), onComplete func(string), onError func(string)) {
+// or the org that owns the inbound socket (slack) and pass it in.
+//
+// Callbacks:
+//   - onUpdate receives raw sandbox log chunks (stdout/stderr from Claude
+//     Code and shell steps). The web UI streams these to the browser; Slack
+//     suppresses them to avoid flooding threads.
+//   - onNotify receives important status messages from the bot itself
+//     ("Spinning up…", "Resuming work on PR…"). Both transports surface
+//     these.
+//   - onComplete fires once with the PR URL on success.
+//   - onError fires once with a human-readable failure message.
+func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, requestID, threadID string, onUpdate func(string), onNotify func(string), onComplete func(string), onError func(string)) {
 	b.log.Info("request received",
 		"org", oc.OrgID,
 		"request_id", requestID,
@@ -165,7 +185,7 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 	rec, err := b.convs.Get(ctx, oc.OrgID, threadID)
 	switch {
 	case err == nil:
-		b.handleFollowUp(ctx, oc, rec, text, requestID, threadID, onUpdate, onComplete, onError)
+		b.handleFollowUp(ctx, oc, rec, text, requestID, threadID, onUpdate, onNotify, onComplete, onError)
 		return
 	case errors.Is(err, convstore.ErrNotFound):
 		// fall through — new conversation
@@ -175,7 +195,7 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		return
 	}
 
-	onUpdate("Spinning up an isolated sandbox for your request...")
+	onNotify("Spinning up an isolated sandbox for your request...")
 
 	envVars := map[string]string{
 		"ANTHROPIC_API_KEY": b.cfg.AnthropicAPIKey,
@@ -189,12 +209,17 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		Snapshot:          b.cfg.Snapshot,
 	})
 	if err != nil {
+		if ctx.Err() != nil {
+			b.log.Error("sandbox create cancelled", "error", err)
+			onError(fmt.Sprintf("Sandbox create cancelled: `%v`", ctx.Err()))
+			return
+		}
 		b.log.Error("sandbox create failed", "error", err)
 		onError(fmt.Sprintf("Sandbox create failed: `%v`", err))
 		return
 	}
 	b.log.Info("sandbox created", "id", sb.ID, "request_id", requestID)
-	onUpdate(fmt.Sprintf("Sandbox `%s` ready — cloning repo and starting Claude Code.", sb.ID))
+	onNotify(fmt.Sprintf("Sandbox `%s` ready — cloning repo and starting Claude Code.", sb.ID))
 
 	branch := "feature/sf-" + requestID
 	prURL, runErr := b.runAgent(ctx, sb, oc, text, requestID, onUpdate)
@@ -224,9 +249,9 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 	onComplete(prURL + "\nReply here to make further changes to this PR.")
 }
 
-func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstore.Record, text, requestID, threadID string, onUpdate func(string), onComplete func(string), onError func(string)) {
+func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstore.Record, text, requestID, threadID string, onUpdate func(string), onNotify func(string), onComplete func(string), onError func(string)) {
 	b.log.Info("follow-up received", "org", oc.OrgID, "sandbox", rec.SandboxID, "branch", rec.Branch, "pr", rec.PRURL)
-	onUpdate(fmt.Sprintf("Resuming work on %s…", rec.PRURL))
+	onNotify(fmt.Sprintf("Resuming work on %s…", rec.PRURL))
 
 	sb, err := b.daytona.Get(ctx, rec.SandboxID)
 	if err != nil {
@@ -263,7 +288,7 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 	if err := b.convs.Upsert(ctx, rec); err != nil {
 		b.log.Error("convstore upsert", "error", err)
 	}
-	_ = oc
+	_ = threadID
 
 	onComplete(prURL)
 }
@@ -278,7 +303,9 @@ func isTransientError(err error) bool {
 	}
 	var dayErr *sdkerrors.DaytonaError
 	if errors.As(err, &dayErr) {
-		return dayErr.StatusCode == 0 || (dayErr.StatusCode >= 500 && dayErr.StatusCode < 600)
+		return dayErr.StatusCode == 0 ||
+			dayErr.StatusCode == http.StatusTooManyRequests ||
+			(dayErr.StatusCode >= 500 && dayErr.StatusCode < 600)
 	}
 	return false
 }
@@ -298,10 +325,10 @@ func truncate(s string, n int) string {
 // logic for transient errors.
 func (b *Bot) createSandboxWithRetry(ctx context.Context, params types.SnapshotParams) (*daytona.Sandbox, error) {
 	var lastErr error
-	backoff := initialBackoff
+	backoff := b.retryBackoff
 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
-		sb, err := b.daytona.Create(ctx, params)
+		sb, err := b.createFn(ctx, params)
 		if err == nil {
 			if attempt > 1 {
 				b.log.Info("sandbox created after retry", "attempt", attempt)

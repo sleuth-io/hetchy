@@ -256,6 +256,11 @@ func (b *Bot) handleSlackEvent(ctx context.Context, oc orgcfg.Config, ev incomin
 	requestID := strings.ReplaceAll(ev.ts, ".", "")
 	b.HandleRequest(ctx, oc, text, requestID, threadID,
 		func(msg string) {
+			// onUpdate: raw sandbox log chunks — logged locally only, never posted to Slack.
+			b.log.Debug("sandbox log", "org", oc.OrgID, "channel", ev.channel, "thread", threadID, "msg", msg)
+		},
+		func(msg string) {
+			// onNotify: important status updates from the bot itself.
 			replyInThread(b.log, cli, ev.channel, replyTo, fmt.Sprintf("<@%s> %s", ev.user, msg))
 		},
 		func(msg string) {

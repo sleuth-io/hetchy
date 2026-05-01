@@ -277,11 +277,18 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 			}
 		}
 		b.HandleRequest(parentCtx, oc, text, requestID, sessionID,
-			sendUpdate,
-			func(msg string) { sendUpdate("Done! :tada: " + msg) },
-			sendUpdate,
+			sendUpdate, // onUpdate: raw sandbox logs streamed to browser
+			sendUpdate, // onNotify: bot status updates streamed to browser
+			func(msg string) { sendUpdate("Done! :tada: " + msg) }, // onComplete
+			sendUpdate, // onError
 		)
 	}()
+
+	// Keepalive ticker: proxies (nginx, etc.) drop idle SSE connections after
+	// ~60 s. Claude can run silently for several minutes, so we send SSE
+	// comment frames periodically to keep the connection alive.
+	keepalive := time.NewTicker(30 * time.Second)
+	defer keepalive.Stop()
 
 	for {
 		select {
@@ -295,6 +302,11 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 				return
 			}
 			if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
+				return
+			}
+			flusher.Flush()
+		case <-keepalive.C:
+			if _, err := fmt.Fprintf(w, ": keepalive\n\n"); err != nil {
 				return
 			}
 			flusher.Flush()
