@@ -163,23 +163,24 @@ func (b *Bot) processSlackEvent(ctx context.Context, ev incoming) {
 
 	b.replyInThread(ev.channel, replyTo, fmt.Sprintf("<@%s> Working on it…", ev.user))
 
-	var lastMsg string
 	requestID := strings.ReplaceAll(ev.ts, ".", "")
-	b.HandleRequest(ctx, text, requestID, threadID, func(msg string) {
-		lastMsg = msg
-	})
-
-	if lastMsg != "" {
-		b.replyInThread(ev.channel, replyTo, fmt.Sprintf("<@%s> %s", ev.user, lastMsg))
-		// If the final message contains a PR URL, add a "white_check_mark" reaction
-		// to indicate the task is complete, and remove the previous status reaction.
-		if strings.Contains(lastMsg, "Done! :tada:") {
-			// Remove the previous status reaction
+	b.HandleRequest(ctx, text, requestID, threadID,
+		func(msg string) {
+			// onUpdate: send progress messages
+			b.replyInThread(ev.channel, replyTo, fmt.Sprintf("<@%s> %s", ev.user, msg))
+		},
+		func(msg string) {
+			// onComplete: task finished successfully
+			b.replyInThread(ev.channel, replyTo, fmt.Sprintf("<@%s> Done! :tada: %s", ev.user, msg))
 			b.removeReaction(ev.channel, threadID, reactionEmoji)
-			// Add the completion reaction
 			b.addReaction(ev.channel, threadID, "white_check_mark")
-		}
-	}
+		},
+		func(msg string) {
+			// onError: task failed
+			b.replyInThread(ev.channel, replyTo, fmt.Sprintf("<@%s> %s", ev.user, msg))
+			b.removeReaction(ev.channel, threadID, reactionEmoji)
+		},
+	)
 }
 
 func (b *Bot) replyInThread(channel, threadTS, msg string) {

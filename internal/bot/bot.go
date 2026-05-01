@@ -93,7 +93,9 @@ func (b *Bot) Run(ctx context.Context) error {
 // HandleRequest is the shared core. threadID ties follow-up messages to an
 // existing conversation; use a unique value (e.g. Slack thread TS or web
 // session ID) so the bot can match follow-ups to the right sandbox and branch.
-func (b *Bot) HandleRequest(ctx context.Context, text, requestID, threadID string, onUpdate func(string)) {
+// onComplete is called on successful PR creation with the PR URL; onError is called
+// when the task fails with an error message.
+func (b *Bot) HandleRequest(ctx context.Context, text, requestID, threadID string, onUpdate func(string), onComplete func(string), onError func(string)) {
 	b.log.Info("request received",
 		"request_id", requestID,
 		"thread_id", threadID,
@@ -106,7 +108,7 @@ func (b *Bot) HandleRequest(ctx context.Context, text, requestID, threadID strin
 	b.mu.Unlock()
 
 	if conv != nil {
-		b.handleFollowUp(ctx, conv, text, requestID, threadID, onUpdate)
+		b.handleFollowUp(ctx, conv, text, requestID, threadID, onUpdate, onComplete, onError)
 		return
 	}
 
@@ -128,7 +130,7 @@ func (b *Bot) HandleRequest(ctx context.Context, text, requestID, threadID strin
 	})
 	if err != nil {
 		b.log.Error("sandbox create failed", "error", err)
-		onUpdate(fmt.Sprintf("Sandbox create failed: `%v`", err))
+		onError(fmt.Sprintf("Sandbox create failed: `%v`", err))
 		return
 	}
 	b.log.Info("sandbox created", "id", sb.ID, "request_id", requestID)
@@ -138,7 +140,7 @@ func (b *Bot) HandleRequest(ctx context.Context, text, requestID, threadID strin
 	prURL, runErr := b.runAgent(ctx, sb, text, requestID, onUpdate)
 	if runErr != nil {
 		b.log.Error("agent run failed", "sandbox", sb.ID, "error", runErr)
-		onUpdate(fmt.Sprintf("Something went wrong: `%v`\nSandbox `%s` was left running for debugging.", runErr, sb.ID))
+		onError(fmt.Sprintf("Something went wrong: `%v`\nSandbox `%s` was left running for debugging.", runErr, sb.ID))
 		return
 	}
 
@@ -159,28 +161,28 @@ func (b *Bot) HandleRequest(ctx context.Context, text, requestID, threadID strin
 	b.saveState()
 	b.mu.Unlock()
 
-	onUpdate("Done! :tada: " + prURL + "\nReply here to make further changes to this PR.")
+	onComplete(prURL + "\nReply here to make further changes to this PR.")
 }
 
-func (b *Bot) handleFollowUp(ctx context.Context, conv *conversation, text, requestID, threadID string, onUpdate func(string)) {
+func (b *Bot) handleFollowUp(ctx context.Context, conv *conversation, text, requestID, threadID string, onUpdate func(string), onComplete func(string), onError func(string)) {
 	b.log.Info("follow-up received", "sandbox", conv.sandbox.ID, "branch", conv.branch, "pr", conv.prURL)
 	onUpdate(fmt.Sprintf("Resuming work on %s…", conv.prURL))
 
 	if err := conv.sandbox.Start(ctx); err != nil {
 		b.log.Error("sandbox start failed", "sandbox", conv.sandbox.ID, "error", err)
-		onUpdate(fmt.Sprintf("Failed to resume sandbox: `%v`", err))
+		onError(fmt.Sprintf("Failed to resume sandbox: `%v`", err))
 		return
 	}
 	if err := conv.sandbox.WaitForStart(ctx, 2*time.Minute); err != nil {
 		b.log.Error("sandbox wait-for-start failed", "sandbox", conv.sandbox.ID, "error", err)
-		onUpdate(fmt.Sprintf("Sandbox did not start in time: `%v`", err))
+		onError(fmt.Sprintf("Sandbox did not start in time: `%v`", err))
 		return
 	}
 
 	prURL, err := b.runFollowUp(ctx, conv, text, requestID, onUpdate)
 	if err != nil {
 		b.log.Error("follow-up failed", "sandbox", conv.sandbox.ID, "error", err)
-		onUpdate(fmt.Sprintf("Something went wrong: `%v`", err))
+		onError(fmt.Sprintf("Something went wrong: `%v`", err))
 		return
 	}
 
@@ -196,7 +198,7 @@ func (b *Bot) handleFollowUp(ctx context.Context, conv *conversation, text, requ
 	b.saveState()
 	b.mu.Unlock()
 
-	onUpdate("Done! :tada: " + prURL)
+	onComplete(prURL)
 }
 
 func shellQuote(s string) string {
