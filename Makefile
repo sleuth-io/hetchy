@@ -119,6 +119,15 @@ daytona-logs: ## Tail Daytona stack logs
 snapshot: ## Build the custom sandbox image
 	docker build --platform=linux/amd64 -t $(SNAPSHOT_NAME):$(SNAPSHOT_TAG) sandbox
 
-push-snapshot: snapshot ## Build + push the snapshot to Daytona's registry
-	# Requires the `daytona` CLI to be logged in (`daytona login`).
-	daytona snapshot push $(SNAPSHOT_NAME):$(SNAPSHOT_TAG)
+push-snapshot: snapshot ## Build the sandbox image and register it as a Daytona snapshot
+	@which daytona > /dev/null 2>&1 || ( \
+	  echo "daytona CLI not found. Install it:"; \
+	  echo "  macOS:  brew install daytonaio/cli/daytona"; \
+	  echo "  Other:  curl -fsSL https://download.daytona.io/daytona/install.sh | bash"; \
+	  echo "Then run: daytona login"; \
+	  exit 1; \
+	)
+	daytona snapshot push $(SNAPSHOT_NAME):$(SNAPSHOT_TAG) --name $(SNAPSHOT_NAME)
+	@echo ""
+	@echo "Registered as Daytona snapshot '$(SNAPSHOT_NAME)'."
+	@echo "Set DAYTONA_SNAPSHOT=$(SNAPSHOT_NAME) in your env (or doppler) to use it."

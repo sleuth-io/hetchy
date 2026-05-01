@@ -375,6 +375,7 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, userRequest, re
 	// heredoc issues regardless of what's in the user request.
 	promptB64 := base64.StdEncoding.EncodeToString([]byte(prompt))
 
+	// Write a single self-contained script to the sandbox and run it in one step.
 	script := fmt.Sprintf(`#!/bin/bash
 set -euo pipefail
 
@@ -410,6 +411,7 @@ claude --print --dangerously-skip-permissions < /tmp/sf-prompt.txt
 
 	b.log.Info("agent script", "sandbox", sb.ID, "script", script)
 
+	// Write script file then execute it.
 	writeCmd := fmt.Sprintf("cat > /tmp/sf-agent.sh << 'SFEOF'\n%sSFEOF\nchmod +x /tmp/sf-agent.sh", script)
 	if _, err := b.sh(ctx, sb, sessionID, "write-script", writeCmd, 15*time.Second, onUpdate); err != nil {
 		return "", err
