@@ -51,7 +51,9 @@ USER REQUEST:
 When you are done implementing the change:
   1. Stage and commit your changes with a clear message.
   2. Push the branch to origin — the PR will update automatically.
-  3. The very last line of your output MUST be just the PR URL — no other
+  3. DO NOT update the PR title — it should remain consistent with the original
+     user request shown in "Conversation so far" above, not this latest change.
+  4. The very last line of your output MUST be just the PR URL — no other
      text on that line.`
 
 // conversation holds the live state for an ongoing multi-turn session.

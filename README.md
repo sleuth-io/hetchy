@@ -9,7 +9,8 @@ Software Factory automates code changes by:
 2. Spinning up an isolated Daytona sandbox with your repository
 3. Running Claude Code to implement the requested changes
 4. Creating a branch, committing changes, and opening a pull request
-5. Cleaning up the sandbox when complete
+5. Supporting conversational follow-ups to refine changes on the same PR
+6. Cleaning up the sandbox when complete
 
 ## Features
 
