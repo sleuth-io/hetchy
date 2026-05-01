@@ -77,18 +77,37 @@ func (b *Bot) dispatch(ctx context.Context) {
 			if payload.Type != slackevents.CallbackEvent {
 				continue
 			}
-			// Only handle MessageEvent. AppMentionEvent fires alongside
-			// MessageEvent for the same user message in channels, so
-			// processing both would double-spawn sandboxes.
-			if ev, ok := payload.InnerEvent.Data.(*slackevents.MessageEvent); ok {
-				b.log.Info("slack event received",
-					"channel", ev.Channel, "channel_type", ev.ChannelType,
-					"user", ev.User, "ts", ev.TimeStamp,
-					"text_preview", truncate(ev.Text, 100),
+			// Route by event type:
+			//  - AppMentionEvent: all @mentions in channels (top-level and
+			//    thread). This is the only reliable event for channel messages
+			//    regardless of whether the app has message.channels scope.
+			//  - MessageEvent (DM only): DMs never fire AppMentionEvent, so
+			//    we handle them here. Channel MessageEvents are skipped to
+			//    avoid double-processing when both event types are subscribed.
+			switch inner := payload.InnerEvent.Data.(type) {
+			case *slackevents.AppMentionEvent:
+				b.log.Info("slack app_mention event",
+					"channel", inner.Channel,
+					"user", inner.User, "ts", inner.TimeStamp,
+					"thread_ts", inner.ThreadTimeStamp,
+					"text_preview", truncate(inner.Text, 100),
 				)
 				go b.processSlackEvent(ctx, incoming{
-					channel: ev.Channel, user: ev.User, ts: ev.TimeStamp,
-					threadTS: ev.ThreadTimeStamp, botID: ev.BotID, text: ev.Text,
+					channel: inner.Channel, user: inner.User, ts: inner.TimeStamp,
+					threadTS: inner.ThreadTimeStamp, botID: inner.BotID, text: inner.Text,
+				})
+			case *slackevents.MessageEvent:
+				if !inner.IsIM() {
+					continue
+				}
+				b.log.Info("slack dm event",
+					"user", inner.User, "ts", inner.TimeStamp,
+					"thread_ts", inner.ThreadTimeStamp,
+					"text_preview", truncate(inner.Text, 100),
+				)
+				go b.processSlackEvent(ctx, incoming{
+					channel: inner.Channel, user: inner.User, ts: inner.TimeStamp,
+					threadTS: inner.ThreadTimeStamp, botID: inner.BotID, text: inner.Text,
 				})
 			}
 		}
@@ -96,9 +115,11 @@ func (b *Bot) dispatch(ctx context.Context) {
 }
 
 func (b *Bot) processSlackEvent(ctx context.Context, ev incoming) {
-	if ev.botID != "" || ev.threadTS != "" {
+	// Ignore bot messages.
+	if ev.botID != "" {
 		return
 	}
+
 	text := strings.TrimSpace(ev.text)
 	if text == "" {
 		return
@@ -108,10 +129,36 @@ func (b *Bot) processSlackEvent(ctx context.Context, ev incoming) {
 		return
 	}
 
+	// threadID is the stable key for a conversation. When a message arrives
+	// inside a thread we always use the thread root TS so that every turn of
+	// the same thread maps to the same conversation, regardless of whether
+	// the bot started the thread. For top-level messages we use the message's
+	// own TS (which becomes the thread root once the bot replies).
+	threadID := ev.ts
+	replyTo := ev.ts
+	if ev.threadTS != "" {
+		threadID = ev.threadTS
+		replyTo = ev.threadTS
+
+		b.mu.Lock()
+		_, active := b.convos[threadID]
+		b.mu.Unlock()
+		if !active {
+			b.log.Warn("no active conversation for thread, will start a new one",
+				"thread_ts", ev.threadTS, "user", ev.user, "channel", ev.channel)
+		}
+	}
+
+	b.replyInThread(ev.channel, replyTo, fmt.Sprintf("<@%s> Working on it…", ev.user))
+
+	var lastMsg string
 	requestID := strings.ReplaceAll(ev.ts, ".", "")
-	b.HandleRequest(ctx, text, requestID, func(msg string) {
-		b.replyInThread(ev.channel, ev.ts, fmt.Sprintf("<@%s> %s", ev.user, msg))
+	b.HandleRequest(ctx, text, requestID, threadID, func(msg string) {
+		lastMsg = msg
 	})
+	if lastMsg != "" {
+		b.replyInThread(ev.channel, replyTo, fmt.Sprintf("<@%s> %s", ev.user, lastMsg))
+	}
 }
 
 func (b *Bot) replyInThread(channel, threadTS, msg string) {

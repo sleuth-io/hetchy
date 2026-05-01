@@ -59,7 +59,8 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 	}
 
 	var body struct {
-		Text string `json:"text"`
+		Text      string `json:"text"`
+		SessionID string `json:"session_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
@@ -70,6 +71,7 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 		http.Error(w, "empty text", http.StatusBadRequest)
 		return
 	}
+	sessionID := strings.TrimSpace(body.SessionID)
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -83,13 +85,18 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 	w.Header().Set("X-Accel-Buffering", "no")
 
 	requestID := strconv.FormatInt(time.Now().UnixMilli(), 10)
+	// If no session ID provided, treat each request as a new conversation.
+	if sessionID == "" {
+		sessionID = requestID
+	}
+
 	updates := make(chan string, 8)
 
 	// Run the agent in a goroutine bound to the bot's lifetime, not the
 	// request's, so a closed browser doesn't kill an in-flight build.
 	go func() {
 		defer close(updates)
-		b.HandleRequest(parentCtx, text, requestID, func(msg string) {
+		b.HandleRequest(parentCtx, text, requestID, sessionID, func(msg string) {
 			select {
 			case updates <- msg:
 			case <-parentCtx.Done():
