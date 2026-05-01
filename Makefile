@@ -132,31 +132,7 @@ push-snapshot: snapshot ## Build the sandbox image and register it as a Daytona 
 	  echo "  Other:  curl -fsSL https://download.daytona.io/daytona/install.sh | bash"; \
 	  exit 1; \
 	)
-	@doppler run -- bash -ec '\
-	  echo "doppler:         $$DOPPLER_PROJECT/$$DOPPLER_CONFIG"; \
-	  echo "DAYTONA_API_URL: $${DAYTONA_API_URL:-https://app.daytona.io/api (cloud default)}"; \
-	  if [[ "$${DAYTONA_API_URL:-}" == *"localhost"* || "$${DAYTONA_API_URL:-}" == *"127.0.0.1"* ]]; then \
-	    echo "→ local Daytona OSS detected; pushing to $(LOCAL_REGISTRY_HOST_PORT) and registering via API"; \
-	    docker tag $(SNAPSHOT_NAME):$(SNAPSHOT_TAG) $(LOCAL_REGISTRY_HOST_PORT)/$(SNAPSHOT_NAME):$(SNAPSHOT_TAG); \
-	    docker push $(LOCAL_REGISTRY_HOST_PORT)/$(SNAPSHOT_NAME):$(SNAPSHOT_TAG); \
-	    daytona snapshot delete $(SNAPSHOT_NAME) >/dev/null 2>&1 || true; \
-	    curl -fsS -X POST "$$DAYTONA_API_URL/snapshots" \
-	      -H "Authorization: Bearer $$DAYTONA_API_KEY" \
-	      -H "Content-Type: application/json" \
-	      -d "{\"name\":\"$(SNAPSHOT_NAME)\",\"imageName\":\"$(LOCAL_REGISTRY_INTERNAL)/$(SNAPSHOT_NAME):$(SNAPSHOT_TAG)\"}" \
-	      >/dev/null; \
-	    echo "registered. Waiting for ACTIVE..."; \
-	    for i in $$(seq 1 24); do \
-	      sleep 5; \
-	      LINE=$$(daytona snapshot list 2>/dev/null | tr "]" "\n" | grep -F " $(SNAPSHOT_NAME)   " | head -1); \
-	      [[ -z "$$LINE" ]] && continue; \
-	      echo "  $$LINE"; \
-	      echo "$$LINE" | grep -qE "ACTIVE|ERROR" && break; \
-	    done; \
-	  else \
-	    echo "→ cloud Daytona; using daytona snapshot push"; \
-	    daytona snapshot push $(SNAPSHOT_NAME):$(SNAPSHOT_TAG) --name $(SNAPSHOT_NAME); \
-	  fi; \
-	  echo ""; \
-	  echo "Registered as Daytona snapshot '\''$(SNAPSHOT_NAME)'\''."; \
-	  echo "Set DAYTONA_SNAPSHOT=$(SNAPSHOT_NAME) in doppler to use it."'
+	@SNAPSHOT_NAME=$(SNAPSHOT_NAME) SNAPSHOT_TAG=$(SNAPSHOT_TAG) \
+	  LOCAL_REGISTRY_HOST_PORT=$(LOCAL_REGISTRY_HOST_PORT) \
+	  LOCAL_REGISTRY_INTERNAL=$(LOCAL_REGISTRY_INTERNAL) \
+	  doppler run -- ./scripts/push-snapshot.sh
