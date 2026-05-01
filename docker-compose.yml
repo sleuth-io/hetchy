@@ -35,15 +35,9 @@ services:
       # Web UI configuration
       WEB_PORT: ${WEB_PORT:-8080}
       DISABLE_SLACK: ${DISABLE_SLACK:-}
-    networks:
-      - software-factory-network
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health", "||", "exit", "1"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
-
-networks:
-  software-factory-network:
-    driver: bridge
