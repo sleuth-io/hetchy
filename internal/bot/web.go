@@ -101,7 +101,7 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 			case updates <- msg:
 			case <-parentCtx.Done():
 			}
-		})
+		}, nil, nil)
 	}()
 
 	for {

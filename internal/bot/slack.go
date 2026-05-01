@@ -149,13 +149,25 @@ func (b *Bot) processSlackEvent(ctx context.Context, ev incoming) {
 		}
 	}
 
+	// Add "working on it" reaction to the thread root message.
+	b.addReaction(ev.channel, threadID, "hourglass_flowing_sand")
+
 	b.replyInThread(ev.channel, replyTo, fmt.Sprintf("<@%s> Working on it…", ev.user))
 
 	var lastMsg string
 	requestID := strings.ReplaceAll(ev.ts, ".", "")
+
+	// Create reaction callbacks for PR creation and follow-up
+	onPRCreated := func() {
+		b.addReaction(ev.channel, threadID, "white_check_mark")
+	}
+	onFollowUp := func() {
+		b.addReaction(ev.channel, threadID, "recycle")
+	}
+
 	b.HandleRequest(ctx, text, requestID, threadID, func(msg string) {
 		lastMsg = msg
-	})
+	}, onPRCreated, onFollowUp)
 	if lastMsg != "" {
 		b.replyInThread(ev.channel, replyTo, fmt.Sprintf("<@%s> %s", ev.user, lastMsg))
 	}
@@ -167,5 +179,15 @@ func (b *Bot) replyInThread(channel, threadTS, msg string) {
 		slack.MsgOptionTS(threadTS),
 	); err != nil {
 		b.log.Error("slack post failed", "channel", channel, "error", err)
+	}
+}
+
+func (b *Bot) addReaction(channel, ts, emoji string) {
+	ref := slack.ItemRef{
+		Channel:   channel,
+		Timestamp: ts,
+	}
+	if err := b.slack.AddReaction(emoji, ref); err != nil {
+		b.log.Warn("slack add reaction failed", "channel", channel, "ts", ts, "emoji", emoji, "error", err)
 	}
 }

@@ -195,7 +195,9 @@ func (b *Bot) Run(ctx context.Context) error {
 // HandleRequest is the shared core. threadID ties follow-up messages to an
 // existing conversation; use a unique value (e.g. Slack thread TS or web
 // session ID) so the bot can match follow-ups to the right sandbox and branch.
-func (b *Bot) HandleRequest(ctx context.Context, text, requestID, threadID string, onUpdate func(string)) {
+// onPRCreated is called when a new PR is created; onFollowUp is called when
+// a follow-up completes. Both may be nil.
+func (b *Bot) HandleRequest(ctx context.Context, text, requestID, threadID string, onUpdate func(string), onPRCreated, onFollowUp func()) {
 	b.log.Info("request received",
 		"request_id", requestID,
 		"thread_id", threadID,
@@ -208,7 +210,7 @@ func (b *Bot) HandleRequest(ctx context.Context, text, requestID, threadID strin
 	b.mu.Unlock()
 
 	if conv != nil {
-		b.handleFollowUp(ctx, conv, text, requestID, threadID, onUpdate)
+		b.handleFollowUp(ctx, conv, text, requestID, threadID, onUpdate, onFollowUp)
 		return
 	}
 
@@ -240,6 +242,11 @@ func (b *Bot) HandleRequest(ctx context.Context, text, requestID, threadID strin
 		return
 	}
 
+	// Call the PR created callback (Slack reaction).
+	if onPRCreated != nil {
+		onPRCreated()
+	}
+
 	// Stop then archive the sandbox to save cost; Start restores it on follow-up.
 	if err := sb.Stop(ctx); err != nil {
 		b.log.Error("sandbox stop failed", "sandbox", sb.ID, "error", err)
@@ -260,7 +267,7 @@ func (b *Bot) HandleRequest(ctx context.Context, text, requestID, threadID strin
 	onUpdate("Done! :tada: " + prURL + "\nReply here to make further changes to this PR.")
 }
 
-func (b *Bot) handleFollowUp(ctx context.Context, conv *conversation, text, requestID, threadID string, onUpdate func(string)) {
+func (b *Bot) handleFollowUp(ctx context.Context, conv *conversation, text, requestID, threadID string, onUpdate func(string), onFollowUp func()) {
 	b.log.Info("follow-up received", "sandbox", conv.sandbox.ID, "branch", conv.branch, "pr", conv.prURL)
 	onUpdate(fmt.Sprintf("Resuming work on %s…", conv.prURL))
 
@@ -280,6 +287,11 @@ func (b *Bot) handleFollowUp(ctx context.Context, conv *conversation, text, requ
 		b.log.Error("follow-up failed", "sandbox", conv.sandbox.ID, "error", err)
 		onUpdate(fmt.Sprintf("Something went wrong: `%v`", err))
 		return
+	}
+
+	// Call the follow-up callback (Slack reaction).
+	if onFollowUp != nil {
+		onFollowUp()
 	}
 
 	if err := conv.sandbox.Stop(ctx); err != nil {
