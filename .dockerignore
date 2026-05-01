@@ -1,0 +1,40 @@
+# Git
+.git
+.gitignore
+.github
+
+# Build artifacts
+dist/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test artifacts
+*.test
+*.out
+coverage.txt
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Documentation
+*.md
+!README.md
+
+# CI/CD
+.golangci.yml
+
+# Misc
+sandbox/
+Makefile
+doppler.yaml
