@@ -169,7 +169,11 @@ func (b *Bot) HandleRequest(ctx context.Context, text, requestID, threadID strin
 		return
 	}
 
-	// Keep the sandbox alive for follow-up turns.
+	// Archive the sandbox to save cost; it will be started again on follow-up.
+	if err := sb.Archive(ctx); err != nil {
+		b.log.Error("sandbox archive failed", "sandbox", sb.ID, "error", err)
+	}
+
 	b.mu.Lock()
 	b.convos[threadID] = &conversation{
 		sandbox: sb,
@@ -186,11 +190,26 @@ func (b *Bot) handleFollowUp(ctx context.Context, conv *conversation, text, requ
 	b.log.Info("follow-up received", "sandbox", conv.sandbox.ID, "branch", conv.branch, "pr", conv.prURL)
 	onUpdate(fmt.Sprintf("Resuming work on %s…", conv.prURL))
 
+	if err := conv.sandbox.Start(ctx); err != nil {
+		b.log.Error("sandbox start failed", "sandbox", conv.sandbox.ID, "error", err)
+		onUpdate(fmt.Sprintf("Failed to resume sandbox: `%v`", err))
+		return
+	}
+	if err := conv.sandbox.WaitForStart(ctx, 2*time.Minute); err != nil {
+		b.log.Error("sandbox wait-for-start failed", "sandbox", conv.sandbox.ID, "error", err)
+		onUpdate(fmt.Sprintf("Sandbox did not start in time: `%v`", err))
+		return
+	}
+
 	prURL, err := b.runFollowUp(ctx, conv, text, requestID, onUpdate)
 	if err != nil {
 		b.log.Error("follow-up failed", "sandbox", conv.sandbox.ID, "error", err)
 		onUpdate(fmt.Sprintf("Something went wrong: `%v`", err))
 		return
+	}
+
+	if err := conv.sandbox.Archive(ctx); err != nil {
+		b.log.Error("sandbox archive failed", "sandbox", conv.sandbox.ID, "error", err)
 	}
 
 	b.mu.Lock()
