@@ -28,7 +28,7 @@ services:
       GITHUB_BASE_BRANCH: ${GITHUB_BASE_BRANCH:-main}
 
       # Daytona configuration
-      DAYTONA_API_URL: ${DAYTONA_API_URL:-http://daytona-server:3000/api}
+      DAYTONA_API_URL: ${DAYTONA_API_URL:-}
       DAYTONA_API_KEY: ${DAYTONA_API_KEY}
       DAYTONA_SNAPSHOT: ${DAYTONA_SNAPSHOT:-claude-playwright:1}
 
