@@ -13,8 +13,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Context
+        uses: okteto/context@latest
+        with:
+          url: "https://demo.okteto.dev"
+          token: ${{ secrets.OKTETO_TOKEN }}
+
       - name: Deploy to Okteto
         uses: okteto/pipeline@latest
         with:
-          token: ${{ secrets.OKTETO_TOKEN }}
-          url: "https://demo.okteto.dev"
+          name: hetchy-staging
+
