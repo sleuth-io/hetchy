@@ -78,6 +78,7 @@ doppler setup   # uses the project/config defined in doppler.yaml
 | `DAYTONA_SNAPSHOT` | Custom snapshot image (optional) |
 | `WEB_PORT` | Web UI port (default: 8080) |
 | `DISABLE_SLACK` | Set to 1 to run web UI only |
+| `DATABASE_URL` | PostgreSQL connection string (optional, enables conversation persistence) |
 
 For Slack setup instructions, see [Slack App Setup](docs/slack-setup.md).
 

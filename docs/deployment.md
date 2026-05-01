@@ -27,7 +27,7 @@ docker run -p 8080:8080 \
 docker compose up
 ```
 
-The compose file reads environment variables from your shell (or a `.env` file) and binds port 8080.
+The compose file reads environment variables from your shell (injected by Doppler) and binds port 8080.
 
 ## Environment Variables
 
@@ -44,3 +44,4 @@ The compose file reads environment variables from your shell (or a `.env` file) 
 | `DAYTONA_SNAPSHOT` | Custom snapshot image (optional) |
 | `WEB_PORT` | Web UI port (default: 8080) |
 | `DISABLE_SLACK` | Set to 1 to run web UI only |
+| `DATABASE_URL` | PostgreSQL connection string (optional, enables conversation persistence) |

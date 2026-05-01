@@ -39,7 +39,13 @@ hetchy/
 │   │   ├── web.go          # HTTP server: REST endpoints and SSE streaming
 │   │   ├── web_test.go     # Tests for web server behaviour
 │   │   └── chat.html       # Embedded single-page web UI (served from web.go)
+│   ├── db/                 # Database connection and generated queries
+│   │   ├── db.go           # pgxpool connection helper (Open / Close)
+│   │   └── sqlc/           # sqlc-generated type-safe queries (DO NOT EDIT)
 │   └── buildinfo/          # Version, commit, and build-date constants
+├── db/
+│   ├── migrations/         # Versioned database migrations (*.up.sql / *.down.sql)
+│   └── queries/            # SQL files annotated for sqlc code generation
 ├── sandbox/
 │   └── Dockerfile          # Sandbox image: Claude Code + gh CLI + Go toolchain
 ├── scripts/
@@ -59,6 +65,7 @@ hetchy/
 |---------|---------------|
 | `cmd/hetchy` | Wires together config, logging, and the bot; handles OS signals for graceful shutdown |
 | `internal/bot` | All runtime logic: receives requests from Slack or HTTP, manages Daytona sandbox lifecycle, streams Claude Code output, extracts the PR URL, and persists conversation state for follow-up turns |
+| `internal/db` | pgxpool connection helper and sqlc-generated type-safe queries for conversation persistence |
 | `internal/buildinfo` | Exposes `Version`, `Commit`, and `Date` constants injected at link time via `ldflags` |
 
 ## Data Flow

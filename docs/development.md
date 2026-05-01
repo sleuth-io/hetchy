@@ -119,6 +119,16 @@ The bot opens a pool at startup if `DATABASE_URL` is set; otherwise it runs with
 | `make daytona-down` | Stop local Daytona stack |
 | `make snapshot` | Build custom sandbox image |
 | `make push-snapshot` | Build and push snapshot |
+| `make pg-up` | Start local Postgres container |
+| `make pg-down` | Stop local Postgres container |
+| `make pg-logs` | Tail Postgres logs |
+| `make pg-psql` | Open psql shell |
+| `make pg-reset` | Wipe Postgres volume |
+| `make db-up` | Apply all migrations |
+| `make db-down` | Roll back one migration |
+| `make db-new` | Scaffold a new migration |
+| `make db-status` | Show current migration version |
+| `make sqlc-generate` | Regenerate internal/db/sqlc from queries |
 
 ## Contributing
 

@@ -38,6 +38,7 @@ If you want to use the Slack integration, follow these steps to create and confi
    - `im:history` — View message history in direct messages
    - `im:read` — View basic information about direct messages
    - `im:write` — Start direct messages with users
+   - `reactions:write` — Add emoji reactions to messages (used for status indicators)
 
    The bot handles two types of events:
    - **App mentions** (`@bot do something`) in channels and threads
