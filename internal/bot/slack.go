@@ -114,6 +114,47 @@ func (b *Bot) dispatch(ctx context.Context) {
 	}
 }
 
+// shouldPostToSlack determines if a message should be posted to Slack.
+// Only error messages and critical status updates are posted; regular logs are suppressed.
+func shouldPostToSlack(msg string) bool {
+	msg = strings.ToLower(msg)
+
+	// Post error indicators
+	errorKeywords := []string{
+		"error",
+		"failed",
+		"failure",
+		"exception",
+		"fatal",
+		"panic",
+		"critical",
+		"warning",
+	}
+
+	for _, keyword := range errorKeywords {
+		if strings.Contains(msg, keyword) {
+			return true
+		}
+	}
+
+	// Post important status updates initiated by bot.go (not sandbox logs)
+	statusUpdates := []string{
+		"spinning up",
+		"sandbox",
+		"ready",
+		"resuming",
+	}
+
+	for _, status := range statusUpdates {
+		if strings.Contains(msg, status) {
+			return true
+		}
+	}
+
+	// Suppress all other messages (sandbox execution logs, etc.)
+	return false
+}
+
 func (b *Bot) processSlackEvent(ctx context.Context, ev incoming) {
 	// Ignore bot messages.
 	if ev.botID != "" {
@@ -166,8 +207,11 @@ func (b *Bot) processSlackEvent(ctx context.Context, ev incoming) {
 	requestID := strings.ReplaceAll(ev.ts, ".", "")
 	b.HandleRequest(ctx, text, requestID, threadID,
 		func(msg string) {
-			// onUpdate: send progress messages
-			b.replyInThread(ev.channel, replyTo, fmt.Sprintf("<@%s> %s", ev.user, msg))
+			// onUpdate: only send error messages and important status updates to Slack
+			// All other logs are only logged locally for debugging
+			if shouldPostToSlack(msg) {
+				b.replyInThread(ev.channel, replyTo, fmt.Sprintf("<@%s> %s", ev.user, msg))
+			}
 		},
 		func(msg string) {
 			// onComplete: task finished successfully
