@@ -1,0 +1,80 @@
+version: '3.8'
+
+services:
+  # Main software-factory bot service
+  software-factory:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VERSION: ${VERSION:-dev}
+        COMMIT: ${COMMIT:-none}
+        DATE: ${DATE:-unknown}
+    container_name: software-factory
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-8080}:8080"
+    environment:
+      # Slack configuration
+      SLACK_BOT_OAUTH_TOKEN: ${SLACK_BOT_OAUTH_TOKEN}
+      SLACK_SOCKET_TOKEN: ${SLACK_SOCKET_TOKEN}
+
+      # Anthropic API
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+
+      # GitHub configuration
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+      GITHUB_REPO: ${GITHUB_REPO}
+      GITHUB_BASE_BRANCH: ${GITHUB_BASE_BRANCH:-main}
+
+      # Daytona configuration
+      DAYTONA_API_URL: ${DAYTONA_API_URL:-http://daytona-server:3000/api}
+      DAYTONA_API_KEY: ${DAYTONA_API_KEY}
+      DAYTONA_SNAPSHOT: ${DAYTONA_SNAPSHOT:-claude-playwright:1}
+
+      # Web UI configuration
+      WEB_PORT: ${WEB_PORT:-8080}
+      DISABLE_SLACK: ${DISABLE_SLACK:-}
+    networks:
+      - software-factory-network
+    depends_on:
+      daytona-server:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health", "||", "exit", "1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Daytona server for managing development environments
+  daytona-server:
+    image: daytonaio/daytona:latest
+    container_name: daytona-server
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+      - "3986:3986"
+    volumes:
+      - daytona-data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      DAYTONA_SERVER_API_PORT: "3000"
+      DAYTONA_SERVER_HEADSCALE_PORT: "3986"
+    networks:
+      - software-factory-network
+    privileged: true
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/health", "||", "exit", "1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+networks:
+  software-factory-network:
+    driver: bridge
+
+volumes:
+  daytona-data:
+    driver: local
