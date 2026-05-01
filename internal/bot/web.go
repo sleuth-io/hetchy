@@ -112,6 +112,12 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 		)
 	}()
 
+	// Keepalive ticker: proxies (nginx, etc.) drop idle SSE connections after
+	// ~60 s. Claude can run silently for several minutes, so we send SSE
+	// comment frames periodically to keep the connection alive.
+	keepalive := time.NewTicker(30 * time.Second)
+	defer keepalive.Stop()
+
 	for {
 		select {
 		case msg, ok := <-updates:
@@ -124,6 +130,11 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 				return
 			}
 			if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
+				return
+			}
+			flusher.Flush()
+		case <-keepalive.C:
+			if _, err := fmt.Fprintf(w, ": keepalive\n\n"); err != nil {
 				return
 			}
 			flusher.Flush()
