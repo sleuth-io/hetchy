@@ -18,6 +18,7 @@ type Config struct {
 	WebPort          string
 	StateFile        string
 	DisableSlack     bool
+	SXKey            string
 }
 
 // LoadConfig reads required and optional env vars. It returns an error listing
@@ -58,6 +59,7 @@ func LoadConfig() (Config, error) {
 		WebPort:          getenvDefault("WEB_PORT", "8080"),
 		StateFile:        getenvDefault("STATE_FILE", "state.json"),
 		DisableSlack:     disableSlack,
+		SXKey:            os.Getenv("SX_KEY"),
 	}, nil
 }
 
