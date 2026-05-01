@@ -77,16 +77,17 @@ func (b *Bot) dispatch(ctx context.Context) {
 			if payload.Type != slackevents.CallbackEvent {
 				continue
 			}
-			// MessageEvent covers DMs and channel messages (when the bot has
-			// message.channels scope). AppMentionEvent fires for @mentions; at
-			// the top level both events fire together, so we only handle
-			// MessageEvent there to avoid double-processing. In threads,
-			// however, only AppMentionEvent is guaranteed to be delivered, so
-			// we handle it there exclusively.
+			// Route by event type:
+			//  - AppMentionEvent: all @mentions in channels (top-level and
+			//    thread). This is the only reliable event for channel messages
+			//    regardless of whether the app has message.channels scope.
+			//  - MessageEvent (DM only): DMs never fire AppMentionEvent, so
+			//    we handle them here. Channel MessageEvents are skipped to
+			//    avoid double-processing when both event types are subscribed.
 			switch inner := payload.InnerEvent.Data.(type) {
-			case *slackevents.MessageEvent:
-				b.log.Info("slack message event",
-					"channel", inner.Channel, "channel_type", inner.ChannelType,
+			case *slackevents.AppMentionEvent:
+				b.log.Info("slack app_mention event",
+					"channel", inner.Channel,
 					"user", inner.User, "ts", inner.TimeStamp,
 					"thread_ts", inner.ThreadTimeStamp,
 					"text_preview", truncate(inner.Text, 100),
@@ -95,14 +96,11 @@ func (b *Bot) dispatch(ctx context.Context) {
 					channel: inner.Channel, user: inner.User, ts: inner.TimeStamp,
 					threadTS: inner.ThreadTimeStamp, botID: inner.BotID, text: inner.Text,
 				})
-			case *slackevents.AppMentionEvent:
-				// Only handle thread @mentions here; top-level @mentions come
-				// through as MessageEvent too and are handled above.
-				if inner.ThreadTimeStamp == "" {
+			case *slackevents.MessageEvent:
+				if !inner.IsIM() {
 					continue
 				}
-				b.log.Info("slack app_mention event (thread)",
-					"channel", inner.Channel,
+				b.log.Info("slack dm event",
 					"user", inner.User, "ts", inner.TimeStamp,
 					"thread_ts", inner.ThreadTimeStamp,
 					"text_preview", truncate(inner.Text, 100),
