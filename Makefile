@@ -134,7 +134,8 @@ daytona-logs: ## Tail Daytona stack logs
 
 # Local Postgres (for dev) ---------------------------------------------------
 pg-up: ## Start the local Postgres container in the background
-	@docker compose up -d postgres
+	@which doppler > /dev/null || (echo "doppler CLI not found. Install: https://docs.doppler.com/docs/install-cli" && exit 1)
+	@doppler run -- docker compose up -d postgres
 
 pg-down: ## Stop the local Postgres container (data persists)
 	@docker compose stop postgres
