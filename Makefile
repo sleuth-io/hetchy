@@ -106,7 +106,7 @@ daytona-up: ## Start the local Daytona OSS stack (docker compose)
 	@echo "  Dashboard:      http://localhost:3000"
 	@echo "  Default login:  dev@daytona.io / password"
 	@echo ""
-	@echo "Next: log in, mint an API key, set DAYTONA_API_KEY in .env,"
+	@echo "Next: log in, mint an API key, set DAYTONA_API_KEY in Doppler,"
 	@echo "      then 'make push-snapshot' and 'make bot'."
 
 daytona-down: ## Stop the local Daytona OSS stack

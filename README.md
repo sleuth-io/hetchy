@@ -23,7 +23,7 @@ Software Factory automates code changes by:
 
 - Go 1.25.6 or later
 - Docker (for local Daytona stack)
-- [Doppler CLI](https://docs.doppler.com/docs/install-cli) (for secrets management)
+- [Doppler CLI](https://docs.doppler.com/docs/install-cli) for secrets management
 - GitHub token with repo scope
 - Anthropic API key
 - Slack app tokens (optional, for Slack integration)
@@ -40,46 +40,52 @@ cd software-factory
 
 ### 2. Configure Environment
 
-Copy the example environment file and fill in your credentials:
+**This project uses Doppler for secrets management. We do not use `.env` files.**
+
+The `.env.example` file documents the required variables; configure them in Doppler instead.
+
+#### Install and set up Doppler
 
 ```bash
-cp .env.example .env
-```
+# macOS
+brew install doppler
 
-Edit `.env` with your tokens:
+# Linux
+(curl -Ls --tlsv1.2 --proto "=https" --retry 3 https://cli.doppler.com/install.sh || wget -t 3 -qO- https://cli.doppler.com/install.sh) | sudo sh
+```
 
 ```bash
-# Slack (optional - skip if using web UI only)
-SLACK_BOT_OAUTH_TOKEN=xoxb-...
-SLACK_SOCKET_TOKEN=xapp-...
-
-# Anthropic
-ANTHROPIC_API_KEY=sk-ant-...
-
-# GitHub
-GITHUB_TOKEN=ghp_...
-GITHUB_REPO=owner/repo
-GITHUB_BASE_BRANCH=main
-
-# Daytona (local or cloud)
-DAYTONA_API_URL=http://localhost:3000/api
-DAYTONA_API_KEY=dtn_...
-
-# Web UI
-WEB_PORT=8080
+doppler login
+doppler setup   # uses the project/config defined in doppler.yaml
 ```
+
+#### Required secrets in Doppler
+
+| Variable | Description |
+|----------|-------------|
+| `SLACK_BOT_OAUTH_TOKEN` | Slack bot token (xoxb-...) — required for Slack |
+| `SLACK_SOCKET_TOKEN` | Slack app-level token (xapp-...) — required for Slack |
+| `ANTHROPIC_API_KEY` | Anthropic API key for Claude |
+| `GITHUB_TOKEN` | GitHub token with repo scope |
+| `GITHUB_REPO` | Repository in owner/repo format |
+| `GITHUB_BASE_BRANCH` | Base branch for PRs (usually main) |
+| `DAYTONA_API_URL` | Daytona API endpoint |
+| `DAYTONA_API_KEY` | Daytona API key |
+| `DAYTONA_SNAPSHOT` | Custom snapshot image (optional) |
+| `WEB_PORT` | Web UI port (default: 8080) |
+| `DISABLE_SLACK` | Set to 1 to run web UI only |
 
 ### 3. Set Up Daytona
 
 #### Option A: Local Daytona OSS Stack
 
 ```bash
-# Start local Daytona stack (pulls dependencies on first run)
+# Start local Daytona stack
 make daytona-up
 
 # Visit http://localhost:3000
 # Login: dev@daytona.io / password
-# Create an API key and add it to .env as DAYTONA_API_KEY
+# Create an API key and save it to Doppler as DAYTONA_API_KEY
 
 # Build and push your sandbox snapshot
 make push-snapshot
@@ -87,12 +93,9 @@ make push-snapshot
 
 #### Option B: Daytona Cloud
 
-Update `.env` with cloud credentials:
-
-```bash
-DAYTONA_API_URL=https://app.daytona.io/api
-DAYTONA_API_KEY=dtn_...
-```
+Set in Doppler:
+- `DAYTONA_API_URL=https://app.daytona.io/api`
+- `DAYTONA_API_KEY=dtn_...`
 
 ### 4. Run the Bot
 
@@ -118,9 +121,10 @@ The web UI will be available at `http://localhost:8080` (or your configured `WEB
 ### Via Slack
 
 1. Invite the bot to a channel
-2. Message the bot with your request
-3. The bot will create a thread with progress updates
+2. Mention the bot with your request: `@bot add a health check endpoint`
+3. The bot replies with progress in the thread
 4. Get the PR URL in the final message
+5. Reply in the thread to make further changes to the same PR
 
 ### Example Requests
 
@@ -161,41 +165,6 @@ make bot-tee
 
 # In another terminal, tail logs
 make logs
-```
-
-## Configuration
-
-### Environment Variables
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `SLACK_BOT_OAUTH_TOKEN` | No* | Slack bot token (xoxb-...) |
-| `SLACK_SOCKET_TOKEN` | No* | Slack app-level token (xapp-...) |
-| `ANTHROPIC_API_KEY` | Yes | Anthropic API key for Claude |
-| `GITHUB_TOKEN` | Yes | GitHub token with repo scope |
-| `GITHUB_REPO` | Yes | Repository in owner/repo format |
-| `GITHUB_BASE_BRANCH` | Yes | Base branch for PRs (usually main) |
-| `DAYTONA_API_URL` | Yes | Daytona API endpoint |
-| `DAYTONA_API_KEY` | Yes | Daytona API key |
-| `DAYTONA_SNAPSHOT` | No | Custom snapshot image |
-| `WEB_PORT` | No | Web UI port (default: 8080) |
-| `DISABLE_SLACK` | No | Set to 1 to run web UI only |
-
-\* Required for Slack integration; optional if using web UI only
-
-### Custom Sandbox Snapshots
-
-You can customize the sandbox environment by modifying the `sandbox/` directory and rebuilding:
-
-```bash
-make snapshot       # Build custom snapshot
-make push-snapshot  # Build and push to Daytona registry
-```
-
-Update `.env` to use your snapshot:
-
-```bash
-DAYTONA_SNAPSHOT=your-snapshot-name:tag
 ```
 
 ## Architecture
@@ -247,8 +216,6 @@ DAYTONA_SNAPSHOT=your-snapshot-name:tag
 
 ### Docker
 
-Build and run with Docker:
-
 ```bash
 # Build image
 docker build -t software-factory .
@@ -261,14 +228,6 @@ docker run -p 8080:8080 \
   # ... other env vars
   software-factory
 ```
-
-### Environment Management
-
-The bot loads environment variables from `.env` at startup using godotenv. For production deployments, consider:
-
-- Using Doppler for secrets management (already configured)
-- Kubernetes secrets or similar for container deployments
-- Ensuring tokens are rotated regularly
 
 ## Troubleshooting
 
