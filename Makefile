@@ -1,4 +1,4 @@
-.PHONY: help build install test lint format clean tidy deps verify update-deps init prepush postpull bot bot-tee web logs dev daytona-up daytona-down daytona-logs snapshot push-snapshot
+.PHONY: help build install test ci lint format clean tidy deps verify update-deps init prepush postpull bot bot-tee web logs dev daytona-up daytona-down daytona-logs snapshot push-snapshot
 
 # Default target
 help: ## Show this help message
@@ -35,6 +35,23 @@ install: build ## Install binary to ~/.local/bin
 test: ## Run tests
 	@echo "Running tests..."
 	@go test -race -cover ./...
+
+ci: ## Run the same read-only checks CI does (gofmt, vet, lint, test -v, build)
+	@echo "Checking formatting..."
+	@if [ -n "$$(gofmt -l .)" ]; then \
+	  echo "Go code is not formatted. Run 'make format' to fix:"; \
+	  gofmt -d .; \
+	  exit 1; \
+	fi
+	@echo "Running go vet..."
+	@go vet ./...
+	@echo "Running linters..."
+	@go tool golangci-lint run
+	@echo "Running tests..."
+	@go test -v -race -cover ./...
+	@echo "Building..."
+	@go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) $(MAIN_PATH)
+	@echo "✓ all CI checks passed"
 
 lint: ## Run linters
 	@echo "Running linters..."

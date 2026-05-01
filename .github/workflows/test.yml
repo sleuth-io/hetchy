@@ -1,0 +1,42 @@
+name: Test
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+
+      - name: Check formatting
+        run: |
+          if [ -n "$(gofmt -l .)" ]; then
+            echo "Go code is not formatted. Run 'go fmt ./...' to fix:"
+            gofmt -d .
+            exit 1
+          fi
+
+      - name: Lint
+        run: go tool golangci-lint run
+
+      - name: Test
+        run: |
+          go mod tidy
+          go vet ./...
+          go test -v -race -cover ./...
+
+      - name: Build
+        run: make build

@@ -51,3 +51,6 @@ temp/
 # project + config; .doppler.yaml is the local override that doppler
 # writes when a user runs `doppler setup` manually.
 .doppler.yaml
+
+# Bot runtime state (conversation persistence; STATE_FILE in config.go)
+state.json
