@@ -108,6 +108,9 @@ func TestChatHandlerStreamsHandleRequestErrors(t *testing.T) {
 		daytona: dc,
 		convos:  make(map[string]*conversation),
 	}
+	b.createFn = func(ctx context.Context, params any) (*daytona.Sandbox, error) {
+		return dc.Create(ctx, params)
+	}
 
 	rec := httptest.NewRecorder()
 	body := `{"text":"please do a thing","session_id":"sess-1"}`

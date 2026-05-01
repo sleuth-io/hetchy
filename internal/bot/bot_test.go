@@ -11,7 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
 	sdkerrors "github.com/daytonaio/daytona/libs/sdk-go/pkg/errors"
+	"github.com/daytonaio/daytona/libs/sdk-go/pkg/types"
 )
 
 func discardLogger() *slog.Logger {
@@ -136,6 +138,8 @@ func TestIsTransientError(t *testing.T) {
 		{"not found 404", sdkerrors.NewDaytonaNotFoundError("not found", nil), false},
 		{"bad request 400", sdkerrors.NewDaytonaError("bad request", 400, nil), false},
 		{"unauthorized 401", sdkerrors.NewDaytonaError("unauthorized", 401, nil), false},
+		{"forbidden 403", sdkerrors.NewDaytonaError("forbidden", 403, nil), false},
+		{"rate limit 429 via DaytonaError", sdkerrors.NewDaytonaError("rate limited", 429, nil), true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -227,6 +231,49 @@ func TestTruncate(t *testing.T) {
 			}
 			if len(tc.s) > tc.n && !strings.HasSuffix(got, "...") {
 				t.Errorf("truncated output should end with '...': got %q", got)
+			}
+		})
+	}
+}
+
+func TestRetryLoop(t *testing.T) {
+	err503 := sdkerrors.NewDaytonaError("service unavailable", 503, nil)
+	err401 := sdkerrors.NewDaytonaError("unauthorized", 401, nil)
+	err429 := sdkerrors.NewDaytonaError("rate limited", 429, nil)
+
+	cases := []struct {
+		name      string
+		returns   []error
+		wantCalls int
+		wantErr   bool
+	}{
+		{name: "succeeds on first attempt", returns: []error{nil}, wantCalls: 1},
+		{name: "retries transient error and succeeds", returns: []error{err503, err503, nil}, wantCalls: 3},
+		{name: "gives up after max retries", returns: []error{err503, err503, err503}, wantCalls: 3, wantErr: true},
+		{name: "does not retry permanent error", returns: []error{err401}, wantCalls: 1, wantErr: true},
+		{name: "429 via DaytonaError triggers retry", returns: []error{err429, nil}, wantCalls: 2},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			b := &Bot{
+				log:          discardLogger(),
+				retryBackoff: 0,
+				convos:       make(map[string]*conversation),
+			}
+			b.createFn = func(_ context.Context, _ any) (*daytona.Sandbox, error) {
+				err := tc.returns[calls]
+				calls++
+				return nil, err
+			}
+
+			_, err := b.createSandboxWithRetry(context.Background(), types.SnapshotParams{})
+			if (err != nil) != tc.wantErr {
+				t.Errorf("wantErr=%v, got err=%v", tc.wantErr, err)
+			}
+			if calls != tc.wantCalls {
+				t.Errorf("wantCalls=%d, got calls=%d", tc.wantCalls, calls)
 			}
 		})
 	}

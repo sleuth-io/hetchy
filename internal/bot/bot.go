@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -45,6 +46,10 @@ type Bot struct {
 	daytona *daytona.Client
 	store   *db.Store
 
+	// createFn is called by createSandboxWithRetry; overridable in tests.
+	createFn     func(context.Context, any) (*daytona.Sandbox, error)
+	retryBackoff time.Duration
+
 	mu     sync.Mutex
 	convos map[string]*conversation
 }
@@ -65,7 +70,10 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 		log.Info("daytona configured", "mode", "cloud", "url", "app.daytona.io")
 	}
 
-	b := &Bot{cfg: cfg, log: log, daytona: dc, convos: make(map[string]*conversation)}
+	b := &Bot{cfg: cfg, log: log, daytona: dc, retryBackoff: initialBackoff, convos: make(map[string]*conversation)}
+	b.createFn = func(ctx context.Context, params any) (*daytona.Sandbox, error) {
+		return dc.Create(ctx, params)
+	}
 	if !cfg.DisableSlack {
 		b.slack = slack.New(cfg.SlackBotToken, slack.OptionAppLevelToken(cfg.SlackSocketToken))
 		b.socket = socketmode.New(b.slack)
@@ -155,6 +163,11 @@ func (b *Bot) HandleRequest(ctx context.Context, text, requestID, threadID strin
 		Snapshot: b.cfg.Snapshot,
 	})
 	if err != nil {
+		if ctx.Err() != nil {
+			b.log.Error("sandbox create cancelled", "error", err)
+			onError(fmt.Sprintf("Sandbox create cancelled: `%v`", ctx.Err()))
+			return
+		}
 		b.log.Error("sandbox create failed", "error", err)
 		onError(fmt.Sprintf("Sandbox create failed: `%v`", err))
 		return
@@ -237,7 +250,9 @@ func isTransientError(err error) bool {
 	}
 	var dayErr *sdkerrors.DaytonaError
 	if errors.As(err, &dayErr) {
-		return dayErr.StatusCode == 0 || (dayErr.StatusCode >= 500 && dayErr.StatusCode < 600)
+		return dayErr.StatusCode == 0 ||
+			dayErr.StatusCode == http.StatusTooManyRequests ||
+			(dayErr.StatusCode >= 500 && dayErr.StatusCode < 600)
 	}
 	return false
 }
@@ -257,10 +272,10 @@ func truncate(s string, n int) string {
 // for transient errors. It tries up to maxRetries times with progressive backoff.
 func (b *Bot) createSandboxWithRetry(ctx context.Context, params types.SnapshotParams) (*daytona.Sandbox, error) {
 	var lastErr error
-	backoff := initialBackoff
+	backoff := b.retryBackoff
 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
-		sb, err := b.daytona.Create(ctx, params)
+		sb, err := b.createFn(ctx, params)
 		if err == nil {
 			if attempt > 1 {
 				b.log.Info("sandbox created after retry", "attempt", attempt)
