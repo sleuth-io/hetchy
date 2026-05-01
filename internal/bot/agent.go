@@ -28,11 +28,12 @@ USER REQUEST:
 
 When you are done implementing the change:
   1. Create a new branch named feature/sf-%s.
-  2. Stage and commit your changes with a clear message.
-  3. Push the branch to origin (gh CLI is already authenticated).
-  4. Open a pull request against %s with ` + "`gh pr create`" + `, giving it a
+  2. Run ` + "`make format`" + ` to format the code.
+  3. Stage and commit your changes with a clear message.
+  4. Push the branch to origin (gh CLI is already authenticated).
+  5. Open a pull request against %s with ` + "`gh pr create`" + `, giving it a
      clear title and a markdown body describing what changed and why.
-  5. The very last line of your output MUST be just the PR URL — no other
+  6. The very last line of your output MUST be just the PR URL — no other
      text on that line.`
 
 const agentFollowUpPromptTemplate = `You are continuing work in %s on branch %s.
@@ -45,11 +46,12 @@ USER REQUEST:
 %s
 
 When you are done implementing the change:
-  1. Stage and commit your changes with a clear message.
-  2. Push the branch to origin — the PR will update automatically.
-  3. DO NOT update the PR title — it should remain consistent with the original
+  1. Run ` + "`make format`" + ` to format the code.
+  2. Stage and commit your changes with a clear message.
+  3. Push the branch to origin — the PR will update automatically.
+  4. DO NOT update the PR title — it should remain consistent with the original
      user request shown in "Conversation so far" above, not this latest change.
-  4. The very last line of your output MUST be just the PR URL — no other
+  5. The very last line of your output MUST be just the PR URL — no other
      text on that line.`
 
 func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, userRequest, requestID string, onUpdate func(string)) (string, error) {
