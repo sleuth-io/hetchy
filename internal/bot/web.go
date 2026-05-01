@@ -103,11 +103,11 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 			}
 		}
 		b.HandleRequest(parentCtx, text, requestID, sessionID,
-			sendUpdate,                         // onUpdate
-			func(msg string) {                  // onComplete
+			sendUpdate, // onUpdate
+			func(msg string) { // onComplete
 				sendUpdate("Done! :tada: " + msg)
 			},
-			sendUpdate,                         // onError
+			sendUpdate, // onError
 		)
 	}()
 
