@@ -40,7 +40,33 @@ func (b *Bot) dispatch(ctx context.Context) {
 			if !ok {
 				return
 			}
-			if evt.Type != socketmode.EventTypeEventsAPI {
+			switch evt.Type {
+			case socketmode.EventTypeConnecting:
+				b.log.Info("slack socket connecting")
+				continue
+			case socketmode.EventTypeConnected:
+				b.log.Info("slack socket connected — listening for events")
+				continue
+			case socketmode.EventTypeHello:
+				continue
+			case socketmode.EventTypeDisconnect:
+				b.log.Warn("slack socket disconnected")
+				continue
+			case socketmode.EventTypeInvalidAuth:
+				b.log.Error("slack socket invalid auth — check SLACK_BOT_OAUTH_TOKEN / SLACK_SOCKET_TOKEN")
+				continue
+			case socketmode.EventTypeConnectionError,
+				socketmode.EventTypeIncomingError,
+				socketmode.EventTypeErrorWriteFailed,
+				socketmode.EventTypeErrorBadMessage:
+				b.log.Warn("slack socket error", "type", evt.Type, "data", fmt.Sprintf("%+v", evt.Data))
+				continue
+			case socketmode.EventTypeEventsAPI:
+				// fall through to handler
+			case socketmode.EventTypeInteractive, socketmode.EventTypeSlashCommand:
+				// not used by this bot
+				continue
+			default:
 				continue
 			}
 			payload, ok := evt.Data.(slackevents.EventsAPIEvent)
@@ -51,13 +77,15 @@ func (b *Bot) dispatch(ctx context.Context) {
 			if payload.Type != slackevents.CallbackEvent {
 				continue
 			}
-			switch ev := payload.InnerEvent.Data.(type) {
-			case *slackevents.MessageEvent:
-				go b.processSlackEvent(ctx, incoming{
-					channel: ev.Channel, user: ev.User, ts: ev.TimeStamp,
-					threadTS: ev.ThreadTimeStamp, botID: ev.BotID, text: ev.Text,
-				})
-			case *slackevents.AppMentionEvent:
+			// Only handle MessageEvent. AppMentionEvent fires alongside
+			// MessageEvent for the same user message in channels, so
+			// processing both would double-spawn sandboxes.
+			if ev, ok := payload.InnerEvent.Data.(*slackevents.MessageEvent); ok {
+				b.log.Info("slack event received",
+					"channel", ev.Channel, "channel_type", ev.ChannelType,
+					"user", ev.User, "ts", ev.TimeStamp,
+					"text_preview", truncate(ev.Text, 100),
+				)
 				go b.processSlackEvent(ctx, incoming{
 					channel: ev.Channel, user: ev.User, ts: ev.TimeStamp,
 					threadTS: ev.ThreadTimeStamp, botID: ev.BotID, text: ev.Text,
