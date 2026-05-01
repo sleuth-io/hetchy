@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -9,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	sdkerrors "github.com/daytonaio/daytona/libs/sdk-go/pkg/errors"
 )
 
 func discardLogger() *slog.Logger {
@@ -115,6 +118,34 @@ func (s stringerWriter) Write(p []byte) (int, error) { return s.b.Write(p) }
 
 // satisfy unused-import lint when running this file in isolation
 var _ = http.StatusOK
+
+func TestIsTransientError(t *testing.T) {
+	cases := []struct {
+		name      string
+		err       error
+		transient bool
+	}{
+		{"nil", nil, false},
+		{"plain error", fmt.Errorf("something"), false},
+		{"rate limit 429", sdkerrors.NewDaytonaRateLimitError("too many requests", nil), true},
+		{"network error status 0", sdkerrors.NewDaytonaError("connection refused", 0, nil), true},
+		{"server error 500", sdkerrors.NewDaytonaError("internal server error", 500, nil), true},
+		{"server error 502", sdkerrors.NewDaytonaError("bad gateway", 502, nil), true},
+		{"server error 503", sdkerrors.NewDaytonaError("service unavailable", 503, nil), true},
+		{"server error 504", sdkerrors.NewDaytonaError("gateway timeout", 504, nil), true},
+		{"not found 404", sdkerrors.NewDaytonaNotFoundError("not found", nil), false},
+		{"bad request 400", sdkerrors.NewDaytonaError("bad request", 400, nil), false},
+		{"unauthorized 401", sdkerrors.NewDaytonaError("unauthorized", 401, nil), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := isTransientError(tc.err)
+			if got != tc.transient {
+				t.Errorf("isTransientError(%v) = %v, want %v", tc.err, got, tc.transient)
+			}
+		})
+	}
+}
 
 func TestShellQuote(t *testing.T) {
 	cases := []struct {

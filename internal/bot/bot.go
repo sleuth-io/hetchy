@@ -4,6 +4,7 @@ package bot
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
+	sdkerrors "github.com/daytonaio/daytona/libs/sdk-go/pkg/errors"
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/types"
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/socketmode"
@@ -122,16 +124,34 @@ func (b *Bot) HandleRequest(ctx context.Context, text, requestID, threadID strin
 	if b.cfg.SXKey != "" {
 		envVars["SX_KEY"] = b.cfg.SXKey
 	}
-	sb, err := b.daytona.Create(ctx, types.SnapshotParams{
+	params := types.SnapshotParams{
 		SandboxBaseParams: types.SandboxBaseParams{
 			EnvVars: envVars,
 		},
 		Snapshot: b.cfg.Snapshot,
-	})
-	if err != nil {
-		b.log.Error("sandbox create failed", "error", err)
-		onError(fmt.Sprintf("Sandbox create failed: `%v`", err))
-		return
+	}
+	const maxRetries = 3
+	backoff := 2 * time.Second
+	var sb *daytona.Sandbox
+	for attempt := 0; ; attempt++ {
+		var err error
+		sb, err = b.daytona.Create(ctx, params)
+		if err == nil {
+			break
+		}
+		if attempt >= maxRetries || !isTransientError(err) {
+			b.log.Error("sandbox create failed", "error", err, "attempts", attempt+1)
+			onError(fmt.Sprintf("Sandbox create failed: `%v`", err))
+			return
+		}
+		b.log.Warn("sandbox create failed, retrying", "error", err, "attempt", attempt+1, "backoff", backoff)
+		select {
+		case <-ctx.Done():
+			onError(fmt.Sprintf("Sandbox create cancelled: `%v`", ctx.Err()))
+			return
+		case <-time.After(backoff):
+		}
+		backoff *= 2
 	}
 	b.log.Info("sandbox created", "id", sb.ID, "request_id", requestID)
 	onUpdate(fmt.Sprintf("Sandbox `%s` ready — cloning repo and starting Claude Code.", sb.ID))
@@ -199,6 +219,21 @@ func (b *Bot) handleFollowUp(ctx context.Context, conv *conversation, text, requ
 	b.mu.Unlock()
 
 	onComplete(prURL)
+}
+
+// isTransientError reports whether err is a retryable Daytona API error:
+// rate-limit (429), server-side 5xx responses, and network-level failures
+// (StatusCode == 0) are all considered transient.
+func isTransientError(err error) bool {
+	var rateLimitErr *sdkerrors.DaytonaRateLimitError
+	if errors.As(err, &rateLimitErr) {
+		return true
+	}
+	var dayErr *sdkerrors.DaytonaError
+	if errors.As(err, &dayErr) {
+		return dayErr.StatusCode == 0 || (dayErr.StatusCode >= 500 && dayErr.StatusCode < 600)
+	}
+	return false
 }
 
 func shellQuote(s string) string {
