@@ -140,15 +140,19 @@ func (m *slackManager) runConn(ctx context.Context, oc orgcfg.Config) {
 	cli := slack.New(oc.SlackBotToken, slack.OptionAppLevelToken(oc.SlackSocketToken))
 	sock := socketmode.New(cli)
 
-	// Dispatch goroutine — drains events while the socket runs.
-	go m.dispatch(ctx, cli, sock, oc.OrgID)
+	// Dispatch goroutine — drains events while the socket runs. The org
+	// config is captured here and reused for every event on this
+	// connection; RestartOrg() tears down and recreates the connection
+	// when settings change, so this snapshot is always current.
+	go m.dispatch(ctx, cli, sock, oc)
 
 	if err := sock.RunContext(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		m.log.Error("slack: socket run failed", "org", oc.OrgID, "error", err)
 	}
 }
 
-func (m *slackManager) dispatch(ctx context.Context, cli *slack.Client, sock *socketmode.Client, orgID string) {
+func (m *slackManager) dispatch(ctx context.Context, cli *slack.Client, sock *socketmode.Client, oc orgcfg.Config) {
+	orgID := oc.OrgID
 	for {
 		select {
 		case <-ctx.Done():
@@ -192,11 +196,6 @@ func (m *slackManager) dispatch(ctx context.Context, cli *slack.Client, sock *so
 			}
 			sock.Ack(*evt.Request)
 			if payload.Type != slackevents.CallbackEvent {
-				continue
-			}
-			oc, err := m.orgs.Get(ctx, orgID)
-			if err != nil {
-				m.log.Warn("slack: org config disappeared mid-flight", "org", orgID, "error", err)
 				continue
 			}
 			switch inner := payload.InnerEvent.Data.(type) {

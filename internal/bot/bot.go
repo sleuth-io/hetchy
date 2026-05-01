@@ -87,6 +87,7 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 		CookiePassword: cfg.WorkOSCookiePassword,
 		RedirectURI:    cfg.WorkOSRedirectURI,
 		LogoutReturnTo: cfg.LogoutReturnTo,
+		CookieSecure:   cfg.CookieSecure,
 		Bypass:         cfg.AuthBypass,
 		BypassUser:     cfg.AuthBypassUser,
 		BypassOrg:      cfg.AuthBypassOrg,
@@ -185,7 +186,7 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 	rec, err := b.convs.Get(ctx, oc.OrgID, threadID)
 	switch {
 	case err == nil:
-		b.handleFollowUp(ctx, oc, rec, text, requestID, threadID, onUpdate, onNotify, onComplete, onError)
+		b.handleFollowUp(ctx, oc, rec, text, requestID, onUpdate, onNotify, onComplete, onError)
 		return
 	case errors.Is(err, convstore.ErrNotFound):
 		// fall through — new conversation
@@ -249,7 +250,7 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 	onComplete(prURL + "\nReply here to make further changes to this PR.")
 }
 
-func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstore.Record, text, requestID, threadID string, onUpdate func(string), onNotify func(string), onComplete func(string), onError func(string)) {
+func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstore.Record, text, requestID string, onUpdate func(string), onNotify func(string), onComplete func(string), onError func(string)) {
 	b.log.Info("follow-up received", "org", oc.OrgID, "sandbox", rec.SandboxID, "branch", rec.Branch, "pr", rec.PRURL)
 	onNotify(fmt.Sprintf("Resuming work on %s…", rec.PRURL))
 
@@ -288,7 +289,6 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 	if err := b.convs.Upsert(ctx, rec); err != nil {
 		b.log.Error("convstore upsert", "error", err)
 	}
-	_ = threadID
 
 	onComplete(prURL)
 }

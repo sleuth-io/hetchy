@@ -32,10 +32,10 @@
   <h1>Organization settings</h1>
   <p class="sub">Per-org runtime configuration. Tokens are encrypted at rest.</p>
 
-  {{if eq .OrgID ""}}{{else}}{{end}}
+  <div id="saved-banner" class="saved" style="display:none">Settings saved.</div>
   <script>
     if (window.location.search.includes('saved=1')) {
-      document.write('<div class="saved">Settings saved.</div>');
+      document.getElementById('saved-banner').style.display = '';
     }
   </script>
 

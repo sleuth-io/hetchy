@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -90,11 +91,15 @@ func (b *Bot) onboardingHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodGet {
-		renderTemplate(w, onboardingHTMLTpl, map[string]any{"Email": p.Email})
+		b.renderTemplate(w, onboardingHTMLTpl, map[string]any{"Email": p.Email})
 		return
 	}
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := requireSameOrigin(r); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
 		return
 	}
 	if err := r.ParseForm(); err != nil {
@@ -103,19 +108,24 @@ func (b *Bot) onboardingHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	name := strings.TrimSpace(r.FormValue("org_name"))
 	if name == "" {
-		renderTemplate(w, onboardingHTMLTpl, map[string]any{"Email": p.Email, "Error": "Please enter an organization name."})
+		b.renderTemplate(w, onboardingHTMLTpl, map[string]any{"Email": p.Email, "Error": "Please enter an organization name."})
 		return
 	}
 
 	orgID, err := b.auth.CreateOrganization(r.Context(), name)
 	if err != nil {
 		b.log.Error("create org failed", "error", err)
-		renderTemplate(w, onboardingHTMLTpl, map[string]any{"Email": p.Email, "Error": "Could not create organization: " + err.Error()})
+		b.renderTemplate(w, onboardingHTMLTpl, map[string]any{"Email": p.Email, "Error": "Could not create organization: " + err.Error()})
 		return
 	}
 	if err := b.auth.AddUserToOrganization(r.Context(), p.UserID, orgID, "admin"); err != nil {
-		b.log.Error("add user to org failed", "error", err)
-		renderTemplate(w, onboardingHTMLTpl, map[string]any{"Email": p.Email, "Error": "Could not assign you to the new organization: " + err.Error()})
+		b.log.Error("add user to org failed", "error", err, "org", orgID)
+		// Roll back the WorkOS org so the user can retry without
+		// accumulating dangling orgs in their WorkOS workspace.
+		if delErr := b.auth.DeleteOrganization(r.Context(), orgID); delErr != nil {
+			b.log.Error("rollback delete org failed", "error", delErr, "org", orgID)
+		}
+		b.renderTemplate(w, onboardingHTMLTpl, map[string]any{"Email": p.Email, "Error": "Could not assign you to the new organization: " + err.Error()})
 		return
 	}
 	if _, err := b.orgs.Upsert(r.Context(), orgcfg.Config{OrgID: orgID, GitHubBaseBranch: "main"}); err != nil {
@@ -136,7 +146,7 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "load config: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		renderTemplate(w, settingsHTMLTpl, map[string]any{
+		b.renderTemplate(w, settingsHTMLTpl, map[string]any{
 			"OrgID":            p.OrgID,
 			"Email":            p.Email,
 			"GitHubRepo":       current.GitHubRepo,
@@ -152,6 +162,10 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	if err := requireSameOrigin(r); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "bad form", http.StatusBadRequest)
 		return
@@ -162,7 +176,16 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	current.OrgID = p.OrgID
-	current.GitHubRepo = strings.TrimSpace(r.FormValue("github_repo"))
+	repo := strings.TrimSpace(r.FormValue("github_repo"))
+	if repo == "" {
+		http.Error(w, "github_repo is required (format: owner/repo)", http.StatusBadRequest)
+		return
+	}
+	if !strings.Contains(repo, "/") {
+		http.Error(w, "github_repo must be in owner/repo format", http.StatusBadRequest)
+		return
+	}
+	current.GitHubRepo = repo
 	if v := strings.TrimSpace(r.FormValue("github_base_branch")); v != "" {
 		current.GitHubBaseBranch = v
 	}
@@ -191,6 +214,39 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/settings/org?saved=1", http.StatusFound)
 }
 
+// requireSameOrigin defends state-mutating POST handlers against CSRF.
+// Browsers send Origin on every cross-site POST and Referer on most; we
+// require at least one to match the request's own host. SameSite=Lax on
+// the session cookie is the first line of defense — this is belt-and-
+// suspenders for older browsers and edge cases SameSite doesn't cover.
+func requireSameOrigin(r *http.Request) error {
+	host := r.Host
+	if host == "" {
+		return errors.New("missing host header")
+	}
+	if origin := r.Header.Get("Origin"); origin != "" {
+		u, err := url.Parse(origin)
+		if err != nil {
+			return fmt.Errorf("invalid origin: %w", err)
+		}
+		if u.Host != host {
+			return fmt.Errorf("origin %q does not match host %q", u.Host, host)
+		}
+		return nil
+	}
+	if referer := r.Header.Get("Referer"); referer != "" {
+		u, err := url.Parse(referer)
+		if err != nil {
+			return fmt.Errorf("invalid referer: %w", err)
+		}
+		if u.Host != host {
+			return fmt.Errorf("referer %q does not match host %q", u.Host, host)
+		}
+		return nil
+	}
+	return errors.New("missing Origin and Referer headers")
+}
+
 // takeIfPresent returns the new form value when supplied (and non-blank),
 // otherwise leaves the existing token untouched. The settings form
 // presents masked tokens by default; the user types a new value to
@@ -210,16 +266,18 @@ func takeIfPresent(r *http.Request, field, existing string) string {
 	return val
 }
 
-func renderTemplate(w http.ResponseWriter, body string, data any) {
+func (b *Bot) renderTemplate(w http.ResponseWriter, body string, data any) {
 	tpl, err := template.New("page").Parse(body)
 	if err != nil {
+		b.log.Error("template parse failed", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := tpl.Execute(w, data); err != nil {
-		// template write may have already started — log only
-		_ = err
+		// The response stream may have already started, so we can't send a
+		// proper 500 — but the failure must not be silent.
+		b.log.Error("template execute failed", "error", err)
 	}
 }
 

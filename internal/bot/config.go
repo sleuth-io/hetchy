@@ -21,6 +21,9 @@ type Config struct {
 	WorkOSCookiePassword string
 	WorkOSRedirectURI    string
 	LogoutReturnTo       string
+	// CookieSecure is the Secure flag on the session cookie. Defaults to
+	// true; set COOKIE_INSECURE=1 to disable it for local HTTP dev.
+	CookieSecure bool
 
 	SecretsEncryptionKey string
 
@@ -62,6 +65,7 @@ func LoadConfig() (Config, error) {
 
 	port := getenvDefault("WEB_PORT", "8080")
 	logout := getenvDefault("LOGOUT_RETURN_TO", "http://localhost:"+port+"/")
+	cookieSecure := os.Getenv("COOKIE_INSECURE") == ""
 
 	return Config{
 		AnthropicAPIKey:      os.Getenv("ANTHROPIC_API_KEY"),
@@ -74,6 +78,7 @@ func LoadConfig() (Config, error) {
 		WorkOSCookiePassword: os.Getenv("WORKOS_COOKIE_PASSWORD"),
 		WorkOSRedirectURI:    os.Getenv("WORKOS_REDIRECT_URI"),
 		LogoutReturnTo:       logout,
+		CookieSecure:         cookieSecure,
 		SecretsEncryptionKey: os.Getenv("SECRETS_ENCRYPTION_KEY"),
 		AuthBypass:           bypass,
 		AuthBypassUser:       getenvDefault("AUTH_BYPASS_USER", "user_bypass"),

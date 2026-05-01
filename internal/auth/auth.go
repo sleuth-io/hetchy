@@ -60,6 +60,11 @@ type Config struct {
 	// LogoutReturnTo is where WorkOS will send the browser after a logout
 	// completes. Usually the public-facing app root.
 	LogoutReturnTo string
+	// CookieSecure controls the Secure attribute on the session cookie.
+	// MUST be true in any production deployment served over HTTPS — the
+	// cookie holds a sealed refresh token. Leave false only when running
+	// over plain HTTP locally.
+	CookieSecure bool
 	// Bypass short-circuits the middleware for tests/CI. When true the
 	// middleware fabricates a Principal from BypassUser/BypassOrg/BypassRole
 	// instead of consulting WorkOS.
@@ -252,6 +257,17 @@ func (s *Service) CreateOrganization(ctx context.Context, name string) (string, 
 	return org.ID, nil
 }
 
+// DeleteOrganization is a best-effort rollback used by the onboarding
+// handler when org creation succeeded but a follow-up step (membership
+// creation) failed. Errors here are logged but not surfaced — the
+// triggering failure has already been reported to the user.
+func (s *Service) DeleteOrganization(ctx context.Context, orgID string) error {
+	if s.cfg.Bypass {
+		return nil
+	}
+	return s.client.Organizations().Delete(ctx, orgID)
+}
+
 // AddUserToOrganization adds a user to an org with the given role slug
 // (e.g. "admin" or "member"). The role must exist in the WorkOS dashboard.
 func (s *Service) AddUserToOrganization(ctx context.Context, userID, orgID, roleSlug string) error {
@@ -304,7 +320,7 @@ func (s *Service) setSessionCookie(w http.ResponseWriter, value string) {
 		Path:     "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-		Secure:   false,
+		Secure:   s.cfg.CookieSecure,
 		Expires:  time.Now().Add(7 * 24 * time.Hour),
 	})
 }
@@ -316,6 +332,7 @@ func (s *Service) clearSessionCookie(w http.ResponseWriter) {
 		Path:     "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
+		Secure:   s.cfg.CookieSecure,
 		Expires:  time.Unix(0, 0),
 		MaxAge:   -1,
 	})
