@@ -69,6 +69,7 @@ If you want to use the Slack integration, follow these steps to create and confi
    - `app_mentions:read` — Listen for @mentions of the bot in channels
    - `chat:write` — Send messages as the bot
    - `channels:history` — View message history in public channels (needed to read thread context)
+   - `groups:history` — View message history in private channels (needed to read thread context in private channels)
    - `im:history` — View message history in direct messages
    - `im:read` — View basic information about direct messages
    - `im:write` — Start direct messages with users
@@ -95,7 +96,9 @@ If you want to use the Slack integration, follow these steps to create and confi
 
 5. Click **"Save Changes"** at the bottom of the page
 
-### 5. Configure App Home (Optional but Recommended)
+### 5. Configure App Home (Required for DM support)
+
+**Without this step, users can still DM the bot by searching for it manually, but they won't see a Messages tab in the App Home view, making it harder to discover.**
 
 1. Navigate to **"App Home"** (under Features in the left sidebar)
 2. Scroll to the **"Show Tabs"** section
@@ -122,8 +125,8 @@ doppler secrets set SLACK_SOCKET_TOKEN="xapp-your-token-here"
 1. Start the bot (see [Quick Start](#quick-start) below)
 2. Look for the log message: `slack socket connected — listening for events`
 3. In your Slack workspace:
-   - Invite the bot to a channel: `/invite @YourBotName`
-   - Mention the bot: `@YourBotName help`
+   - Invite the bot to a channel: `/invite @HetchyBot` (or whatever name you chose in Step 1)
+   - Mention the bot: `@HetchyBot help`
    - Or send a direct message to the bot
 4. The bot should respond in a thread with "Working on it…"
 
