@@ -34,6 +34,7 @@ func main() {
 		log.Error("bot init failed", "error", err)
 		os.Exit(1)
 	}
+	defer b.Close()
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()

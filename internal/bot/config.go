@@ -19,6 +19,7 @@ type Config struct {
 	StateFile        string
 	DisableSlack     bool
 	SXKey            string
+	DatabaseURL      string
 }
 
 // LoadConfig reads required and optional env vars. It returns an error listing
@@ -60,6 +61,7 @@ func LoadConfig() (Config, error) {
 		StateFile:        getenvDefault("STATE_FILE", "state.json"),
 		DisableSlack:     disableSlack,
 		SXKey:            os.Getenv("SX_KEY"),
+		DatabaseURL:      os.Getenv("DATABASE_URL"),
 	}, nil
 }
 

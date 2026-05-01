@@ -16,6 +16,8 @@ import (
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/types"
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/socketmode"
+
+	"github.com/hetchyhq/hetchy/internal/db"
 )
 
 const (
@@ -41,6 +43,7 @@ type Bot struct {
 	slack   *slack.Client
 	socket  *socketmode.Client
 	daytona *daytona.Client
+	store   *db.Store
 
 	mu     sync.Mutex
 	convos map[string]*conversation
@@ -67,10 +70,25 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 		b.slack = slack.New(cfg.SlackBotToken, slack.OptionAppLevelToken(cfg.SlackSocketToken))
 		b.socket = socketmode.New(b.slack)
 	}
+	if cfg.DatabaseURL != "" {
+		store, err := db.Open(context.Background(), cfg.DatabaseURL)
+		if err != nil {
+			return nil, fmt.Errorf("database open: %w", err)
+		}
+		b.store = store
+		log.Info("database connected")
+	} else {
+		log.Info("DATABASE_URL not set — running without database")
+	}
 	if err := b.loadState(context.Background()); err != nil {
 		log.Warn("could not load state file", "path", cfg.StateFile, "error", err)
 	}
 	return b, nil
+}
+
+// Close releases external resources held by the bot. Safe to call once after Run returns.
+func (b *Bot) Close() {
+	b.store.Close()
 }
 
 // Run starts the configured transports (Slack socket-mode + web UI by default;

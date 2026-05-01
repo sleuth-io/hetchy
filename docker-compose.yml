@@ -1,6 +1,30 @@
 version: '3.8'
 
 services:
+  # Local Postgres for development. Mirrors Supabase's Postgres surface (no
+  # auth/storage/etc.) — enough for sqlc + golang-migrate. Port 5432 is
+  # exposed on the host so `make bot` running on the host can connect to it.
+  postgres:
+    image: postgres:16-alpine
+    container_name: hetchy-postgres
+    restart: unless-stopped
+    ports:
+      # Default 5433 so we don't collide with other dev Postgres on 5432.
+      # Override via POSTGRES_HOST_PORT.
+      - "${POSTGRES_HOST_PORT:-5433}:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-hetchy}
+    volumes:
+      - hetchy-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-hetchy}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
   # Main hetchy bot service
   hetchy:
     build:
@@ -14,6 +38,9 @@ services:
     restart: unless-stopped
     ports:
       - "${WEB_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
     environment:
       # Slack configuration
       SLACK_BOT_OAUTH_TOKEN: ${SLACK_BOT_OAUTH_TOKEN}
@@ -32,12 +59,22 @@ services:
       DAYTONA_API_KEY: ${DAYTONA_API_KEY}
       DAYTONA_SNAPSHOT: ${DAYTONA_SNAPSHOT:-claude-playwright:1}
 
+      # sx (optional)
+      SX_KEY: ${SX_KEY:-}
+
+      # Database — defaults to the bundled postgres service. Override
+      # DATABASE_URL to point at Supabase or another instance.
+      DATABASE_URL: ${DATABASE_URL:-postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-hetchy}?sslmode=disable}
+
       # Web UI configuration
       WEB_PORT: ${WEB_PORT:-8080}
       DISABLE_SLACK: ${DISABLE_SLACK:-}
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health", "||", "exit", "1"]
+      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost:8080/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
+
+volumes:
+  hetchy-postgres-data:
