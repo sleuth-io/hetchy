@@ -179,6 +179,7 @@ func (b *Bot) processSlackEvent(ctx context.Context, ev incoming) {
 			// onError: task failed
 			b.replyInThread(ev.channel, replyTo, fmt.Sprintf("<@%s> %s", ev.user, msg))
 			b.removeReaction(ev.channel, threadID, reactionEmoji)
+			b.addReaction(ev.channel, threadID, "x")
 		},
 	)
 }
