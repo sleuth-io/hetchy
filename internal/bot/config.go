@@ -16,6 +16,7 @@ type Config struct {
 	Snapshot         string
 	DaytonaAPIURL    string
 	WebPort          string
+	StateFile        string
 	DisableSlack     bool
 }
 
@@ -55,6 +56,7 @@ func LoadConfig() (Config, error) {
 		Snapshot:         getenvDefault("DAYTONA_SNAPSHOT", fmt.Sprintf("ghcr.io/%s/sandbox:latest", repo)),
 		DaytonaAPIURL:    os.Getenv("DAYTONA_API_URL"),
 		WebPort:          getenvDefault("WEB_PORT", "8080"),
+		StateFile:        getenvDefault("STATE_FILE", "state.json"),
 		DisableSlack:     disableSlack,
 	}, nil
 }

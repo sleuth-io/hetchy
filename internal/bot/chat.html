@@ -21,6 +21,8 @@
   button { padding: .6rem 1.2rem; background: #0b93f6; color: #fff; border: none;
            border-radius: 2rem; font-size: 1rem; cursor: pointer; }
   button:disabled { opacity: .5; cursor: default; }
+  #session-bar { padding: .3rem 1rem; background: #f0f0f0; border-top: 1px solid #ddd;
+                 font-size: .75rem; color: #888; font-family: monospace; }
 </style>
 </head>
 <body>
@@ -29,10 +31,22 @@
   <input id="inp" placeholder="Describe a feature…" autofocus>
   <button id="btn" onclick="send()">Send</button>
 </div>
+<div id="session-bar">session: <span id="session-label"></span></div>
 <script>
 const log = document.getElementById('log');
 const inp = document.getElementById('inp');
 const btn = document.getElementById('btn');
+
+// Read session ID from URL (?session=...) so the page can be reloaded or
+// shared to reconnect to an existing sandbox. Generate a new one if absent.
+const params = new URLSearchParams(window.location.search);
+const sessionId = params.get('session') || crypto.randomUUID();
+if (!params.has('session')) {
+  const url = new URL(window.location);
+  url.searchParams.set('session', sessionId);
+  history.replaceState(null, '', url);
+}
+document.getElementById('session-label').textContent = sessionId;
 
 inp.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
 
@@ -56,7 +70,7 @@ async function send() {
   const res = await fetch('/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text })
+    body: JSON.stringify({ text, session_id: sessionId })
   });
 
   const reader = res.body.getReader();

@@ -5,10 +5,13 @@ package bot
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
@@ -36,6 +39,42 @@ When you are done implementing the change:
   5. The very last line of your output MUST be just the PR URL — no other
      text on that line.`
 
+const agentFollowUpPromptTemplate = `You are continuing work in %s on branch %s.
+The pull request is at %s.
+
+Conversation so far:
+%s
+
+USER REQUEST:
+%s
+
+When you are done implementing the change:
+  1. Stage and commit your changes with a clear message.
+  2. Push the branch to origin — the PR will update automatically.
+  3. The very last line of your output MUST be just the PR URL — no other
+     text on that line.`
+
+// conversation holds the live state for an ongoing multi-turn session.
+type conversation struct {
+	sandbox *daytona.Sandbox
+	branch  string
+	prURL   string
+	history []string // user turns, oldest first
+}
+
+// persistedConversation is the on-disk representation of a conversation.
+// The sandbox is referenced by ID and rehydrated on load.
+type persistedConversation struct {
+	SandboxID string   `json:"sandbox_id"`
+	Branch    string   `json:"branch"`
+	PRURL     string   `json:"pr_url"`
+	History   []string `json:"history"`
+}
+
+type persistedState struct {
+	Conversations map[string]*persistedConversation `json:"conversations"`
+}
+
 // Bot wires Slack, the web UI, Daytona, and the agent loop together.
 type Bot struct {
 	cfg     Config
@@ -43,6 +82,9 @@ type Bot struct {
 	slack   *slack.Client
 	socket  *socketmode.Client
 	daytona *daytona.Client
+
+	mu    sync.Mutex
+	convos map[string]*conversation
 }
 
 // New constructs a Bot from config and a logger.
@@ -61,12 +103,66 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 		log.Info("daytona configured", "mode", "cloud", "url", "app.daytona.io")
 	}
 
-	b := &Bot{cfg: cfg, log: log, daytona: dc}
+	b := &Bot{cfg: cfg, log: log, daytona: dc, convos: make(map[string]*conversation)}
 	if !cfg.DisableSlack {
 		b.slack = slack.New(cfg.SlackBotToken, slack.OptionAppLevelToken(cfg.SlackSocketToken))
 		b.socket = socketmode.New(b.slack)
 	}
+	if err := b.loadState(context.Background()); err != nil {
+		log.Warn("could not load state file", "path", cfg.StateFile, "error", err)
+	}
 	return b, nil
+}
+
+func (b *Bot) loadState(ctx context.Context) error {
+	data, err := os.ReadFile(b.cfg.StateFile)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var ps persistedState
+	if err := json.Unmarshal(data, &ps); err != nil {
+		return fmt.Errorf("parse state file: %w", err)
+	}
+	for threadID, pc := range ps.Conversations {
+		sb, err := b.daytona.Get(ctx, pc.SandboxID)
+		if err != nil {
+			b.log.Warn("state: sandbox not found, dropping conversation",
+				"thread_id", threadID, "sandbox_id", pc.SandboxID, "error", err)
+			continue
+		}
+		b.convos[threadID] = &conversation{
+			sandbox: sb,
+			branch:  pc.Branch,
+			prURL:   pc.PRURL,
+			history: pc.History,
+		}
+		b.log.Info("state: restored conversation",
+			"thread_id", threadID, "sandbox_id", pc.SandboxID, "branch", pc.Branch)
+	}
+	return nil
+}
+
+func (b *Bot) saveState() {
+	ps := persistedState{Conversations: make(map[string]*persistedConversation, len(b.convos))}
+	for threadID, conv := range b.convos {
+		ps.Conversations[threadID] = &persistedConversation{
+			SandboxID: conv.sandbox.ID,
+			Branch:    conv.branch,
+			PRURL:     conv.prURL,
+			History:   conv.history,
+		}
+	}
+	data, err := json.MarshalIndent(ps, "", "  ")
+	if err != nil {
+		b.log.Error("state: marshal failed", "error", err)
+		return
+	}
+	if err := os.WriteFile(b.cfg.StateFile, data, 0600); err != nil {
+		b.log.Error("state: write failed", "path", b.cfg.StateFile, "error", err)
+	}
 }
 
 // Run starts the configured transports (Slack socket-mode + web UI by default;
@@ -94,15 +190,27 @@ func (b *Bot) Run(ctx context.Context) error {
 	return err
 }
 
-// HandleRequest is the shared core: it spins up a sandbox, runs Claude Code
-// inside it, opens a PR, and pipes each progress update through onUpdate.
-// Both the Slack and web transports call this with their own onUpdate.
-func (b *Bot) HandleRequest(ctx context.Context, text, requestID string, onUpdate func(string)) {
+// HandleRequest is the shared core. threadID ties follow-up messages to an
+// existing conversation; use a unique value (e.g. Slack thread TS or web
+// session ID) so the bot can match follow-ups to the right sandbox and branch.
+func (b *Bot) HandleRequest(ctx context.Context, text, requestID, threadID string, onUpdate func(string)) {
 	b.log.Info("request received",
 		"request_id", requestID,
+		"thread_id", threadID,
 		"text_len", len(text),
 		"text_preview", truncate(text, 200),
 	)
+
+	b.mu.Lock()
+	conv := b.convos[threadID]
+	b.mu.Unlock()
+
+	if conv != nil {
+		b.handleFollowUp(ctx, conv, text, requestID, threadID, onUpdate)
+		return
+	}
+
+	// New conversation: spin up a sandbox and open a PR.
 	onUpdate("Spinning up an isolated sandbox for your request...")
 
 	sb, err := b.daytona.Create(ctx, types.SnapshotParams{
@@ -122,6 +230,7 @@ func (b *Bot) HandleRequest(ctx context.Context, text, requestID string, onUpdat
 	b.log.Info("sandbox created", "id", sb.ID, "request_id", requestID)
 	onUpdate(fmt.Sprintf("Sandbox `%s` ready — cloning repo and starting Claude Code.", sb.ID))
 
+	branch := "feature/sf-" + requestID
 	prURL, runErr := b.runAgent(ctx, sb, text, requestID, onUpdate)
 	if runErr != nil {
 		b.log.Error("agent run failed", "sandbox", sb.ID, "error", runErr)
@@ -129,10 +238,61 @@ func (b *Bot) HandleRequest(ctx context.Context, text, requestID string, onUpdat
 		return
 	}
 
-	onUpdate("Done! :tada: " + prURL)
-	if err := sb.Delete(ctx); err != nil {
-		b.log.Error("sandbox delete failed", "sandbox", sb.ID, "error", err)
+	// Stop then archive the sandbox to save cost; Start restores it on follow-up.
+	if err := sb.Stop(ctx); err != nil {
+		b.log.Error("sandbox stop failed", "sandbox", sb.ID, "error", err)
+	} else if err := sb.Archive(ctx); err != nil {
+		b.log.Error("sandbox archive failed", "sandbox", sb.ID, "error", err)
 	}
+
+	b.mu.Lock()
+	b.convos[threadID] = &conversation{
+		sandbox: sb,
+		branch:  branch,
+		prURL:   prURL,
+		history: []string{text},
+	}
+	b.saveState()
+	b.mu.Unlock()
+
+	onUpdate("Done! :tada: " + prURL + "\nReply here to make further changes to this PR.")
+}
+
+func (b *Bot) handleFollowUp(ctx context.Context, conv *conversation, text, requestID, threadID string, onUpdate func(string)) {
+	b.log.Info("follow-up received", "sandbox", conv.sandbox.ID, "branch", conv.branch, "pr", conv.prURL)
+	onUpdate(fmt.Sprintf("Resuming work on %s…", conv.prURL))
+
+	if err := conv.sandbox.Start(ctx); err != nil {
+		b.log.Error("sandbox start failed", "sandbox", conv.sandbox.ID, "error", err)
+		onUpdate(fmt.Sprintf("Failed to resume sandbox: `%v`", err))
+		return
+	}
+	if err := conv.sandbox.WaitForStart(ctx, 2*time.Minute); err != nil {
+		b.log.Error("sandbox wait-for-start failed", "sandbox", conv.sandbox.ID, "error", err)
+		onUpdate(fmt.Sprintf("Sandbox did not start in time: `%v`", err))
+		return
+	}
+
+	prURL, err := b.runFollowUp(ctx, conv, text, requestID, onUpdate)
+	if err != nil {
+		b.log.Error("follow-up failed", "sandbox", conv.sandbox.ID, "error", err)
+		onUpdate(fmt.Sprintf("Something went wrong: `%v`", err))
+		return
+	}
+
+	if err := conv.sandbox.Stop(ctx); err != nil {
+		b.log.Error("sandbox stop failed", "sandbox", conv.sandbox.ID, "error", err)
+	} else if err := conv.sandbox.Archive(ctx); err != nil {
+		b.log.Error("sandbox archive failed", "sandbox", conv.sandbox.ID, "error", err)
+	}
+
+	b.mu.Lock()
+	conv.history = append(conv.history, text)
+	conv.prURL = prURL
+	b.saveState()
+	b.mu.Unlock()
+
+	onUpdate("Done! :tada: " + prURL)
 }
 
 func (b *Bot) sh(ctx context.Context, sb *daytona.Sandbox, sessionID, step, cmd string, timeout time.Duration, onUpdate func(string)) (string, error) {
@@ -269,6 +429,62 @@ claude --print --dangerously-skip-permissions < /tmp/sf-prompt.txt
 			tail = tail[len(tail)-1500:]
 		}
 		return "", fmt.Errorf("no PR URL found in agent output. Tail:\n%s", tail)
+	}
+	return match, nil
+}
+
+func (b *Bot) runFollowUp(ctx context.Context, conv *conversation, userRequest, requestID string, onUpdate func(string)) (string, error) {
+	sessionID := "followup-" + requestID
+	if err := conv.sandbox.Process.CreateSession(ctx, sessionID); err != nil {
+		return "", fmt.Errorf("create session: %w", err)
+	}
+	defer func() { _ = conv.sandbox.Process.DeleteSession(ctx, sessionID) }()
+
+	history := strings.Join(conv.history, "\n---\n")
+	prompt := fmt.Sprintf(agentFollowUpPromptTemplate,
+		workdir, conv.branch, conv.prURL,
+		history, userRequest,
+	)
+	promptB64 := base64.StdEncoding.EncodeToString([]byte(prompt))
+
+	script := fmt.Sprintf(`#!/bin/bash
+set -euo pipefail
+
+echo "[sf] checking out branch"
+cd %s
+git fetch origin
+git checkout %s
+git pull --rebase origin %s
+
+echo "[sf] running claude"
+export ANTHROPIC_API_KEY=%s
+echo %s | base64 -d > /tmp/sf-prompt.txt
+claude --print --dangerously-skip-permissions < /tmp/sf-prompt.txt
+`,
+		workdir, conv.branch, conv.branch,
+		shellQuote(b.cfg.AnthropicAPIKey),
+		shellQuote(promptB64),
+	)
+
+	b.log.Info("follow-up script", "sandbox", conv.sandbox.ID, "script", script)
+
+	writeCmd := fmt.Sprintf("cat > /tmp/sf-followup.sh << 'SFEOF'\n%sSFEOF\nchmod +x /tmp/sf-followup.sh", script)
+	if _, err := b.sh(ctx, conv.sandbox, sessionID, "write-script", writeCmd, 15*time.Second, onUpdate); err != nil {
+		return "", err
+	}
+
+	out, err := b.sh(ctx, conv.sandbox, sessionID, "run-script", "bash /tmp/sf-followup.sh", 20*time.Minute, onUpdate)
+	if err != nil {
+		return "", err
+	}
+
+	match := prURLRe.FindString(out)
+	if match == "" {
+		tail := out
+		if len(tail) > 1500 {
+			tail = tail[len(tail)-1500:]
+		}
+		return "", fmt.Errorf("no PR URL found in follow-up output. Tail:\n%s", tail)
 	}
 	return match, nil
 }
