@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  software-factory:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: software-factory
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-8080}:8080"
+    environment:
+      # Slack configuration
+      - SLACK_BOT_OAUTH_TOKEN=${SLACK_BOT_OAUTH_TOKEN}
+      - SLACK_SOCKET_TOKEN=${SLACK_SOCKET_TOKEN}
+
+      # Anthropic API
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+
+      # GitHub configuration
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - GITHUB_REPO=${GITHUB_REPO}
+      - GITHUB_BASE_BRANCH=${GITHUB_BASE_BRANCH:-main}
+
+      # Daytona configuration
+      - DAYTONA_API_URL=${DAYTONA_API_URL:-http://localhost:3000/api}
+      - DAYTONA_API_KEY=${DAYTONA_API_KEY}
+      - DAYTONA_SNAPSHOT=${DAYTONA_SNAPSHOT:-claude-playwright:1}
+
+      # Web UI
+      - WEB_PORT=${WEB_PORT:-8080}
+
+      # Optional: Disable Slack if running web UI only
+      - DISABLE_SLACK=${DISABLE_SLACK:-0}
+    volumes:
+      # Mount .env file if it exists (optional, for local development)
+      - ./.env:/app/.env:ro
+    networks:
+      - software-factory-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:${WEB_PORT:-8080}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  software-factory-network:
+    driver: bridge
