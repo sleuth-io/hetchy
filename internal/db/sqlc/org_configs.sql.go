@@ -18,7 +18,6 @@ SELECT
     sx_key_encrypted,
     github_repo,
     github_base_branch,
-    slack_team_id,
     created_at,
     updated_at
 FROM org_configs
@@ -36,41 +35,6 @@ func (q *Queries) GetOrgConfig(ctx context.Context, orgID string) (OrgConfig, er
 		&i.SxKeyEncrypted,
 		&i.GithubRepo,
 		&i.GithubBaseBranch,
-		&i.SlackTeamID,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
-const getOrgConfigBySlackTeam = `-- name: GetOrgConfigBySlackTeam :one
-SELECT
-    org_id,
-    github_token_encrypted,
-    slack_bot_token_encrypted,
-    slack_socket_token_encrypted,
-    sx_key_encrypted,
-    github_repo,
-    github_base_branch,
-    slack_team_id,
-    created_at,
-    updated_at
-FROM org_configs
-WHERE slack_team_id = $1
-`
-
-func (q *Queries) GetOrgConfigBySlackTeam(ctx context.Context, slackTeamID *string) (OrgConfig, error) {
-	row := q.db.QueryRow(ctx, getOrgConfigBySlackTeam, slackTeamID)
-	var i OrgConfig
-	err := row.Scan(
-		&i.OrgID,
-		&i.GithubTokenEncrypted,
-		&i.SlackBotTokenEncrypted,
-		&i.SlackSocketTokenEncrypted,
-		&i.SxKeyEncrypted,
-		&i.GithubRepo,
-		&i.GithubBaseBranch,
-		&i.SlackTeamID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -86,7 +50,6 @@ SELECT
     sx_key_encrypted,
     github_repo,
     github_base_branch,
-    slack_team_id,
     created_at,
     updated_at
 FROM org_configs
@@ -111,7 +74,6 @@ func (q *Queries) ListOrgConfigsWithSlack(ctx context.Context) ([]OrgConfig, err
 			&i.SxKeyEncrypted,
 			&i.GithubRepo,
 			&i.GithubBaseBranch,
-			&i.SlackTeamID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -133,10 +95,9 @@ INSERT INTO org_configs (
     slack_socket_token_encrypted,
     sx_key_encrypted,
     github_repo,
-    github_base_branch,
-    slack_team_id
+    github_base_branch
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8
+    $1, $2, $3, $4, $5, $6, $7
 )
 ON CONFLICT (org_id) DO UPDATE SET
     github_token_encrypted       = EXCLUDED.github_token_encrypted,
@@ -145,7 +106,6 @@ ON CONFLICT (org_id) DO UPDATE SET
     sx_key_encrypted             = EXCLUDED.sx_key_encrypted,
     github_repo                  = EXCLUDED.github_repo,
     github_base_branch           = EXCLUDED.github_base_branch,
-    slack_team_id                = EXCLUDED.slack_team_id,
     updated_at                   = NOW()
 RETURNING
     org_id,
@@ -155,20 +115,18 @@ RETURNING
     sx_key_encrypted,
     github_repo,
     github_base_branch,
-    slack_team_id,
     created_at,
     updated_at
 `
 
 type UpsertOrgConfigParams struct {
-	OrgID                     string  `json:"org_id"`
-	GithubTokenEncrypted      []byte  `json:"github_token_encrypted"`
-	SlackBotTokenEncrypted    []byte  `json:"slack_bot_token_encrypted"`
-	SlackSocketTokenEncrypted []byte  `json:"slack_socket_token_encrypted"`
-	SxKeyEncrypted            []byte  `json:"sx_key_encrypted"`
-	GithubRepo                string  `json:"github_repo"`
-	GithubBaseBranch          string  `json:"github_base_branch"`
-	SlackTeamID               *string `json:"slack_team_id"`
+	OrgID                     string `json:"org_id"`
+	GithubTokenEncrypted      []byte `json:"github_token_encrypted"`
+	SlackBotTokenEncrypted    []byte `json:"slack_bot_token_encrypted"`
+	SlackSocketTokenEncrypted []byte `json:"slack_socket_token_encrypted"`
+	SxKeyEncrypted            []byte `json:"sx_key_encrypted"`
+	GithubRepo                string `json:"github_repo"`
+	GithubBaseBranch          string `json:"github_base_branch"`
 }
 
 func (q *Queries) UpsertOrgConfig(ctx context.Context, arg UpsertOrgConfigParams) (OrgConfig, error) {
@@ -180,7 +138,6 @@ func (q *Queries) UpsertOrgConfig(ctx context.Context, arg UpsertOrgConfigParams
 		arg.SxKeyEncrypted,
 		arg.GithubRepo,
 		arg.GithubBaseBranch,
-		arg.SlackTeamID,
 	)
 	var i OrgConfig
 	err := row.Scan(
@@ -191,7 +148,6 @@ func (q *Queries) UpsertOrgConfig(ctx context.Context, arg UpsertOrgConfigParams
 		&i.SxKeyEncrypted,
 		&i.GithubRepo,
 		&i.GithubBaseBranch,
-		&i.SlackTeamID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

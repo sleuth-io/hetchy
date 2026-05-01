@@ -52,13 +52,11 @@
 
   <fieldset>
     <legend>Slack (optional)</legend>
-    <label for="slack_team_id">Slack team ID</label>
-    <input id="slack_team_id" name="slack_team_id" value="{{.SlackTeamID}}" placeholder="T01234ABCDE">
-    <p class="hint">Find in Slack: About app → "App ID / Team ID". Required to route inbound events.</p>
     <label for="slack_bot_token">Bot token</label>
     <input id="slack_bot_token" name="slack_bot_token" type="password" placeholder="{{if .HasSlackBot}}•••••••• (leave blank to keep, type - to clear){{else}}xoxb-…{{end}}">
     <label for="slack_socket_token">Socket token</label>
     <input id="slack_socket_token" name="slack_socket_token" type="password" placeholder="{{if .HasSlackSocket}}•••••••• (leave blank to keep, type - to clear){{else}}xapp-…{{end}}">
+    <p class="hint">Provide both to receive Slack events for this org. Each org runs its own socket-mode connection.</p>
   </fieldset>
 
   <fieldset>

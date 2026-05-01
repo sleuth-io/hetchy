@@ -22,16 +22,35 @@
            border-radius: 2rem; font-size: 1rem; cursor: pointer; }
   button:disabled { opacity: .5; cursor: default; }
   #session-bar { padding: .3rem 1rem; background: #f0f0f0; border-top: 1px solid #ddd;
-                 font-size: .75rem; color: #888; font-family: monospace; }
+                 font-size: .75rem; color: #888; font-family: monospace;
+                 display: flex; justify-content: space-between; align-items: center; }
+  #session-bar a { color: #0b93f6; text-decoration: none; font-family: system-ui, sans-serif; }
+  #session-bar a:hover { text-decoration: underline; }
+  #session-bar .links { display: flex; gap: 1rem; }
+  #topbar { display: flex; justify-content: space-between; align-items: center;
+            padding: .6rem 1.5rem; background: #fff; border-bottom: 1px solid #ddd; }
+  #topbar h1 { font-size: 1rem; font-weight: 600; margin: 0; }
+  #topbar .links { display: flex; gap: 1rem; font-size: .85rem; }
+  #topbar a { color: #0b93f6; text-decoration: none; }
+  #topbar a:hover { text-decoration: underline; }
 </style>
 </head>
 <body>
+<div id="topbar">
+  <h1>Hetchy</h1>
+  <div class="links">
+    <a href="/settings/org">Settings</a>
+    <a href="/logout">Log out</a>
+  </div>
+</div>
 <div id="log"></div>
 <div id="bar">
   <input id="inp" placeholder="Describe a feature…" autofocus>
   <button id="btn" onclick="send()">Send</button>
 </div>
-<div id="session-bar">session: <span id="session-label"></span></div>
+<div id="session-bar">
+  <span>session: <span id="session-label"></span></span>
+</div>
 <script>
 const log = document.getElementById('log');
 const inp = document.getElementById('inp');

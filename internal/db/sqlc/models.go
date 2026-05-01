@@ -27,7 +27,6 @@ type OrgConfig struct {
 	SxKeyEncrypted            []byte             `json:"sx_key_encrypted"`
 	GithubRepo                string             `json:"github_repo"`
 	GithubBaseBranch          string             `json:"github_base_branch"`
-	SlackTeamID               *string            `json:"slack_team_id"`
 	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
 }

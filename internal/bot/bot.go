@@ -141,8 +141,24 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		"text_preview", truncate(text, 200),
 	)
 
-	if oc.GitHubToken == "" || oc.GitHubRepo == "" {
-		onError("This organization is missing its GitHub configuration. An admin needs to set the GitHub token and repository at /settings/org.")
+	var missing []string
+	if oc.GitHubToken == "" {
+		missing = append(missing, "GitHub token")
+	}
+	if oc.GitHubRepo == "" {
+		missing = append(missing, "GitHub repository")
+	}
+	if len(missing) > 0 {
+		b.log.Warn("org missing config",
+			"org", oc.OrgID,
+			"missing", missing,
+			"has_repo", oc.GitHubRepo != "",
+			"has_github_token", oc.GitHubToken != "",
+			"has_slack_bot", oc.SlackBotToken != "",
+			"has_slack_socket", oc.SlackSocketToken != "",
+			"has_sx", oc.SXKey != "",
+		)
+		onError(fmt.Sprintf("This organization is missing: %s. Set them at /settings/org.", strings.Join(missing, ", ")))
 		return
 	}
 

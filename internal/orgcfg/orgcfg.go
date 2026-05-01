@@ -30,7 +30,6 @@ type Config struct {
 	SXKey            string
 	GitHubRepo       string
 	GitHubBaseBranch string
-	SlackTeamID      string
 }
 
 // Store wires a *db.Store to a *secrets.Cipher and exposes plaintext
@@ -53,20 +52,6 @@ func (s *Store) Get(ctx context.Context, orgID string) (Config, error) {
 			return Config{}, ErrNotFound
 		}
 		return Config{}, fmt.Errorf("get org config: %w", err)
-	}
-	return s.decrypt(row)
-}
-
-// GetBySlackTeam looks up a config by Slack team_id, used to route inbound
-// Slack events to the right org.
-func (s *Store) GetBySlackTeam(ctx context.Context, teamID string) (Config, error) {
-	t := teamID
-	row, err := s.db.Queries.GetOrgConfigBySlackTeam(ctx, &t)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return Config{}, ErrNotFound
-		}
-		return Config{}, fmt.Errorf("get org config by slack team: %w", err)
 	}
 	return s.decrypt(row)
 }
@@ -107,11 +92,6 @@ func (s *Store) Upsert(ctx context.Context, c Config) (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("encrypt sx key: %w", err)
 	}
-	var teamID *string
-	if c.SlackTeamID != "" {
-		t := c.SlackTeamID
-		teamID = &t
-	}
 	branch := c.GitHubBaseBranch
 	if branch == "" {
 		branch = "main"
@@ -124,7 +104,6 @@ func (s *Store) Upsert(ctx context.Context, c Config) (Config, error) {
 		SxKeyEncrypted:            sx,
 		GithubRepo:                c.GitHubRepo,
 		GithubBaseBranch:          branch,
-		SlackTeamID:               teamID,
 	})
 	if err != nil {
 		return Config{}, fmt.Errorf("upsert org config: %w", err)
@@ -149,10 +128,6 @@ func (s *Store) decrypt(row sqlc.OrgConfig) (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("decrypt sx key: %w", err)
 	}
-	var teamID string
-	if row.SlackTeamID != nil {
-		teamID = *row.SlackTeamID
-	}
 	return Config{
 		OrgID:            row.OrgID,
 		GitHubToken:      gh,
@@ -161,6 +136,5 @@ func (s *Store) decrypt(row sqlc.OrgConfig) (Config, error) {
 		SXKey:            sx,
 		GitHubRepo:       row.GithubRepo,
 		GitHubBaseBranch: row.GithubBaseBranch,
-		SlackTeamID:      teamID,
 	}, nil
 }

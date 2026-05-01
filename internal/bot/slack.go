@@ -50,7 +50,6 @@ type slackManager struct {
 
 type slackConn struct {
 	cancel context.CancelFunc
-	teamID string
 	done   chan struct{}
 }
 
@@ -125,7 +124,7 @@ func (m *slackManager) startConn(ctx context.Context, oc orgcfg.Config) {
 	}
 	connCtx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
-	conn := &slackConn{cancel: cancel, teamID: oc.SlackTeamID, done: done}
+	conn := &slackConn{cancel: cancel, done: done}
 
 	m.mu.Lock()
 	m.conns[oc.OrgID] = conn

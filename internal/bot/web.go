@@ -141,7 +141,6 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 			"Email":            p.Email,
 			"GitHubRepo":       current.GitHubRepo,
 			"GitHubBaseBranch": current.GitHubBaseBranch,
-			"SlackTeamID":      current.SlackTeamID,
 			"HasGitHubToken":   current.GitHubToken != "",
 			"HasSlackBot":      current.SlackBotToken != "",
 			"HasSlackSocket":   current.SlackSocketToken != "",
@@ -167,17 +166,26 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 	if v := strings.TrimSpace(r.FormValue("github_base_branch")); v != "" {
 		current.GitHubBaseBranch = v
 	}
-	current.SlackTeamID = strings.TrimSpace(r.FormValue("slack_team_id"))
 
 	current.GitHubToken = takeIfPresent(r, "github_token", current.GitHubToken)
 	current.SlackBotToken = takeIfPresent(r, "slack_bot_token", current.SlackBotToken)
 	current.SlackSocketToken = takeIfPresent(r, "slack_socket_token", current.SlackSocketToken)
 	current.SXKey = takeIfPresent(r, "sx_key", current.SXKey)
 
-	if _, err := b.orgs.Upsert(r.Context(), current); err != nil {
+	saved, err := b.orgs.Upsert(r.Context(), current)
+	if err != nil {
 		http.Error(w, "save: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	b.log.Info("org settings saved",
+		"org", saved.OrgID,
+		"github_repo", saved.GitHubRepo,
+		"github_base_branch", saved.GitHubBaseBranch,
+		"has_github_token", saved.GitHubToken != "",
+		"has_slack_bot", saved.SlackBotToken != "",
+		"has_slack_socket", saved.SlackSocketToken != "",
+		"has_sx", saved.SXKey != "",
+	)
 	// Slack creds may have changed; rebuild that org's connection.
 	b.slack.RestartOrg(r.Context(), p.OrgID)
 	http.Redirect(w, r, "/settings/org?saved=1", http.StatusFound)

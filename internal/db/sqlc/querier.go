@@ -12,7 +12,6 @@ type Querier interface {
 	DeleteConversation(ctx context.Context, arg DeleteConversationParams) error
 	GetConversation(ctx context.Context, arg GetConversationParams) (Conversation, error)
 	GetOrgConfig(ctx context.Context, orgID string) (OrgConfig, error)
-	GetOrgConfigBySlackTeam(ctx context.Context, slackTeamID *string) (OrgConfig, error)
 	ListConversationsByOrg(ctx context.Context, orgID string) ([]Conversation, error)
 	ListOrgConfigsWithSlack(ctx context.Context) ([]OrgConfig, error)
 	UpsertConversation(ctx context.Context, arg UpsertConversationParams) (Conversation, error)
