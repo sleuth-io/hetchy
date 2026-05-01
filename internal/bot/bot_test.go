@@ -11,7 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
 	sdkerrors "github.com/daytonaio/daytona/libs/sdk-go/pkg/errors"
+	"github.com/daytonaio/daytona/libs/sdk-go/pkg/types"
 )
 
 func discardLogger() *slog.Logger {
@@ -234,55 +236,45 @@ func TestTruncate(t *testing.T) {
 	}
 }
 
-// TestRetryLoop verifies that isTransientError correctly classifies errors
-// for use in the retry loop in createSandboxWithRetry.
 func TestRetryLoop(t *testing.T) {
-	t.Run("succeeds on first attempt", func(t *testing.T) {
-		attempt := 0
-		if attempt != 0 {
-			t.Errorf("expected 0 attempts, got %d", attempt)
-		}
-	})
+	err503 := sdkerrors.NewDaytonaError("service unavailable", 503, nil)
+	err401 := sdkerrors.NewDaytonaError("unauthorized", 401, nil)
+	err429 := sdkerrors.NewDaytonaError("rate limited", 429, nil)
 
-	t.Run("retries transient error and succeeds", func(t *testing.T) {
-		errs := []error{
-			sdkerrors.NewDaytonaError("service unavailable", 503, nil),
-			sdkerrors.NewDaytonaError("service unavailable", 503, nil),
-			nil,
-		}
-		for i, err := range errs {
-			if err == nil {
-				if i != 2 {
-					t.Errorf("expected success on attempt 2, got attempt %d", i)
-				}
-				break
-			}
-			if !isTransientError(err) {
-				t.Errorf("attempt %d: expected transient error, got non-transient", i)
-			}
-		}
-	})
+	cases := []struct {
+		name      string
+		returns   []error
+		wantCalls int
+		wantErr   bool
+	}{
+		{name: "succeeds on first attempt", returns: []error{nil}, wantCalls: 1},
+		{name: "retries transient error and succeeds", returns: []error{err503, err503, nil}, wantCalls: 3},
+		{name: "gives up after max retries", returns: []error{err503, err503, err503}, wantCalls: 3, wantErr: true},
+		{name: "does not retry permanent error", returns: []error{err401}, wantCalls: 1, wantErr: true},
+		{name: "429 via DaytonaError triggers retry", returns: []error{err429, nil}, wantCalls: 2},
+	}
 
-	t.Run("gives up after max retries", func(t *testing.T) {
-		maxRetries := 3
-		for attempt := 0; attempt <= maxRetries; attempt++ {
-			err := sdkerrors.NewDaytonaError("service unavailable", 503, nil)
-			if attempt >= maxRetries {
-				if !isTransientError(err) {
-					t.Error("error should still be transient")
-				}
-				break
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			b := &Bot{
+				log:          discardLogger(),
+				retryBackoff: 0,
+				convos:       make(map[string]*conversation),
 			}
-			if !isTransientError(err) {
-				t.Errorf("attempt %d: expected transient error", attempt)
+			b.createFn = func(_ context.Context, _ any) (*daytona.Sandbox, error) {
+				err := tc.returns[calls]
+				calls++
+				return nil, err
 			}
-		}
-	})
 
-	t.Run("does not retry permanent error", func(t *testing.T) {
-		err := sdkerrors.NewDaytonaError("unauthorized", 401, nil)
-		if isTransientError(err) {
-			t.Error("401 should not be transient")
-		}
-	})
+			_, err := b.createSandboxWithRetry(context.Background(), types.SnapshotParams{})
+			if (err != nil) != tc.wantErr {
+				t.Errorf("wantErr=%v, got err=%v", tc.wantErr, err)
+			}
+			if calls != tc.wantCalls {
+				t.Errorf("wantCalls=%d, got calls=%d", tc.wantCalls, calls)
+			}
+		})
+	}
 }

@@ -43,6 +43,10 @@ type Bot struct {
 	socket  *socketmode.Client
 	daytona *daytona.Client
 
+	// createFn is called by createSandboxWithRetry; overridable in tests.
+	createFn     func(context.Context, any) (*daytona.Sandbox, error)
+	retryBackoff time.Duration
+
 	mu     sync.Mutex
 	convos map[string]*conversation
 }
@@ -63,7 +67,10 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 		log.Info("daytona configured", "mode", "cloud", "url", "app.daytona.io")
 	}
 
-	b := &Bot{cfg: cfg, log: log, daytona: dc, convos: make(map[string]*conversation)}
+	b := &Bot{cfg: cfg, log: log, daytona: dc, retryBackoff: initialBackoff, convos: make(map[string]*conversation)}
+	b.createFn = func(ctx context.Context, params any) (*daytona.Sandbox, error) {
+		return dc.Create(ctx, params)
+	}
 	if !cfg.DisableSlack {
 		b.slack = slack.New(cfg.SlackBotToken, slack.OptionAppLevelToken(cfg.SlackSocketToken))
 		b.socket = socketmode.New(b.slack)
@@ -247,10 +254,10 @@ func truncate(s string, n int) string {
 // for transient errors. It tries up to maxRetries times with progressive backoff.
 func (b *Bot) createSandboxWithRetry(ctx context.Context, params types.SnapshotParams) (*daytona.Sandbox, error) {
 	var lastErr error
-	backoff := initialBackoff
+	backoff := b.retryBackoff
 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
-		sb, err := b.daytona.Create(ctx, params)
+		sb, err := b.createFn(ctx, params)
 		if err == nil {
 			if attempt > 1 {
 				b.log.Info("sandbox created after retry", "attempt", attempt)
