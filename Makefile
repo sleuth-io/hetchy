@@ -119,15 +119,17 @@ daytona-logs: ## Tail Daytona stack logs
 snapshot: ## Build the custom sandbox image
 	docker build --platform=linux/amd64 -t $(SNAPSHOT_NAME):$(SNAPSHOT_TAG) sandbox
 
-push-snapshot: snapshot ## Build the sandbox image and register it as a Daytona snapshot
+push-snapshot: snapshot ## Build the sandbox image and register it as a Daytona snapshot (via doppler)
+	@which doppler > /dev/null 2>&1 || (echo "doppler CLI not found. Install: https://docs.doppler.com/docs/install-cli" && exit 1)
 	@which daytona > /dev/null 2>&1 || ( \
 	  echo "daytona CLI not found. Install it:"; \
 	  echo "  macOS:  brew install daytonaio/cli/daytona"; \
 	  echo "  Other:  curl -fsSL https://download.daytona.io/daytona/install.sh | bash"; \
-	  echo "Then run: daytona login"; \
 	  exit 1; \
 	)
-	daytona snapshot push $(SNAPSHOT_NAME):$(SNAPSHOT_TAG) --name $(SNAPSHOT_NAME)
+	@echo "Pushing to the Daytona instance defined by your active doppler config:"
+	@doppler run -- bash -c 'printf "  doppler:         %s/%s\n" "$$DOPPLER_PROJECT" "$$DOPPLER_CONFIG"; printf "  DAYTONA_API_URL: %s\n" "$${DAYTONA_API_URL:-https://app.daytona.io/api (cloud default)}"'
+	doppler run -- daytona snapshot push $(SNAPSHOT_NAME):$(SNAPSHOT_TAG) --name $(SNAPSHOT_NAME)
 	@echo ""
 	@echo "Registered as Daytona snapshot '$(SNAPSHOT_NAME)'."
-	@echo "Set DAYTONA_SNAPSHOT=$(SNAPSHOT_NAME) in your env (or doppler) to use it."
+	@echo "Set DAYTONA_SNAPSHOT=$(SNAPSHOT_NAME) in doppler to use it."
