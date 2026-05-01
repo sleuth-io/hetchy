@@ -1,4 +1,8 @@
+.claude-pr/
+.claude
+.cursor
 .github
 .vscode
 dist
+docs
 hetchy
