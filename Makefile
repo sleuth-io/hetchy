@@ -134,7 +134,7 @@ daytona-logs: ## Tail Daytona stack logs
 
 # Local Postgres (for dev) ---------------------------------------------------
 pg-up: ## Start the local Postgres container in the background
-	@docker compose up -d postgres
+	@doppler run -- docker compose up -d postgres
 
 pg-down: ## Stop the local Postgres container (data persists)
 	@docker compose stop postgres
