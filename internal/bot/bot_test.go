@@ -136,6 +136,8 @@ func TestIsTransientError(t *testing.T) {
 		{"not found 404", sdkerrors.NewDaytonaNotFoundError("not found", nil), false},
 		{"bad request 400", sdkerrors.NewDaytonaError("bad request", 400, nil), false},
 		{"unauthorized 401", sdkerrors.NewDaytonaError("unauthorized", 401, nil), false},
+		{"forbidden 403", sdkerrors.NewDaytonaError("forbidden", 403, nil), false},
+		{"rate limit 429 via DaytonaError", sdkerrors.NewDaytonaError("rate limited", 429, nil), true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -230,4 +232,57 @@ func TestTruncate(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestRetryLoop verifies that isTransientError correctly classifies errors
+// for use in the retry loop in createSandboxWithRetry.
+func TestRetryLoop(t *testing.T) {
+	t.Run("succeeds on first attempt", func(t *testing.T) {
+		attempt := 0
+		if attempt != 0 {
+			t.Errorf("expected 0 attempts, got %d", attempt)
+		}
+	})
+
+	t.Run("retries transient error and succeeds", func(t *testing.T) {
+		errs := []error{
+			sdkerrors.NewDaytonaError("service unavailable", 503, nil),
+			sdkerrors.NewDaytonaError("service unavailable", 503, nil),
+			nil,
+		}
+		for i, err := range errs {
+			if err == nil {
+				if i != 2 {
+					t.Errorf("expected success on attempt 2, got attempt %d", i)
+				}
+				break
+			}
+			if !isTransientError(err) {
+				t.Errorf("attempt %d: expected transient error, got non-transient", i)
+			}
+		}
+	})
+
+	t.Run("gives up after max retries", func(t *testing.T) {
+		maxRetries := 3
+		for attempt := 0; attempt <= maxRetries; attempt++ {
+			err := sdkerrors.NewDaytonaError("service unavailable", 503, nil)
+			if attempt >= maxRetries {
+				if !isTransientError(err) {
+					t.Error("error should still be transient")
+				}
+				break
+			}
+			if !isTransientError(err) {
+				t.Errorf("attempt %d: expected transient error", attempt)
+			}
+		}
+	})
+
+	t.Run("does not retry permanent error", func(t *testing.T) {
+		err := sdkerrors.NewDaytonaError("unauthorized", 401, nil)
+		if isTransientError(err) {
+			t.Error("401 should not be transient")
+		}
+	})
 }

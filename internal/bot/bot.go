@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -137,6 +138,11 @@ func (b *Bot) HandleRequest(ctx context.Context, text, requestID, threadID strin
 		Snapshot: b.cfg.Snapshot,
 	})
 	if err != nil {
+		if ctx.Err() != nil {
+			b.log.Error("sandbox create cancelled", "error", err)
+			onError(fmt.Sprintf("Sandbox create cancelled: `%v`", ctx.Err()))
+			return
+		}
 		b.log.Error("sandbox create failed", "error", err)
 		onError(fmt.Sprintf("Sandbox create failed: `%v`", err))
 		return
@@ -219,7 +225,9 @@ func isTransientError(err error) bool {
 	}
 	var dayErr *sdkerrors.DaytonaError
 	if errors.As(err, &dayErr) {
-		return dayErr.StatusCode == 0 || (dayErr.StatusCode >= 500 && dayErr.StatusCode < 600)
+		return dayErr.StatusCode == 0 ||
+			dayErr.StatusCode == http.StatusTooManyRequests ||
+			(dayErr.StatusCode >= 500 && dayErr.StatusCode < 600)
 	}
 	return false
 }
