@@ -4,12 +4,8 @@ package bot
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"log/slog"
-	"os"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -22,59 +18,12 @@ import (
 
 const workdir = "/home/daytona/work"
 
-var prURLRe = regexp.MustCompile(`https://github\.com/[^\s]+/pull/\d+`)
-
-const agentPromptTemplate = `You are working inside a fresh sandbox. The repo %s has been cloned
-to %s and %s is checked out. Your task is the user request below.
-
-USER REQUEST:
-%s
-
-When you are done implementing the change:
-  1. Create a new branch named feature/sf-%s.
-  2. Stage and commit your changes with a clear message.
-  3. Push the branch to origin (gh CLI is already authenticated).
-  4. Open a pull request against %s with ` + "`gh pr create`" + `, giving it a
-     clear title and a markdown body describing what changed and why.
-  5. The very last line of your output MUST be just the PR URL — no other
-     text on that line.`
-
-const agentFollowUpPromptTemplate = `You are continuing work in %s on branch %s.
-The pull request is at %s.
-
-Conversation so far:
-%s
-
-USER REQUEST:
-%s
-
-When you are done implementing the change:
-  1. Stage and commit your changes with a clear message.
-  2. Push the branch to origin — the PR will update automatically.
-  3. DO NOT update the PR title — it should remain consistent with the original
-     user request shown in "Conversation so far" above, not this latest change.
-  4. The very last line of your output MUST be just the PR URL — no other
-     text on that line.`
-
 // conversation holds the live state for an ongoing multi-turn session.
 type conversation struct {
 	sandbox *daytona.Sandbox
 	branch  string
 	prURL   string
 	history []string // user turns, oldest first
-}
-
-// persistedConversation is the on-disk representation of a conversation.
-// The sandbox is referenced by ID and rehydrated on load.
-type persistedConversation struct {
-	SandboxID string   `json:"sandbox_id"`
-	Branch    string   `json:"branch"`
-	PRURL     string   `json:"pr_url"`
-	History   []string `json:"history"`
-}
-
-type persistedState struct {
-	Conversations map[string]*persistedConversation `json:"conversations"`
 }
 
 // Bot wires Slack, the web UI, Daytona, and the agent loop together.
@@ -85,7 +34,7 @@ type Bot struct {
 	socket  *socketmode.Client
 	daytona *daytona.Client
 
-	mu    sync.Mutex
+	mu     sync.Mutex
 	convos map[string]*conversation
 }
 
@@ -114,57 +63,6 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 		log.Warn("could not load state file", "path", cfg.StateFile, "error", err)
 	}
 	return b, nil
-}
-
-func (b *Bot) loadState(ctx context.Context) error {
-	data, err := os.ReadFile(b.cfg.StateFile)
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	var ps persistedState
-	if err := json.Unmarshal(data, &ps); err != nil {
-		return fmt.Errorf("parse state file: %w", err)
-	}
-	for threadID, pc := range ps.Conversations {
-		sb, err := b.daytona.Get(ctx, pc.SandboxID)
-		if err != nil {
-			b.log.Warn("state: sandbox not found, dropping conversation",
-				"thread_id", threadID, "sandbox_id", pc.SandboxID, "error", err)
-			continue
-		}
-		b.convos[threadID] = &conversation{
-			sandbox: sb,
-			branch:  pc.Branch,
-			prURL:   pc.PRURL,
-			history: pc.History,
-		}
-		b.log.Info("state: restored conversation",
-			"thread_id", threadID, "sandbox_id", pc.SandboxID, "branch", pc.Branch)
-	}
-	return nil
-}
-
-func (b *Bot) saveState() {
-	ps := persistedState{Conversations: make(map[string]*persistedConversation, len(b.convos))}
-	for threadID, conv := range b.convos {
-		ps.Conversations[threadID] = &persistedConversation{
-			SandboxID: conv.sandbox.ID,
-			Branch:    conv.branch,
-			PRURL:     conv.prURL,
-			History:   conv.history,
-		}
-	}
-	data, err := json.MarshalIndent(ps, "", "  ")
-	if err != nil {
-		b.log.Error("state: marshal failed", "error", err)
-		return
-	}
-	if err := os.WriteFile(b.cfg.StateFile, data, 0600); err != nil {
-		b.log.Error("state: write failed", "path", b.cfg.StateFile, "error", err)
-	}
 }
 
 // Run starts the configured transports (Slack socket-mode + web UI by default;
@@ -215,12 +113,16 @@ func (b *Bot) HandleRequest(ctx context.Context, text, requestID, threadID strin
 	// New conversation: spin up a sandbox and open a PR.
 	onUpdate("Spinning up an isolated sandbox for your request...")
 
+	envVars := map[string]string{
+		"ANTHROPIC_API_KEY": b.cfg.AnthropicAPIKey,
+		"GITHUB_TOKEN":      b.cfg.GitHubToken,
+	}
+	if b.cfg.SXKey != "" {
+		envVars["SX_KEY"] = b.cfg.SXKey
+	}
 	sb, err := b.daytona.Create(ctx, types.SnapshotParams{
 		SandboxBaseParams: types.SandboxBaseParams{
-			EnvVars: map[string]string{
-				"ANTHROPIC_API_KEY": b.cfg.AnthropicAPIKey,
-				"GITHUB_TOKEN":      b.cfg.GitHubToken,
-			},
+			EnvVars: envVars,
 		},
 		Snapshot: b.cfg.Snapshot,
 	})
@@ -295,200 +197,6 @@ func (b *Bot) handleFollowUp(ctx context.Context, conv *conversation, text, requ
 	b.mu.Unlock()
 
 	onUpdate("Done! :tada: " + prURL)
-}
-
-func (b *Bot) sh(ctx context.Context, sb *daytona.Sandbox, sessionID, step, cmd string, timeout time.Duration, onUpdate func(string)) (string, error) {
-	b.log.Info("sandbox step start", "sandbox", sb.ID, "step", step, "timeout", timeout)
-
-	stepCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	res, err := sb.Process.ExecuteSessionCommand(stepCtx, sessionID, cmd, true, false)
-	if err != nil {
-		b.log.Error("sandbox step exec error", "sandbox", sb.ID, "step", step, "error", err)
-		return "", fmt.Errorf("step %q exec error: %w", step, err)
-	}
-	cmdID, _ := res["id"].(string)
-
-	stdout := make(chan string, 64)
-	stderr := make(chan string, 64)
-	var buf strings.Builder
-
-	streamDone := make(chan error, 1)
-	go func() {
-		streamDone <- sb.Process.GetSessionCommandLogsStream(stepCtx, sessionID, cmdID, stdout, stderr)
-	}()
-
-	for stdout != nil || stderr != nil {
-		select {
-		case chunk, ok := <-stdout:
-			if !ok {
-				stdout = nil
-				continue
-			}
-			buf.WriteString(chunk)
-			b.log.Info("sandbox output", "sandbox", sb.ID, "step", step, "stream", "stdout", "chunk", chunk)
-			onUpdate(chunk)
-		case chunk, ok := <-stderr:
-			if !ok {
-				stderr = nil
-				continue
-			}
-			buf.WriteString(chunk)
-			b.log.Info("sandbox output", "sandbox", sb.ID, "step", step, "stream", "stderr", "chunk", chunk)
-			onUpdate(chunk)
-		}
-	}
-	<-streamDone
-
-	status, err := sb.Process.GetSessionCommand(ctx, sessionID, cmdID)
-	if err != nil {
-		return "", fmt.Errorf("step %q status: %w", step, err)
-	}
-	if exitCode, ok := status["exitCode"]; ok {
-		code, _ := exitCode.(int32)
-		if code != 0 {
-			out := buf.String()
-			if len(out) > 2000 {
-				out = "...(truncated)...\n" + out[len(out)-2000:]
-			}
-			b.log.Error("sandbox step failed", "sandbox", sb.ID, "step", step, "exit", code)
-			return "", fmt.Errorf("step %q exit %d:\n%s", step, code, out)
-		}
-	}
-
-	b.log.Info("sandbox step ok", "sandbox", sb.ID, "step", step, "output_bytes", buf.Len())
-	return buf.String(), nil
-}
-
-func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, userRequest, requestID string, onUpdate func(string)) (string, error) {
-	sessionID := "agent-" + requestID
-	if err := sb.Process.CreateSession(ctx, sessionID); err != nil {
-		return "", fmt.Errorf("create session: %w", err)
-	}
-	defer func() { _ = sb.Process.DeleteSession(ctx, sessionID) }()
-
-	prompt := fmt.Sprintf(agentPromptTemplate,
-		b.cfg.GitHubRepo, workdir, b.cfg.BaseBranch,
-		userRequest, requestID, b.cfg.BaseBranch,
-	)
-
-	// Base64-encode the prompt so it's a single safe line — no quoting or
-	// heredoc issues regardless of what's in the user request.
-	promptB64 := base64.StdEncoding.EncodeToString([]byte(prompt))
-
-	// Write a single self-contained script to the sandbox and run it in one step.
-	script := fmt.Sprintf(`#!/bin/bash
-set -euo pipefail
-
-echo "[sf] setting up git auth"
-git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
-
-echo "[sf] cloning %s"
-git clone https://github.com/%s.git %s
-cd %s
-git checkout %s
-git config user.email 'software-factory-bot@users.noreply.github.com'
-git config user.name 'software-factory-bot'
-
-echo "[sf] verifying claude"
-which claude
-
-echo "[sf] initializing claude config"
-mkdir -p "$HOME/.claude"
-printf '{"hasCompletedOnboarding":true}\n' > "$HOME/.claude.json"
-
-echo "[sf] running claude"
-export ANTHROPIC_API_KEY=%s
-echo %s | base64 -d > /tmp/sf-prompt.txt
-claude --print --dangerously-skip-permissions < /tmp/sf-prompt.txt
-`,
-		b.cfg.GitHubRepo,
-		b.cfg.GitHubRepo, workdir,
-		workdir,
-		b.cfg.BaseBranch,
-		shellQuote(b.cfg.AnthropicAPIKey),
-		shellQuote(promptB64),
-	)
-
-	b.log.Info("agent script", "sandbox", sb.ID, "script", script)
-
-	// Write script file then execute it.
-	writeCmd := fmt.Sprintf("cat > /tmp/sf-agent.sh << 'SFEOF'\n%sSFEOF\nchmod +x /tmp/sf-agent.sh", script)
-	if _, err := b.sh(ctx, sb, sessionID, "write-script", writeCmd, 15*time.Second, onUpdate); err != nil {
-		return "", err
-	}
-
-	out, err := b.sh(ctx, sb, sessionID, "run-script", "bash /tmp/sf-agent.sh", 20*time.Minute, onUpdate)
-	if err != nil {
-		return "", err
-	}
-
-	match := prURLRe.FindString(out)
-	if match == "" {
-		tail := out
-		if len(tail) > 1500 {
-			tail = tail[len(tail)-1500:]
-		}
-		return "", fmt.Errorf("no PR URL found in agent output. Tail:\n%s", tail)
-	}
-	return match, nil
-}
-
-func (b *Bot) runFollowUp(ctx context.Context, conv *conversation, userRequest, requestID string, onUpdate func(string)) (string, error) {
-	sessionID := "followup-" + requestID
-	if err := conv.sandbox.Process.CreateSession(ctx, sessionID); err != nil {
-		return "", fmt.Errorf("create session: %w", err)
-	}
-	defer func() { _ = conv.sandbox.Process.DeleteSession(ctx, sessionID) }()
-
-	history := strings.Join(conv.history, "\n---\n")
-	prompt := fmt.Sprintf(agentFollowUpPromptTemplate,
-		workdir, conv.branch, conv.prURL,
-		history, userRequest,
-	)
-	promptB64 := base64.StdEncoding.EncodeToString([]byte(prompt))
-
-	script := fmt.Sprintf(`#!/bin/bash
-set -euo pipefail
-
-echo "[sf] checking out branch"
-cd %s
-git fetch origin
-git checkout %s
-git pull --rebase origin %s
-
-echo "[sf] running claude"
-export ANTHROPIC_API_KEY=%s
-echo %s | base64 -d > /tmp/sf-prompt.txt
-claude --print --dangerously-skip-permissions < /tmp/sf-prompt.txt
-`,
-		workdir, conv.branch, conv.branch,
-		shellQuote(b.cfg.AnthropicAPIKey),
-		shellQuote(promptB64),
-	)
-
-	b.log.Info("follow-up script", "sandbox", conv.sandbox.ID, "script", script)
-
-	writeCmd := fmt.Sprintf("cat > /tmp/sf-followup.sh << 'SFEOF'\n%sSFEOF\nchmod +x /tmp/sf-followup.sh", script)
-	if _, err := b.sh(ctx, conv.sandbox, sessionID, "write-script", writeCmd, 15*time.Second, onUpdate); err != nil {
-		return "", err
-	}
-
-	out, err := b.sh(ctx, conv.sandbox, sessionID, "run-script", "bash /tmp/sf-followup.sh", 20*time.Minute, onUpdate)
-	if err != nil {
-		return "", err
-	}
-
-	match := prURLRe.FindString(out)
-	if match == "" {
-		tail := out
-		if len(tail) > 1500 {
-			tail = tail[len(tail)-1500:]
-		}
-		return "", fmt.Errorf("no PR URL found in follow-up output. Tail:\n%s", tail)
-	}
-	return match, nil
 }
 
 func shellQuote(s string) string {

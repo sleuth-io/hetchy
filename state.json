@@ -1,0 +1,13 @@
+{
+  "conversations": {
+    "b8585fd7-ef41-4292-8ab7-bb2f61e28087": {
+      "sandbox_id": "1ae48ed6-738d-43dc-8d52-b7cae7b02d20",
+      "branch": "feature/sf-1777658769939",
+      "pr_url": "https://github.com/rberrelleza/software-factory/pull/28",
+      "history": [
+        "build a readme.md for this repo and create a pr",
+        "Update the readme to include information about how the project is structured"
+      ]
+    }
+  }
+}
