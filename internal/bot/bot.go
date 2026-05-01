@@ -4,6 +4,7 @@ package bot
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
+	sdkerrors "github.com/daytonaio/daytona/libs/sdk-go/pkg/errors"
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/types"
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/socketmode"
@@ -207,6 +209,21 @@ func (b *Bot) handleFollowUp(ctx context.Context, conv *conversation, text, requ
 	onComplete(prURL)
 }
 
+// isTransientError reports whether err is a retryable Daytona API error:
+// rate-limit (429), server-side 5xx responses, and network-level failures
+// (StatusCode == 0) are all considered transient.
+func isTransientError(err error) bool {
+	var rateLimitErr *sdkerrors.DaytonaRateLimitError
+	if errors.As(err, &rateLimitErr) {
+		return true
+	}
+	var dayErr *sdkerrors.DaytonaError
+	if errors.As(err, &dayErr) {
+		return dayErr.StatusCode == 0 || (dayErr.StatusCode >= 500 && dayErr.StatusCode < 600)
+	}
+	return false
+}
+
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
@@ -216,40 +233,6 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "..."
-}
-
-// isTransientError determines if an error is likely transient and worth retrying.
-// Common transient errors include network issues, timeouts, and temporary service unavailability.
-func isTransientError(err error) bool {
-	if err == nil {
-		return false
-	}
-	errStr := strings.ToLower(err.Error())
-
-	// Check for common transient error patterns
-	transientPatterns := []string{
-		"timeout",
-		"connection refused",
-		"connection reset",
-		"temporary failure",
-		"service unavailable",
-		"too many requests",
-		"rate limit",
-		"503",
-		"502",
-		"504",
-		"network",
-		"dial tcp",
-		"i/o timeout",
-		"eof",
-	}
-
-	for _, pattern := range transientPatterns {
-		if strings.Contains(errStr, pattern) {
-			return true
-		}
-	}
-	return false
 }
 
 // createSandboxWithRetry attempts to create a Daytona sandbox with retry logic
