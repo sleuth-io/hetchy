@@ -132,7 +132,18 @@ func (b *Bot) onboardingHandler(w http.ResponseWriter, r *http.Request) {
 		b.log.Error("upsert empty org config", "error", err)
 	}
 	if err := b.auth.SwitchOrg(w, r, orgID); err != nil {
-		b.log.Error("switch org cookie failed", "error", err)
+		// The org exists in WorkOS and the membership is in place; only the
+		// session cookie failed to update. Falling through here would
+		// redirect to /settings/org → RequireOrg → /onboarding (infinite
+		// loop), and the user could re-submit and orphan a second org.
+		// Stop the flow and instruct them to re-auth — a fresh login will
+		// issue a session whose JWT carries the new org_id.
+		b.log.Error("switch org cookie failed", "error", err, "org", orgID)
+		b.renderTemplate(w, onboardingHTMLTpl, map[string]any{
+			"Email": p.Email,
+			"Error": "Your organization was created but we could not update your session. Please log out and sign in again.",
+		})
+		return
 	}
 	http.Redirect(w, r, "/settings/org", http.StatusFound)
 }
