@@ -279,7 +279,7 @@ make format        # Format code
 ### Pre-push Checks
 
 ```bash
-make prepush       # Format, lint, test, build
+make format        # Format code
 ```
 
 ### Debugging
@@ -455,7 +455,7 @@ User (Slack or Browser)
 1. Fork the repository
 2. Create a feature branch
 3. Make your changes
-4. Run `make prepush` to verify
+4. Run `make format` to verify
 5. Open a pull request
 
 ## Built with
