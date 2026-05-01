@@ -77,7 +77,6 @@ doppler setup   # uses the project/config defined in doppler.yaml
 | `DAYTONA_API_KEY` | Daytona API key |
 | `DAYTONA_SNAPSHOT` | Custom snapshot image (optional) |
 | `WEB_PORT` | Web UI port (default: 8080) |
-| `STATE_FILE` | Conversation state file (default: state.json) |
 | `DISABLE_SLACK` | Set to 1 to run web UI only |
 
 ### 3. Set Up Daytona
@@ -241,7 +240,7 @@ docker run -p 8080:8080 \
 docker compose up
 ```
 
-The compose file reads environment variables from your shell (or a `.env` file), binds port 8080, and mounts a volume for `state.json`.
+The compose file reads environment variables from your shell (or a `.env` file) and binds port 8080.
 
 ## Troubleshooting
 
