@@ -18,6 +18,12 @@ import (
 	"github.com/slack-go/slack/socketmode"
 )
 
+const (
+	maxRetries        = 3
+	initialBackoff    = 2 * time.Second
+	backoffMultiplier = 2
+)
+
 const workdir = "/home/daytona/work"
 
 // conversation holds the live state for an ongoing multi-turn session.
@@ -124,34 +130,16 @@ func (b *Bot) HandleRequest(ctx context.Context, text, requestID, threadID strin
 	if b.cfg.SXKey != "" {
 		envVars["SX_KEY"] = b.cfg.SXKey
 	}
-	params := types.SnapshotParams{
+	sb, err := b.createSandboxWithRetry(ctx, types.SnapshotParams{
 		SandboxBaseParams: types.SandboxBaseParams{
 			EnvVars: envVars,
 		},
 		Snapshot: b.cfg.Snapshot,
-	}
-	const maxRetries = 3
-	backoff := 2 * time.Second
-	var sb *daytona.Sandbox
-	for attempt := 0; ; attempt++ {
-		var err error
-		sb, err = b.daytona.Create(ctx, params)
-		if err == nil {
-			break
-		}
-		if attempt >= maxRetries || !isTransientError(err) {
-			b.log.Error("sandbox create failed", "error", err, "attempts", attempt+1)
-			onError(fmt.Sprintf("Sandbox create failed: `%v`", err))
-			return
-		}
-		b.log.Warn("sandbox create failed, retrying", "error", err, "attempt", attempt+1, "backoff", backoff)
-		select {
-		case <-ctx.Done():
-			onError(fmt.Sprintf("Sandbox create cancelled: `%v`", ctx.Err()))
-			return
-		case <-time.After(backoff):
-		}
-		backoff *= 2
+	})
+	if err != nil {
+		b.log.Error("sandbox create failed", "error", err)
+		onError(fmt.Sprintf("Sandbox create failed: `%v`", err))
+		return
 	}
 	b.log.Info("sandbox created", "id", sb.ID, "request_id", requestID)
 	onUpdate(fmt.Sprintf("Sandbox `%s` ready — cloning repo and starting Claude Code.", sb.ID))
@@ -245,4 +233,45 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "..."
+}
+
+// createSandboxWithRetry attempts to create a Daytona sandbox with retry logic
+// for transient errors. It tries up to maxRetries times with progressive backoff.
+func (b *Bot) createSandboxWithRetry(ctx context.Context, params types.SnapshotParams) (*daytona.Sandbox, error) {
+	var lastErr error
+	backoff := initialBackoff
+
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		sb, err := b.daytona.Create(ctx, params)
+		if err == nil {
+			if attempt > 1 {
+				b.log.Info("sandbox created after retry", "attempt", attempt)
+			}
+			return sb, nil
+		}
+
+		lastErr = err
+
+		// Don't retry on final attempt or non-transient errors
+		if attempt == maxRetries || !isTransientError(err) {
+			break
+		}
+
+		b.log.Warn("sandbox creation failed, retrying",
+			"attempt", attempt,
+			"max_retries", maxRetries,
+			"backoff", backoff,
+			"error", err,
+		)
+
+		// Wait with progressive backoff before next attempt
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(backoff):
+			backoff *= backoffMultiplier
+		}
+	}
+
+	return nil, lastErr
 }

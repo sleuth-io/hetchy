@@ -2,7 +2,7 @@ package bot
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -126,7 +126,7 @@ func TestIsTransientError(t *testing.T) {
 		transient bool
 	}{
 		{"nil", nil, false},
-		{"plain error", fmt.Errorf("something"), false},
+		{"plain error", errors.New("something"), false},
 		{"rate limit 429", sdkerrors.NewDaytonaRateLimitError("too many requests", nil), true},
 		{"network error status 0", sdkerrors.NewDaytonaError("connection refused", 0, nil), true},
 		{"server error 500", sdkerrors.NewDaytonaError("internal server error", 500, nil), true},
