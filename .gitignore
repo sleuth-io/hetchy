@@ -54,3 +54,4 @@ temp/
 
 # Bot runtime state (conversation persistence; STATE_FILE in config.go)
 state.json
+state.json.old
