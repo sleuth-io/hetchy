@@ -103,8 +103,13 @@ if $is_local; then
 
   wait_until_active
 else
-  echo "→ cloud Daytona; using 'daytona snapshot push' (requires 'daytona login')"
-  daytona snapshot push "$SNAPSHOT_NAME:$SNAPSHOT_TAG" --name "$SNAPSHOT_NAME"
+  echo "→ cloud Daytona; using 'daytona snapshot push'"
+  # `snapshot push` requires the keychain-stored creds from `daytona login
+  # --api-key`. Unset DAYTONA_API_KEY/URL so the doppler-injected env
+  # doesn't shadow the CLI's persisted credentials. Push handles overwrite
+  # of an existing snapshot of the same name on its own.
+  env -u DAYTONA_API_KEY -u DAYTONA_API_URL \
+    daytona snapshot push "$SNAPSHOT_NAME:$SNAPSHOT_TAG" --name "$SNAPSHOT_NAME"
 fi
 
 echo
