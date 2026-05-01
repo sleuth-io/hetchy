@@ -1,4 +1,4 @@
-.PHONY: help build install test ci lint format clean tidy deps verify update-deps init prepush postpull bot bot-tee web logs dev daytona-up daytona-down daytona-logs snapshot push-snapshot
+.PHONY: help build install test ci lint format clean tidy deps verify update-deps init prepush postpull bot bot-tee web logs dev daytona-up daytona-down daytona-logs snapshot push-snapshot db-up db-down db-status db-new sqlc-generate pg-up pg-down pg-logs pg-psql pg-reset
 
 # Default target
 help: ## Show this help message
@@ -131,6 +131,55 @@ daytona-down: ## Stop the local Daytona OSS stack
 
 daytona-logs: ## Tail Daytona stack logs
 	$(COMPOSE) logs -f --tail=100
+
+# Local Postgres (for dev) ---------------------------------------------------
+pg-up: ## Start the local Postgres container in the background
+	@docker compose up -d postgres
+
+pg-down: ## Stop the local Postgres container (data persists)
+	@docker compose stop postgres
+
+pg-logs: ## Tail Postgres logs
+	@docker compose logs -f postgres
+
+pg-psql: ## Open a psql shell on the local Postgres
+	@docker compose exec postgres psql -U postgres -d hetchy
+
+pg-reset: ## Wipe local Postgres data (destructive — confirms first)
+	@printf "This will DROP the local Postgres volume. Continue? [y/N] " && read ans && [ "$$ans" = "y" ]
+	@docker compose down postgres -v
+
+# Database (Supabase / Postgres) ----------------------------------------------
+# DATABASE_URL is loaded from Doppler. For migrations, prefer the direct
+# connection (port 5432), not the transaction pooler.
+#
+# sqlc and migrate are pinned to versions that are compatible with the project's
+# Go directive. They are run via `go run pkg@version` so they don't appear as
+# tool entries in go.mod (which would drag in their full transitive graphs).
+MIGRATE_DIR    ?= db/migrations
+SQLC_VERSION   ?= v1.30.0
+MIGRATE_VERSION?= v4.19.1
+SQLC           = go run github.com/sqlc-dev/sqlc/cmd/sqlc@$(SQLC_VERSION)
+MIGRATE        = go run -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@$(MIGRATE_VERSION)
+
+sqlc-generate: ## Regenerate type-safe Go from db/queries against db/migrations
+	@$(SQLC) generate
+
+db-up: ## Apply all pending migrations
+	@which doppler > /dev/null || (echo "doppler CLI not found." && exit 1)
+	@doppler run -- sh -c '$(MIGRATE) -path "$(MIGRATE_DIR)" -database "$$DATABASE_URL" up'
+
+db-down: ## Roll back one migration (use db-down N=3 to roll back N)
+	@which doppler > /dev/null || (echo "doppler CLI not found." && exit 1)
+	@doppler run -- sh -c '$(MIGRATE) -path "$(MIGRATE_DIR)" -database "$$DATABASE_URL" down $(N)'
+
+db-status: ## Show current migration version
+	@which doppler > /dev/null || (echo "doppler CLI not found." && exit 1)
+	@doppler run -- sh -c '$(MIGRATE) -path "$(MIGRATE_DIR)" -database "$$DATABASE_URL" version'
+
+db-new: ## Create a new timestamped migration pair (usage: make db-new name=add_users)
+	@if [ -z "$(name)" ]; then echo "usage: make db-new name=<snake_case_name>"; exit 1; fi
+	@$(MIGRATE) create -ext sql -dir "$(MIGRATE_DIR)" -seq=false "$(name)"
 
 # Sandbox snapshot
 snapshot: ## Build the custom sandbox image
