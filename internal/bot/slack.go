@@ -127,6 +127,8 @@ func (b *Bot) processSlackEvent(ctx context.Context, ev incoming) {
 		_, active := b.convos[ev.threadTS]
 		b.mu.Unlock()
 		if !active {
+			b.log.Warn("no active conversation for thread, ignoring message",
+				"thread_ts", ev.threadTS, "user", ev.user, "channel", ev.channel)
 			return
 		}
 	}
