@@ -169,8 +169,10 @@ func (b *Bot) HandleRequest(ctx context.Context, text, requestID, threadID strin
 		return
 	}
 
-	// Archive the sandbox to save cost; it will be started again on follow-up.
-	if err := sb.Archive(ctx); err != nil {
+	// Stop then archive the sandbox to save cost; Start restores it on follow-up.
+	if err := sb.Stop(ctx); err != nil {
+		b.log.Error("sandbox stop failed", "sandbox", sb.ID, "error", err)
+	} else if err := sb.Archive(ctx); err != nil {
 		b.log.Error("sandbox archive failed", "sandbox", sb.ID, "error", err)
 	}
 
@@ -208,7 +210,9 @@ func (b *Bot) handleFollowUp(ctx context.Context, conv *conversation, text, requ
 		return
 	}
 
-	if err := conv.sandbox.Archive(ctx); err != nil {
+	if err := conv.sandbox.Stop(ctx); err != nil {
+		b.log.Error("sandbox stop failed", "sandbox", conv.sandbox.ID, "error", err)
+	} else if err := conv.sandbox.Archive(ctx); err != nil {
 		b.log.Error("sandbox archive failed", "sandbox", conv.sandbox.ID, "error", err)
 	}
 
