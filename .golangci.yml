@@ -1,0 +1,82 @@
+version: "2"
+
+run:
+  go: "1.25"
+  modules-download-mode: readonly
+
+linters:
+  default: none
+  enable:
+    # --- Structural & Complexity ---
+    - gocyclo
+
+    # --- Safety & Error Handling ---
+    - errorlint
+    - nilnil
+    - bodyclose
+    - fatcontext
+    - sqlclosecheck
+
+    # --- Maintenance & Logic ---
+    - staticcheck
+    - unused
+    - ineffassign
+    - exhaustive
+    - dogsled
+
+    # --- Style & Cleanliness ---
+    - misspell
+    - dupword
+    - whitespace
+    - usestdlibvars
+
+    # --- Performance ---
+    - perfsprint
+
+    # --- Testing ---
+    - testifylint
+
+    # --- Modernization ---
+    - modernize
+    - copyloopvar
+    - intrange
+    - exptostd
+    - mirror
+
+  settings:
+    exhaustive:
+      default-signifies-exhaustive: false
+    govet:
+      enable-all: true
+      disable: [fieldalignment]
+    testifylint:
+      disable:
+        - require-error
+
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+formatters:
+  enable:
+    - gofmt
+    - gci
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+        - prefix(github.com/rberrelleza/software-factory)
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
