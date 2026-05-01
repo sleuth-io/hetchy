@@ -9,15 +9,15 @@ import (
 
 	"github.com/joho/godotenv"
 
-	"github.com/rberrelleza/software-factory/internal/bot"
-	"github.com/rberrelleza/software-factory/internal/buildinfo"
+	"github.com/hetchyhq/hetchy/internal/bot"
+	"github.com/hetchyhq/hetchy/internal/buildinfo"
 )
 
 func main() {
 	_ = godotenv.Load()
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	log.Info("software-factory starting",
+	log.Info("hetchy starting",
 		"version", buildinfo.Version,
 		"commit", buildinfo.Commit,
 		"date", buildinfo.Date,

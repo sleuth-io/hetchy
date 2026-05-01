@@ -35,8 +35,8 @@ func TestIndexHandlerServesHTML(t *testing.T) {
 	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
 		t.Errorf("content-type = %q, want text/html...", ct)
 	}
-	if !strings.Contains(rec.Body.String(), "Software Factory") {
-		t.Errorf("body missing 'Software Factory' marker")
+	if !strings.Contains(rec.Body.String(), "Hetchy") {
+		t.Errorf("body missing 'Hetchy' marker")
 	}
 }
 

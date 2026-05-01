@@ -22,7 +22,7 @@ Dockerfile
 .dockerignore
 
 # Build artifacts
-software-factory
+hetchy
 *.exe
 *.dll
 *.so

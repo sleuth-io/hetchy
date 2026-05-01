@@ -19,11 +19,11 @@ ARG VERSION=dev
 ARG COMMIT=none
 ARG DATE=unknown
 RUN CGO_ENABLED=0 GOOS=linux go build \
-    -ldflags "-X github.com/rberrelleza/software-factory/internal/buildinfo.Version=${VERSION} \
-              -X github.com/rberrelleza/software-factory/internal/buildinfo.Commit=${COMMIT} \
-              -X github.com/rberrelleza/software-factory/internal/buildinfo.Date=${DATE}" \
-    -o software-factory \
-    ./cmd/software-factory
+    -ldflags "-X github.com/hetchyhq/hetchy/internal/buildinfo.Version=${VERSION} \
+              -X github.com/hetchyhq/hetchy/internal/buildinfo.Commit=${COMMIT} \
+              -X github.com/hetchyhq/hetchy/internal/buildinfo.Date=${DATE}" \
+    -o hetchy \
+    ./cmd/hetchy
 
 # Runtime stage
 FROM alpine:latest
@@ -38,7 +38,7 @@ RUN addgroup -g 1000 appuser && \
 WORKDIR /app
 
 # Copy binary from builder
-COPY --from=builder /build/software-factory .
+COPY --from=builder /build/hetchy .
 
 # Switch to non-root user
 USER appuser
@@ -47,4 +47,4 @@ USER appuser
 EXPOSE 8080
 
 # Run the binary
-ENTRYPOINT ["/app/software-factory"]
+ENTRYPOINT ["/app/hetchy"]
