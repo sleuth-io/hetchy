@@ -166,7 +166,11 @@ func (b *Bot) processSlackEvent(ctx context.Context, ev incoming) {
 	requestID := strings.ReplaceAll(ev.ts, ".", "")
 	b.HandleRequest(ctx, text, requestID, threadID,
 		func(msg string) {
-			// onUpdate: send progress messages
+			// onUpdate: raw sandbox log chunks — logged locally only, never posted to Slack
+			b.log.Debug("sandbox log", "channel", ev.channel, "thread", threadID, "msg", msg)
+		},
+		func(msg string) {
+			// onNotify: important status updates from the bot itself
 			b.replyInThread(ev.channel, replyTo, fmt.Sprintf("<@%s> %s", ev.user, msg))
 		},
 		func(msg string) {
