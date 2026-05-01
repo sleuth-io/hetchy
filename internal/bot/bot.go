@@ -186,9 +186,13 @@ func (b *Bot) HandleRequest(ctx context.Context, text, requestID, threadID strin
 	}
 
 	// Stop then archive the sandbox to save cost; Start restores it on follow-up.
-	if err := sb.Stop(ctx); err != nil {
+	if err := b.retryWithBackoff(ctx, "sandbox stop", func() error {
+		return sb.Stop(ctx)
+	}); err != nil {
 		b.log.Error("sandbox stop failed", "sandbox", sb.ID, "error", err)
-	} else if err := sb.Archive(ctx); err != nil {
+	} else if err := b.retryWithBackoff(ctx, "sandbox archive", func() error {
+		return sb.Archive(ctx)
+	}); err != nil {
 		b.log.Error("sandbox archive failed", "sandbox", sb.ID, "error", err)
 	}
 
@@ -209,12 +213,16 @@ func (b *Bot) handleFollowUp(ctx context.Context, conv *conversation, text, requ
 	b.log.Info("follow-up received", "sandbox", conv.sandbox.ID, "branch", conv.branch, "pr", conv.prURL)
 	onNotify(fmt.Sprintf("Resuming work on %s…", conv.prURL))
 
-	if err := conv.sandbox.Start(ctx); err != nil {
+	if err := b.retryWithBackoff(ctx, "sandbox start", func() error {
+		return conv.sandbox.Start(ctx)
+	}); err != nil {
 		b.log.Error("sandbox start failed", "sandbox", conv.sandbox.ID, "error", err)
 		onError(fmt.Sprintf("Failed to resume sandbox: `%v`", err))
 		return
 	}
-	if err := conv.sandbox.WaitForStart(ctx, 2*time.Minute); err != nil {
+	if err := b.retryWithBackoff(ctx, "sandbox wait-for-start", func() error {
+		return conv.sandbox.WaitForStart(ctx, 2*time.Minute)
+	}); err != nil {
 		b.log.Error("sandbox wait-for-start failed", "sandbox", conv.sandbox.ID, "error", err)
 		onError(fmt.Sprintf("Sandbox did not start in time: `%v`", err))
 		return
@@ -227,9 +235,13 @@ func (b *Bot) handleFollowUp(ctx context.Context, conv *conversation, text, requ
 		return
 	}
 
-	if err := conv.sandbox.Stop(ctx); err != nil {
+	if err := b.retryWithBackoff(ctx, "sandbox stop", func() error {
+		return conv.sandbox.Stop(ctx)
+	}); err != nil {
 		b.log.Error("sandbox stop failed", "sandbox", conv.sandbox.ID, "error", err)
-	} else if err := conv.sandbox.Archive(ctx); err != nil {
+	} else if err := b.retryWithBackoff(ctx, "sandbox archive", func() error {
+		return conv.sandbox.Archive(ctx)
+	}); err != nil {
 		b.log.Error("sandbox archive failed", "sandbox", conv.sandbox.ID, "error", err)
 	}
 
@@ -270,19 +282,20 @@ func truncate(s string, n int) string {
 	return s[:n] + "..."
 }
 
-// createSandboxWithRetry attempts to create a Daytona sandbox with retry logic
-// for transient errors. It tries up to maxRetries times with progressive backoff.
-func (b *Bot) createSandboxWithRetry(ctx context.Context, params types.SnapshotParams) (*daytona.Sandbox, error) {
+// retryWithBackoff executes fn up to maxRetries times with exponential backoff
+// for transient errors (rate-limit, 5xx, network failures). operation is a human-readable
+// name used in log messages.
+func (b *Bot) retryWithBackoff(ctx context.Context, operation string, fn func() error) error {
 	var lastErr error
 	backoff := b.retryBackoff
 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
-		sb, err := b.createFn(ctx, params)
+		err := fn()
 		if err == nil {
 			if attempt > 1 {
-				b.log.Info("sandbox created after retry", "attempt", attempt)
+				b.log.Info("operation succeeded after retry", "operation", operation, "attempt", attempt)
 			}
-			return sb, nil
+			return nil
 		}
 
 		lastErr = err
@@ -292,7 +305,8 @@ func (b *Bot) createSandboxWithRetry(ctx context.Context, params types.SnapshotP
 			break
 		}
 
-		b.log.Warn("sandbox creation failed, retrying",
+		b.log.Warn("operation failed, retrying",
+			"operation", operation,
 			"attempt", attempt,
 			"max_retries", maxRetries,
 			"backoff", backoff,
@@ -302,11 +316,23 @@ func (b *Bot) createSandboxWithRetry(ctx context.Context, params types.SnapshotP
 		// Wait with progressive backoff before next attempt
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return ctx.Err()
 		case <-time.After(backoff):
 			backoff *= backoffMultiplier
 		}
 	}
 
-	return nil, lastErr
+	return lastErr
+}
+
+// createSandboxWithRetry attempts to create a Daytona sandbox with retry logic
+// for transient errors. It tries up to maxRetries times with progressive backoff.
+func (b *Bot) createSandboxWithRetry(ctx context.Context, params types.SnapshotParams) (*daytona.Sandbox, error) {
+	var sb *daytona.Sandbox
+	err := b.retryWithBackoff(ctx, "sandbox create", func() error {
+		var err error
+		sb, err = b.createFn(ctx, params)
+		return err
+	})
+	return sb, err
 }

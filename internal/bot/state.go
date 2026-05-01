@@ -33,7 +33,12 @@ func (b *Bot) loadState(ctx context.Context) error {
 		return fmt.Errorf("parse state file: %w", err)
 	}
 	for threadID, pc := range ps.Conversations {
-		sb, err := b.daytona.Get(ctx, pc.SandboxID)
+		var sb *daytona.Sandbox
+		err := b.retryWithBackoff(ctx, "get sandbox", func() error {
+			var err error
+			sb, err = b.daytona.Get(ctx, pc.SandboxID)
+			return err
+		})
 		if err != nil {
 			b.log.Warn("state: sandbox not found, dropping conversation",
 				"thread_id", threadID, "sandbox_id", pc.SandboxID, "error", err)

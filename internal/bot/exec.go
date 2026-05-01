@@ -19,7 +19,12 @@ func (b *Bot) sh(ctx context.Context, sb *daytona.Sandbox, sessionID, step, cmd 
 	stepCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	res, err := sb.Process.ExecuteSessionCommand(stepCtx, sessionID, cmd, true, false)
+	var res map[string]interface{}
+	err := b.retryWithBackoff(stepCtx, "execute command", func() error {
+		var err error
+		res, err = sb.Process.ExecuteSessionCommand(stepCtx, sessionID, cmd, true, false)
+		return err
+	})
 	if err != nil {
 		b.log.Error("sandbox step exec error", "sandbox", sb.ID, "step", step, "error", err)
 		return "", fmt.Errorf("step %q exec error: %w", step, err)
@@ -32,7 +37,10 @@ func (b *Bot) sh(ctx context.Context, sb *daytona.Sandbox, sessionID, step, cmd 
 
 	streamDone := make(chan error, 1)
 	go func() {
-		streamDone <- sb.Process.GetSessionCommandLogsStream(stepCtx, sessionID, cmdID, stdout, stderr)
+		err := b.retryWithBackoff(stepCtx, "get command logs stream", func() error {
+			return sb.Process.GetSessionCommandLogsStream(stepCtx, sessionID, cmdID, stdout, stderr)
+		})
+		streamDone <- err
 	}()
 
 	for stdout != nil || stderr != nil {
@@ -57,7 +65,12 @@ func (b *Bot) sh(ctx context.Context, sb *daytona.Sandbox, sessionID, step, cmd 
 	}
 	<-streamDone
 
-	status, err := sb.Process.GetSessionCommand(ctx, sessionID, cmdID)
+	var status map[string]interface{}
+	err = b.retryWithBackoff(ctx, "get command status", func() error {
+		var err error
+		status, err = sb.Process.GetSessionCommand(ctx, sessionID, cmdID)
+		return err
+	})
 	if err != nil {
 		return "", fmt.Errorf("step %q status: %w", step, err)
 	}
