@@ -18,6 +18,9 @@ Software Factory automates code changes by:
 - **Isolated Execution**: Each request runs in a fresh Daytona sandbox
 - **Automated PR Workflow**: Automatically creates branches, commits, and opens PRs
 - **Real-time Updates**: Streams progress updates as the bot works
+- **Conversational Refinement**: Reply in the Slack thread or reload the web session to iterate on the same PR without losing context
+- **Session Sharing**: Web sessions are URL-addressable (UUID in query param) — share the URL to resume work from any browser
+- **Cost-aware Sandboxes**: Sandboxes are archived (not destroyed) between requests so follow-ups resume in seconds
 - **Flexible Deployment**: Run locally with Daytona OSS or use Daytona Cloud
 
 ## Prerequisites
@@ -74,6 +77,7 @@ doppler setup   # uses the project/config defined in doppler.yaml
 | `DAYTONA_API_KEY` | Daytona API key |
 | `DAYTONA_SNAPSHOT` | Custom snapshot image (optional) |
 | `WEB_PORT` | Web UI port (default: 8080) |
+| `STATE_FILE` | Conversation state file (default: state.json) |
 | `DISABLE_SLACK` | Set to 1 to run web UI only |
 
 ### 3. Set Up Daytona
@@ -116,8 +120,9 @@ The web UI will be available at `http://localhost:8080` (or your configured `WEB
 
 1. Navigate to `http://localhost:8080`
 2. Enter your request in natural language
-3. Watch real-time progress updates
+3. Watch real-time progress updates via SSE streaming
 4. Receive the PR URL when complete
+5. Bookmark or share the URL to resume the session later — each session has a stable UUID in the query string
 
 ### Via Slack
 
@@ -226,9 +231,17 @@ docker run -p 8080:8080 \
   -e ANTHROPIC_API_KEY=... \
   -e GITHUB_TOKEN=... \
   -e DAYTONA_API_KEY=... \
-  # ... other env vars
+  -e GITHUB_REPO=owner/repo \
   software-factory
 ```
+
+### Docker Compose
+
+```bash
+docker compose up
+```
+
+The compose file reads environment variables from your shell (or a `.env` file), binds port 8080, and mounts a volume for `state.json`.
 
 ## Troubleshooting
 
@@ -256,6 +269,23 @@ docker run -p 8080:8080 \
 - Check `WEB_PORT` environment variable
 - Review firewall/network settings
 
+## Project Structure
+
+```
+cmd/software-factory/     # Entry point
+internal/bot/
+  bot.go                  # Core logic: sandbox orchestration and Claude Code invocation
+  web.go                  # HTTP handlers (SSE streaming)
+  slack.go                # Slack socket-mode event dispatcher
+  config.go               # Environment variable loading and validation
+  chat.html               # Embedded single-file web UI
+sandbox/Dockerfile        # Custom Daytona sandbox image (Claude Code + gh + Go)
+scripts/                  # Snapshot registration helper
+.github/workflows/        # CI: sandbox image build and push
+Makefile                  # All build, test, and dev targets
+doppler.yaml              # Doppler project and config binding
+```
+
 ## Contributing
 
 1. Fork the repository
@@ -264,12 +294,8 @@ docker run -p 8080:8080 \
 4. Run `make prepush` to verify
 5. Open a pull request
 
-## License
+## Built with
 
-[Add your license here]
-
-## Acknowledgments
-
-- Built with [Claude Code](https://claude.com/claude-code)
-- Powered by [Daytona](https://daytona.io)
-- Uses [Slack SDK for Go](https://github.com/slack-go/slack)
+- [Claude Code](https://claude.com/claude-code) — AI coding agent
+- [Daytona](https://daytona.io) — sandbox orchestration
+- [Slack SDK for Go](https://github.com/slack-go/slack) — Slack integration
