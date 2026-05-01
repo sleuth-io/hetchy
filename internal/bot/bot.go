@@ -24,6 +24,10 @@ type conversation struct {
 	branch  string
 	prURL   string
 	history []string // user turns, oldest first
+	// Slack-specific state
+	channel       string
+	threadTS      string
+	statusReaction string // tracks the current status emoji (eyes/recycle)
 }
 
 // Bot wires Slack, the web UI, Daytona, and the agent loop together.

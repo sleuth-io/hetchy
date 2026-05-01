@@ -168,11 +168,24 @@ func (b *Bot) processSlackEvent(ctx context.Context, ev incoming) {
 	b.HandleRequest(ctx, text, requestID, threadID, func(msg string) {
 		lastMsg = msg
 	})
+
+	// Store the reaction emoji and Slack-specific state in the conversation
+	b.mu.Lock()
+	if convo, exists := b.convos[threadID]; exists {
+		convo.statusReaction = reactionEmoji
+		convo.channel = ev.channel
+		convo.threadTS = threadID
+	}
+	b.mu.Unlock()
+
 	if lastMsg != "" {
 		b.replyInThread(ev.channel, replyTo, fmt.Sprintf("<@%s> %s", ev.user, lastMsg))
 		// If the final message contains a PR URL, add a "white_check_mark" reaction
-		// to indicate the task is complete.
+		// to indicate the task is complete, and remove the previous status reaction.
 		if strings.Contains(lastMsg, "Done! :tada:") {
+			// Remove the previous status reaction
+			b.removeReaction(ev.channel, threadID, reactionEmoji)
+			// Add the completion reaction
 			b.addReaction(ev.channel, threadID, "white_check_mark")
 		}
 	}
@@ -191,7 +204,16 @@ func (b *Bot) addReaction(channel, ts, emoji string) {
 	if err := b.slack.AddReaction(emoji, slack.ItemRef{
 		Channel:   channel,
 		Timestamp: ts,
-	}); err != nil {
+	}); err != nil && err.Error() != "already_reacted" {
 		b.log.Error("slack add reaction failed", "channel", channel, "ts", ts, "emoji", emoji, "error", err)
+	}
+}
+
+func (b *Bot) removeReaction(channel, ts, emoji string) {
+	if err := b.slack.RemoveReaction(emoji, slack.ItemRef{
+		Channel:   channel,
+		Timestamp: ts,
+	}); err != nil {
+		b.log.Error("slack remove reaction failed", "channel", channel, "ts", ts, "emoji", emoji, "error", err)
 	}
 }
