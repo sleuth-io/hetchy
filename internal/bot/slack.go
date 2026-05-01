@@ -136,6 +136,7 @@ func (b *Bot) processSlackEvent(ctx context.Context, ev incoming) {
 	// own TS (which becomes the thread root once the bot replies).
 	threadID := ev.ts
 	replyTo := ev.ts
+	isFollowUp := false
 	if ev.threadTS != "" {
 		threadID = ev.threadTS
 		replyTo = ev.threadTS
@@ -146,19 +147,41 @@ func (b *Bot) processSlackEvent(ctx context.Context, ev incoming) {
 		if !active {
 			b.log.Warn("no active conversation for thread, will start a new one",
 				"thread_ts", ev.threadTS, "user", ev.user, "channel", ev.channel)
+		} else {
+			isFollowUp = true
 		}
 	}
 
+	// Add reaction to the thread root message to indicate we're working on it.
+	// For new tasks, use "eyes" to show we've picked it up.
+	// For iterations/follow-ups, use "recycle" to show we're collaborating.
+	reactionEmoji := "eyes"
+	if isFollowUp {
+		reactionEmoji = "recycle"
+	}
+	b.addReaction(ev.channel, threadID, reactionEmoji)
+
 	b.replyInThread(ev.channel, replyTo, fmt.Sprintf("<@%s> Working on it…", ev.user))
 
-	var lastMsg string
 	requestID := strings.ReplaceAll(ev.ts, ".", "")
-	b.HandleRequest(ctx, text, requestID, threadID, func(msg string) {
-		lastMsg = msg
-	})
-	if lastMsg != "" {
-		b.replyInThread(ev.channel, replyTo, fmt.Sprintf("<@%s> %s", ev.user, lastMsg))
-	}
+	b.HandleRequest(ctx, text, requestID, threadID,
+		func(msg string) {
+			// onUpdate: send progress messages
+			b.replyInThread(ev.channel, replyTo, fmt.Sprintf("<@%s> %s", ev.user, msg))
+		},
+		func(msg string) {
+			// onComplete: task finished successfully
+			b.replyInThread(ev.channel, replyTo, fmt.Sprintf("<@%s> Done! :tada: %s", ev.user, msg))
+			b.removeReaction(ev.channel, threadID, reactionEmoji)
+			b.addReaction(ev.channel, threadID, "white_check_mark")
+		},
+		func(msg string) {
+			// onError: task failed
+			b.replyInThread(ev.channel, replyTo, fmt.Sprintf("<@%s> %s", ev.user, msg))
+			b.removeReaction(ev.channel, threadID, reactionEmoji)
+			b.addReaction(ev.channel, threadID, "x")
+		},
+	)
 }
 
 func (b *Bot) replyInThread(channel, threadTS, msg string) {
@@ -167,5 +190,23 @@ func (b *Bot) replyInThread(channel, threadTS, msg string) {
 		slack.MsgOptionTS(threadTS),
 	); err != nil {
 		b.log.Error("slack post failed", "channel", channel, "error", err)
+	}
+}
+
+func (b *Bot) addReaction(channel, ts, emoji string) {
+	if err := b.slack.AddReaction(emoji, slack.ItemRef{
+		Channel:   channel,
+		Timestamp: ts,
+	}); err != nil && err.Error() != "already_reacted" {
+		b.log.Error("slack add reaction failed", "channel", channel, "ts", ts, "emoji", emoji, "error", err)
+	}
+}
+
+func (b *Bot) removeReaction(channel, ts, emoji string) {
+	if err := b.slack.RemoveReaction(emoji, slack.ItemRef{
+		Channel:   channel,
+		Timestamp: ts,
+	}); err != nil && err.Error() != "no_reaction" {
+		b.log.Error("slack remove reaction failed", "channel", channel, "ts", ts, "emoji", emoji, "error", err)
 	}
 }

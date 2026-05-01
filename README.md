@@ -261,6 +261,7 @@ The compose file reads environment variables from your shell (or a `.env` file) 
 - Confirm bot token and socket token are correct
 - Verify bot is invited to the channel
 - Check socket mode is enabled in Slack app settings
+- Ensure the Slack app has the `reactions:write` OAuth scope (required for status reactions)
 
 ### Web UI Not Accessible
 

@@ -96,12 +96,19 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 	// request's, so a closed browser doesn't kill an in-flight build.
 	go func() {
 		defer close(updates)
-		b.HandleRequest(parentCtx, text, requestID, sessionID, func(msg string) {
+		sendUpdate := func(msg string) {
 			select {
 			case updates <- msg:
 			case <-parentCtx.Done():
 			}
-		})
+		}
+		b.HandleRequest(parentCtx, text, requestID, sessionID,
+			sendUpdate, // onUpdate
+			func(msg string) { // onComplete
+				sendUpdate("Done! :tada: " + msg)
+			},
+			sendUpdate, // onError
+		)
 	}()
 
 	for {
