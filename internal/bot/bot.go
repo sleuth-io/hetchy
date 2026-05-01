@@ -16,6 +16,12 @@ import (
 	"github.com/slack-go/slack/socketmode"
 )
 
+const (
+	maxRetries        = 3
+	initialBackoff    = 2 * time.Second
+	backoffMultiplier = 2
+)
+
 const workdir = "/home/daytona/work"
 
 // conversation holds the live state for an ongoing multi-turn session.
@@ -122,7 +128,7 @@ func (b *Bot) HandleRequest(ctx context.Context, text, requestID, threadID strin
 	if b.cfg.SXKey != "" {
 		envVars["SX_KEY"] = b.cfg.SXKey
 	}
-	sb, err := b.daytona.Create(ctx, types.SnapshotParams{
+	sb, err := b.createSandboxWithRetry(ctx, types.SnapshotParams{
 		SandboxBaseParams: types.SandboxBaseParams{
 			EnvVars: envVars,
 		},
@@ -210,4 +216,79 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "..."
+}
+
+// isTransientError determines if an error is likely transient and worth retrying.
+// Common transient errors include network issues, timeouts, and temporary service unavailability.
+func isTransientError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := strings.ToLower(err.Error())
+
+	// Check for common transient error patterns
+	transientPatterns := []string{
+		"timeout",
+		"connection refused",
+		"connection reset",
+		"temporary failure",
+		"service unavailable",
+		"too many requests",
+		"rate limit",
+		"503",
+		"502",
+		"504",
+		"network",
+		"dial tcp",
+		"i/o timeout",
+		"eof",
+	}
+
+	for _, pattern := range transientPatterns {
+		if strings.Contains(errStr, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+// createSandboxWithRetry attempts to create a Daytona sandbox with retry logic
+// for transient errors. It tries up to maxRetries times with progressive backoff.
+func (b *Bot) createSandboxWithRetry(ctx context.Context, params types.SnapshotParams) (*daytona.Sandbox, error) {
+	var lastErr error
+	backoff := initialBackoff
+
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		sb, err := b.daytona.Create(ctx, params)
+		if err == nil {
+			if attempt > 1 {
+				b.log.Info("sandbox created after retry", "attempt", attempt)
+			}
+			return sb, nil
+		}
+
+		lastErr = err
+
+		// Don't retry on final attempt or non-transient errors
+		if attempt == maxRetries || !isTransientError(err) {
+			break
+		}
+
+		b.log.Warn("sandbox creation failed, retrying",
+			"attempt", attempt,
+			"max_retries", maxRetries,
+			"backoff", backoff,
+			"error", err,
+		)
+
+		// Wait with progressive backoff before next attempt
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(backoff):
+			backoff *= backoffMultiplier
+		}
+	}
+
+	return nil, lastErr
 }
