@@ -77,18 +77,39 @@ func (b *Bot) dispatch(ctx context.Context) {
 			if payload.Type != slackevents.CallbackEvent {
 				continue
 			}
-			// Only handle MessageEvent. AppMentionEvent fires alongside
-			// MessageEvent for the same user message in channels, so
-			// processing both would double-spawn sandboxes.
-			if ev, ok := payload.InnerEvent.Data.(*slackevents.MessageEvent); ok {
-				b.log.Info("slack event received",
-					"channel", ev.Channel, "channel_type", ev.ChannelType,
-					"user", ev.User, "ts", ev.TimeStamp,
-					"text_preview", truncate(ev.Text, 100),
+			// MessageEvent covers DMs and channel messages (when the bot has
+			// message.channels scope). AppMentionEvent fires for @mentions; at
+			// the top level both events fire together, so we only handle
+			// MessageEvent there to avoid double-processing. In threads,
+			// however, only AppMentionEvent is guaranteed to be delivered, so
+			// we handle it there exclusively.
+			switch inner := payload.InnerEvent.Data.(type) {
+			case *slackevents.MessageEvent:
+				b.log.Info("slack message event",
+					"channel", inner.Channel, "channel_type", inner.ChannelType,
+					"user", inner.User, "ts", inner.TimeStamp,
+					"thread_ts", inner.ThreadTimeStamp,
+					"text_preview", truncate(inner.Text, 100),
 				)
 				go b.processSlackEvent(ctx, incoming{
-					channel: ev.Channel, user: ev.User, ts: ev.TimeStamp,
-					threadTS: ev.ThreadTimeStamp, botID: ev.BotID, text: ev.Text,
+					channel: inner.Channel, user: inner.User, ts: inner.TimeStamp,
+					threadTS: inner.ThreadTimeStamp, botID: inner.BotID, text: inner.Text,
+				})
+			case *slackevents.AppMentionEvent:
+				// Only handle thread @mentions here; top-level @mentions come
+				// through as MessageEvent too and are handled above.
+				if inner.ThreadTimeStamp == "" {
+					continue
+				}
+				b.log.Info("slack app_mention event (thread)",
+					"channel", inner.Channel,
+					"user", inner.User, "ts", inner.TimeStamp,
+					"thread_ts", inner.ThreadTimeStamp,
+					"text_preview", truncate(inner.Text, 100),
+				)
+				go b.processSlackEvent(ctx, incoming{
+					channel: inner.Channel, user: inner.User, ts: inner.TimeStamp,
+					threadTS: inner.ThreadTimeStamp, botID: inner.BotID, text: inner.Text,
 				})
 			}
 		}
