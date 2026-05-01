@@ -1,3 +1,8 @@
+-- Example scaffolding: these queries (and the matching health_checks
+-- migration) exist only to demonstrate the sqlc + golang-migrate flow on a
+-- live table. Delete this file and the 20260501000001_init migration once
+-- you have a real schema.
+
 -- name: InsertHealthCheck :one
 INSERT INTO health_checks (note)
 VALUES ($1)

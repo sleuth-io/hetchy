@@ -59,6 +59,9 @@ services:
       DAYTONA_API_KEY: ${DAYTONA_API_KEY}
       DAYTONA_SNAPSHOT: ${DAYTONA_SNAPSHOT:-claude-playwright:1}
 
+      # sx (optional)
+      SX_KEY: ${SX_KEY:-}
+
       # Database — defaults to the bundled postgres service. Override
       # DATABASE_URL to point at Supabase or another instance.
       DATABASE_URL: ${DATABASE_URL:-postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-hetchy}?sslmode=disable}
@@ -67,7 +70,7 @@ services:
       WEB_PORT: ${WEB_PORT:-8080}
       DISABLE_SLACK: ${DISABLE_SLACK:-}
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health", "||", "exit", "1"]
+      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost:8080/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3

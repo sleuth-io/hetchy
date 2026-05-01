@@ -10,11 +10,16 @@ import (
 )
 
 const insertHealthCheck = `-- name: InsertHealthCheck :one
+
 INSERT INTO health_checks (note)
 VALUES ($1)
 RETURNING id, checked_at, note
 `
 
+// Example scaffolding: these queries (and the matching health_checks
+// migration) exist only to demonstrate the sqlc + golang-migrate flow on a
+// live table. Delete this file and the 20260501000001_init migration once
+// you have a real schema.
 func (q *Queries) InsertHealthCheck(ctx context.Context, note string) (HealthCheck, error) {
 	row := q.db.QueryRow(ctx, insertHealthCheck, note)
 	var i HealthCheck

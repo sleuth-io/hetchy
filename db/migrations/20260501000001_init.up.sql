@@ -1,3 +1,4 @@
+-- Example scaffolding — delete this migration once you add a real schema.
 CREATE TABLE health_checks (
     id          BIGSERIAL PRIMARY KEY,
     checked_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),

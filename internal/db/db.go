@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/hetchyhq/hetchy/internal/db/sqlc"
@@ -15,10 +16,12 @@ import (
 
 var errEmptyURL = errors.New("database url is empty")
 
-// Store bundles the pgx pool with sqlc's Queries so callers can both run
-// generated queries and start transactions on the same pool.
+// Store wraps the pgx pool and exposes sqlc's generated Queries. Callers
+// should go through Queries for single-statement reads and writes, and
+// WithTx for anything that needs to be atomic. The underlying pool is kept
+// unexported so callers can't bypass the type-safe layer with raw SQL.
 type Store struct {
-	Pool    *pgxpool.Pool
+	pool    *pgxpool.Pool
 	Queries *sqlc.Queries
 }
 
@@ -43,13 +46,33 @@ func Open(ctx context.Context, url string) (*Store, error) {
 		pool.Close()
 		return nil, fmt.Errorf("ping: %w", err)
 	}
-	return &Store{Pool: pool, Queries: sqlc.New(pool)}, nil
+	return &Store{pool: pool, Queries: sqlc.New(pool)}, nil
 }
 
 // Close releases pool resources. Safe to call on a nil Store.
 func (s *Store) Close() {
-	if s == nil || s.Pool == nil {
+	if s == nil || s.pool == nil {
 		return
 	}
-	s.Pool.Close()
+	s.pool.Close()
+}
+
+// WithTx runs fn inside a transaction, passing it a *sqlc.Queries scoped to
+// that transaction. The transaction is committed if fn returns nil and rolled
+// back otherwise. Errors from Begin / Commit / Rollback are wrapped.
+func (s *Store) WithTx(ctx context.Context, fn func(*sqlc.Queries) error) error {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	if err := fn(s.Queries.WithTx(tx)); err != nil {
+		if rbErr := tx.Rollback(ctx); rbErr != nil && !errors.Is(rbErr, pgx.ErrTxClosed) {
+			return errors.Join(err, fmt.Errorf("rollback: %w", rbErr))
+		}
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit tx: %w", err)
+	}
+	return nil
 }
