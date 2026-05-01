@@ -4,7 +4,7 @@ A Slack bot powered by Claude Code that creates sandboxes for automated software
 
 ## Prerequisites
 
-- Go 1.21+
+- Go 1.25+
 - [Doppler CLI](https://docs.doppler.com/docs/install-cli)
 - Docker (for local Daytona stack)
 - [gh CLI](https://cli.github.com/) (authenticated)
