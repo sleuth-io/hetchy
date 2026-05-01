@@ -1,6 +1,7 @@
 deploy:
+  image: dopplerhq/cli:latest
+  commands:
   - name: Load environment variables and deploy
-    image: dopplerhq/cli:latest
     command: |
       # Deploy using doppler to inject secrets into okteto deploy
-      doppler run -- okteto deploy -f docker-compose.yml
+      DOPPLER_TOKEN=${HETCHY_DOPPLER_TOKEN} doppler run -- okteto deploy -f docker-compose.yml
