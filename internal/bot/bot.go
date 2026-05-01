@@ -1,5 +1,7 @@
-// Package bot implements the Slack + web bot that turns natural-language
-// requests into pull requests via Claude Code running in a Daytona sandbox.
+// Package bot implements the multi-tenant Slack + web bot that turns
+// natural-language requests into pull requests via Claude Code running in
+// a Daytona sandbox. Each organization brings its own GitHub/Slack
+// credentials and target repo, looked up per-request from the database.
 package bot
 
 import (
@@ -8,16 +10,17 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
 	sdkerrors "github.com/daytonaio/daytona/libs/sdk-go/pkg/errors"
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/types"
-	"github.com/slack-go/slack"
-	"github.com/slack-go/slack/socketmode"
 
+	"github.com/hetchyhq/hetchy/internal/auth"
+	"github.com/hetchyhq/hetchy/internal/convstore"
 	"github.com/hetchyhq/hetchy/internal/db"
+	"github.com/hetchyhq/hetchy/internal/orgcfg"
+	"github.com/hetchyhq/hetchy/internal/secrets"
 )
 
 const (
@@ -28,28 +31,24 @@ const (
 
 const workdir = "/home/daytona/work"
 
-// conversation holds the live state for an ongoing multi-turn session.
-type conversation struct {
-	sandbox *daytona.Sandbox
-	branch  string
-	prURL   string
-	history []string // user turns, oldest first
-}
-
-// Bot wires Slack, the web UI, Daytona, and the agent loop together.
+// Bot wires the web UI, Slack manager, Daytona, and per-org config
+// together. It owns no per-request mutable state; conversation state lives
+// in the database.
 type Bot struct {
 	cfg     Config
 	log     *slog.Logger
-	slack   *slack.Client
-	socket  *socketmode.Client
 	daytona *daytona.Client
 	store   *db.Store
-
-	mu     sync.Mutex
-	convos map[string]*conversation
+	orgs    *orgcfg.Store
+	convs   *convstore.Store
+	auth    *auth.Service
+	slack   *slackManager
 }
 
-// New constructs a Bot from config and a logger.
+// New constructs a Bot from config and a logger. It opens the database
+// pool, builds the encryption cipher, configures the WorkOS auth service,
+// and prepares the Slack manager (no sockets are opened yet — Run does
+// that).
 func New(cfg Config, log *slog.Logger) (*Bot, error) {
 	daytonaCfg := &types.DaytonaConfig{}
 	if cfg.DaytonaAPIURL != "" {
@@ -65,94 +64,113 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 		log.Info("daytona configured", "mode", "cloud", "url", "app.daytona.io")
 	}
 
-	b := &Bot{cfg: cfg, log: log, daytona: dc, convos: make(map[string]*conversation)}
-	if !cfg.DisableSlack {
-		b.slack = slack.New(cfg.SlackBotToken, slack.OptionAppLevelToken(cfg.SlackSocketToken))
-		b.socket = socketmode.New(b.slack)
+	store, err := db.Open(context.Background(), cfg.DatabaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("database open: %w", err)
 	}
-	if cfg.DatabaseURL != "" {
-		store, err := db.Open(context.Background(), cfg.DatabaseURL)
-		if err != nil {
-			return nil, fmt.Errorf("database open: %w", err)
-		}
-		b.store = store
-		log.Info("database connected")
-	} else {
-		log.Info("DATABASE_URL not set — running without database")
+	log.Info("database connected")
+
+	cipher, err := secrets.New(cfg.SecretsEncryptionKey)
+	if err != nil {
+		return nil, fmt.Errorf("secrets cipher: %w", err)
 	}
-	if err := b.loadState(context.Background()); err != nil {
-		log.Warn("could not load state file", "path", cfg.StateFile, "error", err)
+
+	authSvc, err := auth.New(auth.Config{
+		APIKey:         cfg.WorkOSAPIKey,
+		ClientID:       cfg.WorkOSClientID,
+		CookiePassword: cfg.WorkOSCookiePassword,
+		RedirectURI:    cfg.WorkOSRedirectURI,
+		LogoutReturnTo: cfg.LogoutReturnTo,
+		Bypass:         cfg.AuthBypass,
+		BypassUser:     cfg.AuthBypassUser,
+		BypassOrg:      cfg.AuthBypassOrg,
+		BypassRole:     cfg.AuthBypassRole,
+		BypassEmail:    cfg.AuthBypassEmail,
+	})
+	if err != nil {
+		store.Close()
+		return nil, fmt.Errorf("auth: %w", err)
 	}
+
+	b := &Bot{
+		cfg:     cfg,
+		log:     log,
+		daytona: dc,
+		store:   store,
+		orgs:    orgcfg.New(store, cipher),
+		convs:   convstore.New(store),
+		auth:    authSvc,
+	}
+	b.slack = newSlackManager(log, b.orgs, b.handleSlackEvent)
 	return b, nil
 }
 
-// Close releases external resources held by the bot. Safe to call once after Run returns.
+// Close releases external resources held by the bot. Safe to call once
+// after Run returns.
 func (b *Bot) Close() {
-	b.store.Close()
+	if b.store != nil {
+		b.store.Close()
+	}
 }
 
-// Run starts the configured transports (Slack socket-mode + web UI by default;
-// web only when DISABLE_SLACK=1). It returns the first error from any
-// transport, cancelling the others.
+// Run starts the web UI and the per-org Slack manager. Either failing
+// returns the first error and cancels the other.
 func (b *Bot) Run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	transports := 1 // web is always on
 	errCh := make(chan error, 2)
 	go func() { errCh <- b.runWeb(ctx) }()
-	if !b.cfg.DisableSlack {
-		transports++
-		go func() { errCh <- b.runSlack(ctx) }()
-	} else {
-		b.log.Info("slack disabled (DISABLE_SLACK=1) — running web UI only")
-	}
+	go func() { errCh <- b.slack.Run(ctx) }()
 
 	err := <-errCh
 	cancel()
-	for range transports - 1 {
-		<-errCh
-	}
+	<-errCh
 	return err
 }
 
-// HandleRequest is the shared core. threadID ties follow-up messages to an
-// existing conversation; use a unique value (e.g. Slack thread TS or web
-// session ID) so the bot can match follow-ups to the right sandbox and branch.
-// onComplete is called on successful PR creation with the PR URL; onError is called
-// when the task fails with an error message.
-func (b *Bot) HandleRequest(ctx context.Context, text, requestID, threadID string, onUpdate func(string), onComplete func(string), onError func(string)) {
+// HandleRequest is the shared core. It expects an already-resolved org
+// config — callers (web/slack) pull oc from the principal's org id (web)
+// or the slack team id (slack) and pass it in.
+func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, requestID, threadID string, onUpdate func(string), onComplete func(string), onError func(string)) {
 	b.log.Info("request received",
+		"org", oc.OrgID,
 		"request_id", requestID,
 		"thread_id", threadID,
 		"text_len", len(text),
 		"text_preview", truncate(text, 200),
 	)
 
-	b.mu.Lock()
-	conv := b.convos[threadID]
-	b.mu.Unlock()
-
-	if conv != nil {
-		b.handleFollowUp(ctx, conv, text, requestID, threadID, onUpdate, onComplete, onError)
+	if oc.GitHubToken == "" || oc.GitHubRepo == "" {
+		onError("This organization is missing its GitHub configuration. An admin needs to set the GitHub token and repository at /settings/org.")
 		return
 	}
 
-	// New conversation: spin up a sandbox and open a PR.
+	rec, err := b.convs.Get(ctx, oc.OrgID, threadID)
+	switch {
+	case err == nil:
+		b.handleFollowUp(ctx, oc, rec, text, requestID, threadID, onUpdate, onComplete, onError)
+		return
+	case errors.Is(err, convstore.ErrNotFound):
+		// fall through — new conversation
+	default:
+		b.log.Error("convstore get", "error", err)
+		onError(fmt.Sprintf("Conversation lookup failed: `%v`", err))
+		return
+	}
+
 	onUpdate("Spinning up an isolated sandbox for your request...")
 
 	envVars := map[string]string{
 		"ANTHROPIC_API_KEY": b.cfg.AnthropicAPIKey,
-		"GITHUB_TOKEN":      b.cfg.GitHubToken,
+		"GITHUB_TOKEN":      oc.GitHubToken,
 	}
-	if b.cfg.SXKey != "" {
-		envVars["SX_KEY"] = b.cfg.SXKey
+	if oc.SXKey != "" {
+		envVars["SX_KEY"] = oc.SXKey
 	}
 	sb, err := b.createSandboxWithRetry(ctx, types.SnapshotParams{
-		SandboxBaseParams: types.SandboxBaseParams{
-			EnvVars: envVars,
-		},
-		Snapshot: b.cfg.Snapshot,
+		SandboxBaseParams: types.SandboxBaseParams{EnvVars: envVars},
+		Snapshot:          b.cfg.Snapshot,
 	})
 	if err != nil {
 		b.log.Error("sandbox create failed", "error", err)
@@ -163,66 +181,73 @@ func (b *Bot) HandleRequest(ctx context.Context, text, requestID, threadID strin
 	onUpdate(fmt.Sprintf("Sandbox `%s` ready — cloning repo and starting Claude Code.", sb.ID))
 
 	branch := "feature/sf-" + requestID
-	prURL, runErr := b.runAgent(ctx, sb, text, requestID, onUpdate)
+	prURL, runErr := b.runAgent(ctx, sb, oc, text, requestID, onUpdate)
 	if runErr != nil {
 		b.log.Error("agent run failed", "sandbox", sb.ID, "error", runErr)
 		onError(fmt.Sprintf("Something went wrong: `%v`\nSandbox `%s` was left running for debugging.", runErr, sb.ID))
 		return
 	}
 
-	// Stop then archive the sandbox to save cost; Start restores it on follow-up.
 	if err := sb.Stop(ctx); err != nil {
 		b.log.Error("sandbox stop failed", "sandbox", sb.ID, "error", err)
 	} else if err := sb.Archive(ctx); err != nil {
 		b.log.Error("sandbox archive failed", "sandbox", sb.ID, "error", err)
 	}
 
-	b.mu.Lock()
-	b.convos[threadID] = &conversation{
-		sandbox: sb,
-		branch:  branch,
-		prURL:   prURL,
-		history: []string{text},
+	if err := b.convs.Upsert(ctx, convstore.Record{
+		OrgID:     oc.OrgID,
+		ThreadID:  threadID,
+		SandboxID: sb.ID,
+		Branch:    branch,
+		PRURL:     prURL,
+		History:   []string{text},
+	}); err != nil {
+		b.log.Error("convstore upsert", "error", err)
 	}
-	b.saveState()
-	b.mu.Unlock()
 
 	onComplete(prURL + "\nReply here to make further changes to this PR.")
 }
 
-func (b *Bot) handleFollowUp(ctx context.Context, conv *conversation, text, requestID, threadID string, onUpdate func(string), onComplete func(string), onError func(string)) {
-	b.log.Info("follow-up received", "sandbox", conv.sandbox.ID, "branch", conv.branch, "pr", conv.prURL)
-	onUpdate(fmt.Sprintf("Resuming work on %s…", conv.prURL))
+func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstore.Record, text, requestID, threadID string, onUpdate func(string), onComplete func(string), onError func(string)) {
+	b.log.Info("follow-up received", "org", oc.OrgID, "sandbox", rec.SandboxID, "branch", rec.Branch, "pr", rec.PRURL)
+	onUpdate(fmt.Sprintf("Resuming work on %s…", rec.PRURL))
 
-	if err := conv.sandbox.Start(ctx); err != nil {
-		b.log.Error("sandbox start failed", "sandbox", conv.sandbox.ID, "error", err)
+	sb, err := b.daytona.Get(ctx, rec.SandboxID)
+	if err != nil {
+		b.log.Error("sandbox get failed", "sandbox", rec.SandboxID, "error", err)
+		onError(fmt.Sprintf("Could not find sandbox `%s`: %v", rec.SandboxID, err))
+		return
+	}
+	if err := sb.Start(ctx); err != nil {
+		b.log.Error("sandbox start failed", "sandbox", sb.ID, "error", err)
 		onError(fmt.Sprintf("Failed to resume sandbox: `%v`", err))
 		return
 	}
-	if err := conv.sandbox.WaitForStart(ctx, 2*time.Minute); err != nil {
-		b.log.Error("sandbox wait-for-start failed", "sandbox", conv.sandbox.ID, "error", err)
+	if err := sb.WaitForStart(ctx, 2*time.Minute); err != nil {
+		b.log.Error("sandbox wait-for-start failed", "sandbox", sb.ID, "error", err)
 		onError(fmt.Sprintf("Sandbox did not start in time: `%v`", err))
 		return
 	}
 
-	prURL, err := b.runFollowUp(ctx, conv, text, requestID, onUpdate)
+	prURL, err := b.runFollowUp(ctx, sb, rec, text, requestID, onUpdate)
 	if err != nil {
-		b.log.Error("follow-up failed", "sandbox", conv.sandbox.ID, "error", err)
+		b.log.Error("follow-up failed", "sandbox", sb.ID, "error", err)
 		onError(fmt.Sprintf("Something went wrong: `%v`", err))
 		return
 	}
 
-	if err := conv.sandbox.Stop(ctx); err != nil {
-		b.log.Error("sandbox stop failed", "sandbox", conv.sandbox.ID, "error", err)
-	} else if err := conv.sandbox.Archive(ctx); err != nil {
-		b.log.Error("sandbox archive failed", "sandbox", conv.sandbox.ID, "error", err)
+	if err := sb.Stop(ctx); err != nil {
+		b.log.Error("sandbox stop failed", "sandbox", sb.ID, "error", err)
+	} else if err := sb.Archive(ctx); err != nil {
+		b.log.Error("sandbox archive failed", "sandbox", sb.ID, "error", err)
 	}
 
-	b.mu.Lock()
-	conv.history = append(conv.history, text)
-	conv.prURL = prURL
-	b.saveState()
-	b.mu.Unlock()
+	rec.PRURL = prURL
+	rec.History = append(rec.History, text)
+	if err := b.convs.Upsert(ctx, rec); err != nil {
+		b.log.Error("convstore upsert", "error", err)
+	}
+	_ = oc
 
 	onComplete(prURL)
 }
@@ -253,8 +278,8 @@ func truncate(s string, n int) string {
 	return s[:n] + "..."
 }
 
-// createSandboxWithRetry attempts to create a Daytona sandbox with retry logic
-// for transient errors. It tries up to maxRetries times with progressive backoff.
+// createSandboxWithRetry attempts to create a Daytona sandbox with retry
+// logic for transient errors.
 func (b *Bot) createSandboxWithRetry(ctx context.Context, params types.SnapshotParams) (*daytona.Sandbox, error) {
 	var lastErr error
 	backoff := initialBackoff
@@ -270,7 +295,6 @@ func (b *Bot) createSandboxWithRetry(ctx context.Context, params types.SnapshotP
 
 		lastErr = err
 
-		// Don't retry on final attempt or non-transient errors
 		if attempt == maxRetries || !isTransientError(err) {
 			break
 		}
@@ -282,7 +306,6 @@ func (b *Bot) createSandboxWithRetry(ctx context.Context, params types.SnapshotP
 			"error", err,
 		)
 
-		// Wait with progressive backoff before next attempt
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()

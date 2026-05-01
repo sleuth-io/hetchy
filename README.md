@@ -185,19 +185,48 @@ doppler setup   # uses the project/config defined in doppler.yaml
 
 #### Required secrets in Doppler
 
+Hetchy is multi-tenant. Per-org settings (GitHub repo + token, Slack
+bot/socket tokens, base branch, optional SX key) are configured by each
+org's admin at `/settings/org` after they sign up — they live in the
+database, not in Doppler. Doppler only holds the *process-level* config:
+
 | Variable | Description |
 |----------|-------------|
-| `SLACK_BOT_OAUTH_TOKEN` | Slack bot token (xoxb-...) — required for Slack |
-| `SLACK_SOCKET_TOKEN` | Slack app-level token (xapp-...) — required for Slack |
 | `ANTHROPIC_API_KEY` | Anthropic API key for Claude |
-| `GITHUB_TOKEN` | GitHub token with repo scope |
-| `GITHUB_REPO` | Repository in owner/repo format |
-| `GITHUB_BASE_BRANCH` | Base branch for PRs (usually main) |
+| `WORKOS_API_KEY` | WorkOS API key (sk_test_…) |
+| `WORKOS_CLIENT_ID` | WorkOS client ID (client_test_…) |
+| `WORKOS_COOKIE_PASSWORD` | 32-byte secret for sealing session cookies |
+| `WORKOS_REDIRECT_URI` | OAuth callback URL — must match a Redirect URI in the WorkOS dashboard |
+| `LOGOUT_RETURN_TO` | URL the browser lands on after WorkOS-side logout |
+| `SECRETS_ENCRYPTION_KEY` | 32-byte key used to encrypt per-org tokens at rest |
+| `DATABASE_URL` | Postgres connection string (required) |
 | `DAYTONA_API_URL` | Daytona API endpoint |
 | `DAYTONA_API_KEY` | Daytona API key |
-| `DAYTONA_SNAPSHOT` | Custom snapshot image (optional) |
+| `DAYTONA_SNAPSHOT` | Sandbox snapshot image |
 | `WEB_PORT` | Web UI port (default: 8080) |
-| `DISABLE_SLACK` | Set to 1 to run web UI only |
+| `AUTH_BYPASS` | Set to `1` for tests/CI to skip the WorkOS round-trip |
+
+Generate the two random keys with:
+
+```bash
+openssl rand -base64 32   # for WORKOS_COOKIE_PASSWORD
+openssl rand -base64 32   # for SECRETS_ENCRYPTION_KEY
+```
+
+#### WorkOS dashboard setup (one-time)
+
+1. Sign up at <https://dashboard.workos.com>; the **Staging** environment is
+   what you'll use for local dev.
+2. Open **Redirects** → add `http://localhost:8080/callback`, mark it as
+   default. Set the Sign-out redirect to `http://localhost:8080/`.
+3. Open **Authentication** → enable Email + Password (and any social
+   providers you want).
+4. Open **API Keys** → copy the API key and Client ID into Doppler as
+   `WORKOS_API_KEY` and `WORKOS_CLIENT_ID`.
+
+Self-serve org creation and multi-org membership are not dashboard
+toggles — Hetchy implements them via the WorkOS API, so no further
+configuration is needed.
 
 ### 3. Set Up Daytona
 
@@ -224,24 +253,35 @@ Set in Doppler:
 ### 4. Run the Bot
 
 ```bash
-# Build and run with Slack + Web UI
+# Apply migrations, then run
+make pg-up
+make db-up
 make bot
-
-# Or run web UI only (without Slack)
-make web
 ```
 
 The web UI will be available at `http://localhost:8080` (or your configured `WEB_PORT`).
 
 ## Usage
 
+### First-time signup
+
+1. Navigate to `http://localhost:8080` — you'll see the landing page.
+2. Click **Sign up**, complete the AuthKit form (email + password by default).
+3. After verifying, you'll land on **Create your organization** — type a
+   name and submit. Hetchy creates the org in WorkOS, makes you its admin,
+   and bounces you to **Organization settings**.
+4. Fill in your GitHub repo, GitHub token, optional Slack bot/socket
+   tokens (and Slack team ID if you want to receive Slack events for that
+   org), and optional SX key. Save.
+5. You're now ready to chat.
+
 ### Via Web UI
 
-1. Navigate to `http://localhost:8080`
-2. Enter your request in natural language
-3. Watch real-time progress updates via SSE streaming
-4. Receive the PR URL when complete
-5. Bookmark or share the URL to resume the session later — each session has a stable UUID in the query string
+1. Navigate to `http://localhost:8080` while logged in.
+2. Enter your request in natural language.
+3. Watch real-time progress updates via SSE streaming.
+4. Receive the PR URL when complete.
+5. Bookmark or share the URL to resume the session later — each session has a stable UUID in the query string.
 
 ### Via Slack
 
@@ -398,7 +438,6 @@ once you have your own schema.
 | `make lint` | Run linters |
 | `make format` | Format code |
 | `make bot` | Build and run with doppler |
-| `make web` | Run web UI only |
 | `make bot-tee` | Run with log mirroring |
 | `make logs` | Tail mirrored logs |
 | `make dev` | Start Daytona + run bot |

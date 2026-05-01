@@ -9,12 +9,14 @@ import (
 )
 
 type Querier interface {
-	// Example scaffolding: these queries (and the matching health_checks
-	// migration) exist only to demonstrate the sqlc + golang-migrate flow on a
-	// live table. Delete this file and the 20260501000001_init migration once
-	// you have a real schema.
-	InsertHealthCheck(ctx context.Context, note string) (HealthCheck, error)
-	LatestHealthCheck(ctx context.Context) (HealthCheck, error)
+	DeleteConversation(ctx context.Context, arg DeleteConversationParams) error
+	GetConversation(ctx context.Context, arg GetConversationParams) (Conversation, error)
+	GetOrgConfig(ctx context.Context, orgID string) (OrgConfig, error)
+	GetOrgConfigBySlackTeam(ctx context.Context, slackTeamID *string) (OrgConfig, error)
+	ListConversationsByOrg(ctx context.Context, orgID string) ([]Conversation, error)
+	ListOrgConfigsWithSlack(ctx context.Context) ([]OrgConfig, error)
+	UpsertConversation(ctx context.Context, arg UpsertConversationParams) (Conversation, error)
+	UpsertOrgConfig(ctx context.Context, arg UpsertOrgConfigParams) (OrgConfig, error)
 }
 
 var _ Querier = (*Queries)(nil)

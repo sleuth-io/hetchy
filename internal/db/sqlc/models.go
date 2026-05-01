@@ -8,8 +8,26 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-type HealthCheck struct {
-	ID        int64              `json:"id"`
-	CheckedAt pgtype.Timestamptz `json:"checked_at"`
-	Note      string             `json:"note"`
+type Conversation struct {
+	OrgID     string             `json:"org_id"`
+	ThreadID  string             `json:"thread_id"`
+	SandboxID string             `json:"sandbox_id"`
+	Branch    string             `json:"branch"`
+	PrUrl     string             `json:"pr_url"`
+	History   []string           `json:"history"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
+type OrgConfig struct {
+	OrgID                     string             `json:"org_id"`
+	GithubTokenEncrypted      []byte             `json:"github_token_encrypted"`
+	SlackBotTokenEncrypted    []byte             `json:"slack_bot_token_encrypted"`
+	SlackSocketTokenEncrypted []byte             `json:"slack_socket_token_encrypted"`
+	SxKeyEncrypted            []byte             `json:"sx_key_encrypted"`
+	GithubRepo                string             `json:"github_repo"`
+	GithubBaseBranch          string             `json:"github_base_branch"`
+	SlackTeamID               *string            `json:"slack_team_id"`
+	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
 }
