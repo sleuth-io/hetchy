@@ -22,5 +22,6 @@ jobs:
       - name: Deploy to Okteto
         uses: okteto/pipeline@latest
         with:
-          name: hetchy-staging
+          namespace: hetchy-staging
+          name: hetchy
 
