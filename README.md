@@ -103,7 +103,20 @@ Set in Doppler:
 - `DAYTONA_API_URL=https://app.daytona.io/api`
 - `DAYTONA_API_KEY=dtn_...`
 
-### 4. Run the Bot
+### 4. Start the Database
+
+Hetchy requires a PostgreSQL database. For local development:
+
+```bash
+# Start the local Postgres container
+make pg-up
+```
+
+This starts a Postgres 16 container on port 5433 (to avoid conflicts with other local Postgres instances). The database will be available at `postgresql://postgres:postgres@localhost:5433/hetchy`.
+
+For production or Supabase usage, configure the `DATABASE_URL` variable in Doppler instead.
+
+### 5. Run the Bot
 
 ```bash
 # Build and run with Slack + Web UI
