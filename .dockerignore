@@ -1,0 +1,54 @@
+# Git
+.git
+.gitignore
+.github
+
+# Documentation
+README.md
+*.md
+
+# Build artifacts
+dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Dependencies
+vendor/
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment
+.env
+.env.local
+.env.*.local
+doppler.yaml
+
+# Logs
+*.log
+/tmp/
+
+# Docker
+docker-compose.yml
+.dockerignore
+Dockerfile
+
+# CI/CD
+.github/
+
+# Makefile
+Makefile
+
+# Go specific
+coverage.txt
+coverage.html
