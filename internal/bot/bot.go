@@ -155,9 +155,9 @@ func (b *Bot) HandleRequest(ctx context.Context, text, requestID, threadID strin
 		"ANTHROPIC_API_KEY": b.cfg.AnthropicAPIKey,
 		"GITHUB_TOKEN":      b.cfg.GitHubToken,
 	}
-	if b.cfg.SXKey != "" {
-		envVars["SX_KEY"] = b.cfg.SXKey
-	}
+	//if b.cfg.SXKey != "" {
+	//	envVars["SX_KEY"] = b.cfg.SXKey
+	//}
 	sb, err := b.createSandboxWithRetry(ctx, types.SnapshotParams{
 		SandboxBaseParams: types.SandboxBaseParams{
 			EnvVars: envVars,
