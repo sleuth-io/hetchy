@@ -4,6 +4,7 @@ package bot
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"regexp"
@@ -11,7 +12,6 @@ import (
 	"time"
 
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
-	"github.com/daytonaio/daytona/libs/sdk-go/pkg/options"
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/types"
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/socketmode"
@@ -122,7 +122,7 @@ func (b *Bot) HandleRequest(ctx context.Context, text, requestID string, onUpdat
 	b.log.Info("sandbox created", "id", sb.ID, "request_id", requestID)
 	onUpdate(fmt.Sprintf("Sandbox `%s` ready — cloning repo and starting Claude Code.", sb.ID))
 
-	prURL, runErr := b.runAgent(ctx, sb, text, requestID)
+	prURL, runErr := b.runAgent(ctx, sb, text, requestID, onUpdate)
 	if runErr != nil {
 		b.log.Error("agent run failed", "sandbox", sb.ID, "error", runErr)
 		onUpdate(fmt.Sprintf("Something went wrong: `%v`\nSandbox `%s` was left running for debugging.", runErr, sb.ID))
@@ -135,56 +135,129 @@ func (b *Bot) HandleRequest(ctx context.Context, text, requestID string, onUpdat
 	}
 }
 
-func (b *Bot) sh(ctx context.Context, sb *daytona.Sandbox, step, cmd string, timeout time.Duration) (string, error) {
-	b.log.Info("sandbox step start", "sandbox", sb.ID, "step", step, "timeout", timeout, "cmd", cmd)
-	res, err := sb.Process.ExecuteCommand(ctx, cmd, options.WithExecuteTimeout(timeout))
+func (b *Bot) sh(ctx context.Context, sb *daytona.Sandbox, sessionID, step, cmd string, timeout time.Duration, onUpdate func(string)) (string, error) {
+	b.log.Info("sandbox step start", "sandbox", sb.ID, "step", step, "timeout", timeout)
+
+	stepCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	res, err := sb.Process.ExecuteSessionCommand(stepCtx, sessionID, cmd, true, false)
 	if err != nil {
 		b.log.Error("sandbox step exec error", "sandbox", sb.ID, "step", step, "error", err)
 		return "", fmt.Errorf("step %q exec error: %w", step, err)
 	}
-	if res.ExitCode != 0 {
-		out := res.Result
-		if len(out) > 2000 {
-			out = "...(truncated)...\n" + out[len(out)-2000:]
+	cmdID, _ := res["id"].(string)
+
+	stdout := make(chan string, 64)
+	stderr := make(chan string, 64)
+	var buf strings.Builder
+
+	streamDone := make(chan error, 1)
+	go func() {
+		streamDone <- sb.Process.GetSessionCommandLogsStream(stepCtx, sessionID, cmdID, stdout, stderr)
+	}()
+
+	for stdout != nil || stderr != nil {
+		select {
+		case chunk, ok := <-stdout:
+			if !ok {
+				stdout = nil
+				continue
+			}
+			buf.WriteString(chunk)
+			b.log.Info("sandbox output", "sandbox", sb.ID, "step", step, "stream", "stdout", "chunk", chunk)
+			onUpdate(chunk)
+		case chunk, ok := <-stderr:
+			if !ok {
+				stderr = nil
+				continue
+			}
+			buf.WriteString(chunk)
+			b.log.Info("sandbox output", "sandbox", sb.ID, "step", step, "stream", "stderr", "chunk", chunk)
+			onUpdate(chunk)
 		}
-		b.log.Error("sandbox step failed", "sandbox", sb.ID, "step", step, "exit", res.ExitCode, "output", out)
-		return "", fmt.Errorf("step %q exit %d:\n%s", step, res.ExitCode, out)
 	}
-	b.log.Info("sandbox step ok", "sandbox", sb.ID, "step", step, "output_bytes", len(res.Result))
-	return res.Result, nil
+	<-streamDone
+
+	status, err := sb.Process.GetSessionCommand(ctx, sessionID, cmdID)
+	if err != nil {
+		return "", fmt.Errorf("step %q status: %w", step, err)
+	}
+	if exitCode, ok := status["exitCode"]; ok {
+		code, _ := exitCode.(int32)
+		if code != 0 {
+			out := buf.String()
+			if len(out) > 2000 {
+				out = "...(truncated)...\n" + out[len(out)-2000:]
+			}
+			b.log.Error("sandbox step failed", "sandbox", sb.ID, "step", step, "exit", code)
+			return "", fmt.Errorf("step %q exit %d:\n%s", step, code, out)
+		}
+	}
+
+	b.log.Info("sandbox step ok", "sandbox", sb.ID, "step", step, "output_bytes", buf.Len())
+	return buf.String(), nil
 }
 
-func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, userRequest, requestID string) (string, error) {
-	// gh CLI picks up GITHUB_TOKEN from the env automatically. We can't run
-	// `gh auth login --with-token` while GITHUB_TOKEN is set (gh refuses).
-	// Configure git to use the token for HTTPS github.com URLs via insteadOf
-	// rewriting so `git clone` and `git push` work without exposing the token
-	// in the stored remote URL.
-	if _, err := b.sh(ctx, sb, "git-auth-setup",
-		`git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"`,
-		60*time.Second,
-	); err != nil {
-		return "", err
+func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, userRequest, requestID string, onUpdate func(string)) (string, error) {
+	sessionID := "agent-" + requestID
+	if err := sb.Process.CreateSession(ctx, sessionID); err != nil {
+		return "", fmt.Errorf("create session: %w", err)
 	}
-	cloneCmd := fmt.Sprintf(
-		"git clone https://github.com/%s.git %s "+
-			"&& cd %s && git checkout %s "+
-			"&& git config user.email 'software-factory-bot@users.noreply.github.com' "+
-			"&& git config user.name 'software-factory-bot'",
-		b.cfg.GitHubRepo, workdir, workdir, b.cfg.BaseBranch,
-	)
-	if _, err := b.sh(ctx, sb, "git-clone", cloneCmd, 180*time.Second); err != nil {
-		return "", err
-	}
+	defer func() { _ = sb.Process.DeleteSession(ctx, sessionID) }()
 
 	prompt := fmt.Sprintf(agentPromptTemplate,
 		b.cfg.GitHubRepo, workdir, b.cfg.BaseBranch,
 		userRequest, requestID, b.cfg.BaseBranch,
 	)
-	out, err := b.sh(ctx, sb, "claude-run",
-		fmt.Sprintf("cd %s && claude --print %s", workdir, shellQuote(prompt)),
-		15*time.Minute,
+
+	// Base64-encode the prompt so it's a single safe line — no quoting or
+	// heredoc issues regardless of what's in the user request.
+	promptB64 := base64.StdEncoding.EncodeToString([]byte(prompt))
+
+	// Write a single self-contained script to the sandbox and run it in one step.
+	script := fmt.Sprintf(`#!/bin/bash
+set -euo pipefail
+
+echo "[sf] setting up git auth"
+git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+
+echo "[sf] cloning %s"
+git clone https://github.com/%s.git %s
+cd %s
+git checkout %s
+git config user.email 'software-factory-bot@users.noreply.github.com'
+git config user.name 'software-factory-bot'
+
+echo "[sf] verifying claude"
+which claude
+
+echo "[sf] initializing claude config"
+mkdir -p "$HOME/.claude"
+printf '{"hasCompletedOnboarding":true}\n' > "$HOME/.claude.json"
+
+echo "[sf] running claude"
+export ANTHROPIC_API_KEY=%s
+echo %s | base64 -d > /tmp/sf-prompt.txt
+claude --print --dangerously-skip-permissions < /tmp/sf-prompt.txt
+`,
+		b.cfg.GitHubRepo,
+		b.cfg.GitHubRepo, workdir,
+		workdir,
+		b.cfg.BaseBranch,
+		shellQuote(b.cfg.AnthropicAPIKey),
+		shellQuote(promptB64),
 	)
+
+	b.log.Info("agent script", "sandbox", sb.ID, "script", script)
+
+	// Write script file then execute it.
+	writeCmd := fmt.Sprintf("cat > /tmp/sf-agent.sh << 'SFEOF'\n%sSFEOF\nchmod +x /tmp/sf-agent.sh", script)
+	if _, err := b.sh(ctx, sb, sessionID, "write-script", writeCmd, 15*time.Second, onUpdate); err != nil {
+		return "", err
+	}
+
+	out, err := b.sh(ctx, sb, sessionID, "run-script", "bash /tmp/sf-agent.sh", 20*time.Minute, onUpdate)
 	if err != nil {
 		return "", err
 	}
