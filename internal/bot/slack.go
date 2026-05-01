@@ -96,9 +96,22 @@ func (b *Bot) dispatch(ctx context.Context) {
 }
 
 func (b *Bot) processSlackEvent(ctx context.Context, ev incoming) {
-	if ev.botID != "" || ev.threadTS != "" {
+	// Ignore bot messages.
+	if ev.botID != "" {
 		return
 	}
+
+	// For threaded replies, only respond if we have an active conversation
+	// for that thread (i.e. we opened the PR that started it).
+	if ev.threadTS != "" {
+		b.mu.Lock()
+		_, active := b.convos[ev.threadTS]
+		b.mu.Unlock()
+		if !active {
+			return
+		}
+	}
+
 	text := strings.TrimSpace(ev.text)
 	if text == "" {
 		return
@@ -108,9 +121,17 @@ func (b *Bot) processSlackEvent(ctx context.Context, ev incoming) {
 		return
 	}
 
+	// threadID is the root message TS — stable across all turns of a thread.
+	threadID := ev.ts
+	replyTo := ev.ts
+	if ev.threadTS != "" {
+		threadID = ev.threadTS
+		replyTo = ev.threadTS
+	}
+
 	requestID := strings.ReplaceAll(ev.ts, ".", "")
-	b.HandleRequest(ctx, text, requestID, func(msg string) {
-		b.replyInThread(ev.channel, ev.ts, fmt.Sprintf("<@%s> %s", ev.user, msg))
+	b.HandleRequest(ctx, text, requestID, threadID, func(msg string) {
+		b.replyInThread(ev.channel, replyTo, fmt.Sprintf("<@%s> %s", ev.user, msg))
 	})
 }
 

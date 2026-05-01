@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
@@ -36,6 +37,29 @@ When you are done implementing the change:
   5. The very last line of your output MUST be just the PR URL — no other
      text on that line.`
 
+const agentFollowUpPromptTemplate = `You are continuing work in %s on branch %s.
+The pull request is at %s.
+
+Conversation so far:
+%s
+
+USER REQUEST:
+%s
+
+When you are done implementing the change:
+  1. Stage and commit your changes with a clear message.
+  2. Push the branch to origin — the PR will update automatically.
+  3. The very last line of your output MUST be just the PR URL — no other
+     text on that line.`
+
+// conversation holds the live state for an ongoing multi-turn session.
+type conversation struct {
+	sandbox *daytona.Sandbox
+	branch  string
+	prURL   string
+	history []string // user turns, oldest first
+}
+
 // Bot wires Slack, the web UI, Daytona, and the agent loop together.
 type Bot struct {
 	cfg     Config
@@ -43,6 +67,9 @@ type Bot struct {
 	slack   *slack.Client
 	socket  *socketmode.Client
 	daytona *daytona.Client
+
+	mu    sync.Mutex
+	convos map[string]*conversation
 }
 
 // New constructs a Bot from config and a logger.
@@ -61,7 +88,7 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 		log.Info("daytona configured", "mode", "cloud", "url", "app.daytona.io")
 	}
 
-	b := &Bot{cfg: cfg, log: log, daytona: dc}
+	b := &Bot{cfg: cfg, log: log, daytona: dc, convos: make(map[string]*conversation)}
 	if !cfg.DisableSlack {
 		b.slack = slack.New(cfg.SlackBotToken, slack.OptionAppLevelToken(cfg.SlackSocketToken))
 		b.socket = socketmode.New(b.slack)
@@ -94,15 +121,27 @@ func (b *Bot) Run(ctx context.Context) error {
 	return err
 }
 
-// HandleRequest is the shared core: it spins up a sandbox, runs Claude Code
-// inside it, opens a PR, and pipes each progress update through onUpdate.
-// Both the Slack and web transports call this with their own onUpdate.
-func (b *Bot) HandleRequest(ctx context.Context, text, requestID string, onUpdate func(string)) {
+// HandleRequest is the shared core. threadID ties follow-up messages to an
+// existing conversation; use a unique value (e.g. Slack thread TS or web
+// session ID) so the bot can match follow-ups to the right sandbox and branch.
+func (b *Bot) HandleRequest(ctx context.Context, text, requestID, threadID string, onUpdate func(string)) {
 	b.log.Info("request received",
 		"request_id", requestID,
+		"thread_id", threadID,
 		"text_len", len(text),
 		"text_preview", truncate(text, 200),
 	)
+
+	b.mu.Lock()
+	conv := b.convos[threadID]
+	b.mu.Unlock()
+
+	if conv != nil {
+		b.handleFollowUp(ctx, conv, text, requestID, threadID, onUpdate)
+		return
+	}
+
+	// New conversation: spin up a sandbox and open a PR.
 	onUpdate("Spinning up an isolated sandbox for your request...")
 
 	sb, err := b.daytona.Create(ctx, types.SnapshotParams{
@@ -122,6 +161,7 @@ func (b *Bot) HandleRequest(ctx context.Context, text, requestID string, onUpdat
 	b.log.Info("sandbox created", "id", sb.ID, "request_id", requestID)
 	onUpdate(fmt.Sprintf("Sandbox `%s` ready — cloning repo and starting Claude Code.", sb.ID))
 
+	branch := "feature/sf-" + requestID
 	prURL, runErr := b.runAgent(ctx, sb, text, requestID, onUpdate)
 	if runErr != nil {
 		b.log.Error("agent run failed", "sandbox", sb.ID, "error", runErr)
@@ -129,10 +169,36 @@ func (b *Bot) HandleRequest(ctx context.Context, text, requestID string, onUpdat
 		return
 	}
 
-	onUpdate("Done! :tada: " + prURL)
-	if err := sb.Delete(ctx); err != nil {
-		b.log.Error("sandbox delete failed", "sandbox", sb.ID, "error", err)
+	// Keep the sandbox alive for follow-up turns.
+	b.mu.Lock()
+	b.convos[threadID] = &conversation{
+		sandbox: sb,
+		branch:  branch,
+		prURL:   prURL,
+		history: []string{text},
 	}
+	b.mu.Unlock()
+
+	onUpdate("Done! :tada: " + prURL + "\nReply here to make further changes to this PR.")
+}
+
+func (b *Bot) handleFollowUp(ctx context.Context, conv *conversation, text, requestID, threadID string, onUpdate func(string)) {
+	b.log.Info("follow-up received", "sandbox", conv.sandbox.ID, "branch", conv.branch, "pr", conv.prURL)
+	onUpdate(fmt.Sprintf("Resuming work on %s…", conv.prURL))
+
+	prURL, err := b.runFollowUp(ctx, conv, text, requestID, onUpdate)
+	if err != nil {
+		b.log.Error("follow-up failed", "sandbox", conv.sandbox.ID, "error", err)
+		onUpdate(fmt.Sprintf("Something went wrong: `%v`", err))
+		return
+	}
+
+	b.mu.Lock()
+	conv.history = append(conv.history, text)
+	conv.prURL = prURL
+	b.mu.Unlock()
+
+	onUpdate("Done! :tada: " + prURL)
 }
 
 func (b *Bot) sh(ctx context.Context, sb *daytona.Sandbox, sessionID, step, cmd string, timeout time.Duration, onUpdate func(string)) (string, error) {
@@ -215,7 +281,6 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, userRequest, re
 	// heredoc issues regardless of what's in the user request.
 	promptB64 := base64.StdEncoding.EncodeToString([]byte(prompt))
 
-	// Write a single self-contained script to the sandbox and run it in one step.
 	script := fmt.Sprintf(`#!/bin/bash
 set -euo pipefail
 
@@ -251,7 +316,6 @@ claude --print --dangerously-skip-permissions < /tmp/sf-prompt.txt
 
 	b.log.Info("agent script", "sandbox", sb.ID, "script", script)
 
-	// Write script file then execute it.
 	writeCmd := fmt.Sprintf("cat > /tmp/sf-agent.sh << 'SFEOF'\n%sSFEOF\nchmod +x /tmp/sf-agent.sh", script)
 	if _, err := b.sh(ctx, sb, sessionID, "write-script", writeCmd, 15*time.Second, onUpdate); err != nil {
 		return "", err
@@ -269,6 +333,62 @@ claude --print --dangerously-skip-permissions < /tmp/sf-prompt.txt
 			tail = tail[len(tail)-1500:]
 		}
 		return "", fmt.Errorf("no PR URL found in agent output. Tail:\n%s", tail)
+	}
+	return match, nil
+}
+
+func (b *Bot) runFollowUp(ctx context.Context, conv *conversation, userRequest, requestID string, onUpdate func(string)) (string, error) {
+	sessionID := "followup-" + requestID
+	if err := conv.sandbox.Process.CreateSession(ctx, sessionID); err != nil {
+		return "", fmt.Errorf("create session: %w", err)
+	}
+	defer func() { _ = conv.sandbox.Process.DeleteSession(ctx, sessionID) }()
+
+	history := strings.Join(conv.history, "\n---\n")
+	prompt := fmt.Sprintf(agentFollowUpPromptTemplate,
+		workdir, conv.branch, conv.prURL,
+		history, userRequest,
+	)
+	promptB64 := base64.StdEncoding.EncodeToString([]byte(prompt))
+
+	script := fmt.Sprintf(`#!/bin/bash
+set -euo pipefail
+
+echo "[sf] checking out branch"
+cd %s
+git fetch origin
+git checkout %s
+git pull --rebase origin %s
+
+echo "[sf] running claude"
+export ANTHROPIC_API_KEY=%s
+echo %s | base64 -d > /tmp/sf-prompt.txt
+claude --print --dangerously-skip-permissions < /tmp/sf-prompt.txt
+`,
+		workdir, conv.branch, conv.branch,
+		shellQuote(b.cfg.AnthropicAPIKey),
+		shellQuote(promptB64),
+	)
+
+	b.log.Info("follow-up script", "sandbox", conv.sandbox.ID, "script", script)
+
+	writeCmd := fmt.Sprintf("cat > /tmp/sf-followup.sh << 'SFEOF'\n%sSFEOF\nchmod +x /tmp/sf-followup.sh", script)
+	if _, err := b.sh(ctx, conv.sandbox, sessionID, "write-script", writeCmd, 15*time.Second, onUpdate); err != nil {
+		return "", err
+	}
+
+	out, err := b.sh(ctx, conv.sandbox, sessionID, "run-script", "bash /tmp/sf-followup.sh", 20*time.Minute, onUpdate)
+	if err != nil {
+		return "", err
+	}
+
+	match := prURLRe.FindString(out)
+	if match == "" {
+		tail := out
+		if len(tail) > 1500 {
+			tail = tail[len(tail)-1500:]
+		}
+		return "", fmt.Errorf("no PR URL found in follow-up output. Tail:\n%s", tail)
 	}
 	return match, nil
 }

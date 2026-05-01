@@ -34,6 +34,10 @@ const log = document.getElementById('log');
 const inp = document.getElementById('inp');
 const btn = document.getElementById('btn');
 
+// Stable for the lifetime of this page — ties follow-up messages to the same
+// sandbox and branch so the bot can continue work on the same PR.
+const sessionId = crypto.randomUUID();
+
 inp.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
 
 function addMsg(text, cls) {
@@ -56,7 +60,7 @@ async function send() {
   const res = await fetch('/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text })
+    body: JSON.stringify({ text, session_id: sessionId })
   });
 
   const reader = res.body.getReader();
