@@ -148,10 +148,16 @@ func (b *Bot) processSlackEvent(ctx context.Context, ev incoming) {
 		replyTo = ev.threadTS
 	}
 
+	b.replyInThread(ev.channel, replyTo, fmt.Sprintf("<@%s> Working on it…", ev.user))
+
+	var lastMsg string
 	requestID := strings.ReplaceAll(ev.ts, ".", "")
 	b.HandleRequest(ctx, text, requestID, threadID, func(msg string) {
-		b.replyInThread(ev.channel, replyTo, fmt.Sprintf("<@%s> %s", ev.user, msg))
+		lastMsg = msg
 	})
+	if lastMsg != "" {
+		b.replyInThread(ev.channel, replyTo, fmt.Sprintf("<@%s> %s", ev.user, lastMsg))
+	}
 }
 
 func (b *Bot) replyInThread(channel, threadTS, msg string) {
