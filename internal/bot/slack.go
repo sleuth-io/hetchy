@@ -120,19 +120,6 @@ func (b *Bot) processSlackEvent(ctx context.Context, ev incoming) {
 		return
 	}
 
-	// For threaded replies, only respond if we have an active conversation
-	// for that thread (i.e. we opened the PR that started it).
-	if ev.threadTS != "" {
-		b.mu.Lock()
-		_, active := b.convos[ev.threadTS]
-		b.mu.Unlock()
-		if !active {
-			b.log.Warn("no active conversation for thread, ignoring message",
-				"thread_ts", ev.threadTS, "user", ev.user, "channel", ev.channel)
-			return
-		}
-	}
-
 	text := strings.TrimSpace(ev.text)
 	if text == "" {
 		return
@@ -142,12 +129,24 @@ func (b *Bot) processSlackEvent(ctx context.Context, ev incoming) {
 		return
 	}
 
-	// threadID is the root message TS — stable across all turns of a thread.
+	// threadID is the stable key for a conversation. When a message arrives
+	// inside a thread we always use the thread root TS so that every turn of
+	// the same thread maps to the same conversation, regardless of whether
+	// the bot started the thread. For top-level messages we use the message's
+	// own TS (which becomes the thread root once the bot replies).
 	threadID := ev.ts
 	replyTo := ev.ts
 	if ev.threadTS != "" {
 		threadID = ev.threadTS
 		replyTo = ev.threadTS
+
+		b.mu.Lock()
+		_, active := b.convos[threadID]
+		b.mu.Unlock()
+		if !active {
+			b.log.Warn("no active conversation for thread, will start a new one",
+				"thread_ts", ev.threadTS, "user", ev.user, "channel", ev.channel)
+		}
 	}
 
 	b.replyInThread(ev.channel, replyTo, fmt.Sprintf("<@%s> Working on it…", ev.user))
