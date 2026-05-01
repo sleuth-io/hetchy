@@ -28,8 +28,8 @@ echo "[sf] cloning ${SF_REPO}"
 git clone "https://github.com/${SF_REPO}.git" "${SF_WORKDIR}"
 cd "${SF_WORKDIR}"
 git checkout "${SF_BASE_BRANCH}"
-git config user.email 'software-factory-bot@users.noreply.github.com'
-git config user.name 'software-factory-bot'
+git config user.email 'hetchy-bot@users.noreply.github.com'
+git config user.name 'hetchy-bot'
 
 echo "[sf] verifying claude"
 which claude

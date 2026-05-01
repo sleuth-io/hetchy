@@ -6,20 +6,20 @@ help: ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-15s %s\n", $$1, $$2}'
 
 # Build variables
-BINARY_NAME=software-factory
-MAIN_PATH=./cmd/software-factory
+BINARY_NAME=hetchy
+MAIN_PATH=./cmd/hetchy
 BUILD_DIR=./dist
 VERSION?=$(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT?=$(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
 DATE?=$(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
-LDFLAGS=-ldflags "-X github.com/rberrelleza/software-factory/internal/buildinfo.Version=$(VERSION) -X github.com/rberrelleza/software-factory/internal/buildinfo.Commit=$(COMMIT) -X github.com/rberrelleza/software-factory/internal/buildinfo.Date=$(DATE)"
+LDFLAGS=-ldflags "-X github.com/hetchyhq/hetchy/internal/buildinfo.Version=$(VERSION) -X github.com/hetchyhq/hetchy/internal/buildinfo.Commit=$(COMMIT) -X github.com/hetchyhq/hetchy/internal/buildinfo.Date=$(DATE)"
 
 # Daytona dev stack
 DAYTONA_DIR   ?= $(HOME)/src/daytona
 SNAPSHOT_NAME ?= claude-playwright
 SNAPSHOT_TAG  ?= 1
 COMPOSE       = docker compose -f "$(DAYTONA_DIR)/docker/docker-compose.yaml"
-LOG_FILE      ?= /tmp/software-factory.log
+LOG_FILE      ?= /tmp/hetchy.log
 
 build: ## Build the binary
 	@echo "Building $(BINARY_NAME)..."

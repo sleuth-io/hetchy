@@ -1,4 +1,4 @@
-module github.com/rberrelleza/software-factory
+module github.com/hetchyhq/hetchy
 
 go 1.25.6
 

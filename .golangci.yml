@@ -73,7 +73,7 @@ formatters:
       sections:
         - standard
         - default
-        - prefix(github.com/rberrelleza/software-factory)
+        - prefix(github.com/hetchyhq/hetchy)
   exclusions:
     generated: lax
     paths:

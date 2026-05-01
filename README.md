@@ -38,8 +38,8 @@ Hetchy automates code changes by:
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/rberrelleza/software-factory.git
-cd software-factory
+git clone https://github.com/hetchyhq/hetchy.git
+cd hetchy
 ```
 
 ### 2. Configure Environment
@@ -165,7 +165,7 @@ make prepush       # Format, lint, test, build
 ### Debugging
 
 ```bash
-# Run with log tailing (logs to /tmp/software-factory.log)
+# Run with log tailing (logs to /tmp/hetchy.log)
 make bot-tee
 
 # In another terminal, tail logs
@@ -223,7 +223,7 @@ make logs
 
 ```bash
 # Build image
-docker build -t software-factory .
+docker build -t hetchy .
 
 # Run container
 docker run -p 8080:8080 \
@@ -231,7 +231,7 @@ docker run -p 8080:8080 \
   -e GITHUB_TOKEN=... \
   -e DAYTONA_API_KEY=... \
   -e GITHUB_REPO=owner/repo \
-  software-factory
+  hetchy
 ```
 
 ### Docker Compose
@@ -271,9 +271,9 @@ The compose file reads environment variables from your shell (or a `.env` file) 
 ## Project Structure
 
 ```
-software-factory/
+hetchy/
 ├── cmd/
-│   └── software-factory/   # main.go — binary entry point
+│   └── hetchy/             # main.go — binary entry point
 ├── internal/
 │   ├── bot/                # Core package: all runtime logic lives here
 │   │   ├── bot.go          # Bot struct, sandbox lifecycle, Claude Code invocation
@@ -300,7 +300,7 @@ software-factory/
 
 | Package | Responsibility |
 |---------|---------------|
-| `cmd/software-factory` | Wires together config, logging, and the bot; handles OS signals for graceful shutdown |
+| `cmd/hetchy` | Wires together config, logging, and the bot; handles OS signals for graceful shutdown |
 | `internal/bot` | All runtime logic: receives requests from Slack or HTTP, manages Daytona sandbox lifecycle, streams Claude Code output, extracts the PR URL, and persists conversation state for follow-up turns |
 | `internal/buildinfo` | Exposes `Version`, `Commit`, and `Date` constants injected at link time via `ldflags` |
 
