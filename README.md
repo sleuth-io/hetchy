@@ -1,10 +1,10 @@
-# Software Factory
+# Hetchy
 
 A Slack bot and web UI that converts natural language requests into pull requests by running [Claude Code](https://claude.com/claude-code) inside isolated [Daytona](https://daytona.io) sandboxes.
 
 ## Overview
 
-Software Factory automates code changes by:
+Hetchy automates code changes by:
 1. Receiving requests via Slack or a web interface
 2. Spinning up an isolated Daytona sandbox with your repository
 3. Running Claude Code to implement the requested changes
