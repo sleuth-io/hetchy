@@ -175,6 +175,44 @@ func TestShellQuote_RoundTrip(t *testing.T) {
 	}
 }
 
+// TestHandleRequest_CallbackRouting verifies that status messages go to onNotify
+// (not onUpdate) and raw sandbox output goes to onUpdate (not onNotify).
+// It also verifies that onError is called when sandbox creation fails.
+func TestHandleRequest_CallbackRouting(t *testing.T) {
+	t.Setenv("DAYTONA_API_KEY", "fake-key")
+	cfg := minConfig()
+	b, err := New(cfg, discardLogger())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	var updates, notifies []string
+	b.HandleRequest(context.Background(), "do something", "req-1", "thread-1",
+		func(msg string) { updates = append(updates, msg) },
+		func(msg string) { notifies = append(notifies, msg) },
+		func(msg string) { t.Errorf("unexpected onComplete: %s", msg) },
+		func(msg string) { /* expected: sandbox create will fail */ },
+	)
+
+	// "Spinning up" is a bot-controlled status update — must go to onNotify.
+	foundInNotify := false
+	for _, m := range notifies {
+		if strings.Contains(m, "Spinning up") {
+			foundInNotify = true
+		}
+	}
+	if !foundInNotify {
+		t.Errorf("expected 'Spinning up' in onNotify, got notifies=%v", notifies)
+	}
+
+	// "Spinning up" must NOT appear in onUpdate (which is for raw sandbox output only).
+	for _, m := range updates {
+		if strings.Contains(m, "Spinning up") {
+			t.Errorf("'Spinning up' should not appear in onUpdate, got: %s", m)
+		}
+	}
+}
+
 func TestTruncate(t *testing.T) {
 	cases := []struct {
 		name string

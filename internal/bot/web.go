@@ -103,7 +103,8 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 			}
 		}
 		b.HandleRequest(parentCtx, text, requestID, sessionID,
-			sendUpdate, // onUpdate
+			sendUpdate, // onUpdate: raw logs streamed to browser
+			sendUpdate, // onNotify: status updates also streamed to browser
 			func(msg string) { // onComplete
 				sendUpdate("Done! :tada: " + msg)
 			},

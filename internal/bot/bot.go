@@ -99,9 +99,11 @@ func (b *Bot) Run(ctx context.Context) error {
 // HandleRequest is the shared core. threadID ties follow-up messages to an
 // existing conversation; use a unique value (e.g. Slack thread TS or web
 // session ID) so the bot can match follow-ups to the right sandbox and branch.
+// onUpdate receives raw sandbox log chunks (stdout/stderr); onNotify receives
+// important status messages from the bot itself (not raw tool output).
 // onComplete is called on successful PR creation with the PR URL; onError is called
 // when the task fails with an error message.
-func (b *Bot) HandleRequest(ctx context.Context, text, requestID, threadID string, onUpdate func(string), onComplete func(string), onError func(string)) {
+func (b *Bot) HandleRequest(ctx context.Context, text, requestID, threadID string, onUpdate func(string), onNotify func(string), onComplete func(string), onError func(string)) {
 	b.log.Info("request received",
 		"request_id", requestID,
 		"thread_id", threadID,
@@ -114,12 +116,12 @@ func (b *Bot) HandleRequest(ctx context.Context, text, requestID, threadID strin
 	b.mu.Unlock()
 
 	if conv != nil {
-		b.handleFollowUp(ctx, conv, text, requestID, threadID, onUpdate, onComplete, onError)
+		b.handleFollowUp(ctx, conv, text, requestID, threadID, onUpdate, onNotify, onComplete, onError)
 		return
 	}
 
 	// New conversation: spin up a sandbox and open a PR.
-	onUpdate("Spinning up an isolated sandbox for your request...")
+	onNotify("Spinning up an isolated sandbox for your request...")
 
 	envVars := map[string]string{
 		"ANTHROPIC_API_KEY": b.cfg.AnthropicAPIKey,
@@ -140,7 +142,7 @@ func (b *Bot) HandleRequest(ctx context.Context, text, requestID, threadID strin
 		return
 	}
 	b.log.Info("sandbox created", "id", sb.ID, "request_id", requestID)
-	onUpdate(fmt.Sprintf("Sandbox `%s` ready — cloning repo and starting Claude Code.", sb.ID))
+	onNotify(fmt.Sprintf("Sandbox `%s` ready — cloning repo and starting Claude Code.", sb.ID))
 
 	branch := "feature/sf-" + requestID
 	prURL, runErr := b.runAgent(ctx, sb, text, requestID, onUpdate)
@@ -170,9 +172,9 @@ func (b *Bot) HandleRequest(ctx context.Context, text, requestID, threadID strin
 	onComplete(prURL + "\nReply here to make further changes to this PR.")
 }
 
-func (b *Bot) handleFollowUp(ctx context.Context, conv *conversation, text, requestID, threadID string, onUpdate func(string), onComplete func(string), onError func(string)) {
+func (b *Bot) handleFollowUp(ctx context.Context, conv *conversation, text, requestID, threadID string, onUpdate func(string), onNotify func(string), onComplete func(string), onError func(string)) {
 	b.log.Info("follow-up received", "sandbox", conv.sandbox.ID, "branch", conv.branch, "pr", conv.prURL)
-	onUpdate(fmt.Sprintf("Resuming work on %s…", conv.prURL))
+	onNotify(fmt.Sprintf("Resuming work on %s…", conv.prURL))
 
 	if err := conv.sandbox.Start(ctx); err != nil {
 		b.log.Error("sandbox start failed", "sandbox", conv.sandbox.ID, "error", err)
