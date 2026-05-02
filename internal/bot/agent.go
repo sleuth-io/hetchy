@@ -85,9 +85,7 @@ func (b *Bot) runFollowUp(ctx context.Context, conv *conversation, userRequest, 
 // captured stdout+stderr. It looks for a GitHub PR URL in the output and
 // returns an error if none is found.
 func (b *Bot) runScript(ctx context.Context, sb *daytona.Sandbox, sessionID, label, scriptBody string, env map[string]string, onUpdate func(string)) (string, error) {
-	if err := b.retryWithBackoff(ctx, "create session", func() error {
-		return sb.Process.CreateSession(ctx, sessionID)
-	}); err != nil {
+	if err := sb.Process.CreateSession(ctx, sessionID); err != nil {
 		return "", fmt.Errorf("create session: %w", err)
 	}
 	defer func() {
