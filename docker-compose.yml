@@ -26,6 +26,20 @@ services:
       start_period: 10s
 
   # Main hetchy bot service
+  migration:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VERSION: ${VERSION:-dev}
+        COMMIT: ${COMMIT:-none}
+        DATE: ${DATE:-unknown}
+    container_name: migration
+    restart: on-failure
+    command: "/app/hetchy --migrate"
+    depends_on:
+      postgres:
+        condition: service_healthy
   hetchy:
     build:
       context: .
@@ -41,6 +55,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migration:
+        condition: service_completed_successfully
     environment:
       # Slack configuration
       SLACK_BOT_OAUTH_TOKEN: ${SLACK_BOT_OAUTH_TOKEN}
