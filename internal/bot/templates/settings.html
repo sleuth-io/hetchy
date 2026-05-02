@@ -176,7 +176,7 @@
   <h1>Members</h1>
   <p class="desc">Manage who can use this organization. WorkOS handles invitation emails and password resets.</p>
 
-  {{if .Saved}}<div class="saved-banner">{{.SavedMessage}}</div>{{end}}
+  {{if .SavedMessage}}<div class="saved-banner">{{.SavedMessage}}</div>{{end}}
 
   <p class="section-title">Invite by email</p>
   <form method="POST" action="/settings/org/invite" class="invite-form">

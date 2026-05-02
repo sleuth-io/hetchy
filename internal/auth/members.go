@@ -4,9 +4,40 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	workos "github.com/workos/workos-go/v7"
 )
+
+// formatExpiry trims a WorkOS RFC-3339 timestamp to a friendly
+// "YYYY-MM-DD" for display. Falls back to the raw input when parsing
+// fails so we never blank a real value due to an unexpected format.
+func formatExpiry(s string) string {
+	if s == "" {
+		return ""
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return s
+	}
+	return t.UTC().Format(time.DateOnly)
+}
+
+// displayName returns "First Last" when both are present, falling back
+// to whichever single name is set, or the email as a last resort. Used
+// by both Profile and Member so the rule lives in one place.
+func displayName(first, last, email string) string {
+	switch {
+	case first != "" && last != "":
+		return first + " " + last
+	case first != "":
+		return first
+	case last != "":
+		return last
+	default:
+		return email
+	}
+}
 
 // ErrForbidden is returned when an action requires the admin role and
 // the caller doesn't hold it. Handlers should map this to HTTP 403.
@@ -29,16 +60,7 @@ type Profile struct {
 // DisplayName is "First Last" trimmed, or the email when both names are
 // blank — useful for sidebars and member lists.
 func (p Profile) DisplayName() string {
-	switch {
-	case p.FirstName != "" && p.LastName != "":
-		return p.FirstName + " " + p.LastName
-	case p.FirstName != "":
-		return p.FirstName
-	case p.LastName != "":
-		return p.LastName
-	default:
-		return p.Email
-	}
+	return displayName(p.FirstName, p.LastName, p.Email)
 }
 
 // Member is a resolved organization membership joined with the user's
@@ -57,16 +79,7 @@ type Member struct {
 // DisplayName mirrors Profile.DisplayName so templates can use the same
 // helper without caring whether they have a Profile or a Member.
 func (m Member) DisplayName() string {
-	switch {
-	case m.FirstName != "" && m.LastName != "":
-		return m.FirstName + " " + m.LastName
-	case m.FirstName != "":
-		return m.FirstName
-	case m.LastName != "":
-		return m.LastName
-	default:
-		return m.Email
-	}
+	return displayName(m.FirstName, m.LastName, m.Email)
 }
 
 // Invitation is a pending WorkOS invitation. Already-accepted/revoked
@@ -196,7 +209,7 @@ func (s *Service) ListInvitations(ctx context.Context, orgID string) ([]Invitati
 		if string(inv.State) != "pending" {
 			continue
 		}
-		i := Invitation{ID: inv.ID, Email: inv.Email, ExpiresAt: inv.ExpiresAt}
+		i := Invitation{ID: inv.ID, Email: inv.Email, ExpiresAt: formatExpiry(inv.ExpiresAt)}
 		if inv.RoleSlug != nil {
 			i.RoleSlug = *inv.RoleSlug
 		}
@@ -318,6 +331,15 @@ func (s *Service) UpdateMemberRole(ctx context.Context, membershipID, expectedOr
 
 // countAdmins returns the number of active admin memberships in orgID.
 // Used by the last-admin guards.
+//
+// KNOWN RACE: this is a read-then-write check across two WorkOS API
+// calls. Two concurrent demote/remove requests targeting different
+// admins in a two-admin org can both observe count == 2, both pass the
+// guard, and both succeed -- leaving the org with zero admins. WorkOS
+// has no transactional primitive that would close this window. If it
+// becomes a real issue, gate read+mutate behind a short-TTL distributed
+// lock keyed on orgID. For now the failure mode is a (rare) recovered-
+// by-WorkOS-support situation rather than data loss.
 func (s *Service) countAdmins(ctx context.Context, orgID string) (int, error) {
 	org := orgID
 	it := s.client.UserManagement().ListOrganizationMemberships(ctx, &workos.UserManagementListOrganizationMembershipsParams{

@@ -229,25 +229,23 @@ func TestSettingsTemplate_RendersMembersTab(t *testing.T) {
 		"GitHubRepo": "acme/web", "GitHubBaseBranch": "main",
 		"GitHubTokenPreview": "", "AnthropicAPIKeyPreview": "",
 		"SlackBotTokenPreview": "", "SlackSocketTokenPreview": "", "SXKeyPreview": "",
-		"Members": []any{
-			map[string]any{
-				"MembershipID": "om_1", "UserID": "user_me",
-				"Email": "me@x", "FirstName": "Me", "LastName": "Self",
-				"RoleSlug": "admin", "Status": "active",
-				"DisplayName": "Me Self",
+		// Real auth.Member / auth.Invitation structs so the template's
+		// .DisplayName invocation actually exercises the method, not a
+		// map-key lookup.
+		"Members": []auth.Member{
+			{
+				MembershipID: "om_1", UserID: "user_me",
+				Email: "me@x", FirstName: "Me", LastName: "Self",
+				RoleSlug: "admin", Status: "active",
 			},
-			map[string]any{
-				"MembershipID": "om_2", "UserID": "user_other",
-				"Email": "ada@x", "FirstName": "Ada", "LastName": "L",
-				"RoleSlug": "member", "Status": "active",
-				"DisplayName": "Ada L",
+			{
+				MembershipID: "om_2", UserID: "user_other",
+				Email: "ada@x", FirstName: "Ada", LastName: "L",
+				RoleSlug: "member", Status: "active",
 			},
 		},
-		"Invitations": []any{
-			map[string]any{
-				"ID": "inv_1", "Email": "pending@x", "RoleSlug": "member",
-				"ExpiresAt": "2026-12-01T00:00:00Z",
-			},
+		"Invitations": []auth.Invitation{
+			{ID: "inv_1", Email: "pending@x", RoleSlug: "member", ExpiresAt: "2026-12-01"},
 		},
 	})
 	if rec.Code != http.StatusOK {
