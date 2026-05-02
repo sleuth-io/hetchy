@@ -4,18 +4,44 @@
 <meta charset="utf-8">
 <title>Organization settings · Hetchy</title>
 <style>
-  body { font-family: system-ui, sans-serif; background: #f5f5f5; margin: 0; padding: 2rem; }
-  .card { background: #fff; padding: 2rem 2.5rem; border-radius: 1rem;
-          box-shadow: 0 6px 24px rgba(0,0,0,.08); max-width: 36rem; margin: 0 auto; }
-  h1 { margin: 0 0 .25rem; font-size: 1.4rem; }
-  .sub { color: #777; margin: 0 0 1.5rem; font-size: .9rem; }
+  body { font-family: system-ui, sans-serif; background: #4a4d52; margin: 0; padding: 2rem;
+         min-height: 100vh; box-sizing: border-box; }
+  .modal { background: #fff; border-radius: 1rem; box-shadow: 0 12px 40px rgba(0,0,0,.25);
+           max-width: 60rem; min-height: 36rem; margin: 0 auto;
+           display: grid; grid-template-columns: 14rem 1fr; overflow: hidden; }
+
+  /* Sidebar */
+  .sidebar { background: #fafafa; border-right: 1px solid #e8e8e8;
+             padding: 1.25rem 1rem; min-width: 0; }
+  .sidebar h2 { font-size: .95rem; margin: 0 0 .15rem; color: #222;
+                white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sidebar .subhead { font-size: .75rem; color: #888; margin: 0 0 1rem; }
+  .sidebar nav { display: flex; flex-direction: column; gap: .15rem; }
+  .sidebar nav a { display: flex; align-items: center; gap: .55rem;
+                   padding: .45rem .6rem; border-radius: .4rem;
+                   font-size: .85rem; color: #444; text-decoration: none; }
+  .sidebar nav a:hover { background: #f0f0f0; }
+  .sidebar nav a.active { background: #e9eef5; color: #1a1a1a; font-weight: 500; }
+  .sidebar nav .ico { width: 1rem; height: 1rem; opacity: .65;
+                      flex-shrink: 0; color: #555; }
+
+  /* Content pane */
+  .content { padding: 1.5rem 2rem 2rem; position: relative; overflow-y: auto; }
+  .content .close { position: absolute; top: 1.25rem; right: 1.5rem;
+                    color: #aaa; text-decoration: none; font-size: 1.25rem; }
+  .content .close:hover { color: #555; }
+  .content h1 { margin: 0 0 .15rem; font-size: 1.25rem; }
+  .content .desc { margin: 0 0 1.5rem; color: #777; font-size: .85rem; }
+
+  /* Form bits (carried over from old settings) */
   fieldset { border: none; padding: 0; margin: 0 0 1.5rem; }
-  legend { font-weight: 600; font-size: .95rem; padding: 0 0 .5rem; }
+  legend { font-weight: 600; font-size: .9rem; padding: 0 0 .5rem; }
   label { display: block; font-size: .85rem; color: #555; margin: .5rem 0 .25rem; }
-  input[type="text"], input[type="password"] {
+  input[type="text"], input[type="password"], input[type="email"], select {
           width: 100%; padding: .55rem .75rem; border: 1px solid #ccc;
-          border-radius: .4rem; font-size: .95rem; box-sizing: border-box; font-family: ui-monospace, monospace; }
-  input:focus { outline: none; border-color: #0b93f6; }
+          border-radius: .4rem; font-size: .95rem; box-sizing: border-box;
+          font-family: ui-monospace, monospace; background: #fff; }
+  input:focus, select:focus { outline: none; border-color: #0b93f6; }
   input[readonly] { background: #fafafa; color: #555; cursor: default; }
   input[readonly]:focus { border-color: #ccc; }
   input.removing { background: #fdecec; color: #b03030; text-decoration: line-through; }
@@ -33,60 +59,204 @@
               color: #888; cursor: pointer; }
   .link-btn:hover { color: #555; text-decoration: underline; }
   .link-btn[disabled] { color: #b03030; cursor: default; text-decoration: none; }
-  button[type="submit"] { margin-top: 1rem; padding: .65rem 1.25rem; background: #0b93f6;
-           color: #fff; border: none; border-radius: .4rem; font-size: 1rem;
-           cursor: pointer; }
-  .saved { background: #efe; color: #060; padding: .5rem .75rem;
-           border-radius: .4rem; margin-bottom: 1rem; font-size: .85rem; }
-  .nav { font-size: .85rem; color: #999; margin: 0 0 1rem; }
-  .nav a { color: #0b93f6; text-decoration: none; }
-  .meta { color: #999; font-size: .75rem; margin-top: 1.25rem; text-align: right; }
+  button.primary { margin-top: 1rem; padding: .6rem 1.25rem; background: #0b93f6;
+                   color: #fff; border: none; border-radius: .4rem; font-size: .95rem;
+                   cursor: pointer; }
+  .saved-banner { background: #efe; color: #060; padding: .5rem .75rem;
+                  border-radius: .4rem; margin-bottom: 1rem; font-size: .85rem; }
+  .meta { color: #999; font-size: .72rem; margin-top: 1.5rem; }
+
+  /* Members table */
+  table.members { width: 100%; border-collapse: collapse; font-size: .85rem; }
+  table.members th { text-align: left; padding: .5rem .6rem; color: #888;
+                     font-weight: 500; font-size: .75rem; text-transform: uppercase;
+                     letter-spacing: .03em; border-bottom: 1px solid #eee; }
+  table.members td { padding: .65rem .6rem; border-bottom: 1px solid #f3f3f3;
+                     vertical-align: middle; }
+  table.members tr:last-child td { border-bottom: none; }
+  table.members .name { font-weight: 500; color: #222; }
+  table.members .email { color: #666; font-size: .8rem; }
+  table.members .role select { width: auto; padding: .25rem .4rem; font-size: .8rem;
+                               font-family: inherit; }
+  table.members .pill { display: inline-block; padding: .12rem .5rem; border-radius: 1rem;
+                        font-size: .7rem; background: #f3f3f3; color: #777;
+                        text-transform: uppercase; letter-spacing: .03em; }
+  table.members .pill.pending { background: #fff4d6; color: #8a6500; }
+  table.members .row-actions { text-align: right; }
+  .invite-form { display: grid; grid-template-columns: 1fr 8rem auto;
+                 gap: .5rem; align-items: end; margin-top: .25rem; }
+  .invite-form button { padding: .55rem .9rem; background: #0b93f6;
+                        color: #fff; border: none; border-radius: .4rem;
+                        font-size: .85rem; cursor: pointer; }
+  .section-title { font-weight: 600; font-size: .9rem; margin: 1.5rem 0 .25rem; }
+  .empty { color: #999; font-size: .85rem; padding: .75rem 0; }
 </style>
 </head>
 <body>
-<form class="card" method="POST" action="/settings/org">
-  <p class="nav"><a href="/">← Back to chat</a></p>
-  <h1>Organization settings</h1>
-  <p class="sub">Per-org runtime configuration. Tokens are encrypted at rest; only a fingerprint is shown back.</p>
 
-  <div id="saved-banner" class="saved" style="display:none">Settings saved.</div>
-  <script>
-    if (window.location.search.includes('saved=1')) {
-      document.getElementById('saved-banner').style.display = '';
-    }
-  </script>
+<div class="modal">
+  <aside class="sidebar">
+    <h2 title="{{.OrgName}}">{{.OrgName}}</h2>
+    <p class="subhead">Organization settings</p>
+    <nav>
+      <a href="/settings/org?tab=general"{{if eq .Tab "general"}} class="active"{{end}}>
+        <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="8" cy="8" r="2"/>
+          <path d="M13 8a5 5 0 0 0-.1-1l1.3-1-1-1.7-1.5.5a5 5 0 0 0-1.7-1L9.7 2H6.3l-.3 1.6a5 5 0 0 0-1.7 1l-1.5-.5-1 1.7 1.3 1A5 5 0 0 0 3 8a5 5 0 0 0 .1 1l-1.3 1 1 1.7 1.5-.5a5 5 0 0 0 1.7 1l.3 1.6h3.4l.3-1.6a5 5 0 0 0 1.7-1l1.5.5 1-1.7-1.3-1A5 5 0 0 0 13 8z"/>
+        </svg>
+        General
+      </a>
+      {{if .IsAdmin}}
+      <a href="/settings/org?tab=members"{{if eq .Tab "members"}} class="active"{{end}}>
+        <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="6" cy="5.5" r="2"/>
+          <circle cx="11.5" cy="6.5" r="1.5"/>
+          <path d="M2 13c0-2 1.8-3.5 4-3.5s4 1.5 4 3.5"/>
+          <path d="M11 10c1.8 0 3 1.2 3 2.8"/>
+        </svg>
+        Members
+      </a>
+      {{end}}
+    </nav>
+  </aside>
 
-  <fieldset>
-    <legend>GitHub</legend>
-    <label for="github_repo">Repository (owner/repo)</label>
-    <input id="github_repo" type="text" name="github_repo" value="{{.GitHubRepo}}" placeholder="acme/website" required>
-    <label for="github_base_branch">Base branch</label>
-    <input id="github_base_branch" type="text" name="github_base_branch" value="{{.GitHubBaseBranch}}" placeholder="main">
-    {{template "secret" dict "Field" "github_token" "Label" "Personal access token" "Preview" .GitHubTokenPreview "Placeholder" "ghp_…" "Required" false}}
-    <p class="hint">Needs <code>repo</code> scope.</p>
-  </fieldset>
+  <section class="content">
+    <a class="close" href="/" title="Close">✕</a>
 
-  <fieldset>
-    <legend>Anthropic (required)</legend>
-    {{template "secret" dict "Field" "anthropic_api_key" "Label" "API key" "Preview" .AnthropicAPIKeyPreview "Placeholder" "sk-ant-…" "Required" true}}
-    <p class="hint">Used by Claude Code inside the sandbox.</p>
-  </fieldset>
+    {{if eq .Tab "members"}}
+      {{template "members" .}}
+    {{else}}
+      {{template "general" .}}
+    {{end}}
 
-  <fieldset>
-    <legend>Slack (optional)</legend>
-    {{template "secret" dict "Field" "slack_bot_token" "Label" "Bot token" "Preview" .SlackBotTokenPreview "Placeholder" "xoxb-…" "Required" false}}
-    {{template "secret" dict "Field" "slack_socket_token" "Label" "Socket token" "Preview" .SlackSocketTokenPreview "Placeholder" "xapp-…" "Required" false}}
-    <p class="hint">Provide both to receive Slack events for this org. Each org runs its own socket-mode connection.</p>
-  </fieldset>
+    <p class="meta">Org ID: <code>{{.OrgID}}</code> · {{.Email}} · <a href="/logout" style="color:#888">Log out</a></p>
+  </section>
+</div>
 
-  <fieldset>
-    <legend>SX (optional)</legend>
-    {{template "secret" dict "Field" "sx_key" "Label" "SX bot key" "Preview" .SXKeyPreview "Placeholder" "sx-…" "Required" false}}
-  </fieldset>
+{{define "general"}}
+  <h1>General</h1>
+  <p class="desc">Per-org runtime configuration. Tokens are encrypted at rest; only a fingerprint is shown back.</p>
 
-  <button type="submit">Save</button>
-  <p class="meta">Org ID: <code>{{.OrgID}}</code> · {{.Email}} · <a href="/logout">Log out</a></p>
-</form>
+  {{if .Saved}}<div class="saved-banner">Settings saved.</div>{{end}}
+
+  <form method="POST" action="/settings/org">
+    <fieldset>
+      <legend>GitHub</legend>
+      <label for="github_repo">Repository (owner/repo)</label>
+      <input id="github_repo" type="text" name="github_repo" value="{{.GitHubRepo}}" placeholder="acme/website" required>
+      <label for="github_base_branch">Base branch</label>
+      <input id="github_base_branch" type="text" name="github_base_branch" value="{{.GitHubBaseBranch}}" placeholder="main">
+      {{template "secret" dict "Field" "github_token" "Label" "Personal access token" "Preview" .GitHubTokenPreview "Placeholder" "ghp_…" "Required" false}}
+      <p class="hint">Needs <code>repo</code> scope.</p>
+    </fieldset>
+
+    <fieldset>
+      <legend>Anthropic (required)</legend>
+      {{template "secret" dict "Field" "anthropic_api_key" "Label" "API key" "Preview" .AnthropicAPIKeyPreview "Placeholder" "sk-ant-…" "Required" true}}
+      <p class="hint">Used by Claude Code inside the sandbox.</p>
+    </fieldset>
+
+    <fieldset>
+      <legend>Slack (optional)</legend>
+      {{template "secret" dict "Field" "slack_bot_token" "Label" "Bot token" "Preview" .SlackBotTokenPreview "Placeholder" "xoxb-…" "Required" false}}
+      {{template "secret" dict "Field" "slack_socket_token" "Label" "Socket token" "Preview" .SlackSocketTokenPreview "Placeholder" "xapp-…" "Required" false}}
+      <p class="hint">Provide both to receive Slack events for this org. Each org runs its own socket-mode connection.</p>
+    </fieldset>
+
+    <fieldset>
+      <legend>SX (optional)</legend>
+      {{template "secret" dict "Field" "sx_key" "Label" "SX bot key" "Preview" .SXKeyPreview "Placeholder" "sx-…" "Required" false}}
+    </fieldset>
+
+    <button class="primary" type="submit">Save</button>
+  </form>
+{{end}}
+
+{{define "members"}}
+  <h1>Members</h1>
+  <p class="desc">Manage who can use this organization. WorkOS handles invitation emails and password resets.</p>
+
+  {{if .Saved}}<div class="saved-banner">{{.SavedMessage}}</div>{{end}}
+
+  <p class="section-title">Invite by email</p>
+  <form method="POST" action="/settings/org/invite" class="invite-form">
+    <div>
+      <label for="invite_email" style="margin-top:0">Email address</label>
+      <input id="invite_email" type="email" name="email" placeholder="teammate@example.com" required>
+    </div>
+    <div>
+      <label for="invite_role" style="margin-top:0">Role</label>
+      <select id="invite_role" name="role">
+        <option value="member" selected>member</option>
+        <option value="admin">admin</option>
+      </select>
+    </div>
+    <button type="submit">Send invite</button>
+  </form>
+
+  <p class="section-title">Members</p>
+  {{if .Members}}
+    <table class="members">
+      <thead><tr><th>Name</th><th>Role</th><th>Status</th><th></th></tr></thead>
+      <tbody>
+        {{range .Members}}
+        <tr>
+          <td>
+            <div class="name">{{.DisplayName}}</div>
+            <div class="email">{{.Email}}</div>
+          </td>
+          <td class="role">
+            {{if eq $.PrincipalUserID .UserID}}
+              <span class="pill">{{.RoleSlug}}</span>
+            {{else}}
+              <form method="POST" action="/settings/org/members/{{.MembershipID}}/role" class="role-form" style="margin:0">
+                <select name="role" data-original="{{.RoleSlug}}">
+                  <option value="member"{{if eq .RoleSlug "member"}} selected{{end}}>member</option>
+                  <option value="admin"{{if eq .RoleSlug "admin"}} selected{{end}}>admin</option>
+                </select>
+                <button type="submit" class="link-btn role-save" hidden>Save</button>
+              </form>
+            {{end}}
+          </td>
+          <td><span class="pill {{if eq .Status "pending"}}pending{{end}}">{{.Status}}</span></td>
+          <td class="row-actions">
+            {{if ne $.PrincipalUserID .UserID}}
+              <form method="POST" action="/settings/org/members/{{.MembershipID}}/remove" class="remove-form" data-email="{{.Email}}" style="margin:0; display:inline">
+                <button type="submit" class="link-btn">Remove</button>
+              </form>
+            {{end}}
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  {{else}}
+    <p class="empty">No members yet — invite someone above.</p>
+  {{end}}
+
+  <p class="section-title">Pending invitations</p>
+  {{if .Invitations}}
+    <table class="members">
+      <thead><tr><th>Email</th><th>Role</th><th>Expires</th><th></th></tr></thead>
+      <tbody>
+        {{range .Invitations}}
+        <tr>
+          <td>{{.Email}}</td>
+          <td><span class="pill">{{.RoleSlug}}</span></td>
+          <td class="email">{{.ExpiresAt}}</td>
+          <td class="row-actions">
+            <form method="POST" action="/settings/org/invitations/{{.ID}}/revoke" class="revoke-form" data-email="{{.Email}}" style="margin:0; display:inline">
+              <button type="submit" class="link-btn">Revoke</button>
+            </form>
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  {{else}}
+    <p class="empty">No pending invitations.</p>
+  {{end}}
+{{end}}
 
 {{define "secret"}}
   <label for="{{.Field}}">{{.Label}}</label>
@@ -138,6 +308,33 @@
       document.getElementById(field + '-preview').classList.add('removing');
       btn.textContent = 'Will be removed on Save';
       btn.disabled = true;
+    });
+  });
+
+  // Members-tab role select: only reveal the Save button when the value
+  // actually differs from the original. Avoids spurious submits while
+  // the user keyboard-arrows through options.
+  document.querySelectorAll('.role-form select').forEach(sel => {
+    const save = sel.parentElement.querySelector('.role-save');
+    sel.addEventListener('change', () => {
+      save.hidden = (sel.value === sel.dataset.original);
+    });
+  });
+
+  // Confirm-on-submit for member remove + invitation revoke. Email
+  // comes from a data-attribute (HTML-escaped by Go's template) instead
+  // of being interpolated into a JS string literal — that way an email
+  // with an apostrophe (RFC-allowed) can't break the page.
+  document.querySelectorAll('.remove-form').forEach(f => {
+    f.addEventListener('submit', e => {
+      const email = f.dataset.email || 'this member';
+      if (!confirm('Remove ' + email + ' from this organization?')) e.preventDefault();
+    });
+  });
+  document.querySelectorAll('.revoke-form').forEach(f => {
+    f.addEventListener('submit', e => {
+      const email = f.dataset.email || 'this invitation';
+      if (!confirm('Revoke invitation to ' + email + '?')) e.preventDefault();
     });
   });
 </script>

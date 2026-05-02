@@ -30,9 +30,37 @@
   #topbar { display: flex; justify-content: space-between; align-items: center;
             padding: .6rem 1.5rem; background: #fff; border-bottom: 1px solid #ddd; }
   #topbar h1 { font-size: 1rem; font-weight: 600; margin: 0; }
-  #topbar .links { display: flex; gap: 1rem; font-size: .85rem; }
+  #topbar .links { display: flex; gap: 1rem; font-size: .85rem; align-items: center; }
   #topbar a { color: #0b93f6; text-decoration: none; }
   #topbar a:hover { text-decoration: underline; }
+
+  /* User menu (avatar dropdown) */
+  .user-menu { position: relative; margin-left: .25rem; }
+  .avatar-btn { background: none; border: 1px solid #e5e5e5; padding: 0;
+                border-radius: 50%; cursor: pointer; display: inline-flex;
+                line-height: 0; }
+  .avatar-btn:hover, .avatar-btn[aria-expanded="true"] { border-color: #0b93f6; }
+  .avatar { width: 28px; height: 28px; border-radius: 50%;
+            display: block; background: #f0f0f0; }
+  .user-menu-dropdown { position: absolute; top: calc(100% + .5rem); right: 0;
+                        background: #fff; border: 1px solid #e5e5e5;
+                        border-radius: .5rem; box-shadow: 0 8px 24px rgba(0,0,0,.12);
+                        min-width: 18rem; padding: .25rem 0; z-index: 50; }
+  .user-menu-dropdown[hidden] { display: none; }
+  .user-menu-header { display: flex; align-items: center; gap: .75rem;
+                      padding: .9rem 1rem; border-bottom: 1px solid #f0f0f0; }
+  .user-menu-header .avatar-lg { width: 44px; height: 44px; border-radius: 50%;
+                                  background: #f0f0f0; display: block; flex-shrink: 0; }
+  .user-menu-header .name { font-weight: 600; font-size: .95rem; color: #1a1a1a;
+                            line-height: 1.2; }
+  .user-menu-header .email { font-size: .8rem; color: #777; line-height: 1.4; }
+  .user-menu-dropdown a.item { display: flex; align-items: center; gap: .6rem;
+                                padding: .6rem 1rem; color: #333; font-size: .9rem;
+                                text-decoration: none; }
+  .user-menu-dropdown a.item:hover { background: #f7f7f7; text-decoration: none; }
+  .user-menu-dropdown a.item .ico { width: 1rem; height: 1rem; opacity: .65;
+                                     flex-shrink: 0; color: #555; }
+  .user-menu-dropdown .divider { border-top: 1px solid #f0f0f0; margin: .25rem 0; }
 </style>
 </head>
 <body>
@@ -40,7 +68,37 @@
   <h1>Hetchy</h1>
   <div class="links">
     <a href="/settings/org">Settings</a>
-    <a href="/logout">Log out</a>
+    <div class="user-menu">
+      <button class="avatar-btn" id="user-menu-btn"
+              aria-haspopup="menu" aria-expanded="false" aria-label="Open user menu">
+        <img class="avatar" src="{{.GravatarURL}}" alt="" referrerpolicy="no-referrer">
+      </button>
+      <div class="user-menu-dropdown" id="user-menu-dropdown" role="menu" hidden>
+        <div class="user-menu-header">
+          <img class="avatar-lg" src="{{.GravatarURL}}" alt="" referrerpolicy="no-referrer">
+          <div>
+            <div class="name">{{.DisplayName}}</div>
+            <div class="email">{{.Email}}</div>
+          </div>
+        </div>
+        <a class="item" role="menuitem" href="/settings/profile">
+          <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="8" cy="5.5" r="2.5"/>
+            <path d="M3 13.5c0-2.5 2.2-4.5 5-4.5s5 2 5 4.5"/>
+          </svg>
+          Profile
+        </a>
+        <div class="divider"></div>
+        <a class="item" role="menuitem" href="/logout">
+          <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M9 3.5H5a1.5 1.5 0 0 0-1.5 1.5v6A1.5 1.5 0 0 0 5 12.5h4"/>
+            <path d="M11 5.5 13.5 8 11 10.5"/>
+            <path d="M6.5 8h7"/>
+          </svg>
+          Log out
+        </a>
+      </div>
+    </div>
   </div>
 </div>
 <div id="log"></div>
@@ -113,6 +171,27 @@ async function send() {
   btn.disabled = false;
   inp.focus();
 }
+
+// Avatar dropdown — toggle on click, close on outside-click or Escape.
+const userMenuBtn = document.getElementById('user-menu-btn');
+const userMenuDrop = document.getElementById('user-menu-dropdown');
+function setUserMenuOpen(open) {
+  userMenuDrop.hidden = !open;
+  userMenuBtn.setAttribute('aria-expanded', String(open));
+}
+userMenuBtn.addEventListener('click', e => {
+  e.stopPropagation();
+  setUserMenuOpen(userMenuDrop.hidden);
+});
+document.addEventListener('click', e => {
+  if (!userMenuDrop.hidden && !userMenuDrop.contains(e.target)) setUserMenuOpen(false);
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && !userMenuDrop.hidden) {
+    setUserMenuOpen(false);
+    userMenuBtn.focus();
+  }
+});
 </script>
 </body>
 </html>
