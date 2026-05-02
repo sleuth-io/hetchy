@@ -35,7 +35,7 @@ services:
         COMMIT: ${COMMIT:-none}
         DATE: ${DATE:-unknown}
     container_name: migration
-    restart: on-failure
+    restart: never
     command: "/app/hetchy --migrate"
     depends_on:
       postgres:
