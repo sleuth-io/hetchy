@@ -91,11 +91,17 @@ prepush: format lint test build ## Run before pushing (format, lint, test, build
 postpull: init ## Run after pulling (download dependencies)
 
 # Bot runtime
-bot: build ## Build and run the Slack bot via doppler
-	@which doppler > /dev/null || (echo "doppler CLI not found. Install: https://docs.doppler.com/docs/install-cli" && exit 1)
-	@doppler run -- $(BUILD_DIR)/$(BINARY_NAME)
+# `bot` uses air for live-reload — saving a .go/.html/.sql file rebuilds
+# and restarts the binary in ~1-2s. Air is run via `go run pkg@version`
+# so contributors don't need a global install. Config lives in .air.toml.
+AIR_VERSION ?= v1.52.3
+AIR          = go run github.com/air-verse/air@$(AIR_VERSION)
 
-bot-tee: build ## Run the bot, mirroring logs to $(LOG_FILE) so another shell can `make logs`
+bot: ## Run the bot with live-reload (rebuilds on file changes)
+	@which doppler > /dev/null || (echo "doppler CLI not found. Install: https://docs.doppler.com/docs/install-cli" && exit 1)
+	@doppler run -- $(AIR)
+
+bot-tee: build ## Run the bot once (no live-reload), mirroring logs to $(LOG_FILE) so another shell can `make logs`
 	@which doppler > /dev/null || (echo "doppler CLI not found. Install: https://docs.doppler.com/docs/install-cli" && exit 1)
 	@echo "Logging to $(LOG_FILE) (tail with 'make logs')"
 	@doppler run -- $(BUILD_DIR)/$(BINARY_NAME) 2>&1 | tee $(LOG_FILE)
