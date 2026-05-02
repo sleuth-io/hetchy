@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+
+	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
 )
 
 // persistedConversation is the on-disk representation of a conversation.

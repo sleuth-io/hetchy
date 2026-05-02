@@ -220,9 +220,7 @@ func (b *Bot) handleFollowUp(ctx context.Context, conv *conversation, text, requ
 		onError(fmt.Sprintf("Failed to resume sandbox: `%v`", err))
 		return
 	}
-	if err := b.retryWithBackoff(ctx, "sandbox wait-for-start", func() error {
-		return conv.sandbox.WaitForStart(ctx, 2*time.Minute)
-	}); err != nil {
+	if err := conv.sandbox.WaitForStart(ctx, 2*time.Minute); err != nil {
 		b.log.Error("sandbox wait-for-start failed", "sandbox", conv.sandbox.ID, "error", err)
 		onError(fmt.Sprintf("Sandbox did not start in time: `%v`", err))
 		return
