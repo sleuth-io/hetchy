@@ -99,6 +99,15 @@ WHERE slack_bot_token_encrypted IS NOT NULL
   AND slack_socket_token_encrypted IS NOT NULL
 `
 
+// Lists Socket-Mode-installed orgs only. The slackManager iterates
+// this on startup to open one socket per org.
+//
+// Important: HTTP-mode orgs (OAuth-installed via /slack/oauth/callback)
+// are intentionally excluded — the OAuth callback clears
+// slack_socket_token_encrypted to make sure we don't try to keep a
+// doomed socket alive for them. If you need "every org with any kind
+// of Slack connection," write a different query — don't rename this
+// one.
 func (q *Queries) ListOrgConfigsWithSlack(ctx context.Context) ([]OrgConfig, error) {
 	rows, err := q.db.Query(ctx, listOrgConfigsWithSlack)
 	if err != nil {

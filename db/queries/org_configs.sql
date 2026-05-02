@@ -31,6 +31,15 @@ FROM org_configs
 WHERE slack_team_id = $1;
 
 -- name: ListOrgConfigsWithSlack :many
+-- Lists Socket-Mode-installed orgs only. The slackManager iterates
+-- this on startup to open one socket per org.
+--
+-- Important: HTTP-mode orgs (OAuth-installed via /slack/oauth/callback)
+-- are intentionally excluded — the OAuth callback clears
+-- slack_socket_token_encrypted to make sure we don't try to keep a
+-- doomed socket alive for them. If you need "every org with any kind
+-- of Slack connection," write a different query — don't rename this
+-- one.
 SELECT
     org_id,
     github_token_encrypted,

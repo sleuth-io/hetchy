@@ -75,8 +75,14 @@ func (s *Store) GetBySlackTeamID(ctx context.Context, teamID string) (Config, er
 	return s.decrypt(row)
 }
 
-// ListWithSlack returns every org that has both Slack tokens set —
-// the list of orgs for which we should maintain a socket-mode connection.
+// ListWithSlack returns every org with both bot and socket tokens set
+// — the orgs for which slackManager opens a Socket Mode connection.
+//
+// HTTP-mode orgs (OAuth-installed) are intentionally excluded: the
+// OAuth callback clears the socket token, so they don't appear here
+// and the slack manager never tries to socket-connect them. If you
+// need to enumerate all Slack-connected orgs (HTTP + socket), add a
+// different query — don't generalize this one.
 func (s *Store) ListWithSlack(ctx context.Context) ([]Config, error) {
 	rows, err := s.db.Queries.ListOrgConfigsWithSlack(ctx)
 	if err != nil {

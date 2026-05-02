@@ -40,23 +40,25 @@ response="$(curl -sS -X POST 'https://slack.com/api/apps.manifest.create' \
   -H 'Content-Type: application/x-www-form-urlencoded' \
   --data-urlencode "manifest=$manifest_json")"
 
-eval "$(echo "$response" | python3 -c '
-import json, sys, shlex
+# Parse the response and emit the user-facing message in a single
+# Python call. Avoids `eval` on API output entirely — the script just
+# pipes Python's stdout through.
+echo "$response" | NAME="$NAME" python3 - <<'PY'
+import json, os, sys
+
 d = json.load(sys.stdin)
 if not d.get("ok"):
     sys.stderr.write("Slack API rejected manifest:\n" + json.dumps(d, indent=2) + "\n")
     sys.exit(1)
-print(f"export APP_APP_ID={shlex.quote(d.get(\"app_id\", \"\"))}")
+
+name = os.environ["NAME"]
+app_id = d.get("app_id", "")
 creds = d.get("credentials", {})
-for k in ("client_id", "client_secret", "signing_secret", "verification_token"):
-    print(f"export APP_{k.upper()}={shlex.quote(creds.get(k, \"\"))}")
-')"
 
-cat <<EOF
+print(f"""
+  Created "Hetchy ({name})" — App ID {app_id}
 
-  Created "Hetchy ($NAME)" — App ID $APP_APP_ID
-
-Next manual steps in https://api.slack.com/apps/$APP_APP_ID :
+Next manual steps in https://api.slack.com/apps/{app_id} :
   1. Install App -> Install to Workspace
        (gives you the xoxb- bot token)
   2. Basic Information -> App-Level Tokens -> Generate Token and Scopes
@@ -67,11 +69,11 @@ Next manual steps in https://api.slack.com/apps/$APP_APP_ID :
 Make sure your default Doppler config is dev_personal, then:
 
   doppler secrets set \\
-    SLACK_APP_ID=$APP_APP_ID \\
-    SLACK_CLIENT_ID=$APP_CLIENT_ID \\
-    SLACK_CLIENT_SECRET=$APP_CLIENT_SECRET \\
-    SLACK_SIGNING_SECRET=$APP_SIGNING_SECRET \\
+    SLACK_APP_ID={app_id} \\
+    SLACK_CLIENT_ID={creds.get("client_id", "")} \\
+    SLACK_CLIENT_SECRET={creds.get("client_secret", "")} \\
+    SLACK_SIGNING_SECRET={creds.get("signing_secret", "")} \\
     SLACK_BOT_TOKEN=<xoxb- from step 1> \\
     SLACK_APP_TOKEN=<xapp- from step 2>
-
-EOF
+""")
+PY

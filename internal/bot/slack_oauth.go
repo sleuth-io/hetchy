@@ -186,13 +186,16 @@ func (b *Bot) slackOAuthCallbackHandler(w http.ResponseWriter, r *http.Request) 
 		b.cfg.SlackOAuthRedirectURI,
 	)
 	if err != nil {
+		// Don't echo the raw SDK error to the browser — it can leak
+		// internals (transport errors, library frames). Log server
+		// side, return a generic message.
 		b.log.Error("slack install: token exchange failed", "error", err)
-		http.Error(w, "token exchange failed: "+err.Error(), http.StatusBadGateway)
+		http.Error(w, "token exchange failed — check server logs", http.StatusBadGateway)
 		return
 	}
 	if !resp.Ok {
 		b.log.Error("slack install: oauth.v2.access not ok", "error", resp.Error)
-		http.Error(w, "Slack rejected the install: "+resp.Error, http.StatusBadGateway)
+		http.Error(w, "Slack rejected the install — check server logs", http.StatusBadGateway)
 		return
 	}
 
