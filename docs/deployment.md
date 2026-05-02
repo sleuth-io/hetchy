@@ -14,12 +14,12 @@ docker build -t hetchy .
 
 ```bash
 docker run -p 8080:8080 \
-  -e ANTHROPIC_API_KEY=... \
-  -e GITHUB_TOKEN=... \
   -e DAYTONA_API_KEY=... \
-  -e GITHUB_REPO=owner/repo \
   hetchy
 ```
+
+Per-org settings (Anthropic API key, GitHub token + repo, Slack tokens,
+optional SX key) are configured at `/settings/org` after sign-up.
 
 ## Docker Compose
 
@@ -33,12 +33,6 @@ The compose file reads environment variables from your shell (injected by Dopple
 
 | Variable | Description |
 |----------|-------------|
-| `SLACK_BOT_OAUTH_TOKEN` | Slack bot token (xoxb-...) — required for Slack |
-| `SLACK_SOCKET_TOKEN` | Slack app-level token (xapp-...) — required for Slack |
-| `ANTHROPIC_API_KEY` | Anthropic API key for Claude |
-| `GITHUB_TOKEN` | GitHub token with repo scope |
-| `GITHUB_REPO` | Repository in owner/repo format |
-| `GITHUB_BASE_BRANCH` | Base branch for PRs (usually main) |
 | `DAYTONA_API_URL` | Daytona API endpoint |
 | `DAYTONA_API_KEY` | Daytona API key |
 | `DAYTONA_SNAPSHOT` | Custom snapshot image (optional) |

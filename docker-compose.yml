@@ -45,9 +45,6 @@ services:
       SLACK_BOT_OAUTH_TOKEN: ${SLACK_BOT_OAUTH_TOKEN}
       SLACK_SOCKET_TOKEN: ${SLACK_SOCKET_TOKEN}
 
-      # Anthropic API
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
-
       # GitHub configuration
       GITHUB_TOKEN: ${GITHUB_TOKEN}
       GITHUB_REPO: ${GITHUB_REPO}
@@ -97,9 +94,6 @@ services:
       # Slack configuration
       SLACK_BOT_OAUTH_TOKEN: ${SLACK_BOT_OAUTH_TOKEN}
       SLACK_SOCKET_TOKEN: ${SLACK_SOCKET_TOKEN}
-
-      # Anthropic API
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
 
       # GitHub configuration
       GITHUB_TOKEN: ${GITHUB_TOKEN}

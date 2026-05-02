@@ -24,6 +24,7 @@ var ErrNotFound = errors.New("orgcfg: not found")
 // All token fields are plaintext; do not log them.
 type Config struct {
 	OrgID            string
+	AnthropicAPIKey  string
 	GitHubToken      string
 	SlackBotToken    string
 	SlackSocketToken string
@@ -92,6 +93,10 @@ func (s *Store) Upsert(ctx context.Context, c Config) (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("encrypt sx key: %w", err)
 	}
+	ak, err := s.cipher.Encrypt(c.AnthropicAPIKey)
+	if err != nil {
+		return Config{}, fmt.Errorf("encrypt anthropic api key: %w", err)
+	}
 	branch := c.GitHubBaseBranch
 	if branch == "" {
 		branch = "main"
@@ -102,6 +107,7 @@ func (s *Store) Upsert(ctx context.Context, c Config) (Config, error) {
 		SlackBotTokenEncrypted:    sb,
 		SlackSocketTokenEncrypted: ss,
 		SxKeyEncrypted:            sx,
+		AnthropicApiKeyEncrypted:  ak,
 		GithubRepo:                c.GitHubRepo,
 		GithubBaseBranch:          branch,
 	})
@@ -128,12 +134,17 @@ func (s *Store) decrypt(row sqlc.OrgConfig) (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("decrypt sx key: %w", err)
 	}
+	ak, err := s.cipher.Decrypt(row.AnthropicApiKeyEncrypted)
+	if err != nil {
+		return Config{}, fmt.Errorf("decrypt anthropic api key: %w", err)
+	}
 	return Config{
 		OrgID:            row.OrgID,
 		GitHubToken:      gh,
 		SlackBotToken:    sb,
 		SlackSocketToken: ss,
 		SXKey:            sx,
+		AnthropicAPIKey:  ak,
 		GitHubRepo:       row.GithubRepo,
 		GitHubBaseBranch: row.GithubBaseBranch,
 	}, nil

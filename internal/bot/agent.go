@@ -67,23 +67,31 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, oc orgcfg.Confi
 		userRequest, requestID, branch,
 	)
 	return b.runScript(ctx, sb, "agent-"+requestID, "agent", agentScript, map[string]string{
-		"SF_REPO":        oc.GitHubRepo,
-		"SF_WORKDIR":     workdir,
-		"SF_BASE_BRANCH": branch,
-		"SF_PROMPT_B64":  base64.StdEncoding.EncodeToString([]byte(prompt)),
+		"SF_REPO":           oc.GitHubRepo,
+		"SF_WORKDIR":        workdir,
+		"SF_BASE_BRANCH":    branch,
+		"SF_PROMPT_B64":     base64.StdEncoding.EncodeToString([]byte(prompt)),
+		"ANTHROPIC_API_KEY": oc.AnthropicAPIKey,
+		"GITHUB_TOKEN":      oc.GitHubToken,
 	}, onUpdate)
 }
 
-func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, rec convstore.Record, userRequest, requestID string, onUpdate func(string)) (string, error) {
+// runFollowUp resumes work in an existing sandbox. Anthropic/GitHub creds
+// are passed per-run (not just at sandbox-create time) so a key rotation
+// in /settings/org takes effect on the very next follow-up rather than
+// only on a freshly-created sandbox.
+func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, oc orgcfg.Config, rec convstore.Record, userRequest, requestID string, onUpdate func(string)) (string, error) {
 	history := strings.Join(rec.History, "\n---\n")
 	prompt := fmt.Sprintf(agentFollowUpPromptTemplate,
 		workdir, rec.Branch, rec.PRURL,
 		history, userRequest,
 	)
 	return b.runScript(ctx, sb, "followup-"+requestID, "followup", followupScript, map[string]string{
-		"SF_WORKDIR":    workdir,
-		"SF_BRANCH":     rec.Branch,
-		"SF_PROMPT_B64": base64.StdEncoding.EncodeToString([]byte(prompt)),
+		"SF_WORKDIR":        workdir,
+		"SF_BRANCH":         rec.Branch,
+		"SF_PROMPT_B64":     base64.StdEncoding.EncodeToString([]byte(prompt)),
+		"ANTHROPIC_API_KEY": oc.AnthropicAPIKey,
+		"GITHUB_TOKEN":      oc.GitHubToken,
 	}, onUpdate)
 }
 

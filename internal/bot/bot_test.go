@@ -108,7 +108,6 @@ func TestShellQuote_RoundTrip(t *testing.T) {
 func TestHandleRequest_CallbackRouting(t *testing.T) {
 	b := &Bot{
 		log:          discardLogger(),
-		cfg:          Config{AnthropicAPIKey: "ant"},
 		convs:        convstore.New(nil),
 		retryBackoff: 0,
 	}
@@ -116,7 +115,7 @@ func TestHandleRequest_CallbackRouting(t *testing.T) {
 		return nil, sdkerrors.NewDaytonaError("forced failure", 401, nil)
 	}
 
-	oc := orgcfg.Config{OrgID: "org_test", GitHubToken: "ghp", GitHubRepo: "owner/repo"}
+	oc := orgcfg.Config{OrgID: "org_test", GitHubToken: "ghp", GitHubRepo: "owner/repo", AnthropicAPIKey: "ant"}
 
 	var updates, notifies []string
 	var errored bool
@@ -145,6 +144,49 @@ func TestHandleRequest_CallbackRouting(t *testing.T) {
 		if strings.Contains(m, "Spinning up") {
 			t.Errorf("'Spinning up' should not appear in onUpdate, got: %s", m)
 		}
+	}
+}
+
+func TestHandleRequest_MissingOrgConfig(t *testing.T) {
+	cases := []struct {
+		name      string
+		oc        orgcfg.Config
+		wantInErr string
+	}{
+		{
+			name:      "missing GitHub token",
+			oc:        orgcfg.Config{OrgID: "o", GitHubRepo: "x/y", AnthropicAPIKey: "ant"},
+			wantInErr: "GitHub token",
+		},
+		{
+			name:      "missing GitHub repo",
+			oc:        orgcfg.Config{OrgID: "o", GitHubToken: "ghp", AnthropicAPIKey: "ant"},
+			wantInErr: "GitHub repository",
+		},
+		{
+			name:      "missing Anthropic API key",
+			oc:        orgcfg.Config{OrgID: "o", GitHubToken: "ghp", GitHubRepo: "x/y"},
+			wantInErr: "Anthropic API key",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			b := &Bot{log: discardLogger(), convs: convstore.New(nil), retryBackoff: 0}
+			b.createFn = func(context.Context, any) (*daytona.Sandbox, error) {
+				t.Fatal("sandbox should not be created when config is incomplete")
+				return nil, errors.New("unreachable")
+			}
+			var errMsg string
+			b.HandleRequest(context.Background(), tc.oc, "do something", "req", "thread",
+				func(string) {},
+				func(string) {},
+				func(string) { t.Error("unexpected onComplete") },
+				func(msg string) { errMsg = msg },
+			)
+			if !strings.Contains(errMsg, tc.wantInErr) {
+				t.Errorf("error %q missing %q", errMsg, tc.wantInErr)
+			}
+		})
 	}
 }
 

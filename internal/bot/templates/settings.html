@@ -9,14 +9,31 @@
           box-shadow: 0 6px 24px rgba(0,0,0,.08); max-width: 36rem; margin: 0 auto; }
   h1 { margin: 0 0 .25rem; font-size: 1.4rem; }
   .sub { color: #777; margin: 0 0 1.5rem; font-size: .9rem; }
-  fieldset { border: none; padding: 0; margin: 0 0 1.25rem; }
+  fieldset { border: none; padding: 0; margin: 0 0 1.5rem; }
   legend { font-weight: 600; font-size: .95rem; padding: 0 0 .5rem; }
   label { display: block; font-size: .85rem; color: #555; margin: .5rem 0 .25rem; }
-  input { width: 100%; padding: .55rem .75rem; border: 1px solid #ccc;
+  input[type="text"], input[type="password"] {
+          width: 100%; padding: .55rem .75rem; border: 1px solid #ccc;
           border-radius: .4rem; font-size: .95rem; box-sizing: border-box; font-family: ui-monospace, monospace; }
   input:focus { outline: none; border-color: #0b93f6; }
+  input[readonly] { background: #fafafa; color: #555; cursor: default; }
+  input[readonly]:focus { border-color: #ccc; }
+  input.removing { background: #fdecec; color: #b03030; text-decoration: line-through; }
   .hint { font-size: .75rem; color: #999; margin-top: .25rem; }
-  button { margin-top: 1rem; padding: .65rem 1.25rem; background: #0b93f6;
+  .secret-saved { position: relative; }
+  .secret-preview { padding-right: 9rem; }
+  .secret-actions-overlay { position: absolute; right: .65rem; top: 50%;
+                            transform: translateY(-50%); font-size: .75rem;
+                            color: #999; background: #fafafa; padding-left: .4rem;
+                            display: flex; align-items: center; gap: .35rem; }
+  .secret-actions { font-size: .75rem; color: #999; margin-top: .25rem; }
+  .sep { color: #ccc; }
+  .link-btn { background: none; border: none; padding: 0;
+              font-size: inherit; font-family: inherit;
+              color: #888; cursor: pointer; }
+  .link-btn:hover { color: #555; text-decoration: underline; }
+  .link-btn[disabled] { color: #b03030; cursor: default; text-decoration: none; }
+  button[type="submit"] { margin-top: 1rem; padding: .65rem 1.25rem; background: #0b93f6;
            color: #fff; border: none; border-radius: .4rem; font-size: 1rem;
            cursor: pointer; }
   .saved { background: #efe; color: #060; padding: .5rem .75rem;
@@ -30,7 +47,7 @@
 <form class="card" method="POST" action="/settings/org">
   <p class="nav"><a href="/">← Back to chat</a></p>
   <h1>Organization settings</h1>
-  <p class="sub">Per-org runtime configuration. Tokens are encrypted at rest.</p>
+  <p class="sub">Per-org runtime configuration. Tokens are encrypted at rest; only a fingerprint is shown back.</p>
 
   <div id="saved-banner" class="saved" style="display:none">Settings saved.</div>
   <script>
@@ -42,31 +59,87 @@
   <fieldset>
     <legend>GitHub</legend>
     <label for="github_repo">Repository (owner/repo)</label>
-    <input id="github_repo" name="github_repo" value="{{.GitHubRepo}}" placeholder="acme/website" required>
+    <input id="github_repo" type="text" name="github_repo" value="{{.GitHubRepo}}" placeholder="acme/website" required>
     <label for="github_base_branch">Base branch</label>
-    <input id="github_base_branch" name="github_base_branch" value="{{.GitHubBaseBranch}}" placeholder="main">
-    <label for="github_token">Personal access token</label>
-    <input id="github_token" name="github_token" type="password" placeholder="{{if .HasGitHubToken}}•••••••• (leave blank to keep, type - to clear){{else}}ghp_…{{end}}">
+    <input id="github_base_branch" type="text" name="github_base_branch" value="{{.GitHubBaseBranch}}" placeholder="main">
+    {{template "secret" dict "Field" "github_token" "Label" "Personal access token" "Preview" .GitHubTokenPreview "Placeholder" "ghp_…" "Required" false}}
     <p class="hint">Needs <code>repo</code> scope.</p>
   </fieldset>
 
   <fieldset>
+    <legend>Anthropic (required)</legend>
+    {{template "secret" dict "Field" "anthropic_api_key" "Label" "API key" "Preview" .AnthropicAPIKeyPreview "Placeholder" "sk-ant-…" "Required" true}}
+    <p class="hint">Used by Claude Code inside the sandbox.</p>
+  </fieldset>
+
+  <fieldset>
     <legend>Slack (optional)</legend>
-    <label for="slack_bot_token">Bot token</label>
-    <input id="slack_bot_token" name="slack_bot_token" type="password" placeholder="{{if .HasSlackBot}}•••••••• (leave blank to keep, type - to clear){{else}}xoxb-…{{end}}">
-    <label for="slack_socket_token">Socket token</label>
-    <input id="slack_socket_token" name="slack_socket_token" type="password" placeholder="{{if .HasSlackSocket}}•••••••• (leave blank to keep, type - to clear){{else}}xapp-…{{end}}">
+    {{template "secret" dict "Field" "slack_bot_token" "Label" "Bot token" "Preview" .SlackBotTokenPreview "Placeholder" "xoxb-…" "Required" false}}
+    {{template "secret" dict "Field" "slack_socket_token" "Label" "Socket token" "Preview" .SlackSocketTokenPreview "Placeholder" "xapp-…" "Required" false}}
     <p class="hint">Provide both to receive Slack events for this org. Each org runs its own socket-mode connection.</p>
   </fieldset>
 
   <fieldset>
     <legend>SX (optional)</legend>
-    <label for="sx_key">SX bot key</label>
-    <input id="sx_key" name="sx_key" type="password" placeholder="{{if .HasSXKey}}•••••••• (leave blank to keep, type - to clear){{else}}sx-…{{end}}">
+    {{template "secret" dict "Field" "sx_key" "Label" "SX bot key" "Preview" .SXKeyPreview "Placeholder" "sx-…" "Required" false}}
   </fieldset>
 
   <button type="submit">Save</button>
   <p class="meta">Org ID: <code>{{.OrgID}}</code> · {{.Email}} · <a href="/logout">Log out</a></p>
 </form>
+
+{{define "secret"}}
+  <label for="{{.Field}}">{{.Label}}</label>
+  {{if .Preview}}
+    <div id="{{.Field}}-saved" class="secret-saved">
+      <input id="{{.Field}}-preview" class="secret-preview" type="text" value="{{.Preview}}" readonly tabindex="-1" aria-label="{{.Label}} (saved value, fingerprint only)">
+      <div class="secret-actions-overlay">
+        <button type="button" class="link-btn" data-rotate="{{.Field}}">Rotate</button>
+        {{if not .Required}}
+        <span class="sep">·</span>
+        <button type="button" class="link-btn" data-remove="{{.Field}}">Remove</button>
+        {{end}}
+      </div>
+    </div>
+    <div id="{{.Field}}-rotate" style="display:none">
+      <input id="{{.Field}}" type="password" name="{{.Field}}" placeholder="{{.Placeholder}}" autocomplete="off">
+      <div class="secret-actions">
+        <button type="button" class="link-btn" data-cancel="{{.Field}}">Cancel</button>
+      </div>
+    </div>
+    <input type="hidden" name="{{.Field}}_action" id="{{.Field}}-action" value="">
+  {{else}}
+    <input id="{{.Field}}" type="password" name="{{.Field}}" placeholder="{{.Placeholder}}" autocomplete="off"{{if .Required}} required{{end}}>
+  {{end}}
+{{end}}
+
+<script>
+  document.querySelectorAll('[data-rotate]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const field = btn.dataset.rotate;
+      document.getElementById(field + '-saved').style.display = 'none';
+      document.getElementById(field + '-rotate').style.display = '';
+      document.getElementById(field).focus();
+    });
+  });
+  document.querySelectorAll('[data-cancel]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const field = btn.dataset.cancel;
+      document.getElementById(field + '-rotate').style.display = 'none';
+      document.getElementById(field + '-saved').style.display = '';
+      document.getElementById(field).value = '';
+    });
+  });
+  document.querySelectorAll('[data-remove]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const field = btn.dataset.remove;
+      if (!confirm('Remove the saved ' + field + '? Requests that need it will fail until a new value is saved.')) return;
+      document.getElementById(field + '-action').value = 'remove';
+      document.getElementById(field + '-preview').classList.add('removing');
+      btn.textContent = 'Will be removed on Save';
+      btn.disabled = true;
+    });
+  });
+</script>
 </body>
 </html>

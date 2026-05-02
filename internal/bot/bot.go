@@ -169,6 +169,9 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 	if oc.GitHubRepo == "" {
 		missing = append(missing, "GitHub repository")
 	}
+	if oc.AnthropicAPIKey == "" {
+		missing = append(missing, "Anthropic API key")
+	}
 	if len(missing) > 0 {
 		b.log.Warn("org missing config",
 			"org", oc.OrgID,
@@ -178,6 +181,7 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 			"has_slack_bot", oc.SlackBotToken != "",
 			"has_slack_socket", oc.SlackSocketToken != "",
 			"has_sx", oc.SXKey != "",
+			"has_anthropic", oc.AnthropicAPIKey != "",
 		)
 		onError(fmt.Sprintf("This organization is missing: %s. Set them at /settings/org.", strings.Join(missing, ", ")))
 		return
@@ -198,10 +202,12 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 
 	onNotify("Spinning up an isolated sandbox for your request...")
 
-	envVars := map[string]string{
-		"ANTHROPIC_API_KEY": b.cfg.AnthropicAPIKey,
-		"GITHUB_TOKEN":      oc.GitHubToken,
-	}
+	// Rotating tokens (Anthropic, GitHub) are passed per-script in agent.go
+	// so that a key rotation in /settings/org takes effect on the very next
+	// request without having to recycle the sandbox. Only SX_KEY is set at
+	// create time because it's not currently consumed via the per-script
+	// env-prefix path.
+	envVars := map[string]string{}
 	if oc.SXKey != "" {
 		envVars["SX_KEY"] = oc.SXKey
 	}
@@ -271,7 +277,7 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 		return
 	}
 
-	prURL, err := b.runFollowUp(ctx, sb, rec, text, requestID, onUpdate)
+	prURL, err := b.runFollowUp(ctx, sb, oc, rec, text, requestID, onUpdate)
 	if err != nil {
 		b.log.Error("follow-up failed", "sandbox", sb.ID, "error", err)
 		onError(fmt.Sprintf("Something went wrong: `%v`", err))

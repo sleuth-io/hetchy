@@ -21,7 +21,6 @@ func setEnv(t *testing.T, env map[string]string) {
 
 func requiredEnv() map[string]string {
 	return map[string]string{
-		"ANTHROPIC_API_KEY":      "ant",
 		"DATABASE_URL":           "postgres://localhost/x",
 		"SECRETS_ENCRYPTION_KEY": strings.Repeat("k", 32),
 		"DAYTONA_SNAPSHOT":       "snap:1",
@@ -40,7 +39,7 @@ func TestLoadConfig_AllRequiredSet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
-	if cfg.AnthropicAPIKey != "ant" || cfg.DatabaseURL == "" {
+	if cfg.DatabaseURL == "" {
 		t.Errorf("required fields not populated: %+v", cfg)
 	}
 	if cfg.WorkOSAPIKey != "sk_test_x" || cfg.WorkOSClientID != "client_x" {
@@ -70,7 +69,7 @@ func TestLoadConfig_AppliesDefaults(t *testing.T) {
 func TestLoadConfig_MissingRequired(t *testing.T) {
 	clearEnv(t,
 		"AUTH_BYPASS",
-		"ANTHROPIC_API_KEY", "DATABASE_URL", "SECRETS_ENCRYPTION_KEY", "DAYTONA_SNAPSHOT",
+		"DATABASE_URL", "SECRETS_ENCRYPTION_KEY", "DAYTONA_SNAPSHOT",
 		"WORKOS_API_KEY", "WORKOS_CLIENT_ID", "WORKOS_COOKIE_PASSWORD", "WORKOS_REDIRECT_URI",
 	)
 
@@ -78,7 +77,7 @@ func TestLoadConfig_MissingRequired(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing env vars")
 	}
-	for _, key := range []string{"ANTHROPIC_API_KEY", "DATABASE_URL", "SECRETS_ENCRYPTION_KEY", "WORKOS_API_KEY"} {
+	for _, key := range []string{"DATABASE_URL", "SECRETS_ENCRYPTION_KEY", "WORKOS_API_KEY"} {
 		if !strings.Contains(err.Error(), key) {
 			t.Errorf("error missing %s: %v", key, err)
 		}
@@ -89,7 +88,6 @@ func TestLoadConfig_BypassRelaxesWorkOSRequirements(t *testing.T) {
 	clearEnv(t, "WORKOS_API_KEY", "WORKOS_CLIENT_ID", "WORKOS_COOKIE_PASSWORD", "WORKOS_REDIRECT_URI")
 	setEnv(t, map[string]string{
 		"AUTH_BYPASS":            "1",
-		"ANTHROPIC_API_KEY":      "ant",
 		"DATABASE_URL":           "postgres://localhost/x",
 		"SECRETS_ENCRYPTION_KEY": strings.Repeat("k", 32),
 		"DAYTONA_SNAPSHOT":       "snap:1",
