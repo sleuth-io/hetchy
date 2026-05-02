@@ -64,13 +64,17 @@ services:
 
       # Database — defaults to the bundled postgres service. Override
       # DATABASE_URL to point at Supabase or another instance.
-      DATABASE_URL: ${DATABASE_URL:-postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-hetchy}?sslmode=disable}
+      # Nested ${...} in default values is unsupported by Docker Compose interpolation,
+      # so defaults are hardcoded to match the postgres service's own defaults above.
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@localhost:5432/hetchy?sslmode=disable}
 
       # Web UI configuration
       WEB_PORT: ${WEB_PORT:-8080}
       DISABLE_SLACK: ${DISABLE_SLACK:-}
     healthcheck:
-      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost:8080/health || exit 1"]
+      http:
+        path: "/"
+        port: 8080
       interval: 30s
       timeout: 10s
       retries: 3

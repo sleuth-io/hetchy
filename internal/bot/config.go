@@ -5,37 +5,53 @@ import (
 	"os"
 )
 
-// Config holds runtime configuration loaded from the environment.
+// Config holds runtime configuration loaded from the environment. Per-org
+// settings (GitHub repo, GitHub PAT, Slack tokens, SX key, base branch)
+// live in the database keyed by WorkOS organization_id — they're not in
+// this struct.
 type Config struct {
-	SlackBotToken    string
-	SlackSocketToken string
-	AnthropicAPIKey  string
-	GitHubToken      string
-	GitHubRepo       string
-	BaseBranch       string
-	Snapshot         string
-	DaytonaAPIURL    string
-	WebPort          string
-	StateFile        string
-	DisableSlack     bool
-	SXKey            string
-	DatabaseURL      string
+	AnthropicAPIKey string
+	DaytonaAPIURL   string
+	Snapshot        string
+	DatabaseURL     string
+	WebPort         string
+
+	WorkOSAPIKey         string
+	WorkOSClientID       string
+	WorkOSCookiePassword string
+	WorkOSRedirectURI    string
+	LogoutReturnTo       string
+	// CookieSecure is the Secure flag on the session cookie. Defaults to
+	// true; set COOKIE_INSECURE=1 to disable it for local HTTP dev.
+	CookieSecure bool
+
+	SecretsEncryptionKey string
+
+	AuthBypass      bool
+	AuthBypassUser  string
+	AuthBypassOrg   string
+	AuthBypassRole  string
+	AuthBypassEmail string
 }
 
-// LoadConfig reads required and optional env vars. It returns an error listing
-// any required variables that are missing rather than fatal-exiting. Set
-// DISABLE_SLACK=1 to drop the Slack tokens from the required list and run the
-// web UI alone.
+// LoadConfig reads required and optional env vars. Set AUTH_BYPASS=1 to
+// skip the WorkOS round-trip for tests/CI.
 func LoadConfig() (Config, error) {
-	disableSlack := os.Getenv("DISABLE_SLACK") != ""
+	bypass := os.Getenv("AUTH_BYPASS") != ""
 
 	required := []string{
 		"ANTHROPIC_API_KEY",
-		"GITHUB_TOKEN",
-		"GITHUB_REPO",
+		"DATABASE_URL",
+		"SECRETS_ENCRYPTION_KEY",
+		"DAYTONA_SNAPSHOT",
 	}
-	if !disableSlack {
-		required = append(required, "SLACK_BOT_OAUTH_TOKEN", "SLACK_SOCKET_TOKEN")
+	if !bypass {
+		required = append(required,
+			"WORKOS_API_KEY",
+			"WORKOS_CLIENT_ID",
+			"WORKOS_COOKIE_PASSWORD",
+			"WORKOS_REDIRECT_URI",
+		)
 	}
 	var missing []string
 	for _, key := range required {
@@ -47,21 +63,28 @@ func LoadConfig() (Config, error) {
 		return Config{}, fmt.Errorf("missing required env vars: %v", missing)
 	}
 
-	repo := os.Getenv("GITHUB_REPO")
+	port := getenvDefault("WEB_PORT", "8080")
+	logout := getenvDefault("LOGOUT_RETURN_TO", "http://localhost:"+port+"/")
+	cookieSecure := os.Getenv("COOKIE_INSECURE") == ""
+
 	return Config{
-		SlackBotToken:    os.Getenv("SLACK_BOT_OAUTH_TOKEN"),
-		SlackSocketToken: os.Getenv("SLACK_SOCKET_TOKEN"),
-		AnthropicAPIKey:  os.Getenv("ANTHROPIC_API_KEY"),
-		GitHubToken:      os.Getenv("GITHUB_TOKEN"),
-		GitHubRepo:       repo,
-		BaseBranch:       getenvDefault("GITHUB_BASE_BRANCH", "main"),
-		Snapshot:         getenvDefault("DAYTONA_SNAPSHOT", fmt.Sprintf("ghcr.io/%s/sandbox:latest", repo)),
-		DaytonaAPIURL:    os.Getenv("DAYTONA_API_URL"),
-		WebPort:          getenvDefault("WEB_PORT", "8080"),
-		StateFile:        getenvDefault("STATE_FILE", "state.json"),
-		DisableSlack:     disableSlack,
-		SXKey:            os.Getenv("SX_KEY"),
-		DatabaseURL:      os.Getenv("DATABASE_URL"),
+		AnthropicAPIKey:      os.Getenv("ANTHROPIC_API_KEY"),
+		DaytonaAPIURL:        os.Getenv("DAYTONA_API_URL"),
+		Snapshot:             os.Getenv("DAYTONA_SNAPSHOT"),
+		DatabaseURL:          os.Getenv("DATABASE_URL"),
+		WebPort:              port,
+		WorkOSAPIKey:         os.Getenv("WORKOS_API_KEY"),
+		WorkOSClientID:       os.Getenv("WORKOS_CLIENT_ID"),
+		WorkOSCookiePassword: os.Getenv("WORKOS_COOKIE_PASSWORD"),
+		WorkOSRedirectURI:    os.Getenv("WORKOS_REDIRECT_URI"),
+		LogoutReturnTo:       logout,
+		CookieSecure:         cookieSecure,
+		SecretsEncryptionKey: os.Getenv("SECRETS_ENCRYPTION_KEY"),
+		AuthBypass:           bypass,
+		AuthBypassUser:       getenvDefault("AUTH_BYPASS_USER", "user_bypass"),
+		AuthBypassOrg:        os.Getenv("AUTH_BYPASS_ORG"),
+		AuthBypassRole:       getenvDefault("AUTH_BYPASS_ROLE", "admin"),
+		AuthBypassEmail:      getenvDefault("AUTH_BYPASS_EMAIL", "bypass@hetchy.local"),
 	}, nil
 }
 
