@@ -4,15 +4,24 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
+
+	"github.com/hetchyhq/hetchy/internal/orgcfg"
 )
 
 var mentionPrefix = regexp.MustCompile(`^<@[A-Z0-9]+>\s*`)
+
+// slackHandler is the per-org dispatch target. The Bot supplies one of
+// these to slackManager, capturing both the inbound event and the org's
+// resolved config so HandleRequest can be invoked with the right tokens.
+type slackHandler func(ctx context.Context, oc orgcfg.Config, ev incoming, cli *slack.Client)
 
 type incoming struct {
 	channel  string
@@ -23,46 +32,158 @@ type incoming struct {
 	text     string
 }
 
-func (b *Bot) runSlack(ctx context.Context) error {
-	go b.dispatch(ctx)
-	if err := b.socket.RunContext(ctx); err != nil && !errors.Is(err, context.Canceled) {
-		return fmt.Errorf("socket mode run: %w", err)
+// slackManager owns one socket-mode connection per org with Slack creds.
+// Lifecycle: Run() loads all orgs at startup and spins up a goroutine for
+// each; RestartOrg() reloads a single org after its settings change;
+// remove happens implicitly when an org's tokens go missing on reload.
+type slackManager struct {
+	log     *slog.Logger
+	orgs    *orgcfg.Store
+	handler slackHandler
+
+	mu    sync.Mutex
+	conns map[string]*slackConn // orgID -> running connection
+
+	// Captured Run context, used to start new connections on RestartOrg.
+	runCtx context.Context
+}
+
+type slackConn struct {
+	cancel context.CancelFunc
+	done   chan struct{}
+}
+
+func newSlackManager(log *slog.Logger, orgs *orgcfg.Store, h slackHandler) *slackManager {
+	return &slackManager{log: log, orgs: orgs, handler: h, conns: make(map[string]*slackConn)}
+}
+
+// Run boots every configured org's socket connection and blocks until
+// ctx is cancelled, at which point all per-org goroutines are signalled
+// to stop.
+func (m *slackManager) Run(ctx context.Context) error {
+	m.mu.Lock()
+	m.runCtx = ctx
+	m.mu.Unlock()
+
+	cfgs, err := m.orgs.ListWithSlack(ctx)
+	if err != nil {
+		return fmt.Errorf("list slack orgs: %w", err)
+	}
+	for _, oc := range cfgs {
+		m.startConn(ctx, oc)
+	}
+	if len(cfgs) == 0 {
+		m.log.Info("slack: no orgs with credentials yet — waiting for settings updates")
+	}
+
+	<-ctx.Done()
+
+	m.mu.Lock()
+	conns := m.conns
+	m.conns = make(map[string]*slackConn)
+	m.mu.Unlock()
+	for _, c := range conns {
+		c.cancel()
+		<-c.done
 	}
 	return nil
 }
 
-func (b *Bot) dispatch(ctx context.Context) {
+// RestartOrg tears down the org's existing connection (if any) and starts
+// a fresh one with whatever creds are now in the database. Called by the
+// settings handler after a save.
+func (m *slackManager) RestartOrg(ctx context.Context, orgID string) {
+	m.mu.Lock()
+	old := m.conns[orgID]
+	delete(m.conns, orgID)
+	parent := m.runCtx
+	m.mu.Unlock()
+	if old != nil {
+		old.cancel()
+		<-old.done
+	}
+	if parent == nil {
+		// Manager hasn't started yet — startup will pick up the new config.
+		return
+	}
+	oc, err := m.orgs.Get(ctx, orgID)
+	if err != nil {
+		m.log.Warn("slack: skip restart, org config missing", "org", orgID, "error", err)
+		return
+	}
+	if oc.SlackBotToken == "" || oc.SlackSocketToken == "" {
+		m.log.Info("slack: org has no slack tokens, leaving disconnected", "org", orgID)
+		return
+	}
+	m.startConn(parent, oc)
+}
+
+func (m *slackManager) startConn(ctx context.Context, oc orgcfg.Config) {
+	if oc.SlackBotToken == "" || oc.SlackSocketToken == "" {
+		return
+	}
+	connCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	conn := &slackConn{cancel: cancel, done: done}
+
+	m.mu.Lock()
+	m.conns[oc.OrgID] = conn
+	m.mu.Unlock()
+
+	go func() {
+		defer close(done)
+		m.runConn(connCtx, oc)
+	}()
+}
+
+func (m *slackManager) runConn(ctx context.Context, oc orgcfg.Config) {
+	cli := slack.New(oc.SlackBotToken, slack.OptionAppLevelToken(oc.SlackSocketToken))
+	sock := socketmode.New(cli)
+
+	// Dispatch goroutine — drains events while the socket runs. The org
+	// config is captured here and reused for every event on this
+	// connection; RestartOrg() tears down and recreates the connection
+	// when settings change, so this snapshot is always current.
+	go m.dispatch(ctx, cli, sock, oc)
+
+	if err := sock.RunContext(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		m.log.Error("slack: socket run failed", "org", oc.OrgID, "error", err)
+	}
+}
+
+func (m *slackManager) dispatch(ctx context.Context, cli *slack.Client, sock *socketmode.Client, oc orgcfg.Config) {
+	orgID := oc.OrgID
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case evt, ok := <-b.socket.Events:
+		case evt, ok := <-sock.Events:
 			if !ok {
 				return
 			}
 			switch evt.Type {
 			case socketmode.EventTypeConnecting:
-				b.log.Info("slack socket connecting")
+				m.log.Info("slack socket connecting", "org", orgID)
 				continue
 			case socketmode.EventTypeConnected:
-				b.log.Info("slack socket connected — listening for events")
+				m.log.Info("slack socket connected", "org", orgID)
 				continue
 			case socketmode.EventTypeHello:
 				continue
 			case socketmode.EventTypeDisconnect:
-				b.log.Warn("slack socket disconnected")
+				m.log.Warn("slack socket disconnected", "org", orgID)
 				continue
 			case socketmode.EventTypeInvalidAuth:
-				b.log.Error("slack socket invalid auth — check SLACK_BOT_OAUTH_TOKEN / SLACK_SOCKET_TOKEN")
+				m.log.Error("slack socket invalid auth", "org", orgID)
 				continue
 			case socketmode.EventTypeConnectionError,
 				socketmode.EventTypeIncomingError,
 				socketmode.EventTypeErrorWriteFailed,
 				socketmode.EventTypeErrorBadMessage:
-				b.log.Warn("slack socket error", "type", evt.Type, "data", fmt.Sprintf("%+v", evt.Data))
+				m.log.Warn("slack socket error", "org", orgID, "type", evt.Type)
 				continue
 			case socketmode.EventTypeEventsAPI:
-				// fall through to handler
+				// fall through
 			case socketmode.EventTypeInteractive, socketmode.EventTypeSlashCommand:
 				// not used by this bot
 				continue
@@ -73,53 +194,37 @@ func (b *Bot) dispatch(ctx context.Context) {
 			if !ok {
 				continue
 			}
-			b.socket.Ack(*evt.Request)
+			sock.Ack(*evt.Request)
 			if payload.Type != slackevents.CallbackEvent {
 				continue
 			}
-			// Route by event type:
-			//  - AppMentionEvent: all @mentions in channels (top-level and
-			//    thread). This is the only reliable event for channel messages
-			//    regardless of whether the app has message.channels scope.
-			//  - MessageEvent (DM only): DMs never fire AppMentionEvent, so
-			//    we handle them here. Channel MessageEvents are skipped to
-			//    avoid double-processing when both event types are subscribed.
 			switch inner := payload.InnerEvent.Data.(type) {
 			case *slackevents.AppMentionEvent:
-				b.log.Info("slack app_mention event",
-					"channel", inner.Channel,
-					"user", inner.User, "ts", inner.TimeStamp,
-					"thread_ts", inner.ThreadTimeStamp,
-					"text_preview", truncate(inner.Text, 100),
-				)
-				go b.processSlackEvent(ctx, incoming{
+				go m.handler(ctx, oc, incoming{
 					channel: inner.Channel, user: inner.User, ts: inner.TimeStamp,
 					threadTS: inner.ThreadTimeStamp, botID: inner.BotID, text: inner.Text,
-				})
+				}, cli)
 			case *slackevents.MessageEvent:
 				if !inner.IsIM() {
 					continue
 				}
-				b.log.Info("slack dm event",
-					"user", inner.User, "ts", inner.TimeStamp,
-					"thread_ts", inner.ThreadTimeStamp,
-					"text_preview", truncate(inner.Text, 100),
-				)
-				go b.processSlackEvent(ctx, incoming{
+				go m.handler(ctx, oc, incoming{
 					channel: inner.Channel, user: inner.User, ts: inner.TimeStamp,
 					threadTS: inner.ThreadTimeStamp, botID: inner.BotID, text: inner.Text,
-				})
+				}, cli)
 			}
 		}
 	}
 }
 
-func (b *Bot) processSlackEvent(ctx context.Context, ev incoming) {
-	// Ignore bot messages.
+// handleSlackEvent is the Bot-side dispatcher passed to slackManager. It
+// strips bot mentions, decides whether the message starts a new
+// conversation or continues one, and invokes HandleRequest with the right
+// callbacks.
+func (b *Bot) handleSlackEvent(ctx context.Context, oc orgcfg.Config, ev incoming, cli *slack.Client) {
 	if ev.botID != "" {
 		return
 	}
-
 	text := strings.TrimSpace(ev.text)
 	if text == "" {
 		return
@@ -129,88 +234,64 @@ func (b *Bot) processSlackEvent(ctx context.Context, ev incoming) {
 		return
 	}
 
-	// threadID is the stable key for a conversation. When a message arrives
-	// inside a thread we always use the thread root TS so that every turn of
-	// the same thread maps to the same conversation, regardless of whether
-	// the bot started the thread. For top-level messages we use the message's
-	// own TS (which becomes the thread root once the bot replies).
 	threadID := ev.ts
 	replyTo := ev.ts
 	isFollowUp := false
 	if ev.threadTS != "" {
 		threadID = ev.threadTS
 		replyTo = ev.threadTS
-
-		b.mu.Lock()
-		_, active := b.convos[threadID]
-		b.mu.Unlock()
-		if !active {
-			b.log.Warn("no active conversation for thread, will start a new one",
-				"thread_ts", ev.threadTS, "user", ev.user, "channel", ev.channel)
-		} else {
+		if _, err := b.convs.Get(ctx, oc.OrgID, threadID); err == nil {
 			isFollowUp = true
 		}
 	}
 
-	// Add reaction to the thread root message to indicate we're working on it.
-	// For new tasks, use "eyes" to show we've picked it up.
-	// For iterations/follow-ups, use "recycle" to show we're collaborating.
-	reactionEmoji := "eyes"
+	reaction := "eyes"
 	if isFollowUp {
-		reactionEmoji = "recycle"
+		reaction = "recycle"
 	}
-	b.addReaction(ev.channel, threadID, reactionEmoji)
-
-	b.replyInThread(ev.channel, replyTo, fmt.Sprintf("<@%s> Working on it…", ev.user))
+	addReaction(b.log, cli, ev.channel, threadID, reaction)
+	replyInThread(b.log, cli, ev.channel, replyTo, fmt.Sprintf("<@%s> Working on it…", ev.user))
 
 	requestID := strings.ReplaceAll(ev.ts, ".", "")
-	b.HandleRequest(ctx, text, requestID, threadID,
+	b.HandleRequest(ctx, oc, text, requestID, threadID,
 		func(msg string) {
-			// onUpdate: raw sandbox log chunks — logged locally only, never posted to Slack
-			b.log.Debug("sandbox log", "channel", ev.channel, "thread", threadID, "msg", msg)
+			// onUpdate: raw sandbox log chunks — logged locally only, never posted to Slack.
+			b.log.Debug("sandbox log", "org", oc.OrgID, "channel", ev.channel, "thread", threadID, "msg", msg)
 		},
 		func(msg string) {
-			// onNotify: important status updates from the bot itself
-			b.replyInThread(ev.channel, replyTo, fmt.Sprintf("<@%s> %s", ev.user, msg))
+			// onNotify: important status updates from the bot itself.
+			replyInThread(b.log, cli, ev.channel, replyTo, fmt.Sprintf("<@%s> %s", ev.user, msg))
 		},
 		func(msg string) {
-			// onComplete: task finished successfully
-			b.replyInThread(ev.channel, replyTo, fmt.Sprintf("<@%s> Done! :tada: %s", ev.user, msg))
-			b.removeReaction(ev.channel, threadID, reactionEmoji)
-			b.addReaction(ev.channel, threadID, "white_check_mark")
+			replyInThread(b.log, cli, ev.channel, replyTo, fmt.Sprintf("<@%s> Done! :tada: %s", ev.user, msg))
+			removeReaction(b.log, cli, ev.channel, threadID, reaction)
+			addReaction(b.log, cli, ev.channel, threadID, "white_check_mark")
 		},
 		func(msg string) {
-			// onError: task failed
-			b.replyInThread(ev.channel, replyTo, fmt.Sprintf("<@%s> %s", ev.user, msg))
-			b.removeReaction(ev.channel, threadID, reactionEmoji)
-			b.addReaction(ev.channel, threadID, "x")
+			replyInThread(b.log, cli, ev.channel, replyTo, fmt.Sprintf("<@%s> %s", ev.user, msg))
+			removeReaction(b.log, cli, ev.channel, threadID, reaction)
+			addReaction(b.log, cli, ev.channel, threadID, "x")
 		},
 	)
 }
 
-func (b *Bot) replyInThread(channel, threadTS, msg string) {
-	if _, _, err := b.slack.PostMessage(channel,
+func replyInThread(log *slog.Logger, cli *slack.Client, channel, threadTS, msg string) {
+	if _, _, err := cli.PostMessage(channel,
 		slack.MsgOptionText(msg, false),
 		slack.MsgOptionTS(threadTS),
 	); err != nil {
-		b.log.Error("slack post failed", "channel", channel, "error", err)
+		log.Error("slack post failed", "channel", channel, "error", err)
 	}
 }
 
-func (b *Bot) addReaction(channel, ts, emoji string) {
-	if err := b.slack.AddReaction(emoji, slack.ItemRef{
-		Channel:   channel,
-		Timestamp: ts,
-	}); err != nil && err.Error() != "already_reacted" {
-		b.log.Error("slack add reaction failed", "channel", channel, "ts", ts, "emoji", emoji, "error", err)
+func addReaction(log *slog.Logger, cli *slack.Client, channel, ts, emoji string) {
+	if err := cli.AddReaction(emoji, slack.ItemRef{Channel: channel, Timestamp: ts}); err != nil && err.Error() != "already_reacted" {
+		log.Error("slack add reaction failed", "channel", channel, "ts", ts, "emoji", emoji, "error", err)
 	}
 }
 
-func (b *Bot) removeReaction(channel, ts, emoji string) {
-	if err := b.slack.RemoveReaction(emoji, slack.ItemRef{
-		Channel:   channel,
-		Timestamp: ts,
-	}); err != nil && err.Error() != "no_reaction" {
-		b.log.Error("slack remove reaction failed", "channel", channel, "ts", ts, "emoji", emoji, "error", err)
+func removeReaction(log *slog.Logger, cli *slack.Client, channel, ts, emoji string) {
+	if err := cli.RemoveReaction(emoji, slack.ItemRef{Channel: channel, Timestamp: ts}); err != nil && err.Error() != "no_reaction" {
+		log.Error("slack remove reaction failed", "channel", channel, "ts", ts, "emoji", emoji, "error", err)
 	}
 }

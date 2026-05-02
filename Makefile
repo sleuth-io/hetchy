@@ -1,4 +1,4 @@
-.PHONY: help build install test ci lint format clean tidy deps verify update-deps init prepush postpull bot bot-tee web logs dev daytona-up daytona-down daytona-logs snapshot push-snapshot db-up db-down db-status db-new sqlc-generate pg-up pg-down pg-logs pg-psql pg-reset
+.PHONY: help build install test ci lint format clean tidy deps verify update-deps init prepush postpull bot bot-tee logs dev daytona-up daytona-down daytona-logs snapshot push-snapshot db-up db-down db-status db-new sqlc-generate pg-up pg-down pg-logs pg-psql pg-reset
 
 # Default target
 help: ## Show this help message
@@ -100,10 +100,6 @@ bot-tee: build ## Run the bot, mirroring logs to $(LOG_FILE) so another shell ca
 	@echo "Logging to $(LOG_FILE) (tail with 'make logs')"
 	@doppler run -- $(BUILD_DIR)/$(BINARY_NAME) 2>&1 | tee $(LOG_FILE)
 
-web: build ## Run only the web UI (skips Slack; http://localhost:$$WEB_PORT, default 8080)
-	@which doppler > /dev/null || (echo "doppler CLI not found. Install: https://docs.doppler.com/docs/install-cli" && exit 1)
-	@doppler run -- env DISABLE_SLACK=1 $(BUILD_DIR)/$(BINARY_NAME)
-
 logs: ## Tail the log file written by `make bot-tee` (LOG_FILE=$(LOG_FILE))
 	@touch $(LOG_FILE)
 	@tail -F $(LOG_FILE)
@@ -166,17 +162,17 @@ MIGRATE        = go run -tags 'postgres' github.com/golang-migrate/migrate/v4/cm
 sqlc-generate: ## Regenerate type-safe Go from db/queries against db/migrations
 	@$(SQLC) generate
 
-db-up: ## Apply all pending migrations
+db-up: build ## Apply all pending migrations (uses embedded migrator in the hetchy binary)
 	@which doppler > /dev/null || (echo "doppler CLI not found." && exit 1)
-	@doppler run -- sh -c '$(MIGRATE) -path "$(MIGRATE_DIR)" -database "$$DATABASE_URL" up'
+	@doppler run -- $(BUILD_DIR)/$(BINARY_NAME) --migrate
 
-db-down: ## Roll back one migration (use db-down N=3 to roll back N)
+db-down: build ## Roll back one migration (use db-down N=3 to roll back N; N=0 rolls back all)
 	@which doppler > /dev/null || (echo "doppler CLI not found." && exit 1)
-	@doppler run -- sh -c '$(MIGRATE) -path "$(MIGRATE_DIR)" -database "$$DATABASE_URL" down $(N)'
+	@doppler run -- $(BUILD_DIR)/$(BINARY_NAME) --migrate-down $(if $(N),$(N),1)
 
-db-status: ## Show current migration version
+db-status: build ## Show current migration version
 	@which doppler > /dev/null || (echo "doppler CLI not found." && exit 1)
-	@doppler run -- sh -c '$(MIGRATE) -path "$(MIGRATE_DIR)" -database "$$DATABASE_URL" version'
+	@doppler run -- $(BUILD_DIR)/$(BINARY_NAME) --migrate-status
 
 db-new: ## Create a new timestamped migration pair (usage: make db-new name=add_users)
 	@if [ -z "$(name)" ]; then echo "usage: make db-new name=<snake_case_name>"; exit 1; fi

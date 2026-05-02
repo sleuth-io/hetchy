@@ -1,0 +1,72 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Organization settings · Hetchy</title>
+<style>
+  body { font-family: system-ui, sans-serif; background: #f5f5f5; margin: 0; padding: 2rem; }
+  .card { background: #fff; padding: 2rem 2.5rem; border-radius: 1rem;
+          box-shadow: 0 6px 24px rgba(0,0,0,.08); max-width: 36rem; margin: 0 auto; }
+  h1 { margin: 0 0 .25rem; font-size: 1.4rem; }
+  .sub { color: #777; margin: 0 0 1.5rem; font-size: .9rem; }
+  fieldset { border: none; padding: 0; margin: 0 0 1.25rem; }
+  legend { font-weight: 600; font-size: .95rem; padding: 0 0 .5rem; }
+  label { display: block; font-size: .85rem; color: #555; margin: .5rem 0 .25rem; }
+  input { width: 100%; padding: .55rem .75rem; border: 1px solid #ccc;
+          border-radius: .4rem; font-size: .95rem; box-sizing: border-box; font-family: ui-monospace, monospace; }
+  input:focus { outline: none; border-color: #0b93f6; }
+  .hint { font-size: .75rem; color: #999; margin-top: .25rem; }
+  button { margin-top: 1rem; padding: .65rem 1.25rem; background: #0b93f6;
+           color: #fff; border: none; border-radius: .4rem; font-size: 1rem;
+           cursor: pointer; }
+  .saved { background: #efe; color: #060; padding: .5rem .75rem;
+           border-radius: .4rem; margin-bottom: 1rem; font-size: .85rem; }
+  .nav { font-size: .85rem; color: #999; margin: 0 0 1rem; }
+  .nav a { color: #0b93f6; text-decoration: none; }
+  .meta { color: #999; font-size: .75rem; margin-top: 1.25rem; text-align: right; }
+</style>
+</head>
+<body>
+<form class="card" method="POST" action="/settings/org">
+  <p class="nav"><a href="/">← Back to chat</a></p>
+  <h1>Organization settings</h1>
+  <p class="sub">Per-org runtime configuration. Tokens are encrypted at rest.</p>
+
+  <div id="saved-banner" class="saved" style="display:none">Settings saved.</div>
+  <script>
+    if (window.location.search.includes('saved=1')) {
+      document.getElementById('saved-banner').style.display = '';
+    }
+  </script>
+
+  <fieldset>
+    <legend>GitHub</legend>
+    <label for="github_repo">Repository (owner/repo)</label>
+    <input id="github_repo" name="github_repo" value="{{.GitHubRepo}}" placeholder="acme/website" required>
+    <label for="github_base_branch">Base branch</label>
+    <input id="github_base_branch" name="github_base_branch" value="{{.GitHubBaseBranch}}" placeholder="main">
+    <label for="github_token">Personal access token</label>
+    <input id="github_token" name="github_token" type="password" placeholder="{{if .HasGitHubToken}}•••••••• (leave blank to keep, type - to clear){{else}}ghp_…{{end}}">
+    <p class="hint">Needs <code>repo</code> scope.</p>
+  </fieldset>
+
+  <fieldset>
+    <legend>Slack (optional)</legend>
+    <label for="slack_bot_token">Bot token</label>
+    <input id="slack_bot_token" name="slack_bot_token" type="password" placeholder="{{if .HasSlackBot}}•••••••• (leave blank to keep, type - to clear){{else}}xoxb-…{{end}}">
+    <label for="slack_socket_token">Socket token</label>
+    <input id="slack_socket_token" name="slack_socket_token" type="password" placeholder="{{if .HasSlackSocket}}•••••••• (leave blank to keep, type - to clear){{else}}xapp-…{{end}}">
+    <p class="hint">Provide both to receive Slack events for this org. Each org runs its own socket-mode connection.</p>
+  </fieldset>
+
+  <fieldset>
+    <legend>SX (optional)</legend>
+    <label for="sx_key">SX bot key</label>
+    <input id="sx_key" name="sx_key" type="password" placeholder="{{if .HasSXKey}}•••••••• (leave blank to keep, type - to clear){{else}}sx-…{{end}}">
+  </fieldset>
+
+  <button type="submit">Save</button>
+  <p class="meta">Org ID: <code>{{.OrgID}}</code> · {{.Email}} · <a href="/logout">Log out</a></p>
+</form>
+</body>
+</html>
