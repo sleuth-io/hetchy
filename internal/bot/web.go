@@ -2,7 +2,9 @@ package bot
 
 import (
 	"context"
+	"crypto/md5"
 	_ "embed"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,14 +19,26 @@ import (
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
 )
 
+// gravatarURL returns a gravatar.com avatar link for email. Gravatar
+// hashes are MD5 of the lowercased, trimmed address. We request the
+// `identicon` fallback so users without a real gravatar still see a
+// stable, distinctive image rather than a generic silhouette.
+func gravatarURL(email string) string {
+	sum := md5.Sum([]byte(strings.ToLower(strings.TrimSpace(email)))) //nolint:gosec // MD5 is the gravatar hash spec, not used for security
+	return "https://www.gravatar.com/avatar/" + hex.EncodeToString(sum[:]) + "?d=identicon&s=64"
+}
+
 //go:embed chat.html
-var chatHTML []byte
+var chatHTMLTpl string
 
 //go:embed templates/onboarding.html
 var onboardingHTMLTpl string
 
 //go:embed templates/settings.html
 var settingsHTMLTpl string
+
+//go:embed templates/profile.html
+var profileHTMLTpl string
 
 //go:embed templates/landing.html
 var landingHTML []byte
@@ -40,6 +54,11 @@ func (b *Bot) runWeb(ctx context.Context) error {
 	mux.Handle("/", b.auth.Middleware(http.HandlerFunc(b.indexHandler)))
 	mux.Handle("/onboarding", b.auth.Middleware(b.auth.RequireAuth(http.HandlerFunc(b.onboardingHandler))))
 	mux.Handle("/settings/org", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.settingsHandler))))
+	mux.Handle("/settings/org/invite", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.inviteHandler))))
+	mux.Handle("/settings/org/invitations/", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.invitationActionHandler))))
+	mux.Handle("/settings/org/members/", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.memberActionHandler))))
+	mux.Handle("/settings/profile", b.auth.Middleware(b.auth.RequireAuth(http.HandlerFunc(b.profileHandler))))
+	mux.Handle("/settings/profile/password-reset", b.auth.Middleware(b.auth.RequireAuth(http.HandlerFunc(b.passwordResetHandler))))
 	mux.Handle("/chat", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b.chatHandler(ctx, w, r)
 	}))))
@@ -80,8 +99,21 @@ func (b *Bot) indexHandler(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/onboarding", http.StatusFound)
 		return
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write(chatHTML)
+	// Profile fetch supplies the display name shown in the avatar
+	// dropdown. WorkOS doesn't put first/last name in the session JWT,
+	// so we have to round-trip. If it fails we still render the page
+	// with email-only so a transient WorkOS hiccup doesn't break chat.
+	displayName := p.Email
+	if prof, err := b.auth.GetProfile(r.Context(), p.UserID); err == nil {
+		displayName = prof.DisplayName()
+	} else {
+		b.log.Warn("profile fetch for chat header failed", "error", err, "user", p.UserID)
+	}
+	b.renderTemplate(w, chatHTMLTpl, map[string]any{
+		"Email":       p.Email,
+		"DisplayName": displayName,
+		"GravatarURL": gravatarURL(p.Email),
+	})
 }
 
 func (b *Bot) onboardingHandler(w http.ResponseWriter, r *http.Request) {
@@ -148,6 +180,12 @@ func (b *Bot) onboardingHandler(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/settings/org", http.StatusFound)
 }
 
+// isAdmin reports whether p holds the admin role for their current org.
+// All member-management actions gate on this; the General tab does not
+// (any member of the org can adjust org-level config — that's a
+// deliberate trust choice for the small-team workflow this app targets).
+func isAdmin(p auth.Principal) bool { return p.Role == "admin" }
+
 func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.FromContext(r.Context())
 
@@ -157,9 +195,23 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "load config: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		b.renderTemplate(w, settingsHTMLTpl, map[string]any{
+		tab := r.URL.Query().Get("tab")
+		if tab == "" {
+			tab = "general"
+		}
+		// Non-admins clicking the (now-hidden) Members tab fall back to General.
+		if tab == "members" && !isAdmin(p) {
+			tab = "general"
+		}
+		data := map[string]any{
 			"OrgID":                   p.OrgID,
+			"OrgName":                 p.OrgID, // WorkOS doesn't include org name in the session JWT
 			"Email":                   p.Email,
+			"PrincipalUserID":         p.UserID,
+			"IsAdmin":                 isAdmin(p),
+			"Tab":                     tab,
+			"Saved":                   r.URL.Query().Get("saved") == "1",
+			"SavedMessage":            savedMessage(r.URL.Query().Get("saved")),
 			"GitHubRepo":              current.GitHubRepo,
 			"GitHubBaseBranch":        current.GitHubBaseBranch,
 			"GitHubTokenPreview":      previewSecret(current.GitHubToken),
@@ -167,7 +219,22 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 			"SlackBotTokenPreview":    previewSecret(current.SlackBotToken),
 			"SlackSocketTokenPreview": previewSecret(current.SlackSocketToken),
 			"SXKeyPreview":            previewSecret(current.SXKey),
-		})
+		}
+		if tab == "members" {
+			members, err := b.auth.ListMembers(r.Context(), p.OrgID)
+			if err != nil {
+				http.Error(w, "load members: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+			invites, err := b.auth.ListInvitations(r.Context(), p.OrgID)
+			if err != nil {
+				http.Error(w, "load invitations: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+			data["Members"] = members
+			data["Invitations"] = invites
+		}
+		b.renderTemplate(w, settingsHTMLTpl, data)
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -230,6 +297,281 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 	// Slack creds may have changed; rebuild that org's connection.
 	b.slack.RestartOrg(r.Context(), p.OrgID)
 	http.Redirect(w, r, "/settings/org?saved=1", http.StatusFound)
+}
+
+// savedMessage maps the ?saved= sentinel to the green banner text shown
+// at the top of a tab after a successful POST. Empty string → no banner.
+func savedMessage(s string) string {
+	switch s {
+	case "1":
+		return "Settings saved."
+	case "invited":
+		return "Invitation sent."
+	case "revoked":
+		return "Invitation revoked."
+	case "removed":
+		return "Member removed."
+	case "role":
+		return "Role updated."
+	default:
+		return ""
+	}
+}
+
+// inviteHandler creates a pending WorkOS invitation. WorkOS sends the
+// email; once accepted the recipient gets a session bound to this org.
+func (b *Bot) inviteHandler(w http.ResponseWriter, r *http.Request) {
+	p, _ := auth.FromContext(r.Context())
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !isAdmin(p) {
+		http.Error(w, "admin role required", http.StatusForbidden)
+		return
+	}
+	if err := requireSameOrigin(r); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	email := strings.TrimSpace(r.FormValue("email"))
+	role := strings.TrimSpace(r.FormValue("role"))
+	if email == "" || !strings.Contains(email, "@") {
+		http.Error(w, "valid email required", http.StatusBadRequest)
+		return
+	}
+	if role == "" {
+		role = "member"
+	}
+	if !validRoleSlug(role) {
+		http.Error(w, "unknown role", http.StatusBadRequest)
+		return
+	}
+	if err := b.auth.SendInvitation(r.Context(), email, p.OrgID, role, p.UserID); err != nil {
+		b.log.Error("send invitation failed", "error", err, "org", p.OrgID, "email", email)
+		http.Error(w, "send invite: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	b.log.Info("invitation sent", "org", p.OrgID, "email", email, "role", role, "inviter", p.UserID)
+	http.Redirect(w, r, "/settings/org?tab=members&saved=invited", http.StatusFound)
+}
+
+// invitationActionHandler handles /settings/org/invitations/{id}/revoke.
+// The trailing slash on the route registration means we need to parse
+// the id and action out of the path ourselves.
+func (b *Bot) invitationActionHandler(w http.ResponseWriter, r *http.Request) {
+	p, _ := auth.FromContext(r.Context())
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !isAdmin(p) {
+		http.Error(w, "admin role required", http.StatusForbidden)
+		return
+	}
+	if err := requireSameOrigin(r); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	id, action, ok := splitIDAction(r.URL.Path, "/settings/org/invitations/")
+	if !ok || action != "revoke" {
+		http.Error(w, "unknown action", http.StatusNotFound)
+		return
+	}
+	if err := b.auth.RevokeInvitation(r.Context(), id, p.OrgID); err != nil {
+		if errors.Is(err, auth.ErrCrossOrg) {
+			http.NotFound(w, r)
+			return
+		}
+		b.log.Error("revoke invitation failed", "error", err, "org", p.OrgID, "id", id)
+		http.Error(w, "revoke: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	b.log.Info("invitation revoked", "org", p.OrgID, "id", id, "actor", p.UserID)
+	http.Redirect(w, r, "/settings/org?tab=members&saved=revoked", http.StatusFound)
+}
+
+// memberActionHandler handles /settings/org/members/{id}/{remove|role}.
+func (b *Bot) memberActionHandler(w http.ResponseWriter, r *http.Request) {
+	p, _ := auth.FromContext(r.Context())
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !isAdmin(p) {
+		http.Error(w, "admin role required", http.StatusForbidden)
+		return
+	}
+	if err := requireSameOrigin(r); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	id, action, ok := splitIDAction(r.URL.Path, "/settings/org/members/")
+	if !ok {
+		http.Error(w, "bad path", http.StatusNotFound)
+		return
+	}
+	switch action {
+	case "remove":
+		if err := b.auth.RemoveMember(r.Context(), id, p.OrgID, p.UserID); err != nil {
+			if errors.Is(err, auth.ErrCrossOrg) {
+				http.NotFound(w, r)
+				return
+			}
+			b.log.Warn("remove member rejected", "error", err, "org", p.OrgID, "id", id, "actor", p.UserID)
+			http.Error(w, "remove: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		b.log.Info("member removed", "org", p.OrgID, "id", id, "actor", p.UserID)
+		http.Redirect(w, r, "/settings/org?tab=members&saved=removed", http.StatusFound)
+	case "role":
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "bad form", http.StatusBadRequest)
+			return
+		}
+		role := strings.TrimSpace(r.FormValue("role"))
+		if role == "" {
+			http.Error(w, "role required", http.StatusBadRequest)
+			return
+		}
+		if !validRoleSlug(role) {
+			http.Error(w, "unknown role", http.StatusBadRequest)
+			return
+		}
+		if err := b.auth.UpdateMemberRole(r.Context(), id, p.OrgID, p.UserID, role); err != nil {
+			if errors.Is(err, auth.ErrCrossOrg) {
+				http.NotFound(w, r)
+				return
+			}
+			b.log.Warn("update role rejected", "error", err, "org", p.OrgID, "id", id, "actor", p.UserID)
+			http.Error(w, "update role: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		b.log.Info("member role updated", "org", p.OrgID, "id", id, "role", role, "actor", p.UserID)
+		http.Redirect(w, r, "/settings/org?tab=members&saved=role", http.StatusFound)
+	default:
+		http.Error(w, "unknown action", http.StatusNotFound)
+	}
+}
+
+// validRoleSlug guards POSTed role values against typos and arbitrary
+// strings. Hardcoded list mirrors the dropdown options; if the WorkOS
+// dashboard adds custom roles, extend this set.
+func validRoleSlug(s string) bool {
+	switch s {
+	case "admin", "member":
+		return true
+	}
+	return false
+}
+
+// splitIDAction parses paths shaped like prefix/{id}/{action}, returning
+// the id and action segments. Both must be non-empty for ok to be true.
+// id is restricted to a conservative WorkOS-id charset so a path
+// segment containing whitespace, slashes (already split), or special
+// characters can't be passed to upstream APIs.
+func splitIDAction(path, prefix string) (id, action string, ok bool) {
+	rest := strings.TrimPrefix(path, prefix)
+	if rest == path {
+		return "", "", false
+	}
+	parts := strings.SplitN(rest, "/", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", false
+	}
+	if !isSafeID(parts[0]) {
+		return "", "", false
+	}
+	return parts[0], parts[1], true
+}
+
+// isSafeID restricts WorkOS-style ids to ASCII letters, digits, and
+// underscores -- the actual id alphabet plus a defensive guard against
+// anything weirder slipping through to outbound API calls.
+func isSafeID(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case r == '_':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// profileHandler renders / saves the logged-in user's WorkOS profile
+// (first/last name). Email and password rotate through hosted AuthKit
+// flows — we never store them or implement validation locally.
+func (b *Bot) profileHandler(w http.ResponseWriter, r *http.Request) {
+	p, _ := auth.FromContext(r.Context())
+
+	if r.Method == http.MethodGet {
+		prof, err := b.auth.GetProfile(r.Context(), p.UserID)
+		if err != nil {
+			http.Error(w, "load profile: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		b.renderTemplate(w, profileHTMLTpl, map[string]any{
+			"UserID":    prof.UserID,
+			"Email":     prof.Email,
+			"FirstName": prof.FirstName,
+			"LastName":  prof.LastName,
+			"Saved":     r.URL.Query().Get("saved") == "1",
+		})
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := requireSameOrigin(r); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	first := strings.TrimSpace(r.FormValue("first_name"))
+	last := strings.TrimSpace(r.FormValue("last_name"))
+	if err := b.auth.UpdateProfile(r.Context(), p.UserID, first, last); err != nil {
+		b.log.Error("update profile failed", "error", err, "user", p.UserID)
+		http.Error(w, "update: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	b.log.Info("profile updated", "user", p.UserID)
+	http.Redirect(w, r, "/settings/profile?saved=1", http.StatusFound)
+}
+
+// passwordResetHandler asks WorkOS for a one-time password-reset URL on
+// AuthKit's hosted page and bounces the browser straight to it.
+func (b *Bot) passwordResetHandler(w http.ResponseWriter, r *http.Request) {
+	p, _ := auth.FromContext(r.Context())
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := requireSameOrigin(r); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	url, err := b.auth.RequestPasswordReset(r.Context(), p.Email)
+	if err != nil {
+		b.log.Error("password reset failed", "error", err, "user", p.UserID)
+		http.Error(w, "password reset: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, url, http.StatusFound)
 }
 
 // requireSameOrigin defends state-mutating POST handlers against CSRF.

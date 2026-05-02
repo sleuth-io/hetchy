@@ -220,6 +220,153 @@ func TestApplyTokenChange(t *testing.T) {
 	}
 }
 
+func TestSettingsTemplate_RendersMembersTab(t *testing.T) {
+	b := newBypassBot(t)
+	rec := httptest.NewRecorder()
+	b.renderTemplate(rec, settingsHTMLTpl, map[string]any{
+		"OrgID": "org_y", "OrgName": "Acme", "Email": "u@y", "PrincipalUserID": "user_me",
+		"IsAdmin": true, "Tab": "members", "Saved": false, "SavedMessage": "",
+		"GitHubRepo": "acme/web", "GitHubBaseBranch": "main",
+		"GitHubTokenPreview": "", "AnthropicAPIKeyPreview": "",
+		"SlackBotTokenPreview": "", "SlackSocketTokenPreview": "", "SXKeyPreview": "",
+		// Real auth.Member / auth.Invitation structs so the template's
+		// .DisplayName invocation actually exercises the method, not a
+		// map-key lookup.
+		"Members": []auth.Member{
+			{
+				MembershipID: "om_1", UserID: "user_me",
+				Email: "me@x", FirstName: "Me", LastName: "Self",
+				RoleSlug: "admin", Status: "active",
+			},
+			{
+				MembershipID: "om_2", UserID: "user_other",
+				Email: "ada@x", FirstName: "Ada", LastName: "L",
+				RoleSlug: "member", Status: "active",
+			},
+		},
+		"Invitations": []auth.Invitation{
+			{ID: "inv_1", Email: "pending@x", RoleSlug: "member", ExpiresAt: "2026-12-01"},
+		},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	wants := []string{
+		"Invite by email",
+		`name="email"`,
+		`action="/settings/org/invite"`,
+		"Ada L",
+		`action="/settings/org/members/om_2/remove"`,
+		`action="/settings/org/members/om_2/role"`,
+		`action="/settings/org/invitations/inv_1/revoke"`,
+		`tab=members`,
+	}
+	for _, w := range wants {
+		if !strings.Contains(body, w) {
+			t.Errorf("members tab missing %q", w)
+		}
+	}
+	// The current user's row should NOT have a Remove button.
+	if strings.Contains(body, `action="/settings/org/members/om_1/remove"`) {
+		t.Errorf("self-row should not have a remove button")
+	}
+}
+
+func TestSettingsTemplate_HidesMembersTabForNonAdmin(t *testing.T) {
+	b := newBypassBot(t)
+	rec := httptest.NewRecorder()
+	b.renderTemplate(rec, settingsHTMLTpl, map[string]any{
+		"OrgID": "o", "OrgName": "o", "Email": "u", "PrincipalUserID": "u",
+		"IsAdmin": false, "Tab": "general",
+		"GitHubRepo": "", "GitHubBaseBranch": "",
+		"GitHubTokenPreview": "", "AnthropicAPIKeyPreview": "",
+		"SlackBotTokenPreview": "", "SlackSocketTokenPreview": "", "SXKeyPreview": "",
+	})
+	if strings.Contains(rec.Body.String(), `href="/settings/org?tab=members"`) {
+		t.Errorf("non-admin should not see Members tab in sidebar")
+	}
+}
+
+func TestProfileTemplate_Renders(t *testing.T) {
+	b := newBypassBot(t)
+	rec := httptest.NewRecorder()
+	b.renderTemplate(rec, profileHTMLTpl, map[string]any{
+		"UserID": "user_x", "Email": "u@x", "FirstName": "Ada", "LastName": "Lovelace", "Saved": true,
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, w := range []string{
+		`value="Ada"`,
+		`value="Lovelace"`,
+		`value="u@x" readonly`,
+		`action="/settings/profile/password-reset"`,
+		"Profile saved.",
+	} {
+		if !strings.Contains(body, w) {
+			t.Errorf("profile missing %q", w)
+		}
+	}
+}
+
+func TestSplitIDAction(t *testing.T) {
+	cases := []struct {
+		path, prefix, wantID, wantAction string
+		wantOK                           bool
+	}{
+		{"/settings/org/members/om_42/remove", "/settings/org/members/", "om_42", "remove", true},
+		{"/settings/org/members/om_42/role", "/settings/org/members/", "om_42", "role", true},
+		{"/settings/org/invitations/inv_1/revoke", "/settings/org/invitations/", "inv_1", "revoke", true},
+		{"/settings/org/members/", "/settings/org/members/", "", "", false},
+		{"/settings/org/members/om_42", "/settings/org/members/", "", "", false},
+		{"/settings/org/members/om_42/", "/settings/org/members/", "", "", false},
+		{"/other/path", "/settings/org/members/", "", "", false},
+		// id sanitization rejects exotic chars
+		{"/settings/org/members/om-42/remove", "/settings/org/members/", "", "", false},
+		{"/settings/org/members/om 42/remove", "/settings/org/members/", "", "", false},
+		{"/settings/org/members/om;42/remove", "/settings/org/members/", "", "", false},
+	}
+	for _, tc := range cases {
+		id, action, ok := splitIDAction(tc.path, tc.prefix)
+		if id != tc.wantID || action != tc.wantAction || ok != tc.wantOK {
+			t.Errorf("splitIDAction(%q, %q) = (%q, %q, %v), want (%q, %q, %v)",
+				tc.path, tc.prefix, id, action, ok, tc.wantID, tc.wantAction, tc.wantOK)
+		}
+	}
+}
+
+func TestValidRoleSlug(t *testing.T) {
+	for _, ok := range []string{"admin", "member"} {
+		if !validRoleSlug(ok) {
+			t.Errorf("validRoleSlug(%q) = false, want true", ok)
+		}
+	}
+	for _, bad := range []string{"", "ADMIN", "owner", "admin ", "admin\n", "../admin"} {
+		if validRoleSlug(bad) {
+			t.Errorf("validRoleSlug(%q) = true, want false", bad)
+		}
+	}
+}
+
+func TestSavedMessage(t *testing.T) {
+	cases := map[string]string{
+		"":        "",
+		"unknown": "",
+		"1":       "Settings saved.",
+		"invited": "Invitation sent.",
+		"revoked": "Invitation revoked.",
+		"removed": "Member removed.",
+		"role":    "Role updated.",
+	}
+	for in, want := range cases {
+		if got := savedMessage(in); got != want {
+			t.Errorf("savedMessage(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestRunWeb_StartsAndStopsCleanly(t *testing.T) {
 	b := newBypassBot(t)
 	// Without a slack manager this would crash on Run; only exercise runWeb directly.

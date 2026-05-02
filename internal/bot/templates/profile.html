@@ -1,0 +1,86 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>My profile · Hetchy</title>
+<style>
+  body { font-family: system-ui, sans-serif; background: #4a4d52; margin: 0; padding: 2rem;
+         min-height: 100vh; box-sizing: border-box; }
+  .modal { background: #fff; border-radius: 1rem; box-shadow: 0 12px 40px rgba(0,0,0,.25);
+           max-width: 32rem; margin: 0 auto; padding: 1.75rem 2rem; position: relative; }
+  h1 { margin: 0 0 .15rem; font-size: 1.25rem; }
+  .desc { margin: 0 0 1.5rem; color: #777; font-size: .85rem; }
+  .close { position: absolute; top: 1.25rem; right: 1.5rem;
+           color: #aaa; text-decoration: none; font-size: 1.25rem; }
+  .close:hover { color: #555; }
+  fieldset { border: none; padding: 0; margin: 0 0 1.25rem; }
+  label { display: block; font-size: .85rem; color: #555; margin: .5rem 0 .25rem; }
+  input { width: 100%; padding: .55rem .75rem; border: 1px solid #ccc;
+          border-radius: .4rem; font-size: .95rem; box-sizing: border-box;
+          font-family: ui-monospace, monospace; background: #fff; }
+  input:focus { outline: none; border-color: #0b93f6; }
+  input[readonly] { background: #fafafa; color: #555; cursor: default; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; }
+  .hint { font-size: .75rem; color: #999; margin-top: .35rem; }
+  button.primary { padding: .55rem 1.1rem; background: #0b93f6;
+                   color: #fff; border: none; border-radius: .4rem;
+                   font-size: .9rem; cursor: pointer; }
+  .saved-banner { background: #efe; color: #060; padding: .5rem .75rem;
+                  border-radius: .4rem; margin-bottom: 1rem; font-size: .85rem; }
+  .meta { color: #999; font-size: .72rem; margin-top: 1.5rem; }
+  hr { border: none; border-top: 1px solid #eee; margin: 1.5rem 0; }
+  .actions-row { display: flex; align-items: center; gap: 1rem; }
+  .password-form { margin: 0; }
+  .password-form button { background: none; border: 1px solid #ccc; border-radius: .4rem;
+                          padding: .5rem .9rem; font-size: .85rem; color: #444;
+                          cursor: pointer; font-family: inherit; }
+  .password-form button:hover { background: #f5f5f5; }
+</style>
+</head>
+<body>
+
+<div class="modal">
+  <a class="close" href="/" title="Close">✕</a>
+  <h1>My profile</h1>
+  <p class="desc">Your account details across all organizations.</p>
+
+  {{if .Saved}}<div class="saved-banner">Profile saved.</div>{{end}}
+
+  <form method="POST" action="/settings/profile">
+    <fieldset>
+      <div class="row">
+        <div>
+          <label for="first_name">First name</label>
+          <input id="first_name" type="text" name="first_name" value="{{.FirstName}}" placeholder="Ada">
+        </div>
+        <div>
+          <label for="last_name">Last name</label>
+          <input id="last_name" type="text" name="last_name" value="{{.LastName}}" placeholder="Lovelace">
+        </div>
+      </div>
+      <label for="email">Email</label>
+      <input id="email" type="text" value="{{.Email}}" readonly tabindex="-1">
+      <p class="hint">Email changes go through AuthKit's verification flow — coming soon.</p>
+    </fieldset>
+
+    <button class="primary" type="submit">Save</button>
+  </form>
+
+  <hr>
+
+  <div class="actions-row">
+    <div>
+      <p style="margin:0; font-weight:500; font-size:.9rem">Password</p>
+      <p class="hint" style="margin-top:.15rem">Reset via AuthKit's hosted page.</p>
+    </div>
+    <form method="POST" action="/settings/profile/password-reset" class="password-form"
+          onsubmit="return confirm('Send yourself to AuthKit to reset your password? You will be redirected immediately.')">
+      <button type="submit">Reset password…</button>
+    </form>
+  </div>
+
+  <p class="meta">User ID: <code>{{.UserID}}</code> · <a href="/settings/org" style="color:#888">Org settings</a> · <a href="/logout" style="color:#888">Log out</a></p>
+</div>
+
+</body>
+</html>
