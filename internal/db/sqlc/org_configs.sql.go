@@ -19,7 +19,8 @@ SELECT
     github_repo,
     github_base_branch,
     created_at,
-    updated_at
+    updated_at,
+    anthropic_api_key_encrypted
 FROM org_configs
 WHERE org_id = $1
 `
@@ -37,6 +38,7 @@ func (q *Queries) GetOrgConfig(ctx context.Context, orgID string) (OrgConfig, er
 		&i.GithubBaseBranch,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AnthropicApiKeyEncrypted,
 	)
 	return i, err
 }
@@ -51,7 +53,8 @@ SELECT
     github_repo,
     github_base_branch,
     created_at,
-    updated_at
+    updated_at,
+    anthropic_api_key_encrypted
 FROM org_configs
 WHERE slack_bot_token_encrypted IS NOT NULL
   AND slack_socket_token_encrypted IS NOT NULL
@@ -76,6 +79,7 @@ func (q *Queries) ListOrgConfigsWithSlack(ctx context.Context) ([]OrgConfig, err
 			&i.GithubBaseBranch,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.AnthropicApiKeyEncrypted,
 		); err != nil {
 			return nil, err
 		}
@@ -95,15 +99,17 @@ INSERT INTO org_configs (
     slack_socket_token_encrypted,
     sx_key_encrypted,
     github_repo,
-    github_base_branch
+    github_base_branch,
+    anthropic_api_key_encrypted
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7
+    $1, $2, $3, $4, $5, $6, $7, $8
 )
 ON CONFLICT (org_id) DO UPDATE SET
     github_token_encrypted       = EXCLUDED.github_token_encrypted,
     slack_bot_token_encrypted    = EXCLUDED.slack_bot_token_encrypted,
     slack_socket_token_encrypted = EXCLUDED.slack_socket_token_encrypted,
     sx_key_encrypted             = EXCLUDED.sx_key_encrypted,
+    anthropic_api_key_encrypted  = EXCLUDED.anthropic_api_key_encrypted,
     github_repo                  = EXCLUDED.github_repo,
     github_base_branch           = EXCLUDED.github_base_branch,
     updated_at                   = NOW()
@@ -116,7 +122,8 @@ RETURNING
     github_repo,
     github_base_branch,
     created_at,
-    updated_at
+    updated_at,
+    anthropic_api_key_encrypted
 `
 
 type UpsertOrgConfigParams struct {
@@ -127,6 +134,7 @@ type UpsertOrgConfigParams struct {
 	SxKeyEncrypted            []byte `json:"sx_key_encrypted"`
 	GithubRepo                string `json:"github_repo"`
 	GithubBaseBranch          string `json:"github_base_branch"`
+	AnthropicApiKeyEncrypted  []byte `json:"anthropic_api_key_encrypted"`
 }
 
 func (q *Queries) UpsertOrgConfig(ctx context.Context, arg UpsertOrgConfigParams) (OrgConfig, error) {
@@ -138,6 +146,7 @@ func (q *Queries) UpsertOrgConfig(ctx context.Context, arg UpsertOrgConfigParams
 		arg.SxKeyEncrypted,
 		arg.GithubRepo,
 		arg.GithubBaseBranch,
+		arg.AnthropicApiKeyEncrypted,
 	)
 	var i OrgConfig
 	err := row.Scan(
@@ -150,6 +159,7 @@ func (q *Queries) UpsertOrgConfig(ctx context.Context, arg UpsertOrgConfigParams
 		&i.GithubBaseBranch,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AnthropicApiKeyEncrypted,
 	)
 	return i, err
 }

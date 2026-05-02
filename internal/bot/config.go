@@ -6,15 +6,14 @@ import (
 )
 
 // Config holds runtime configuration loaded from the environment. Per-org
-// settings (GitHub repo, GitHub PAT, Slack tokens, SX key, base branch)
-// live in the database keyed by WorkOS organization_id — they're not in
-// this struct.
+// settings (GitHub repo, GitHub PAT, Slack tokens, SX key, Anthropic API
+// key, base branch) live in the database keyed by WorkOS organization_id
+// — they're not in this struct.
 type Config struct {
-	AnthropicAPIKey string
-	DaytonaAPIURL   string
-	Snapshot        string
-	DatabaseURL     string
-	WebPort         string
+	DaytonaAPIURL string
+	Snapshot      string
+	DatabaseURL   string
+	WebPort       string
 
 	WorkOSAPIKey         string
 	WorkOSClientID       string
@@ -40,7 +39,6 @@ func LoadConfig() (Config, error) {
 	bypass := os.Getenv("AUTH_BYPASS") != ""
 
 	required := []string{
-		"ANTHROPIC_API_KEY",
 		"DATABASE_URL",
 		"SECRETS_ENCRYPTION_KEY",
 		"DAYTONA_SNAPSHOT",
@@ -68,7 +66,6 @@ func LoadConfig() (Config, error) {
 	cookieSecure := os.Getenv("COOKIE_INSECURE") == ""
 
 	return Config{
-		AnthropicAPIKey:      os.Getenv("ANTHROPIC_API_KEY"),
 		DaytonaAPIURL:        os.Getenv("DAYTONA_API_URL"),
 		Snapshot:             os.Getenv("DAYTONA_SNAPSHOT"),
 		DatabaseURL:          os.Getenv("DATABASE_URL"),

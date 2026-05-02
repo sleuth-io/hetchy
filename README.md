@@ -66,13 +66,13 @@ doppler setup   # uses the project/config defined in doppler.yaml
 #### Required secrets in Doppler
 
 Hetchy is multi-tenant. Per-org settings (GitHub repo + token, Slack
-bot/socket tokens, base branch, optional SX key) are configured by each
-org's admin at `/settings/org` after they sign up — they live in the
-database, not in Doppler. Doppler only holds the *process-level* config:
+bot/socket tokens, base branch, Anthropic API key, optional SX key) are
+configured by each org's admin at `/settings/org` after they sign up —
+they live in the database, not in Doppler. Doppler only holds the
+*process-level* config:
 
 | Variable | Description |
 |----------|-------------|
-| `ANTHROPIC_API_KEY` | Anthropic API key for Claude |
 | `WORKOS_API_KEY` | WorkOS API key (sk_test_…) |
 | `WORKOS_CLIENT_ID` | WorkOS client ID (client_test_…) |
 | `WORKOS_COOKIE_PASSWORD` | 32-byte secret for sealing session cookies |

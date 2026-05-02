@@ -158,14 +158,15 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		b.renderTemplate(w, settingsHTMLTpl, map[string]any{
-			"OrgID":            p.OrgID,
-			"Email":            p.Email,
-			"GitHubRepo":       current.GitHubRepo,
-			"GitHubBaseBranch": current.GitHubBaseBranch,
-			"HasGitHubToken":   current.GitHubToken != "",
-			"HasSlackBot":      current.SlackBotToken != "",
-			"HasSlackSocket":   current.SlackSocketToken != "",
-			"HasSXKey":         current.SXKey != "",
+			"OrgID":                   p.OrgID,
+			"Email":                   p.Email,
+			"GitHubRepo":              current.GitHubRepo,
+			"GitHubBaseBranch":        current.GitHubBaseBranch,
+			"GitHubTokenPreview":      previewSecret(current.GitHubToken),
+			"AnthropicAPIKeyPreview":  previewSecret(current.AnthropicAPIKey),
+			"SlackBotTokenPreview":    previewSecret(current.SlackBotToken),
+			"SlackSocketTokenPreview": previewSecret(current.SlackSocketToken),
+			"SXKeyPreview":            previewSecret(current.SXKey),
 		})
 		return
 	}
@@ -201,10 +202,15 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 		current.GitHubBaseBranch = v
 	}
 
-	current.GitHubToken = takeIfPresent(r, "github_token", current.GitHubToken)
-	current.SlackBotToken = takeIfPresent(r, "slack_bot_token", current.SlackBotToken)
-	current.SlackSocketToken = takeIfPresent(r, "slack_socket_token", current.SlackSocketToken)
-	current.SXKey = takeIfPresent(r, "sx_key", current.SXKey)
+	current.GitHubToken = applyTokenChange(r, "github_token", current.GitHubToken)
+	current.SlackBotToken = applyTokenChange(r, "slack_bot_token", current.SlackBotToken)
+	current.SlackSocketToken = applyTokenChange(r, "slack_socket_token", current.SlackSocketToken)
+	current.SXKey = applyTokenChange(r, "sx_key", current.SXKey)
+	current.AnthropicAPIKey = applyTokenChange(r, "anthropic_api_key", current.AnthropicAPIKey)
+	if current.AnthropicAPIKey == "" {
+		http.Error(w, "Anthropic API key is required — paste a key (sk-ant-…) and save.", http.StatusBadRequest)
+		return
+	}
 
 	saved, err := b.orgs.Upsert(r.Context(), current)
 	if err != nil {
@@ -219,6 +225,7 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 		"has_slack_bot", saved.SlackBotToken != "",
 		"has_slack_socket", saved.SlackSocketToken != "",
 		"has_sx", saved.SXKey != "",
+		"has_anthropic", saved.AnthropicAPIKey != "",
 	)
 	// Slack creds may have changed; rebuild that org's connection.
 	b.slack.RestartOrg(r.Context(), p.OrgID)
@@ -258,27 +265,62 @@ func requireSameOrigin(r *http.Request) error {
 	return errors.New("missing Origin and Referer headers")
 }
 
-// takeIfPresent returns the new form value when supplied (and non-blank),
-// otherwise leaves the existing token untouched. The settings form
-// presents masked tokens by default; the user types a new value to
-// rotate, leaves blank to keep, or types "-" to clear.
-func takeIfPresent(r *http.Request, field, existing string) string {
-	v, ok := r.PostForm[field]
-	if !ok || len(v) == 0 {
-		return existing
+// previewSecret returns a masked rendering of a stored secret suitable
+// for displaying back in a readonly settings field. Empty input → empty
+// output (the template uses that to mean "not set"). Short secrets are
+// masked entirely so we never reveal a high-fraction of a low-entropy
+// value; longer ones expose a 6-char prefix and 4-char suffix, which is
+// enough to recognize the key at a glance without materially weakening
+// it (the prefix is usually a known scheme tag like "sk-ant-" or "ghp_").
+func previewSecret(s string) string {
+	if s == "" {
+		return ""
 	}
-	val := strings.TrimSpace(v[0])
+	if len(s) < 14 {
+		return "••••••••"
+	}
+	return s[:6] + "••••••" + s[len(s)-4:]
+}
+
+// applyTokenChange resolves the new value for a token field given an
+// explicit set/keep/remove signal from the settings form. The form posts
+// a hidden `<field>_action` of "remove" when the user ticks the
+// remove checkbox; otherwise a non-blank `<field>` rotates and a blank
+// `<field>` keeps the existing value. This avoids overloading a single
+// text input with destructive semantics ("type - to clear").
+func applyTokenChange(r *http.Request, field, existing string) string {
+	if r.PostFormValue(field+"_action") == "remove" {
+		return ""
+	}
+	val := strings.TrimSpace(r.PostFormValue(field))
 	if val == "" {
 		return existing
-	}
-	if val == "-" {
-		return ""
 	}
 	return val
 }
 
+// templateFuncs defines helpers callable from the embedded HTML templates.
+// `dict` lets callers build inline maps to pass into sub-templates, which
+// is otherwise awkward in html/template.
+var templateFuncs = template.FuncMap{
+	"dict": func(values ...any) (map[string]any, error) {
+		if len(values)%2 != 0 {
+			return nil, errors.New("dict: odd number of arguments")
+		}
+		m := make(map[string]any, len(values)/2)
+		for i := 0; i < len(values); i += 2 {
+			key, ok := values[i].(string)
+			if !ok {
+				return nil, fmt.Errorf("dict: key %d not a string", i)
+			}
+			m[key] = values[i+1]
+		}
+		return m, nil
+	},
+}
+
 func (b *Bot) renderTemplate(w http.ResponseWriter, body string, data any) {
-	tpl, err := template.New("page").Parse(body)
+	tpl, err := template.New("page").Funcs(templateFuncs).Parse(body)
 	if err != nil {
 		b.log.Error("template parse failed", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)

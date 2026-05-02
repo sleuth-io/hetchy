@@ -1,0 +1,31 @@
+# Live-reload config for `make bot`. Watches Go sources, embedded HTML,
+# and SQL queries; rebuilds and restarts the binary on save. Generated
+# files (sqlc output, migrations) are excluded so a regen doesn't trigger
+# a useless second rebuild.
+root = "."
+tmp_dir = ".air-tmp"
+
+[build]
+  cmd = "go build -o ./.air-tmp/hetchy ./cmd/hetchy"
+  bin = "./.air-tmp/hetchy"
+  include_ext = ["go", "html", "sql"]
+  exclude_dir = [
+    "dist",
+    ".air-tmp",
+    "db/migrations",
+    "internal/db/sqlc",
+    "sandbox",
+    "scripts",
+    "docs",
+  ]
+  exclude_regex = ["_test\\.go$"]
+  delay = 300
+  stop_on_error = true
+  send_interrupt = true
+  kill_delay = "2s"
+
+[log]
+  time = true
+
+[misc]
+  clean_on_exit = true
