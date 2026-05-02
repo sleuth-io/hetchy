@@ -30,4 +30,5 @@ type OrgConfig struct {
 	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
 	AnthropicApiKeyEncrypted  []byte             `json:"anthropic_api_key_encrypted"`
+	SlackTeamID               *string            `json:"slack_team_id"`
 }

@@ -63,6 +63,19 @@ doppler login
 doppler setup   # uses the project/config defined in doppler.yaml
 ```
 
+Each developer should then switch their default config to their personal
+one, which inherits from `dev` and lets you override secrets (e.g. your
+own Slack bot tokens) without affecting other devs:
+
+```bash
+doppler configure set config dev_personal
+```
+
+If `dev_personal` doesn't exist yet, create it as a branch of `dev` in
+the Doppler dashboard. From this point on, every `doppler run …`
+or `doppler secrets set …` lands in your personal config without needing
+a `--config` flag.
+
 #### Required secrets in Doppler
 
 Hetchy is multi-tenant. Per-org settings (GitHub repo + token, Slack
@@ -115,6 +128,28 @@ Each organization brings its own Slack bot. Tokens are configured at
 setup instructions (creating the app, enabling Socket Mode, OAuth scopes,
 event subscriptions), see [Slack App Setup](docs/slack-setup.md).
 
+For local development, every dev runs against their own personal Slack
+app (Socket Mode) so multiple developers can work in parallel without
+sharing an events tunnel:
+
+```bash
+# One-time: visit https://api.slack.com/apps and click "Generate Token"
+# under "Your App Configuration Tokens". Save the xoxe.xoxp- token.
+export SLACK_CONFIG_TOKEN=xoxe.xoxp-...
+
+make slack-app NAME=Dylan
+```
+
+This creates a `Hetchy (Dylan)` app from `scripts/slack-manifest.template.json`
+and prints the next manual steps:
+
+1. **Install App → Install to Workspace** to capture the `xoxb-` bot token.
+2. **Basic Information → App-Level Tokens → Generate Token and Scopes**
+   with scope `connections:write` for the `xapp-` socket token.
+3. Run the printed `doppler secrets set …` command (lands in your
+   `dev_personal` config) and paste the two tokens into your org settings
+   at `/settings/org` after signup.
+
 ### 3. Set Up Daytona
 
 #### Option A: Local Daytona OSS Stack
@@ -153,13 +188,15 @@ For production or Supabase usage, configure the `DATABASE_URL` variable in Doppl
 ### 5. Run the Bot
 
 ```bash
-# Apply migrations, then run
-make pg-up
+# Apply pending migrations, then run the bot + web UI together
 make db-up
 make bot
 ```
 
-The web UI will be available at `http://localhost:8080` (or your configured `WEB_PORT`).
+`make bot` runs the single Hetchy binary with live-reload (via air) — it
+serves the web UI on `http://localhost:8080` (or your configured
+`WEB_PORT`) and connects to Slack over Socket Mode using the tokens
+configured per-org at `/settings/org`.
 
 ## Usage
 

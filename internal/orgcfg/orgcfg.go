@@ -28,6 +28,7 @@ type Config struct {
 	GitHubToken      string
 	SlackBotToken    string
 	SlackSocketToken string
+	SlackTeamID      string
 	SXKey            string
 	GitHubRepo       string
 	GitHubBaseBranch string
@@ -53,6 +54,23 @@ func (s *Store) Get(ctx context.Context, orgID string) (Config, error) {
 			return Config{}, ErrNotFound
 		}
 		return Config{}, fmt.Errorf("get org config: %w", err)
+	}
+	return s.decrypt(row)
+}
+
+// GetBySlackTeamID looks up an org by its Slack workspace team_id. Used
+// by the HTTP webhook transport to route an incoming Slack event (which
+// carries team_id at the payload root) to the right org's bot token.
+func (s *Store) GetBySlackTeamID(ctx context.Context, teamID string) (Config, error) {
+	if teamID == "" {
+		return Config{}, ErrNotFound
+	}
+	row, err := s.db.Queries.GetOrgConfigBySlackTeamID(ctx, &teamID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Config{}, ErrNotFound
+		}
+		return Config{}, fmt.Errorf("get org config by slack team id: %w", err)
 	}
 	return s.decrypt(row)
 }
@@ -101,6 +119,11 @@ func (s *Store) Upsert(ctx context.Context, c Config) (Config, error) {
 	if branch == "" {
 		branch = "main"
 	}
+	var teamID *string
+	if c.SlackTeamID != "" {
+		t := c.SlackTeamID
+		teamID = &t
+	}
 	row, err := s.db.Queries.UpsertOrgConfig(ctx, sqlc.UpsertOrgConfigParams{
 		OrgID:                     c.OrgID,
 		GithubTokenEncrypted:      gh,
@@ -110,6 +133,7 @@ func (s *Store) Upsert(ctx context.Context, c Config) (Config, error) {
 		AnthropicApiKeyEncrypted:  ak,
 		GithubRepo:                c.GitHubRepo,
 		GithubBaseBranch:          branch,
+		SlackTeamID:               teamID,
 	})
 	if err != nil {
 		return Config{}, fmt.Errorf("upsert org config: %w", err)
@@ -138,11 +162,16 @@ func (s *Store) decrypt(row sqlc.OrgConfig) (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("decrypt anthropic api key: %w", err)
 	}
+	teamID := ""
+	if row.SlackTeamID != nil {
+		teamID = *row.SlackTeamID
+	}
 	return Config{
 		OrgID:            row.OrgID,
 		GitHubToken:      gh,
 		SlackBotToken:    sb,
 		SlackSocketToken: ss,
+		SlackTeamID:      teamID,
 		SXKey:            sx,
 		AnthropicAPIKey:  ak,
 		GitHubRepo:       row.GithubRepo,

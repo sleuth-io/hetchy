@@ -1,0 +1,66 @@
+{
+  "display_information": {
+    "name": "Hetchy ({{NAME}})",
+    "description": "Hetchy personal dev app for {{NAME}}",
+    "background_color": "#6B3FA0",
+    "long_description": "Personal Slack app for the Hetchy {{NAME}} dev environment. Uses Socket Mode — no public URL or tunnel required. Install only into your personal sandbox workspace."
+  },
+  "features": {
+    "bot_user": {
+      "display_name": "Hetchy",
+      "always_online": true
+    },
+    "app_home": {
+      "home_tab_enabled": true,
+      "messages_tab_enabled": true,
+      "messages_tab_read_only_enabled": false
+    }
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": [
+        "app_mentions:read",
+        "assistant:write",
+        "channels:history",
+        "channels:read",
+        "chat:write",
+        "chat:write.public",
+        "commands",
+        "files:read",
+        "files:write",
+        "groups:history",
+        "groups:read",
+        "im:history",
+        "im:read",
+        "im:write",
+        "links:read",
+        "links:write",
+        "mpim:history",
+        "mpim:read",
+        "mpim:write",
+        "reactions:read",
+        "reactions:write",
+        "team:read",
+        "users:read",
+        "users:read.email"
+      ]
+    }
+  },
+  "settings": {
+    "event_subscriptions": {
+      "bot_events": [
+        "app_home_opened",
+        "app_mention",
+        "app_uninstalled",
+        "message.im",
+        "tokens_revoked"
+      ]
+    },
+    "interactivity": {
+      "is_enabled": true
+    },
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": true,
+    "token_rotation_enabled": false
+  }
+}

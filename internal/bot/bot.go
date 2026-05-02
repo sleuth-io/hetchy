@@ -44,6 +44,10 @@ type Bot struct {
 	convs   *convstore.Store
 	auth    *auth.Service
 	slack   *slackManager
+	// cipher is reused for the OAuth state token (Slack install flow).
+	// AES-GCM gives confidentiality + tamper detection in a single step,
+	// so we don't need a separate signing key for state.
+	cipher *secrets.Cipher
 
 	// createFn is called by createSandboxWithRetry; overridable in tests.
 	createFn     func(context.Context, any) (*daytona.Sandbox, error)
@@ -107,13 +111,47 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 		orgs:         orgcfg.New(store, cipher),
 		convs:        convstore.New(store),
 		auth:         authSvc,
+		cipher:       cipher,
 		retryBackoff: initialBackoff,
 	}
 	b.createFn = func(ctx context.Context, params any) (*daytona.Sandbox, error) {
 		return dc.Create(ctx, params)
 	}
 	b.slack = newSlackManager(log, b.orgs, b.handleSlackEvent)
+	b.warnIfSlackOAuthMisconfigured()
 	return b, nil
+}
+
+// warnIfSlackOAuthMisconfigured surfaces a startup-time warning when
+// the env is anything other than dev but the Slack OAuth/HTTP-transport
+// env vars are missing or partial. Without this, a misconfigured
+// staging/prod box silently starts up and Slack starts retrying every
+// event into a closed-from-our-side endpoint — discoverable only via
+// log volume an hour later. dev mode legitimately runs with these
+// blank (Socket Mode does its own auth via xapp- tokens).
+func (b *Bot) warnIfSlackOAuthMisconfigured() {
+	if b.cfg.Env == "dev" {
+		return
+	}
+	missing := []string{}
+	if b.cfg.SlackSigningSecret == "" {
+		missing = append(missing, "SLACK_SIGNING_SECRET")
+	}
+	if b.cfg.SlackClientID == "" {
+		missing = append(missing, "SLACK_CLIENT_ID")
+	}
+	if b.cfg.SlackClientSecret == "" {
+		missing = append(missing, "SLACK_CLIENT_SECRET")
+	}
+	if b.cfg.SlackOAuthRedirectURI == "" {
+		missing = append(missing, "SLACK_OAUTH_REDIRECT_URI")
+	}
+	if len(missing) > 0 {
+		b.log.Warn("slack: HTTP transport not configured — install + events endpoints will refuse traffic",
+			"env", b.cfg.Env,
+			"missing", missing,
+		)
+	}
 }
 
 // Close releases external resources held by the bot. Safe to call once
