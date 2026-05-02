@@ -13,6 +13,7 @@ RUN go mod download
 # Copy only the source code directories needed for build
 COPY cmd/ ./cmd/
 COPY internal/ ./internal/
+COPY db/ ./db/
 
 # Build the binary
 ARG VERSION=dev
