@@ -162,17 +162,17 @@ MIGRATE        = go run -tags 'postgres' github.com/golang-migrate/migrate/v4/cm
 sqlc-generate: ## Regenerate type-safe Go from db/queries against db/migrations
 	@$(SQLC) generate
 
-db-up: ## Apply all pending migrations
+db-up: build ## Apply all pending migrations (uses embedded migrator in the hetchy binary)
 	@which doppler > /dev/null || (echo "doppler CLI not found." && exit 1)
-	@doppler run -- sh -c '$(MIGRATE) -path "$(MIGRATE_DIR)" -database "$$DATABASE_URL" up'
+	@doppler run -- $(BUILD_DIR)/$(BINARY_NAME) --migrate
 
-db-down: ## Roll back one migration (use db-down N=3 to roll back N)
+db-down: build ## Roll back one migration (use db-down N=3 to roll back N; N=0 rolls back all)
 	@which doppler > /dev/null || (echo "doppler CLI not found." && exit 1)
-	@doppler run -- sh -c '$(MIGRATE) -path "$(MIGRATE_DIR)" -database "$$DATABASE_URL" down $(N)'
+	@doppler run -- $(BUILD_DIR)/$(BINARY_NAME) --migrate-down $(if $(N),$(N),1)
 
-db-status: ## Show current migration version
+db-status: build ## Show current migration version
 	@which doppler > /dev/null || (echo "doppler CLI not found." && exit 1)
-	@doppler run -- sh -c '$(MIGRATE) -path "$(MIGRATE_DIR)" -database "$$DATABASE_URL" version'
+	@doppler run -- $(BUILD_DIR)/$(BINARY_NAME) --migrate-status
 
 db-new: ## Create a new timestamped migration pair (usage: make db-new name=add_users)
 	@if [ -z "$(name)" ]; then echo "usage: make db-new name=<snake_case_name>"; exit 1; fi
