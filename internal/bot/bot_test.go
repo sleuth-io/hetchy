@@ -215,3 +215,40 @@ func TestRetryLoop(t *testing.T) {
 		})
 	}
 }
+
+func TestRetryWithBackoff(t *testing.T) {
+	err502 := sdkerrors.NewDaytonaError("bad gateway", 502, nil)
+	err401 := sdkerrors.NewDaytonaError("unauthorized", 401, nil)
+	sentinel := errors.New("done")
+
+	cases := []struct {
+		name      string
+		returns   []error
+		wantCalls int
+		wantErr   bool
+	}{
+		{name: "succeeds on first attempt", returns: []error{nil}, wantCalls: 1},
+		{name: "retries 502 and succeeds", returns: []error{err502, nil}, wantCalls: 2},
+		{name: "exhausts retries on repeated 502", returns: []error{err502, err502, err502}, wantCalls: 3, wantErr: true},
+		{name: "does not retry permanent error", returns: []error{err401}, wantCalls: 1, wantErr: true},
+		{name: "wraps non-daytona error without retry", returns: []error{sentinel}, wantCalls: 1, wantErr: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			b := &Bot{log: discardLogger(), retryBackoff: 0}
+			err := b.retryWithBackoff(context.Background(), "test-op", func() error {
+				err := tc.returns[calls]
+				calls++
+				return err
+			})
+			if (err != nil) != tc.wantErr {
+				t.Errorf("wantErr=%v, got err=%v", tc.wantErr, err)
+			}
+			if calls != tc.wantCalls {
+				t.Errorf("wantCalls=%d, got calls=%d", tc.wantCalls, calls)
+			}
+		})
+	}
+}

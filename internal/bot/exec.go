@@ -57,7 +57,12 @@ func (b *Bot) sh(ctx context.Context, sb *daytona.Sandbox, sessionID, step, cmd 
 	}
 	<-streamDone
 
-	status, err := sb.Process.GetSessionCommand(ctx, sessionID, cmdID)
+	var status map[string]any
+	err = b.retryWithBackoff(ctx, "get command status", func() error {
+		var err error
+		status, err = sb.Process.GetSessionCommand(ctx, sessionID, cmdID)
+		return err
+	})
 	if err != nil {
 		return "", fmt.Errorf("step %q status: %w", step, err)
 	}

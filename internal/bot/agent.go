@@ -95,7 +95,11 @@ func (b *Bot) runScript(ctx context.Context, sb *daytona.Sandbox, sessionID, lab
 	if err := sb.Process.CreateSession(ctx, sessionID); err != nil {
 		return "", fmt.Errorf("create session: %w", err)
 	}
-	defer func() { _ = sb.Process.DeleteSession(ctx, sessionID) }()
+	defer func() {
+		_ = b.retryWithBackoff(ctx, "delete session", func() error {
+			return sb.Process.DeleteSession(ctx, sessionID)
+		})
+	}()
 
 	scriptPath := "/tmp/sf-" + label + ".sh"
 	writeCmd := fmt.Sprintf("cat > %s << 'SFEOF'\n%sSFEOF\nchmod +x %s", scriptPath, scriptBody, scriptPath)

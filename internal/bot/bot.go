@@ -321,19 +321,20 @@ func truncate(s string, n int) string {
 	return s[:n] + "..."
 }
 
-// createSandboxWithRetry attempts to create a Daytona sandbox with retry
-// logic for transient errors.
-func (b *Bot) createSandboxWithRetry(ctx context.Context, params types.SnapshotParams) (*daytona.Sandbox, error) {
+// retryWithBackoff executes fn up to maxRetries times with exponential backoff
+// for transient errors (rate-limit, 5xx, network failures). operation is a human-readable
+// name used in log messages.
+func (b *Bot) retryWithBackoff(ctx context.Context, operation string, fn func() error) error {
 	var lastErr error
 	backoff := b.retryBackoff
 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
-		sb, err := b.createFn(ctx, params)
+		err := fn()
 		if err == nil {
 			if attempt > 1 {
-				b.log.Info("sandbox created after retry", "attempt", attempt)
+				b.log.Info("operation succeeded after retry", "operation", operation, "attempt", attempt)
 			}
-			return sb, nil
+			return nil
 		}
 
 		lastErr = err
@@ -342,7 +343,8 @@ func (b *Bot) createSandboxWithRetry(ctx context.Context, params types.SnapshotP
 			break
 		}
 
-		b.log.Warn("sandbox creation failed, retrying",
+		b.log.Warn("operation failed, retrying",
+			"operation", operation,
 			"attempt", attempt,
 			"max_retries", maxRetries,
 			"backoff", backoff,
@@ -351,11 +353,23 @@ func (b *Bot) createSandboxWithRetry(ctx context.Context, params types.SnapshotP
 
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return ctx.Err()
 		case <-time.After(backoff):
 			backoff *= backoffMultiplier
 		}
 	}
 
-	return nil, lastErr
+	return lastErr
+}
+
+// createSandboxWithRetry attempts to create a Daytona sandbox with retry logic
+// for transient errors. It tries up to maxRetries times with progressive backoff.
+func (b *Bot) createSandboxWithRetry(ctx context.Context, params types.SnapshotParams) (*daytona.Sandbox, error) {
+	var sb *daytona.Sandbox
+	err := b.retryWithBackoff(ctx, "sandbox create", func() error {
+		var err error
+		sb, err = b.createFn(ctx, params)
+		return err
+	})
+	return sb, err
 }
