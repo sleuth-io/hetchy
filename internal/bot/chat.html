@@ -30,6 +30,8 @@
                white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .chat-item:hover { background: #f0f0f0; }
   .chat-item.active { background: #e8f1fc; color: #0b5ec0; }
+  .chat-item.pending { color: #888; font-style: italic; }
+  .chat-item.pending.active { color: #0b5ec0; }
 
   /* Main column */
   #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
@@ -196,6 +198,42 @@ function showEmptyState() {
   log.appendChild(d);
 }
 
+// Sidebar state. `sidebarItems` is the last list returned by the API;
+// `pendingChatTitle` is set when the user starts a brand-new chat so we
+// can show it in the sidebar before the agent finishes and the row is
+// persisted. We always render from these two pieces, so any update to
+// either triggers a paint via renderSidebar().
+let sidebarItems = [];
+let pendingChatTitle = null;
+
+function renderSidebar() {
+  const list = document.getElementById('chat-list');
+  // Optimistically prepend the in-flight chat if it isn't (yet) in the
+  // server-side list. Once the agent finishes and the row is persisted,
+  // the next loadSidebar() will replace the optimistic entry with the
+  // real one (same thread_id, same place at the top by updated_at DESC).
+  const display = sidebarItems.slice();
+  const alreadyHasCurrent = display.some(c => c.thread_id === sessionId);
+  if (pendingChatTitle && !alreadyHasCurrent) {
+    display.unshift({ thread_id: sessionId, title: pendingChatTitle, _pending: true });
+  }
+  list.innerHTML = '';
+  if (display.length === 0) {
+    list.innerHTML = '<div class="empty">No past chats yet.</div>';
+    return;
+  }
+  for (const c of display) {
+    const a = document.createElement('a');
+    a.className = 'chat-item'
+      + (c.thread_id === sessionId ? ' active' : '')
+      + (c._pending ? ' pending' : '');
+    a.href = '/?session=' + encodeURIComponent(c.thread_id);
+    a.title = c.title;
+    a.textContent = c.title;
+    list.appendChild(a);
+  }
+}
+
 async function loadSidebar() {
   const list = document.getElementById('chat-list');
   try {
@@ -204,20 +242,14 @@ async function loadSidebar() {
       list.innerHTML = '<div class="empty">Could not load chats.</div>';
       return;
     }
-    const items = await res.json();
-    list.innerHTML = '';
-    if (!items || items.length === 0) {
-      list.innerHTML = '<div class="empty">No past chats yet.</div>';
-      return;
+    sidebarItems = (await res.json()) || [];
+    // Once the server has persisted the current chat, the optimistic
+    // entry is no longer needed — drop the pending title so the real row
+    // is rendered with its server-side title.
+    if (sidebarItems.some(c => c.thread_id === sessionId)) {
+      pendingChatTitle = null;
     }
-    for (const c of items) {
-      const a = document.createElement('a');
-      a.className = 'chat-item' + (c.thread_id === sessionId ? ' active' : '');
-      a.href = '/?session=' + encodeURIComponent(c.thread_id);
-      a.title = c.title;
-      a.textContent = c.title;
-      list.appendChild(a);
-    }
+    renderSidebar();
   } catch (e) {
     list.innerHTML = '<div class="empty">Could not load chats.</div>';
   }
@@ -257,6 +289,11 @@ async function loadHistory() {
   }
 }
 
+function makePendingTitle(text) {
+  const oneLine = text.replace(/\s+/g, ' ').trim();
+  return oneLine.length > 80 ? oneLine.slice(0, 80) + '…' : oneLine;
+}
+
 async function send() {
   const text = inp.value.trim();
   if (!text) return;
@@ -265,6 +302,15 @@ async function send() {
   const isFirstTurn = log.querySelectorAll('.msg').length === 0;
   addMsg(text, 'user');
   const bot = addMsg('…', 'bot');
+
+  // Show the chat in the sidebar immediately on the first turn — the
+  // backend doesn't persist the row until the agent finishes, which can
+  // take minutes, and the user expects to see their chat appear right
+  // away (and to be able to navigate back to it mid-run).
+  if (isFirstTurn) {
+    pendingChatTitle = makePendingTitle(text);
+    renderSidebar();
+  }
 
   const res = await fetch('/chat', {
     method: 'POST',
@@ -292,9 +338,9 @@ async function send() {
   }
   btn.disabled = false;
   inp.focus();
-  // After the first turn finishes, the conversation row exists — refresh
-  // the sidebar so the new chat appears in Recents.
-  if (isFirstTurn) loadSidebar();
+  // Refresh the sidebar after every turn so the row's title (server-side)
+  // and ordering (newest activity first) reflect the just-completed turn.
+  loadSidebar();
 }
 
 // Avatar dropdown — toggle on click, close on outside-click or Escape.
