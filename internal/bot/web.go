@@ -832,7 +832,7 @@ func (b *Bot) conversationsHandler(w http.ResponseWriter, r *http.Request) {
 	recs, err := b.convs.List(r.Context(), p.OrgID)
 	if err != nil {
 		b.log.Error("list conversations", "error", err, "org", p.OrgID)
-		http.Error(w, "list conversations: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 	out := make([]conversationSummary, 0, len(recs))
@@ -869,7 +869,7 @@ func (b *Bot) conversationDetailHandler(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		b.log.Error("get conversation", "error", err, "org", p.OrgID, "thread", threadID)
-		http.Error(w, "get conversation: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 	writeJSON(w, conversationDetail{
@@ -884,7 +884,10 @@ func (b *Bot) conversationDetailHandler(w http.ResponseWriter, r *http.Request) 
 
 // conversationTitle derives a sidebar label from the first user turn,
 // trimmed and capped. Falls back to a generic placeholder so a record
-// with empty history still renders something selectable.
+// with empty history still renders something selectable. Truncation is
+// rune-aware so non-ASCII prompts don't get split mid-codepoint, and
+// CR/LF/CRLF are normalized to spaces so a multi-line first prompt
+// renders as a single sidebar line.
 func conversationTitle(rec convstore.Record) string {
 	if len(rec.History) == 0 {
 		return "New chat"
@@ -893,11 +896,11 @@ func conversationTitle(rec convstore.Record) string {
 	if first == "" {
 		return "New chat"
 	}
-	const maxLen = 80
-	if len(first) > maxLen {
-		first = first[:maxLen] + "…"
+	const maxRunes = 80
+	if runes := []rune(first); len(runes) > maxRunes {
+		first = string(runes[:maxRunes]) + "…"
 	}
-	first = strings.ReplaceAll(first, "\n", " ")
+	first = strings.NewReplacer("\r\n", " ", "\r", " ", "\n", " ").Replace(first)
 	return first
 }
 
@@ -924,9 +927,10 @@ func isSafeThreadID(s string) bool {
 
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	if err := json.NewEncoder(w).Encode(v); err != nil {
-		// Headers already written — just log; the client will see a
-		// truncated body, which is the best we can do at this point.
-		http.Error(w, "encode: "+err.Error(), http.StatusInternalServerError)
-	}
+	// Encoding the concrete struct types used by these handlers cannot
+	// fail in practice. Headers are already on the wire by the time the
+	// encoder starts streaming, so an http.Error fallback would just
+	// append plain-text noise to a half-written JSON body — silently
+	// dropping the (impossible) error is strictly better.
+	_ = json.NewEncoder(w).Encode(v)
 }

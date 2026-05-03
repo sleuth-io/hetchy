@@ -302,7 +302,7 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		Branch:    branch,
 		PRURL:     prURL,
 		History:   []string{text},
-		Responses: []string{transcript.String()},
+		Responses: []string{capTranscript(transcript.String())},
 	}); err != nil {
 		b.log.Error("convstore upsert", "error", err)
 	}
@@ -348,7 +348,7 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 
 	rec.PRURL = prURL
 	rec.History = append(rec.History, text)
-	rec.Responses = append(rec.Responses, transcript.String())
+	rec.Responses = append(rec.Responses, capTranscript(transcript.String()))
 	if err := b.convs.Upsert(ctx, rec); err != nil {
 		b.log.Error("convstore upsert", "error", err)
 	}
@@ -383,6 +383,24 @@ func wrapTranscript(buf *strings.Builder, next func(string)) func(string) {
 		buf.WriteString(s)
 		next(s)
 	}
+}
+
+// maxTranscriptBytes caps the per-turn transcript before it goes into
+// Postgres. The full stream still reaches the user in real time via SSE;
+// the persisted copy only needs enough context for a reopened chat to
+// be readable. A long agent run with verbose tool output can otherwise
+// easily push hundreds of KB into a single TEXT[] cell.
+const maxTranscriptBytes = 64 * 1024
+
+// capTranscript trims s from the front when it exceeds the cap so that
+// the most recent content — which contains the completion message
+// (PR URL or error) — is always preserved.
+func capTranscript(s string) string {
+	if len(s) <= maxTranscriptBytes {
+		return s
+	}
+	const marker = "[…transcript truncated…]\n"
+	return marker + s[len(s)-maxTranscriptBytes:]
 }
 
 func shellQuote(s string) string {
