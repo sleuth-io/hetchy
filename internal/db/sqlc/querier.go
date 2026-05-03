@@ -10,10 +10,31 @@ import (
 
 type Querier interface {
 	DeleteConversation(ctx context.Context, arg DeleteConversationParams) error
+	DeleteGithubInstallation(ctx context.Context, installationID int64) error
+	DeleteGithubReposByInstallation(ctx context.Context, installationID int64) error
+	// Used by the sync routine: after upserting the current set of repos,
+	// delete anything that wasn't in the list (revoked access).
+	DeleteGithubReposByInstallationExcept(ctx context.Context, arg DeleteGithubReposByInstallationExceptParams) error
+	DeleteGithubTeamMembersForTeam(ctx context.Context, arg DeleteGithubTeamMembersForTeamParams) error
+	DeleteGithubTeamsByInstallationExcept(ctx context.Context, arg DeleteGithubTeamsByInstallationExceptParams) error
 	GetConversation(ctx context.Context, arg GetConversationParams) (Conversation, error)
+	GetGithubInstallation(ctx context.Context, installationID int64) (GithubAppInstallation, error)
+	// Resolves an (owner, name) the user typed in chat to a concrete
+	// (installation_id, repo_id, default_branch) for this org. If the same
+	// repo is exposed via two installations the LIMIT picks the first; the
+	// caller doesn't need to care which since either token will work.
+	GetGithubRepoForOrg(ctx context.Context, arg GetGithubRepoForOrgParams) (GithubRepo, error)
 	GetOrgConfig(ctx context.Context, orgID string) (OrgConfig, error)
 	GetOrgConfigBySlackTeamID(ctx context.Context, slackTeamID *string) (OrgConfig, error)
 	ListConversationsByOrg(ctx context.Context, orgID string) ([]Conversation, error)
+	ListGithubInstallationsByOrg(ctx context.Context, orgID string) ([]GithubAppInstallation, error)
+	ListGithubReposByInstallation(ctx context.Context, installationID int64) ([]GithubRepo, error)
+	// Every repo accessible to the given Hetchy org, across all of its
+	// GitHub App installations. Powers the "default repo" picker and the
+	// per-conversation repo selector.
+	ListGithubReposByOrg(ctx context.Context, orgID string) ([]GithubRepo, error)
+	ListGithubTeamMembers(ctx context.Context, arg ListGithubTeamMembersParams) ([]GithubTeamMember, error)
+	ListGithubTeamsByInstallation(ctx context.Context, installationID int64) ([]GithubTeam, error)
 	// Lists Socket-Mode-installed orgs only. The slackManager iterates
 	// this on startup to open one socket per org.
 	//
@@ -25,6 +46,13 @@ type Querier interface {
 	// one.
 	ListOrgConfigsWithSlack(ctx context.Context) ([]OrgConfig, error)
 	UpsertConversation(ctx context.Context, arg UpsertConversationParams) (Conversation, error)
+	// Queries for the GitHub App installation cache: installations, the
+	// repos they grant access to, and (for Organization installs) team
+	// + membership snapshots.
+	UpsertGithubInstallation(ctx context.Context, arg UpsertGithubInstallationParams) (GithubAppInstallation, error)
+	UpsertGithubRepo(ctx context.Context, arg UpsertGithubRepoParams) error
+	UpsertGithubTeam(ctx context.Context, arg UpsertGithubTeamParams) error
+	UpsertGithubTeamMember(ctx context.Context, arg UpsertGithubTeamMemberParams) error
 	UpsertOrgConfig(ctx context.Context, arg UpsertOrgConfigParams) (OrgConfig, error)
 }
 

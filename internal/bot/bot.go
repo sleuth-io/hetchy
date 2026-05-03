@@ -20,6 +20,8 @@ import (
 	"github.com/hetchyhq/hetchy/internal/auth"
 	"github.com/hetchyhq/hetchy/internal/convstore"
 	"github.com/hetchyhq/hetchy/internal/db"
+	"github.com/hetchyhq/hetchy/internal/db/sqlc"
+	"github.com/hetchyhq/hetchy/internal/githubapp"
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
 	"github.com/hetchyhq/hetchy/internal/secrets"
 )
@@ -44,9 +46,15 @@ type Bot struct {
 	convs   *convstore.Store
 	auth    *auth.Service
 	slack   *slackManager
-	// cipher is reused for the OAuth state token (Slack install flow).
-	// AES-GCM gives confidentiality + tamper detection in a single step,
-	// so we don't need a separate signing key for state.
+	// app is the GitHub App handle (per-environment dev/staging/prod).
+	// Nil when GITHUB_APP_* env vars aren't configured — the install
+	// button is hidden and inbound webhooks refused in that case, so
+	// every read of this field must nil-check.
+	app *githubapp.App
+	// cipher is reused for the OAuth state token (Slack install flow,
+	// GitHub App setup callback). AES-GCM gives confidentiality +
+	// tamper detection in a single step, so we don't need a separate
+	// signing key for state.
 	cipher *secrets.Cipher
 
 	// createFn is called by createSandboxWithRetry; overridable in tests.
@@ -119,6 +127,40 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 	}
 	b.slack = newSlackManager(log, b.orgs, b.handleSlackEvent)
 	b.warnIfSlackOAuthMisconfigured()
+
+	// Surface a few config values that are easy to misset on a dev box
+	// and produce confusing failure modes (cookie not stored, OAuth
+	// state mismatch, etc.). Shown at info level on every startup.
+	log.Info("bot startup",
+		"env", cfg.Env,
+		"web_port", cfg.WebPort,
+		"cookie_secure", cfg.CookieSecure,
+	)
+
+	// GitHub App is optional in dev — without env vars the integrations
+	// page hides the install button and inbound webhooks refuse traffic.
+	// In staging/prod we expect every var; warn loudly on missing pieces
+	// so a misconfigured deploy is discovered at startup rather than at
+	// the first install attempt.
+	if cfg.GitHubAppID != 0 {
+		app, err := githubapp.New(githubapp.Config{
+			AppID:         cfg.GitHubAppID,
+			Slug:          cfg.GitHubAppSlug,
+			ClientID:      cfg.GitHubAppClientID,
+			PrivateKeyPEM: cfg.GitHubAppPrivateKey,
+			WebhookSecret: cfg.GitHubAppWebhookSecret,
+		}, log)
+		if err != nil {
+			store.Close()
+			return nil, fmt.Errorf("github app: %w", err)
+		}
+		b.app = app
+		log.Info("github app configured", "app_id", cfg.GitHubAppID, "slug", cfg.GitHubAppSlug)
+	} else if cfg.Env != "dev" {
+		log.Warn("github app: GITHUB_APP_ID is not set — integration install button + webhooks disabled",
+			"env", cfg.Env,
+		)
+	}
 	return b, nil
 }
 
@@ -191,6 +233,14 @@ func (b *Bot) Run(ctx context.Context) error {
 //     these.
 //   - onComplete fires once with the PR URL on success.
 //   - onError fires once with a human-readable failure message.
+//
+// Per-conversation state machine: when no conversation row exists for
+// (org, thread), the request opens a new one. The repo is resolved
+// from oc.DefaultGitHubOwner/Repo if set, otherwise the bot saves a
+// partial conversation (no sandbox, empty repo fields) and asks the
+// user to reply with `owner/name`. The next message into a conversation
+// in that "awaiting repo" state is interpreted as the repo selection,
+// not as a new task.
 func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, requestID, threadID string, onUpdate func(string), onNotify func(string), onComplete func(string), onError func(string)) {
 	b.log.Info("request received",
 		"org", oc.OrgID,
@@ -210,35 +260,27 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 	wOnComplete := wrapTranscript(transcript, onComplete)
 	wOnError := wrapTranscript(transcript, onError)
 
-	var missing []string
-	if oc.GitHubToken == "" {
-		missing = append(missing, "GitHub token")
-	}
-	if oc.GitHubRepo == "" {
-		missing = append(missing, "GitHub repository")
-	}
 	if oc.AnthropicAPIKey == "" {
-		missing = append(missing, "Anthropic API key")
-	}
-	if len(missing) > 0 {
-		b.log.Warn("org missing config",
-			"org", oc.OrgID,
-			"missing", missing,
-			"has_repo", oc.GitHubRepo != "",
-			"has_github_token", oc.GitHubToken != "",
-			"has_slack_bot", oc.SlackBotToken != "",
-			"has_slack_socket", oc.SlackSocketToken != "",
-			"has_sx", oc.SXKey != "",
-			"has_anthropic", oc.AnthropicAPIKey != "",
-		)
-		wOnError(fmt.Sprintf("This organization is missing: %s. Set them at /settings/org.", strings.Join(missing, ", ")))
+		b.log.Warn("org missing anthropic api key", "org", oc.OrgID)
+		wOnError("This organization is missing an Anthropic API key. Set it at /settings/org.")
 		return
 	}
 
 	rec, err := b.convs.Get(ctx, oc.OrgID, threadID)
 	switch {
-	case err == nil:
+	case err == nil && rec.SandboxID != "":
+		// Live conversation — agent has run before, pinning is set.
 		b.handleFollowUp(ctx, oc, rec, text, requestID, transcript, wOnUpdate, wOnNotify, wOnComplete, wOnError)
+		return
+	case err == nil && rec.GitHubOwner == "":
+		// We previously asked this thread for a repo and saved a
+		// partial row. Treat the current message as the repo answer.
+		b.handleAwaitingRepoReply(ctx, oc, rec, text, requestID, transcript, wOnUpdate, wOnNotify, wOnComplete, wOnError)
+		return
+	case err == nil:
+		// Repo was set but no sandbox — unusual state (shouldn't happen
+		// in normal flow), treat as fresh and use the stored repo.
+		b.runFreshAgent(ctx, oc, rec, rec.History[0], requestID, transcript, wOnUpdate, wOnNotify, wOnComplete, wOnError)
 		return
 	case errors.Is(err, convstore.ErrNotFound):
 		// fall through — new conversation
@@ -248,13 +290,81 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		return
 	}
 
-	wOnNotify("Spinning up an isolated sandbox for your request...")
+	// New conversation. Use the org's default repo if set; otherwise
+	// stash the request and ask the user which repo to use.
+	if oc.DefaultGitHubOwner == "" || oc.DefaultGitHubRepo == "" {
+		wOnNotify("Which repository should I work in? Reply with `owner/name`.\n(You can save a default at /settings/org → Integrations.)")
+		partial := convstore.Record{
+			OrgID:     oc.OrgID,
+			ThreadID:  threadID,
+			History:   []string{text},
+			Responses: []string{capTranscript(transcript.String())},
+		}
+		if err := b.convs.Upsert(ctx, partial); err != nil {
+			b.log.Error("convstore upsert (awaiting repo)", "error", err, "org", oc.OrgID, "thread", threadID)
+		}
+		return
+	}
 
-	// Rotating tokens (Anthropic, GitHub) are passed per-script in agent.go
-	// so that a key rotation in /settings/org takes effect on the very next
-	// request without having to recycle the sandbox. Only SX_KEY is set at
-	// create time because it's not currently consumed via the per-script
-	// env-prefix path.
+	rec = convstore.Record{
+		OrgID:       oc.OrgID,
+		ThreadID:    threadID,
+		History:     []string{text},
+		GitHubOwner: oc.DefaultGitHubOwner,
+		GitHubRepo:  oc.DefaultGitHubRepo,
+	}
+	b.runFreshAgent(ctx, oc, rec, text, requestID, transcript, wOnUpdate, wOnNotify, wOnComplete, wOnError)
+}
+
+// handleAwaitingRepoReply parses the user's reply as `owner/name`. On
+// success it stamps the conversation with the chosen repo and runs the
+// agent against the original request stored in History[0]. On failure
+// it nudges the user to retry without modifying the saved row, so the
+// state machine stays in `awaiting repo` until they get it right.
+func (b *Bot) handleAwaitingRepoReply(ctx context.Context, oc orgcfg.Config, rec convstore.Record, text, requestID string, transcript *strings.Builder, onUpdate func(string), onNotify func(string), onComplete func(string), onError func(string)) {
+	owner, name, ok := parseOwnerRepo(text)
+	if !ok {
+		onNotify("I couldn't parse that as `owner/name`. Try again — for example `acme/website`.")
+		// Persist the bot's nudge so a UI replay shows it; keep the
+		// row otherwise unchanged.
+		appendResponseToFirstTurn(&rec, transcript.String())
+		if err := b.convs.Upsert(ctx, rec); err != nil {
+			b.log.Error("convstore upsert (parse retry)", "error", err)
+		}
+		return
+	}
+	if len(rec.History) == 0 {
+		// Defensive: a partial row should always have History[0]
+		// (the original request that triggered the question). Fall
+		// back to treating the parsed text as the request itself
+		// rather than crashing on the empty slice.
+		rec.History = []string{fmt.Sprintf("Work in %s/%s.", owner, name)}
+	}
+	rec.GitHubOwner = owner
+	rec.GitHubRepo = name
+	originalRequest := rec.History[0]
+	b.runFreshAgent(ctx, oc, rec, originalRequest, requestID, transcript, onUpdate, onNotify, onComplete, onError)
+}
+
+// runFreshAgent creates a new sandbox, mints an installation token
+// scoped to rec's repo, runs the agent on userRequest, and persists
+// the resulting conversation. Shared by the new-conversation, awaiting-
+// repo-reply, and "had repo but no sandbox" paths so they all stamp
+// the row identically.
+func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore.Record, userRequest, requestID string, transcript *strings.Builder, onUpdate func(string), onNotify func(string), onComplete func(string), onError func(string)) {
+	repo, err := b.resolveRepo(ctx, oc.OrgID, rec.GitHubOwner, rec.GitHubRepo)
+	if err != nil {
+		b.log.Warn("resolve repo failed", "org", oc.OrgID, "owner", rec.GitHubOwner, "name", rec.GitHubRepo, "error", err)
+		onError(fmt.Sprintf("`%s/%s` isn't accessible to this organization's GitHub App installations. Install the App on it at /settings/org → Integrations and try again.", rec.GitHubOwner, rec.GitHubRepo))
+		appendResponseToFirstTurn(&rec, transcript.String())
+		if err := b.convs.Upsert(ctx, rec); err != nil {
+			b.log.Error("convstore upsert (resolve fail)", "error", err)
+		}
+		return
+	}
+
+	onNotify(fmt.Sprintf("Spinning up an isolated sandbox for your request in `%s` (base: `%s`)…", repo.Slug, repo.BaseBranch))
+
 	envVars := map[string]string{}
 	if oc.SXKey != "" {
 		envVars["SX_KEY"] = oc.SXKey
@@ -266,21 +376,21 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 	if err != nil {
 		if ctx.Err() != nil {
 			b.log.Error("sandbox create cancelled", "error", err)
-			wOnError(fmt.Sprintf("Sandbox create cancelled: `%v`", ctx.Err()))
+			onError(fmt.Sprintf("Sandbox create cancelled: `%v`", ctx.Err()))
 			return
 		}
 		b.log.Error("sandbox create failed", "error", err)
-		wOnError(fmt.Sprintf("Sandbox create failed: `%v`", err))
+		onError(fmt.Sprintf("Sandbox create failed: `%v`", err))
 		return
 	}
 	b.log.Info("sandbox created", "id", sb.ID, "request_id", requestID)
-	wOnNotify(fmt.Sprintf("Sandbox `%s` ready — cloning repo and starting Claude Code.", sb.ID))
+	onNotify(fmt.Sprintf("Sandbox `%s` ready — cloning repo and starting Claude Code.", sb.ID))
 
 	branch := "feature/sf-" + requestID
-	prURL, runErr := b.runAgent(ctx, sb, oc, text, requestID, wOnUpdate)
+	prURL, runErr := b.runAgent(ctx, sb, repo, oc.AnthropicAPIKey, oc.SXKey, userRequest, requestID, onUpdate)
 	if runErr != nil {
 		b.log.Error("agent run failed", "sandbox", sb.ID, "error", runErr)
-		wOnError(fmt.Sprintf("Something went wrong: `%v`\nSandbox `%s` was left running for debugging.", runErr, sb.ID))
+		onError(fmt.Sprintf("Something went wrong: `%v`\nSandbox `%s` was left running for debugging.", runErr, sb.ID))
 		return
 	}
 
@@ -290,20 +400,17 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		b.log.Error("sandbox archive failed", "sandbox", sb.ID, "error", err)
 	}
 
-	// Send the completion message before the upsert so the transcript
-	// captures it — reopening the chat should show the same final line
-	// the user saw streamed in.
-	wOnComplete(prURL + "\nReply here to make further changes to this PR.")
+	onComplete(prURL + "\nReply here to make further changes to this PR.")
 
-	if err := b.convs.Upsert(ctx, convstore.Record{
-		OrgID:     oc.OrgID,
-		ThreadID:  threadID,
-		SandboxID: sb.ID,
-		Branch:    branch,
-		PRURL:     prURL,
-		History:   []string{text},
-		Responses: []string{capTranscript(transcript.String())},
-	}); err != nil {
+	rec.SandboxID = sb.ID
+	rec.Branch = branch
+	rec.PRURL = prURL
+	if len(rec.Responses) == 0 {
+		rec.Responses = []string{capTranscript(transcript.String())}
+	} else {
+		rec.Responses[0] = capTranscript(rec.Responses[0] + "\n" + transcript.String())
+	}
+	if err := b.convs.Upsert(ctx, rec); err != nil {
 		b.log.Error("convstore upsert", "error", err)
 	}
 }
@@ -311,6 +418,13 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstore.Record, text, requestID string, transcript *strings.Builder, onUpdate func(string), onNotify func(string), onComplete func(string), onError func(string)) {
 	b.log.Info("follow-up received", "org", oc.OrgID, "sandbox", rec.SandboxID, "branch", rec.Branch, "pr", rec.PRURL)
 	onNotify(fmt.Sprintf("Resuming work on %s…", rec.PRURL))
+
+	repo, err := b.resolveRepo(ctx, oc.OrgID, rec.GitHubOwner, rec.GitHubRepo)
+	if err != nil {
+		b.log.Warn("resolve repo for follow-up failed", "org", oc.OrgID, "owner", rec.GitHubOwner, "name", rec.GitHubRepo, "error", err)
+		onError(fmt.Sprintf("Lost access to `%s/%s` — check the GitHub App install at /settings/org → Integrations.", rec.GitHubOwner, rec.GitHubRepo))
+		return
+	}
 
 	sb, err := b.daytona.Get(ctx, rec.SandboxID)
 	if err != nil {
@@ -329,7 +443,7 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 		return
 	}
 
-	prURL, err := b.runFollowUp(ctx, sb, oc, rec, text, requestID, onUpdate)
+	prURL, err := b.runFollowUp(ctx, sb, repo, oc.AnthropicAPIKey, rec, text, requestID, onUpdate)
 	if err != nil {
 		b.log.Error("follow-up failed", "sandbox", sb.ID, "error", err)
 		onError(fmt.Sprintf("Something went wrong: `%v`", err))
@@ -352,6 +466,109 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 	if err := b.convs.Upsert(ctx, rec); err != nil {
 		b.log.Error("convstore upsert", "error", err)
 	}
+}
+
+// resolveRepo joins org → installations → repos to find which
+// installation grants access to (owner, name), then mints a fresh
+// installation token scoped to that single repo. The 1-hour token is
+// cached inside githubapp.App until 5 min before expiry.
+func (b *Bot) resolveRepo(ctx context.Context, orgID, owner, name string) (repoCtx, error) {
+	if owner == "" || name == "" {
+		return repoCtx{}, fmt.Errorf("repo not selected (owner=%q name=%q)", owner, name)
+	}
+	if b.app == nil {
+		return repoCtx{}, errors.New("github app not configured for this environment")
+	}
+	row, err := b.store.Queries.GetGithubRepoForOrg(ctx, sqlc.GetGithubRepoForOrgParams{
+		OrgID: orgID,
+		Owner: owner,
+		Name:  name,
+	})
+	if err != nil {
+		return repoCtx{}, fmt.Errorf("lookup %s/%s for org %s: %w", owner, name, orgID, err)
+	}
+	tok, exp, err := b.app.InstallationToken(ctx, row.InstallationID, []int64{row.RepoID})
+	if err != nil {
+		return repoCtx{}, fmt.Errorf("mint installation token: %w", err)
+	}
+	return repoCtx{
+		Slug:         row.Owner + "/" + row.Name,
+		BaseBranch:   row.DefaultBranch,
+		GitHubToken:  tok,
+		InstallID:    row.InstallationID,
+		RepoID:       row.RepoID,
+		TokenExpires: exp,
+	}, nil
+}
+
+// parseOwnerRepo extracts (owner, name) from a free-form chat reply.
+// Tolerates surrounding whitespace, trailing punctuation, and a leading
+// `https://github.com/` URL — but rejects anything that doesn't look
+// like exactly one `/`-separated pair so we don't silently accept
+// gibberish like "the auth one".
+func parseOwnerRepo(s string) (owner, name string, ok bool) {
+	s = strings.TrimSpace(s)
+	s = strings.TrimPrefix(s, "https://github.com/")
+	s = strings.TrimPrefix(s, "http://github.com/")
+	s = strings.TrimPrefix(s, "github.com/")
+	s = strings.TrimSuffix(s, ".git")
+	// Strip trailing path segments past owner/name (e.g. /tree/main).
+	if i := strings.Index(s, "/"); i >= 0 {
+		if j := strings.Index(s[i+1:], "/"); j >= 0 {
+			s = s[:i+1+j]
+		}
+	}
+	s = strings.TrimRight(s, ".,;:!?)")
+	parts := strings.Split(s, "/")
+	if len(parts) != 2 {
+		return "", "", false
+	}
+	owner = strings.TrimSpace(parts[0])
+	name = strings.TrimSpace(parts[1])
+	if owner == "" || name == "" {
+		return "", "", false
+	}
+	if !validGitHubName(owner) || !validGitHubName(name) {
+		return "", "", false
+	}
+	return owner, name, true
+}
+
+// validGitHubName is a conservative check: GitHub allows letters,
+// digits, hyphens, underscores, and dots in repo names; owners are
+// stricter (no leading hyphen, no consecutive hyphens) but for the
+// purpose of this parse we accept the union and let a downstream lookup
+// fail if the value is not a real repo.
+func validGitHubName(s string) bool {
+	if s == "" || len(s) > 100 {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case r == '-' || r == '_' || r == '.':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// appendResponseToFirstTurn appends `next` to rec.Responses[0],
+// allocating the slice if empty. Used to grow the bot's response
+// transcript across multi-step interactions (ask-for-repo → answer →
+// agent run) without changing rec.History.
+func appendResponseToFirstTurn(rec *convstore.Record, next string) {
+	if next == "" {
+		return
+	}
+	if len(rec.Responses) == 0 {
+		rec.Responses = []string{capTranscript(next)}
+		return
+	}
+	rec.Responses[0] = capTranscript(rec.Responses[0] + "\n" + next)
 }
 
 // isTransientError reports whether err is a retryable Daytona API error:

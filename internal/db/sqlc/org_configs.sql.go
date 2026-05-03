@@ -12,16 +12,15 @@ import (
 const getOrgConfig = `-- name: GetOrgConfig :one
 SELECT
     org_id,
-    github_token_encrypted,
     slack_bot_token_encrypted,
     slack_socket_token_encrypted,
     sx_key_encrypted,
-    github_repo,
-    github_base_branch,
     created_at,
     updated_at,
     anthropic_api_key_encrypted,
-    slack_team_id
+    slack_team_id,
+    default_github_owner,
+    default_github_repo
 FROM org_configs
 WHERE org_id = $1
 `
@@ -31,16 +30,15 @@ func (q *Queries) GetOrgConfig(ctx context.Context, orgID string) (OrgConfig, er
 	var i OrgConfig
 	err := row.Scan(
 		&i.OrgID,
-		&i.GithubTokenEncrypted,
 		&i.SlackBotTokenEncrypted,
 		&i.SlackSocketTokenEncrypted,
 		&i.SxKeyEncrypted,
-		&i.GithubRepo,
-		&i.GithubBaseBranch,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.AnthropicApiKeyEncrypted,
 		&i.SlackTeamID,
+		&i.DefaultGithubOwner,
+		&i.DefaultGithubRepo,
 	)
 	return i, err
 }
@@ -48,16 +46,15 @@ func (q *Queries) GetOrgConfig(ctx context.Context, orgID string) (OrgConfig, er
 const getOrgConfigBySlackTeamID = `-- name: GetOrgConfigBySlackTeamID :one
 SELECT
     org_id,
-    github_token_encrypted,
     slack_bot_token_encrypted,
     slack_socket_token_encrypted,
     sx_key_encrypted,
-    github_repo,
-    github_base_branch,
     created_at,
     updated_at,
     anthropic_api_key_encrypted,
-    slack_team_id
+    slack_team_id,
+    default_github_owner,
+    default_github_repo
 FROM org_configs
 WHERE slack_team_id = $1
 `
@@ -67,16 +64,15 @@ func (q *Queries) GetOrgConfigBySlackTeamID(ctx context.Context, slackTeamID *st
 	var i OrgConfig
 	err := row.Scan(
 		&i.OrgID,
-		&i.GithubTokenEncrypted,
 		&i.SlackBotTokenEncrypted,
 		&i.SlackSocketTokenEncrypted,
 		&i.SxKeyEncrypted,
-		&i.GithubRepo,
-		&i.GithubBaseBranch,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.AnthropicApiKeyEncrypted,
 		&i.SlackTeamID,
+		&i.DefaultGithubOwner,
+		&i.DefaultGithubRepo,
 	)
 	return i, err
 }
@@ -84,16 +80,15 @@ func (q *Queries) GetOrgConfigBySlackTeamID(ctx context.Context, slackTeamID *st
 const listOrgConfigsWithSlack = `-- name: ListOrgConfigsWithSlack :many
 SELECT
     org_id,
-    github_token_encrypted,
     slack_bot_token_encrypted,
     slack_socket_token_encrypted,
     sx_key_encrypted,
-    github_repo,
-    github_base_branch,
     created_at,
     updated_at,
     anthropic_api_key_encrypted,
-    slack_team_id
+    slack_team_id,
+    default_github_owner,
+    default_github_repo
 FROM org_configs
 WHERE slack_bot_token_encrypted IS NOT NULL
   AND slack_socket_token_encrypted IS NOT NULL
@@ -119,16 +114,15 @@ func (q *Queries) ListOrgConfigsWithSlack(ctx context.Context) ([]OrgConfig, err
 		var i OrgConfig
 		if err := rows.Scan(
 			&i.OrgID,
-			&i.GithubTokenEncrypted,
 			&i.SlackBotTokenEncrypted,
 			&i.SlackSocketTokenEncrypted,
 			&i.SxKeyEncrypted,
-			&i.GithubRepo,
-			&i.GithubBaseBranch,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.AnthropicApiKeyEncrypted,
 			&i.SlackTeamID,
+			&i.DefaultGithubOwner,
+			&i.DefaultGithubRepo,
 		); err != nil {
 			return nil, err
 		}
@@ -143,78 +137,72 @@ func (q *Queries) ListOrgConfigsWithSlack(ctx context.Context) ([]OrgConfig, err
 const upsertOrgConfig = `-- name: UpsertOrgConfig :one
 INSERT INTO org_configs (
     org_id,
-    github_token_encrypted,
     slack_bot_token_encrypted,
     slack_socket_token_encrypted,
     sx_key_encrypted,
-    github_repo,
-    github_base_branch,
     anthropic_api_key_encrypted,
-    slack_team_id
+    slack_team_id,
+    default_github_owner,
+    default_github_repo
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9
+    $1, $2, $3, $4, $5, $6, $7, $8
 )
 ON CONFLICT (org_id) DO UPDATE SET
-    github_token_encrypted       = EXCLUDED.github_token_encrypted,
     slack_bot_token_encrypted    = EXCLUDED.slack_bot_token_encrypted,
     slack_socket_token_encrypted = EXCLUDED.slack_socket_token_encrypted,
     sx_key_encrypted             = EXCLUDED.sx_key_encrypted,
     anthropic_api_key_encrypted  = EXCLUDED.anthropic_api_key_encrypted,
-    github_repo                  = EXCLUDED.github_repo,
-    github_base_branch           = EXCLUDED.github_base_branch,
     slack_team_id                = EXCLUDED.slack_team_id,
+    default_github_owner         = EXCLUDED.default_github_owner,
+    default_github_repo          = EXCLUDED.default_github_repo,
     updated_at                   = NOW()
 RETURNING
     org_id,
-    github_token_encrypted,
     slack_bot_token_encrypted,
     slack_socket_token_encrypted,
     sx_key_encrypted,
-    github_repo,
-    github_base_branch,
     created_at,
     updated_at,
     anthropic_api_key_encrypted,
-    slack_team_id
+    slack_team_id,
+    default_github_owner,
+    default_github_repo
 `
 
 type UpsertOrgConfigParams struct {
 	OrgID                     string  `json:"org_id"`
-	GithubTokenEncrypted      []byte  `json:"github_token_encrypted"`
 	SlackBotTokenEncrypted    []byte  `json:"slack_bot_token_encrypted"`
 	SlackSocketTokenEncrypted []byte  `json:"slack_socket_token_encrypted"`
 	SxKeyEncrypted            []byte  `json:"sx_key_encrypted"`
-	GithubRepo                string  `json:"github_repo"`
-	GithubBaseBranch          string  `json:"github_base_branch"`
 	AnthropicApiKeyEncrypted  []byte  `json:"anthropic_api_key_encrypted"`
 	SlackTeamID               *string `json:"slack_team_id"`
+	DefaultGithubOwner        string  `json:"default_github_owner"`
+	DefaultGithubRepo         string  `json:"default_github_repo"`
 }
 
 func (q *Queries) UpsertOrgConfig(ctx context.Context, arg UpsertOrgConfigParams) (OrgConfig, error) {
 	row := q.db.QueryRow(ctx, upsertOrgConfig,
 		arg.OrgID,
-		arg.GithubTokenEncrypted,
 		arg.SlackBotTokenEncrypted,
 		arg.SlackSocketTokenEncrypted,
 		arg.SxKeyEncrypted,
-		arg.GithubRepo,
-		arg.GithubBaseBranch,
 		arg.AnthropicApiKeyEncrypted,
 		arg.SlackTeamID,
+		arg.DefaultGithubOwner,
+		arg.DefaultGithubRepo,
 	)
 	var i OrgConfig
 	err := row.Scan(
 		&i.OrgID,
-		&i.GithubTokenEncrypted,
 		&i.SlackBotTokenEncrypted,
 		&i.SlackSocketTokenEncrypted,
 		&i.SxKeyEncrypted,
-		&i.GithubRepo,
-		&i.GithubBaseBranch,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.AnthropicApiKeyEncrypted,
 		&i.SlackTeamID,
+		&i.DefaultGithubOwner,
+		&i.DefaultGithubRepo,
 	)
 	return i, err
 }

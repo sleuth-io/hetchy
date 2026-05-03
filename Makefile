@@ -99,12 +99,12 @@ AIR          = go run github.com/air-verse/air@$(AIR_VERSION)
 
 bot: ## Run the bot with live-reload (rebuilds on file changes)
 	@which doppler > /dev/null || (echo "doppler CLI not found. Install: https://docs.doppler.com/docs/install-cli" && exit 1)
-	@HETCHY_ENV=dev doppler run -- $(AIR)
+	@HETCHY_ENV=dev COOKIE_INSECURE=1 doppler run -- $(AIR)
 
 bot-tee: build ## Run the bot once (no live-reload), mirroring logs to $(LOG_FILE) so another shell can `make logs`
 	@which doppler > /dev/null || (echo "doppler CLI not found. Install: https://docs.doppler.com/docs/install-cli" && exit 1)
 	@echo "Logging to $(LOG_FILE) (tail with 'make logs')"
-	@HETCHY_ENV=dev doppler run -- $(BUILD_DIR)/$(BINARY_NAME) 2>&1 | tee $(LOG_FILE)
+	@HETCHY_ENV=dev COOKIE_INSECURE=1 doppler run -- $(BUILD_DIR)/$(BINARY_NAME) 2>&1 | tee $(LOG_FILE)
 
 logs: ## Tail the log file written by `make bot-tee` (LOG_FILE=$(LOG_FILE))
 	@touch $(LOG_FILE)

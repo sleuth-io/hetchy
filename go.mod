@@ -4,7 +4,9 @@ go 1.25.6
 
 require (
 	github.com/daytonaio/daytona/libs/sdk-go v0.171.0
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/golang-migrate/migrate/v4 v4.19.1
+	github.com/google/go-github/v66 v66.0.0
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/joho/godotenv v1.5.1
 	github.com/slack-go/slack v0.23.0
