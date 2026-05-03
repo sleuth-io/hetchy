@@ -1,4 +1,4 @@
-.PHONY: help build install test ci lint format clean tidy deps verify update-deps init prepush postpull bot bot-tee logs dev daytona-up daytona-down daytona-logs snapshot push-snapshot db-up db-down db-status db-new sqlc-generate pg-up pg-down pg-logs pg-psql pg-reset
+.PHONY: help build install test ci lint format clean tidy deps verify update-deps init prepush postpull bot bot-tee logs dev daytona-up daytona-down daytona-logs snapshot push-snapshot db-up db-down db-status db-new sqlc-generate pg-up pg-down pg-logs pg-psql pg-reset slack-app
 
 # Default target
 help: ## Show this help message
@@ -99,12 +99,12 @@ AIR          = go run github.com/air-verse/air@$(AIR_VERSION)
 
 bot: ## Run the bot with live-reload (rebuilds on file changes)
 	@which doppler > /dev/null || (echo "doppler CLI not found. Install: https://docs.doppler.com/docs/install-cli" && exit 1)
-	@doppler run -- $(AIR)
+	@HETCHY_ENV=dev doppler run -- $(AIR)
 
 bot-tee: build ## Run the bot once (no live-reload), mirroring logs to $(LOG_FILE) so another shell can `make logs`
 	@which doppler > /dev/null || (echo "doppler CLI not found. Install: https://docs.doppler.com/docs/install-cli" && exit 1)
 	@echo "Logging to $(LOG_FILE) (tail with 'make logs')"
-	@doppler run -- $(BUILD_DIR)/$(BINARY_NAME) 2>&1 | tee $(LOG_FILE)
+	@HETCHY_ENV=dev doppler run -- $(BUILD_DIR)/$(BINARY_NAME) 2>&1 | tee $(LOG_FILE)
 
 logs: ## Tail the log file written by `make bot-tee` (LOG_FILE=$(LOG_FILE))
 	@touch $(LOG_FILE)
@@ -205,3 +205,11 @@ push-snapshot: snapshot ## Build the sandbox image and register it as a Daytona 
 	  LOCAL_REGISTRY_HOST_PORT=$(LOCAL_REGISTRY_HOST_PORT) \
 	  LOCAL_REGISTRY_INTERNAL=$(LOCAL_REGISTRY_INTERNAL) \
 	  doppler run -- ./scripts/push-snapshot.sh
+
+# Slack app provisioning ------------------------------------------------------
+# Each developer gets a personal Slack app for local Socket Mode dev work, so
+# multiple devs can run Hetchy in parallel without sharing an events tunnel.
+# See scripts/create-slack-app.sh for the full flow and required env.
+slack-app: ## Create a personal Slack dev app (usage: make slack-app NAME=Dylan)
+	@if [ -z "$(NAME)" ]; then echo "usage: make slack-app NAME=<DevName>"; exit 1; fi
+	@./scripts/create-slack-app.sh "$(NAME)"

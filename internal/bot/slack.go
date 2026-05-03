@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
@@ -195,26 +196,79 @@ func (m *slackManager) dispatch(ctx context.Context, cli *slack.Client, sock *so
 				continue
 			}
 			sock.Ack(*evt.Request)
-			if payload.Type != slackevents.CallbackEvent {
-				continue
-			}
-			switch inner := payload.InnerEvent.Data.(type) {
-			case *slackevents.AppMentionEvent:
-				go m.handler(ctx, oc, incoming{
-					channel: inner.Channel, user: inner.User, ts: inner.TimeStamp,
-					threadTS: inner.ThreadTimeStamp, botID: inner.BotID, text: inner.Text,
-				}, cli)
-			case *slackevents.MessageEvent:
-				if !inner.IsIM() {
-					continue
-				}
-				go m.handler(ctx, oc, incoming{
-					channel: inner.Channel, user: inner.User, ts: inner.TimeStamp,
-					threadTS: inner.ThreadTimeStamp, botID: inner.BotID, text: inner.Text,
-				}, cli)
-			}
+			m.dispatchCallback(ctx, oc, payload, cli)
 		}
 	}
+}
+
+// dispatchCallback routes a parsed Slack EventsAPIEvent (CallbackEvent
+// only) into the org's handler. Shared by the Socket Mode loop above
+// and the HTTP events endpoint in slack_http.go so both transports
+// produce the same Bot.handleSlackEvent call.
+func (m *slackManager) dispatchCallback(ctx context.Context, oc orgcfg.Config, ev slackevents.EventsAPIEvent, cli *slack.Client) {
+	if ev.Type != slackevents.CallbackEvent {
+		return
+	}
+	switch inner := ev.InnerEvent.Data.(type) {
+	case *slackevents.AppMentionEvent:
+		go m.handler(ctx, oc, incoming{
+			channel: inner.Channel, user: inner.User, ts: inner.TimeStamp,
+			threadTS: inner.ThreadTimeStamp, botID: inner.BotID, text: inner.Text,
+		}, cli)
+	case *slackevents.MessageEvent:
+		if !inner.IsIM() {
+			return
+		}
+		go m.handler(ctx, oc, incoming{
+			channel: inner.Channel, user: inner.User, ts: inner.TimeStamp,
+			threadTS: inner.ThreadTimeStamp, botID: inner.BotID, text: inner.Text,
+		}, cli)
+	case *slackevents.AppUninstalledEvent:
+		// Spawn off the main goroutine: clearInstall calls RestartOrg
+		// which blocks waiting for the connection to drain, and when
+		// dispatchCallback runs from inside the Socket Mode dispatch
+		// goroutine, that drain depends on this loop returning to its
+		// select. Backgrounding it avoids any chance of self-deadlock
+		// in future refactors.
+		go m.clearInstall(oc, "app_uninstalled")
+	case *slackevents.TokensRevokedEvent:
+		// Slack fires this when any token tied to our app gets
+		// revoked (admin action, user de-auth, etc.). For our use
+		// case — bot tokens only — treat it the same as uninstall:
+		// clear the org's Slack creds so we stop posting with a dead
+		// token. The org can reinstall to come back.
+		go m.clearInstall(oc, "tokens_revoked")
+	}
+}
+
+// clearInstall wipes the Slack-related fields on an org's config and
+// tears down any Socket Mode connection. Called from the lifecycle
+// event handlers (app_uninstalled, tokens_revoked).
+//
+// Runs on a fresh detached context — never the caller's, since the
+// caller's context (in the Socket Mode dispatch path) is the
+// per-connection context that RestartOrg cancels as part of teardown.
+// Using the caller's context would race the upsert against its own
+// cancellation and silently no-op the reload.
+func (m *slackManager) clearInstall(oc orgcfg.Config, reason string) {
+	prevTeamID := oc.SlackTeamID
+	m.log.Info("slack: clearing install",
+		"org", oc.OrgID,
+		"team_id", prevTeamID,
+		"reason", reason,
+	)
+	oc.SlackBotToken = ""
+	oc.SlackSocketToken = ""
+	oc.SlackTeamID = ""
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if _, err := m.orgs.Upsert(ctx, oc); err != nil {
+		m.log.Error("slack: clear install upsert failed", "org", oc.OrgID, "error", err)
+		return
+	}
+	// Tear down the socket if one is open. RestartOrg reloads the org
+	// config, sees the empty tokens, and stays disconnected.
+	m.RestartOrg(ctx, oc.OrgID)
 }
 
 // handleSlackEvent is the Bot-side dispatcher passed to slackManager. It

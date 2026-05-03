@@ -158,9 +158,45 @@
 
     <fieldset>
       <legend>Slack (optional)</legend>
-      {{template "secret" dict "Field" "slack_bot_token" "Label" "Bot token" "Preview" .SlackBotTokenPreview "Placeholder" "xoxb-…" "Required" false}}
-      {{template "secret" dict "Field" "slack_socket_token" "Label" "Socket token" "Preview" .SlackSocketTokenPreview "Placeholder" "xapp-…" "Required" false}}
-      <p class="hint">Provide both to receive Slack events for this org. Each org runs its own socket-mode connection.</p>
+
+      {{/*
+        Four combinations of (IsDev, SlackOAuthEnabled):
+          (false, false) — prod with no OAuth configured: show only the
+                           "contact administrator" hint at the bottom.
+          (false, true)  — prod with OAuth: show only the install button
+                           (or reinstall + connection status).
+          (true,  false) — dev with no OAuth: show the manual paste form,
+                           no disclosure wrapper since it's the only path.
+          (true,  true)  — dev with OAuth (e.g. testing the button
+                           against staging): show the install button plus
+                           a collapsed disclosure wrapping the manual
+                           paste form.
+      */}}
+
+      {{if .SlackOAuthEnabled}}
+        {{if .SlackTeamID}}
+          <p class="hint">Connected to Slack workspace <code>{{.SlackTeamID}}</code>.</p>
+          <p><a class="primary" href="/slack/install" style="display:inline-block;text-decoration:none;padding:.5rem 1rem;background:#4A154B;color:#fff;border-radius:4px;">Reinstall to Slack</a></p>
+        {{else}}
+          <p><a class="primary" href="/slack/install" style="display:inline-block;text-decoration:none;padding:.5rem 1rem;background:#4A154B;color:#fff;border-radius:4px;">Install to Slack</a></p>
+          <p class="hint">Click to authorize Hetchy in your Slack workspace. You'll be sent back here when the install completes.</p>
+        {{end}}
+      {{end}}
+
+      {{if .IsDev}}
+        {{if .SlackOAuthEnabled}}
+        <details style="margin-top:1rem">
+          <summary style="cursor:pointer;color:#888;font-size:.9rem">Advanced: paste tokens manually (dev only)</summary>
+        {{end}}
+          {{template "secret" dict "Field" "slack_bot_token" "Label" "Bot token" "Preview" .SlackBotTokenPreview "Placeholder" "xoxb-…" "Required" false}}
+          {{template "secret" dict "Field" "slack_socket_token" "Label" "Socket token" "Preview" .SlackSocketTokenPreview "Placeholder" "xapp-…" "Required" false}}
+          <p class="hint">Run <code>make slack-app NAME=…</code> to create a personal Socket Mode app, then paste its bot + socket tokens here. Socket Mode doesn't need a team ID — the open socket already identifies the org.</p>
+        {{if .SlackOAuthEnabled}}
+        </details>
+        {{end}}
+      {{else if not .SlackOAuthEnabled}}
+        <p class="hint">Slack OAuth is not configured for this environment. Contact your administrator.</p>
+      {{end}}
     </fieldset>
 
     <fieldset>

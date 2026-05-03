@@ -12,7 +12,17 @@ type Querier interface {
 	DeleteConversation(ctx context.Context, arg DeleteConversationParams) error
 	GetConversation(ctx context.Context, arg GetConversationParams) (Conversation, error)
 	GetOrgConfig(ctx context.Context, orgID string) (OrgConfig, error)
+	GetOrgConfigBySlackTeamID(ctx context.Context, slackTeamID *string) (OrgConfig, error)
 	ListConversationsByOrg(ctx context.Context, orgID string) ([]Conversation, error)
+	// Lists Socket-Mode-installed orgs only. The slackManager iterates
+	// this on startup to open one socket per org.
+	//
+	// Important: HTTP-mode orgs (OAuth-installed via /slack/oauth/callback)
+	// are intentionally excluded — the OAuth callback clears
+	// slack_socket_token_encrypted to make sure we don't try to keep a
+	// doomed socket alive for them. If you need "every org with any kind
+	// of Slack connection," write a different query — don't rename this
+	// one.
 	ListOrgConfigsWithSlack(ctx context.Context) ([]OrgConfig, error)
 	UpsertConversation(ctx context.Context, arg UpsertConversationParams) (Conversation, error)
 	UpsertOrgConfig(ctx context.Context, arg UpsertOrgConfigParams) (OrgConfig, error)

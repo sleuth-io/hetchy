@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # Local Postgres for development. Mirrors Supabase's Postgres surface (no
   # auth/storage/etc.) — enough for sqlc + golang-migrate. Port 5432 is
@@ -25,7 +23,8 @@ services:
       retries: 5
       start_period: 10s
 
-  # Main hetchy bot service
+  # One-shot migration runner. Bumps schema before the hetchy service
+  # starts (see hetchy.depends_on.migration.condition: service_completed_successfully).
   migration:
     build:
       context: .
@@ -41,10 +40,6 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      # Slack configuration
-      SLACK_BOT_OAUTH_TOKEN: ${SLACK_BOT_OAUTH_TOKEN}
-      SLACK_SOCKET_TOKEN: ${SLACK_SOCKET_TOKEN}
-
       # GitHub configuration
       GITHUB_TOKEN: ${GITHUB_TOKEN}
       GITHUB_REPO: ${GITHUB_REPO}
@@ -73,6 +68,8 @@ services:
       # Web UI configuration
       WEB_PORT: ${WEB_PORT:-8080}
       DISABLE_SLACK: ${DISABLE_SLACK:-}
+
+  # Main hetchy bot service.
   hetchy:
     build:
       context: .
@@ -91,9 +88,21 @@ services:
       migration:
         condition: service_completed_successfully
     environment:
-      # Slack configuration
-      SLACK_BOT_OAUTH_TOKEN: ${SLACK_BOT_OAUTH_TOKEN}
-      SLACK_SOCKET_TOKEN: ${SLACK_SOCKET_TOKEN}
+      # Runtime mode — gates dev-only UI affordances (manual Slack
+      # token paste, etc.). Defaults to prod so a missing var is the
+      # safe choice; `make bot` overrides to dev.
+      HETCHY_ENV: ${HETCHY_ENV:-prod}
+
+      # Slack — process-level config for the deployed Hetchy app
+      # (one app per env: dev/staging/prod). Per-org bot tokens land
+      # in the database after OAuth install, not here.
+      SLACK_CLIENT_ID: ${SLACK_CLIENT_ID:-}
+      SLACK_CLIENT_SECRET: ${SLACK_CLIENT_SECRET:-}
+      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-}
+      SLACK_OAUTH_REDIRECT_URI: ${SLACK_OAUTH_REDIRECT_URI:-}
+      # Reference-only / not consumed by the Go code today.
+      SLACK_APP_ID: ${SLACK_APP_ID:-}
+      SLACK_VERIFICATION_TOKEN: ${SLACK_VERIFICATION_TOKEN:-}
 
       # GitHub configuration
       GITHUB_TOKEN: ${GITHUB_TOKEN}

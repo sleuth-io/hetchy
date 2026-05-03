@@ -51,6 +51,16 @@ func (b *Bot) runWeb(ctx context.Context) error {
 	mux.HandleFunc("/callback", b.auth.CallbackHandler)
 	mux.HandleFunc("/logout", b.auth.LogoutHandler)
 
+	// Slack HTTP transport — public endpoints that Slack POSTs to. No
+	// WorkOS auth middleware: these are verified instead by HMAC over
+	// the SLACK_SIGNING_SECRET inside the handlers.
+	mux.HandleFunc("/slack/events", b.slackEventsHandler)
+	mux.HandleFunc("/slack/interactivity", b.slackInteractivityHandler)
+	mux.HandleFunc("/slack/oauth/callback", b.slackOAuthCallbackHandler)
+	// /slack/install initiates the OAuth flow. Auth-gated so we know
+	// which org this install should be bound to (state carries that).
+	mux.Handle("/slack/install", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.slackInstallHandler))))
+
 	mux.Handle("/", b.auth.Middleware(http.HandlerFunc(b.indexHandler)))
 	mux.Handle("/onboarding", b.auth.Middleware(b.auth.RequireAuth(http.HandlerFunc(b.onboardingHandler))))
 	mux.Handle("/settings/org", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.settingsHandler))))
@@ -218,6 +228,9 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 			"AnthropicAPIKeyPreview":  previewSecret(current.AnthropicAPIKey),
 			"SlackBotTokenPreview":    previewSecret(current.SlackBotToken),
 			"SlackSocketTokenPreview": previewSecret(current.SlackSocketToken),
+			"SlackTeamID":             current.SlackTeamID,
+			"SlackOAuthEnabled":       b.slackOAuthConfigured(),
+			"IsDev":                   b.cfg.Env == "dev",
 			"SXKeyPreview":            previewSecret(current.SXKey),
 		}
 		if tab == "members" {
@@ -272,6 +285,8 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 	current.GitHubToken = applyTokenChange(r, "github_token", current.GitHubToken)
 	current.SlackBotToken = applyTokenChange(r, "slack_bot_token", current.SlackBotToken)
 	current.SlackSocketToken = applyTokenChange(r, "slack_socket_token", current.SlackSocketToken)
+	// SlackTeamID is set by the OAuth callback, not the form — only the
+	// HTTP transport needs it, and OAuth is its source of truth.
 	current.SXKey = applyTokenChange(r, "sx_key", current.SXKey)
 	current.AnthropicAPIKey = applyTokenChange(r, "anthropic_api_key", current.AnthropicAPIKey)
 	if current.AnthropicAPIKey == "" {
@@ -291,6 +306,7 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 		"has_github_token", saved.GitHubToken != "",
 		"has_slack_bot", saved.SlackBotToken != "",
 		"has_slack_socket", saved.SlackSocketToken != "",
+		"has_slack_team_id", saved.SlackTeamID != "",
 		"has_sx", saved.SXKey != "",
 		"has_anthropic", saved.AnthropicAPIKey != "",
 	)
@@ -313,6 +329,12 @@ func savedMessage(s string) string {
 		return "Member removed."
 	case "role":
 		return "Role updated."
+	case "slack_installed":
+		return "Slack installed."
+	case "slack_install_cancelled":
+		return "Slack install cancelled."
+	case "slack_install_conflict":
+		return "That Slack workspace is already connected to another Hetchy organization. Have the existing org uninstall first."
 	default:
 		return ""
 	}

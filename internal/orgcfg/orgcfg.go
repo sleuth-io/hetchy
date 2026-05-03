@@ -28,6 +28,7 @@ type Config struct {
 	GitHubToken      string
 	SlackBotToken    string
 	SlackSocketToken string
+	SlackTeamID      string
 	SXKey            string
 	GitHubRepo       string
 	GitHubBaseBranch string
@@ -57,8 +58,31 @@ func (s *Store) Get(ctx context.Context, orgID string) (Config, error) {
 	return s.decrypt(row)
 }
 
-// ListWithSlack returns every org that has both Slack tokens set —
-// the list of orgs for which we should maintain a socket-mode connection.
+// GetBySlackTeamID looks up an org by its Slack workspace team_id. Used
+// by the HTTP webhook transport to route an incoming Slack event (which
+// carries team_id at the payload root) to the right org's bot token.
+func (s *Store) GetBySlackTeamID(ctx context.Context, teamID string) (Config, error) {
+	if teamID == "" {
+		return Config{}, ErrNotFound
+	}
+	row, err := s.db.Queries.GetOrgConfigBySlackTeamID(ctx, &teamID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Config{}, ErrNotFound
+		}
+		return Config{}, fmt.Errorf("get org config by slack team id: %w", err)
+	}
+	return s.decrypt(row)
+}
+
+// ListWithSlack returns every org with both bot and socket tokens set
+// — the orgs for which slackManager opens a Socket Mode connection.
+//
+// HTTP-mode orgs (OAuth-installed) are intentionally excluded: the
+// OAuth callback clears the socket token, so they don't appear here
+// and the slack manager never tries to socket-connect them. If you
+// need to enumerate all Slack-connected orgs (HTTP + socket), add a
+// different query — don't generalize this one.
 func (s *Store) ListWithSlack(ctx context.Context) ([]Config, error) {
 	rows, err := s.db.Queries.ListOrgConfigsWithSlack(ctx)
 	if err != nil {
@@ -101,6 +125,11 @@ func (s *Store) Upsert(ctx context.Context, c Config) (Config, error) {
 	if branch == "" {
 		branch = "main"
 	}
+	var teamID *string
+	if c.SlackTeamID != "" {
+		t := c.SlackTeamID
+		teamID = &t
+	}
 	row, err := s.db.Queries.UpsertOrgConfig(ctx, sqlc.UpsertOrgConfigParams{
 		OrgID:                     c.OrgID,
 		GithubTokenEncrypted:      gh,
@@ -110,6 +139,7 @@ func (s *Store) Upsert(ctx context.Context, c Config) (Config, error) {
 		AnthropicApiKeyEncrypted:  ak,
 		GithubRepo:                c.GitHubRepo,
 		GithubBaseBranch:          branch,
+		SlackTeamID:               teamID,
 	})
 	if err != nil {
 		return Config{}, fmt.Errorf("upsert org config: %w", err)
@@ -138,11 +168,16 @@ func (s *Store) decrypt(row sqlc.OrgConfig) (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("decrypt anthropic api key: %w", err)
 	}
+	teamID := ""
+	if row.SlackTeamID != nil {
+		teamID = *row.SlackTeamID
+	}
 	return Config{
 		OrgID:            row.OrgID,
 		GitHubToken:      gh,
 		SlackBotToken:    sb,
 		SlackSocketToken: ss,
+		SlackTeamID:      teamID,
 		SXKey:            sx,
 		AnthropicAPIKey:  ak,
 		GitHubRepo:       row.GithubRepo,
