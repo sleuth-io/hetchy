@@ -6,7 +6,8 @@ WHERE org_id = $1 AND thread_id = $2;
 -- name: ListConversationsByOrg :many
 SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at
 FROM conversations
-WHERE org_id = $1;
+WHERE org_id = $1
+ORDER BY updated_at DESC;
 
 -- name: UpsertConversation :one
 INSERT INTO conversations (

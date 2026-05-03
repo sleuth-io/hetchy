@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/hetchyhq/hetchy/internal/auth"
+	"github.com/hetchyhq/hetchy/internal/convstore"
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
 )
 
@@ -72,6 +73,8 @@ func (b *Bot) runWeb(ctx context.Context) error {
 	mux.Handle("/chat", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b.chatHandler(ctx, w, r)
 	}))))
+	mux.Handle("/api/conversations", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.conversationsHandler))))
+	mux.Handle("/api/conversations/", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.conversationDetailHandler))))
 
 	addr := ":" + b.cfg.WebPort
 	srv := &http.Server{
@@ -792,5 +795,134 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 			}()
 			return
 		}
+	}
+}
+
+// conversationSummary is the shape returned by GET /api/conversations.
+// `Title` is derived from the first user turn so the sidebar has a
+// human-readable label without us needing a dedicated DB column.
+type conversationSummary struct {
+	ThreadID  string `json:"thread_id"`
+	Title     string `json:"title"`
+	PRURL     string `json:"pr_url,omitempty"`
+	UpdatedAt string `json:"updated_at"`
+}
+
+// conversationDetail is the shape returned by GET /api/conversations/{id}.
+// Only user turns are persisted (history); the bot's streamed responses
+// aren't, so reopening a chat shows the prompts and the resulting PR URL,
+// then resumes by sending a new turn through /chat.
+type conversationDetail struct {
+	ThreadID  string   `json:"thread_id"`
+	Title     string   `json:"title"`
+	PRURL     string   `json:"pr_url,omitempty"`
+	History   []string `json:"history"`
+	UpdatedAt string   `json:"updated_at"`
+}
+
+func (b *Bot) conversationsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	p, _ := auth.FromContext(r.Context())
+	recs, err := b.convs.List(r.Context(), p.OrgID)
+	if err != nil {
+		b.log.Error("list conversations", "error", err, "org", p.OrgID)
+		http.Error(w, "list conversations: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	out := make([]conversationSummary, 0, len(recs))
+	for _, rec := range recs {
+		out = append(out, conversationSummary{
+			ThreadID:  rec.ThreadID,
+			Title:     conversationTitle(rec),
+			PRURL:     rec.PRURL,
+			UpdatedAt: rec.UpdatedAt.UTC().Format(time.RFC3339),
+		})
+	}
+	writeJSON(w, out)
+}
+
+func (b *Bot) conversationDetailHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	threadID := strings.TrimPrefix(r.URL.Path, "/api/conversations/")
+	if threadID == "" || strings.Contains(threadID, "/") {
+		http.NotFound(w, r)
+		return
+	}
+	if !isSafeThreadID(threadID) {
+		http.NotFound(w, r)
+		return
+	}
+	p, _ := auth.FromContext(r.Context())
+	rec, err := b.convs.Get(r.Context(), p.OrgID, threadID)
+	if err != nil {
+		if errors.Is(err, convstore.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		b.log.Error("get conversation", "error", err, "org", p.OrgID, "thread", threadID)
+		http.Error(w, "get conversation: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, conversationDetail{
+		ThreadID:  rec.ThreadID,
+		Title:     conversationTitle(rec),
+		PRURL:     rec.PRURL,
+		History:   rec.History,
+		UpdatedAt: rec.UpdatedAt.UTC().Format(time.RFC3339),
+	})
+}
+
+// conversationTitle derives a sidebar label from the first user turn,
+// trimmed and capped. Falls back to a generic placeholder so a record
+// with empty history still renders something selectable.
+func conversationTitle(rec convstore.Record) string {
+	if len(rec.History) == 0 {
+		return "New chat"
+	}
+	first := strings.TrimSpace(rec.History[0])
+	if first == "" {
+		return "New chat"
+	}
+	const maxLen = 80
+	if len(first) > maxLen {
+		first = first[:maxLen] + "…"
+	}
+	first = strings.ReplaceAll(first, "\n", " ")
+	return first
+}
+
+// isSafeThreadID guards path segments used to look up conversations.
+// Browser-generated thread ids are UUIDs (hex + hyphens); Slack thread
+// timestamps look like "1700000000.123456". Both are covered by this
+// conservative charset.
+func isSafeThreadID(s string) bool {
+	if s == "" || len(s) > 128 {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case r == '-' || r == '_' || r == '.':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func writeJSON(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		// Headers already written — just log; the client will see a
+		// truncated body, which is the best we can do at this point.
+		http.Error(w, "encode: "+err.Error(), http.StatusInternalServerError)
 	}
 }
