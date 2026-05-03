@@ -239,11 +239,18 @@ async function loadHistory() {
     if (!res.ok) return;
     const detail = await res.json();
     log.innerHTML = '';
-    for (const turn of detail.history || []) {
-      addMsg(turn, 'user');
-    }
-    if (detail.pr_url) {
-      addMsg('Done! 🎉 ' + detail.pr_url, 'bot');
+    const history = detail.history || [];
+    const responses = detail.responses || [];
+    for (let i = 0; i < history.length; i++) {
+      addMsg(history[i], 'user');
+      // Older rows persisted before we tracked bot transcripts won't have
+      // a paired response — fall back to the PR URL on the last turn so
+      // the chat doesn't look one-sided.
+      if (responses[i]) {
+        addMsg(responses[i], 'bot');
+      } else if (i === history.length - 1 && detail.pr_url) {
+        addMsg('Done! 🎉 ' + detail.pr_url, 'bot');
+      }
     }
   } catch (e) {
     // Leave the log empty on error; the user can still type a message.

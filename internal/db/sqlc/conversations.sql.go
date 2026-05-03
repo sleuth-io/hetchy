@@ -24,7 +24,7 @@ func (q *Queries) DeleteConversation(ctx context.Context, arg DeleteConversation
 }
 
 const getConversation = `-- name: GetConversation :one
-SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at
+SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, responses
 FROM conversations
 WHERE org_id = $1 AND thread_id = $2
 `
@@ -46,12 +46,13 @@ func (q *Queries) GetConversation(ctx context.Context, arg GetConversationParams
 		&i.History,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Responses,
 	)
 	return i, err
 }
 
 const listConversationsByOrg = `-- name: ListConversationsByOrg :many
-SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at
+SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, responses
 FROM conversations
 WHERE org_id = $1
 ORDER BY updated_at DESC
@@ -75,6 +76,7 @@ func (q *Queries) ListConversationsByOrg(ctx context.Context, orgID string) ([]C
 			&i.History,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Responses,
 		); err != nil {
 			return nil, err
 		}
@@ -88,17 +90,18 @@ func (q *Queries) ListConversationsByOrg(ctx context.Context, orgID string) ([]C
 
 const upsertConversation = `-- name: UpsertConversation :one
 INSERT INTO conversations (
-    org_id, thread_id, sandbox_id, branch, pr_url, history
+    org_id, thread_id, sandbox_id, branch, pr_url, history, responses
 ) VALUES (
-    $1, $2, $3, $4, $5, $6
+    $1, $2, $3, $4, $5, $6, $7
 )
 ON CONFLICT (org_id, thread_id) DO UPDATE SET
     sandbox_id = EXCLUDED.sandbox_id,
     branch     = EXCLUDED.branch,
     pr_url     = EXCLUDED.pr_url,
     history    = EXCLUDED.history,
+    responses  = EXCLUDED.responses,
     updated_at = NOW()
-RETURNING org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at
+RETURNING org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, responses
 `
 
 type UpsertConversationParams struct {
@@ -108,6 +111,7 @@ type UpsertConversationParams struct {
 	Branch    string   `json:"branch"`
 	PrUrl     string   `json:"pr_url"`
 	History   []string `json:"history"`
+	Responses []string `json:"responses"`
 }
 
 func (q *Queries) UpsertConversation(ctx context.Context, arg UpsertConversationParams) (Conversation, error) {
@@ -118,6 +122,7 @@ func (q *Queries) UpsertConversation(ctx context.Context, arg UpsertConversation
 		arg.Branch,
 		arg.PrUrl,
 		arg.History,
+		arg.Responses,
 	)
 	var i Conversation
 	err := row.Scan(
@@ -129,6 +134,7 @@ func (q *Queries) UpsertConversation(ctx context.Context, arg UpsertConversation
 		&i.History,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Responses,
 	)
 	return i, err
 }

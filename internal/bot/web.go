@@ -809,14 +809,17 @@ type conversationSummary struct {
 }
 
 // conversationDetail is the shape returned by GET /api/conversations/{id}.
-// Only user turns are persisted (history); the bot's streamed responses
-// aren't, so reopening a chat shows the prompts and the resulting PR URL,
-// then resumes by sending a new turn through /chat.
+// History and Responses are paired by index: history[i] is the user turn
+// and responses[i] is the full bot transcript that streamed back for it
+// (status updates + sandbox logs + the final PR URL or error). Older
+// rows from before the responses column existed will have a shorter
+// responses slice; the UI tolerates that.
 type conversationDetail struct {
 	ThreadID  string   `json:"thread_id"`
 	Title     string   `json:"title"`
 	PRURL     string   `json:"pr_url,omitempty"`
 	History   []string `json:"history"`
+	Responses []string `json:"responses"`
 	UpdatedAt string   `json:"updated_at"`
 }
 
@@ -874,6 +877,7 @@ func (b *Bot) conversationDetailHandler(w http.ResponseWriter, r *http.Request) 
 		Title:     conversationTitle(rec),
 		PRURL:     rec.PRURL,
 		History:   rec.History,
+		Responses: rec.Responses,
 		UpdatedAt: rec.UpdatedAt.UTC().Format(time.RFC3339),
 	})
 }

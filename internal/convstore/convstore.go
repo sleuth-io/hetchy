@@ -22,6 +22,13 @@ import (
 var ErrNotFound = errors.New("convstore: not found")
 
 // Record is the app-friendly view of a conversation row.
+//
+// History and Responses are paired by index: History[i] is the user's
+// turn and Responses[i] is the full bot transcript that the user saw
+// streamed back for that turn (status updates + sandbox logs + the
+// final PR URL or error). Old rows from before the responses column
+// existed have len(Responses) < len(History); callers must tolerate
+// that mismatch when rendering.
 type Record struct {
 	OrgID     string
 	ThreadID  string
@@ -29,6 +36,7 @@ type Record struct {
 	Branch    string
 	PRURL     string
 	History   []string
+	Responses []string
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
@@ -83,6 +91,7 @@ func recordFromRow(row sqlc.Conversation) Record {
 		Branch:    row.Branch,
 		PRURL:     row.PrUrl,
 		History:   row.History,
+		Responses: row.Responses,
 		CreatedAt: row.CreatedAt.Time,
 		UpdatedAt: row.UpdatedAt.Time,
 	}
@@ -100,6 +109,7 @@ func (s *Store) Upsert(ctx context.Context, r Record) error {
 		Branch:    r.Branch,
 		PrUrl:     r.PRURL,
 		History:   r.History,
+		Responses: r.Responses,
 	})
 	if err != nil {
 		return fmt.Errorf("upsert conversation: %w", err)
