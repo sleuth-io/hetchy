@@ -42,8 +42,10 @@ response="$(curl -sS -X POST 'https://slack.com/api/apps.manifest.create' \
 
 # Parse the response and emit the user-facing message in a single
 # Python call. Avoids `eval` on API output entirely — the script just
-# pipes Python's stdout through.
-echo "$response" | NAME="$NAME" python3 - <<'PY'
+# pipes Python's stdout through. Note: `python3 -c` (not `python3 -`
+# with a heredoc) so stdin stays free for json.load(sys.stdin) to
+# read the API response.
+echo "$response" | NAME="$NAME" python3 -c '
 import json, os, sys
 
 d = json.load(sys.stdin)
@@ -54,9 +56,15 @@ if not d.get("ok"):
 name = os.environ["NAME"]
 app_id = d.get("app_id", "")
 creds = d.get("credentials", {})
+client_id = creds.get("client_id", "")
+client_secret = creds.get("client_secret", "")
+signing_secret = creds.get("signing_secret", "")
 
+# Pre-extracted into locals so the f-string body has no inner
+# quotes — keeps the bash-quoted python literal readable and avoids
+# any Python-version-dependent f-string parsing surprises.
 print(f"""
-  Created "Hetchy ({name})" — App ID {app_id}
+  Created \"Hetchy ({name})\" — App ID {app_id}
 
 Next manual steps in https://api.slack.com/apps/{app_id} :
   1. Install App -> Install to Workspace
@@ -70,10 +78,10 @@ Make sure your default Doppler config is dev_personal, then:
 
   doppler secrets set \\
     SLACK_APP_ID={app_id} \\
-    SLACK_CLIENT_ID={creds.get("client_id", "")} \\
-    SLACK_CLIENT_SECRET={creds.get("client_secret", "")} \\
-    SLACK_SIGNING_SECRET={creds.get("signing_secret", "")} \\
+    SLACK_CLIENT_ID={client_id} \\
+    SLACK_CLIENT_SECRET={client_secret} \\
+    SLACK_SIGNING_SECRET={signing_secret} \\
     SLACK_BOT_TOKEN=<xoxb- from step 1> \\
     SLACK_APP_TOKEN=<xapp- from step 2>
 """)
-PY
+'

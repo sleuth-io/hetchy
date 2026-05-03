@@ -3,7 +3,7 @@
     "name": "Hetchy ({{NAME}})",
     "description": "Hetchy personal dev app for {{NAME}}",
     "background_color": "#6B3FA0",
-    "long_description": "Personal Slack app for the Hetchy {{NAME}} dev environment. Uses Socket Mode — no public URL or tunnel required. Install only into your personal sandbox workspace."
+    "long_description": "Personal Slack app for the Hetchy {{NAME}} dev environment. Uses Socket Mode so no public URL or tunnel is required. Install only into your personal sandbox workspace — this app is paired with a single developer's local Hetchy instance and is not meant to be shared, listed in the Slack Marketplace, or installed by anyone else."
   },
   "features": {
     "bot_user": {
