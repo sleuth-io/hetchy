@@ -66,22 +66,36 @@ signing_secret = creds.get("signing_secret", "")
 print(f"""
   Created \"Hetchy ({name})\" — App ID {app_id}
 
-Next manual steps in https://api.slack.com/apps/{app_id} :
-  1. Install App -> Install to Workspace
-       (gives you the xoxb- bot token)
-  2. Basic Information -> App-Level Tokens -> Generate Token and Scopes
-       name:  socket
-       scope: connections:write
-       (gives you the xapp- socket token)
+Next steps:
 
-Make sure your default Doppler config is dev_personal, then:
+  1. Install the app to your sandbox workspace.
+       Open https://api.slack.com/apps/{app_id}/install-on-team
+       Click \"Install to Workspace\", approve scopes, then copy the
+       \"Bot User OAuth Token\" (xoxb-...).
+
+  2. Generate a Socket Mode app-level token.
+       Open https://api.slack.com/apps/{app_id}/general
+       Scroll to \"App-Level Tokens\" -> \"Generate Token and Scopes\"
+         Name:   socket
+         Scope:  connections:write
+       Copy the token (xapp-...).
+
+  3. Paste both tokens into your local Hetchy at
+       http://localhost:8080/settings/org
+       (Bot token + Socket token fields — they're stored encrypted in
+        your local Postgres; they do NOT go in Doppler.)
+
+  4. Restart `make bot` so it opens a Socket Mode connection with the
+     new tokens.
+
+Optional: save these app credentials to your dev_personal Doppler
+config in case you later want to test the OAuth Install button flow
+locally. They are NOT needed for normal Socket Mode dev:
 
   doppler secrets set \\
     SLACK_APP_ID={app_id} \\
     SLACK_CLIENT_ID={client_id} \\
     SLACK_CLIENT_SECRET={client_secret} \\
-    SLACK_SIGNING_SECRET={signing_secret} \\
-    SLACK_BOT_TOKEN=<xoxb- from step 1> \\
-    SLACK_APP_TOKEN=<xapp- from step 2>
+    SLACK_SIGNING_SECRET={signing_secret}
 """)
 '
