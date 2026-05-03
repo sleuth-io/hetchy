@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -21,6 +22,13 @@ import (
 var ErrNotFound = errors.New("convstore: not found")
 
 // Record is the app-friendly view of a conversation row.
+//
+// History and Responses are paired by index: History[i] is the user's
+// turn and Responses[i] is the full bot transcript that the user saw
+// streamed back for that turn (status updates + sandbox logs + the
+// final PR URL or error). Old rows from before the responses column
+// existed have len(Responses) < len(History); callers must tolerate
+// that mismatch when rendering.
 type Record struct {
 	OrgID     string
 	ThreadID  string
@@ -28,6 +36,9 @@ type Record struct {
 	Branch    string
 	PRURL     string
 	History   []string
+	Responses []string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // Store wraps the sqlc queries with the loose Record shape used elsewhere.
@@ -52,6 +63,27 @@ func (s *Store) Get(ctx context.Context, orgID, threadID string) (Record, error)
 		}
 		return Record{}, fmt.Errorf("get conversation: %w", err)
 	}
+	return recordFromRow(row), nil
+}
+
+// List returns every conversation for an org, newest first. Returns an
+// empty slice (not an error) when the store is nil or no rows exist.
+func (s *Store) List(ctx context.Context, orgID string) ([]Record, error) {
+	if s == nil || s.db == nil {
+		return nil, nil
+	}
+	rows, err := s.db.Queries.ListConversationsByOrg(ctx, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("list conversations: %w", err)
+	}
+	out := make([]Record, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, recordFromRow(r))
+	}
+	return out, nil
+}
+
+func recordFromRow(row sqlc.Conversation) Record {
 	return Record{
 		OrgID:     row.OrgID,
 		ThreadID:  row.ThreadID,
@@ -59,7 +91,10 @@ func (s *Store) Get(ctx context.Context, orgID, threadID string) (Record, error)
 		Branch:    row.Branch,
 		PRURL:     row.PrUrl,
 		History:   row.History,
-	}, nil
+		Responses: row.Responses,
+		CreatedAt: row.CreatedAt.Time,
+		UpdatedAt: row.UpdatedAt.Time,
+	}
 }
 
 // Upsert writes the supplied record. No-op when the store is nil.
@@ -74,6 +109,7 @@ func (s *Store) Upsert(ctx context.Context, r Record) error {
 		Branch:    r.Branch,
 		PrUrl:     r.PRURL,
 		History:   r.History,
+		Responses: r.Responses,
 	})
 	if err != nil {
 		return fmt.Errorf("upsert conversation: %w", err)

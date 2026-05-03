@@ -5,14 +5,52 @@
 <title>Hetchy</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: system-ui, sans-serif; display: flex; flex-direction: column;
-         height: 100vh; background: #f5f5f5; }
+  body { font-family: system-ui, sans-serif; display: flex; height: 100vh;
+         background: #f5f5f5; color: #1a1a1a; }
+
+  /* Sidebar */
+  #sidebar { width: 260px; flex-shrink: 0; background: #fafafa;
+             border-right: 1px solid #e5e5e5; display: flex; flex-direction: column; }
+  #sidebar-head { padding: .75rem; border-bottom: 1px solid #f0f0f0; }
+  .new-chat-btn { display: flex; align-items: center; gap: .5rem; width: 100%;
+                  padding: .55rem .75rem; background: #fff; border: 1px solid #e5e5e5;
+                  border-radius: .5rem; font-size: .9rem; font-weight: 500;
+                  color: #1a1a1a; cursor: pointer; text-decoration: none;
+                  text-align: left; }
+  .new-chat-btn:hover { background: #f4f4f4; border-color: #d0d0d0; }
+  .new-chat-btn .plus { font-size: 1.05rem; line-height: 1; color: #888; }
+  #sidebar-section { padding: .75rem .75rem .25rem;
+                     font-size: .7rem; font-weight: 600; text-transform: uppercase;
+                     letter-spacing: .05em; color: #999; }
+  #chat-list { flex: 1; overflow-y: auto; padding: 0 .25rem .75rem; }
+  #chat-list .empty { padding: .5rem .75rem; font-size: .85rem; color: #999; }
+  .chat-item { display: block; padding: .5rem .75rem; margin: 0 .25rem;
+               border-radius: .375rem; font-size: .875rem; color: #333;
+               text-decoration: none; cursor: pointer;
+               white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .chat-item:hover { background: #f0f0f0; }
+  .chat-item.active { background: #e8f1fc; color: #0b5ec0; }
+  .chat-item.pending { color: #888; font-style: italic; }
+  .chat-item.pending.active { color: #0b5ec0; }
+
+  /* Main column */
+  #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  #topbar { display: flex; justify-content: space-between; align-items: center;
+            padding: .6rem 1.5rem; background: #fff; border-bottom: 1px solid #ddd; }
+  #topbar h1 { font-size: 1rem; font-weight: 600; margin: 0; }
+  #topbar .links { display: flex; gap: 1rem; font-size: .85rem; align-items: center; }
+  #topbar a { color: #0b93f6; text-decoration: none; }
+  #topbar a:hover { text-decoration: underline; }
+
   #log  { flex: 1; overflow-y: auto; padding: 1.5rem; display: flex;
           flex-direction: column; gap: .75rem; }
   .msg  { max-width: 70%; padding: .6rem 1rem; border-radius: 1rem; line-height: 1.4; }
   .user { align-self: flex-end; background: #0b93f6; color: #fff; border-bottom-right-radius: .25rem; }
   .bot  { align-self: flex-start; background: #fff; border: 1px solid #ddd;
           border-bottom-left-radius: .25rem; white-space: pre-wrap; }
+  #empty-state { margin: auto; text-align: center; color: #888; font-size: .95rem; }
+  #empty-state h2 { font-size: 1.5rem; font-weight: 500; margin-bottom: .5rem;
+                    color: #333; }
   #bar  { display: flex; gap: .5rem; padding: 1rem; background: #fff;
           border-top: 1px solid #ddd; }
   #inp  { flex: 1; padding: .6rem 1rem; border: 1px solid #ccc; border-radius: 2rem;
@@ -27,12 +65,6 @@
   #session-bar a { color: #0b93f6; text-decoration: none; font-family: system-ui, sans-serif; }
   #session-bar a:hover { text-decoration: underline; }
   #session-bar .links { display: flex; gap: 1rem; }
-  #topbar { display: flex; justify-content: space-between; align-items: center;
-            padding: .6rem 1.5rem; background: #fff; border-bottom: 1px solid #ddd; }
-  #topbar h1 { font-size: 1rem; font-weight: 600; margin: 0; }
-  #topbar .links { display: flex; gap: 1rem; font-size: .85rem; align-items: center; }
-  #topbar a { color: #0b93f6; text-decoration: none; }
-  #topbar a:hover { text-decoration: underline; }
 
   /* User menu (avatar dropdown) */
   .user-menu { position: relative; margin-left: .25rem; }
@@ -64,6 +96,21 @@
 </style>
 </head>
 <body>
+
+<aside id="sidebar">
+  <div id="sidebar-head">
+    <a href="/" class="new-chat-btn" id="new-chat-btn">
+      <span class="plus">+</span>
+      <span>New chat</span>
+    </a>
+  </div>
+  <div id="sidebar-section">Recents</div>
+  <nav id="chat-list">
+    <div class="empty">Loading…</div>
+  </nav>
+</aside>
+
+<div id="main">
 <div id="topbar">
   <h1>Hetchy</h1>
   <div class="links">
@@ -109,6 +156,8 @@
 <div id="session-bar">
   <span>session: <span id="session-label"></span></span>
 </div>
+</div>
+
 <script>
 const log = document.getElementById('log');
 const inp = document.getElementById('inp');
@@ -117,8 +166,9 @@ const btn = document.getElementById('btn');
 // Read session ID from URL (?session=...) so the page can be reloaded or
 // shared to reconnect to an existing sandbox. Generate a new one if absent.
 const params = new URLSearchParams(window.location.search);
+const isFreshChat = !params.has('session');
 const sessionId = params.get('session') || crypto.randomUUID();
-if (!params.has('session')) {
+if (isFreshChat) {
   const url = new URL(window.location);
   url.searchParams.set('session', sessionId);
   history.replaceState(null, '', url);
@@ -128,6 +178,10 @@ document.getElementById('session-label').textContent = sessionId;
 inp.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
 
 function addMsg(text, cls) {
+  // Replace the empty-state placeholder the first time we add a message
+  // so the welcome card disappears as the conversation begins.
+  const empty = document.getElementById('empty-state');
+  if (empty) empty.remove();
   const d = document.createElement('div');
   d.className = 'msg ' + cls;
   d.textContent = text;
@@ -136,13 +190,127 @@ function addMsg(text, cls) {
   return d;
 }
 
+function showEmptyState() {
+  log.innerHTML = '';
+  const d = document.createElement('div');
+  d.id = 'empty-state';
+  d.innerHTML = '<h2>Start a new chat</h2><div>Describe a feature, fix, or refactor and Hetchy will open a PR.</div>';
+  log.appendChild(d);
+}
+
+// Sidebar state. `sidebarItems` is the last list returned by the API;
+// `pendingChatTitle` is set when the user starts a brand-new chat so we
+// can show it in the sidebar before the agent finishes and the row is
+// persisted. We always render from these two pieces, so any update to
+// either triggers a paint via renderSidebar().
+let sidebarItems = [];
+let pendingChatTitle = null;
+
+function renderSidebar() {
+  const list = document.getElementById('chat-list');
+  // Optimistically prepend the in-flight chat if it isn't (yet) in the
+  // server-side list. Once the agent finishes and the row is persisted,
+  // the next loadSidebar() will replace the optimistic entry with the
+  // real one (same thread_id, same place at the top by updated_at DESC).
+  const display = sidebarItems.slice();
+  const alreadyHasCurrent = display.some(c => c.thread_id === sessionId);
+  if (pendingChatTitle && !alreadyHasCurrent) {
+    display.unshift({ thread_id: sessionId, title: pendingChatTitle, _pending: true });
+  }
+  list.innerHTML = '';
+  if (display.length === 0) {
+    list.innerHTML = '<div class="empty">No past chats yet.</div>';
+    return;
+  }
+  for (const c of display) {
+    const a = document.createElement('a');
+    a.className = 'chat-item'
+      + (c.thread_id === sessionId ? ' active' : '')
+      + (c._pending ? ' pending' : '');
+    a.href = '/?session=' + encodeURIComponent(c.thread_id);
+    a.title = c.title;
+    a.textContent = c.title;
+    list.appendChild(a);
+  }
+}
+
+async function loadSidebar() {
+  const list = document.getElementById('chat-list');
+  try {
+    const res = await fetch('/api/conversations', { headers: { 'Accept': 'application/json' } });
+    if (!res.ok) {
+      list.innerHTML = '<div class="empty">Could not load chats.</div>';
+      return;
+    }
+    sidebarItems = (await res.json()) || [];
+    // Once the server has persisted the current chat, the optimistic
+    // entry is no longer needed — drop the pending title so the real row
+    // is rendered with its server-side title.
+    if (sidebarItems.some(c => c.thread_id === sessionId)) {
+      pendingChatTitle = null;
+    }
+    renderSidebar();
+  } catch (e) {
+    list.innerHTML = '<div class="empty">Could not load chats.</div>';
+  }
+}
+
+async function loadHistory() {
+  // Fresh chat: don't probe the API, just show the welcome state.
+  if (isFreshChat) { showEmptyState(); return; }
+  try {
+    const res = await fetch('/api/conversations/' + encodeURIComponent(sessionId),
+                            { headers: { 'Accept': 'application/json' } });
+    if (res.status === 404) {
+      // Session id is in the URL but no conversation has been persisted yet
+      // (e.g. the user opened a fresh URL with ?session= or the agent for a
+      // brand-new chat hasn't completed its first turn). Treat as new chat.
+      showEmptyState();
+      return;
+    }
+    if (!res.ok) return;
+    const detail = await res.json();
+    log.innerHTML = '';
+    const history = detail.history || [];
+    const responses = detail.responses || [];
+    for (let i = 0; i < history.length; i++) {
+      addMsg(history[i], 'user');
+      // Older rows persisted before we tracked bot transcripts won't have
+      // a paired response — fall back to the PR URL on the last turn so
+      // the chat doesn't look one-sided.
+      if (responses[i]) {
+        addMsg(responses[i], 'bot');
+      } else if (i === history.length - 1 && detail.pr_url) {
+        addMsg('Done! 🎉 ' + detail.pr_url, 'bot');
+      }
+    }
+  } catch (e) {
+    // Leave the log empty on error; the user can still type a message.
+  }
+}
+
+function makePendingTitle(text) {
+  const oneLine = text.replace(/\s+/g, ' ').trim();
+  return oneLine.length > 80 ? oneLine.slice(0, 80) + '…' : oneLine;
+}
+
 async function send() {
   const text = inp.value.trim();
   if (!text) return;
   inp.value = '';
   btn.disabled = true;
+  const isFirstTurn = log.querySelectorAll('.msg').length === 0;
   addMsg(text, 'user');
   const bot = addMsg('…', 'bot');
+
+  // Show the chat in the sidebar immediately on the first turn — the
+  // backend doesn't persist the row until the agent finishes, which can
+  // take minutes, and the user expects to see their chat appear right
+  // away (and to be able to navigate back to it mid-run).
+  if (isFirstTurn) {
+    pendingChatTitle = makePendingTitle(text);
+    renderSidebar();
+  }
 
   const res = await fetch('/chat', {
     method: 'POST',
@@ -170,6 +338,9 @@ async function send() {
   }
   btn.disabled = false;
   inp.focus();
+  // Refresh the sidebar after every turn so the row's title (server-side)
+  // and ordering (newest activity first) reflect the just-completed turn.
+  loadSidebar();
 }
 
 // Avatar dropdown — toggle on click, close on outside-click or Escape.
@@ -192,6 +363,10 @@ document.addEventListener('keydown', e => {
     userMenuBtn.focus();
   }
 });
+
+// Initial load: paint the sidebar and any existing chat history in parallel.
+loadSidebar();
+loadHistory();
 </script>
 </body>
 </html>

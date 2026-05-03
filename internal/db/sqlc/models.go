@@ -17,6 +17,7 @@ type Conversation struct {
 	History   []string           `json:"history"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+	Responses []string           `json:"responses"`
 }
 
 type OrgConfig struct {

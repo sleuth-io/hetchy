@@ -200,6 +200,16 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		"text_preview", truncate(text, 200),
 	)
 
+	// Wrap callbacks so every line streamed to the user is also captured
+	// in `transcript`. We persist that string alongside the user turn so
+	// reopening the chat replays the same bot output the user originally
+	// saw — status updates, sandbox logs, and the final PR URL.
+	transcript := &strings.Builder{}
+	wOnUpdate := wrapTranscript(transcript, onUpdate)
+	wOnNotify := wrapTranscript(transcript, onNotify)
+	wOnComplete := wrapTranscript(transcript, onComplete)
+	wOnError := wrapTranscript(transcript, onError)
+
 	var missing []string
 	if oc.GitHubToken == "" {
 		missing = append(missing, "GitHub token")
@@ -221,24 +231,24 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 			"has_sx", oc.SXKey != "",
 			"has_anthropic", oc.AnthropicAPIKey != "",
 		)
-		onError(fmt.Sprintf("This organization is missing: %s. Set them at /settings/org.", strings.Join(missing, ", ")))
+		wOnError(fmt.Sprintf("This organization is missing: %s. Set them at /settings/org.", strings.Join(missing, ", ")))
 		return
 	}
 
 	rec, err := b.convs.Get(ctx, oc.OrgID, threadID)
 	switch {
 	case err == nil:
-		b.handleFollowUp(ctx, oc, rec, text, requestID, onUpdate, onNotify, onComplete, onError)
+		b.handleFollowUp(ctx, oc, rec, text, requestID, transcript, wOnUpdate, wOnNotify, wOnComplete, wOnError)
 		return
 	case errors.Is(err, convstore.ErrNotFound):
 		// fall through — new conversation
 	default:
 		b.log.Error("convstore get", "error", err)
-		onError(fmt.Sprintf("Conversation lookup failed: `%v`", err))
+		wOnError(fmt.Sprintf("Conversation lookup failed: `%v`", err))
 		return
 	}
 
-	onNotify("Spinning up an isolated sandbox for your request...")
+	wOnNotify("Spinning up an isolated sandbox for your request...")
 
 	// Rotating tokens (Anthropic, GitHub) are passed per-script in agent.go
 	// so that a key rotation in /settings/org takes effect on the very next
@@ -256,21 +266,21 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 	if err != nil {
 		if ctx.Err() != nil {
 			b.log.Error("sandbox create cancelled", "error", err)
-			onError(fmt.Sprintf("Sandbox create cancelled: `%v`", ctx.Err()))
+			wOnError(fmt.Sprintf("Sandbox create cancelled: `%v`", ctx.Err()))
 			return
 		}
 		b.log.Error("sandbox create failed", "error", err)
-		onError(fmt.Sprintf("Sandbox create failed: `%v`", err))
+		wOnError(fmt.Sprintf("Sandbox create failed: `%v`", err))
 		return
 	}
 	b.log.Info("sandbox created", "id", sb.ID, "request_id", requestID)
-	onNotify(fmt.Sprintf("Sandbox `%s` ready — cloning repo and starting Claude Code.", sb.ID))
+	wOnNotify(fmt.Sprintf("Sandbox `%s` ready — cloning repo and starting Claude Code.", sb.ID))
 
 	branch := "feature/sf-" + requestID
-	prURL, runErr := b.runAgent(ctx, sb, oc, text, requestID, onUpdate)
+	prURL, runErr := b.runAgent(ctx, sb, oc, text, requestID, wOnUpdate)
 	if runErr != nil {
 		b.log.Error("agent run failed", "sandbox", sb.ID, "error", runErr)
-		onError(fmt.Sprintf("Something went wrong: `%v`\nSandbox `%s` was left running for debugging.", runErr, sb.ID))
+		wOnError(fmt.Sprintf("Something went wrong: `%v`\nSandbox `%s` was left running for debugging.", runErr, sb.ID))
 		return
 	}
 
@@ -280,6 +290,11 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		b.log.Error("sandbox archive failed", "sandbox", sb.ID, "error", err)
 	}
 
+	// Send the completion message before the upsert so the transcript
+	// captures it — reopening the chat should show the same final line
+	// the user saw streamed in.
+	wOnComplete(prURL + "\nReply here to make further changes to this PR.")
+
 	if err := b.convs.Upsert(ctx, convstore.Record{
 		OrgID:     oc.OrgID,
 		ThreadID:  threadID,
@@ -287,14 +302,13 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		Branch:    branch,
 		PRURL:     prURL,
 		History:   []string{text},
+		Responses: []string{capTranscript(transcript.String())},
 	}); err != nil {
 		b.log.Error("convstore upsert", "error", err)
 	}
-
-	onComplete(prURL + "\nReply here to make further changes to this PR.")
 }
 
-func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstore.Record, text, requestID string, onUpdate func(string), onNotify func(string), onComplete func(string), onError func(string)) {
+func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstore.Record, text, requestID string, transcript *strings.Builder, onUpdate func(string), onNotify func(string), onComplete func(string), onError func(string)) {
 	b.log.Info("follow-up received", "org", oc.OrgID, "sandbox", rec.SandboxID, "branch", rec.Branch, "pr", rec.PRURL)
 	onNotify(fmt.Sprintf("Resuming work on %s…", rec.PRURL))
 
@@ -328,13 +342,16 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 		b.log.Error("sandbox archive failed", "sandbox", sb.ID, "error", err)
 	}
 
+	// onComplete first so the transcript captures the closing line,
+	// then upsert with the user turn + this turn's bot transcript.
+	onComplete(prURL)
+
 	rec.PRURL = prURL
 	rec.History = append(rec.History, text)
+	rec.Responses = append(rec.Responses, capTranscript(transcript.String()))
 	if err := b.convs.Upsert(ctx, rec); err != nil {
 		b.log.Error("convstore upsert", "error", err)
 	}
-
-	onComplete(prURL)
 }
 
 // isTransientError reports whether err is a retryable Daytona API error:
@@ -352,6 +369,38 @@ func isTransientError(err error) bool {
 			(dayErr.StatusCode >= 500 && dayErr.StatusCode < 600)
 	}
 	return false
+}
+
+// wrapTranscript returns a callback that streams to the original
+// `next` and also appends to `buf` on a fresh line. Used to capture
+// the bot's full per-turn output for persistence so a reopened chat
+// can replay what the user originally saw.
+func wrapTranscript(buf *strings.Builder, next func(string)) func(string) {
+	return func(s string) {
+		if buf.Len() > 0 {
+			buf.WriteByte('\n')
+		}
+		buf.WriteString(s)
+		next(s)
+	}
+}
+
+// maxTranscriptBytes caps the per-turn transcript before it goes into
+// Postgres. The full stream still reaches the user in real time via SSE;
+// the persisted copy only needs enough context for a reopened chat to
+// be readable. A long agent run with verbose tool output can otherwise
+// easily push hundreds of KB into a single TEXT[] cell.
+const maxTranscriptBytes = 64 * 1024
+
+// capTranscript trims s from the front when it exceeds the cap so that
+// the most recent content — which contains the completion message
+// (PR URL or error) — is always preserved.
+func capTranscript(s string) string {
+	if len(s) <= maxTranscriptBytes {
+		return s
+	}
+	const marker = "[…transcript truncated…]\n"
+	return marker + s[len(s)-maxTranscriptBytes:]
 }
 
 func shellQuote(s string) string {
