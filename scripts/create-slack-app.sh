@@ -82,7 +82,7 @@ Next steps:
 
   3. Paste both tokens into your local Hetchy at
        http://localhost:8080/settings/org
-       (Bot token + Socket token fields — they're stored encrypted in
+       (Bot token + Socket token fields are stored encrypted in
         your local Postgres; they do NOT go in Doppler.)
 
   4. Restart `make bot` so it opens a Socket Mode connection with the
