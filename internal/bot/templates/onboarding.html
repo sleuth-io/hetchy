@@ -3,6 +3,20 @@
 <head>
 <meta charset="utf-8">
 <title>Create your organization · Hetchy</title>
+<script>
+(function(){
+  var mq = window.matchMedia('(prefers-color-scheme: dark)');
+  function apply(){
+    var pref;
+    try { pref = localStorage.getItem('theme') || 'system'; } catch(e) { pref = 'system'; }
+    var dark = pref === 'dark' || (pref === 'system' && mq.matches);
+    document.documentElement.classList.toggle('is-dark', dark);
+  }
+  apply();
+  mq.addEventListener('change', apply);
+  window.addEventListener('storage', function(e){ if (e.key === 'theme') apply(); });
+})();
+</script>
 <style>
   body { font-family: system-ui, sans-serif; background: #f5f5f5; margin: 0;
          display: flex; align-items: center; justify-content: center; height: 100vh; }
@@ -21,6 +35,18 @@
          border-radius: .4rem; margin-bottom: 1rem; font-size: .85rem; }
   .who { color: #999; font-size: .8rem; margin-top: 1rem; text-align: center; }
   .who a { color: #999; }
+
+  html { color-scheme: light; }
+  html.is-dark { color-scheme: dark; }
+  html.is-dark body { background: #0f0f10; }
+  html.is-dark .card { background: #1c1c1f; color: #e7e7e9;
+                       box-shadow: 0 6px 24px rgba(0,0,0,.5); }
+  html.is-dark h1 { color: #f5f5f7; }
+  html.is-dark .sub { color: #9a9aa0; }
+  html.is-dark label { color: #b8b8bc; }
+  html.is-dark input { background: #232327; color: #e7e7e9; border-color: #2e2e33; }
+  html.is-dark .err { background: #3a1818; color: #ff8888; }
+  html.is-dark .who, html.is-dark .who a { color: #6e6e72; }
 </style>
 </head>
 <body>

@@ -358,6 +358,12 @@ func TestProfileTemplate_Renders(t *testing.T) {
 		`value="u@x" readonly`,
 		`action="/settings/profile/password-reset"`,
 		"Profile saved.",
+		// Appearance toggle: three options with the values the bootstrap
+		// script writes to localStorage.
+		`data-theme="system"`,
+		`data-theme="light"`,
+		`data-theme="dark"`,
+		`role="radiogroup"`,
 	} {
 		if !strings.Contains(body, w) {
 			t.Errorf("profile missing %q", w)

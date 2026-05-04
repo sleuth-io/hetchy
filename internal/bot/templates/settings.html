@@ -3,6 +3,22 @@
 <head>
 <meta charset="utf-8">
 <title>Organization settings · Hetchy</title>
+<script>
+// Theme bootstrap — see chat.html for the rationale. Inlined per-page so
+// the page paints in the chosen theme on first frame.
+(function(){
+  var mq = window.matchMedia('(prefers-color-scheme: dark)');
+  function apply(){
+    var pref;
+    try { pref = localStorage.getItem('theme') || 'system'; } catch(e) { pref = 'system'; }
+    var dark = pref === 'dark' || (pref === 'system' && mq.matches);
+    document.documentElement.classList.toggle('is-dark', dark);
+  }
+  apply();
+  mq.addEventListener('change', apply);
+  window.addEventListener('storage', function(e){ if (e.key === 'theme') apply(); });
+})();
+</script>
 <style>
   body { font-family: system-ui, sans-serif; background: #4a4d52; margin: 0; padding: 2rem;
          min-height: 100vh; box-sizing: border-box; }
@@ -188,6 +204,79 @@
                         font-size: .85rem; cursor: pointer; }
   .section-title { font-weight: 600; font-size: .9rem; margin: 1.5rem 0 .25rem; }
   .empty { color: #999; font-size: .85rem; padding: .75rem 0; }
+
+  /* Dark theme — applied via html.is-dark by the bootstrap script. */
+  html { color-scheme: light; }
+  html.is-dark { color-scheme: dark; }
+  html.is-dark body { background: #0f0f10; }
+  html.is-dark .modal-page { background: #1c1c1f;
+                             box-shadow: 0 12px 40px rgba(0,0,0,.5); }
+  html.is-dark .sidebar { background: #18181b; border-right-color: #2a2a2d; }
+  html.is-dark .sidebar h2 { color: #f5f5f7; }
+  html.is-dark .sidebar .subhead { color: #6e6e72; }
+  html.is-dark .sidebar nav a { color: #c4c4c8; }
+  html.is-dark .sidebar nav a:hover { background: #232327; }
+  html.is-dark .sidebar nav a.active { background: #1f3a5c; color: #f5f5f7; }
+  html.is-dark .sidebar nav .ico { color: #b8b8bc; }
+  html.is-dark .content .close { color: #6e6e72; }
+  html.is-dark .content .close:hover { color: #c4c4c8; }
+  html.is-dark .content h1 { color: #f5f5f7; }
+  html.is-dark .content .desc { color: #9a9aa0; }
+  html.is-dark legend { color: #e7e7e9; }
+  html.is-dark label { color: #b8b8bc; }
+  html.is-dark input[type="text"],
+  html.is-dark input[type="password"],
+  html.is-dark input[type="email"],
+  html.is-dark select { background: #232327; color: #e7e7e9; border-color: #2e2e33; }
+  html.is-dark input[readonly] { background: #1a1a1d; color: #9a9aa0; }
+  html.is-dark input.removing { background: #3a1818; color: #ff8888; }
+  html.is-dark .hint { color: #6e6e72; }
+  html.is-dark .secret-actions-overlay { background: #1a1a1d; color: #6e6e72; }
+  html.is-dark .secret-actions { color: #6e6e72; }
+  html.is-dark .sep { color: #3a3a40; }
+  html.is-dark .link-btn { color: #9a9aa0; }
+  html.is-dark .link-btn:hover { color: #e7e7e9; }
+  html.is-dark .link-btn[disabled] { color: #ff8888; }
+  html.is-dark .saved-banner { background: #173b1e; color: #5cd06b; }
+  html.is-dark .meta { color: #6e6e72; }
+
+  /* Integration cards */
+  html.is-dark .integration { background: #232327; border-color: #2e2e33;
+                              border-left-color: #2e2e33; }
+  html.is-dark .integration.enabled { border-left-color: #2dab66; }
+  html.is-dark .integration.required:not(.enabled) { border-left-color: #f5a623; }
+  html.is-dark .integration-icon { color: #c4c4c8; }
+  html.is-dark .integration-title strong { color: #f5f5f7; }
+  html.is-dark .integration-title .tag { background: #2e2e33; color: #b8b8bc; }
+  html.is-dark .integration-title .tag.required { background: #3a2c1c; color: #f0b674; }
+  html.is-dark .integration-title p { color: #9a9aa0; }
+  html.is-dark .btn-not-configured { background: #2a2a2e; color: #9a9aa0; }
+  html.is-dark .caret { color: #9a9aa0; }
+  html.is-dark .caret:hover { color: #e7e7e9; }
+  html.is-dark .integration-body { border-top-color: #2a2a2d; }
+  html.is-dark .connection { border-bottom-color: #2a2a2d; }
+  html.is-dark .connection .who strong { color: #f5f5f7; }
+  html.is-dark .connection .repos { color: #9a9aa0; }
+  html.is-dark .body-section { border-top-color: #2a2a2d; }
+
+  /* Modal dialogs */
+  html.is-dark dialog.api-modal { background: #1c1c1f; color: #e7e7e9;
+                                  box-shadow: 0 24px 64px rgba(0,0,0,.6); }
+  html.is-dark dialog.api-modal::backdrop { background: rgba(0,0,0,.6); }
+  html.is-dark dialog.api-modal h2 { color: #f5f5f7; }
+  html.is-dark dialog.api-modal p { color: #9a9aa0; }
+  html.is-dark dialog.api-modal .cancel { background: #232327; color: #c4c4c8;
+                                          border-color: #2e2e33; }
+  html.is-dark dialog.api-modal .cancel:hover { background: #2a2a2e; }
+
+  /* Members table */
+  html.is-dark table.members th { color: #6e6e72; border-bottom-color: #2a2a2d; }
+  html.is-dark table.members td { border-bottom-color: #232327; }
+  html.is-dark table.members .name { color: #f5f5f7; }
+  html.is-dark table.members .email { color: #9a9aa0; }
+  html.is-dark table.members .pill { background: #2e2e33; color: #b8b8bc; }
+  html.is-dark table.members .pill.pending { background: #3a3220; color: #f0c674; }
+  html.is-dark .empty { color: #6e6e72; }
 </style>
 </head>
 <body>

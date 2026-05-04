@@ -3,6 +3,25 @@
 <head>
 <meta charset="utf-8">
 <title>Hetchy</title>
+<script>
+// Theme bootstrap — runs before any styles are applied so the page paints
+// in the chosen theme on first frame (no flash of light content). The
+// preference lives in localStorage under 'theme' with values
+// "system" | "light" | "dark"; "system" (or missing) follows the OS via
+// prefers-color-scheme. A change in either source flips html.is-dark.
+(function(){
+  var mq = window.matchMedia('(prefers-color-scheme: dark)');
+  function apply(){
+    var pref;
+    try { pref = localStorage.getItem('theme') || 'system'; } catch(e) { pref = 'system'; }
+    var dark = pref === 'dark' || (pref === 'system' && mq.matches);
+    document.documentElement.classList.toggle('is-dark', dark);
+  }
+  apply();
+  mq.addEventListener('change', apply);
+  window.addEventListener('storage', function(e){ if (e.key === 'theme') apply(); });
+})();
+</script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: system-ui, sans-serif; display: flex; height: 100vh;
@@ -102,6 +121,46 @@
   .user-menu-dropdown a.item .ico { width: 1rem; height: 1rem; opacity: .65;
                                      flex-shrink: 0; color: #555; }
   .user-menu-dropdown .divider { border-top: 1px solid #f0f0f0; margin: .25rem 0; }
+
+  /* Dark theme — applied via html.is-dark by the bootstrap script. Kept
+     as overrides on top of the light defaults so the light path stays
+     untouched and either rule set is easy to find when tweaking colors. */
+  html { color-scheme: light; }
+  html.is-dark { color-scheme: dark; }
+  html.is-dark body { background: #18181b; color: #e7e7e9; }
+  html.is-dark #sidebar { background: #1c1c1f; border-right-color: #2a2a2d; }
+  html.is-dark #sidebar-head { border-bottom-color: #2a2a2d; }
+  html.is-dark .new-chat-btn { background: #232327; border-color: #2e2e33; color: #e7e7e9; }
+  html.is-dark .new-chat-btn:hover { background: #2a2a2e; border-color: #3a3a40; }
+  html.is-dark .new-chat-btn .plus { color: #9a9aa0; }
+  html.is-dark #sidebar-section { color: #6e6e72; }
+  html.is-dark #chat-list .empty { color: #6e6e72; }
+  html.is-dark .chat-item { color: #c4c4c8; }
+  html.is-dark .chat-item:hover { background: #2a2a2e; }
+  html.is-dark .chat-item.active { background: #1f3a5c; color: #7dc4ff; }
+  html.is-dark .chat-item.pending { color: #6e6e72; }
+  html.is-dark .chat-item.pending.active { color: #7dc4ff; }
+  html.is-dark .msg.bot { background: #232327; border-color: #2e2e33; color: #e7e7e9; }
+  html.is-dark #empty-state { color: #9a9aa0; }
+  html.is-dark #empty-state h2 { color: #e7e7e9; }
+  html.is-dark #bar { background: #1c1c1f; border-top-color: #2a2a2d; }
+  html.is-dark #inp { background: #232327; color: #e7e7e9; border-color: #2e2e33; }
+  html.is-dark #session-bar { background: #1c1c1f; border-top-color: #2a2a2d; color: #6e6e72; }
+  html.is-dark .user-menu { border-top-color: #2a2a2d; }
+  html.is-dark .user-menu-trigger { color: #e7e7e9; }
+  html.is-dark .user-menu-trigger:hover,
+  html.is-dark .user-menu-trigger[aria-expanded="true"] { background: #2a2a2e; }
+  html.is-dark .avatar { background: #2a2a2e; }
+  html.is-dark .user-menu-dropdown { background: #232327; border-color: #2e2e33;
+                                     box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+  html.is-dark .user-menu-header { border-bottom-color: #2a2a2d; }
+  html.is-dark .user-menu-header .avatar-lg { background: #2a2a2e; }
+  html.is-dark .user-menu-header .name { color: #f5f5f7; }
+  html.is-dark .user-menu-header .email { color: #9a9aa0; }
+  html.is-dark .user-menu-dropdown a.item { color: #c4c4c8; }
+  html.is-dark .user-menu-dropdown a.item:hover { background: #2a2a2e; }
+  html.is-dark .user-menu-dropdown a.item .ico { color: #9a9aa0; }
+  html.is-dark .user-menu-dropdown .divider { border-top-color: #2a2a2d; }
 </style>
 </head>
 <body>
