@@ -310,6 +310,30 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad form", http.StatusBadRequest)
 		return
 	}
+	tab := r.URL.Query().Get("tab")
+	if tab == "" {
+		tab = "general"
+	}
+
+	// General tab posts only the org_name field. Pushing it through the
+	// integrations save below would null out default_repo and the API-key
+	// previews, so handle the rename inline and bounce.
+	if tab == "general" {
+		name := strings.TrimSpace(r.FormValue("org_name"))
+		if name == "" {
+			http.Error(w, "organization name is required", http.StatusBadRequest)
+			return
+		}
+		if err := b.auth.UpdateOrganizationName(r.Context(), p.OrgID, name); err != nil {
+			b.log.Error("update org name failed", "error", err, "org", p.OrgID)
+			http.Error(w, "rename: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		b.log.Info("org renamed", "org", p.OrgID, "actor", p.UserID)
+		http.Redirect(w, r, "/settings/org?tab=general&saved=1", http.StatusFound)
+		return
+	}
+
 	current, err := b.orgs.Get(r.Context(), p.OrgID)
 	if err != nil && !errors.Is(err, orgcfg.ErrNotFound) {
 		http.Error(w, "load config: "+err.Error(), http.StatusInternalServerError)
@@ -372,10 +396,6 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 	)
 	// Slack creds may have changed; rebuild that org's connection.
 	b.slack.RestartOrg(r.Context(), p.OrgID)
-	tab := r.URL.Query().Get("tab")
-	if tab == "" {
-		tab = "general"
-	}
 	http.Redirect(w, r, "/settings/org?tab="+tab+"&saved=1", http.StatusFound)
 }
 

@@ -272,6 +272,17 @@ func (s *Service) GetOrganizationName(ctx context.Context, orgID string) (string
 	return org.Name, nil
 }
 
+// UpdateOrganizationName renames the WorkOS organization. The change is
+// pushed to WorkOS as the source of truth — settings pages should re-read
+// via GetOrganizationName afterwards rather than caching locally.
+func (s *Service) UpdateOrganizationName(ctx context.Context, orgID, name string) error {
+	if s.cfg.Bypass {
+		return nil
+	}
+	_, err := s.client.Organizations().Update(ctx, orgID, &workos.OrganizationsUpdateParams{Name: &name})
+	return err
+}
+
 // DeleteOrganization is a best-effort rollback used by the onboarding
 // handler when org creation succeeded but a follow-up step (membership
 // creation) failed. Errors here are logged but not surfaced — the

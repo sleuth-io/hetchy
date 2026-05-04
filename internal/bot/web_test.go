@@ -78,9 +78,9 @@ func TestIndexHandler_RedirectsAuthenticatedNoOrgToOnboarding(t *testing.T) {
 	}
 }
 
-// TestSettingsTemplate_GeneralTab covers the General tab post-redesign:
-// it shows the org name (read-only, sourced from WorkOS) and a brief
-// description. Integrations live on their own tab.
+// TestSettingsTemplate_GeneralTab covers the General tab: the org name
+// is editable and posts back to /settings/org?tab=general so the rename
+// can be pushed to WorkOS. Integrations live on their own tab.
 func TestSettingsTemplate_GeneralTab(t *testing.T) {
 	b := newBypassBot(t)
 	rec := httptest.NewRecorder()
@@ -92,12 +92,18 @@ func TestSettingsTemplate_GeneralTab(t *testing.T) {
 	}
 	body := rec.Body.String()
 	for _, w := range []string{
-		`value="Acme Inc." readonly`,
-		`Managed in WorkOS`,
+		`name="org_name"`,
+		`value="Acme Inc."`,
+		`action="/settings/org?tab=general"`,
 	} {
 		if !strings.Contains(body, w) {
 			t.Errorf("general tab missing %q", w)
 		}
+	}
+	// The org-name input must not be readonly any more — users should
+	// be able to type a new name and submit.
+	if strings.Contains(body, `id="org_name" type="text" value="Acme Inc." readonly`) {
+		t.Errorf("org_name should not be readonly")
 	}
 	// Anthropic moved to Integrations — the General tab should NOT
 	// surface its form input.
@@ -356,6 +362,42 @@ func TestProfileTemplate_Renders(t *testing.T) {
 		if !strings.Contains(body, w) {
 			t.Errorf("profile missing %q", w)
 		}
+	}
+}
+
+// TestChatTemplate_SidebarUserMenu verifies the chat page renders the
+// user menu at the bottom of the sidebar (with User settings,
+// Organization settings, and Log out entries) and no longer shows the
+// old top-nav bar with a separate Settings link.
+func TestChatTemplate_SidebarUserMenu(t *testing.T) {
+	b := newBypassBot(t)
+	rec := httptest.NewRecorder()
+	b.renderTemplate(rec, chatHTMLTpl, map[string]any{
+		"Email":       "ada@example.com",
+		"DisplayName": "Ada Lovelace",
+		"GravatarURL": "https://example.com/avatar.png",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, w := range []string{
+		`id="sidebar"`,
+		`class="user-menu"`,
+		`id="user-menu-btn"`,
+		`href="/settings/profile"`,
+		`User settings`,
+		`href="/settings/org"`,
+		`Organization settings`,
+		`href="/logout"`,
+		`Ada Lovelace`,
+	} {
+		if !strings.Contains(body, w) {
+			t.Errorf("chat template missing %q", w)
+		}
+	}
+	if strings.Contains(body, `id="topbar"`) {
+		t.Errorf("chat template should no longer render the top nav bar")
 	}
 }
 

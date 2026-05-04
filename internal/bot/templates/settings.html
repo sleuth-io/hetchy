@@ -247,12 +247,15 @@
 
   {{if .SavedMessage}}<div class="saved-banner">{{.SavedMessage}}</div>{{end}}
 
-  <fieldset>
-    <legend>Organization</legend>
-    <label for="org_name">Name</label>
-    <input id="org_name" type="text" value="{{.OrgName}}" readonly>
-    <p class="hint">Managed in WorkOS. Contact support to rename.</p>
-  </fieldset>
+  <form method="POST" action="/settings/org?tab=general">
+    <fieldset>
+      <legend>Organization</legend>
+      <label for="org_name">Name</label>
+      <input id="org_name" type="text" name="org_name" value="{{.OrgName}}" required maxlength="120">
+      <p class="hint">Shown to your team in the sidebar and on invites. Pushed straight through to WorkOS on save.</p>
+    </fieldset>
+    <button class="primary" type="submit">Save</button>
+  </form>
 {{end}}
 
 {{define "integrations"}}
