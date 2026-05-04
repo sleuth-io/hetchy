@@ -135,6 +135,8 @@ func LoadConfig() (Config, error) {
 		GitHubAppID:            ghAppID,
 		GitHubAppSlug:          strings.TrimSpace(os.Getenv("GITHUB_APP_SLUG")),
 		GitHubAppClientID:      strings.TrimSpace(os.Getenv("GITHUB_APP_CLIENT_ID")),
+		// Not trimmed: PEM contents are multi-line and the parser relies on
+		// embedded newlines; trimming risks corrupting the key.
 		GitHubAppPrivateKey:    os.Getenv("GITHUB_APP_PRIVATE_KEY"),
 		GitHubAppWebhookSecret: strings.TrimSpace(os.Getenv("GITHUB_APP_WEBHOOK_SECRET")),
 		AuthBypass:             bypass,
