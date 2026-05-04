@@ -110,6 +110,14 @@ func TestInstallURL(t *testing.T) {
 	if got != want {
 		t.Errorf("InstallURL = %q, want %q", got, want)
 	}
+	// Defensive: if the state-token encoding ever changes to include
+	// reserved characters, url.Values must escape them rather than
+	// emitting a malformed URL.
+	got = app.InstallURL("a b&c=d")
+	want = "https://github.com/apps/hetchy-dev/installations/new?state=a+b%26c%3Dd"
+	if got != want {
+		t.Errorf("InstallURL with reserved chars = %q, want %q", got, want)
+	}
 }
 
 // TestAppJWT_VerifiesWithPublicKey confirms the App-level JWT we mint

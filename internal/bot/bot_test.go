@@ -271,3 +271,66 @@ func TestRetryWithBackoff(t *testing.T) {
 		})
 	}
 }
+
+// TestParseOwnerRepo locks in the contract used by the "ask for repo"
+// flow: anything the user might paste — bare `owner/name`, a github.com
+// URL, a clone-style `.git` suffix, trailing punctuation — should
+// resolve to the same pair, while gibberish or path-traversal shapes
+// must be rejected.
+func TestParseOwnerRepo(t *testing.T) {
+	cases := []struct {
+		in    string
+		owner string
+		name  string
+		ok    bool
+	}{
+		{"acme/website", "acme", "website", true},
+		{"  acme/website  ", "acme", "website", true},
+		{"https://github.com/acme/website", "acme", "website", true},
+		{"http://github.com/acme/website", "acme", "website", true},
+		{"github.com/acme/website", "acme", "website", true},
+		{"acme/website.git", "acme", "website", true},
+		{"https://github.com/acme/website.git", "acme", "website", true},
+		{"https://github.com/acme/website/tree/main", "acme", "website", true},
+		{"acme/website.", "acme", "website", true},
+		{"acme/website,", "acme", "website", true},
+		{"acme/website!", "acme", "website", true},
+		{"acme/website)", "acme", "website", true},
+		{"the auth one", "", "", false},
+		{"acme", "", "", false},
+		{"acme/", "", "", false},
+		{"/website", "", "", false},
+		{"acme//website", "", "", false},
+		{"acme/web site", "", "", false},
+		{"./website", "", "", false},
+		{"-acme/website", "", "", false},
+		{"acme/.", "", "", false},
+		{"acme/..", "", "", false},
+		{"acme/web$site", "", "", false},
+		{"", "", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.in, func(t *testing.T) {
+			gotOwner, gotName, gotOk := parseOwnerRepo(tc.in)
+			if gotOk != tc.ok || gotOwner != tc.owner || gotName != tc.name {
+				t.Errorf("parseOwnerRepo(%q) = (%q, %q, %v), want (%q, %q, %v)",
+					tc.in, gotOwner, gotName, gotOk, tc.owner, tc.name, tc.ok)
+			}
+		})
+	}
+}
+
+func TestValidGitHubName(t *testing.T) {
+	good := []string{"acme", "ACME", "acme-co", "acme_co", "v1.2", "a", "a1b2c3"}
+	bad := []string{"", ".", "..", ".acme", "-acme", "acme/website", "acme co", "acme$", strings.Repeat("a", 101)}
+	for _, s := range good {
+		if !validGitHubName(s) {
+			t.Errorf("validGitHubName(%q) = false, want true", s)
+		}
+	}
+	for _, s := range bad {
+		if validGitHubName(s) {
+			t.Errorf("validGitHubName(%q) = true, want false", s)
+		}
+	}
+}

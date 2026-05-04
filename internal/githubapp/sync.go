@@ -29,6 +29,10 @@ type SyncResult struct {
 // items present locally but missing from GitHub on this run are
 // pruned. Items new in GitHub are upserted, which also bumps
 // last_synced_at.
+//
+// All DB writes happen inside one transaction so a crash, context
+// cancellation, or a concurrent webhook for the same installation can
+// never leave the cache in a half-applied state.
 func (a *App) SyncInstallation(ctx context.Context, store *db.Store, installationID int64) (SyncResult, error) {
 	if store == nil {
 		return SyncResult{}, errors.New("githubapp: SyncInstallation requires a non-nil db store")
@@ -37,106 +41,119 @@ func (a *App) SyncInstallation(ctx context.Context, store *db.Store, installatio
 	if err != nil {
 		return SyncResult{}, fmt.Errorf("client for installation %d: %w", installationID, err)
 	}
+	appCli, err := a.AppClient()
+	if err != nil {
+		return SyncResult{}, fmt.Errorf("app client: %w", err)
+	}
 
+	// GitHub round-trips happen outside the transaction so we don't hold a
+	// DB connection open for tens of seconds on a slow Apps API; the tx
+	// only owns the writes.
 	repos, err := listInstallationRepos(ctx, cli)
 	if err != nil {
 		return SyncResult{}, fmt.Errorf("list repos: %w", err)
 	}
-	keepRepoIDs := make([]int64, 0, len(repos))
-	for _, r := range repos {
-		if err := store.Queries.UpsertGithubRepo(ctx, sqlc.UpsertGithubRepoParams{
-			InstallationID: installationID,
-			RepoID:         r.GetID(),
-			Owner:          r.GetOwner().GetLogin(),
-			Name:           r.GetName(),
-			DefaultBranch:  r.GetDefaultBranch(),
-			Private:        r.GetPrivate(),
-		}); err != nil {
-			return SyncResult{}, fmt.Errorf("upsert repo %s: %w", r.GetFullName(), err)
-		}
-		keepRepoIDs = append(keepRepoIDs, r.GetID())
-	}
-	if err := store.Queries.DeleteGithubReposByInstallationExcept(ctx, sqlc.DeleteGithubReposByInstallationExceptParams{
-		InstallationID: installationID,
-		Column2:        keepRepoIDs,
-	}); err != nil {
-		return SyncResult{}, fmt.Errorf("prune repos: %w", err)
-	}
-
-	result := SyncResult{InstallationID: installationID, Repos: len(repos)}
-
-	// Teams + memberships only make sense for Organization installs.
-	// Caller passes the installation row, but here we re-discover the
-	// account type by inspecting the installation through the App
-	// client — avoids requiring callers to thread it in and keeps the
-	// sync entrypoint a single id.
-	appCli, err := a.AppClient()
-	if err != nil {
-		return result, fmt.Errorf("app client: %w", err)
-	}
 	inst, _, err := appCli.Apps.GetInstallation(ctx, installationID)
 	if err != nil {
-		return result, fmt.Errorf("get installation %d: %w", installationID, err)
+		return SyncResult{}, fmt.Errorf("get installation %d: %w", installationID, err)
 	}
-	if inst.GetAccount().GetType() != "Organization" {
-		return result, nil
-	}
-	orgLogin := inst.GetAccount().GetLogin()
-
-	teams, err := listOrgTeams(ctx, cli, orgLogin)
-	if err != nil {
-		return result, fmt.Errorf("list teams: %w", err)
-	}
-	keepTeamIDs := make([]int64, 0, len(teams))
-	for _, t := range teams {
-		var parentID *int64
-		if p := t.GetParent(); p != nil {
-			id := p.GetID()
-			parentID = &id
-		}
-		if err := store.Queries.UpsertGithubTeam(ctx, sqlc.UpsertGithubTeamParams{
-			InstallationID: installationID,
-			TeamID:         t.GetID(),
-			Slug:           t.GetSlug(),
-			Name:           t.GetName(),
-			ParentTeamID:   parentID,
-		}); err != nil {
-			return result, fmt.Errorf("upsert team %s: %w", t.GetSlug(), err)
-		}
-		keepTeamIDs = append(keepTeamIDs, t.GetID())
-
-		members, err := listTeamMembers(ctx, cli, orgLogin, t.GetSlug())
+	var teams []*github.Team
+	teamMembers := map[int64][]*github.User{}
+	if inst.GetAccount().GetType() == "Organization" {
+		orgLogin := inst.GetAccount().GetLogin()
+		teams, err = listOrgTeams(ctx, cli, orgLogin)
 		if err != nil {
-			return result, fmt.Errorf("list members of %s: %w", t.GetSlug(), err)
+			return SyncResult{}, fmt.Errorf("list teams: %w", err)
 		}
-		// Replace strategy: wipe this team's members then re-insert.
-		// Cleaner than diffing for the small per-team size we expect
-		// (single-digit to low-hundred members).
-		if err := store.Queries.DeleteGithubTeamMembersForTeam(ctx, sqlc.DeleteGithubTeamMembersForTeamParams{
+		for _, t := range teams {
+			members, err := listTeamMembers(ctx, cli, orgLogin, t.GetSlug())
+			if err != nil {
+				return SyncResult{}, fmt.Errorf("list members of %s: %w", t.GetSlug(), err)
+			}
+			teamMembers[t.GetID()] = members
+		}
+	}
+
+	result := SyncResult{InstallationID: installationID, Repos: len(repos), Teams: len(teams)}
+	err = store.WithTx(ctx, func(q *sqlc.Queries) error {
+		keepRepoIDs := make([]int64, 0, len(repos))
+		for _, r := range repos {
+			if err := q.UpsertGithubRepo(ctx, sqlc.UpsertGithubRepoParams{
+				InstallationID: installationID,
+				RepoID:         r.GetID(),
+				Owner:          r.GetOwner().GetLogin(),
+				Name:           r.GetName(),
+				DefaultBranch:  r.GetDefaultBranch(),
+				Private:        r.GetPrivate(),
+			}); err != nil {
+				return fmt.Errorf("upsert repo %s: %w", r.GetFullName(), err)
+			}
+			keepRepoIDs = append(keepRepoIDs, r.GetID())
+		}
+		if err := q.DeleteGithubReposByInstallationExcept(ctx, sqlc.DeleteGithubReposByInstallationExceptParams{
 			InstallationID: installationID,
-			TeamID:         t.GetID(),
+			Column2:        keepRepoIDs,
 		}); err != nil {
-			return result, fmt.Errorf("clear members of %s: %w", t.GetSlug(), err)
+			return fmt.Errorf("prune repos: %w", err)
 		}
-		for _, u := range members {
-			if err := store.Queries.UpsertGithubTeamMember(ctx, sqlc.UpsertGithubTeamMemberParams{
+
+		if len(teams) == 0 {
+			return nil
+		}
+
+		keepTeamIDs := make([]int64, 0, len(teams))
+		for _, t := range teams {
+			var parentID *int64
+			if p := t.GetParent(); p != nil {
+				id := p.GetID()
+				parentID = &id
+			}
+			if err := q.UpsertGithubTeam(ctx, sqlc.UpsertGithubTeamParams{
 				InstallationID: installationID,
 				TeamID:         t.GetID(),
-				GithubUserID:   u.GetID(),
-				GithubLogin:    u.GetLogin(),
+				Slug:           t.GetSlug(),
+				Name:           t.GetName(),
+				ParentTeamID:   parentID,
 			}); err != nil {
-				return result, fmt.Errorf("upsert member %s/%s: %w", t.GetSlug(), u.GetLogin(), err)
+				return fmt.Errorf("upsert team %s: %w", t.GetSlug(), err)
 			}
+			keepTeamIDs = append(keepTeamIDs, t.GetID())
+
+			// Replace strategy: wipe this team's members then re-insert.
+			// Cleaner than diffing for the small per-team size we expect
+			// (single-digit to low-hundred members).
+			if err := q.DeleteGithubTeamMembersForTeam(ctx, sqlc.DeleteGithubTeamMembersForTeamParams{
+				InstallationID: installationID,
+				TeamID:         t.GetID(),
+			}); err != nil {
+				return fmt.Errorf("clear members of %s: %w", t.GetSlug(), err)
+			}
+			members := teamMembers[t.GetID()]
+			for _, u := range members {
+				if err := q.UpsertGithubTeamMember(ctx, sqlc.UpsertGithubTeamMemberParams{
+					InstallationID: installationID,
+					TeamID:         t.GetID(),
+					GithubUserID:   u.GetID(),
+					GithubLogin:    u.GetLogin(),
+				}); err != nil {
+					return fmt.Errorf("upsert member %s/%s: %w", t.GetSlug(), u.GetLogin(), err)
+				}
+			}
+			result.TeamMembers += len(members)
 		}
-		result.TeamMembers += len(members)
+		// FK on github_team_members(installation_id, team_id) cascades,
+		// so pruning the team here also drops its member rows.
+		if err := q.DeleteGithubTeamsByInstallationExcept(ctx, sqlc.DeleteGithubTeamsByInstallationExceptParams{
+			InstallationID: installationID,
+			Column2:        keepTeamIDs,
+		}); err != nil {
+			return fmt.Errorf("prune teams: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return SyncResult{}, err
 	}
-	if err := store.Queries.DeleteGithubTeamsByInstallationExcept(ctx, sqlc.DeleteGithubTeamsByInstallationExceptParams{
-		InstallationID: installationID,
-		Column2:        keepTeamIDs,
-	}); err != nil {
-		return result, fmt.Errorf("prune teams: %w", err)
-	}
-	result.Teams = len(teams)
 	return result, nil
 }
 

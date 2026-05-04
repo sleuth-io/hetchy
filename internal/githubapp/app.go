@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -90,8 +91,14 @@ func (a *App) Slug() string { return a.cfg.Slug }
 // query, which lets us tie the install to the originating Hetchy org
 // + user without ever trusting the installation_id alone.
 func (a *App) InstallURL(state string) string {
-	return fmt.Sprintf("https://github.com/apps/%s/installations/new?state=%s",
-		a.cfg.Slug, state)
+	u := url.URL{
+		Scheme: "https",
+		Host:   "github.com",
+		Path:   "/apps/" + a.cfg.Slug + "/installations/new",
+	}
+	q := url.Values{"state": {state}}
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 // jwtTTL is the lifetime of the App-level JWT used to mint

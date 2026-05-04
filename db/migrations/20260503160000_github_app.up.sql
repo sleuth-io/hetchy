@@ -53,13 +53,18 @@ CREATE TABLE github_teams (
     PRIMARY KEY (installation_id, team_id)
 );
 
+-- The composite FK on (installation_id, team_id) makes pruning a team
+-- cascade-delete its member rows, which is what the sync routine needs
+-- when GitHub reports a team has been removed. Without it, member rows
+-- silently leak whenever DeleteGithubTeamsByInstallationExcept fires.
 CREATE TABLE github_team_members (
-    installation_id  BIGINT NOT NULL
-        REFERENCES github_app_installations(installation_id) ON DELETE CASCADE,
+    installation_id  BIGINT NOT NULL,
     team_id          BIGINT NOT NULL,
     github_user_id   BIGINT NOT NULL,
     github_login     TEXT NOT NULL,
-    PRIMARY KEY (installation_id, team_id, github_user_id)
+    PRIMARY KEY (installation_id, team_id, github_user_id),
+    FOREIGN KEY (installation_id, team_id)
+        REFERENCES github_teams (installation_id, team_id) ON DELETE CASCADE
 );
 
 -- Drop the PAT/pinned-repo columns from org_configs and replace them with

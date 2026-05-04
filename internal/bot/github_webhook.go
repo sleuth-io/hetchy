@@ -187,9 +187,11 @@ func (b *Bot) handleInstallationEvent(ctx context.Context, body []byte) {
 		row, err := b.store.Queries.GetGithubInstallation(ctx, p.Installation.ID)
 		if err != nil {
 			// `created` arrives before the setup callback in some
-			// flows (e.g. install without redirect); skip silently —
-			// the setup callback writes the row.
-			b.log.Debug("github webhook: installation not yet recorded", "id", p.Installation.ID)
+			// flows (e.g. install without redirect). The setup callback
+			// is what writes the row, so drop this event — but log at
+			// Info so a stuck install (setup callback never fired) is
+			// visible in production rather than buried at Debug.
+			b.log.Info("github webhook: installation not yet recorded; awaiting setup callback", "id", p.Installation.ID, "action", p.Action)
 			return
 		}
 		var suspended pgtype.Timestamptz

@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/google/go-github/v66/github"
+	"golang.org/x/sync/singleflight"
 )
 
 // installationTokenSafetyWindow is how long before actual expiry we
@@ -30,6 +32,10 @@ type tokenEntry struct {
 type tokenCache struct {
 	mu      sync.Mutex
 	entries map[int64]*tokenEntry
+	// flight coalesces concurrent mint requests for the same
+	// (installation, scope) so a burst of webhook/sandbox launches for
+	// the same org doesn't multiply our GitHub API spend.
+	flight singleflight.Group
 }
 
 func newTokenCache() *tokenCache {
@@ -45,45 +51,100 @@ func newTokenCache() *tokenCache {
 // Cached tokens are reused until they're within the safety window of
 // expiry and were minted with the same scope set.
 func (a *App) InstallationToken(ctx context.Context, installationID int64, repoIDs []int64) (string, time.Time, error) {
-	a.tokens.mu.Lock()
-	if e, ok := a.tokens.entries[installationID]; ok {
-		if time.Until(e.expiresAt) > installationTokenSafetyWindow && sameInts(e.repoIDs, repoIDs) {
-			tok, exp := e.token, e.expiresAt
-			a.tokens.mu.Unlock()
-			return tok, exp, nil
-		}
+	if tok, exp, ok := a.cachedToken(installationID, repoIDs); ok {
+		return tok, exp, nil
 	}
-	a.tokens.mu.Unlock()
 
-	jwtTok, err := a.appJWT()
+	// Coalesce concurrent mint requests so a burst of inbound work for
+	// the same installation only spends one GitHub API call. The key
+	// includes the scope set so a sandbox token (single repo) and a
+	// sync token (full access) for the same install don't share a flight.
+	key := mintKey(installationID, repoIDs)
+	v, err, _ := a.tokens.flight.Do(key, func() (any, error) {
+		// Re-check the cache: the inflight goroutine may have just
+		// populated it for the same key while we were waiting on Do.
+		if tok, exp, ok := a.cachedToken(installationID, repoIDs); ok {
+			return mintResult{token: tok, expiresAt: exp}, nil
+		}
+		jwtTok, err := a.appJWT()
+		if err != nil {
+			return mintResult{}, err
+		}
+		cli := github.NewClient(a.http).WithAuthToken(jwtTok)
+		opts := &github.InstallationTokenOptions{}
+		if len(repoIDs) > 0 {
+			opts.RepositoryIDs = repoIDs
+		}
+		itok, resp, err := cli.Apps.CreateInstallationToken(ctx, installationID, opts)
+		if err != nil {
+			status := 0
+			if resp != nil {
+				status = resp.StatusCode
+			}
+			return mintResult{}, fmt.Errorf("create installation token (status %d): %w", status, err)
+		}
+		if itok.GetToken() == "" || itok.GetExpiresAt().IsZero() {
+			return mintResult{}, errors.New("create installation token: empty response")
+		}
+		a.tokens.mu.Lock()
+		a.tokens.entries[installationID] = &tokenEntry{
+			token:     itok.GetToken(),
+			expiresAt: itok.GetExpiresAt().Time,
+			repoIDs:   append([]int64(nil), repoIDs...),
+		}
+		a.tokens.mu.Unlock()
+		return mintResult{token: itok.GetToken(), expiresAt: itok.GetExpiresAt().Time}, nil
+	})
 	if err != nil {
 		return "", time.Time{}, err
 	}
-	cli := github.NewClient(a.http).WithAuthToken(jwtTok)
-	opts := &github.InstallationTokenOptions{}
-	if len(repoIDs) > 0 {
-		opts.RepositoryIDs = repoIDs
-	}
-	itok, resp, err := cli.Apps.CreateInstallationToken(ctx, installationID, opts)
-	if err != nil {
-		status := 0
-		if resp != nil {
-			status = resp.StatusCode
-		}
-		return "", time.Time{}, fmt.Errorf("create installation token (status %d): %w", status, err)
-	}
-	if itok.GetToken() == "" || itok.GetExpiresAt().IsZero() {
-		return "", time.Time{}, errors.New("create installation token: empty response")
-	}
+	r := v.(mintResult)
+	return r.token, r.expiresAt, nil
+}
 
+type mintResult struct {
+	token     string
+	expiresAt time.Time
+}
+
+// cachedToken returns the cached token for installationID if one exists
+// that's still inside the safety window and was minted with a matching
+// scope set. The bool reports whether the returned token is usable.
+func (a *App) cachedToken(installationID int64, repoIDs []int64) (string, time.Time, bool) {
 	a.tokens.mu.Lock()
-	a.tokens.entries[installationID] = &tokenEntry{
-		token:     itok.GetToken(),
-		expiresAt: itok.GetExpiresAt().Time,
-		repoIDs:   append([]int64(nil), repoIDs...),
+	defer a.tokens.mu.Unlock()
+	e, ok := a.tokens.entries[installationID]
+	if !ok {
+		return "", time.Time{}, false
 	}
-	a.tokens.mu.Unlock()
-	return itok.GetToken(), itok.GetExpiresAt().Time, nil
+	if time.Until(e.expiresAt) <= installationTokenSafetyWindow {
+		return "", time.Time{}, false
+	}
+	if !sameInts(e.repoIDs, repoIDs) {
+		return "", time.Time{}, false
+	}
+	return e.token, e.expiresAt, true
+}
+
+// mintKey is the singleflight key for a given (installation, scope)
+// pair. Scope IDs are sorted so callers passing the same set in
+// different orders share a flight.
+func mintKey(installationID int64, repoIDs []int64) string {
+	if len(repoIDs) == 0 {
+		return strconv.FormatInt(installationID, 10) + ":all"
+	}
+	sorted := slices.Clone(repoIDs)
+	slices.Sort(sorted)
+	var b []byte
+	b = strconv.AppendInt(b, installationID, 10)
+	b = append(b, ':')
+	for i, id := range sorted {
+		if i > 0 {
+			b = append(b, ',')
+		}
+		b = strconv.AppendInt(b, id, 10)
+	}
+	return string(b)
 }
 
 // InvalidateInstallation drops any cached token for installationID.

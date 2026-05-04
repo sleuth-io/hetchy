@@ -67,6 +67,9 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_args: "--max-turns 50"
           track_progress: true
+          # Hetchy itself is dogfooded against this repo — PRs opened by
+          # hetchy-dev[bot] / hetchy[bot] should still get reviewed.
+          allowed_bots: "*"
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
