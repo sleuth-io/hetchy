@@ -14,13 +14,13 @@
 #   DAYTONA_API_URL   — empty/cloud URL or http://localhost:3000/api for local
 #
 # Optional env:
-#   SNAPSHOT_NAME             default: claude-playwright
+#   SNAPSHOT_NAME             default: universal-coding
 #   SNAPSHOT_TAG              default: 1
 #   LOCAL_REGISTRY_HOST_PORT  default: localhost:6000
 #   LOCAL_REGISTRY_INTERNAL   default: registry:6000
 set -euo pipefail
 
-SNAPSHOT_NAME="${SNAPSHOT_NAME:-claude-playwright}"
+SNAPSHOT_NAME="${SNAPSHOT_NAME:-universal-coding}"
 SNAPSHOT_TAG="${SNAPSHOT_TAG:-1}"
 LOCAL_REGISTRY_HOST_PORT="${LOCAL_REGISTRY_HOST_PORT:-localhost:6000}"
 LOCAL_REGISTRY_INTERNAL="${LOCAL_REGISTRY_INTERNAL:-registry:6000}"

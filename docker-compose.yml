@@ -91,7 +91,7 @@ services:
       # Daytona configuration
       DAYTONA_API_URL: ${DAYTONA_API_URL:-}
       DAYTONA_API_KEY: ${DAYTONA_API_KEY}
-      DAYTONA_SNAPSHOT: ${DAYTONA_SNAPSHOT:-claude-playwright:1}
+      DAYTONA_SNAPSHOT: ${DAYTONA_SNAPSHOT:-universal-coding:1}
 
       # WorkOS configuration
       WORKOS_API_KEY: ${WORKOS_API_KEY}
