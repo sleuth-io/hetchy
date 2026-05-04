@@ -311,15 +311,19 @@ func (b *Bot) handleSlackEvent(ctx context.Context, oc orgcfg.Config, ev incomin
 	conversationURL := b.cfg.PublicBaseURL() + "/?session=" + threadID
 	emit := newSlackEmitter(b.log, cli, ev.channel, replyTo, ev.user, conversationURL)
 	b.HandleRequest(ctx, oc, text, requestID, threadID, emit)
-	// Reaction bookkeeping: the eyes/recycle that signalled "working on
-	// it" gets swapped for a final ✓/✗ once HandleRequest returns. We
-	// can't tell from the emitter alone whether the run succeeded, so
-	// fall back to the last result/error block kind.
-	removeReaction(b.log, cli, ev.channel, threadID, reaction)
-	if emit.lastTerminalKind == blocks.KindError {
-		addReaction(b.log, cli, ev.channel, threadID, "x")
-	} else {
-		addReaction(b.log, cli, ev.channel, threadID, "white_check_mark")
+	// Reaction bookkeeping: only swap the eyes/recycle that signalled
+	// "working on it" for a final ✓/✗ when the run actually reached a
+	// terminal state. Bot-driven question turns ("Which repository?"
+	// / "Try again") leave the running reaction in place — stamping
+	// a green check on a question is misleading, and stamping ✗ on a
+	// nudge is worse.
+	if emit.terminated {
+		removeReaction(b.log, cli, ev.channel, threadID, reaction)
+		if emit.lastTerminalKind == blocks.KindError {
+			addReaction(b.log, cli, ev.channel, threadID, "x")
+		} else {
+			addReaction(b.log, cli, ev.channel, threadID, "white_check_mark")
+		}
 	}
 }
 

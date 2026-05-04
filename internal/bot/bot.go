@@ -275,23 +275,27 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 
 	rec, err := b.convs.Get(ctx, oc.OrgID, threadID)
 	switch {
-	case err == nil && rec.SandboxID != "":
-		// Live conversation — agent has run before, pinning is set.
+	case err == nil && rec.SandboxID != "" && rec.PRURL != "":
+		// Live conversation — agent succeeded at least once, PR exists.
 		b.handleFollowUp(ctx, oc, rec, text, requestID, recorder, emit)
 		return
+	case err == nil && rec.SandboxID != "":
+		// Sandbox was created but the agent failed before producing a
+		// PR. Retry: archive the orphan sandbox + spawn a fresh one.
+		b.handleRetryAfterFailure(ctx, oc, rec, text, requestID, recorder, emit)
+		return
 	case err == nil:
-		// Conversation exists but the agent has not run yet (no sandbox).
-		// This covers two cases:
-		//   1. We asked for a repo and the user is now answering. The
-		//      partial row has GitHubOwner == "".
-		//   2. A previous fresh-agent attempt resolved a repo but
-		//      then failed — we now treat the user's *new* message as
-		//      a fresh repo answer, having already cleared
-		//      GitHubOwner/Repo on that failure path. (Belt-and-
-		//      suspenders: if a row somehow has GitHubOwner set with no
-		//      sandbox, we fall back to the awaiting-reply handler too,
-		//      because the user's new text is what they want acted on
-		//      — not a stale History[0].)
+		// No sandbox was ever created. Two sub-states distinguished by
+		// GitHubOwner:
+		//   1. GitHubOwner == "" → we asked for a repo and the user is
+		//      answering. handleAwaitingRepoReply parses owner/name.
+		//   2. GitHubOwner != "" → resolveRepo+sandbox-create failed.
+		//      The repo isn't the problem; treat the new message as
+		//      the new request and re-run on the same repo.
+		if rec.GitHubOwner != "" && rec.GitHubRepo != "" {
+			b.handleRetryAfterFailure(ctx, oc, rec, text, requestID, recorder, emit)
+			return
+		}
 		b.handleAwaitingRepoReply(ctx, oc, rec, text, requestID, recorder, emit)
 		return
 	case errors.Is(err, convstore.ErrNotFound):
@@ -373,6 +377,39 @@ func clearRepoOnFailure(rec *convstore.Record) {
 	rec.GitHubRepo = ""
 }
 
+// handleRetryAfterFailure resumes a fresh-agent attempt that
+// previously failed (either before producing a sandbox or after the
+// agent crashed mid-run). The repo was resolved successfully on the
+// prior turn, so we keep it and re-run with the new user message as
+// the request — the repo isn't the problem and forcing the user to
+// retype `owner/name` would be noise. The new message replaces
+// History[0] (this is still the first real turn — the row exists only
+// because we persisted the failure blocks for refresh visibility) so a
+// follow-up only sees the request that actually shipped.
+//
+// If the failed attempt left an orphan sandbox (rec.SandboxID set,
+// rec.PRURL empty), archive it best-effort before spawning a fresh
+// one. The user retrying is the signal that they're done debugging
+// the previous failure; without this we'd leak a Daytona sandbox per
+// retry.
+func (b *Bot) handleRetryAfterFailure(ctx context.Context, oc orgcfg.Config, rec convstore.Record, text, requestID string, recorder *blocks.Recorder, emit blocks.Emitter) {
+	if rec.SandboxID != "" {
+		if sb, err := b.daytona.Get(ctx, rec.SandboxID); err == nil {
+			if err := sb.Stop(ctx); err != nil {
+				b.log.Warn("orphan sandbox stop failed", "sandbox", rec.SandboxID, "error", err)
+			} else if err := sb.Archive(ctx); err != nil {
+				b.log.Warn("orphan sandbox archive failed", "sandbox", rec.SandboxID, "error", err)
+			}
+		} else {
+			b.log.Warn("orphan sandbox lookup failed; assuming already gone", "sandbox", rec.SandboxID, "error", err)
+		}
+		rec.SandboxID = ""
+	}
+	rec.History = []string{text}
+	rec.ResponseBlocks = nil
+	b.runFreshAgent(ctx, oc, rec, text, requestID, recorder, emit)
+}
+
 // runFreshAgent creates a new sandbox, mints an installation token
 // scoped to rec's repo, runs the agent on userRequest, and persists
 // the resulting conversation. Shared by the new-conversation, awaiting-
@@ -408,10 +445,21 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 		if ctx.Err() != nil {
 			b.log.Error("sandbox create cancelled", "request_id", requestID, "error", err)
 			emit.Error("Sandbox cancelled", "Sandbox creation was cancelled before it could start. Try again.")
-			return
+		} else {
+			b.log.Error("sandbox create failed", "request_id", requestID, "error", err)
+			emit.Error("Sandbox failed", "Couldn't start a sandbox for your request. Check the server logs for details and try again.")
 		}
-		b.log.Error("sandbox create failed", "request_id", requestID, "error", err)
-		emit.Error("Sandbox failed", "Couldn't start a sandbox for your request. Check the server logs for details and try again.")
+		// Persist the streamed blocks so a refresh shows the failure
+		// instead of an empty chat. For a brand-new conversation the
+		// row hasn't been written yet — without this the user loses
+		// every block they just watched stream by. The dispatcher
+		// recognises (GitHubOwner != "" && SandboxID == "" && first
+		// turn already has blocks) as "retry pending" and re-runs on
+		// the next message instead of asking for a repo.
+		appendBlocksToFirstTurn(&rec, recorder.Snapshot())
+		if uerr := b.convs.Upsert(ctx, rec); uerr != nil {
+			b.log.Error("convstore upsert (sandbox create fail)", "error", uerr)
+		}
 		return
 	}
 	b.log.Info("sandbox created", "id", sb.ID, "request_id", requestID)
@@ -421,8 +469,13 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 	prURL, runErr := b.runAgent(ctx, sb, repo, oc.AnthropicAPIKey, oc.SXKey, userRequest, requestID, emit)
 	if runErr != nil {
 		b.log.Error("agent run failed", "sandbox", sb.ID, "request_id", requestID, "error", runErr)
-		emit.Error("Agent failed", fmt.Sprintf("Something went wrong while running the agent. Sandbox `%s` is left running for debugging — check the server logs for details.", sb.ID))
-		// Persist what we got so the chat replay shows the failure.
+		emit.Error("Agent failed", fmt.Sprintf("Something went wrong while running the agent. Sandbox `%s` is left running for debugging — reply here to retry (the orphan sandbox will be archived automatically) or check the server logs for details.", sb.ID))
+		// Persist sb.ID so handleRetryAfterFailure can archive the
+		// stale sandbox on the next user message — without this we'd
+		// leak a sandbox per retry. PRURL stays empty, which is how
+		// the dispatcher tells "agent failed mid-run, clean up first"
+		// apart from a real follow-up.
+		rec.SandboxID = sb.ID
 		appendBlocksToFirstTurn(&rec, recorder.Snapshot())
 		if err := b.convs.Upsert(ctx, rec); err != nil {
 			b.log.Error("convstore upsert (agent fail)", "error", err)

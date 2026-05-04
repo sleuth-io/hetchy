@@ -44,7 +44,16 @@ type claudeStreamParser struct {
 	// the result comes back)
 	tools map[string]string
 
-	finalText string
+	// Captured text candidates we may pull a PR URL out of, in
+	// preference order. We accumulate everywhere a URL might land
+	// because Claude doesn't guarantee a specific output shape: the
+	// URL might be in the closing assistant text (preferred), or
+	// in any earlier assistant text, or only in the gh-pr-create
+	// tool result. Without all three sources we'd throw "no PR URL
+	// found" on a successful run.
+	finalText     string          // result envelope (preferred)
+	allText       strings.Builder // every assistant text chunk
+	toolResultBuf strings.Builder // every tool_result body
 }
 
 var prURLRe = regexp.MustCompile(`https://github\.com/[^\s)]+/pull/\d+`)
@@ -76,9 +85,18 @@ func (p *claudeStreamParser) Line(line string) {
 	}
 }
 
-// Finish closes any still-open assistant-text block and returns the PR
-// URL parsed from the final assistant text (or any tool result that
-// contains it as a fallback).
+// Finish closes any still-open assistant-text block and returns the
+// PR URL parsed from (in preference order) the result envelope, the
+// concatenated assistant text, or any tool result body. The fallback
+// chain matters because Claude's output shape varies: a clean run
+// echoes the URL in its final text, but an early-exit / version-skew
+// run might skip the result envelope, and a `gh pr create` URL only
+// reaches us via the tool_result if Claude doesn't echo it back.
+//
+// In the fallback buffers we pick the *last* PR URL match, not the
+// first: the user's request may mention an unrelated PR URL that
+// Claude echoes back early, or `gh pr list` may run before
+// `gh pr create`. The new PR is always the most recent URL emitted.
 func (p *claudeStreamParser) Finish() string {
 	p.closeText("")
 	for _, id := range p.tools {
@@ -88,7 +106,24 @@ func (p *claudeStreamParser) Finish() string {
 	if m := prURLRe.FindString(p.finalText); m != "" {
 		return m
 	}
+	if m := lastMatch(prURLRe, p.allText.String()); m != "" {
+		return m
+	}
+	if m := lastMatch(prURLRe, p.toolResultBuf.String()); m != "" {
+		return m
+	}
 	return ""
+}
+
+// lastMatch returns the rightmost match of re in s, or "" if none.
+// Used in the PR-URL fallback to pick the freshly-opened PR over any
+// earlier URL that may have appeared in the same buffer.
+func lastMatch(re *regexp.Regexp, s string) string {
+	all := re.FindAllString(s, -1)
+	if len(all) == 0 {
+		return ""
+	}
+	return all[len(all)-1]
 }
 
 // Abort marks any still-open blocks as failed (on a script-level
@@ -116,6 +151,8 @@ func (p *claudeStreamParser) handleAssistant(env streamEnvelope) {
 				p.textBlockID = p.emit.Start(blocks.KindClaudeText, title, nil)
 			}
 			p.emit.Append(p.textBlockID, c.Text)
+			p.allText.WriteString(c.Text)
+			p.allText.WriteByte('\n')
 		case "tool_use":
 			p.closeText("")
 			id := p.emit.Start(blocks.KindToolUse, toolTitle(c.Name, c.Input), map[string]any{
@@ -152,6 +189,8 @@ func (p *claudeStreamParser) handleUser(env streamEnvelope) {
 		body := toolResultBody(c.Content)
 		if body != "" {
 			p.emit.Append(blockID, "\n\n**Result:**\n```\n"+body+"\n```")
+			p.toolResultBuf.WriteString(body)
+			p.toolResultBuf.WriteByte('\n')
 		}
 		summary := ""
 		if c.IsError {

@@ -70,6 +70,58 @@ func TestClaudeStream_ResultExtractsPRURL(t *testing.T) {
 	}
 }
 
+// PR URL lives only in an assistant text chunk (no result envelope).
+// Claude versions skewed from us occasionally finish without one;
+// the fallback should still surface the URL.
+func TestClaudeStream_AssistantTextFallback(t *testing.T) {
+	emit := newCaptureEmitter()
+	p := newClaudeStreamParser(emit)
+	p.Line(`{"type":"assistant","message":{"content":[{"type":"text","text":"Opened https://github.com/owner/repo/pull/77 for review"}]}}`)
+	if got := p.Finish(); got != "https://github.com/owner/repo/pull/77" {
+		t.Errorf("want PR URL from assistant text, got %q", got)
+	}
+}
+
+// PR URL lives only in the gh-pr-create tool_result. If Claude
+// doesn't echo it back in closing prose, the fallback to tool
+// results should still surface it.
+func TestClaudeStream_ToolResultFallback(t *testing.T) {
+	emit := newCaptureEmitter()
+	p := newClaudeStreamParser(emit)
+	p.Line(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_x","name":"Bash","input":{"command":"gh pr create"}}]}}`)
+	p.Line(`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_x","content":"https://github.com/owner/repo/pull/99\n"}]}}`)
+	if got := p.Finish(); got != "https://github.com/owner/repo/pull/99" {
+		t.Errorf("want PR URL from tool_result, got %q", got)
+	}
+}
+
+// User's request mentions an old PR URL; Claude echoes it back in
+// early assistant text before opening the new PR. The fallback must
+// pick the *latest* URL (the new PR), not the first one mentioned.
+func TestClaudeStream_FallbackPrefersLatestURL(t *testing.T) {
+	emit := newCaptureEmitter()
+	p := newClaudeStreamParser(emit)
+	p.Line(`{"type":"assistant","message":{"content":[{"type":"text","text":"You mentioned https://github.com/owner/repo/pull/10 — let me check it"}]}}`)
+	p.Line(`{"type":"assistant","message":{"content":[{"type":"text","text":"Opened https://github.com/owner/repo/pull/200 with the fix"}]}}`)
+	if got := p.Finish(); got != "https://github.com/owner/repo/pull/200" {
+		t.Errorf("want latest PR URL, got %q", got)
+	}
+}
+
+// Same idea on the tool_result fallback: gh pr list before gh pr
+// create yields multiple URLs; the new PR (last one) wins.
+func TestClaudeStream_FallbackPrefersLatestToolResultURL(t *testing.T) {
+	emit := newCaptureEmitter()
+	p := newClaudeStreamParser(emit)
+	p.Line(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_a","name":"Bash","input":{"command":"gh pr list"}}]}}`)
+	p.Line(`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_a","content":"https://github.com/owner/repo/pull/1\nhttps://github.com/owner/repo/pull/2\n"}]}}`)
+	p.Line(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_b","name":"Bash","input":{"command":"gh pr create"}}]}}`)
+	p.Line(`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_b","content":"https://github.com/owner/repo/pull/3\n"}]}}`)
+	if got := p.Finish(); got != "https://github.com/owner/repo/pull/3" {
+		t.Errorf("want freshly-created PR URL, got %q", got)
+	}
+}
+
 func TestClaudeStream_TextBeforeToolUseClosesText(t *testing.T) {
 	emit := newCaptureEmitter()
 	p := newClaudeStreamParser(emit)

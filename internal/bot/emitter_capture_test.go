@@ -12,7 +12,11 @@ import (
 type captureEmitter struct {
 	mu    sync.Mutex
 	idGen int
-	open  map[string]*captureBlock
+	// open maps id → index into Blocks. We store the index rather
+	// than a *captureBlock pointer because Blocks grows via append
+	// and reallocation invalidates pointers — tests would silently
+	// lose Append/Done writes once the slice resized.
+	open map[string]int
 
 	// Calls records every Notify/Result/Error helper invocation as
 	// "<kind>:<title>|<body>" so tests can search them with simple
@@ -34,7 +38,7 @@ type captureBlock struct {
 }
 
 func newCaptureEmitter() *captureEmitter {
-	return &captureEmitter{open: map[string]*captureBlock{}}
+	return &captureEmitter{open: map[string]int{}}
 }
 
 func (e *captureEmitter) Start(kind blocks.Kind, title string, _ map[string]any) string {
@@ -43,23 +47,23 @@ func (e *captureEmitter) Start(kind blocks.Kind, title string, _ map[string]any)
 	e.idGen++
 	id := "t" + ctoa(e.idGen)
 	e.Blocks = append(e.Blocks, captureBlock{ID: id, Kind: kind, Title: title, Status: blocks.StatusStreaming})
-	e.open[id] = &e.Blocks[len(e.Blocks)-1]
+	e.open[id] = len(e.Blocks) - 1
 	return id
 }
 
 func (e *captureEmitter) Append(id, delta string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if b, ok := e.open[id]; ok {
-		b.Body.WriteString(delta)
+	if idx, ok := e.open[id]; ok {
+		e.Blocks[idx].Body.WriteString(delta)
 	}
 }
 
 func (e *captureEmitter) Done(id, _ string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if b, ok := e.open[id]; ok {
-		b.Status = blocks.StatusDone
+	if idx, ok := e.open[id]; ok {
+		e.Blocks[idx].Status = blocks.StatusDone
 		delete(e.open, id)
 	}
 }
@@ -67,8 +71,8 @@ func (e *captureEmitter) Done(id, _ string) {
 func (e *captureEmitter) Fail(id, _ string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if b, ok := e.open[id]; ok {
-		b.Status = blocks.StatusError
+	if idx, ok := e.open[id]; ok {
+		e.Blocks[idx].Status = blocks.StatusError
 		delete(e.open, id)
 	}
 }

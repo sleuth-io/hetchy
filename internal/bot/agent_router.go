@@ -31,7 +31,12 @@ type agentLineRouter struct {
 	inAgent bool
 }
 
-const setupSwitchPrefix = "[sf] running claude"
+// setupSwitchMarker is the exact echo line in agent.sh / followup.sh
+// that signals "the next line will be Claude stream-json output".
+// Exact-match (not HasPrefix) so a future debug echo whose prefix
+// happens to overlap can't accidentally flip the router and start
+// dropping setup lines as malformed JSON.
+const setupSwitchMarker = "[sf] running claude"
 
 func newAgentLineRouter(emit blocks.Emitter) *agentLineRouter {
 	return &agentLineRouter{emit: emit}
@@ -43,9 +48,9 @@ func (r *agentLineRouter) Line(line string) {
 		r.parser.Line(line)
 		return
 	}
-	// Detect the handoff before processing: the marker line itself is
-	// the last setup step, then the parser takes over.
-	if strings.HasPrefix(line, setupSwitchPrefix) {
+	// The marker line itself is logged as the last setup step, then
+	// the parser takes over. Exact-match — see setupSwitchMarker.
+	if line == setupSwitchMarker {
 		r.appendSetup(line)
 		r.closeSetup("Sandbox ready, starting agent")
 		r.parser = newClaudeStreamParser(r.emit)
@@ -56,7 +61,10 @@ func (r *agentLineRouter) Line(line string) {
 }
 
 // Finish closes any still-open blocks and returns the PR URL parsed
-// from the assistant's final message.
+// from the assistant's final message. ReachedAgent reports whether
+// the script ever crossed the setup→agent handoff so the caller can
+// distinguish "setup script bailed before claude ran" from "claude
+// ran but didn't surface a URL".
 func (r *agentLineRouter) Finish() string {
 	if r.setupOpen {
 		r.closeSetup("Sandbox setup complete")
@@ -66,6 +74,13 @@ func (r *agentLineRouter) Finish() string {
 	}
 	return ""
 }
+
+// ReachedAgent reports whether the line stream crossed the
+// `[sf] running claude` marker. False means the setup script exited
+// (cleanly or otherwise) before invoking claude — the caller can
+// surface a setup-specific error instead of the generic "no PR URL
+// found".
+func (r *agentLineRouter) ReachedAgent() bool { return r.inAgent }
 
 // Abort marks any still-open blocks as failed (called on a script-
 // level error so the UI shows the failure rather than a stuck spinner).

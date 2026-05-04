@@ -147,7 +147,14 @@ func (b *Bot) runScript(ctx context.Context, sb *daytona.Sandbox, sessionID, lab
 	}
 	prURL := router.Finish()
 	if prURL == "" {
-		return "", fmt.Errorf("no PR URL found in %s output", label)
+		// Distinguish "setup never reached claude" from "claude ran
+		// but didn't post a URL". Both surface here but they need
+		// different remediation, so on-call shouldn't have to tail
+		// logs to tell them apart.
+		if !router.ReachedAgent() {
+			return "", fmt.Errorf("setup script for %s exited before invoking claude — check the sandbox setup block for the failing step", label)
+		}
+		return "", fmt.Errorf("claude finished the %s run without posting a PR URL — check the agent transcript blocks", label)
 	}
 	return prURL, nil
 }

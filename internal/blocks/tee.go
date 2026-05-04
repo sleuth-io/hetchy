@@ -34,14 +34,24 @@ func (t *teeEmitter) Start(kind Kind, title string, meta map[string]any) string 
 }
 
 func (t *teeEmitter) Append(id, delta string) {
-	ids := t.idMap[id]
+	// A double-close (Done followed by another Append/Done) deletes
+	// the id from idMap. Without the nil check, the next call would
+	// index into a nil slice and panic — taking down the whole
+	// request goroutine. Silently ignore unknown ids instead.
+	ids, ok := t.idMap[id]
+	if !ok {
+		return
+	}
 	for i, e := range t.emitters {
 		e.Append(ids[i], delta)
 	}
 }
 
 func (t *teeEmitter) Done(id, summary string) {
-	ids := t.idMap[id]
+	ids, ok := t.idMap[id]
+	if !ok {
+		return
+	}
 	for i, e := range t.emitters {
 		e.Done(ids[i], summary)
 	}
@@ -49,7 +59,10 @@ func (t *teeEmitter) Done(id, summary string) {
 }
 
 func (t *teeEmitter) Fail(id, summary string) {
-	ids := t.idMap[id]
+	ids, ok := t.idMap[id]
+	if !ok {
+		return
+	}
 	for i, e := range t.emitters {
 		e.Fail(ids[i], summary)
 	}

@@ -27,10 +27,15 @@ type slackEmitter struct {
 	idGen           atomic.Uint64
 	open            map[string]openBlock
 
-	// lastTerminalKind tracks whether the run ended in a result or
-	// error block, so the slack handler can swap the running-reaction
-	// for the right final reaction (✓ vs ✗) without inspecting the
-	// recorder snapshot.
+	// terminated reflects whether a true terminal block (Result or
+	// Error) was emitted. The Slack handler only swaps the running
+	// reaction (eyes/recycle) for a final ✓/✗ when this is true —
+	// otherwise the run ended in a non-terminal state (a Notify
+	// asking a question, or a panic) and we leave the original
+	// reaction in place rather than misleadingly stamp a green check.
+	terminated bool
+	// lastTerminalKind is the kind of the terminal block, used to
+	// pick between ✓ and ✗ when terminated is true.
 	lastTerminalKind blocks.Kind
 }
 
@@ -110,6 +115,7 @@ func (e *slackEmitter) Notify(title, body string) {
 }
 
 func (e *slackEmitter) Result(title, body string) {
+	e.terminated = true
 	e.lastTerminalKind = blocks.KindResult
 	msg := fmt.Sprintf("<@%s> :tada: %s", e.user, title)
 	if body != "" {
@@ -122,6 +128,7 @@ func (e *slackEmitter) Result(title, body string) {
 }
 
 func (e *slackEmitter) Error(title, body string) {
+	e.terminated = true
 	e.lastTerminalKind = blocks.KindError
 	msg := fmt.Sprintf("<@%s> :x: %s", e.user, title)
 	if body != "" {

@@ -417,12 +417,31 @@ function renderBlock(turn, block, opts) {
   return el;
 }
 
+// appendToBlock buffers the delta into the block's raw markdown and
+// schedules a single rAF-coalesced re-render. A naive "re-render on
+// every delta" would be O(n²): each chunk re-parses + re-sanitises the
+// full body, which visibly stutters the browser on long Claude streams
+// (thousands of small text deltas). Coalescing collapses bursts of
+// deltas into one paint per frame.
 function appendToBlock(el, delta) {
   if (!el) return;
   const body = el.querySelector('.blk-body');
   body.dataset.raw = (body.dataset.raw || '') + delta;
-  body.innerHTML = renderMarkdown(body.dataset.raw);
-  log.scrollTop = log.scrollHeight;
+  scheduleBlockRender(el);
+}
+
+function scheduleBlockRender(el) {
+  if (el._renderQueued) return;
+  el._renderQueued = true;
+  requestAnimationFrame(() => {
+    el._renderQueued = false;
+    // Collapsed blocks aren't visible; skip the markdown work and
+    // catch up on the next render (or on finishBlock).
+    if (!el.open) return;
+    const body = el.querySelector('.blk-body');
+    body.innerHTML = renderMarkdown(body.dataset.raw || '');
+    log.scrollTop = log.scrollHeight;
+  });
 }
 
 function finishBlock(el, status, summary) {
@@ -432,6 +451,11 @@ function finishBlock(el, status, summary) {
   if (status === 'error') {
     el.classList.add('blk-kind-error');
   }
+  // Force a final render so any pending deltas land before the block
+  // is collapsed by the next block_start (a collapsed block skips its
+  // queued render, so we'd otherwise miss the last few tokens).
+  const body = el.querySelector('.blk-body');
+  body.innerHTML = renderMarkdown(body.dataset.raw || '');
 }
 
 function showEmptyState() {
