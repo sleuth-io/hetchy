@@ -361,7 +361,14 @@
 
 {{define "integration_slack"}}
   {{$envOk := or .SlackOAuthEnabled .IsDev}}
-  {{$enabled := ne .SlackTeamID ""}}
+  {{/* OAuth is "enabled" when we've stamped a workspace team_id from
+       the install callback. Dev's manual-paste path doesn't get a
+       team_id (Socket Mode identifies the workspace via the open
+       socket itself), so we treat both bot+socket tokens being set as
+       the dev-equivalent of "connected". */}}
+  {{$oauthEnabled := ne .SlackTeamID ""}}
+  {{$devEnabled := and .IsDev (and (ne .SlackBotTokenPreview "") (ne .SlackSocketTokenPreview ""))}}
+  {{$enabled := or $oauthEnabled $devEnabled}}
   <article class="integration{{if $enabled}} enabled{{end}}{{if not $envOk}} disabled-env{{end}}" data-integration="slack">
     <div class="integration-head">
       <div class="integration-icon">
@@ -389,28 +396,34 @@
         {{else if .SlackOAuthEnabled}}
           <a class="btn-enable" href="/slack/install">Enable</a>
         {{else}}
-          <button class="btn-enable" type="button" data-open-modal="modal-slack-dev">Enable</button>
+          {{/* Dev-only: clicking Enable expands the card and focuses
+               the first paste field; the body below carries the form. */}}
+          <button class="btn-enable" type="button" data-toggle-card="slack" data-focus-field="slack_bot_token">Enable</button>
         {{end}}
         <button class="caret" type="button" aria-label="Toggle details">
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><polyline points="4,6 8,10 12,6"/></svg>
         </button>
       </div>
     </div>
-    {{if and $enabled $envOk}}
+    {{/* Body always rendered when env supports Slack so dev users can
+         expand and paste/rotate tokens regardless of current state. */}}
+    {{if $envOk}}
     <div class="integration-body">
+      {{if $oauthEnabled}}
       <div class="body-section">
         <p class="hint">Connected workspace: <code>{{.SlackTeamID}}</code></p>
         {{if .SlackOAuthEnabled}}
           <p><a class="btn-enable" href="/slack/install">Reinstall</a></p>
         {{end}}
       </div>
+      {{end}}
       {{if .IsDev}}
       <div class="body-section">
         <legend>Dev: paste tokens manually</legend>
         <form method="POST" action="/settings/org?tab=integrations">
           {{template "secret" dict "Field" "slack_bot_token" "Label" "Bot token" "Preview" .SlackBotTokenPreview "Placeholder" "xoxb-…" "Required" false}}
           {{template "secret" dict "Field" "slack_socket_token" "Label" "Socket token" "Preview" .SlackSocketTokenPreview "Placeholder" "xapp-…" "Required" false}}
-          <p class="hint">Run <code>make slack-app NAME=…</code> to create a personal Socket Mode app, then paste its bot + socket tokens here.</p>
+          <p class="hint">Run <code>make slack-app NAME=…</code> to create a personal Socket Mode app, then paste its bot + socket tokens here. Both must be set for the integration to show as Enabled.</p>
           <button class="primary" type="submit">Save</button>
         </form>
       </div>
@@ -653,6 +666,20 @@
   document.querySelectorAll('.integration .caret').forEach(btn => {
     btn.addEventListener('click', () => {
       btn.closest('.integration').toggleAttribute('open');
+    });
+  });
+
+  // Dev-mode "Enable" buttons that don't kick off OAuth: just open
+  // the card and focus the first relevant input so the user can paste.
+  document.querySelectorAll('[data-toggle-card]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const card = btn.closest('.integration');
+      card.setAttribute('open', '');
+      const field = btn.dataset.focusField;
+      if (field) {
+        const input = document.getElementById(field);
+        if (input) setTimeout(() => input.focus(), 0);
+      }
     });
   });
 

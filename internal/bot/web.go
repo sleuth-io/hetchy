@@ -100,7 +100,18 @@ func (b *Bot) runWeb(ctx context.Context) error {
 		_ = srv.Shutdown(shutdownCtx)
 	}()
 
-	b.log.Info("web ui listening", "addr", "http://localhost"+addr)
+	// Log both the bind address (where the kernel will accept
+	// connections) and the public URL the user should hit in a
+	// browser (which differs in dev when /etc/hosts maps a real-
+	// looking hostname to localhost). LogoutReturnTo doubles as our
+	// canonical "public app root" — it's the only URL the WorkOS
+	// SDK requires us to know, and Doppler per-env config sets it
+	// correctly for dev (dev.hetchy.ai), staging, and prod.
+	publicURL := strings.TrimSuffix(b.cfg.LogoutReturnTo, "/")
+	if publicURL == "" {
+		publicURL = "http://localhost" + addr
+	}
+	b.log.Info("web ui listening", "addr", addr, "public_url", publicURL)
 	if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("web server: %w", err)
 	}

@@ -128,23 +128,6 @@ openssl rand -base64 32   # for WORKOS_COOKIE_PASSWORD
 openssl rand -base64 32   # for SECRETS_ENCRYPTION_KEY
 ```
 
-#### WorkOS dashboard setup (one-time)
-
-1. Sign up at <https://dashboard.workos.com>; the **Staging** environment is
-   what you'll use for local dev.
-2. Open **Redirects** → add `http://dev.hetchy.ai:8080/callback`, mark it as
-   default. Set the Sign-out redirect to `http://dev.hetchy.ai:8080/`.
-   (Make sure your `/etc/hosts` line from step 2 above is in place so
-   the browser can resolve this hostname to localhost.)
-3. Open **Authentication** → enable Email + Password (and any social
-   providers you want).
-4. Open **API Keys** → copy the API key and Client ID into Doppler as
-   `WORKOS_API_KEY` and `WORKOS_CLIENT_ID`.
-
-Self-serve org creation and multi-org membership are not dashboard
-toggles — Hetchy implements them via the WorkOS API, so no further
-configuration is needed.
-
 #### Per-org Slack setup
 
 Each organization brings its own Slack bot. Tokens are configured at
