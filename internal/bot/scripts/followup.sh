@@ -22,4 +22,7 @@ git pull --rebase origin "${SF_BRANCH}"
 
 echo "[sf] running claude"
 echo "${SF_PROMPT_B64}" | base64 -d > /tmp/sf-prompt.txt
-claude --print --dangerously-skip-permissions < /tmp/sf-prompt.txt
+# See agent.sh for the rationale behind stream-json.
+claude --print --dangerously-skip-permissions \
+       --output-format stream-json --verbose \
+       < /tmp/sf-prompt.txt

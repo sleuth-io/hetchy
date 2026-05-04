@@ -17,7 +17,7 @@ type Querier interface {
 	DeleteGithubReposByInstallationExcept(ctx context.Context, arg DeleteGithubReposByInstallationExceptParams) error
 	DeleteGithubTeamMembersForTeam(ctx context.Context, arg DeleteGithubTeamMembersForTeamParams) error
 	DeleteGithubTeamsByInstallationExcept(ctx context.Context, arg DeleteGithubTeamsByInstallationExceptParams) error
-	GetConversation(ctx context.Context, arg GetConversationParams) (Conversation, error)
+	GetConversation(ctx context.Context, arg GetConversationParams) (GetConversationRow, error)
 	GetGithubInstallation(ctx context.Context, installationID int64) (GithubAppInstallation, error)
 	// Resolves an (owner, name) the user typed in chat to a concrete
 	// (installation_id, repo_id, default_branch) for this org. If the same
@@ -28,7 +28,7 @@ type Querier interface {
 	GetGithubRepoForOrg(ctx context.Context, arg GetGithubRepoForOrgParams) (GithubRepo, error)
 	GetOrgConfig(ctx context.Context, orgID string) (OrgConfig, error)
 	GetOrgConfigBySlackTeamID(ctx context.Context, slackTeamID *string) (OrgConfig, error)
-	ListConversationsByOrg(ctx context.Context, orgID string) ([]Conversation, error)
+	ListConversationsByOrg(ctx context.Context, orgID string) ([]ListConversationsByOrgRow, error)
 	ListGithubInstallationsByOrg(ctx context.Context, orgID string) ([]GithubAppInstallation, error)
 	ListGithubReposByInstallation(ctx context.Context, installationID int64) ([]GithubRepo, error)
 	// Every repo accessible to the given Hetchy org, across all of its
@@ -47,7 +47,7 @@ type Querier interface {
 	// of Slack connection," write a different query — don't rename this
 	// one.
 	ListOrgConfigsWithSlack(ctx context.Context) ([]OrgConfig, error)
-	UpsertConversation(ctx context.Context, arg UpsertConversationParams) (Conversation, error)
+	UpsertConversation(ctx context.Context, arg UpsertConversationParams) (UpsertConversationRow, error)
 	// Queries for the GitHub App installation cache: installations, the
 	// repos they grant access to, and (for Organization installs) team
 	// + membership snapshots.

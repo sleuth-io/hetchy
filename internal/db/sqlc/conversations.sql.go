@@ -7,6 +7,8 @@ package sqlc
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const deleteConversation = `-- name: DeleteConversation :exec
@@ -24,7 +26,7 @@ func (q *Queries) DeleteConversation(ctx context.Context, arg DeleteConversation
 }
 
 const getConversation = `-- name: GetConversation :one
-SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, responses,
+SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, response_blocks,
        github_owner, github_repo
 FROM conversations
 WHERE org_id = $1 AND thread_id = $2
@@ -35,9 +37,23 @@ type GetConversationParams struct {
 	ThreadID string `json:"thread_id"`
 }
 
-func (q *Queries) GetConversation(ctx context.Context, arg GetConversationParams) (Conversation, error) {
+type GetConversationRow struct {
+	OrgID          string             `json:"org_id"`
+	ThreadID       string             `json:"thread_id"`
+	SandboxID      string             `json:"sandbox_id"`
+	Branch         string             `json:"branch"`
+	PrUrl          string             `json:"pr_url"`
+	History        []string           `json:"history"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	ResponseBlocks [][]byte           `json:"response_blocks"`
+	GithubOwner    string             `json:"github_owner"`
+	GithubRepo     string             `json:"github_repo"`
+}
+
+func (q *Queries) GetConversation(ctx context.Context, arg GetConversationParams) (GetConversationRow, error) {
 	row := q.db.QueryRow(ctx, getConversation, arg.OrgID, arg.ThreadID)
-	var i Conversation
+	var i GetConversationRow
 	err := row.Scan(
 		&i.OrgID,
 		&i.ThreadID,
@@ -47,7 +63,7 @@ func (q *Queries) GetConversation(ctx context.Context, arg GetConversationParams
 		&i.History,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.Responses,
+		&i.ResponseBlocks,
 		&i.GithubOwner,
 		&i.GithubRepo,
 	)
@@ -55,22 +71,36 @@ func (q *Queries) GetConversation(ctx context.Context, arg GetConversationParams
 }
 
 const listConversationsByOrg = `-- name: ListConversationsByOrg :many
-SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, responses,
+SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, response_blocks,
        github_owner, github_repo
 FROM conversations
 WHERE org_id = $1
 ORDER BY updated_at DESC
 `
 
-func (q *Queries) ListConversationsByOrg(ctx context.Context, orgID string) ([]Conversation, error) {
+type ListConversationsByOrgRow struct {
+	OrgID          string             `json:"org_id"`
+	ThreadID       string             `json:"thread_id"`
+	SandboxID      string             `json:"sandbox_id"`
+	Branch         string             `json:"branch"`
+	PrUrl          string             `json:"pr_url"`
+	History        []string           `json:"history"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	ResponseBlocks [][]byte           `json:"response_blocks"`
+	GithubOwner    string             `json:"github_owner"`
+	GithubRepo     string             `json:"github_repo"`
+}
+
+func (q *Queries) ListConversationsByOrg(ctx context.Context, orgID string) ([]ListConversationsByOrgRow, error) {
 	rows, err := q.db.Query(ctx, listConversationsByOrg, orgID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Conversation
+	var items []ListConversationsByOrgRow
 	for rows.Next() {
-		var i Conversation
+		var i ListConversationsByOrgRow
 		if err := rows.Scan(
 			&i.OrgID,
 			&i.ThreadID,
@@ -80,7 +110,7 @@ func (q *Queries) ListConversationsByOrg(ctx context.Context, orgID string) ([]C
 			&i.History,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.Responses,
+			&i.ResponseBlocks,
 			&i.GithubOwner,
 			&i.GithubRepo,
 		); err != nil {
@@ -96,37 +126,51 @@ func (q *Queries) ListConversationsByOrg(ctx context.Context, orgID string) ([]C
 
 const upsertConversation = `-- name: UpsertConversation :one
 INSERT INTO conversations (
-    org_id, thread_id, sandbox_id, branch, pr_url, history, responses,
+    org_id, thread_id, sandbox_id, branch, pr_url, history, response_blocks,
     github_owner, github_repo
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9
 )
 ON CONFLICT (org_id, thread_id) DO UPDATE SET
-    sandbox_id   = EXCLUDED.sandbox_id,
-    branch       = EXCLUDED.branch,
-    pr_url       = EXCLUDED.pr_url,
-    history      = EXCLUDED.history,
-    responses    = EXCLUDED.responses,
-    github_owner = EXCLUDED.github_owner,
-    github_repo  = EXCLUDED.github_repo,
-    updated_at   = NOW()
-RETURNING org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, responses,
+    sandbox_id      = EXCLUDED.sandbox_id,
+    branch          = EXCLUDED.branch,
+    pr_url          = EXCLUDED.pr_url,
+    history         = EXCLUDED.history,
+    response_blocks = EXCLUDED.response_blocks,
+    github_owner    = EXCLUDED.github_owner,
+    github_repo     = EXCLUDED.github_repo,
+    updated_at      = NOW()
+RETURNING org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, response_blocks,
           github_owner, github_repo
 `
 
 type UpsertConversationParams struct {
-	OrgID       string   `json:"org_id"`
-	ThreadID    string   `json:"thread_id"`
-	SandboxID   string   `json:"sandbox_id"`
-	Branch      string   `json:"branch"`
-	PrUrl       string   `json:"pr_url"`
-	History     []string `json:"history"`
-	Responses   []string `json:"responses"`
-	GithubOwner string   `json:"github_owner"`
-	GithubRepo  string   `json:"github_repo"`
+	OrgID          string   `json:"org_id"`
+	ThreadID       string   `json:"thread_id"`
+	SandboxID      string   `json:"sandbox_id"`
+	Branch         string   `json:"branch"`
+	PrUrl          string   `json:"pr_url"`
+	History        []string `json:"history"`
+	ResponseBlocks [][]byte `json:"response_blocks"`
+	GithubOwner    string   `json:"github_owner"`
+	GithubRepo     string   `json:"github_repo"`
 }
 
-func (q *Queries) UpsertConversation(ctx context.Context, arg UpsertConversationParams) (Conversation, error) {
+type UpsertConversationRow struct {
+	OrgID          string             `json:"org_id"`
+	ThreadID       string             `json:"thread_id"`
+	SandboxID      string             `json:"sandbox_id"`
+	Branch         string             `json:"branch"`
+	PrUrl          string             `json:"pr_url"`
+	History        []string           `json:"history"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	ResponseBlocks [][]byte           `json:"response_blocks"`
+	GithubOwner    string             `json:"github_owner"`
+	GithubRepo     string             `json:"github_repo"`
+}
+
+func (q *Queries) UpsertConversation(ctx context.Context, arg UpsertConversationParams) (UpsertConversationRow, error) {
 	row := q.db.QueryRow(ctx, upsertConversation,
 		arg.OrgID,
 		arg.ThreadID,
@@ -134,11 +178,11 @@ func (q *Queries) UpsertConversation(ctx context.Context, arg UpsertConversation
 		arg.Branch,
 		arg.PrUrl,
 		arg.History,
-		arg.Responses,
+		arg.ResponseBlocks,
 		arg.GithubOwner,
 		arg.GithubRepo,
 	)
-	var i Conversation
+	var i UpsertConversationRow
 	err := row.Scan(
 		&i.OrgID,
 		&i.ThreadID,
@@ -148,7 +192,7 @@ func (q *Queries) UpsertConversation(ctx context.Context, arg UpsertConversation
 		&i.History,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.Responses,
+		&i.ResponseBlocks,
 		&i.GithubOwner,
 		&i.GithubRepo,
 	)

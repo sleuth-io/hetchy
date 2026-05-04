@@ -6,12 +6,14 @@ package convstore
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/hetchyhq/hetchy/internal/blocks"
 	"github.com/hetchyhq/hetchy/internal/db"
 	"github.com/hetchyhq/hetchy/internal/db/sqlc"
 )
@@ -23,20 +25,18 @@ var ErrNotFound = errors.New("convstore: not found")
 
 // Record is the app-friendly view of a conversation row.
 //
-// History and Responses are paired by index: History[i] is the user's
-// turn and Responses[i] is the full bot transcript that the user saw
-// streamed back for that turn (status updates + sandbox logs + the
-// final PR URL or error). Old rows from before the responses column
-// existed have len(Responses) < len(History); callers must tolerate
-// that mismatch when rendering.
+// History and ResponseBlocks are paired by index: History[i] is the
+// user's turn and ResponseBlocks[i] is the typed-block transcript that
+// the user saw streamed back for that turn. Each entry is a list of
+// blocks.Block (setup, claude_text, tool_use, notify, result, error).
 type Record struct {
-	OrgID     string
-	ThreadID  string
-	SandboxID string
-	Branch    string
-	PRURL     string
-	History   []string
-	Responses []string
+	OrgID          string
+	ThreadID       string
+	SandboxID      string
+	Branch         string
+	PRURL          string
+	History        []string
+	ResponseBlocks [][]blocks.Block
 	// GitHubOwner + GitHubRepo identify the repository this conversation
 	// is targeting. Empty when the conversation has been opened but no
 	// repo has been picked yet (the agent hasn't launched). The bot
@@ -71,7 +71,11 @@ func (s *Store) Get(ctx context.Context, orgID, threadID string) (Record, error)
 		}
 		return Record{}, fmt.Errorf("get conversation: %w", err)
 	}
-	return recordFromRow(row), nil
+	rec, err := recordFromGetRow(row)
+	if err != nil {
+		return Record{}, fmt.Errorf("decode response_blocks: %w", err)
+	}
+	return rec, nil
 }
 
 // List returns every conversation for an org, newest first. Returns an
@@ -86,25 +90,13 @@ func (s *Store) List(ctx context.Context, orgID string) ([]Record, error) {
 	}
 	out := make([]Record, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, recordFromRow(r))
+		rec, err := recordFromListRow(r)
+		if err != nil {
+			return nil, fmt.Errorf("decode response_blocks for %s/%s: %w", r.OrgID, r.ThreadID, err)
+		}
+		out = append(out, rec)
 	}
 	return out, nil
-}
-
-func recordFromRow(row sqlc.Conversation) Record {
-	return Record{
-		OrgID:       row.OrgID,
-		ThreadID:    row.ThreadID,
-		SandboxID:   row.SandboxID,
-		Branch:      row.Branch,
-		PRURL:       row.PrUrl,
-		History:     row.History,
-		Responses:   row.Responses,
-		GitHubOwner: row.GithubOwner,
-		GitHubRepo:  row.GithubRepo,
-		CreatedAt:   row.CreatedAt.Time,
-		UpdatedAt:   row.UpdatedAt.Time,
-	}
 }
 
 // Upsert writes the supplied record. No-op when the store is nil.
@@ -112,16 +104,20 @@ func (s *Store) Upsert(ctx context.Context, r Record) error {
 	if s == nil || s.db == nil {
 		return nil
 	}
-	_, err := s.db.Queries.UpsertConversation(ctx, sqlc.UpsertConversationParams{
-		OrgID:       r.OrgID,
-		ThreadID:    r.ThreadID,
-		SandboxID:   r.SandboxID,
-		Branch:      r.Branch,
-		PrUrl:       r.PRURL,
-		History:     r.History,
-		Responses:   r.Responses,
-		GithubOwner: r.GitHubOwner,
-		GithubRepo:  r.GitHubRepo,
+	encoded, err := encodeBlocks(r.ResponseBlocks)
+	if err != nil {
+		return fmt.Errorf("encode response_blocks: %w", err)
+	}
+	_, err = s.db.Queries.UpsertConversation(ctx, sqlc.UpsertConversationParams{
+		OrgID:          r.OrgID,
+		ThreadID:       r.ThreadID,
+		SandboxID:      r.SandboxID,
+		Branch:         r.Branch,
+		PrUrl:          r.PRURL,
+		History:        r.History,
+		ResponseBlocks: encoded,
+		GithubOwner:    r.GitHubOwner,
+		GithubRepo:     r.GitHubRepo,
 	})
 	if err != nil {
 		return fmt.Errorf("upsert conversation: %w", err)
@@ -141,4 +137,84 @@ func (s *Store) Delete(ctx context.Context, orgID, threadID string) error {
 		return fmt.Errorf("delete conversation: %w", err)
 	}
 	return nil
+}
+
+// encodeBlocks marshals each per-turn []Block to a JSONB element. A nil
+// or empty slice for a turn becomes the JSON literal `[]` so the column
+// stays NOT NULL-clean and decode round-trips to a non-nil empty slice.
+func encodeBlocks(turns [][]blocks.Block) ([][]byte, error) {
+	if len(turns) == 0 {
+		return [][]byte{}, nil
+	}
+	out := make([][]byte, len(turns))
+	for i, t := range turns {
+		if t == nil {
+			t = []blocks.Block{}
+		}
+		raw, err := json.Marshal(t)
+		if err != nil {
+			return nil, fmt.Errorf("marshal turn %d: %w", i, err)
+		}
+		out[i] = raw
+	}
+	return out, nil
+}
+
+func decodeBlocks(raw [][]byte) ([][]blocks.Block, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	out := make([][]blocks.Block, len(raw))
+	for i, r := range raw {
+		if len(r) == 0 {
+			out[i] = []blocks.Block{}
+			continue
+		}
+		var bs []blocks.Block
+		if err := json.Unmarshal(r, &bs); err != nil {
+			return nil, fmt.Errorf("unmarshal turn %d: %w", i, err)
+		}
+		out[i] = bs
+	}
+	return out, nil
+}
+
+func recordFromGetRow(row sqlc.GetConversationRow) (Record, error) {
+	bs, err := decodeBlocks(row.ResponseBlocks)
+	if err != nil {
+		return Record{}, err
+	}
+	return Record{
+		OrgID:          row.OrgID,
+		ThreadID:       row.ThreadID,
+		SandboxID:      row.SandboxID,
+		Branch:         row.Branch,
+		PRURL:          row.PrUrl,
+		History:        row.History,
+		ResponseBlocks: bs,
+		GitHubOwner:    row.GithubOwner,
+		GitHubRepo:     row.GithubRepo,
+		CreatedAt:      row.CreatedAt.Time,
+		UpdatedAt:      row.UpdatedAt.Time,
+	}, nil
+}
+
+func recordFromListRow(row sqlc.ListConversationsByOrgRow) (Record, error) {
+	bs, err := decodeBlocks(row.ResponseBlocks)
+	if err != nil {
+		return Record{}, err
+	}
+	return Record{
+		OrgID:          row.OrgID,
+		ThreadID:       row.ThreadID,
+		SandboxID:      row.SandboxID,
+		Branch:         row.Branch,
+		PRURL:          row.PrUrl,
+		History:        row.History,
+		ResponseBlocks: bs,
+		GitHubOwner:    row.GithubOwner,
+		GitHubRepo:     row.GithubRepo,
+		CreatedAt:      row.CreatedAt.Time,
+		UpdatedAt:      row.UpdatedAt.Time,
+	}, nil
 }

@@ -1,68 +1,45 @@
 # Daytona sandbox image for general-purpose coding agents.
 #
-# Built on Microsoft's devcontainers "universal" image (Ubuntu 24.04) — the
-# same image GitHub Codespaces uses by default. It's auto-rebuilt weekly with
-# upstream security patches, so we offload most language-runtime maintenance.
+# Built on the slim Daytona base (~430 MB) which provides:
+#   - daytona user (uid 1000) with NOPASSWD sudo — runner expects this
+#   - sleep-infinity entrypoint behavior (we wrap it to also start dockerd)
+#   - Node 22 (via nvm at /usr/local/nvm) + npm on PATH
+#   - Python 3.11 + pip + pipx
+#   - curl, sudo, bash
 #
-# Universal already ships:
-#   Python 3.11 + 3.12, Node 22 + 24 (nvm), Ruby 3.3 + 3.4 (rbenv + rvm),
-#   PHP 8.3 + Composer, OpenJDK 21 + Maven + Gradle, Go (latest),
-#   GCC 13 + Clang 18 + CMake, Docker engine + Compose, gh CLI,
-#   git, jq, vim, nano, pipx, pnpm, yarn.
-#
-# We layer on top:
-#   - Rust, ninja-build, conan
-#   - Postgres 16, Redis
-#   - PHP 8.4 (universal ships 8.3)
-#   - Bun, Playwright + browsers
-#   - Python tooling: poetry, uv, ruff, black, mypy, pytest
-#   - Node tooling: eslint, prettier, chromedriver
-#   - AI CLIs: claude-code, codex, gemini
-#   - yq, ripgrep, tmux
-#
-# We rename the default `codespace` user to `daytona` (keeping uid 1000) so
-# the Hetchy runner contract holds.
-FROM mcr.microsoft.com/devcontainers/universal:3
+# Layered on top: a polyglot toolchain (Ruby, PHP, Java, Rust, Go, C/C++),
+# Postgres 16, Redis, Docker engine, Playwright, and the
+# Claude / Codex / Gemini AI CLIs.
+FROM daytonaio/sandbox:0.6.0-slim
 
 USER root
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# qemu emulation (Apple Silicon → linux/amd64) breaks gpgv during apt's
-# signature verification, so every repository appears "not signed" at build
-# time. It also slows networking dramatically, so apt fetches frequently
-# time out against Ubuntu mirrors. We drop a temporary apt config that
-# bypasses GPG and bumps retry/timeout limits for the duration of the
-# build, then delete it before USER daytona so the runtime image verifies
-# signatures normally.
-RUN echo 'APT::Get::AllowUnauthenticated "true";' \
-        'Acquire::AllowInsecureRepositories "true";' \
-        'Acquire::AllowDowngradeToInsecureRepositories "true";' \
-        'Acquire::Retries "5";' \
-        'Acquire::http::Timeout "180";' \
-        'Acquire::https::Timeout "180";' \
-        > /etc/apt/apt.conf.d/99-build-insecure
-
 # ---------------------------------------------------------------------------
-# Rename codespace -> daytona (preserves uid/gid 1000 and group membership in
-# nvm/rvm/sdkman/docker/etc., which is how universal exposes its toolchains).
-# Home directory stays at /home/codespace — moving it would copy ~7 GB out of
-# the lower layer into our overlay. Instead we symlink /home/daytona to it so
-# both paths resolve.
+# Core OS packages: utilities, build toolchain, Java, Ruby base, C/C++.
 # ---------------------------------------------------------------------------
-RUN usermod -l daytona codespace \
- && groupmod -n daytona codespace \
- && ln -sfn /home/codespace /home/daytona \
- && rm -f /etc/sudoers.d/codespace \
- && echo "daytona ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/daytona \
- && chmod 0440 /etc/sudoers.d/daytona
-
-# ---------------------------------------------------------------------------
-# Apt packages universal doesn't ship.
-# ---------------------------------------------------------------------------
-RUN apt-get update \
- && apt-get install -y --no-install-recommends \
-        ripgrep tmux ninja-build redis-server \
+RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl gnupg lsb-release \
+        git wget jq tmux vim nano ripgrep unzip xz-utils \
+        build-essential gcc g++ clang make cmake ninja-build pkg-config \
+        openjdk-21-jdk maven gradle \
+        ruby ruby-dev rbenv ruby-build \
+        zlib1g-dev libssl-dev libffi-dev libreadline-dev libsqlite3-dev \
+        libyaml-dev libxml2-dev libxslt1-dev \
+        redis-server \
+ && rm -rf /var/lib/apt/lists/*
+
+# ---------------------------------------------------------------------------
+# PHP 8.4 from sury.org (Debian's default PHP is older) + Composer.
+# ---------------------------------------------------------------------------
+RUN curl -sSL https://packages.sury.org/php/apt.gpg \
+        -o /usr/share/keyrings/debsuryorg-archive-keyring.gpg \
+ && echo "deb [signed-by=/usr/share/keyrings/debsuryorg-archive-keyring.gpg] https://packages.sury.org/php/ $(lsb_release -sc) main" \
+        > /etc/apt/sources.list.d/php.list \
+ && apt-get update && apt-get install -y --no-install-recommends \
+        php8.4 php8.4-cli php8.4-curl php8.4-mbstring php8.4-xml php8.4-zip \
+ && curl -sS https://getcomposer.org/installer \
+        | php -- --install-dir=/usr/local/bin --filename=composer \
  && rm -rf /var/lib/apt/lists/*
 
 # ---------------------------------------------------------------------------
@@ -73,29 +50,51 @@ RUN install -d /usr/share/postgresql-common/pgdg \
         https://www.postgresql.org/media/keys/ACCC4CF8.asc \
  && echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -sc)-pgdg main" \
         > /etc/apt/sources.list.d/pgdg.list \
- && apt-get update \
- && apt-get install -y --no-install-recommends \
+ && apt-get update && apt-get install -y --no-install-recommends \
         postgresql-16 postgresql-client-16 \
  && rm -rf /var/lib/apt/lists/*
 
 # ---------------------------------------------------------------------------
-# PHP 8.4 from sury.org (universal ships 8.3).
+# Docker engine + CLI + compose plugin (Docker-in-Docker).
+# Daemon is started by the entrypoint script — sandbox needs --privileged.
 # ---------------------------------------------------------------------------
-RUN curl -sSL https://packages.sury.org/php/apt.gpg \
-        -o /usr/share/keyrings/debsuryorg-archive-keyring.gpg \
- && echo "deb [signed-by=/usr/share/keyrings/debsuryorg-archive-keyring.gpg] https://packages.sury.org/php/ $(lsb_release -sc) main" \
-        > /etc/apt/sources.list.d/php.list \
- && apt-get update \
- && apt-get install -y --no-install-recommends \
-        php8.4 php8.4-cli php8.4-curl php8.4-mbstring php8.4-xml php8.4-zip \
+RUN install -m 0755 -d /etc/apt/keyrings \
+ && curl -fsSL https://download.docker.com/linux/debian/gpg \
+        -o /etc/apt/keyrings/docker.asc \
+ && chmod a+r /etc/apt/keyrings/docker.asc \
+ && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $(. /etc/os-release && echo $VERSION_CODENAME) stable" \
+        > /etc/apt/sources.list.d/docker.list \
+ && apt-get update && apt-get install -y --no-install-recommends \
+        docker-ce docker-ce-cli containerd.io \
+        docker-buildx-plugin docker-compose-plugin \
  && rm -rf /var/lib/apt/lists/*
 
 # ---------------------------------------------------------------------------
-# yq (jq is preinstalled).
+# GitHub CLI — used by the agent to push branches and open PRs.
+# ---------------------------------------------------------------------------
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+        | tee /usr/share/keyrings/githubcli-archive-keyring.gpg > /dev/null \
+ && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
+ && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+        > /etc/apt/sources.list.d/github-cli.list \
+ && apt-get update && apt-get install -y --no-install-recommends gh \
+ && rm -rf /var/lib/apt/lists/*
+
+# ---------------------------------------------------------------------------
+# yq (jq is in apt above).
 # ---------------------------------------------------------------------------
 RUN curl -fsSL -o /usr/local/bin/yq \
         https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 \
  && chmod +x /usr/local/bin/yq
+
+# ---------------------------------------------------------------------------
+# Go toolchain (pinned).
+# ---------------------------------------------------------------------------
+ARG GO_VERSION=1.25.6
+RUN curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" \
+      | tar -C /usr/local -xz \
+ && ln -s /usr/local/go/bin/go /usr/local/bin/go \
+ && ln -s /usr/local/go/bin/gofmt /usr/local/bin/gofmt
 
 # ---------------------------------------------------------------------------
 # Rust (rustup) — installed system-wide, symlinked into /usr/local/bin so
@@ -111,7 +110,6 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
 
 # ---------------------------------------------------------------------------
 # Python tooling via pipx (each tool isolated, exposed in /usr/local/bin).
-# pipx is preinstalled in universal.
 # ---------------------------------------------------------------------------
 ENV PIPX_HOME=/opt/pipx \
     PIPX_BIN_DIR=/usr/local/bin
@@ -120,11 +118,12 @@ RUN for pkg in poetry uv ruff black mypy pytest conan; do \
     done
 
 # ---------------------------------------------------------------------------
-# Node global tooling + AI CLIs + Playwright. Symlink active node bin into
-# /usr/local/bin for login-shell PATH visibility.
+# Node global tooling + AI CLIs + Playwright + browsers. Symlink active node
+# bin into /usr/local/bin so the daytona user (login shell with reset PATH)
+# can find every tool.
 # ---------------------------------------------------------------------------
 RUN npm install -g \
-        bun \
+        pnpm yarn bun \
         eslint prettier chromedriver \
         @anthropic-ai/claude-code \
         @openai/codex \
@@ -135,22 +134,15 @@ RUN npm install -g \
  && for f in "$NODE_BIN"/*; do ln -sf "$f" "/usr/local/bin/$(basename "$f")"; done
 
 # ---------------------------------------------------------------------------
-# Ensure daytona is in the docker group (universal puts codespace there; the
-# rename preserves membership, but be defensive).
+# Add daytona to the docker group so the user can talk to dockerd via the
+# unix socket without sudo (entrypoint chgrps the socket on startup).
 # ---------------------------------------------------------------------------
-RUN getent group docker >/dev/null || groupadd docker \
- && usermod -aG docker daytona
+RUN usermod -aG docker daytona
 
 # ---------------------------------------------------------------------------
-# Remove the build-time apt insecure-repo bypass so the runtime image
-# verifies signatures normally.
-# ---------------------------------------------------------------------------
-RUN rm -f /etc/apt/apt.conf.d/99-build-insecure
-
-# ---------------------------------------------------------------------------
-# Entrypoint: auto-starts dockerd in the background, then `sleep infinity`
-# becomes pid 1 (Daytona's long-running-pid-1 requirement). Sandbox must be
-# launched with --privileged for dockerd to function.
+# Entrypoint that auto-starts dockerd in the background and then sleeps
+# forever — preserves Daytona's long-running-pid-1 requirement while making
+# Docker available out of the box (sandbox must run with --privileged).
 # ---------------------------------------------------------------------------
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh

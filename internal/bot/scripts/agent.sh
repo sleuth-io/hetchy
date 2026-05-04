@@ -59,4 +59,9 @@ fi
 
 echo "[sf] running claude"
 echo "${SF_PROMPT_B64}" | base64 -d > /tmp/sf-prompt.txt
-claude --print --dangerously-skip-permissions < /tmp/sf-prompt.txt
+# stream-json + verbose emits one NDJSON event per assistant chunk and
+# tool call so the bot can render typed Block updates in real time.
+# The PR URL is parsed out of the final assistant text by the bot.
+claude --print --dangerously-skip-permissions \
+       --output-format stream-json --verbose \
+       < /tmp/sf-prompt.txt
