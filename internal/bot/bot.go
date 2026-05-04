@@ -51,6 +51,10 @@ type Bot struct {
 	// button is hidden and inbound webhooks refused in that case, so
 	// every read of this field must nil-check.
 	app *githubapp.App
+	// githubWebhookSem caps the number of concurrent goroutines
+	// fanned out from the GitHub webhook endpoint. See
+	// github_webhook.go for the rationale + tuning.
+	githubWebhookSem chan struct{}
 	// cipher is reused for the OAuth state token (Slack install flow,
 	// GitHub App setup callback). AES-GCM gives confidentiality +
 	// tamper detection in a single step, so we don't need a separate
@@ -112,15 +116,16 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 	}
 
 	b := &Bot{
-		cfg:          cfg,
-		log:          log,
-		daytona:      dc,
-		store:        store,
-		orgs:         orgcfg.New(store, cipher),
-		convs:        convstore.New(store),
-		auth:         authSvc,
-		cipher:       cipher,
-		retryBackoff: initialBackoff,
+		cfg:              cfg,
+		log:              log,
+		daytona:          dc,
+		store:            store,
+		orgs:             orgcfg.New(store, cipher),
+		convs:            convstore.New(store),
+		auth:             authSvc,
+		cipher:           cipher,
+		retryBackoff:     initialBackoff,
+		githubWebhookSem: make(chan struct{}, webhookDispatchConcurrency),
 	}
 	b.createFn = func(ctx context.Context, params any) (*daytona.Sandbox, error) {
 		return dc.Create(ctx, params)
@@ -272,15 +277,20 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		// Live conversation — agent has run before, pinning is set.
 		b.handleFollowUp(ctx, oc, rec, text, requestID, transcript, wOnUpdate, wOnNotify, wOnComplete, wOnError)
 		return
-	case err == nil && rec.GitHubOwner == "":
-		// We previously asked this thread for a repo and saved a
-		// partial row. Treat the current message as the repo answer.
-		b.handleAwaitingRepoReply(ctx, oc, rec, text, requestID, transcript, wOnUpdate, wOnNotify, wOnComplete, wOnError)
-		return
 	case err == nil:
-		// Repo was set but no sandbox — unusual state (shouldn't happen
-		// in normal flow), treat as fresh and use the stored repo.
-		b.runFreshAgent(ctx, oc, rec, rec.History[0], requestID, transcript, wOnUpdate, wOnNotify, wOnComplete, wOnError)
+		// Conversation exists but the agent has not run yet (no sandbox).
+		// This covers two cases:
+		//   1. We asked for a repo and the user is now answering. The
+		//      partial row has GitHubOwner == "".
+		//   2. A previous fresh-agent attempt resolved a repo but
+		//      then failed — we now treat the user's *new* message as
+		//      a fresh repo answer, having already cleared
+		//      GitHubOwner/Repo on that failure path. (Belt-and-
+		//      suspenders: if a row somehow has GitHubOwner set with no
+		//      sandbox, we fall back to the awaiting-reply handler too,
+		//      because the user's new text is what they want acted on
+		//      — not a stale History[0].)
+		b.handleAwaitingRepoReply(ctx, oc, rec, text, requestID, transcript, wOnUpdate, wOnNotify, wOnComplete, wOnError)
 		return
 	case errors.Is(err, convstore.ErrNotFound):
 		// fall through — new conversation
@@ -321,6 +331,10 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 // agent against the original request stored in History[0]. On failure
 // it nudges the user to retry without modifying the saved row, so the
 // state machine stays in `awaiting repo` until they get it right.
+//
+// rec on entry may have GitHubOwner already set (from a previous
+// resolve-failed attempt); we'll overwrite both with whatever this
+// message resolves to.
 func (b *Bot) handleAwaitingRepoReply(ctx context.Context, oc orgcfg.Config, rec convstore.Record, text, requestID string, transcript *strings.Builder, onUpdate func(string), onNotify func(string), onComplete func(string), onError func(string)) {
 	owner, name, ok := parseOwnerRepo(text)
 	if !ok {
@@ -346,6 +360,17 @@ func (b *Bot) handleAwaitingRepoReply(ctx context.Context, oc orgcfg.Config, rec
 	b.runFreshAgent(ctx, oc, rec, originalRequest, requestID, transcript, onUpdate, onNotify, onComplete, onError)
 }
 
+// clearRepoOnFailure rewrites a partial conversation back to the
+// "awaiting repo" state when runFreshAgent's resolveRepo fails. Without
+// this, the row would be persisted with GitHubOwner set but no
+// SandboxID, and the user's next message would re-enter the same dead
+// branch — they'd be stuck. Clearing the repo lets them answer with a
+// different `owner/name` on the next turn.
+func clearRepoOnFailure(rec *convstore.Record) {
+	rec.GitHubOwner = ""
+	rec.GitHubRepo = ""
+}
+
 // runFreshAgent creates a new sandbox, mints an installation token
 // scoped to rec's repo, runs the agent on userRequest, and persists
 // the resulting conversation. Shared by the new-conversation, awaiting-
@@ -355,7 +380,11 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 	repo, err := b.resolveRepo(ctx, oc.OrgID, rec.GitHubOwner, rec.GitHubRepo)
 	if err != nil {
 		b.log.Warn("resolve repo failed", "org", oc.OrgID, "owner", rec.GitHubOwner, "name", rec.GitHubRepo, "error", err)
-		onError(fmt.Sprintf("`%s/%s` isn't accessible to this organization's GitHub App installations. Install the App on it at /settings/org → Integrations and try again.", rec.GitHubOwner, rec.GitHubRepo))
+		onError(fmt.Sprintf("`%s/%s` isn't accessible to this organization's GitHub App installations. Install the App on it at /settings/org → Integrations and try again, or reply with a different `owner/name`.", rec.GitHubOwner, rec.GitHubRepo))
+		// Drop back to the awaiting-repo state so the user's next
+		// message can pick a different repo without being interpreted
+		// as a follow-up to a half-launched conversation.
+		clearRepoOnFailure(&rec)
 		appendResponseToFirstTurn(&rec, transcript.String())
 		if err := b.convs.Upsert(ctx, rec); err != nil {
 			b.log.Error("convstore upsert (resolve fail)", "error", err)
@@ -538,9 +567,18 @@ func parseOwnerRepo(s string) (owner, name string, ok bool) {
 // digits, hyphens, underscores, and dots in repo names; owners are
 // stricter (no leading hyphen, no consecutive hyphens) but for the
 // purpose of this parse we accept the union and let a downstream lookup
-// fail if the value is not a real repo.
+// fail if the value is not a real repo. We do reject the path-traversal
+// shapes ".", "..", and any name that leads with "." or "-" so that
+// echoing the value back in an error message can't smuggle a relative
+// path through to a UI that renders it as a link.
 func validGitHubName(s string) bool {
 	if s == "" || len(s) > 100 {
+		return false
+	}
+	if s == "." || s == ".." {
+		return false
+	}
+	if s[0] == '.' || s[0] == '-' {
 		return false
 	}
 	for _, r := range s {

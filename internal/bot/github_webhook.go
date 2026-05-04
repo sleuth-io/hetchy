@@ -13,11 +13,30 @@ import (
 	"github.com/hetchyhq/hetchy/internal/githubapp"
 )
 
+// webhookDispatchTimeout caps how long any single dispatched event
+// can run. The longest legitimate handler is `installation_repositories`
+// → SyncInstallation, which paginates GitHub APIs and a few DB
+// upserts; 60 s is comfortable headroom and bounds goroutine lifetime
+// in the face of a hung GitHub round-trip.
+const webhookDispatchTimeout = 60 * time.Second
+
+// webhookDispatchConcurrency caps concurrent dispatch goroutines
+// across all events. A leaked webhook secret or a high-volume install
+// flap could otherwise trigger arbitrary parallel SyncInstallation
+// calls, each holding DB connections + a GitHub rate-limit budget.
+const webhookDispatchConcurrency = 8
+
+// webhookEnqueueTimeout is how long the HTTP handler will wait for a
+// dispatch slot before responding 503 + asking GitHub to redeliver.
+// Short enough to avoid GitHub's 10 s receive deadline, long enough to
+// absorb a brief burst.
+const webhookEnqueueTimeout = 5 * time.Second
+
 // githubWebhookHandler is the public endpoint GitHub posts events to.
 // Verifies the HMAC, parses the event type, and dispatches to a
-// specific handler. Always 200s after dispatch (errors are logged
-// only) so GitHub doesn't enter its retry loop on transient bot
-// problems.
+// specific handler. Responds 200 once a dispatch slot is reserved; if
+// the in-process queue is saturated we return 503 so GitHub retries
+// (it gives ~5 retries with exponential backoff for failed deliveries).
 func (b *Bot) githubWebhookHandler(w http.ResponseWriter, r *http.Request) {
 	if b.app == nil {
 		http.Error(w, "github app not configured", http.StatusServiceUnavailable)
@@ -41,12 +60,38 @@ func (b *Bot) githubWebhookHandler(w http.ResponseWriter, r *http.Request) {
 
 	event := githubapp.EventTypeFromHeaders(r.Header)
 	delivery := githubapp.DeliveryIDFromHeaders(r.Header)
-	b.log.Info("github webhook received", "event", event, "delivery", delivery, "bytes", len(body))
 
+	enqueueCtx, cancel := context.WithTimeout(r.Context(), webhookEnqueueTimeout)
+	defer cancel()
+	select {
+	case b.githubWebhookSem <- struct{}{}:
+		// Slot reserved; ack to GitHub and run the dispatch async.
+	case <-enqueueCtx.Done():
+		// All dispatch slots busy. Return 503 so GitHub redelivers
+		// rather than dropping the event silently.
+		b.log.Warn("github webhook: dispatcher saturated, asking GitHub to retry",
+			"event", event, "delivery", delivery,
+		)
+		http.Error(w, "dispatcher saturated", http.StatusServiceUnavailable)
+		return
+	}
+
+	b.log.Info("github webhook received", "event", event, "delivery", delivery, "bytes", len(body))
 	w.WriteHeader(http.StatusOK)
-	// Detached context: dispatch can outlive the request lifetime
-	// (sync calls hit GitHub APIs and may take seconds).
-	go b.dispatchGithubEvent(context.Background(), event, body)
+
+	go func() {
+		defer func() {
+			<-b.githubWebhookSem
+			if rec := recover(); rec != nil {
+				b.log.Error("github webhook: dispatch panic recovered",
+					"panic", rec, "event", event, "delivery", delivery,
+				)
+			}
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), webhookDispatchTimeout)
+		defer cancel()
+		b.dispatchGithubEvent(ctx, event, body)
+	}()
 }
 
 // dispatchGithubEvent fans an event payload out to the right handler.
@@ -54,6 +99,12 @@ func (b *Bot) githubWebhookHandler(w http.ResponseWriter, r *http.Request) {
 // set on the App side, but GitHub may deliver a few extras (like
 // ping) that we don't care about.
 func (b *Bot) dispatchGithubEvent(ctx context.Context, event string, body []byte) {
+	// Defensive: the HTTP entrypoint already nil-checks b.app, but a
+	// future refactor that calls dispatchGithubEvent from a different
+	// path shouldn't nil-deref a goroutine into oblivion.
+	if b.app == nil {
+		return
+	}
 	switch event {
 	case "ping":
 		// Sent once when GitHub first verifies the webhook URL.

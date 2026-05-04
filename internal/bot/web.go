@@ -455,6 +455,8 @@ func savedMessage(s string) string {
 		return "GitHub App installed. Repos and teams have been synced."
 	case "github_synced":
 		return "Sync complete."
+	case "github_install_conflict":
+		return "That GitHub installation is already connected to another Hetchy organization. Have the existing org uninstall first (or pick a different account)."
 	default:
 		return ""
 	}

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/hetchyhq/hetchy/internal/auth"
@@ -143,6 +144,34 @@ func (b *Bot) githubSetupHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Multi-tenant guard: a single GitHub installation_id can only ever
+	// be bound to one Hetchy organization. Without this check, any
+	// Hetchy admin who is also a GitHub admin on a target account
+	// could click "Install" and silently rebind the existing
+	// installation row to their own org via the upsert's
+	// ON CONFLICT … DO UPDATE SET org_id = EXCLUDED.org_id, evicting
+	// the original org's repo + team data via the FK join key change.
+	// Refuse the rebind and surface a clear "uninstall first" message.
+	existing, err := b.store.Queries.GetGithubInstallation(r.Context(), installationID)
+	switch {
+	case err == nil:
+		if existing.OrgID != state.OrgID {
+			b.log.Warn("github install: cross-org rebind blocked",
+				"installation_id", installationID,
+				"current_org", existing.OrgID,
+				"attempting_org", state.OrgID,
+			)
+			http.Redirect(w, r, "/settings/org?tab=integrations&saved=github_install_conflict", http.StatusFound)
+			return
+		}
+	case errors.Is(err, pgx.ErrNoRows):
+		// fresh install — fall through to upsert
+	default:
+		b.log.Error("github install: existing installation lookup", "id", installationID, "error", err)
+		http.Error(w, "lookup failed", http.StatusInternalServerError)
+		return
+	}
+
 	row, err := b.store.Queries.UpsertGithubInstallation(r.Context(), sqlc.UpsertGithubInstallationParams{
 		InstallationID: installationID,
 		OrgID:          state.OrgID,
@@ -152,6 +181,19 @@ func (b *Bot) githubSetupHandler(w http.ResponseWriter, r *http.Request) {
 		SuspendedAt:    pgtype.Timestamptz{}, // a fresh install is never suspended
 	})
 	if err != nil {
+		// The upsert's `WHERE org_id = EXCLUDED.org_id` clause means a
+		// cross-org conflict yields zero rows back. This catches the
+		// narrow TOCTOU window between the pre-check above and the
+		// upsert: a concurrent install of the same installation_id
+		// from a different org would otherwise win the race.
+		if errors.Is(err, pgx.ErrNoRows) {
+			b.log.Warn("github install: cross-org rebind blocked at upsert (race)",
+				"installation_id", installationID,
+				"attempting_org", state.OrgID,
+			)
+			http.Redirect(w, r, "/settings/org?tab=integrations&saved=github_install_conflict", http.StatusFound)
+			return
+		}
 		b.log.Error("github install: upsert installation", "id", installationID, "error", err)
 		http.Error(w, "save installation failed", http.StatusInternalServerError)
 		return

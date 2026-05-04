@@ -3,6 +3,13 @@
 -- + membership snapshots.
 
 -- name: UpsertGithubInstallation :one
+-- The WHERE clause on the DO UPDATE is the SQL-level guard against
+-- one Hetchy org silently rebinding another org's installation_id.
+-- The Go-side pre-check covers the common case with a clean error;
+-- this WHERE closes the TOCTOU window where two simultaneous installs
+-- of the same installation_id from different orgs could race past the
+-- pre-check. On a cross-org conflict the UPDATE doesn't fire and
+-- RETURNING yields zero rows — callers must handle pgx.ErrNoRows.
 INSERT INTO github_app_installations (
     installation_id, org_id, account_login, account_type, account_id, suspended_at
 ) VALUES (
@@ -15,6 +22,7 @@ ON CONFLICT (installation_id) DO UPDATE SET
     account_id    = EXCLUDED.account_id,
     suspended_at  = EXCLUDED.suspended_at,
     updated_at    = NOW()
+WHERE github_app_installations.org_id = EXCLUDED.org_id
 RETURNING installation_id, org_id, account_login, account_type, account_id, suspended_at, created_at, updated_at;
 
 -- name: GetGithubInstallation :one
@@ -63,12 +71,16 @@ ORDER BY r.owner, r.name;
 -- name: GetGithubRepoForOrg :one
 -- Resolves an (owner, name) the user typed in chat to a concrete
 -- (installation_id, repo_id, default_branch) for this org. If the same
--- repo is exposed via two installations the LIMIT picks the first; the
--- caller doesn't need to care which since either token will work.
+-- repo is exposed via two installations we prefer the unsuspended one
+-- and break the remaining tie deterministically by installation_id so
+-- repeat calls return the same row (and the caller's cached token
+-- stays warm).
 SELECT r.installation_id, r.repo_id, r.owner, r.name, r.default_branch, r.private, r.last_synced_at
 FROM github_repos r
 JOIN github_app_installations i ON i.installation_id = r.installation_id
 WHERE i.org_id = $1 AND r.owner = $2 AND r.name = $3
+  AND i.suspended_at IS NULL
+ORDER BY r.installation_id
 LIMIT 1;
 
 -- name: DeleteGithubReposByInstallation :exec
