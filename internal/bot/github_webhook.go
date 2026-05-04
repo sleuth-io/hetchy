@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -31,6 +32,34 @@ const webhookDispatchConcurrency = 8
 // Short enough to avoid GitHub's 10 s receive deadline, long enough to
 // absorb a brief burst.
 const webhookEnqueueTimeout = 5 * time.Second
+
+// webhookLogSuppressWindow rate-limits how often we'll emit a single
+// kind of webhook parse-error log line. With a leaked webhook secret
+// an attacker could submit valid-HMAC garbage and otherwise flood our
+// logs — at most one log per kind per window.
+const webhookLogSuppressWindow = 30 * time.Second
+
+// webhookErrLogger gates noisy log lines from the webhook parse path.
+// Indexed by (handler, error-kind) so distinct failures still surface
+// individually but a flood of one kind collapses to a single line.
+type webhookErrLogger struct {
+	mu   sync.Mutex
+	last map[string]time.Time
+}
+
+func (l *webhookErrLogger) allow(key string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.last == nil {
+		l.last = map[string]time.Time{}
+	}
+	now := time.Now()
+	if t, ok := l.last[key]; ok && now.Sub(t) < webhookLogSuppressWindow {
+		return false
+	}
+	l.last[key] = now
+	return true
+}
 
 // githubWebhookHandler is the public endpoint GitHub posts events to.
 // Verifies the HMAC, parses the event type, and dispatches to a
@@ -137,7 +166,9 @@ func (b *Bot) handleInstallationEvent(ctx context.Context, body []byte) {
 		} `json:"installation"`
 	}
 	if err := json.Unmarshal(body, &p); err != nil {
-		b.log.Error("github webhook: parse installation event", "error", err)
+		if b.githubWebhookErrLog.allow("installation") {
+			b.log.Error("github webhook: parse installation event", "error", err)
+		}
 		return
 	}
 	if p.Installation.ID == 0 {
@@ -194,7 +225,9 @@ func (b *Bot) handleInstallationReposEvent(ctx context.Context, body []byte) {
 		} `json:"installation"`
 	}
 	if err := json.Unmarshal(body, &p); err != nil {
-		b.log.Error("github webhook: parse installation_repositories", "error", err)
+		if b.githubWebhookErrLog.allow("installation_repositories") {
+			b.log.Error("github webhook: parse installation_repositories", "error", err)
+		}
 		return
 	}
 	if p.Installation.ID == 0 {
@@ -220,7 +253,9 @@ func (b *Bot) handleOrgScopedEvent(ctx context.Context, event string, body []byt
 		} `json:"organization"`
 	}
 	if err := json.Unmarshal(body, &p); err != nil {
-		b.log.Error("github webhook: parse org event", "event", event, "error", err)
+		if b.githubWebhookErrLog.allow("org:" + event) {
+			b.log.Error("github webhook: parse org event", "event", event, "error", err)
+		}
 		return
 	}
 	if p.Installation.ID != 0 {

@@ -213,6 +213,22 @@ doppler secrets set \
 Repeat for staging and prod with the appropriate hostnames. App IDs and
 private keys are env-specific.
 
+**Rotating the webhook secret.** Change it in two places at the same
+time: the App's settings page on GitHub (regenerate, copy) and Doppler
+(`doppler secrets set GITHUB_APP_WEBHOOK_SECRET=…`). In-flight events
+delivered between the GitHub change and the Doppler restart will fail
+HMAC verification and GitHub will retry them — the bot rejects them
+with a 401 and the events drop after GitHub gives up (~5 retries with
+exponential backoff). For zero-loss rotation, redeploy with the new
+secret quickly and rely on GitHub's redelivery; for events that
+genuinely matter, rotate during a quiet window.
+
+**Rotating the private key.** Generate a new key on the App page
+(GitHub keeps the old one valid until you explicitly delete it), drop
+the new PEM into Doppler, redeploy, then delete the old key on
+GitHub. Cached installation tokens stay valid for up to an hour
+across rotations, so there's no traffic dip.
+
 ### 4. Set Up Daytona
 
 #### Option A: Local Daytona OSS Stack

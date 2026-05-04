@@ -55,6 +55,10 @@ type Bot struct {
 	// fanned out from the GitHub webhook endpoint. See
 	// github_webhook.go for the rationale + tuning.
 	githubWebhookSem chan struct{}
+	// githubWebhookErrLog suppresses repeat log lines from the
+	// webhook parse-error paths so a leaked webhook secret can't be
+	// used to flood logs at our expense.
+	githubWebhookErrLog webhookErrLogger
 	// cipher is reused for the OAuth state token (Slack install flow,
 	// GitHub App setup callback). AES-GCM gives confidentiality +
 	// tamper detection in a single step, so we don't need a separate
@@ -404,12 +408,12 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 	})
 	if err != nil {
 		if ctx.Err() != nil {
-			b.log.Error("sandbox create cancelled", "error", err)
-			onError(fmt.Sprintf("Sandbox create cancelled: `%v`", ctx.Err()))
+			b.log.Error("sandbox create cancelled", "request_id", requestID, "error", err)
+			onError("Sandbox creation was cancelled before it could start. Try again.")
 			return
 		}
-		b.log.Error("sandbox create failed", "error", err)
-		onError(fmt.Sprintf("Sandbox create failed: `%v`", err))
+		b.log.Error("sandbox create failed", "request_id", requestID, "error", err)
+		onError("Couldn't start a sandbox for your request. Check the server logs for details and try again.")
 		return
 	}
 	b.log.Info("sandbox created", "id", sb.ID, "request_id", requestID)
@@ -418,8 +422,8 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 	branch := "feature/sf-" + requestID
 	prURL, runErr := b.runAgent(ctx, sb, repo, oc.AnthropicAPIKey, oc.SXKey, userRequest, requestID, onUpdate)
 	if runErr != nil {
-		b.log.Error("agent run failed", "sandbox", sb.ID, "error", runErr)
-		onError(fmt.Sprintf("Something went wrong: `%v`\nSandbox `%s` was left running for debugging.", runErr, sb.ID))
+		b.log.Error("agent run failed", "sandbox", sb.ID, "request_id", requestID, "error", runErr)
+		onError(fmt.Sprintf("Something went wrong while running the agent. Sandbox `%s` is left running for debugging — check the server logs for details.", sb.ID))
 		return
 	}
 
@@ -457,25 +461,25 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 
 	sb, err := b.daytona.Get(ctx, rec.SandboxID)
 	if err != nil {
-		b.log.Error("sandbox get failed", "sandbox", rec.SandboxID, "error", err)
-		onError(fmt.Sprintf("Could not find sandbox `%s`: %v", rec.SandboxID, err))
+		b.log.Error("sandbox get failed", "sandbox", rec.SandboxID, "request_id", requestID, "error", err)
+		onError(fmt.Sprintf("Could not find sandbox `%s` — it may have been archived or removed. Start a new chat to continue.", rec.SandboxID))
 		return
 	}
 	if err := sb.Start(ctx); err != nil {
-		b.log.Error("sandbox start failed", "sandbox", sb.ID, "error", err)
-		onError(fmt.Sprintf("Failed to resume sandbox: `%v`", err))
+		b.log.Error("sandbox start failed", "sandbox", sb.ID, "request_id", requestID, "error", err)
+		onError(fmt.Sprintf("Failed to resume sandbox `%s`. Check the server logs for details.", sb.ID))
 		return
 	}
 	if err := sb.WaitForStart(ctx, 2*time.Minute); err != nil {
-		b.log.Error("sandbox wait-for-start failed", "sandbox", sb.ID, "error", err)
-		onError(fmt.Sprintf("Sandbox did not start in time: `%v`", err))
+		b.log.Error("sandbox wait-for-start failed", "sandbox", sb.ID, "request_id", requestID, "error", err)
+		onError(fmt.Sprintf("Sandbox `%s` did not start in time. Try again, or open a fresh chat.", sb.ID))
 		return
 	}
 
 	prURL, err := b.runFollowUp(ctx, sb, repo, oc.AnthropicAPIKey, rec, text, requestID, onUpdate)
 	if err != nil {
-		b.log.Error("follow-up failed", "sandbox", sb.ID, "error", err)
-		onError(fmt.Sprintf("Something went wrong: `%v`", err))
+		b.log.Error("follow-up failed", "sandbox", sb.ID, "request_id", requestID, "error", err)
+		onError(fmt.Sprintf("Something went wrong while running the agent. Sandbox `%s` is left running for debugging — check the server logs for details.", sb.ID))
 		return
 	}
 

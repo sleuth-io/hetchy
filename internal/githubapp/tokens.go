@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -120,15 +121,23 @@ func (a *App) AppClient() (*github.Client, error) {
 	return github.NewClient(a.http).WithAuthToken(jwtTok), nil
 }
 
+// sameInts reports whether a and b contain the same elements,
+// disregarding order. We sort copies so callers don't have to commit
+// to a stable ordering — passing the same scope list as `[42, 43]`
+// or `[43, 42]` should both hit the same cached token.
 func sameInts(a, b []int64) bool {
 	if len(a) != len(b) {
 		return false
 	}
-	// Order matters here: a token cached with [42, 43] and one with
-	// [43, 42] are scope-equivalent, but normalizing is overkill for
-	// our caller pattern (we always pass either nil or a single id).
-	for i := range a {
-		if a[i] != b[i] {
+	if len(a) == 0 {
+		return true
+	}
+	aa := slices.Clone(a)
+	bb := slices.Clone(b)
+	slices.Sort(aa)
+	slices.Sort(bb)
+	for i := range aa {
+		if aa[i] != bb[i] {
 			return false
 		}
 	}
