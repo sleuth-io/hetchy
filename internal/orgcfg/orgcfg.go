@@ -1,7 +1,13 @@
 // Package orgcfg loads and stores per-organization runtime config
-// (GitHub/Slack tokens, repo, base branch). It sits on top of the sqlc
-// queries, decrypting secrets on read and encrypting on write so callers
-// only ever see plaintext.
+// (Slack tokens, Anthropic key, default repo selection). It sits on top
+// of the sqlc queries, decrypting secrets on read and encrypting on
+// write so callers only ever see plaintext.
+//
+// GitHub auth no longer lives here: it's handled by the GitHub App
+// installations cached in the github_app_installations table and
+// minted on demand by internal/githubapp. The default-repo fields here
+// only record what to fall back to when a chat request doesn't name a
+// repo explicitly (Slack messages, plain-text follow-ups).
 package orgcfg
 
 import (
@@ -23,15 +29,14 @@ var ErrNotFound = errors.New("orgcfg: not found")
 // Config is the decrypted, app-friendly view of a row in org_configs.
 // All token fields are plaintext; do not log them.
 type Config struct {
-	OrgID            string
-	AnthropicAPIKey  string
-	GitHubToken      string
-	SlackBotToken    string
-	SlackSocketToken string
-	SlackTeamID      string
-	SXKey            string
-	GitHubRepo       string
-	GitHubBaseBranch string
+	OrgID              string
+	AnthropicAPIKey    string
+	SlackBotToken      string
+	SlackSocketToken   string
+	SlackTeamID        string
+	SXKey              string
+	DefaultGitHubOwner string
+	DefaultGitHubRepo  string
 }
 
 // Store wires a *db.Store to a *secrets.Cipher and exposes plaintext
@@ -101,10 +106,6 @@ func (s *Store) ListWithSlack(ctx context.Context) ([]Config, error) {
 
 // Upsert encrypts and writes the supplied Config.
 func (s *Store) Upsert(ctx context.Context, c Config) (Config, error) {
-	gh, err := s.cipher.Encrypt(c.GitHubToken)
-	if err != nil {
-		return Config{}, fmt.Errorf("encrypt github token: %w", err)
-	}
 	sb, err := s.cipher.Encrypt(c.SlackBotToken)
 	if err != nil {
 		return Config{}, fmt.Errorf("encrypt slack bot token: %w", err)
@@ -121,10 +122,6 @@ func (s *Store) Upsert(ctx context.Context, c Config) (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("encrypt anthropic api key: %w", err)
 	}
-	branch := c.GitHubBaseBranch
-	if branch == "" {
-		branch = "main"
-	}
 	var teamID *string
 	if c.SlackTeamID != "" {
 		t := c.SlackTeamID
@@ -132,14 +129,13 @@ func (s *Store) Upsert(ctx context.Context, c Config) (Config, error) {
 	}
 	row, err := s.db.Queries.UpsertOrgConfig(ctx, sqlc.UpsertOrgConfigParams{
 		OrgID:                     c.OrgID,
-		GithubTokenEncrypted:      gh,
 		SlackBotTokenEncrypted:    sb,
 		SlackSocketTokenEncrypted: ss,
 		SxKeyEncrypted:            sx,
 		AnthropicApiKeyEncrypted:  ak,
-		GithubRepo:                c.GitHubRepo,
-		GithubBaseBranch:          branch,
 		SlackTeamID:               teamID,
+		DefaultGithubOwner:        c.DefaultGitHubOwner,
+		DefaultGithubRepo:         c.DefaultGitHubRepo,
 	})
 	if err != nil {
 		return Config{}, fmt.Errorf("upsert org config: %w", err)
@@ -148,10 +144,6 @@ func (s *Store) Upsert(ctx context.Context, c Config) (Config, error) {
 }
 
 func (s *Store) decrypt(row sqlc.OrgConfig) (Config, error) {
-	gh, err := s.cipher.Decrypt(row.GithubTokenEncrypted)
-	if err != nil {
-		return Config{}, fmt.Errorf("decrypt github token: %w", err)
-	}
 	sb, err := s.cipher.Decrypt(row.SlackBotTokenEncrypted)
 	if err != nil {
 		return Config{}, fmt.Errorf("decrypt slack bot token: %w", err)
@@ -173,14 +165,13 @@ func (s *Store) decrypt(row sqlc.OrgConfig) (Config, error) {
 		teamID = *row.SlackTeamID
 	}
 	return Config{
-		OrgID:            row.OrgID,
-		GitHubToken:      gh,
-		SlackBotToken:    sb,
-		SlackSocketToken: ss,
-		SlackTeamID:      teamID,
-		SXKey:            sx,
-		AnthropicAPIKey:  ak,
-		GitHubRepo:       row.GithubRepo,
-		GitHubBaseBranch: row.GithubBaseBranch,
+		OrgID:              row.OrgID,
+		SlackBotToken:      sb,
+		SlackSocketToken:   ss,
+		SlackTeamID:        teamID,
+		SXKey:              sx,
+		AnthropicAPIKey:    ak,
+		DefaultGitHubOwner: row.DefaultGithubOwner,
+		DefaultGitHubRepo:  row.DefaultGithubRepo,
 	}, nil
 }

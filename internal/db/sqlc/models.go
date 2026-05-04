@@ -9,27 +9,65 @@ import (
 )
 
 type Conversation struct {
-	OrgID     string             `json:"org_id"`
-	ThreadID  string             `json:"thread_id"`
-	SandboxID string             `json:"sandbox_id"`
-	Branch    string             `json:"branch"`
-	PrUrl     string             `json:"pr_url"`
-	History   []string           `json:"history"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
-	Responses []string           `json:"responses"`
+	OrgID       string             `json:"org_id"`
+	ThreadID    string             `json:"thread_id"`
+	SandboxID   string             `json:"sandbox_id"`
+	Branch      string             `json:"branch"`
+	PrUrl       string             `json:"pr_url"`
+	History     []string           `json:"history"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	Responses   []string           `json:"responses"`
+	GithubOwner string             `json:"github_owner"`
+	GithubRepo  string             `json:"github_repo"`
+}
+
+type GithubAppInstallation struct {
+	InstallationID int64              `json:"installation_id"`
+	OrgID          string             `json:"org_id"`
+	AccountLogin   string             `json:"account_login"`
+	AccountType    string             `json:"account_type"`
+	AccountID      int64              `json:"account_id"`
+	SuspendedAt    pgtype.Timestamptz `json:"suspended_at"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
+type GithubRepo struct {
+	InstallationID int64              `json:"installation_id"`
+	RepoID         int64              `json:"repo_id"`
+	Owner          string             `json:"owner"`
+	Name           string             `json:"name"`
+	DefaultBranch  string             `json:"default_branch"`
+	Private        bool               `json:"private"`
+	LastSyncedAt   pgtype.Timestamptz `json:"last_synced_at"`
+}
+
+type GithubTeam struct {
+	InstallationID int64              `json:"installation_id"`
+	TeamID         int64              `json:"team_id"`
+	Slug           string             `json:"slug"`
+	Name           string             `json:"name"`
+	ParentTeamID   *int64             `json:"parent_team_id"`
+	LastSyncedAt   pgtype.Timestamptz `json:"last_synced_at"`
+}
+
+type GithubTeamMember struct {
+	InstallationID int64  `json:"installation_id"`
+	TeamID         int64  `json:"team_id"`
+	GithubUserID   int64  `json:"github_user_id"`
+	GithubLogin    string `json:"github_login"`
 }
 
 type OrgConfig struct {
 	OrgID                     string             `json:"org_id"`
-	GithubTokenEncrypted      []byte             `json:"github_token_encrypted"`
 	SlackBotTokenEncrypted    []byte             `json:"slack_bot_token_encrypted"`
 	SlackSocketTokenEncrypted []byte             `json:"slack_socket_token_encrypted"`
 	SxKeyEncrypted            []byte             `json:"sx_key_encrypted"`
-	GithubRepo                string             `json:"github_repo"`
-	GithubBaseBranch          string             `json:"github_base_branch"`
 	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
 	AnthropicApiKeyEncrypted  []byte             `json:"anthropic_api_key_encrypted"`
 	SlackTeamID               *string            `json:"slack_team_id"`
+	DefaultGithubOwner        string             `json:"default_github_owner"`
+	DefaultGithubRepo         string             `json:"default_github_repo"`
 }

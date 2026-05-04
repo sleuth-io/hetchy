@@ -257,6 +257,21 @@ func (s *Service) CreateOrganization(ctx context.Context, name string) (string, 
 	return org.ID, nil
 }
 
+// GetOrganizationName fetches the WorkOS organization's display name.
+// Returns the orgID itself as a fallback if the WorkOS round-trip fails
+// — better than crashing the settings page over a transient API hiccup,
+// and the orgID is at least visually unique.
+func (s *Service) GetOrganizationName(ctx context.Context, orgID string) (string, error) {
+	if s.cfg.Bypass {
+		return orgID, nil
+	}
+	org, err := s.client.Organizations().Get(ctx, orgID)
+	if err != nil {
+		return "", err
+	}
+	return org.Name, nil
+}
+
 // DeleteOrganization is a best-effort rollback used by the onboarding
 // handler when org creation succeeded but a follow-up step (membership
 // creation) failed. Errors here are logged but not surfaced — the

@@ -12,7 +12,6 @@ import (
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
 
 	"github.com/hetchyhq/hetchy/internal/convstore"
-	"github.com/hetchyhq/hetchy/internal/orgcfg"
 )
 
 //go:embed scripts/agent.sh
@@ -57,30 +56,45 @@ When you are done implementing the change:
   5. The very last line of your output MUST be just the PR URL — no other
      text on that line.`
 
-func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, oc orgcfg.Config, userRequest, requestID string, onUpdate func(string)) (string, error) {
-	branch := oc.GitHubBaseBranch
-	if branch == "" {
-		branch = "main"
-	}
-	prompt := fmt.Sprintf(agentPromptTemplate,
-		oc.GitHubRepo, workdir, branch,
-		userRequest, requestID, branch,
-	)
-	return b.runScript(ctx, sb, "agent-"+requestID, "agent", agentScript, map[string]string{
-		"SF_REPO":           oc.GitHubRepo,
-		"SF_WORKDIR":        workdir,
-		"SF_BASE_BRANCH":    branch,
-		"SF_PROMPT_B64":     base64.StdEncoding.EncodeToString([]byte(prompt)),
-		"ANTHROPIC_API_KEY": oc.AnthropicAPIKey,
-		"GITHUB_TOKEN":      oc.GitHubToken,
-	}, onUpdate)
+// repoCtx carries the resolved per-request repository details into the
+// sandbox: the slug "owner/name", the default branch the agent should
+// branch off, and a freshly-minted GitHub App installation token. The
+// token is scoped to a single repo (RepoID is set when minting upstream)
+// so a compromised sandbox can only push to the one repo it's working
+// on, not the whole installation.
+type repoCtx struct {
+	Slug         string
+	BaseBranch   string
+	GitHubToken  string
+	InstallID    int64
+	RepoID       int64
+	TokenExpires time.Time
 }
 
-// runFollowUp resumes work in an existing sandbox. Anthropic/GitHub creds
-// are passed per-run (not just at sandbox-create time) so a key rotation
-// in /settings/org takes effect on the very next follow-up rather than
-// only on a freshly-created sandbox.
-func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, oc orgcfg.Config, rec convstore.Record, userRequest, requestID string, onUpdate func(string)) (string, error) {
+func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, anthropicAPIKey, sxKey, userRequest, requestID string, onUpdate func(string)) (string, error) {
+	prompt := fmt.Sprintf(agentPromptTemplate,
+		repo.Slug, workdir, repo.BaseBranch,
+		userRequest, requestID, repo.BaseBranch,
+	)
+	env := map[string]string{
+		"SF_REPO":           repo.Slug,
+		"SF_WORKDIR":        workdir,
+		"SF_BASE_BRANCH":    repo.BaseBranch,
+		"SF_PROMPT_B64":     base64.StdEncoding.EncodeToString([]byte(prompt)),
+		"ANTHROPIC_API_KEY": anthropicAPIKey,
+		"GITHUB_TOKEN":      repo.GitHubToken,
+	}
+	if sxKey != "" {
+		env["SX_KEY"] = sxKey
+	}
+	return b.runScript(ctx, sb, "agent-"+requestID, "agent", agentScript, env, onUpdate)
+}
+
+// runFollowUp resumes work in an existing sandbox. The installation
+// token is freshly minted and passed per-run (not just at sandbox-create
+// time) so a token rotation or a re-installed App takes effect on the
+// very next follow-up rather than only on a freshly-created sandbox.
+func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, anthropicAPIKey string, rec convstore.Record, userRequest, requestID string, onUpdate func(string)) (string, error) {
 	history := strings.Join(rec.History, "\n---\n")
 	prompt := fmt.Sprintf(agentFollowUpPromptTemplate,
 		workdir, rec.Branch, rec.PRURL,
@@ -90,8 +104,8 @@ func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, oc orgcfg.Co
 		"SF_WORKDIR":        workdir,
 		"SF_BRANCH":         rec.Branch,
 		"SF_PROMPT_B64":     base64.StdEncoding.EncodeToString([]byte(prompt)),
-		"ANTHROPIC_API_KEY": oc.AnthropicAPIKey,
-		"GITHUB_TOKEN":      oc.GitHubToken,
+		"ANTHROPIC_API_KEY": anthropicAPIKey,
+		"GITHUB_TOKEN":      repo.GitHubToken,
 	}, onUpdate)
 }
 

@@ -24,7 +24,8 @@ func (q *Queries) DeleteConversation(ctx context.Context, arg DeleteConversation
 }
 
 const getConversation = `-- name: GetConversation :one
-SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, responses
+SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, responses,
+       github_owner, github_repo
 FROM conversations
 WHERE org_id = $1 AND thread_id = $2
 `
@@ -47,12 +48,15 @@ func (q *Queries) GetConversation(ctx context.Context, arg GetConversationParams
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Responses,
+		&i.GithubOwner,
+		&i.GithubRepo,
 	)
 	return i, err
 }
 
 const listConversationsByOrg = `-- name: ListConversationsByOrg :many
-SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, responses
+SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, responses,
+       github_owner, github_repo
 FROM conversations
 WHERE org_id = $1
 ORDER BY updated_at DESC
@@ -77,6 +81,8 @@ func (q *Queries) ListConversationsByOrg(ctx context.Context, orgID string) ([]C
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.Responses,
+			&i.GithubOwner,
+			&i.GithubRepo,
 		); err != nil {
 			return nil, err
 		}
@@ -90,28 +96,34 @@ func (q *Queries) ListConversationsByOrg(ctx context.Context, orgID string) ([]C
 
 const upsertConversation = `-- name: UpsertConversation :one
 INSERT INTO conversations (
-    org_id, thread_id, sandbox_id, branch, pr_url, history, responses
+    org_id, thread_id, sandbox_id, branch, pr_url, history, responses,
+    github_owner, github_repo
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7
+    $1, $2, $3, $4, $5, $6, $7, $8, $9
 )
 ON CONFLICT (org_id, thread_id) DO UPDATE SET
-    sandbox_id = EXCLUDED.sandbox_id,
-    branch     = EXCLUDED.branch,
-    pr_url     = EXCLUDED.pr_url,
-    history    = EXCLUDED.history,
-    responses  = EXCLUDED.responses,
-    updated_at = NOW()
-RETURNING org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, responses
+    sandbox_id   = EXCLUDED.sandbox_id,
+    branch       = EXCLUDED.branch,
+    pr_url       = EXCLUDED.pr_url,
+    history      = EXCLUDED.history,
+    responses    = EXCLUDED.responses,
+    github_owner = EXCLUDED.github_owner,
+    github_repo  = EXCLUDED.github_repo,
+    updated_at   = NOW()
+RETURNING org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, responses,
+          github_owner, github_repo
 `
 
 type UpsertConversationParams struct {
-	OrgID     string   `json:"org_id"`
-	ThreadID  string   `json:"thread_id"`
-	SandboxID string   `json:"sandbox_id"`
-	Branch    string   `json:"branch"`
-	PrUrl     string   `json:"pr_url"`
-	History   []string `json:"history"`
-	Responses []string `json:"responses"`
+	OrgID       string   `json:"org_id"`
+	ThreadID    string   `json:"thread_id"`
+	SandboxID   string   `json:"sandbox_id"`
+	Branch      string   `json:"branch"`
+	PrUrl       string   `json:"pr_url"`
+	History     []string `json:"history"`
+	Responses   []string `json:"responses"`
+	GithubOwner string   `json:"github_owner"`
+	GithubRepo  string   `json:"github_repo"`
 }
 
 func (q *Queries) UpsertConversation(ctx context.Context, arg UpsertConversationParams) (Conversation, error) {
@@ -123,6 +135,8 @@ func (q *Queries) UpsertConversation(ctx context.Context, arg UpsertConversation
 		arg.PrUrl,
 		arg.History,
 		arg.Responses,
+		arg.GithubOwner,
+		arg.GithubRepo,
 	)
 	var i Conversation
 	err := row.Scan(
@@ -135,6 +149,8 @@ func (q *Queries) UpsertConversation(ctx context.Context, arg UpsertConversation
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Responses,
+		&i.GithubOwner,
+		&i.GithubRepo,
 	)
 	return i, err
 }

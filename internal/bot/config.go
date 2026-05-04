@@ -3,12 +3,15 @@ package bot
 import (
 	"fmt"
 	"os"
+	"strconv"
 )
 
-// Config holds runtime configuration loaded from the environment. Per-org
-// settings (GitHub repo, GitHub PAT, Slack tokens, SX key, Anthropic API
-// key, base branch) live in the database keyed by WorkOS organization_id
-// — they're not in this struct.
+// Config holds runtime configuration loaded from the environment.
+// Per-org settings (Slack tokens, Anthropic API key, default repo
+// selection) live in the database keyed by WorkOS organization_id —
+// they're not in this struct. GitHub access is via the GitHub App
+// installation cache, also in the database; this struct only carries
+// the App-level credentials needed to mint installation tokens.
 type Config struct {
 	// Env is "dev", "staging", or "prod" (HETCHY_ENV). Defaults to
 	// "prod" so a missing var is the safe choice — the dev-only
@@ -49,6 +52,20 @@ type Config struct {
 	// for staging, https://app.hetchy.ai/slack/oauth/callback for prod.
 	SlackOAuthRedirectURI string
 
+	// GitHubAppID / GitHubAppSlug / GitHubAppPrivateKey / GitHubAppWebhookSecret
+	// configure the GitHub App used for per-org integrations. One App per
+	// environment (dev / staging / prod). Without these, the integration
+	// install button is hidden and inbound webhooks are refused.
+	//
+	// GitHubAppPrivateKey is the multi-line PEM contents of the App's
+	// private key — Doppler stores it as a multi-line secret; the env
+	// var arrives here with newlines preserved.
+	GitHubAppID            int64
+	GitHubAppSlug          string
+	GitHubAppClientID      string
+	GitHubAppPrivateKey    string
+	GitHubAppWebhookSecret string
+
 	AuthBypass      bool
 	AuthBypassUser  string
 	AuthBypassOrg   string
@@ -88,28 +105,42 @@ func LoadConfig() (Config, error) {
 	logout := getenvDefault("LOGOUT_RETURN_TO", "http://localhost:"+port+"/")
 	cookieSecure := os.Getenv("COOKIE_INSECURE") == ""
 
+	var ghAppID int64
+	if v := os.Getenv("GITHUB_APP_ID"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return Config{}, fmt.Errorf("GITHUB_APP_ID must be numeric: %w", err)
+		}
+		ghAppID = n
+	}
+
 	return Config{
-		Env:                   getenvDefault("HETCHY_ENV", "prod"),
-		DaytonaAPIURL:         os.Getenv("DAYTONA_API_URL"),
-		Snapshot:              os.Getenv("DAYTONA_SNAPSHOT"),
-		DatabaseURL:           os.Getenv("DATABASE_URL"),
-		WebPort:               port,
-		WorkOSAPIKey:          os.Getenv("WORKOS_API_KEY"),
-		WorkOSClientID:        os.Getenv("WORKOS_CLIENT_ID"),
-		WorkOSCookiePassword:  os.Getenv("WORKOS_COOKIE_PASSWORD"),
-		WorkOSRedirectURI:     os.Getenv("WORKOS_REDIRECT_URI"),
-		LogoutReturnTo:        logout,
-		CookieSecure:          cookieSecure,
-		SecretsEncryptionKey:  os.Getenv("SECRETS_ENCRYPTION_KEY"),
-		SlackSigningSecret:    os.Getenv("SLACK_SIGNING_SECRET"),
-		SlackClientID:         os.Getenv("SLACK_CLIENT_ID"),
-		SlackClientSecret:     os.Getenv("SLACK_CLIENT_SECRET"),
-		SlackOAuthRedirectURI: os.Getenv("SLACK_OAUTH_REDIRECT_URI"),
-		AuthBypass:            bypass,
-		AuthBypassUser:        getenvDefault("AUTH_BYPASS_USER", "user_bypass"),
-		AuthBypassOrg:         os.Getenv("AUTH_BYPASS_ORG"),
-		AuthBypassRole:        getenvDefault("AUTH_BYPASS_ROLE", "admin"),
-		AuthBypassEmail:       getenvDefault("AUTH_BYPASS_EMAIL", "bypass@hetchy.local"),
+		Env:                    getenvDefault("HETCHY_ENV", "prod"),
+		DaytonaAPIURL:          os.Getenv("DAYTONA_API_URL"),
+		Snapshot:               os.Getenv("DAYTONA_SNAPSHOT"),
+		DatabaseURL:            os.Getenv("DATABASE_URL"),
+		WebPort:                port,
+		WorkOSAPIKey:           os.Getenv("WORKOS_API_KEY"),
+		WorkOSClientID:         os.Getenv("WORKOS_CLIENT_ID"),
+		WorkOSCookiePassword:   os.Getenv("WORKOS_COOKIE_PASSWORD"),
+		WorkOSRedirectURI:      os.Getenv("WORKOS_REDIRECT_URI"),
+		LogoutReturnTo:         logout,
+		CookieSecure:           cookieSecure,
+		SecretsEncryptionKey:   os.Getenv("SECRETS_ENCRYPTION_KEY"),
+		SlackSigningSecret:     os.Getenv("SLACK_SIGNING_SECRET"),
+		SlackClientID:          os.Getenv("SLACK_CLIENT_ID"),
+		SlackClientSecret:      os.Getenv("SLACK_CLIENT_SECRET"),
+		SlackOAuthRedirectURI:  os.Getenv("SLACK_OAUTH_REDIRECT_URI"),
+		GitHubAppID:            ghAppID,
+		GitHubAppSlug:          os.Getenv("GITHUB_APP_SLUG"),
+		GitHubAppClientID:      os.Getenv("GITHUB_APP_CLIENT_ID"),
+		GitHubAppPrivateKey:    os.Getenv("GITHUB_APP_PRIVATE_KEY"),
+		GitHubAppWebhookSecret: os.Getenv("GITHUB_APP_WEBHOOK_SECRET"),
+		AuthBypass:             bypass,
+		AuthBypassUser:         getenvDefault("AUTH_BYPASS_USER", "user_bypass"),
+		AuthBypassOrg:          os.Getenv("AUTH_BYPASS_ORG"),
+		AuthBypassRole:         getenvDefault("AUTH_BYPASS_ROLE", "admin"),
+		AuthBypassEmail:        getenvDefault("AUTH_BYPASS_EMAIL", "bypass@hetchy.local"),
 	}, nil
 }
 

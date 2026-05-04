@@ -37,8 +37,16 @@ type Record struct {
 	PRURL     string
 	History   []string
 	Responses []string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	// GitHubOwner + GitHubRepo identify the repository this conversation
+	// is targeting. Empty when the conversation has been opened but no
+	// repo has been picked yet (the agent hasn't launched). The bot
+	// treats SandboxID == "" + GitHubOwner == "" + non-empty History
+	// as "awaiting repo answer" — the user's next reply is interpreted
+	// as the owner/name selection.
+	GitHubOwner string
+	GitHubRepo  string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 // Store wraps the sqlc queries with the loose Record shape used elsewhere.
@@ -85,15 +93,17 @@ func (s *Store) List(ctx context.Context, orgID string) ([]Record, error) {
 
 func recordFromRow(row sqlc.Conversation) Record {
 	return Record{
-		OrgID:     row.OrgID,
-		ThreadID:  row.ThreadID,
-		SandboxID: row.SandboxID,
-		Branch:    row.Branch,
-		PRURL:     row.PrUrl,
-		History:   row.History,
-		Responses: row.Responses,
-		CreatedAt: row.CreatedAt.Time,
-		UpdatedAt: row.UpdatedAt.Time,
+		OrgID:       row.OrgID,
+		ThreadID:    row.ThreadID,
+		SandboxID:   row.SandboxID,
+		Branch:      row.Branch,
+		PRURL:       row.PrUrl,
+		History:     row.History,
+		Responses:   row.Responses,
+		GitHubOwner: row.GithubOwner,
+		GitHubRepo:  row.GithubRepo,
+		CreatedAt:   row.CreatedAt.Time,
+		UpdatedAt:   row.UpdatedAt.Time,
 	}
 }
 
@@ -103,13 +113,15 @@ func (s *Store) Upsert(ctx context.Context, r Record) error {
 		return nil
 	}
 	_, err := s.db.Queries.UpsertConversation(ctx, sqlc.UpsertConversationParams{
-		OrgID:     r.OrgID,
-		ThreadID:  r.ThreadID,
-		SandboxID: r.SandboxID,
-		Branch:    r.Branch,
-		PrUrl:     r.PRURL,
-		History:   r.History,
-		Responses: r.Responses,
+		OrgID:       r.OrgID,
+		ThreadID:    r.ThreadID,
+		SandboxID:   r.SandboxID,
+		Branch:      r.Branch,
+		PrUrl:       r.PRURL,
+		History:     r.History,
+		Responses:   r.Responses,
+		GithubOwner: r.GitHubOwner,
+		GithubRepo:  r.GitHubRepo,
 	})
 	if err != nil {
 		return fmt.Errorf("upsert conversation: %w", err)

@@ -6,9 +6,9 @@
 <style>
   body { font-family: system-ui, sans-serif; background: #4a4d52; margin: 0; padding: 2rem;
          min-height: 100vh; box-sizing: border-box; }
-  .modal { background: #fff; border-radius: 1rem; box-shadow: 0 12px 40px rgba(0,0,0,.25);
-           max-width: 60rem; min-height: 36rem; margin: 0 auto;
-           display: grid; grid-template-columns: 14rem 1fr; overflow: hidden; }
+  .modal-page { background: #fff; border-radius: 1rem; box-shadow: 0 12px 40px rgba(0,0,0,.25);
+                max-width: 64rem; min-height: 36rem; margin: 0 auto;
+                display: grid; grid-template-columns: 14rem 1fr; overflow: hidden; }
 
   /* Sidebar */
   .sidebar { background: #fafafa; border-right: 1px solid #e8e8e8;
@@ -33,7 +33,7 @@
   .content h1 { margin: 0 0 .15rem; font-size: 1.25rem; }
   .content .desc { margin: 0 0 1.5rem; color: #777; font-size: .85rem; }
 
-  /* Form bits (carried over from old settings) */
+  /* Form bits */
   fieldset { border: none; padding: 0; margin: 0 0 1.5rem; }
   legend { font-weight: 600; font-size: .9rem; padding: 0 0 .5rem; }
   label { display: block; font-size: .85rem; color: #555; margin: .5rem 0 .25rem; }
@@ -66,6 +66,104 @@
                   border-radius: .4rem; margin-bottom: 1rem; font-size: .85rem; }
   .meta { color: #999; font-size: .72rem; margin-top: 1.5rem; }
 
+  /* Integration cards */
+  .integration-list { display: flex; flex-direction: column; gap: .75rem; }
+  .integration { background: #fff; border: 1px solid #e6e6e6; border-radius: .5rem;
+                 border-left-width: 4px; border-left-color: #e6e6e6;
+                 overflow: hidden; }
+  .integration.enabled { border-left-color: #2dab66; }
+  .integration.required:not(.enabled) { border-left-color: #f5a623; }
+  .integration.disabled-env { opacity: .6; }
+  .integration-head { display: grid;
+                      grid-template-columns: 3rem 1fr auto;
+                      align-items: center; gap: 1rem; padding: 1rem 1.25rem; }
+  .integration-icon { width: 2.5rem; height: 2.5rem; display: flex;
+                      align-items: center; justify-content: center;
+                      color: #444; }
+  .integration-icon svg { width: 100%; height: 100%; }
+  .integration-title strong { display: inline-block; font-size: 1rem; color: #222;
+                              vertical-align: middle; margin-right: .5rem; }
+  .integration-title .tag { display: inline-block; font-size: .7rem;
+                            padding: .1rem .45rem; border-radius: .8rem;
+                            background: #f0f2f5; color: #666;
+                            margin-right: .25rem; vertical-align: middle;
+                            font-weight: 500; letter-spacing: .02em; }
+  .integration-title .tag.required { background: #fff3e0; color: #b06d00; }
+  .integration-title p { margin: .25rem 0 0; color: #777; font-size: .85rem;
+                         line-height: 1.4;
+                         /* Floor at ~2 lines so all collapsed cards have
+                            the same height regardless of how short the
+                            individual description text is. */
+                         min-height: 2.4em; }
+  .integration-status { display: flex; align-items: center; gap: .5rem;
+                        white-space: nowrap; }
+  .btn-enable, .btn-enabled { display: inline-flex; align-items: center; gap: .3rem;
+                              padding: .45rem .9rem; border-radius: .4rem;
+                              font-size: .85rem; font-weight: 500;
+                              text-decoration: none; border: 0; cursor: pointer;
+                              font-family: inherit; }
+  .btn-enable { background: #0b93f6; color: #fff; }
+  .btn-enable:hover { background: #0a83d8; }
+  .btn-enabled { background: #2dab66; color: #fff; }
+  .btn-enabled[disabled] { cursor: default; }
+  .btn-not-configured { font-size: .8rem; color: #888;
+                        padding: .35rem .8rem; background: #f0f0f0;
+                        border-radius: .4rem; }
+  .caret { background: none; border: none; color: #888;
+           cursor: pointer; padding: .25rem .4rem; font-size: 1rem; }
+  .caret:hover { color: #444; }
+  .caret svg { width: .9rem; height: .9rem; transition: transform .15s; }
+  .integration[open] .caret svg { transform: rotate(180deg); }
+  .integration-body { display: none; padding: 0 1.25rem 1.25rem;
+                      border-top: 1px solid #f0f0f0; }
+  .integration[open] .integration-body { display: block; }
+
+  .connection { display: grid; grid-template-columns: 1fr auto;
+                gap: .5rem; padding: .5rem 0;
+                border-bottom: 1px solid #f3f3f3; align-items: center; }
+  .connection:last-child { border-bottom: none; }
+  .connection .who strong { color: #222; font-size: .9rem; }
+  .connection .who .hint { display: inline; margin-left: .35rem; }
+  .connection .repos { font-family: ui-monospace, monospace; font-size: .75rem;
+                       color: #888; margin-top: .15rem;
+                       overflow: hidden; text-overflow: ellipsis;
+                       white-space: nowrap; max-width: 30rem; }
+  .connection .actions { display: flex; gap: .75rem; align-items: center;
+                         font-size: .8rem; }
+  .connection .actions a { color: #0b93f6; text-decoration: none; }
+  .connection .actions a:hover { text-decoration: underline; }
+  .connection .actions form { margin: 0; }
+  .add-link { display: inline-block; margin-top: .75rem;
+              font-size: .85rem; color: #0b93f6; text-decoration: none; }
+  .add-link:hover { text-decoration: underline; }
+
+  .body-section { margin-top: 1rem; padding-top: 1rem;
+                  border-top: 1px dashed #eee; }
+  .body-section:first-child { border-top: 0; padding-top: .75rem; margin-top: .25rem; }
+  .body-section legend { padding-top: 0; }
+
+  /* Modal dialogs (used by API-key integrations) */
+  dialog.api-modal { border: none; border-radius: .5rem; padding: 0;
+                     box-shadow: 0 24px 64px rgba(0,0,0,.35);
+                     max-width: 28rem; width: 100%; }
+  dialog.api-modal::backdrop { background: rgba(0,0,0,.4); }
+  dialog.api-modal .body { padding: 1.5rem 1.5rem 1.25rem; }
+  dialog.api-modal h2 { margin: 0 0 .25rem; font-size: 1.05rem; }
+  dialog.api-modal h2 a { color: #0b93f6; text-decoration: none;
+                          font-weight: 400; font-size: .9rem; }
+  dialog.api-modal h2 a:hover { text-decoration: underline; }
+  dialog.api-modal p { color: #777; font-size: .8rem; margin: .35rem 0 0; }
+  dialog.api-modal .actions { display: flex; justify-content: flex-end;
+                              gap: .5rem; padding: 0 1.5rem 1.25rem; }
+  dialog.api-modal button { padding: .5rem 1rem; border-radius: .4rem;
+                            font-size: .85rem; cursor: pointer;
+                            font-family: inherit; }
+  dialog.api-modal .save { background: #0b93f6; color: #fff; border: 0; }
+  dialog.api-modal .save:hover { background: #0a83d8; }
+  dialog.api-modal .cancel { background: #fff; color: #555;
+                             border: 1px solid #ddd; }
+  dialog.api-modal .cancel:hover { background: #fafafa; }
+
   /* Members table */
   table.members { width: 100%; border-collapse: collapse; font-size: .85rem; }
   table.members th { text-align: left; padding: .5rem .6rem; color: #888;
@@ -94,7 +192,7 @@
 </head>
 <body>
 
-<div class="modal">
+<div class="modal-page">
   <aside class="sidebar">
     <h2 title="{{.OrgName}}">{{.OrgName}}</h2>
     <p class="subhead">Organization settings</p>
@@ -105,6 +203,14 @@
           <path d="M13 8a5 5 0 0 0-.1-1l1.3-1-1-1.7-1.5.5a5 5 0 0 0-1.7-1L9.7 2H6.3l-.3 1.6a5 5 0 0 0-1.7 1l-1.5-.5-1 1.7 1.3 1A5 5 0 0 0 3 8a5 5 0 0 0 .1 1l-1.3 1 1 1.7 1.5-.5a5 5 0 0 0 1.7 1l.3 1.6h3.4l.3-1.6a5 5 0 0 0 1.7-1l1.5.5 1-1.7-1.3-1A5 5 0 0 0 13 8z"/>
         </svg>
         General
+      </a>
+      <a href="/settings/org?tab=integrations"{{if eq .Tab "integrations"}} class="active"{{end}}>
+        <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="2" y="3" width="5" height="5" rx="1"/>
+          <rect x="9" y="8" width="5" height="5" rx="1"/>
+          <path d="M7 5.5h2v2.5"/>
+        </svg>
+        Integrations
       </a>
       {{if .IsAdmin}}
       <a href="/settings/org?tab=members"{{if eq .Tab "members"}} class="active"{{end}}>
@@ -125,6 +231,8 @@
 
     {{if eq .Tab "members"}}
       {{template "members" .}}
+    {{else if eq .Tab "integrations"}}
+      {{template "integrations" .}}
     {{else}}
       {{template "general" .}}
     {{end}}
@@ -135,77 +243,311 @@
 
 {{define "general"}}
   <h1>General</h1>
-  <p class="desc">Per-org runtime configuration. Tokens are encrypted at rest; only a fingerprint is shown back.</p>
+  <p class="desc">Organization-level info. Integrations (GitHub, Slack, Claude, SX) live on the next tab.</p>
 
-  {{if .Saved}}<div class="saved-banner">Settings saved.</div>{{end}}
+  {{if .SavedMessage}}<div class="saved-banner">{{.SavedMessage}}</div>{{end}}
 
-  <form method="POST" action="/settings/org">
-    <fieldset>
-      <legend>GitHub</legend>
-      <label for="github_repo">Repository (owner/repo)</label>
-      <input id="github_repo" type="text" name="github_repo" value="{{.GitHubRepo}}" placeholder="acme/website" required>
-      <label for="github_base_branch">Base branch</label>
-      <input id="github_base_branch" type="text" name="github_base_branch" value="{{.GitHubBaseBranch}}" placeholder="main">
-      {{template "secret" dict "Field" "github_token" "Label" "Personal access token" "Preview" .GitHubTokenPreview "Placeholder" "ghp_…" "Required" false}}
-      <p class="hint">Needs <code>repo</code> scope.</p>
-    </fieldset>
+  <fieldset>
+    <legend>Organization</legend>
+    <label for="org_name">Name</label>
+    <input id="org_name" type="text" value="{{.OrgName}}" readonly>
+    <p class="hint">Managed in WorkOS. Contact support to rename.</p>
+  </fieldset>
+{{end}}
 
-    <fieldset>
-      <legend>Anthropic (required)</legend>
-      {{template "secret" dict "Field" "anthropic_api_key" "Label" "API key" "Preview" .AnthropicAPIKeyPreview "Placeholder" "sk-ant-…" "Required" true}}
-      <p class="hint">Used by Claude Code inside the sandbox.</p>
-    </fieldset>
+{{define "integrations"}}
+  <h1>Integrations</h1>
+  <p class="desc">Connect Hetchy to GitHub for repo access, Slack for chat, Claude for the agent, and SX for skills.</p>
 
-    <fieldset>
-      <legend>Slack (optional)</legend>
+  {{if .SavedMessage}}<div class="saved-banner">{{.SavedMessage}}</div>{{end}}
 
-      {{/*
-        Four combinations of (IsDev, SlackOAuthEnabled):
-          (false, false) — prod with no OAuth configured: show only the
-                           "contact administrator" hint at the bottom.
-          (false, true)  — prod with OAuth: show only the install button
-                           (or reinstall + connection status).
-          (true,  false) — dev with no OAuth: show the manual paste form,
-                           no disclosure wrapper since it's the only path.
-          (true,  true)  — dev with OAuth (e.g. testing the button
-                           against staging): show the install button plus
-                           a collapsed disclosure wrapping the manual
-                           paste form.
-      */}}
+  <div class="integration-list">
+    {{/* Anthropic first because it's required for any chat to work;
+         the others are optional and ordered by visibility/usefulness. */}}
+    {{template "integration_anthropic" .}}
+    {{template "integration_github" .}}
+    {{template "integration_slack" .}}
+    {{template "integration_sx" .}}
+  </div>
 
-      {{if .SlackOAuthEnabled}}
-        {{if .SlackTeamID}}
-          <p class="hint">Connected to Slack workspace <code>{{.SlackTeamID}}</code>.</p>
-          <p><a class="primary" href="/slack/install" style="display:inline-block;text-decoration:none;padding:.5rem 1rem;background:#4A154B;color:#fff;border-radius:4px;">Reinstall to Slack</a></p>
+  {{template "modal_anthropic" .}}
+  {{template "modal_sx" .}}
+{{end}}
+
+{{define "integration_github"}}
+  {{$enabled := and .GitHubAppEnabled .GitHubInstallations}}
+  <article class="integration{{if $enabled}} enabled{{end}}{{if not .GitHubAppEnabled}} disabled-env{{end}}" data-integration="github">
+    <div class="integration-head">
+      <div class="integration-icon">
+        <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+          <path fill-rule="evenodd" d="M8 0C3.58 0 0 3.58 0 8a8 8 0 0 0 5.47 7.59c.4.07.55-.17.55-.38v-1.32c-2.22.48-2.69-1.07-2.69-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.06-.49.06-.49.81.06 1.23.83 1.23.83.72 1.23 1.88.88 2.34.67.07-.52.28-.88.51-1.08-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.03 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 16 8c0-4.42-3.58-8-8-8z"/>
+        </svg>
+      </div>
+      <div class="integration-title">
+        <strong>GitHub</strong>
+        <span class="tag">Code</span>
+        <span class="tag">Repos</span>
+        <span class="tag">Teams</span>
+        <p>Install the Hetchy GitHub App on your org or personal account so the agent can read and push to your repos.</p>
+      </div>
+      <div class="integration-status">
+        {{if not .GitHubAppEnabled}}
+          <span class="btn-not-configured">Not configured for this env</span>
+        {{else if $enabled}}
+          <span class="btn-enabled">✓ Enabled</span>
         {{else}}
-          <p><a class="primary" href="/slack/install" style="display:inline-block;text-decoration:none;padding:.5rem 1rem;background:#4A154B;color:#fff;border-radius:4px;">Install to Slack</a></p>
-          <p class="hint">Click to authorize Hetchy in your Slack workspace. You'll be sent back here when the install completes.</p>
+          <a class="btn-enable" href="/integrations/github/install">Enable</a>
         {{end}}
-      {{end}}
+        <button class="caret" type="button" aria-label="Toggle details">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><polyline points="4,6 8,10 12,6"/></svg>
+        </button>
+      </div>
+    </div>
+    {{if .GitHubAppEnabled}}
+    <div class="integration-body">
+      {{if $enabled}}
+        <div class="body-section">
+          <legend>Connections</legend>
+          {{range .GitHubInstallations}}
+            <div class="connection">
+              <div class="who">
+                <strong>{{.AccountLogin}}</strong>
+                <span class="hint">{{.AccountType}} · {{len .Repos}} repo{{if ne (len .Repos) 1}}s{{end}}</span>
+                {{if .Repos}}
+                <div class="repos">
+                  {{range $i, $r := .Repos}}{{if lt $i 5}}{{if gt $i 0}}, {{end}}{{$r.Owner}}/{{$r.Name}}{{end}}{{end}}{{if gt (len .Repos) 5}} …{{end}}
+                </div>
+                {{end}}
+              </div>
+              <div class="actions">
+                <a href="{{.ManageURL}}" target="_blank" rel="noopener">Manage on GitHub ↗</a>
+                <form method="POST" action="/integrations/github/sync">
+                  <input type="hidden" name="installation_id" value="{{.InstallationID}}">
+                  <button type="submit" class="link-btn" style="color:#0b93f6">Sync</button>
+                </form>
+              </div>
+            </div>
+          {{end}}
+          <a class="add-link" href="/integrations/github/install">+ Install on another account</a>
+        </div>
 
-      {{if .IsDev}}
-        {{if .SlackOAuthEnabled}}
-        <details style="margin-top:1rem">
-          <summary style="cursor:pointer;color:#888;font-size:.9rem">Advanced: paste tokens manually (dev only)</summary>
+        <div class="body-section">
+          <legend>Default repository</legend>
+          <form method="POST" action="/settings/org?tab=integrations">
+            {{if .GitHubRepos}}
+              <select name="default_repo">
+                <option value=""{{if eq .DefaultRepoSlug ""}} selected{{end}}>(none — ask me each time)</option>
+                {{range .GitHubRepos}}
+                  {{$slug := printf "%s/%s" .Owner .Name}}
+                  <option value="{{$slug}}"{{if eq $.DefaultRepoSlug $slug}} selected{{end}}>{{$slug}}</option>
+                {{end}}
+              </select>
+            {{else}}
+              <input type="text" name="default_repo" value="{{.DefaultRepoSlug}}" placeholder="acme/website">
+            {{end}}
+            <p class="hint">Used when a chat message (especially in Slack) doesn't say which repo to work in. Leave empty to require an explicit selection every time.</p>
+            <button class="primary" type="submit">Save default</button>
+          </form>
+        </div>
+      {{else}}
+        <div class="body-section">
+          <p class="hint">Click <strong>Enable</strong> above to install the Hetchy GitHub App. You'll be redirected to GitHub to choose which repos to grant access to, then sent back here.</p>
+        </div>
+      {{end}}
+    </div>
+    {{end}}
+  </article>
+{{end}}
+
+{{define "integration_slack"}}
+  {{$envOk := or .SlackOAuthEnabled .IsDev}}
+  {{/* OAuth is "enabled" when we've stamped a workspace team_id from
+       the install callback. Dev's manual-paste path doesn't get a
+       team_id (Socket Mode identifies the workspace via the open
+       socket itself), so we treat both bot+socket tokens being set as
+       the dev-equivalent of "connected". */}}
+  {{$oauthEnabled := ne .SlackTeamID ""}}
+  {{$devEnabled := and .IsDev (and (ne .SlackBotTokenPreview "") (ne .SlackSocketTokenPreview ""))}}
+  {{$enabled := or $oauthEnabled $devEnabled}}
+  <article class="integration{{if $enabled}} enabled{{end}}{{if not $envOk}} disabled-env{{end}}" data-integration="slack">
+    <div class="integration-head">
+      <div class="integration-icon">
+        <svg viewBox="0 0 16 16" aria-hidden="true">
+          <path fill="#36C5F0" d="M3.4 10c0 .9-.7 1.6-1.6 1.6s-1.6-.7-1.6-1.6.7-1.6 1.6-1.6h1.6V10z"/>
+          <path fill="#36C5F0" d="M4.2 10c0-.9.7-1.6 1.6-1.6s1.6.7 1.6 1.6v4c0 .9-.7 1.6-1.6 1.6S4.2 14.9 4.2 14v-4z"/>
+          <path fill="#2EB67D" d="M5.8 3.4c-.9 0-1.6-.7-1.6-1.6S4.9.2 5.8.2 7.4.9 7.4 1.8v1.6H5.8z"/>
+          <path fill="#2EB67D" d="M5.8 4.2c.9 0 1.6.7 1.6 1.6s-.7 1.6-1.6 1.6H1.8c-.9 0-1.6-.7-1.6-1.6S.9 4.2 1.8 4.2h4z"/>
+          <path fill="#ECB22E" d="M12.4 5.8c0-.9.7-1.6 1.6-1.6s1.6.7 1.6 1.6-.7 1.6-1.6 1.6h-1.6V5.8z"/>
+          <path fill="#ECB22E" d="M11.6 5.8c0 .9-.7 1.6-1.6 1.6s-1.6-.7-1.6-1.6V1.8c0-.9.7-1.6 1.6-1.6s1.6.7 1.6 1.6v4z"/>
+          <path fill="#E01E5A" d="M10 12.4c.9 0 1.6.7 1.6 1.6s-.7 1.6-1.6 1.6S8.4 14.9 8.4 14v-1.6H10z"/>
+          <path fill="#E01E5A" d="M10 11.6c-.9 0-1.6-.7-1.6-1.6s.7-1.6 1.6-1.6h4c.9 0 1.6.7 1.6 1.6s-.7 1.6-1.6 1.6h-4z"/>
+        </svg>
+      </div>
+      <div class="integration-title">
+        <strong>Slack</strong>
+        <span class="tag">Chat</span>
+        <p>Talk to Hetchy from any channel by mentioning the bot, or DM it directly. Replies thread back to your conversation here.</p>
+      </div>
+      <div class="integration-status">
+        {{if not $envOk}}
+          <span class="btn-not-configured">Not configured for this env</span>
+        {{else if $enabled}}
+          <span class="btn-enabled">✓ Enabled</span>
+        {{else if .SlackOAuthEnabled}}
+          <a class="btn-enable" href="/slack/install">Enable</a>
+        {{else}}
+          {{/* Dev-only: clicking Enable expands the card and focuses
+               the first paste field; the body below carries the form. */}}
+          <button class="btn-enable" type="button" data-toggle-card="slack" data-focus-field="slack_bot_token">Enable</button>
         {{end}}
+        <button class="caret" type="button" aria-label="Toggle details">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><polyline points="4,6 8,10 12,6"/></svg>
+        </button>
+      </div>
+    </div>
+    {{/* Body always rendered when env supports Slack so dev users can
+         expand and paste/rotate tokens regardless of current state. */}}
+    {{if $envOk}}
+    <div class="integration-body">
+      {{if $oauthEnabled}}
+      <div class="body-section">
+        <p class="hint">Connected workspace: <code>{{.SlackTeamID}}</code></p>
+        {{if .SlackOAuthEnabled}}
+          <p><a class="btn-enable" href="/slack/install">Reinstall</a></p>
+        {{end}}
+      </div>
+      {{end}}
+      {{if .IsDev}}
+      <div class="body-section">
+        <legend>Dev: paste tokens manually</legend>
+        <form method="POST" action="/settings/org?tab=integrations">
           {{template "secret" dict "Field" "slack_bot_token" "Label" "Bot token" "Preview" .SlackBotTokenPreview "Placeholder" "xoxb-…" "Required" false}}
           {{template "secret" dict "Field" "slack_socket_token" "Label" "Socket token" "Preview" .SlackSocketTokenPreview "Placeholder" "xapp-…" "Required" false}}
-          <p class="hint">Run <code>make slack-app NAME=…</code> to create a personal Socket Mode app, then paste its bot + socket tokens here. Socket Mode doesn't need a team ID — the open socket already identifies the org.</p>
-        {{if .SlackOAuthEnabled}}
-        </details>
-        {{end}}
-      {{else if not .SlackOAuthEnabled}}
-        <p class="hint">Slack OAuth is not configured for this environment. Contact your administrator.</p>
+          <p class="hint">Run <code>make slack-app NAME=…</code> to create a personal Socket Mode app, then paste its bot + socket tokens here. Both must be set for the integration to show as Enabled.</p>
+          <button class="primary" type="submit">Save</button>
+        </form>
+      </div>
       {{end}}
-    </fieldset>
+    </div>
+    {{end}}
+  </article>
+{{end}}
 
-    <fieldset>
-      <legend>SX (optional)</legend>
-      {{template "secret" dict "Field" "sx_key" "Label" "SX bot key" "Preview" .SXKeyPreview "Placeholder" "sx-…" "Required" false}}
-    </fieldset>
+{{define "integration_anthropic"}}
+  {{$enabled := ne .AnthropicAPIKeyPreview ""}}
+  <article class="integration required{{if $enabled}} enabled{{end}}" data-integration="anthropic">
+    <div class="integration-head">
+      <div class="integration-icon">
+        <svg viewBox="0 0 16 16" fill="#cc785c" aria-hidden="true">
+          <path d="M5.4 2.6h2.2L11.4 13.4h-2.2L8.45 11h-3.7L4 13.4H1.8L5.4 2.6zm.1 6.6h2.4l-1.2-3.4-1.2 3.4z"/>
+          <path d="M11.5 2.6h2.7v10.8h-2.7V2.6z"/>
+        </svg>
+      </div>
+      <div class="integration-title">
+        <strong>Claude (Anthropic)</strong>
+        <span class="tag required">Required</span>
+        <span class="tag">AI</span>
+        <p>Powers the Claude Code agent that reads your repo, plans the change, and writes the diff inside the sandbox. Get a key at <a href="https://console.anthropic.com/" target="_blank" rel="noopener">console.anthropic.com</a>.</p>
+      </div>
+      <div class="integration-status">
+        {{if $enabled}}
+          <span class="btn-enabled">✓ Enabled</span>
+        {{else}}
+          <button class="btn-enable" type="button" data-open-modal="modal-anthropic">Enable</button>
+        {{end}}
+        <button class="caret" type="button" aria-label="Toggle details">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><polyline points="4,6 8,10 12,6"/></svg>
+        </button>
+      </div>
+    </div>
+    {{if $enabled}}
+    <div class="integration-body">
+      <div class="body-section">
+        <legend>API key</legend>
+        <form method="POST" action="/settings/org?tab=integrations">
+          {{template "secret" dict "Field" "anthropic_api_key" "Label" "Claude API key" "Preview" .AnthropicAPIKeyPreview "Placeholder" "sk-ant-…" "Required" true}}
+          <button class="primary" type="submit">Save</button>
+        </form>
+      </div>
+    </div>
+    {{end}}
+  </article>
+{{end}}
 
-    <button class="primary" type="submit">Save</button>
+{{define "integration_sx"}}
+  {{$enabled := ne .SXKeyPreview ""}}
+  <article class="integration{{if $enabled}} enabled{{end}}" data-integration="sx">
+    <div class="integration-head">
+      <div class="integration-icon">
+        <svg viewBox="0 0 16 16" fill="none" stroke="#5a4ad9" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="8" cy="8" r="6"/>
+          <path d="M5 9c.5 1 1.5 1.5 3 1.5s2.5-.5 3-1.5"/>
+          <circle cx="6" cy="6.5" r=".5" fill="#5a4ad9"/>
+          <circle cx="10" cy="6.5" r=".5" fill="#5a4ad9"/>
+        </svg>
+      </div>
+      <div class="integration-title">
+        <strong>SX</strong>
+        <span class="tag">Skills</span>
+        <p>Sleuth-managed bot skills. Install <code>sx</code> in the sandbox so the agent can run skill-based workflows.</p>
+      </div>
+      <div class="integration-status">
+        {{if $enabled}}
+          <span class="btn-enabled">✓ Enabled</span>
+        {{else}}
+          <button class="btn-enable" type="button" data-open-modal="modal-sx">Enable</button>
+        {{end}}
+        <button class="caret" type="button" aria-label="Toggle details">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><polyline points="4,6 8,10 12,6"/></svg>
+        </button>
+      </div>
+    </div>
+    {{if $enabled}}
+    <div class="integration-body">
+      <div class="body-section">
+        <legend>SX bot key</legend>
+        <form method="POST" action="/settings/org?tab=integrations">
+          {{template "secret" dict "Field" "sx_key" "Label" "Bot key" "Preview" .SXKeyPreview "Placeholder" "sx-…" "Required" false}}
+          <button class="primary" type="submit">Save</button>
+        </form>
+      </div>
+    </div>
+    {{end}}
+  </article>
+{{end}}
+
+{{define "modal_anthropic"}}
+<dialog class="api-modal" id="modal-anthropic">
+  <form method="POST" action="/settings/org?tab=integrations">
+    <div class="body">
+      <h2>Claude API key — <a href="https://console.anthropic.com/" target="_blank" rel="noopener">generate</a></h2>
+      <label for="modal-anthropic-input">API key</label>
+      <input id="modal-anthropic-input" type="password" name="anthropic_api_key" placeholder="sk-ant-…" autocomplete="off" required>
+      <p>Get a key at <a href="https://console.anthropic.com/" target="_blank" rel="noopener">console.anthropic.com</a> — you'll need to add billing.</p>
+    </div>
+    <div class="actions">
+      <button type="button" class="cancel" data-close-modal>Cancel</button>
+      <button type="submit" class="save">Save</button>
+    </div>
   </form>
+</dialog>
+{{end}}
+
+{{define "modal_sx"}}
+<dialog class="api-modal" id="modal-sx">
+  <form method="POST" action="/settings/org?tab=integrations">
+    <div class="body">
+      <h2>SX bot key</h2>
+      <label for="modal-sx-input">Bot key</label>
+      <input id="modal-sx-input" type="password" name="sx_key" placeholder="sx-…" autocomplete="off" required>
+      <p>Issued by your SX admin. Optional — leave SX disabled if you're not using skills.</p>
+    </div>
+    <div class="actions">
+      <button type="button" class="cancel" data-close-modal>Cancel</button>
+      <button type="submit" class="save">Save</button>
+    </div>
+  </form>
+</dialog>
 {{end}}
 
 {{define "members"}}
@@ -320,6 +662,43 @@
 {{end}}
 
 <script>
+  // Caret toggles open/close on integration cards.
+  document.querySelectorAll('.integration .caret').forEach(btn => {
+    btn.addEventListener('click', () => {
+      btn.closest('.integration').toggleAttribute('open');
+    });
+  });
+
+  // Dev-mode "Enable" buttons that don't kick off OAuth: just open
+  // the card and focus the first relevant input so the user can paste.
+  document.querySelectorAll('[data-toggle-card]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const card = btn.closest('.integration');
+      card.setAttribute('open', '');
+      const field = btn.dataset.focusField;
+      if (field) {
+        const input = document.getElementById(field);
+        if (input) setTimeout(() => input.focus(), 0);
+      }
+    });
+  });
+
+  // API-key integration: Enable button opens its modal.
+  document.querySelectorAll('[data-open-modal]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const dlg = document.getElementById(btn.dataset.openModal);
+      if (dlg && typeof dlg.showModal === 'function') {
+        dlg.showModal();
+        const input = dlg.querySelector('input[type="password"]');
+        if (input) setTimeout(() => input.focus(), 0);
+      }
+    });
+  });
+  document.querySelectorAll('[data-close-modal]').forEach(btn => {
+    btn.addEventListener('click', () => btn.closest('dialog').close());
+  });
+
+  // Existing rotate/remove logic for the "secret" sub-template.
   document.querySelectorAll('[data-rotate]').forEach(btn => {
     btn.addEventListener('click', () => {
       const field = btn.dataset.rotate;
@@ -347,9 +726,7 @@
     });
   });
 
-  // Members-tab role select: only reveal the Save button when the value
-  // actually differs from the original. Avoids spurious submits while
-  // the user keyboard-arrows through options.
+  // Members-tab role select: only reveal Save when value changes.
   document.querySelectorAll('.role-form select').forEach(sel => {
     const save = sel.parentElement.querySelector('.role-save');
     sel.addEventListener('change', () => {
@@ -357,10 +734,7 @@
     });
   });
 
-  // Confirm-on-submit for member remove + invitation revoke. Email
-  // comes from a data-attribute (HTML-escaped by Go's template) instead
-  // of being interpolated into a JS string literal — that way an email
-  // with an apostrophe (RFC-allowed) can't break the page.
+  // Confirm-on-submit for member remove + invitation revoke.
   document.querySelectorAll('.remove-form').forEach(f => {
     f.addEventListener('submit', e => {
       const email = f.dataset.email || 'this member';

@@ -1,0 +1,268 @@
+package bot
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"sync"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
+
+	"github.com/hetchyhq/hetchy/internal/db/sqlc"
+	"github.com/hetchyhq/hetchy/internal/githubapp"
+)
+
+// webhookDispatchTimeout caps how long any single dispatched event
+// can run. The longest legitimate handler is `installation_repositories`
+// → SyncInstallation, which paginates GitHub APIs and a few DB
+// upserts; 60 s is comfortable headroom and bounds goroutine lifetime
+// in the face of a hung GitHub round-trip.
+const webhookDispatchTimeout = 60 * time.Second
+
+// webhookDispatchConcurrency caps concurrent dispatch goroutines
+// across all events. A leaked webhook secret or a high-volume install
+// flap could otherwise trigger arbitrary parallel SyncInstallation
+// calls, each holding DB connections + a GitHub rate-limit budget.
+const webhookDispatchConcurrency = 8
+
+// webhookEnqueueTimeout is how long the HTTP handler will wait for a
+// dispatch slot before responding 503 + asking GitHub to redeliver.
+// Short enough to avoid GitHub's 10 s receive deadline, long enough to
+// absorb a brief burst.
+const webhookEnqueueTimeout = 5 * time.Second
+
+// webhookLogSuppressWindow rate-limits how often we'll emit a single
+// kind of webhook parse-error log line. With a leaked webhook secret
+// an attacker could submit valid-HMAC garbage and otherwise flood our
+// logs — at most one log per kind per window.
+const webhookLogSuppressWindow = 30 * time.Second
+
+// webhookErrLogger gates noisy log lines from the webhook parse path.
+// Indexed by (handler, error-kind) so distinct failures still surface
+// individually but a flood of one kind collapses to a single line.
+type webhookErrLogger struct {
+	mu   sync.Mutex
+	last map[string]time.Time
+}
+
+func (l *webhookErrLogger) allow(key string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.last == nil {
+		l.last = map[string]time.Time{}
+	}
+	now := time.Now()
+	if t, ok := l.last[key]; ok && now.Sub(t) < webhookLogSuppressWindow {
+		return false
+	}
+	l.last[key] = now
+	return true
+}
+
+// githubWebhookHandler is the public endpoint GitHub posts events to.
+// Verifies the HMAC, parses the event type, and dispatches to a
+// specific handler. Responds 200 once a dispatch slot is reserved; if
+// the in-process queue is saturated we return 503 so GitHub retries
+// (it gives ~5 retries with exponential backoff for failed deliveries).
+func (b *Bot) githubWebhookHandler(w http.ResponseWriter, r *http.Request) {
+	if b.app == nil {
+		http.Error(w, "github app not configured", http.StatusServiceUnavailable)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, githubapp.MaxWebhookBodyBytes())
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "read body failed", http.StatusBadRequest)
+		return
+	}
+	if err := b.app.VerifyWebhookSignature(r.Header, body); err != nil {
+		b.log.Warn("github webhook: signature verify failed",
+			"error", err,
+			"event", githubapp.EventTypeFromHeaders(r.Header),
+			"delivery", githubapp.DeliveryIDFromHeaders(r.Header),
+		)
+		http.Error(w, "signature mismatch", http.StatusUnauthorized)
+		return
+	}
+
+	event := githubapp.EventTypeFromHeaders(r.Header)
+	delivery := githubapp.DeliveryIDFromHeaders(r.Header)
+
+	enqueueCtx, cancel := context.WithTimeout(r.Context(), webhookEnqueueTimeout)
+	defer cancel()
+	select {
+	case b.githubWebhookSem <- struct{}{}:
+		// Slot reserved; ack to GitHub and run the dispatch async.
+	case <-enqueueCtx.Done():
+		// All dispatch slots busy. Return 503 so GitHub redelivers
+		// rather than dropping the event silently.
+		b.log.Warn("github webhook: dispatcher saturated, asking GitHub to retry",
+			"event", event, "delivery", delivery,
+		)
+		http.Error(w, "dispatcher saturated", http.StatusServiceUnavailable)
+		return
+	}
+
+	b.log.Info("github webhook received", "event", event, "delivery", delivery, "bytes", len(body))
+	w.WriteHeader(http.StatusOK)
+
+	go func() {
+		defer func() {
+			<-b.githubWebhookSem
+			if rec := recover(); rec != nil {
+				b.log.Error("github webhook: dispatch panic recovered",
+					"panic", rec, "event", event, "delivery", delivery,
+				)
+			}
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), webhookDispatchTimeout)
+		defer cancel()
+		b.dispatchGithubEvent(ctx, event, body)
+	}()
+}
+
+// dispatchGithubEvent fans an event payload out to the right handler.
+// Unknown event types are silently ignored — we subscribe to a small
+// set on the App side, but GitHub may deliver a few extras (like
+// ping) that we don't care about.
+func (b *Bot) dispatchGithubEvent(ctx context.Context, event string, body []byte) {
+	// Defensive: the HTTP entrypoint already nil-checks b.app, but a
+	// future refactor that calls dispatchGithubEvent from a different
+	// path shouldn't nil-deref a goroutine into oblivion.
+	if b.app == nil {
+		return
+	}
+	switch event {
+	case "ping":
+		// Sent once when GitHub first verifies the webhook URL.
+		return
+	case "installation":
+		b.handleInstallationEvent(ctx, body)
+	case "installation_repositories":
+		b.handleInstallationReposEvent(ctx, body)
+	case "team", "team_add", "membership", "member", "organization":
+		b.handleOrgScopedEvent(ctx, event, body)
+	default:
+		b.log.Debug("github webhook: ignoring event", "event", event)
+	}
+}
+
+// handleInstallationEvent reacts to install lifecycle changes:
+// `created`/`unsuspend` → upsert, sync. `deleted`/`suspend` → mark
+// suspended (or remove). The action determines which.
+func (b *Bot) handleInstallationEvent(ctx context.Context, body []byte) {
+	var p struct {
+		Action       string `json:"action"`
+		Installation struct {
+			ID      int64 `json:"id"`
+			Account struct {
+				Login string `json:"login"`
+				Type  string `json:"type"`
+				ID    int64  `json:"id"`
+			} `json:"account"`
+			SuspendedAt *time.Time `json:"suspended_at"`
+		} `json:"installation"`
+	}
+	if err := json.Unmarshal(body, &p); err != nil {
+		if b.githubWebhookErrLog.allow("installation") {
+			b.log.Error("github webhook: parse installation event", "error", err)
+		}
+		return
+	}
+	if p.Installation.ID == 0 {
+		return
+	}
+	switch p.Action {
+	case "deleted":
+		// Cascade drops repos/teams/members via FK. The setup-callback
+		// row is removed; if the user reinstalls a fresh row appears.
+		if err := b.store.Queries.DeleteGithubInstallation(ctx, p.Installation.ID); err != nil {
+			b.log.Error("github webhook: delete installation", "id", p.Installation.ID, "error", err)
+		}
+		b.app.InvalidateInstallation(p.Installation.ID)
+		return
+	case "suspend", "unsuspend", "created", "new_permissions_accepted":
+		row, err := b.store.Queries.GetGithubInstallation(ctx, p.Installation.ID)
+		if err != nil {
+			// `created` arrives before the setup callback in some
+			// flows (e.g. install without redirect). The setup callback
+			// is what writes the row, so drop this event — but log at
+			// Info so a stuck install (setup callback never fired) is
+			// visible in production rather than buried at Debug.
+			b.log.Info("github webhook: installation not yet recorded; awaiting setup callback", "id", p.Installation.ID, "action", p.Action)
+			return
+		}
+		var suspended pgtype.Timestamptz
+		if p.Installation.SuspendedAt != nil {
+			suspended = pgtype.Timestamptz{Time: *p.Installation.SuspendedAt, Valid: true}
+		}
+		if _, err := b.store.Queries.UpsertGithubInstallation(ctx, sqlc.UpsertGithubInstallationParams{
+			InstallationID: row.InstallationID,
+			OrgID:          row.OrgID,
+			AccountLogin:   p.Installation.Account.Login,
+			AccountType:    p.Installation.Account.Type,
+			AccountID:      p.Installation.Account.ID,
+			SuspendedAt:    suspended,
+		}); err != nil {
+			b.log.Error("github webhook: upsert installation on event", "id", p.Installation.ID, "error", err)
+			return
+		}
+		b.app.InvalidateInstallation(p.Installation.ID)
+		// Sync to pick up any repo/team changes that came with the event.
+		if _, err := b.app.SyncInstallation(ctx, b.store, p.Installation.ID); err != nil {
+			b.log.Error("github webhook: sync after installation event", "id", p.Installation.ID, "error", err)
+		}
+	}
+}
+
+// handleInstallationReposEvent fires when the user adds or removes
+// repos from the installation via GitHub's UI. Just re-sync — the
+// payload contains the list but a fresh sync is simpler and idempotent.
+func (b *Bot) handleInstallationReposEvent(ctx context.Context, body []byte) {
+	var p struct {
+		Installation struct {
+			ID int64 `json:"id"`
+		} `json:"installation"`
+	}
+	if err := json.Unmarshal(body, &p); err != nil {
+		if b.githubWebhookErrLog.allow("installation_repositories") {
+			b.log.Error("github webhook: parse installation_repositories", "error", err)
+		}
+		return
+	}
+	if p.Installation.ID == 0 {
+		return
+	}
+	b.app.InvalidateInstallation(p.Installation.ID)
+	if _, err := b.app.SyncInstallation(ctx, b.store, p.Installation.ID); err != nil {
+		b.log.Error("github webhook: sync after install_repos event", "id", p.Installation.ID, "error", err)
+	}
+}
+
+// handleOrgScopedEvent re-syncs every installation owned by the
+// affected org. We don't bother diffing the payload: team/member
+// events fire a few times per change at most, and a full org sync
+// with a tiny number of teams is fast.
+func (b *Bot) handleOrgScopedEvent(ctx context.Context, event string, body []byte) {
+	var p struct {
+		Installation struct {
+			ID int64 `json:"id"`
+		} `json:"installation"`
+		Organization struct {
+			Login string `json:"login"`
+		} `json:"organization"`
+	}
+	if err := json.Unmarshal(body, &p); err != nil {
+		if b.githubWebhookErrLog.allow("org:" + event) {
+			b.log.Error("github webhook: parse org event", "event", event, "error", err)
+		}
+		return
+	}
+	if p.Installation.ID != 0 {
+		if _, err := b.app.SyncInstallation(ctx, b.store, p.Installation.ID); err != nil {
+			b.log.Error("github webhook: sync after org event", "event", event, "id", p.Installation.ID, "error", err)
+		}
+	}
+}

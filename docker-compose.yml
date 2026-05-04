@@ -40,34 +40,8 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      # GitHub configuration
-      GITHUB_TOKEN: ${GITHUB_TOKEN}
-      GITHUB_REPO: ${GITHUB_REPO}
-      GITHUB_BASE_BRANCH: ${GITHUB_BASE_BRANCH:-main}
-
-      # Daytona configuration
-      DAYTONA_API_URL: ${DAYTONA_API_URL:-}
-      DAYTONA_API_KEY: ${DAYTONA_API_KEY}
-      DAYTONA_SNAPSHOT: ${DAYTONA_SNAPSHOT:-claude-playwright:1}
-
-      # WorkOS configuration
-      WORKOS_API_KEY: ${WORKOS_API_KEY}
-      WORKOS_CLIENT_ID: ${WORKOS_CLIENT_ID}
-      WORKOS_COOKIE_PASSWORD: ${WORKOS_COOKIE_PASSWORD}
-      WORKOS_REDIRECT_URI: ${WORKOS_REDIRECT_URI}
-      SECRETS_ENCRYPTION_KEY: ${SECRETS_ENCRYPTION_KEY}
-      # sx (optional)
-      SX_KEY: ${SX_KEY:-}
-
-      # Database — defaults to the bundled postgres service. Override
-      # DATABASE_URL to point at Supabase or another instance.
-      # Nested ${...} in default values is unsupported by Docker Compose interpolation,
-      # so defaults are hardcoded to match the postgres service's own defaults above.
+      # --migrate mode only reads DATABASE_URL; nothing else is needed.
       DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@localhost:5432/hetchy?sslmode=disable}
-
-      # Web UI configuration
-      WEB_PORT: ${WEB_PORT:-8080}
-      DISABLE_SLACK: ${DISABLE_SLACK:-}
 
   # Main hetchy bot service.
   hetchy:
@@ -104,10 +78,15 @@ services:
       SLACK_APP_ID: ${SLACK_APP_ID:-}
       SLACK_VERIFICATION_TOKEN: ${SLACK_VERIFICATION_TOKEN:-}
 
-      # GitHub configuration
-      GITHUB_TOKEN: ${GITHUB_TOKEN}
-      GITHUB_REPO: ${GITHUB_REPO}
-      GITHUB_BASE_BRANCH: ${GITHUB_BASE_BRANCH:-main}
+      # GitHub App — process-level config for the deployed Hetchy
+      # GitHub App (one App per env: dev/staging/prod). Per-org
+      # installation tokens are minted on demand; nothing org-specific
+      # lives here.
+      GITHUB_APP_ID: ${GITHUB_APP_ID}
+      GITHUB_APP_SLUG: ${GITHUB_APP_SLUG}
+      GITHUB_APP_CLIENT_ID: ${GITHUB_APP_CLIENT_ID:-}
+      GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY}
+      GITHUB_APP_WEBHOOK_SECRET: ${GITHUB_APP_WEBHOOK_SECRET}
 
       # Daytona configuration
       DAYTONA_API_URL: ${DAYTONA_API_URL:-}
@@ -119,6 +98,7 @@ services:
       WORKOS_CLIENT_ID: ${WORKOS_CLIENT_ID}
       WORKOS_COOKIE_PASSWORD: ${WORKOS_COOKIE_PASSWORD}
       WORKOS_REDIRECT_URI: ${WORKOS_REDIRECT_URI}
+      LOGOUT_RETURN_TO: ${LOGOUT_RETURN_TO:-}
       SECRETS_ENCRYPTION_KEY: ${SECRETS_ENCRYPTION_KEY}
       # sx (optional)
       SX_KEY: ${SX_KEY:-}
@@ -131,7 +111,9 @@ services:
 
       # Web UI configuration
       WEB_PORT: ${WEB_PORT:-8080}
-      DISABLE_SLACK: ${DISABLE_SLACK:-}
+      # Set to 1 only when serving over plain HTTP (local dev). In
+      # production, leave empty so session cookies require TLS.
+      COOKIE_INSECURE: ${COOKIE_INSECURE:-}
     healthcheck:
       http:
         path: "/"

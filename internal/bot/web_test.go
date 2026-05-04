@@ -78,56 +78,122 @@ func TestIndexHandler_RedirectsAuthenticatedNoOrgToOnboarding(t *testing.T) {
 	}
 }
 
-func TestSettingsTemplate_RendersAllSecretStates(t *testing.T) {
+// TestSettingsTemplate_GeneralTab covers the General tab post-redesign:
+// it shows the org name (read-only, sourced from WorkOS) and a brief
+// description. Integrations live on their own tab.
+func TestSettingsTemplate_GeneralTab(t *testing.T) {
+	b := newBypassBot(t)
+	rec := httptest.NewRecorder()
+	b.renderTemplate(rec, settingsHTMLTpl, map[string]any{
+		"OrgID": "org_x", "OrgName": "Acme Inc.", "Email": "u@x", "Tab": "general",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, w := range []string{
+		`value="Acme Inc." readonly`,
+		`Managed in WorkOS`,
+	} {
+		if !strings.Contains(body, w) {
+			t.Errorf("general tab missing %q", w)
+		}
+	}
+	// Anthropic moved to Integrations — the General tab should NOT
+	// surface its form input.
+	if strings.Contains(body, `name="anthropic_api_key"`) {
+		t.Errorf("anthropic field should not appear on General tab")
+	}
+}
+
+// TestSettingsTemplate_IntegrationsTab covers the card-based
+// integrations layout. Each integration is its own card; OAuth cards
+// link to install URLs, API-key cards open a <dialog> modal.
+func TestSettingsTemplate_IntegrationsTab(t *testing.T) {
 	b := newBypassBot(t)
 	cases := []struct {
-		name string
-		data map[string]any
-		want []string
+		name    string
+		data    map[string]any
+		want    []string
+		notWant []string
 	}{
 		{
-			name: "fresh org — all secrets unset",
+			name: "all disabled — every Enable button + every modal pre-rendered",
 			data: map[string]any{
-				"OrgID": "org_x", "Email": "u@x", "GitHubRepo": "", "GitHubBaseBranch": "main",
-				"GitHubTokenPreview": "", "AnthropicAPIKeyPreview": "",
-				"SlackBotTokenPreview": "", "SlackSocketTokenPreview": "", "SXKeyPreview": "",
+				"OrgID": "org_x", "OrgName": "Acme", "Email": "u@x", "Tab": "integrations",
+				"GitHubAppEnabled":        true,
+				"GitHubInstallations":     nil,
+				"GitHubRepos":             nil,
+				"DefaultRepoSlug":         "",
+				"SlackOAuthEnabled":       true,
+				"SlackTeamID":             "",
+				"SlackBotTokenPreview":    "",
+				"SlackSocketTokenPreview": "",
+				"SXKeyPreview":            "",
+				"AnthropicAPIKeyPreview":  "",
 			},
 			want: []string{
-				`name="github_token"`,
-				`placeholder="ghp_…"`,
-				`name="anthropic_api_key"`,
-				`required`,
+				// GitHub Enable button is a real link (OAuth flow)
+				`href="/integrations/github/install"`,
+				// Slack Enable is a real link too
+				`href="/slack/install"`,
+				// Anthropic + SX Enable buttons open modals (no link)
+				`data-open-modal="modal-anthropic"`,
+				`data-open-modal="modal-sx"`,
+				// Each modal is pre-rendered in the DOM
+				`id="modal-anthropic"`,
+				`id="modal-sx"`,
+				// Anthropic carries the Required tag
+				`<span class="tag required">Required</span>`,
 			},
 		},
 		{
-			name: "fully configured org — readonly previews + rotate/remove for all secrets",
+			name: "github enabled — connections list + default-repo dropdown shown",
 			data: map[string]any{
-				"OrgID": "org_y", "Email": "u@y", "GitHubRepo": "acme/web", "GitHubBaseBranch": "main",
-				"GitHubTokenPreview":      "ghp_Ab••••••wxyz",
-				"AnthropicAPIKeyPreview":  "sk-ant••••••XyZ4",
-				"SlackBotTokenPreview":    "xoxb-1••••••AbCd",
-				"SlackSocketTokenPreview": "xapp-2••••••EfGh",
-				"SXKeyPreview":            "sx-aaa••••••wxyz",
+				"OrgID": "org_y", "OrgName": "Acme", "Email": "u@y", "Tab": "integrations",
+				"GitHubAppEnabled": true,
+				"GitHubInstallations": []integrationInstallation{
+					{
+						InstallationID: 999, AccountLogin: "acme",
+						AccountType: "Organization",
+						ManageURL:   "https://github.com/organizations/acme/settings/installations/999",
+						Repos: []integrationRepo{
+							{Owner: "acme", Name: "web", DefaultBranch: "main"},
+							{Owner: "acme", Name: "api", DefaultBranch: "main", Private: true},
+						},
+					},
+				},
+				"GitHubRepos": []integrationRepo{
+					{Owner: "acme", Name: "web", DefaultBranch: "main"},
+					{Owner: "acme", Name: "api", DefaultBranch: "main"},
+				},
+				"DefaultRepoSlug":      "acme/web",
+				"SlackOAuthEnabled":    false,
+				"SlackBotTokenPreview": "", "SlackSocketTokenPreview": "",
+				"SXKeyPreview": "", "AnthropicAPIKeyPreview": "",
 			},
 			want: []string{
-				`data-rotate="github_token"`,
-				`data-remove="github_token"`,
-				`data-rotate="anthropic_api_key"`,
-				`name="anthropic_api_key_action"`,
-				`value="ghp_Ab••••••wxyz" readonly`,
-				`value="sk-ant••••••XyZ4" readonly`,
+				`<strong>acme</strong>`,
+				`Organization · 2 repos`,
+				`installations/999`,
+				`name="installation_id" value="999"`,
+				`<option value="acme/web" selected>acme/web</option>`,
+				`✓ Enabled`,
 			},
 		},
 		{
-			name: "anthropic saved is not removable",
+			name: "GitHub App not configured for env — Not configured pill, install link absent",
 			data: map[string]any{
-				"OrgID": "org_z", "Email": "u@z", "GitHubRepo": "a/b", "GitHubBaseBranch": "main",
-				"GitHubTokenPreview":     "",
-				"AnthropicAPIKeyPreview": "sk-ant••••••XyZ4",
-				"SlackBotTokenPreview":   "", "SlackSocketTokenPreview": "", "SXKeyPreview": "",
+				"OrgID": "org_z", "OrgName": "Acme", "Email": "u@z", "Tab": "integrations",
+				"GitHubAppEnabled": false, "DefaultRepoSlug": "",
+				"SlackOAuthEnabled":    true,
+				"SlackBotTokenPreview": "", "SlackSocketTokenPreview": "",
+				"SXKeyPreview":           "",
+				"AnthropicAPIKeyPreview": "",
 			},
-			want: []string{
-				`data-rotate="anthropic_api_key"`,
+			want: []string{`Not configured for this env`},
+			notWant: []string{
+				`href="/integrations/github/install"`,
 			},
 		},
 	}
@@ -144,28 +210,12 @@ func TestSettingsTemplate_RendersAllSecretStates(t *testing.T) {
 					t.Errorf("body missing %q", w)
 				}
 			}
+			for _, n := range tc.notWant {
+				if strings.Contains(body, n) {
+					t.Errorf("body unexpectedly contained %q", n)
+				}
+			}
 		})
-	}
-	// Spot-check: for the unset case, no rotate/remove buttons should exist.
-	rec := httptest.NewRecorder()
-	b.renderTemplate(rec, settingsHTMLTpl, map[string]any{
-		"OrgID": "o", "Email": "e", "GitHubRepo": "", "GitHubBaseBranch": "main",
-		"GitHubTokenPreview": "", "AnthropicAPIKeyPreview": "",
-		"SlackBotTokenPreview": "", "SlackSocketTokenPreview": "", "SXKeyPreview": "",
-	})
-	if strings.Contains(rec.Body.String(), "data-rotate=") {
-		t.Errorf("unset state should not render rotate buttons")
-	}
-	// Anthropic-required case: no remove button anywhere for anthropic_api_key.
-	rec = httptest.NewRecorder()
-	b.renderTemplate(rec, settingsHTMLTpl, map[string]any{
-		"OrgID": "o", "Email": "e", "GitHubRepo": "a/b", "GitHubBaseBranch": "main",
-		"GitHubTokenPreview":     "ghp_Ab••••••wxyz",
-		"AnthropicAPIKeyPreview": "sk-ant••••••XyZ4",
-		"SlackBotTokenPreview":   "", "SlackSocketTokenPreview": "", "SXKeyPreview": "",
-	})
-	if strings.Contains(rec.Body.String(), `data-remove="anthropic_api_key"`) {
-		t.Errorf("required Anthropic key must not have a Remove button")
 	}
 }
 
@@ -226,9 +276,8 @@ func TestSettingsTemplate_RendersMembersTab(t *testing.T) {
 	b.renderTemplate(rec, settingsHTMLTpl, map[string]any{
 		"OrgID": "org_y", "OrgName": "Acme", "Email": "u@y", "PrincipalUserID": "user_me",
 		"IsAdmin": true, "Tab": "members", "Saved": false, "SavedMessage": "",
-		"GitHubRepo": "acme/web", "GitHubBaseBranch": "main",
-		"GitHubTokenPreview": "", "AnthropicAPIKeyPreview": "",
-		"SlackBotTokenPreview": "", "SlackSocketTokenPreview": "", "SXKeyPreview": "",
+		"AnthropicAPIKeyPreview": "",
+		"SlackBotTokenPreview":   "", "SlackSocketTokenPreview": "", "SXKeyPreview": "",
 		// Real auth.Member / auth.Invitation structs so the template's
 		// .DisplayName invocation actually exercises the method, not a
 		// map-key lookup.
@@ -279,9 +328,8 @@ func TestSettingsTemplate_HidesMembersTabForNonAdmin(t *testing.T) {
 	b.renderTemplate(rec, settingsHTMLTpl, map[string]any{
 		"OrgID": "o", "OrgName": "o", "Email": "u", "PrincipalUserID": "u",
 		"IsAdmin": false, "Tab": "general",
-		"GitHubRepo": "", "GitHubBaseBranch": "",
-		"GitHubTokenPreview": "", "AnthropicAPIKeyPreview": "",
-		"SlackBotTokenPreview": "", "SlackSocketTokenPreview": "", "SXKeyPreview": "",
+		"AnthropicAPIKeyPreview": "",
+		"SlackBotTokenPreview":   "", "SlackSocketTokenPreview": "", "SXKeyPreview": "",
 	})
 	if strings.Contains(rec.Body.String(), `href="/settings/org?tab=members"`) {
 		t.Errorf("non-admin should not see Members tab in sidebar")

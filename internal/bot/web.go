@@ -17,6 +17,7 @@ import (
 
 	"github.com/hetchyhq/hetchy/internal/auth"
 	"github.com/hetchyhq/hetchy/internal/convstore"
+	"github.com/hetchyhq/hetchy/internal/db/sqlc"
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
 )
 
@@ -62,6 +63,15 @@ func (b *Bot) runWeb(ctx context.Context) error {
 	// which org this install should be bound to (state carries that).
 	mux.Handle("/slack/install", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.slackInstallHandler))))
 
+	// GitHub App transport. The webhook endpoint is unauthenticated —
+	// it's verified by HMAC inside the handler. The setup callback is
+	// also unauthenticated (state token does the binding). The install
+	// kick-off is auth-gated so we know which org the install belongs to.
+	mux.HandleFunc("/integrations/github/webhook", b.githubWebhookHandler)
+	mux.HandleFunc("/integrations/github/setup", b.githubSetupHandler)
+	mux.Handle("/integrations/github/install", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.githubInstallHandler))))
+	mux.Handle("/integrations/github/sync", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.githubSyncHandler))))
+
 	mux.Handle("/", b.auth.Middleware(http.HandlerFunc(b.indexHandler)))
 	mux.Handle("/onboarding", b.auth.Middleware(b.auth.RequireAuth(http.HandlerFunc(b.onboardingHandler))))
 	mux.Handle("/settings/org", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.settingsHandler))))
@@ -90,7 +100,18 @@ func (b *Bot) runWeb(ctx context.Context) error {
 		_ = srv.Shutdown(shutdownCtx)
 	}()
 
-	b.log.Info("web ui listening", "addr", "http://localhost"+addr)
+	// Log both the bind address (where the kernel will accept
+	// connections) and the public URL the user should hit in a
+	// browser (which differs in dev when /etc/hosts maps a real-
+	// looking hostname to localhost). LogoutReturnTo doubles as our
+	// canonical "public app root" — it's the only URL the WorkOS
+	// SDK requires us to know, and Doppler per-env config sets it
+	// correctly for dev (dev.hetchy.ai), staging, and prod.
+	publicURL := strings.TrimSuffix(b.cfg.LogoutReturnTo, "/")
+	if publicURL == "" {
+		publicURL = "http://localhost" + addr
+	}
+	b.log.Info("web ui listening", "addr", addr, "public_url", publicURL)
 	if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("web server: %w", err)
 	}
@@ -173,7 +194,7 @@ func (b *Bot) onboardingHandler(w http.ResponseWriter, r *http.Request) {
 		b.renderTemplate(w, onboardingHTMLTpl, map[string]any{"Email": p.Email, "Error": "Could not assign you to the new organization: " + err.Error()})
 		return
 	}
-	if _, err := b.orgs.Upsert(r.Context(), orgcfg.Config{OrgID: orgID, GitHubBaseBranch: "main"}); err != nil {
+	if _, err := b.orgs.Upsert(r.Context(), orgcfg.Config{OrgID: orgID}); err != nil {
 		b.log.Error("upsert empty org config", "error", err)
 	}
 	if err := b.auth.SwitchOrg(w, r, orgID); err != nil {
@@ -190,7 +211,10 @@ func (b *Bot) onboardingHandler(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	http.Redirect(w, r, "/settings/org", http.StatusFound)
+	// Land newly-onboarded orgs on Integrations rather than General —
+	// the very first thing they need to do is connect GitHub + paste
+	// an Anthropic key, so put them in front of those controls.
+	http.Redirect(w, r, "/settings/org?tab=integrations", http.StatusFound)
 }
 
 // isAdmin reports whether p holds the admin role for their current org.
@@ -216,18 +240,28 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 		if tab == "members" && !isAdmin(p) {
 			tab = "general"
 		}
+		defaultRepoSlug := ""
+		if current.DefaultGitHubOwner != "" && current.DefaultGitHubRepo != "" {
+			defaultRepoSlug = current.DefaultGitHubOwner + "/" + current.DefaultGitHubRepo
+		}
+		// Org name lives in WorkOS, not the session JWT. The fetch is
+		// best-effort: a transient WorkOS error falls back to the org id
+		// rather than failing the whole settings page.
+		orgName := p.OrgID
+		if name, err := b.auth.GetOrganizationName(r.Context(), p.OrgID); err == nil && name != "" {
+			orgName = name
+		} else if err != nil {
+			b.log.Warn("workos: org name lookup failed", "org", p.OrgID, "error", err)
+		}
 		data := map[string]any{
 			"OrgID":                   p.OrgID,
-			"OrgName":                 p.OrgID, // WorkOS doesn't include org name in the session JWT
+			"OrgName":                 orgName,
 			"Email":                   p.Email,
 			"PrincipalUserID":         p.UserID,
 			"IsAdmin":                 isAdmin(p),
 			"Tab":                     tab,
 			"Saved":                   r.URL.Query().Get("saved") == "1",
 			"SavedMessage":            savedMessage(r.URL.Query().Get("saved")),
-			"GitHubRepo":              current.GitHubRepo,
-			"GitHubBaseBranch":        current.GitHubBaseBranch,
-			"GitHubTokenPreview":      previewSecret(current.GitHubToken),
 			"AnthropicAPIKeyPreview":  previewSecret(current.AnthropicAPIKey),
 			"SlackBotTokenPreview":    previewSecret(current.SlackBotToken),
 			"SlackSocketTokenPreview": previewSecret(current.SlackSocketToken),
@@ -235,6 +269,17 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 			"SlackOAuthEnabled":       b.slackOAuthConfigured(),
 			"IsDev":                   b.cfg.Env == "dev",
 			"SXKeyPreview":            previewSecret(current.SXKey),
+			"GitHubAppEnabled":        b.app != nil,
+			"DefaultRepoSlug":         defaultRepoSlug,
+		}
+		if tab == "integrations" {
+			installs, repos, err := b.loadIntegrationsView(r.Context(), p.OrgID)
+			if err != nil {
+				http.Error(w, "load integrations: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+			data["GitHubInstallations"] = installs
+			data["GitHubRepos"] = repos
 		}
 		if tab == "members" {
 			members, err := b.auth.ListMembers(r.Context(), p.OrgID)
@@ -271,31 +316,44 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	current.OrgID = p.OrgID
-	repo := strings.TrimSpace(r.FormValue("github_repo"))
-	if repo == "" {
-		http.Error(w, "github_repo is required (format: owner/repo)", http.StatusBadRequest)
-		return
-	}
-	if !strings.Contains(repo, "/") {
-		http.Error(w, "github_repo must be in owner/repo format", http.StatusBadRequest)
-		return
-	}
-	current.GitHubRepo = repo
-	if v := strings.TrimSpace(r.FormValue("github_base_branch")); v != "" {
-		current.GitHubBaseBranch = v
+
+	// Default repo for chats/Slack messages that don't specify one.
+	// Empty string is allowed — orgs that always pick per-conversation
+	// (web UI workflow) don't need a default. If a non-empty value is
+	// supplied, it must parse as owner/name AND be accessible to one
+	// of this org's GitHub App installations.
+	defaultRepo := strings.TrimSpace(r.FormValue("default_repo"))
+	if defaultRepo == "" {
+		current.DefaultGitHubOwner = ""
+		current.DefaultGitHubRepo = ""
+	} else {
+		owner, name, ok := parseOwnerRepo(defaultRepo)
+		if !ok {
+			http.Error(w, "default_repo must be in owner/name format", http.StatusBadRequest)
+			return
+		}
+		if _, err := b.store.Queries.GetGithubRepoForOrg(r.Context(), sqlc.GetGithubRepoForOrgParams{
+			OrgID: p.OrgID, Owner: owner, Name: name,
+		}); err != nil {
+			http.Error(w, fmt.Sprintf("default_repo %s/%s isn't in this org's GitHub App installations — install the App on it first.", owner, name), http.StatusBadRequest)
+			return
+		}
+		current.DefaultGitHubOwner = owner
+		current.DefaultGitHubRepo = name
 	}
 
-	current.GitHubToken = applyTokenChange(r, "github_token", current.GitHubToken)
 	current.SlackBotToken = applyTokenChange(r, "slack_bot_token", current.SlackBotToken)
 	current.SlackSocketToken = applyTokenChange(r, "slack_socket_token", current.SlackSocketToken)
 	// SlackTeamID is set by the OAuth callback, not the form — only the
 	// HTTP transport needs it, and OAuth is its source of truth.
 	current.SXKey = applyTokenChange(r, "sx_key", current.SXKey)
 	current.AnthropicAPIKey = applyTokenChange(r, "anthropic_api_key", current.AnthropicAPIKey)
-	if current.AnthropicAPIKey == "" {
-		http.Error(w, "Anthropic API key is required — paste a key (sk-ant-…) and save.", http.StatusBadRequest)
-		return
-	}
+	// Anthropic is required at chat-launch time (HandleRequest enforces
+	// it), but no longer required at settings-save time: each
+	// integration on the new card-based UI is its own form, and saving
+	// (say) the SX key shouldn't refuse on the grounds that Anthropic
+	// hasn't been pasted yet. The bot still surfaces a clear error to
+	// the user the moment they try to chat without a key.
 
 	saved, err := b.orgs.Upsert(r.Context(), current)
 	if err != nil {
@@ -304,9 +362,8 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	b.log.Info("org settings saved",
 		"org", saved.OrgID,
-		"github_repo", saved.GitHubRepo,
-		"github_base_branch", saved.GitHubBaseBranch,
-		"has_github_token", saved.GitHubToken != "",
+		"default_repo_owner", saved.DefaultGitHubOwner,
+		"default_repo_name", saved.DefaultGitHubRepo,
 		"has_slack_bot", saved.SlackBotToken != "",
 		"has_slack_socket", saved.SlackSocketToken != "",
 		"has_slack_team_id", saved.SlackTeamID != "",
@@ -315,7 +372,74 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 	)
 	// Slack creds may have changed; rebuild that org's connection.
 	b.slack.RestartOrg(r.Context(), p.OrgID)
-	http.Redirect(w, r, "/settings/org?saved=1", http.StatusFound)
+	tab := r.URL.Query().Get("tab")
+	if tab == "" {
+		tab = "general"
+	}
+	http.Redirect(w, r, "/settings/org?tab="+tab+"&saved=1", http.StatusFound)
+}
+
+// integrationInstallation is the per-installation row passed to the
+// settings template. Each installation owns a list of repos, sourced
+// from the local cache (refreshed by webhook + on-demand sync).
+type integrationInstallation struct {
+	InstallationID int64
+	AccountLogin   string
+	AccountType    string
+	Suspended      bool
+	ManageURL      string
+	Repos          []integrationRepo
+}
+
+// integrationRepo is the slim view a settings template needs.
+type integrationRepo struct {
+	Owner         string
+	Name          string
+	DefaultBranch string
+	Private       bool
+}
+
+// loadIntegrationsView pulls the org's GitHub App installations and the
+// repos cached for each. Used by the settings page Integrations tab to
+// render the list + Manage links + default-repo dropdown source.
+func (b *Bot) loadIntegrationsView(ctx context.Context, orgID string) ([]integrationInstallation, []integrationRepo, error) {
+	rows, err := b.store.Queries.ListGithubInstallationsByOrg(ctx, orgID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("list installations: %w", err)
+	}
+	out := make([]integrationInstallation, 0, len(rows))
+	allRepos := []integrationRepo{}
+	for _, row := range rows {
+		installRepos, err := b.store.Queries.ListGithubReposByInstallation(ctx, row.InstallationID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("list repos for install %d: %w", row.InstallationID, err)
+		}
+		view := integrationInstallation{
+			InstallationID: row.InstallationID,
+			AccountLogin:   row.AccountLogin,
+			AccountType:    row.AccountType,
+			Suspended:      row.SuspendedAt.Valid,
+			ManageURL:      githubInstallationManageURL(row.AccountType, row.AccountLogin, row.InstallationID),
+		}
+		for _, rr := range installRepos {
+			repo := integrationRepo{Owner: rr.Owner, Name: rr.Name, DefaultBranch: rr.DefaultBranch, Private: rr.Private}
+			view.Repos = append(view.Repos, repo)
+			allRepos = append(allRepos, repo)
+		}
+		out = append(out, view)
+	}
+	return out, allRepos, nil
+}
+
+// githubInstallationManageURL returns the GitHub-side deep link for the
+// installation: org installs land in the org settings page, user
+// installs in the personal settings page. Used to surface a "Manage on
+// GitHub" link from the Integrations tab.
+func githubInstallationManageURL(accountType, accountLogin string, installationID int64) string {
+	if accountType == "Organization" {
+		return fmt.Sprintf("https://github.com/organizations/%s/settings/installations/%d", accountLogin, installationID)
+	}
+	return fmt.Sprintf("https://github.com/settings/installations/%d", installationID)
 }
 
 // savedMessage maps the ?saved= sentinel to the green banner text shown
@@ -338,6 +462,12 @@ func savedMessage(s string) string {
 		return "Slack install cancelled."
 	case "slack_install_conflict":
 		return "That Slack workspace is already connected to another Hetchy organization. Have the existing org uninstall first."
+	case "github_installed":
+		return "GitHub App installed. Repos and teams have been synced."
+	case "github_synced":
+		return "Sync complete."
+	case "github_install_conflict":
+		return "That GitHub installation is already connected to another Hetchy organization. Have the existing org uninstall first (or pick a different account)."
 	default:
 		return ""
 	}
@@ -668,7 +798,8 @@ func applyTokenChange(r *http.Request, field, existing string) string {
 
 // templateFuncs defines helpers callable from the embedded HTML templates.
 // `dict` lets callers build inline maps to pass into sub-templates, which
-// is otherwise awkward in html/template.
+// is otherwise awkward in html/template. `minus` is used by the
+// integrations panel to render "…and N more" suffixes.
 var templateFuncs = template.FuncMap{
 	"dict": func(values ...any) (map[string]any, error) {
 		if len(values)%2 != 0 {
@@ -684,6 +815,7 @@ var templateFuncs = template.FuncMap{
 		}
 		return m, nil
 	},
+	"minus": func(a, b int) int { return a - b },
 }
 
 func (b *Bot) renderTemplate(w http.ResponseWriter, body string, data any) {
