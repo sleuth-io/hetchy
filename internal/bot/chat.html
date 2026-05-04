@@ -165,9 +165,23 @@ const btn = document.getElementById('btn');
 
 // Read session ID from URL (?session=...) so the page can be reloaded or
 // shared to reconnect to an existing sandbox. Generate a new one if absent.
+// crypto.randomUUID() is gated on secure contexts; on plain HTTP at a
+// non-localhost host (like dev.hetchy.ai) it isn't defined, so fall back
+// to RFC4122 v4 from getRandomValues (which is unrestricted).
+function newSessionId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  const b = new Uint8Array(16);
+  crypto.getRandomValues(b);
+  b[6] = (b[6] & 0x0f) | 0x40;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  const h = [...b].map(x => x.toString(16).padStart(2, '0')).join('');
+  return h.slice(0, 8) + '-' + h.slice(8, 12) + '-' + h.slice(12, 16) + '-' + h.slice(16, 20) + '-' + h.slice(20);
+}
 const params = new URLSearchParams(window.location.search);
 const isFreshChat = !params.has('session');
-const sessionId = params.get('session') || crypto.randomUUID();
+const sessionId = params.get('session') || newSessionId();
 if (isFreshChat) {
   const url = new URL(window.location);
   url.searchParams.set('session', sessionId);
