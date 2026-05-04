@@ -465,12 +465,16 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 		onError(fmt.Sprintf("Could not find sandbox `%s` — it may have been archived or removed. Start a new chat to continue.", rec.SandboxID))
 		return
 	}
-	if err := sb.Start(ctx); err != nil {
+	if err := b.retryWithBackoff(ctx, "start sandbox", func() error {
+		return sb.Start(ctx)
+	}); err != nil {
 		b.log.Error("sandbox start failed", "sandbox", sb.ID, "request_id", requestID, "error", err)
 		onError(fmt.Sprintf("Failed to resume sandbox `%s`. Check the server logs for details.", sb.ID))
 		return
 	}
-	if err := sb.WaitForStart(ctx, 2*time.Minute); err != nil {
+	if err := b.retryWithBackoff(ctx, "wait for sandbox start", func() error {
+		return sb.WaitForStart(ctx, 2*time.Minute)
+	}); err != nil {
 		b.log.Error("sandbox wait-for-start failed", "sandbox", sb.ID, "request_id", requestID, "error", err)
 		onError(fmt.Sprintf("Sandbox `%s` did not start in time. Try again, or open a fresh chat.", sb.ID))
 		return
