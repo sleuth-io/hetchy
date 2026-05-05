@@ -33,6 +33,13 @@ type LoopInput struct {
 	Path            string
 	Hints           *Hints
 	SuppliedSecrets map[string]string // injected into the sandbox env
+
+	// RepoDir is the absolute path inside the sandbox where the repo is
+	// cloned. Required so the bootstrap shell script can cd into it
+	// before invoking claude — the script runs in its own subshell, so
+	// it can't rely on a cwd set by a prior setup step. Empty value
+	// fails the loop early.
+	RepoDir string
 }
 
 // LoopResult is what the loop produces: a Spec ready to be persisted,
@@ -70,6 +77,9 @@ func Run(ctx context.Context, runner Runner, in LoopInput) (*LoopResult, error) 
 	if in.Hints == nil {
 		return nil, errors.New("bootstrap: hints are required")
 	}
+	if in.RepoDir == "" {
+		return nil, errors.New("bootstrap: RepoDir is required")
+	}
 
 	prompt := BuildPrompt(in.Hints, PromptArgs{
 		OwnerRepo:       in.OwnerRepo,
@@ -84,6 +94,7 @@ func Run(ctx context.Context, runner Runner, in LoopInput) (*LoopResult, error) 
 	env := map[string]string{
 		"HETCHY_BOOTSTRAP_PROMPT_FILE": "/tmp/hetchy-bootstrap-prompt.txt",
 		"HETCHY_BOOTSTRAP_OUT_DIR":     "/tmp/hetchy-spec",
+		"HETCHY_BOOTSTRAP_REPO_DIR":    in.RepoDir,
 	}
 	maps.Copy(env, in.SuppliedSecrets)
 
@@ -223,8 +234,29 @@ set -euo pipefail
 
 : "${HETCHY_BOOTSTRAP_PROMPT_FILE:?required}"
 : "${HETCHY_BOOTSTRAP_OUT_DIR:?required}"
+: "${HETCHY_BOOTSTRAP_REPO_DIR:?required}"
 
 mkdir -p "${HETCHY_BOOTSTRAP_OUT_DIR}"
+
+# Each shLines call runs in its own subshell, so the cwd from the
+# preceding setup-clone step doesn't survive. cd here so the agent's
+# tools (Read/Edit/Bash) operate on the cloned repo by default.
+cd "${HETCHY_BOOTSTRAP_REPO_DIR}"
+
+# Strip out the alternate credential — claude's auth precedence puts
+# ANTHROPIC_API_KEY ahead of CLAUDE_CODE_OAUTH_TOKEN, so a stray value
+# inherited from a snapshot or sibling shell would silently win over the
+# token the bot injected. Mirrors agent.sh's auth hygiene.
+if [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
+  unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN
+elif [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
+  unset CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_AUTH_TOKEN
+fi
+
+# Claude Code expects its config to acknowledge onboarding before it
+# will run non-interactively in a fresh sandbox.
+mkdir -p "$HOME/.claude"
+printf '{"hasCompletedOnboarding":true}\n' > "$HOME/.claude.json"
 
 echo "[hetchy-bootstrap] invoking claude" >&2
 # stream-json + verbose mirrors agent.sh — gives the bot typed Block

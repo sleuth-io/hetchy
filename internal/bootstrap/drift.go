@@ -52,6 +52,7 @@ type AutoHealInput struct {
 	FailureLog      string
 	Hints           *Hints
 	SuppliedSecrets map[string]string
+	RepoDir         string
 }
 
 // AutoHeal re-runs the bootstrap loop with the prior spec + failure
@@ -73,6 +74,7 @@ func AutoHeal(ctx context.Context, runner Runner, in AutoHealInput) (*LoopResult
 		Path:            in.Path,
 		Hints:           in.Hints,
 		SuppliedSecrets: in.SuppliedSecrets,
+		RepoDir:         in.RepoDir,
 	})
 	if err != nil {
 		return res, err

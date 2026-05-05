@@ -60,6 +60,7 @@ func TestLoopSuccess(t *testing.T) {
 		OwnerRepo:       "x/y",
 		Hints:           hints,
 		SuppliedSecrets: map[string]string{"GITHUB_TOKEN": "ghp_..."},
+		RepoDir:         "/repo",
 	})
 	if err != nil {
 		t.Fatalf("loop: %v", err)
@@ -104,6 +105,7 @@ func TestLoopPartialOnDeferred(t *testing.T) {
 	res, err := Run(context.Background(), runner, LoopInput{
 		OwnerRepo: "x/y",
 		Hints:     &Hints{Path: "/repo"},
+		RepoDir:   "/repo",
 	})
 	if err != nil {
 		t.Fatalf("loop: %v", err)
@@ -123,6 +125,7 @@ func TestLoopRunFailureWrapsError(t *testing.T) {
 	_, err := Run(context.Background(), runner, LoopInput{
 		OwnerRepo: "x/y",
 		Hints:     &Hints{Path: "/repo"},
+		RepoDir:   "/repo",
 	})
 	if err == nil {
 		t.Fatal("expected loop to fail")

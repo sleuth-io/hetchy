@@ -178,11 +178,22 @@ func (b *Bot) ensureBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo
 		return nil, fmt.Errorf("get secrets: %w", err)
 	}
 
-	runner := &botRunner{b: b, sb: sb, sessionID: sessionID, emit: emit}
+	authKey, authVal := claudeAuthEnv(oc)
+	runner := &botRunner{
+		b:         b,
+		sb:        sb,
+		sessionID: sessionID,
+		emit:      emit,
+		baseEnv: map[string]string{
+			authKey:        authVal,
+			"GITHUB_TOKEN": repo.GitHubToken,
+		},
+	}
 	res, err := bootstrap.Run(ctx, runner, bootstrap.LoopInput{
 		OwnerRepo:       repo.Slug,
 		Hints:           hints,
 		SuppliedSecrets: suppliedSecrets,
+		RepoDir:         workdir,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("bootstrap.Run: %w", err)

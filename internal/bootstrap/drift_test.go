@@ -93,6 +93,7 @@ func TestAutoHealBumpsSpecVersion(t *testing.T) {
 		PriorSpec:  prior,
 		FailureLog: "exit 1",
 		Hints:      &Hints{Path: "/repo"},
+		RepoDir:    "/repo",
 	})
 	if err != nil {
 		t.Fatalf("auto-heal: %v", err)

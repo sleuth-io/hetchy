@@ -3,6 +3,7 @@ package bot
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
@@ -25,6 +26,12 @@ type botRunner struct {
 	sb        *daytona.Sandbox
 	sessionID string
 	emit      blocks.Emitter
+	// baseEnv carries credentials every bootstrap step needs but the
+	// loop-side env map shouldn't have to know about (claude auth, github
+	// token). bootstrap.Run forwards its own env on top of these — keys
+	// in env override baseEnv, so a future per-step credential override
+	// is still possible without restructuring the interface.
+	baseEnv map[string]string
 }
 
 // Run executes scriptBody inside the sandbox session, emitting any
@@ -39,8 +46,11 @@ func (r *botRunner) Run(ctx context.Context, label, scriptBody string, env map[s
 		return fmt.Errorf("bootstrap: write script: %w", err)
 	}
 
+	merged := make(map[string]string, len(r.baseEnv)+len(env))
+	maps.Copy(merged, r.baseEnv)
+	maps.Copy(merged, env)
 	var prefix strings.Builder
-	for k, v := range env {
+	for k, v := range merged {
 		prefix.WriteString(k)
 		prefix.WriteByte('=')
 		prefix.WriteString(shellQuote(v))
