@@ -855,15 +855,12 @@
   // handler. Server-side already clears "the other" credential when
   // a new one is pasted, but disabling here keeps the wire form
   // honest.
+  // Tab buttons live outside panels; tab-internal buttons (rotate
+  // /remove/cancel) and inputs all need to follow the panel's
+  // active/inactive state.
   function setCredPanelDisabled(panel, disabled) {
     panel.querySelectorAll('input, button[data-rotate], button[data-remove], button[data-cancel]').forEach(el => {
-      // Tab buttons live outside panels; tab-internal buttons (rotate
-      // /remove/cancel) need to follow the panel state.
-      if (el.matches('input')) {
-        el.disabled = disabled;
-      } else {
-        el.disabled = disabled;
-      }
+      el.disabled = disabled;
     });
   }
   document.querySelectorAll('[data-cred-panel]').forEach(p => {

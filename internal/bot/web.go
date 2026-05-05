@@ -850,6 +850,12 @@ func applyAnthropicCredsChange(r *http.Request, current *orgcfg.Config) {
 	}
 }
 
+// credLineBreakStripper drops CR and LF that sneak into pasted
+// credentials (terminal-wrapped `claude setup-token` output, in
+// particular). Hoisted to package scope so applyTokenChange doesn't
+// allocate a fresh Replacer per request.
+var credLineBreakStripper = strings.NewReplacer("\r", "", "\n", "")
+
 // applyTokenChange resolves the new value for a token field given an
 // explicit set/keep/remove signal from the settings form. The form posts
 // a hidden `<field>_action` of "remove" when the user ticks the
@@ -871,7 +877,7 @@ func applyTokenChange(r *http.Request, field, existing string) string {
 		return ""
 	}
 	raw := r.PostFormValue(field)
-	val := strings.TrimSpace(strings.NewReplacer("\r", "", "\n", "").Replace(raw))
+	val := strings.TrimSpace(credLineBreakStripper.Replace(raw))
 	if val == "" {
 		return existing
 	}
