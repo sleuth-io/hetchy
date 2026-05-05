@@ -84,6 +84,7 @@ func (b *Bot) runWeb(ctx context.Context) error {
 	mux.Handle("/chat", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b.chatHandler(ctx, w, r)
 	}))))
+	mux.Handle("/api/repo-secrets", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.repoSecretsHandler))))
 	mux.Handle("/api/conversations", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.conversationsHandler))))
 	mux.Handle("/api/conversations/", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.conversationDetailHandler))))
 	mux.Handle("/api/members", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.membersHandler))))
@@ -275,8 +276,14 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "load integrations: "+err.Error(), http.StatusInternalServerError)
 				return
 			}
+			// Stamp OrgID so loadBootstrapStatus can scope the repo lookup.
+			for i := range repos {
+				repos[i].OrgID = p.OrgID
+			}
+			bootstrapStatus, _ := b.loadBootstrapStatus(r.Context(), repos)
 			data["GitHubInstallations"] = installs
 			data["GitHubRepos"] = repos
+			data["BootstrapStatus"] = bootstrapStatus
 		}
 		if tab == "members" {
 			members, err := b.auth.ListMembers(r.Context(), p.OrgID)
@@ -394,6 +401,66 @@ type integrationRepo struct {
 	Name          string
 	DefaultBranch string
 	Private       bool
+	// OrgID is set on each repo before passing the slice into
+	// loadBootstrapStatus — we need it to scope the GitHub repo
+	// lookup back to this org's installations.
+	OrgID string
+}
+
+// repoBootstrapStatusView is the per-repo bootstrap status shown in
+// the Integrations tab. Slug is "owner/name"; the rest is a compact
+// summary the template renders without further joining.
+type repoBootstrapStatusView struct {
+	Slug                 string
+	Status               string
+	Kind                 string
+	UnfilledSecrets      []string
+	DeferredCapabilities []string
+}
+
+// loadBootstrapStatus returns a map keyed by "owner/name" so the
+// integrations template can decorate each cached repo card with its
+// bootstrap state in O(1). Repos without a spec produce no entry —
+// the template falls back to "Not bootstrapped yet" in that case.
+func (b *Bot) loadBootstrapStatus(ctx context.Context, repos []integrationRepo) (map[string]repoBootstrapStatusView, error) {
+	out := make(map[string]repoBootstrapStatusView, len(repos))
+	if len(repos) == 0 {
+		return out, nil
+	}
+	for _, repo := range repos {
+		// We only have (owner, name) here — look up the (installation,
+		// repo_id) once via the org repo lookup, then read the spec.
+		row, err := b.store.Queries.GetGithubRepoForOrg(ctx, sqlc.GetGithubRepoForOrgParams{
+			OrgID: repo.OrgID, Owner: repo.Owner, Name: repo.Name,
+		})
+		if err != nil {
+			continue
+		}
+		spec, err := b.bootstrap.GetSpec(ctx, row.InstallationID, row.RepoID, "")
+		if err != nil {
+			continue
+		}
+		secrets, err := b.store.Queries.ListRepoSecretValues(ctx, sqlc.ListRepoSecretValuesParams{
+			InstallationID: row.InstallationID, RepoID: row.RepoID, Path: "",
+		})
+		if err != nil {
+			continue
+		}
+		var unfilled []string
+		for _, s := range secrets {
+			if len(s.ValueEncrypted) == 0 {
+				unfilled = append(unfilled, s.Name)
+			}
+		}
+		out[repo.Owner+"/"+repo.Name] = repoBootstrapStatusView{
+			Slug:                 repo.Owner + "/" + repo.Name,
+			Status:               string(spec.ValidationStatus),
+			Kind:                 spec.Kind,
+			UnfilledSecrets:      unfilled,
+			DeferredCapabilities: spec.DeferredCapabilities,
+		}
+	}
+	return out, nil
 }
 
 // loadIntegrationsView pulls the org's GitHub App installations and the

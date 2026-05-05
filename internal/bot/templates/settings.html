@@ -472,6 +472,36 @@
           <p class="hint">Click <strong>Enable</strong> above to install the Hetchy GitHub App. You'll be redirected to GitHub to choose which repos to grant access to, then sent back here.</p>
         </div>
       {{end}}
+
+      {{if .GitHubRepos}}
+        <div class="body-section">
+          <legend>Repo bootstrap</legend>
+          <p class="hint">When Hetchy first works on a repo, it spends a few minutes figuring out how to run it end-to-end. The cached spec is reused on every subsequent task.</p>
+          <table class="grid">
+            <thead><tr><th>Repository</th><th>Status</th><th>Notes</th></tr></thead>
+            <tbody>
+              {{range .GitHubRepos}}
+                {{$slug := printf "%s/%s" .Owner .Name}}
+                {{$bs := index $.BootstrapStatus $slug}}
+                <tr>
+                  <td>{{$slug}}</td>
+                  {{if $bs.Slug}}
+                    <td><span class="tag tag-{{$bs.Status}}">{{$bs.Status}}</span> {{if $bs.Kind}}<small>· {{$bs.Kind}}</small>{{end}}</td>
+                    <td>
+                      {{if $bs.UnfilledSecrets}}<div class="hint">Needs values for: {{range $i, $s := $bs.UnfilledSecrets}}{{if $i}}, {{end}}<code>{{$s}}</code>{{end}}</div>{{end}}
+                      {{if $bs.DeferredCapabilities}}<div class="hint">Deferred: {{range $i, $d := $bs.DeferredCapabilities}}{{if $i}}; {{end}}{{$d}}{{end}}</div>{{end}}
+                      {{if and (not $bs.UnfilledSecrets) (not $bs.DeferredCapabilities)}}<span class="hint">All set.</span>{{end}}
+                    </td>
+                  {{else}}
+                    <td><span class="hint">not bootstrapped yet</span></td>
+                    <td><span class="hint">First task on this repo will trigger bootstrap.</span></td>
+                  {{end}}
+                </tr>
+              {{end}}
+            </tbody>
+          </table>
+        </div>
+      {{end}}
     </div>
     {{end}}
   </article>

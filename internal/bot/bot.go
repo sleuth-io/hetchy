@@ -19,6 +19,7 @@ import (
 
 	"github.com/hetchyhq/hetchy/internal/auth"
 	"github.com/hetchyhq/hetchy/internal/blocks"
+	"github.com/hetchyhq/hetchy/internal/bootstrap"
 	"github.com/hetchyhq/hetchy/internal/convstore"
 	"github.com/hetchyhq/hetchy/internal/db"
 	"github.com/hetchyhq/hetchy/internal/db/sqlc"
@@ -46,14 +47,15 @@ const workdir = "/home/daytona/work"
 // together. It owns no per-request mutable state; conversation state lives
 // in the database.
 type Bot struct {
-	cfg     Config
-	log     *slog.Logger
-	daytona *daytona.Client
-	store   *db.Store
-	orgs    *orgcfg.Store
-	convs   *convstore.Store
-	auth    *auth.Service
-	slack   *slackManager
+	cfg       Config
+	log       *slog.Logger
+	daytona   *daytona.Client
+	store     *db.Store
+	orgs      *orgcfg.Store
+	convs     *convstore.Store
+	auth      *auth.Service
+	slack     *slackManager
+	bootstrap *bootstrap.Store
 	// app is the GitHub App handle (per-environment dev/staging/prod).
 	// Nil when GITHUB_APP_* env vars aren't configured — the install
 	// button is hidden and inbound webhooks refused in that case, so
@@ -139,6 +141,7 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 		store:            store,
 		orgs:             orgcfg.New(store, cipher),
 		convs:            convstore.New(store),
+		bootstrap:        bootstrap.New(store, cipher),
 		auth:             authSvc,
 		cipher:           cipher,
 		retryBackoff:     initialBackoff,
