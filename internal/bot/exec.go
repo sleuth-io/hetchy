@@ -105,7 +105,25 @@ func (b *Bot) shLines(ctx context.Context, sb *daytona.Sandbox, sessionID, step,
 		return "", fmt.Errorf("step %q status: %w", step, err)
 	}
 	if exitCode, ok := status["exitCode"]; ok {
-		code, _ := exitCode.(int32)
+		// status is map[string]any populated by the Daytona SDK from
+		// a JSON HTTP response, so numbers arrive as float64 — a
+		// blind exitCode.(int32) assertion fails for every real
+		// value, silently turning every non-zero exit into 0. Cover
+		// every plausible numeric type so a sandbox script that
+		// fails actually surfaces an error.
+		var code int64
+		switch v := exitCode.(type) {
+		case float64:
+			code = int64(v)
+		case float32:
+			code = int64(v)
+		case int:
+			code = int64(v)
+		case int32:
+			code = int64(v)
+		case int64:
+			code = v
+		}
 		if code != 0 {
 			out := buf.String()
 			if len(out) > 2000 {

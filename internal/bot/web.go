@@ -885,7 +885,11 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
 
-	requestID := strconv.FormatInt(time.Now().UnixMilli(), 10)
+	// Nanosecond precision (base 36 to keep the resulting branch
+	// suffix short) so two concurrent requests don't generate the
+	// same `feature/sf-<id>` branch name. Millisecond precision was
+	// realistic to collide under load.
+	requestID := strconv.FormatInt(time.Now().UnixNano(), 36)
 	if sessionID == "" {
 		sessionID = requestID
 	}

@@ -125,8 +125,16 @@ func (b *Bot) runScript(ctx context.Context, sb *daytona.Sandbox, sessionID, lab
 
 	// Writing the script generates no user-visible output; pass a noop
 	// line handler so it doesn't open a stray block.
+	//
+	// Heredoc terminator MUST sit on its own line. The embedded scripts
+	// end with "\n" today, but an edit that drops the trailing newline
+	// would put `SFEOF` on the same line as the last script line and
+	// the heredoc would hang waiting for a bare terminator. Trim any
+	// trailing newlines and emit our own so the construction is
+	// invariant to the script body's exact whitespace.
 	scriptPath := "/tmp/sf-" + label + ".sh"
-	writeCmd := fmt.Sprintf("cat > %s << 'SFEOF'\n%sSFEOF\nchmod +x %s", scriptPath, scriptBody, scriptPath)
+	body := strings.TrimRight(scriptBody, "\n")
+	writeCmd := fmt.Sprintf("cat > %s << 'SFEOF'\n%s\nSFEOF\nchmod +x %s", scriptPath, body, scriptPath)
 	if _, err := b.shLines(ctx, sb, sessionID, "write-script", writeCmd, 15*time.Second, func(string) {}); err != nil {
 		return "", err
 	}
