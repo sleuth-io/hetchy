@@ -1,4 +1,4 @@
-.PHONY: help build install test ci lint format clean tidy deps verify update-deps init prepush postpull bot bot-with-logs logs dev daytona-up daytona-down daytona-logs snapshot push-snapshot db-up db-down db-status db-new sqlc-generate pg-up pg-down pg-logs pg-psql pg-reset slack-app
+.PHONY: help build install test ci lint format clean tidy deps verify update-deps init prepush postpull bot bot-with-logs logs dev daytona-up daytona-down daytona-logs snapshot push-snapshot db-up db-down db-status db-new check-migrations sqlc-generate pg-up pg-down pg-logs pg-psql pg-reset slack-app
 
 # Default target
 help: ## Show this help message
@@ -86,7 +86,10 @@ update-deps: ## Update all dependencies to latest versions
 
 init: deps ## Initialize development environment
 
-prepush: format lint test build ## Run before pushing (format, lint, test, build)
+prepush: format lint test build check-migrations ## Run before pushing (format, lint, test, build, check-migrations)
+
+check-migrations: ## Verify branch-added migrations won't be silently skipped vs origin/main
+	@./scripts/check-migrations-order.sh
 
 postpull: init ## Run after pulling (download dependencies)
 
@@ -177,6 +180,11 @@ sqlc-generate: ## Regenerate type-safe Go from db/queries against db/migrations
 
 db-up: build ## Apply all pending migrations (uses embedded migrator in the hetchy binary)
 	@which doppler > /dev/null || (echo "doppler CLI not found." && exit 1)
+	@db_version=$$(doppler run -- $(BUILD_DIR)/$(BINARY_NAME) --migrate-status 2>/dev/null \
+	    | sed -nE 's/^schema version: ([0-9]+).*/\1/p' | head -1); \
+	if [ -n "$$db_version" ] && [ "$$db_version" != "0" ]; then \
+	    ./scripts/check-migrations-order.sh --threshold="$$db_version" || exit 1; \
+	fi
 	@doppler run -- $(BUILD_DIR)/$(BINARY_NAME) --migrate
 
 db-down: build ## Roll back one migration (use db-down N=3 to roll back N; N=0 rolls back all)

@@ -59,7 +59,7 @@ func (b *Bot) shLines(ctx context.Context, sb *daytona.Sandbox, sessionID, step,
 			}
 			line := s[:i]
 			s = s[i+1:]
-			b.log.Debug("sandbox line", "sandbox", sb.ID, "step", step, "stream", stream, "line", line)
+			b.log.Debug("sandbox line", "sandbox", sb.ID, "step", step, "stream", stream, "line", lazySandboxLine{raw: line})
 			onLine(line)
 		}
 		tail.Reset()
@@ -70,7 +70,7 @@ func (b *Bot) shLines(ctx context.Context, sb *daytona.Sandbox, sessionID, step,
 			return
 		}
 		line := tail.String()
-		b.log.Debug("sandbox line", "sandbox", sb.ID, "step", step, "stream", stream, "line", line)
+		b.log.Debug("sandbox line", "sandbox", sb.ID, "step", step, "stream", stream, "line", lazySandboxLine{raw: line})
 		onLine(line)
 		tail.Reset()
 	}
