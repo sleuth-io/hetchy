@@ -45,6 +45,57 @@ func TestCategorise(t *testing.T) {
 	}
 }
 
+// mrkdwnEscape neuters Slack broadcast/mention syntax in foreign-origin
+// text. Our intentional `<@user>` and `<URL|label>` constructs are
+// added separately *after* escape, so they're not affected here —
+// this test pins the foreign-text neutering only.
+func TestMrkdwnEscape(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"plain text", "plain text"},
+		{"<!channel> ping everyone", "&lt;!channel&gt; ping everyone"},
+		{"<!here> ping online", "&lt;!here&gt; ping online"},
+		{"<@U12345> direct ping", "&lt;@U12345&gt; direct ping"},
+		{"<!subteam^S0> group ping", "&lt;!subteam^S0&gt; group ping"},
+		{"a & b", "a &amp; b"},
+		{"", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.in, func(t *testing.T) {
+			if got := mrkdwnEscape(tc.in); got != tc.want {
+				t.Errorf("mrkdwnEscape(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// notifyIcon picks an emoji prefix for Notify thread posts. Milestones
+// (Starting, Sandbox ready, Resuming) get a check — by the time the
+// user reads the message the underlying step is already done — and
+// bot-asks-user prompts get a speech-balloon. An earlier hourglass
+// version implied "still pending" which read wrong on done milestones.
+func TestNotifyIcon(t *testing.T) {
+	cases := []struct {
+		title string
+		want  string
+	}{
+		{"Starting", ":white_check_mark:"},
+		{"Sandbox ready", ":white_check_mark:"},
+		{"Resuming", ":white_check_mark:"},
+		{"Which repository?", ":speech_balloon:"},
+		{"Try again", ":speech_balloon:"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.title, func(t *testing.T) {
+			if got := notifyIcon(tc.title); got != tc.want {
+				t.Errorf("notifyIcon(%q) = %q, want %q", tc.title, got, tc.want)
+			}
+		})
+	}
+}
+
 // compactRequest cleans up the user's prompt for inclusion in the
 // terminal-state live message header. Multi-line prompts must
 // collapse to one line, pathological lengths must truncate, and

@@ -69,6 +69,19 @@ func TestWebEmitter_KeepsAppendForClaudeText(t *testing.T) {
 	}
 }
 
+// One-shot helpers (Notify / Result / Error) used to push block_done
+// directly without going through Done/Fail, leaking a kinds map entry
+// per call. Pin the cleanup so a regression doesn't silently re-leak.
+func TestWebEmitter_OneShotsClearKinds(t *testing.T) {
+	e := newWebEmitter()
+	e.Notify("hello", "")
+	e.Result("done", "url")
+	e.Error("oops", "trace")
+	if n := len(e.kinds); n != 0 {
+		t.Errorf("kinds map should be empty after Notify/Result/Error, got %d entries: %v", n, e.kinds)
+	}
+}
+
 // After Done/Fail the kind tracking should be cleaned up so a future
 // id collision (extremely unlikely with the atomic counter, but cheap
 // to guard against) doesn't leak the old kind into a new block's

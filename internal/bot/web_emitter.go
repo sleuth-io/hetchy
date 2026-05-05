@@ -121,12 +121,21 @@ func (e *webEmitter) Fail(id, summary string) {
 	e.push(webSSE{Event: "block_done", Data: sseEvent{ID: id, Status: blocks.StatusError, Summary: summary}})
 }
 
+// oneShot routes through Done/Fail rather than pushing block_done
+// directly so the kinds map entry created by Start is cleaned up.
+// Bypassing Done/Fail used to silently violate the same cleanup
+// contract that TestWebEmitter_ClearsKindOnTerminate pins for the
+// streaming path.
 func (e *webEmitter) oneShot(kind blocks.Kind, title, body string, status blocks.Status) {
 	id := e.Start(kind, title, nil)
 	if body != "" {
 		e.Append(id, body)
 	}
-	e.push(webSSE{Event: "block_done", Data: sseEvent{ID: id, Status: status}})
+	if status == blocks.StatusError {
+		e.Fail(id, "")
+	} else {
+		e.Done(id, "")
+	}
 }
 
 func (e *webEmitter) Notify(title, body string) {

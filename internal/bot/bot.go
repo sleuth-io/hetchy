@@ -463,7 +463,7 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 		return
 	}
 	b.log.Info("sandbox created", "id", sb.ID, "request_id", requestID)
-	emit.Notify("Sandbox ready", fmt.Sprintf("Sandbox `%s` ready — cloning repo and starting Claude Code.", sb.ID))
+	emit.Notify("Sandbox ready", fmt.Sprintf("`%s` is up — cloning repo and starting Claude Code.", sb.ID))
 
 	branch := "feature/sf-" + requestID
 	prURL, runErr := b.runAgent(ctx, sb, repo, oc, userRequest, requestID, emit)

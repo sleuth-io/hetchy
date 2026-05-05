@@ -5,10 +5,12 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/slack-go/slack"
+	"github.com/slack-go/slack/slackutilsx"
 
 	"github.com/hetchyhq/hetchy/internal/blocks"
 )
@@ -44,7 +46,21 @@ type slackEmitter struct {
 	// for what this run was about.
 	request string
 	idGen   atomic.Uint64
-	open    map[string]openBlock
+
+	// mu serialises all mutations of the per-emitter state. The
+	// emitter's public methods are called from the bot's request
+	// goroutine, but the trailing-flush timer fires from the runtime
+	// timer goroutine — two writers, must be locked.
+	mu sync.Mutex
+
+	// flushTimer schedules a "trailing flush" of the live message
+	// when refreshLive() is throttled. Without it, a fast burst of
+	// state changes followed by a long quiet period would leave the
+	// live message stuck on a stale "current activity" line for the
+	// duration of a slow tool call.
+	flushTimer *time.Timer
+
+	open map[string]openBlock
 
 	// liveTS is the timestamp of the live status message in the
 	// thread, set after the first PostMessage. Empty until then.
@@ -99,6 +115,8 @@ func newSlackEmitter(log *slog.Logger, cli *slack.Client, channel, threadTS, use
 }
 
 func (e *slackEmitter) Start(kind blocks.Kind, title string, _ map[string]any) string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	id := "s" + strconv.FormatUint(e.idGen.Add(1), 10)
 	e.open[id] = openBlock{kind: kind, title: title}
 	// Notify blocks are status messages — keep posting them as their
@@ -106,9 +124,11 @@ func (e *slackEmitter) Start(kind blocks.Kind, title string, _ map[string]any) s
 	// user is already in the thread (they just sent a message), and
 	// pinging them on every status step is overkill. We reserve the
 	// mention for the terminal Result/Error post that tells them
-	// they need to come back and look.
+	// they need to come back and look. An icon prefix keeps the
+	// thread visually consistent — every status row starts with a
+	// glyph, matching the live message and the terminal post.
 	if kind == blocks.KindNotify {
-		e.post(title)
+		e.post(notifyIcon(title) + " " + mrkdwnEscape(title))
 		return id
 	}
 	e.current = title
@@ -122,6 +142,8 @@ func (e *slackEmitter) Start(kind blocks.Kind, title string, _ map[string]any) s
 func (e *slackEmitter) Append(string, string) {}
 
 func (e *slackEmitter) Done(id, _ string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	b, ok := e.open[id]
 	delete(e.open, id)
 	if !ok {
@@ -143,6 +165,8 @@ func (e *slackEmitter) Done(id, _ string) {
 }
 
 func (e *slackEmitter) Fail(id, summary string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	b, ok := e.open[id]
 	delete(e.open, id)
 	title := "Step failed"
@@ -154,9 +178,14 @@ func (e *slackEmitter) Fail(id, summary string) {
 	// this, a transient tool error (e.g. a flaky bash step Claude
 	// recovers from) would scroll past invisibly. The live message
 	// keeps moving forward.
-	line := ":x: " + title
+	//
+	// title and summary may carry Claude/sandbox-controlled text
+	// (tool titles include Bash command first lines, summary echoes
+	// stderr's first line). Escape both so a malicious or accidental
+	// `<!channel>` in the source can't broadcast on PostMessage.
+	line := ":x: " + mrkdwnEscape(title)
 	if summary != "" {
-		line += " — " + summary
+		line += " — " + mrkdwnEscape(summary)
 	}
 	e.post(line)
 	if e.current == title {
@@ -166,14 +195,18 @@ func (e *slackEmitter) Fail(id, summary string) {
 }
 
 func (e *slackEmitter) Notify(title, body string) {
-	msg := title
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	msg := notifyIcon(title) + " " + mrkdwnEscape(title)
 	if body != "" {
-		msg += "\n" + body
+		msg += "\n" + mrkdwnEscape(body)
 	}
 	e.post(msg)
 }
 
 func (e *slackEmitter) Result(title, body string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	e.terminated = true
 	e.lastTerminalKind = blocks.KindResult
 	// Force-flush the live message one last time so the final
@@ -181,9 +214,9 @@ func (e *slackEmitter) Result(title, body string) {
 	e.lastUpdate = time.Time{}
 	e.current = ""
 	e.refreshLive()
-	msg := fmt.Sprintf("<@%s> :tada: %s", e.user, title)
+	msg := fmt.Sprintf("<@%s> :tada: %s", e.user, mrkdwnEscape(title))
 	if body != "" {
-		msg += "\n" + body
+		msg += "\n" + mrkdwnEscape(body)
 	}
 	if e.conversationURL != "" {
 		msg += "\n_<" + e.conversationURL + "|View full details>_"
@@ -192,14 +225,16 @@ func (e *slackEmitter) Result(title, body string) {
 }
 
 func (e *slackEmitter) Error(title, body string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	e.terminated = true
 	e.lastTerminalKind = blocks.KindError
 	e.lastUpdate = time.Time{}
 	e.current = ""
 	e.refreshLive()
-	msg := fmt.Sprintf("<@%s> :x: %s", e.user, title)
+	msg := fmt.Sprintf("<@%s> :x: %s", e.user, mrkdwnEscape(title))
 	if body != "" {
-		msg += "\n" + body
+		msg += "\n" + mrkdwnEscape(body)
 	}
 	if e.conversationURL != "" {
 		msg += "\n_<" + e.conversationURL + "|View full details>_"
@@ -207,18 +242,64 @@ func (e *slackEmitter) Error(title, body string) {
 	e.post(msg)
 }
 
-// refreshLive is the central driver of the live status message. Lazy-
-// posts it on first call, and edits it in place on every subsequent
-// call (subject to the throttle). Errors fall through to plain logs:
-// a stuck live message is never worth tanking the request over.
+// refreshLive is the central driver of the live status message.
+// Caller must hold e.mu. Lazy-posts the message on first call, and
+// edits it in place on every subsequent call (subject to the
+// throttle).
+//
+// When throttled, it schedules a *trailing flush* — a one-shot
+// timer that fires after the throttle window and commits whatever
+// state exists at that point. Without the trailing flush, the LAST
+// state change in a fast burst (followed by a long quiet gap, e.g.
+// a 60s Bash invocation) would never reach the user; they'd see a
+// stale "current activity" line for the duration of the slow tool.
+//
+// Errors are logged but never returned: a stuck live message is
+// never worth tanking the underlying request over.
 func (e *slackEmitter) refreshLive() {
 	now := time.Now()
 	if !e.lastUpdate.IsZero() && now.Sub(e.lastUpdate) < slackUpdateMinInterval {
+		// Throttled. Arm the trailing flush if it isn't already.
+		if e.flushTimer == nil {
+			wait := slackUpdateMinInterval - now.Sub(e.lastUpdate)
+			e.flushTimer = time.AfterFunc(wait, e.trailingFlush)
+		}
 		return
 	}
+	// We're flushing now — cancel any pending trailing flush so it
+	// doesn't fire redundantly on top of this commit.
+	if e.flushTimer != nil {
+		e.flushTimer.Stop()
+		e.flushTimer = nil
+	}
+	e.flushNow(now)
+}
+
+// trailingFlush runs from the time.AfterFunc goroutine. Acquires the
+// mutex, then commits the current state (if the run hasn't already
+// terminated — a terminal post forces a flush, so any later trailing
+// flush would just re-render the same content).
+func (e *slackEmitter) trailingFlush() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.flushTimer = nil
+	if e.terminated {
+		return
+	}
+	e.flushNow(time.Now())
+}
+
+// flushNow does the actual PostMessage / UpdateMessage call. Caller
+// must hold e.mu. Skips the throttle check — the throttle is
+// refreshLive's job, flushNow always sends. now is threaded in so
+// the lastUpdate timestamp matches the moment refreshLive made the
+// throttle decision (rather than re-reading the clock).
+func (e *slackEmitter) flushNow(now time.Time) {
 	text := e.renderLive()
 	if e.liveTS == "" {
-		e.liveStart = now
+		if e.liveStart.IsZero() {
+			e.liveStart = now
+		}
 		_, ts, err := e.cli.PostMessage(e.channel,
 			slack.MsgOptionText(text, false),
 			slack.MsgOptionTS(e.threadTS),
@@ -246,11 +327,16 @@ func (e *slackEmitter) refreshLive() {
 // open a PR" rather than the bare "Done" the previous version had.
 // Slack-thread context is fleeting, and giving the live message a
 // recap header makes it useful long after the run finishes.
+//
+// Dynamic content (e.current from Claude/tool titles, e.request from
+// the user's prompt) is mrkdwn-escaped before interpolation: a Bash
+// command title containing `<!channel>` would otherwise broadcast on
+// the very first PostMessage of the live message.
 func (e *slackEmitter) renderLive() string {
 	icon := ":hourglass_flowing_sand:"
 	header := "Working…"
 	if e.current != "" {
-		header = e.current
+		header = mrkdwnEscape(e.current)
 	}
 	if e.terminated {
 		if e.lastTerminalKind == blocks.KindError {
@@ -261,7 +347,7 @@ func (e *slackEmitter) renderLive() string {
 			header = "Done"
 		}
 		if r := compactRequest(e.request); r != "" {
-			header += " — " + r
+			header += " — " + mrkdwnEscape(r)
 		}
 	}
 	parts := []string{icon + " " + header}
@@ -270,6 +356,23 @@ func (e *slackEmitter) renderLive() string {
 		parts = append(parts, tail)
 	}
 	return strings.Join(parts, "\n")
+}
+
+// mrkdwnEscape neuters Slack control sequences (`<!channel>`,
+// `<!here>`, `<@U…>`, `<!subteam^…>`, and link/mention forms) in a
+// string of foreign text by replacing the angle brackets and
+// ampersand with HTML entities — Slack's mrkdwn parser leaves
+// entity-escaped text alone, so the dangerous tokens render as
+// literal characters instead of broadcasts or pings.
+//
+// We can't escape blanket-style at the post() boundary because we
+// build messages with intentional `<@user>` mentions and
+// `<URL|label>` deep links of our own; only foreign-origin
+// substrings need the treatment. Apply this to any dynamic value
+// (block titles, user prompt, tool result summaries) before it
+// reaches MsgOptionText(_, false).
+func mrkdwnEscape(s string) string {
+	return slackutilsx.EscapeMessage(s)
 }
 
 // compactRequest collapses the user's prompt to a single line for
@@ -353,6 +456,20 @@ func categorise(kind blocks.Kind, title string) string {
 		return "Todo"
 	}
 	return "Other"
+}
+
+// notifyIcon picks a Slack emoji prefix for a Notify message based on
+// the title. Milestone notifies ("Starting", "Sandbox ready",
+// "Resuming") get a check because by the time the user reads them
+// that step is *already done* — the hourglass earlier versions used
+// implied "still waiting on this", which read wrong. Bot-asks-user
+// prompts ("Which repository?", "Try again") get a speech-balloon
+// because they're a question to the user, not a status report.
+func notifyIcon(title string) string {
+	if strings.Contains(title, "?") || strings.HasPrefix(title, "Try ") {
+		return ":speech_balloon:"
+	}
+	return ":white_check_mark:"
 }
 
 // formatElapsed renders a duration in a Slack-thread-friendly form:
