@@ -316,7 +316,11 @@ func (b *Bot) handleSlackEvent(ctx context.Context, oc orgcfg.Config, ev incomin
 	requestID := strings.ReplaceAll(ev.ts, ".", "")
 	conversationURL := b.cfg.PublicBaseURL() + "/?session=" + threadID
 	emit := newSlackEmitter(b.log, cli, ev.channel, replyTo, ev.user, conversationURL, text)
-	b.HandleRequest(ctx, oc, text, requestID, threadID, "", emit)
+	// Best-effort attribution: map the Slack author to a hetchy user so
+	// the chat appears under their LHN filter. Empty string when the
+	// author has no matching org member; HandleRequest tolerates that.
+	creatorID := b.slackUsers.Resolve(ctx, cli, oc.OrgID, ev.user)
+	b.HandleRequest(ctx, oc, text, requestID, threadID, creatorID, emit)
 	// Reaction bookkeeping: only swap the eyes/recycle that signalled
 	// "working on it" for a final ✓/✗ when the run actually reached a
 	// terminal state. Bot-driven question turns ("Which repository?"

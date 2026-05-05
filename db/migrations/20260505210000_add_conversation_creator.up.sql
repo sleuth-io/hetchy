@@ -1,0 +1,1 @@
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS creator_id TEXT NOT NULL DEFAULT '';

@@ -59,6 +59,11 @@ type Bot struct {
 	// button is hidden and inbound webhooks refused in that case, so
 	// every read of this field must nil-check.
 	app *githubapp.App
+	// slackUsers maps Slack user IDs to WorkOS user IDs so a chat
+	// started in Slack is attributed to the right hetchy user. Lazily
+	// populated and cached for the process lifetime — see
+	// slack_user_resolver.go.
+	slackUsers *slackUserResolver
 	// githubWebhookSem caps the number of concurrent goroutines
 	// fanned out from the GitHub webhook endpoint. See
 	// github_webhook.go for the rationale + tuning.
@@ -142,6 +147,7 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 	b.createFn = func(ctx context.Context, params any) (*daytona.Sandbox, error) {
 		return dc.Create(ctx, params)
 	}
+	b.slackUsers = newSlackUserResolver(log, authSvc)
 	b.slack = newSlackManager(log, b.orgs, b.handleSlackEvent)
 	b.warnIfSlackOAuthMisconfigured()
 

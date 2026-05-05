@@ -783,8 +783,18 @@ function showEmptyState() {
 let sidebarItems = [];
 let pendingChatTitle = null;
 // `userFilter` is the currently-selected creator_id for the sidebar filter.
-// Empty string means "All". Defaults to the current user.
-let userFilter = currentUserID;
+// Empty string means "All". Persisted in localStorage so navigating to a
+// chat (which reloads the page) doesn't snap the filter back to "Me".
+// Defaults to the current user on first visit.
+const userFilterStorageKey = 'hetchy.userFilter';
+let userFilter = (function () {
+  try {
+    const saved = localStorage.getItem(userFilterStorageKey);
+    return saved === null ? currentUserID : saved;
+  } catch (e) {
+    return currentUserID;
+  }
+})();
 
 function renderSidebar() {
   const list = document.getElementById('chat-list');
@@ -1211,7 +1221,7 @@ async function loadMembers() {
       const opt = document.createElement('option');
       opt.value = m.user_id;
       opt.textContent = m.user_id === currentUserID
-        ? 'Me (' + (m.display_name || m.email) + ')'
+        ? (m.display_name || m.email)
         : (m.display_name || m.email);
       sel.appendChild(opt);
     }
@@ -1223,6 +1233,7 @@ async function loadMembers() {
 
 document.getElementById('user-filter').addEventListener('change', function () {
   userFilter = this.value;
+  try { localStorage.setItem(userFilterStorageKey, userFilter); } catch (e) {}
   loadSidebar();
 });
 

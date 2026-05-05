@@ -191,6 +191,49 @@ func (s *Service) ListMembers(ctx context.Context, orgID string) ([]Member, erro
 	return out, nil
 }
 
+// FindOrgUserByEmail returns the WorkOS user that belongs to orgID and
+// has the given email. The Slack integration uses this to map a Slack
+// user (whose email comes from users.info) to the matching hetchy user
+// so chats they start show up in their LHN filter.
+//
+// Returns ok=false (with no error) when no matching org-member exists,
+// so callers can treat "no mapping" as a normal case rather than a
+// failure. Email matching delegates to WorkOS's filter, which is
+// case-insensitive on the indexed primary email — secondary emails are
+// not consulted.
+func (s *Service) FindOrgUserByEmail(ctx context.Context, orgID, email string) (Profile, bool, error) {
+	if email == "" {
+		return Profile{}, false, nil
+	}
+	if s.cfg.Bypass {
+		if email == s.cfg.BypassEmail {
+			return Profile{UserID: s.cfg.BypassUser, Email: email, FirstName: "Bypass", LastName: "User"}, true, nil
+		}
+		return Profile{}, false, nil
+	}
+	org := orgID
+	em := email
+	it := s.client.UserManagement().List(ctx, &workos.UserManagementListParams{
+		OrganizationID: &org,
+		Email:          &em,
+	})
+	if !it.Next() {
+		if err := it.Err(); err != nil {
+			return Profile{}, false, fmt.Errorf("find user by email: %w", err)
+		}
+		return Profile{}, false, nil
+	}
+	u := it.Current()
+	p := Profile{UserID: u.ID, Email: u.Email}
+	if u.FirstName != nil {
+		p.FirstName = *u.FirstName
+	}
+	if u.LastName != nil {
+		p.LastName = *u.LastName
+	}
+	return p, true, nil
+}
+
 // ListInvitations returns invitations on orgID that are still pending
 // (not yet accepted/revoked/expired). Accepted invitations show up as
 // active memberships in ListMembers, so surfacing them here would
