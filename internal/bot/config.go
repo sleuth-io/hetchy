@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 )
 
 // Config holds runtime configuration loaded from the environment.
@@ -93,7 +94,7 @@ func LoadConfig() (Config, error) {
 	}
 	var missing []string
 	for _, key := range required {
-		if os.Getenv(key) == "" {
+		if strings.TrimSpace(os.Getenv(key)) == "" {
 			missing = append(missing, key)
 		}
 	}
@@ -115,27 +116,29 @@ func LoadConfig() (Config, error) {
 	}
 
 	return Config{
-		Env:                    getenvDefault("HETCHY_ENV", "prod"),
-		DaytonaAPIURL:          os.Getenv("DAYTONA_API_URL"),
-		Snapshot:               os.Getenv("DAYTONA_SNAPSHOT"),
-		DatabaseURL:            os.Getenv("DATABASE_URL"),
-		WebPort:                port,
-		WorkOSAPIKey:           os.Getenv("WORKOS_API_KEY"),
-		WorkOSClientID:         os.Getenv("WORKOS_CLIENT_ID"),
-		WorkOSCookiePassword:   os.Getenv("WORKOS_COOKIE_PASSWORD"),
-		WorkOSRedirectURI:      os.Getenv("WORKOS_REDIRECT_URI"),
-		LogoutReturnTo:         logout,
-		CookieSecure:           cookieSecure,
-		SecretsEncryptionKey:   os.Getenv("SECRETS_ENCRYPTION_KEY"),
-		SlackSigningSecret:     os.Getenv("SLACK_SIGNING_SECRET"),
-		SlackClientID:          os.Getenv("SLACK_CLIENT_ID"),
-		SlackClientSecret:      os.Getenv("SLACK_CLIENT_SECRET"),
-		SlackOAuthRedirectURI:  os.Getenv("SLACK_OAUTH_REDIRECT_URI"),
-		GitHubAppID:            ghAppID,
-		GitHubAppSlug:          os.Getenv("GITHUB_APP_SLUG"),
-		GitHubAppClientID:      os.Getenv("GITHUB_APP_CLIENT_ID"),
+		Env:                   getenvDefault("HETCHY_ENV", "prod"),
+		DaytonaAPIURL:         strings.TrimSpace(os.Getenv("DAYTONA_API_URL")),
+		Snapshot:              os.Getenv("DAYTONA_SNAPSHOT"),
+		DatabaseURL:           os.Getenv("DATABASE_URL"),
+		WebPort:               port,
+		WorkOSAPIKey:          strings.TrimSpace(os.Getenv("WORKOS_API_KEY")),
+		WorkOSClientID:        strings.TrimSpace(os.Getenv("WORKOS_CLIENT_ID")),
+		WorkOSCookiePassword:  strings.TrimSpace(os.Getenv("WORKOS_COOKIE_PASSWORD")),
+		WorkOSRedirectURI:     strings.TrimSpace(os.Getenv("WORKOS_REDIRECT_URI")),
+		LogoutReturnTo:        logout,
+		CookieSecure:          cookieSecure,
+		SecretsEncryptionKey:  strings.TrimSpace(os.Getenv("SECRETS_ENCRYPTION_KEY")),
+		SlackSigningSecret:    strings.TrimSpace(os.Getenv("SLACK_SIGNING_SECRET")),
+		SlackClientID:         strings.TrimSpace(os.Getenv("SLACK_CLIENT_ID")),
+		SlackClientSecret:     strings.TrimSpace(os.Getenv("SLACK_CLIENT_SECRET")),
+		SlackOAuthRedirectURI: strings.TrimSpace(os.Getenv("SLACK_OAUTH_REDIRECT_URI")),
+		GitHubAppID:           ghAppID,
+		GitHubAppSlug:         strings.TrimSpace(os.Getenv("GITHUB_APP_SLUG")),
+		GitHubAppClientID:     strings.TrimSpace(os.Getenv("GITHUB_APP_CLIENT_ID")),
+		// Not trimmed: PEM contents are multi-line and the parser relies on
+		// embedded newlines; trimming risks corrupting the key.
 		GitHubAppPrivateKey:    os.Getenv("GITHUB_APP_PRIVATE_KEY"),
-		GitHubAppWebhookSecret: os.Getenv("GITHUB_APP_WEBHOOK_SECRET"),
+		GitHubAppWebhookSecret: strings.TrimSpace(os.Getenv("GITHUB_APP_WEBHOOK_SECRET")),
 		AuthBypass:             bypass,
 		AuthBypassUser:         getenvDefault("AUTH_BYPASS_USER", "user_bypass"),
 		AuthBypassOrg:          os.Getenv("AUTH_BYPASS_ORG"),
