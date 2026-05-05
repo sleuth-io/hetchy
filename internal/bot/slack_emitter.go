@@ -169,8 +169,15 @@ func (e *slackEmitter) Fail(id, summary string) {
 	defer e.mu.Unlock()
 	b, ok := e.open[id]
 	delete(e.open, id)
+	if !ok {
+		// No registered block for this id — happens on a double-
+		// terminate or after Abort() has cleared the map. Posting
+		// a `:x: Step failed` here would inject noise the rest of
+		// the design exists to avoid. Match the Done() guard.
+		return
+	}
 	title := "Step failed"
-	if ok && b.title != "" {
+	if b.title != "" {
 		title = b.title
 	}
 	// Failures are signal — surface them as their own thread message
@@ -427,12 +434,7 @@ func (e *slackEmitter) renderCountersAndElapsed() string {
 // to keep categorisation cheap and avoid threading the raw tool name
 // through extra plumbing.
 func categorise(kind blocks.Kind, title string) string {
-	switch kind {
-	case blocks.KindToolUse:
-		// fall through
-	case blocks.KindSetup, blocks.KindClaudeText, blocks.KindNotify, blocks.KindResult, blocks.KindError:
-		return ""
-	default:
+	if kind != blocks.KindToolUse {
 		return ""
 	}
 	switch {

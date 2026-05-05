@@ -715,11 +715,16 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
+// truncate caps s to at most n runes, appending "..." when it cuts.
+// Rune-aware (not byte-aware) so multi-byte characters (emoji, CJK,
+// non-ASCII filenames in Bash command titles) don't get split mid-
+// codepoint and surface as mojibake in the UI.
 func truncate(s string, n int) string {
-	if len(s) <= n {
+	runes := []rune(s)
+	if len(runes) <= n {
 		return s
 	}
-	return s[:n] + "..."
+	return string(runes[:n]) + "..."
 }
 
 // retryWithBackoff executes fn up to maxRetries times with exponential backoff

@@ -641,16 +641,26 @@ function closePhase(phase) {
 // and schedules a single rAF-coalesced re-render — same coalescing
 // rationale as the original appendToBlock (avoid O(n²) full re-parse
 // per token on long prose chunks).
+//
+// Once the prose contains its first newline the header title is
+// frozen with `titleLocked = true`. Without that latch, every
+// subsequent delta would re-run `indexOf('\n')` over the growing
+// buffer for nothing — the title can't change after the first line
+// is complete. Until the newline arrives, we keep updating the
+// title from the running first-line preview so streaming feels live.
 function appendPhaseProse(phase, delta) {
   if (!phase) return;
   phase.proseRaw += delta;
   if (!phase.titleLocked) {
-    const firstLine = phase.proseRaw.split('\n', 1)[0].trim();
+    const nl = phase.proseRaw.indexOf('\n');
+    const head = nl >= 0 ? phase.proseRaw.slice(0, nl) : phase.proseRaw;
+    const firstLine = head.trim();
     if (firstLine) {
       phase.titleEl.textContent = firstLine.length > 100
         ? firstLine.slice(0, 100) + '…'
         : firstLine;
     }
+    if (nl >= 0) phase.titleLocked = true;
   }
   if (phase.proseRenderQueued) return;
   phase.proseRenderQueued = true;
