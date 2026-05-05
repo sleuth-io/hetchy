@@ -1015,6 +1015,10 @@ func (b *Bot) conversationDetailHandler(w http.ResponseWriter, r *http.Request) 
 		})
 
 	case http.MethodDelete:
+		if err := requireSameOrigin(r); err != nil {
+			http.Error(w, err.Error(), http.StatusForbidden)
+			return
+		}
 		if err := b.convs.Delete(r.Context(), p.OrgID, threadID); err != nil {
 			b.log.Error("delete conversation", "error", err, "org", p.OrgID, "thread", threadID)
 			http.Error(w, "internal server error", http.StatusInternalServerError)
@@ -1023,6 +1027,10 @@ func (b *Bot) conversationDetailHandler(w http.ResponseWriter, r *http.Request) 
 		w.WriteHeader(http.StatusNoContent)
 
 	case http.MethodPatch:
+		if err := requireSameOrigin(r); err != nil {
+			http.Error(w, err.Error(), http.StatusForbidden)
+			return
+		}
 		var body struct {
 			Title string `json:"title"`
 		}

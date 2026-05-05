@@ -630,6 +630,7 @@ function renderSidebar() {
 // isn't clipped by the sidebar's overflow-y: auto scroll container.
 const chatMenuDrop = document.createElement('div');
 chatMenuDrop.className = 'chat-menu-drop';
+chatMenuDrop.setAttribute('role', 'menu');
 chatMenuDrop.hidden = true;
 document.body.appendChild(chatMenuDrop);
 
@@ -654,10 +655,12 @@ function toggleChatMenu(btn, threadId, title) {
   chatMenuDrop.innerHTML = '';
   const renameItem = document.createElement('button');
   renameItem.className = 'chat-menu-drop-item';
+  renameItem.setAttribute('role', 'menuitem');
   renameItem.textContent = 'Rename';
   renameItem.addEventListener('click', () => { closeChatMenu(); openRenameDialog(threadId, title); });
   const deleteItem = document.createElement('button');
   deleteItem.className = 'chat-menu-drop-item danger';
+  deleteItem.setAttribute('role', 'menuitem');
   deleteItem.textContent = 'Delete';
   deleteItem.addEventListener('click', () => { closeChatMenu(); openDeleteDialog(threadId); });
   chatMenuDrop.appendChild(renameItem);
