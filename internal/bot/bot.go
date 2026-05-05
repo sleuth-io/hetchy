@@ -252,7 +252,7 @@ func (b *Bot) Run(ctx context.Context) error {
 // user to reply with `owner/name`. The next message into a conversation
 // in that "awaiting repo" state is interpreted as the repo selection,
 // not as a new task.
-func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, requestID, threadID string, out blocks.Emitter) {
+func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, requestID, threadID, userID string, out blocks.Emitter) {
 	b.log.Info("request received",
 		"org", oc.OrgID,
 		"request_id", requestID,
@@ -315,6 +315,7 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 			ThreadID:       threadID,
 			History:        []string{text},
 			ResponseBlocks: [][]blocks.Block{recorder.Snapshot()},
+			CreatorID:      userID,
 		}
 		if err := b.convs.Upsert(ctx, partial); err != nil {
 			b.log.Error("convstore upsert (awaiting repo)", "error", err, "org", oc.OrgID, "thread", threadID)
@@ -328,6 +329,7 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		History:     []string{text},
 		GitHubOwner: oc.DefaultGitHubOwner,
 		GitHubRepo:  oc.DefaultGitHubRepo,
+		CreatorID:   userID,
 	}
 	b.runFreshAgent(ctx, oc, rec, text, requestID, recorder, emit)
 }

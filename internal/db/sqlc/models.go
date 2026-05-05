@@ -21,6 +21,7 @@ type Conversation struct {
 	GithubRepo     string             `json:"github_repo"`
 	ResponseBlocks [][]byte           `json:"response_blocks"`
 	CustomTitle    string             `json:"custom_title"`
+	CreatorID      string             `json:"creator_id"`
 }
 
 type GithubAppInstallation struct {

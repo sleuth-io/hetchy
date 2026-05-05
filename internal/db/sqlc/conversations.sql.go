@@ -27,7 +27,7 @@ func (q *Queries) DeleteConversation(ctx context.Context, arg DeleteConversation
 
 const getConversation = `-- name: GetConversation :one
 SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, response_blocks,
-       github_owner, github_repo, custom_title
+       github_owner, github_repo, custom_title, creator_id
 FROM conversations
 WHERE org_id = $1 AND thread_id = $2
 `
@@ -50,6 +50,7 @@ type GetConversationRow struct {
 	GithubOwner    string             `json:"github_owner"`
 	GithubRepo     string             `json:"github_repo"`
 	CustomTitle    string             `json:"custom_title"`
+	CreatorID      string             `json:"creator_id"`
 }
 
 func (q *Queries) GetConversation(ctx context.Context, arg GetConversationParams) (GetConversationRow, error) {
@@ -68,13 +69,14 @@ func (q *Queries) GetConversation(ctx context.Context, arg GetConversationParams
 		&i.GithubOwner,
 		&i.GithubRepo,
 		&i.CustomTitle,
+		&i.CreatorID,
 	)
 	return i, err
 }
 
 const listConversationsByOrg = `-- name: ListConversationsByOrg :many
 SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, response_blocks,
-       github_owner, github_repo, custom_title
+       github_owner, github_repo, custom_title, creator_id
 FROM conversations
 WHERE org_id = $1
 ORDER BY updated_at DESC
@@ -93,6 +95,7 @@ type ListConversationsByOrgRow struct {
 	GithubOwner    string             `json:"github_owner"`
 	GithubRepo     string             `json:"github_repo"`
 	CustomTitle    string             `json:"custom_title"`
+	CreatorID      string             `json:"creator_id"`
 }
 
 func (q *Queries) ListConversationsByOrg(ctx context.Context, orgID string) ([]ListConversationsByOrgRow, error) {
@@ -117,6 +120,70 @@ func (q *Queries) ListConversationsByOrg(ctx context.Context, orgID string) ([]L
 			&i.GithubOwner,
 			&i.GithubRepo,
 			&i.CustomTitle,
+			&i.CreatorID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listConversationsByOrgAndUser = `-- name: ListConversationsByOrgAndUser :many
+SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, response_blocks,
+       github_owner, github_repo, custom_title, creator_id
+FROM conversations
+WHERE org_id = $1 AND creator_id = $2
+ORDER BY updated_at DESC
+`
+
+type ListConversationsByOrgAndUserParams struct {
+	OrgID     string `json:"org_id"`
+	CreatorID string `json:"creator_id"`
+}
+
+type ListConversationsByOrgAndUserRow struct {
+	OrgID          string             `json:"org_id"`
+	ThreadID       string             `json:"thread_id"`
+	SandboxID      string             `json:"sandbox_id"`
+	Branch         string             `json:"branch"`
+	PrUrl          string             `json:"pr_url"`
+	History        []string           `json:"history"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	ResponseBlocks [][]byte           `json:"response_blocks"`
+	GithubOwner    string             `json:"github_owner"`
+	GithubRepo     string             `json:"github_repo"`
+	CustomTitle    string             `json:"custom_title"`
+	CreatorID      string             `json:"creator_id"`
+}
+
+func (q *Queries) ListConversationsByOrgAndUser(ctx context.Context, arg ListConversationsByOrgAndUserParams) ([]ListConversationsByOrgAndUserRow, error) {
+	rows, err := q.db.Query(ctx, listConversationsByOrgAndUser, arg.OrgID, arg.CreatorID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListConversationsByOrgAndUserRow
+	for rows.Next() {
+		var i ListConversationsByOrgAndUserRow
+		if err := rows.Scan(
+			&i.OrgID,
+			&i.ThreadID,
+			&i.SandboxID,
+			&i.Branch,
+			&i.PrUrl,
+			&i.History,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ResponseBlocks,
+			&i.GithubOwner,
+			&i.GithubRepo,
+			&i.CustomTitle,
+			&i.CreatorID,
 		); err != nil {
 			return nil, err
 		}
@@ -150,9 +217,9 @@ func (q *Queries) RenameConversation(ctx context.Context, arg RenameConversation
 const upsertConversation = `-- name: UpsertConversation :one
 INSERT INTO conversations (
     org_id, thread_id, sandbox_id, branch, pr_url, history, response_blocks,
-    github_owner, github_repo
+    github_owner, github_repo, creator_id
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
 )
 ON CONFLICT (org_id, thread_id) DO UPDATE SET
     sandbox_id      = EXCLUDED.sandbox_id,
@@ -164,7 +231,7 @@ ON CONFLICT (org_id, thread_id) DO UPDATE SET
     github_repo     = EXCLUDED.github_repo,
     updated_at      = NOW()
 RETURNING org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, response_blocks,
-          github_owner, github_repo, custom_title
+          github_owner, github_repo, custom_title, creator_id
 `
 
 type UpsertConversationParams struct {
@@ -177,6 +244,7 @@ type UpsertConversationParams struct {
 	ResponseBlocks [][]byte `json:"response_blocks"`
 	GithubOwner    string   `json:"github_owner"`
 	GithubRepo     string   `json:"github_repo"`
+	CreatorID      string   `json:"creator_id"`
 }
 
 type UpsertConversationRow struct {
@@ -192,6 +260,7 @@ type UpsertConversationRow struct {
 	GithubOwner    string             `json:"github_owner"`
 	GithubRepo     string             `json:"github_repo"`
 	CustomTitle    string             `json:"custom_title"`
+	CreatorID      string             `json:"creator_id"`
 }
 
 func (q *Queries) UpsertConversation(ctx context.Context, arg UpsertConversationParams) (UpsertConversationRow, error) {
@@ -205,6 +274,7 @@ func (q *Queries) UpsertConversation(ctx context.Context, arg UpsertConversation
 		arg.ResponseBlocks,
 		arg.GithubOwner,
 		arg.GithubRepo,
+		arg.CreatorID,
 	)
 	var i UpsertConversationRow
 	err := row.Scan(
@@ -220,6 +290,7 @@ func (q *Queries) UpsertConversation(ctx context.Context, arg UpsertConversation
 		&i.GithubOwner,
 		&i.GithubRepo,
 		&i.CustomTitle,
+		&i.CreatorID,
 	)
 	return i, err
 }

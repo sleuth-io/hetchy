@@ -49,8 +49,12 @@ type Record struct {
 	// non-empty it overrides the auto-generated title derived from the
 	// first user turn.
 	CustomTitle string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	// CreatorID is the WorkOS user ID of the user who started this
+	// conversation. Empty for conversations initiated via Slack or before
+	// this field was introduced.
+	CreatorID string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // Store wraps the sqlc queries with the loose Record shape used elsewhere.
@@ -103,6 +107,30 @@ func (s *Store) List(ctx context.Context, orgID string) ([]Record, error) {
 	return out, nil
 }
 
+// ListByUser returns conversations for the given org filtered to those created
+// by creatorID, newest first. Returns an empty slice when the store is nil.
+func (s *Store) ListByUser(ctx context.Context, orgID, creatorID string) ([]Record, error) {
+	if s == nil || s.db == nil {
+		return nil, nil
+	}
+	rows, err := s.db.Queries.ListConversationsByOrgAndUser(ctx, sqlc.ListConversationsByOrgAndUserParams{
+		OrgID:     orgID,
+		CreatorID: creatorID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list conversations by user: %w", err)
+	}
+	out := make([]Record, 0, len(rows))
+	for _, r := range rows {
+		rec, err := recordFromListByUserRow(r)
+		if err != nil {
+			return nil, fmt.Errorf("decode response_blocks for %s/%s: %w", r.OrgID, r.ThreadID, err)
+		}
+		out = append(out, rec)
+	}
+	return out, nil
+}
+
 // Upsert writes the supplied record. No-op when the store is nil.
 func (s *Store) Upsert(ctx context.Context, r Record) error {
 	if s == nil || s.db == nil {
@@ -122,6 +150,7 @@ func (s *Store) Upsert(ctx context.Context, r Record) error {
 		ResponseBlocks: encoded,
 		GithubOwner:    r.GitHubOwner,
 		GithubRepo:     r.GitHubRepo,
+		CreatorID:      r.CreatorID,
 	})
 	if err != nil {
 		return fmt.Errorf("upsert conversation: %w", err)
@@ -220,6 +249,7 @@ func recordFromGetRow(row sqlc.GetConversationRow) (Record, error) {
 		GitHubOwner:    row.GithubOwner,
 		GitHubRepo:     row.GithubRepo,
 		CustomTitle:    row.CustomTitle,
+		CreatorID:      row.CreatorID,
 		CreatedAt:      row.CreatedAt.Time,
 		UpdatedAt:      row.UpdatedAt.Time,
 	}, nil
@@ -241,6 +271,29 @@ func recordFromListRow(row sqlc.ListConversationsByOrgRow) (Record, error) {
 		GitHubOwner:    row.GithubOwner,
 		GitHubRepo:     row.GithubRepo,
 		CustomTitle:    row.CustomTitle,
+		CreatorID:      row.CreatorID,
+		CreatedAt:      row.CreatedAt.Time,
+		UpdatedAt:      row.UpdatedAt.Time,
+	}, nil
+}
+
+func recordFromListByUserRow(row sqlc.ListConversationsByOrgAndUserRow) (Record, error) {
+	bs, err := decodeBlocks(row.ResponseBlocks)
+	if err != nil {
+		return Record{}, err
+	}
+	return Record{
+		OrgID:          row.OrgID,
+		ThreadID:       row.ThreadID,
+		SandboxID:      row.SandboxID,
+		Branch:         row.Branch,
+		PRURL:          row.PrUrl,
+		History:        row.History,
+		ResponseBlocks: bs,
+		GitHubOwner:    row.GithubOwner,
+		GitHubRepo:     row.GithubRepo,
+		CustomTitle:    row.CustomTitle,
+		CreatorID:      row.CreatorID,
 		CreatedAt:      row.CreatedAt.Time,
 		UpdatedAt:      row.UpdatedAt.Time,
 	}, nil

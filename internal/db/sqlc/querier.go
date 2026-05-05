@@ -29,6 +29,7 @@ type Querier interface {
 	GetOrgConfig(ctx context.Context, orgID string) (OrgConfig, error)
 	GetOrgConfigBySlackTeamID(ctx context.Context, slackTeamID *string) (OrgConfig, error)
 	ListConversationsByOrg(ctx context.Context, orgID string) ([]ListConversationsByOrgRow, error)
+	ListConversationsByOrgAndUser(ctx context.Context, arg ListConversationsByOrgAndUserParams) ([]ListConversationsByOrgAndUserRow, error)
 	ListGithubInstallationsByOrg(ctx context.Context, orgID string) ([]GithubAppInstallation, error)
 	ListGithubReposByInstallation(ctx context.Context, installationID int64) ([]GithubRepo, error)
 	// Every repo accessible to the given Hetchy org, across all of its

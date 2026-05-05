@@ -117,7 +117,7 @@ func TestHandleRequest_AskForRepo(t *testing.T) {
 	oc := orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "ant"}
 
 	emit := newCaptureEmitter()
-	b.HandleRequest(context.Background(), oc, "do something", "req-1", "thread-1", emit)
+	b.HandleRequest(context.Background(), oc, "do something", "req-1", "thread-1", "", emit)
 
 	if !emit.hasCall("notify", "Which repository") {
 		t.Errorf("expected a Notify with 'Which repository', got Calls=%v", emit.Calls)
@@ -137,7 +137,7 @@ func TestHandleRequest_MissingAnthropic(t *testing.T) {
 		return nil, errors.New("unreachable")
 	}
 	emit := newCaptureEmitter()
-	b.HandleRequest(context.Background(), orgcfg.Config{OrgID: "o"}, "do something", "req", "thread", emit)
+	b.HandleRequest(context.Background(), orgcfg.Config{OrgID: "o"}, "do something", "req", "thread", "", emit)
 	if !emit.hasCall("error", "Anthropic API key") {
 		t.Errorf("expected Error call with 'Anthropic API key', got Calls=%v", emit.Calls)
 	}
