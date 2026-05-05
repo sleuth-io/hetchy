@@ -982,10 +982,6 @@ func (b *Bot) conversationsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (b *Bot) conversationDetailHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
 	threadID := strings.TrimPrefix(r.URL.Path, "/api/conversations/")
 	if threadID == "" || strings.Contains(threadID, "/") {
 		http.NotFound(w, r)
@@ -996,33 +992,72 @@ func (b *Bot) conversationDetailHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	p, _ := auth.FromContext(r.Context())
-	rec, err := b.convs.Get(r.Context(), p.OrgID, threadID)
-	if err != nil {
-		if errors.Is(err, convstore.ErrNotFound) {
-			http.NotFound(w, r)
+
+	switch r.Method {
+	case http.MethodGet:
+		rec, err := b.convs.Get(r.Context(), p.OrgID, threadID)
+		if err != nil {
+			if errors.Is(err, convstore.ErrNotFound) {
+				http.NotFound(w, r)
+				return
+			}
+			b.log.Error("get conversation", "error", err, "org", p.OrgID, "thread", threadID)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
-		b.log.Error("get conversation", "error", err, "org", p.OrgID, "thread", threadID)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
-		return
+		writeJSON(w, conversationDetail{
+			ThreadID:       rec.ThreadID,
+			Title:          conversationTitle(rec),
+			PRURL:          rec.PRURL,
+			History:        rec.History,
+			ResponseBlocks: rec.ResponseBlocks,
+			UpdatedAt:      rec.UpdatedAt.UTC().Format(time.RFC3339),
+		})
+
+	case http.MethodDelete:
+		if err := b.convs.Delete(r.Context(), p.OrgID, threadID); err != nil {
+			b.log.Error("delete conversation", "error", err, "org", p.OrgID, "thread", threadID)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+
+	case http.MethodPatch:
+		var body struct {
+			Title string `json:"title"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		title := strings.TrimSpace(body.Title)
+		if title == "" {
+			http.Error(w, "title is required", http.StatusBadRequest)
+			return
+		}
+		if err := b.convs.Rename(r.Context(), p.OrgID, threadID, title); err != nil {
+			b.log.Error("rename conversation", "error", err, "org", p.OrgID, "thread", threadID)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
-	writeJSON(w, conversationDetail{
-		ThreadID:       rec.ThreadID,
-		Title:          conversationTitle(rec),
-		PRURL:          rec.PRURL,
-		History:        rec.History,
-		ResponseBlocks: rec.ResponseBlocks,
-		UpdatedAt:      rec.UpdatedAt.UTC().Format(time.RFC3339),
-	})
 }
 
-// conversationTitle derives a sidebar label from the first user turn,
-// trimmed and capped. Falls back to a generic placeholder so a record
-// with empty history still renders something selectable. Truncation is
-// rune-aware so non-ASCII prompts don't get split mid-codepoint, and
-// CR/LF/CRLF are normalized to spaces so a multi-line first prompt
-// renders as a single sidebar line.
+// conversationTitle derives a sidebar label. If the user has set a custom
+// title it is returned as-is. Otherwise the label is derived from the first
+// user turn, trimmed and capped. Falls back to a generic placeholder so a
+// record with empty history still renders something selectable. Truncation
+// is rune-aware so non-ASCII prompts don't get split mid-codepoint, and
+// CR/LF/CRLF are normalized to spaces so a multi-line first prompt renders
+// as a single sidebar line.
 func conversationTitle(rec convstore.Record) string {
+	if rec.CustomTitle != "" {
+		return rec.CustomTitle
+	}
 	if len(rec.History) == 0 {
 		return "New chat"
 	}

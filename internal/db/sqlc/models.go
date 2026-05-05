@@ -20,6 +20,7 @@ type Conversation struct {
 	GithubOwner    string             `json:"github_owner"`
 	GithubRepo     string             `json:"github_repo"`
 	ResponseBlocks [][]byte           `json:"response_blocks"`
+	CustomTitle    string             `json:"custom_title"`
 }
 
 type GithubAppInstallation struct {

@@ -51,14 +51,66 @@
                      letter-spacing: .05em; color: #999; }
   #chat-list { flex: 1; overflow-y: auto; padding: 0 .25rem .75rem; }
   #chat-list .empty { padding: .5rem .75rem; font-size: .85rem; color: #999; }
-  .chat-item { display: block; padding: .5rem .75rem; margin: 0 .25rem;
-               border-radius: .375rem; font-size: .875rem; color: #333;
-               text-decoration: none; cursor: pointer;
-               white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .chat-item:hover { background: #f0f0f0; }
-  .chat-item.active { background: #e8f1fc; color: #0b5ec0; }
+  .chat-item-wrap { position: relative; display: flex; align-items: center;
+                    margin: 0 .25rem; border-radius: .375rem; }
+  .chat-item-wrap:hover { background: #f0f0f0; }
+  .chat-item-wrap.wrap-active { background: #e8f1fc; }
+  .chat-item { flex: 1; min-width: 0; display: block; padding: .5rem .4rem .5rem .75rem;
+               font-size: .875rem; color: #333; text-decoration: none; cursor: pointer;
+               white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+               background: none; border-radius: 0; }
+  .chat-item:hover { background: none; }
+  .chat-item.active { background: none; color: #0b5ec0; }
   .chat-item.pending { color: #888; font-style: italic; }
   .chat-item.pending.active { color: #0b5ec0; }
+  .chat-menu-btn { flex-shrink: 0; visibility: hidden; padding: .2rem .45rem;
+                   margin-right: .3rem; background: none; border: 0;
+                   border-radius: .3rem; color: #666; cursor: pointer;
+                   font-size: 1rem; line-height: 1; font-family: inherit; }
+  .chat-item-wrap:hover .chat-menu-btn,
+  .chat-menu-btn[aria-expanded="true"] { visibility: visible; }
+  .chat-menu-btn:hover { background: rgba(0,0,0,.08); }
+
+  /* Chat item context-menu dropdown — rendered into <body> as fixed-position */
+  .chat-menu-drop { position: fixed; z-index: 200; background: #fff;
+                    border: 1px solid #e5e5e5; border-radius: .4rem;
+                    box-shadow: 0 4px 16px rgba(0,0,0,.12); padding: .25rem 0;
+                    min-width: 130px; }
+  .chat-menu-drop[hidden] { display: none; }
+  .chat-menu-drop-item { display: block; width: 100%; padding: .45rem .85rem;
+                         text-align: left; background: none; border: 0;
+                         border-radius: 0; cursor: pointer; font-family: inherit;
+                         font-size: .83rem; color: #333; }
+  .chat-menu-drop-item:hover { background: #f5f5f5; }
+  .chat-menu-drop-item.danger { color: #c0392b; }
+  .chat-menu-drop-item.danger:hover { background: #fff0ee; }
+
+  /* Rename / delete dialogs */
+  dialog.chat-dialog { border: none; border-radius: .55rem; padding: 0;
+                        box-shadow: 0 16px 48px rgba(0,0,0,.22); max-width: 26rem;
+                        width: 90vw; background: #fff; color: #1a1a1a; }
+  dialog.chat-dialog::backdrop { background: rgba(0,0,0,.35); }
+  dialog.chat-dialog .dlg-body { padding: 1.25rem 1.25rem 1rem; }
+  dialog.chat-dialog h3 { margin: 0 0 .75rem; font-size: 1rem; font-weight: 600; }
+  dialog.chat-dialog p { margin: 0 0 .75rem; font-size: .875rem; color: #555; }
+  dialog.chat-dialog input[type="text"] { width: 100%; padding: .5rem .65rem;
+    border: 1px solid #d0d0d0; border-radius: .4rem; font-size: .9rem;
+    font-family: inherit; outline: none; }
+  dialog.chat-dialog input[type="text"]:focus { border-color: #0b93f6; }
+  dialog.chat-dialog .dlg-actions { display: flex; justify-content: flex-end;
+                                     gap: .5rem; padding: .85rem 1.25rem; }
+  dialog.chat-dialog .dlg-cancel { padding: .5rem 1rem; background: #f3f3f3;
+    color: #333; border: 1px solid #d8d8d8; border-radius: .4rem; cursor: pointer;
+    font-size: .875rem; font-family: inherit; }
+  dialog.chat-dialog .dlg-cancel:hover { background: #ebebeb; }
+  dialog.chat-dialog .dlg-save { padding: .5rem 1rem; background: #0b93f6;
+    color: #fff; border: 0; border-radius: .4rem; cursor: pointer;
+    font-size: .875rem; font-family: inherit; }
+  dialog.chat-dialog .dlg-save:hover { background: #0a83d8; }
+  dialog.chat-dialog .dlg-delete { padding: .5rem 1rem; background: #c0392b;
+    color: #fff; border: 0; border-radius: .4rem; cursor: pointer;
+    font-size: .875rem; font-family: inherit; }
+  dialog.chat-dialog .dlg-delete:hover { background: #a93226; }
 
   /* Main column */
   #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
@@ -209,11 +261,30 @@
   html.is-dark .new-chat-btn .plus { color: #9a9aa0; }
   html.is-dark #sidebar-section { color: #6e6e72; }
   html.is-dark #chat-list .empty { color: #6e6e72; }
+  html.is-dark .chat-item-wrap:hover { background: #2a2a2e; }
+  html.is-dark .chat-item-wrap.wrap-active { background: #1f3a5c; }
   html.is-dark .chat-item { color: #c4c4c8; }
-  html.is-dark .chat-item:hover { background: #2a2a2e; }
-  html.is-dark .chat-item.active { background: #1f3a5c; color: #7dc4ff; }
+  html.is-dark .chat-item:hover { background: none; }
+  html.is-dark .chat-item.active { background: none; color: #7dc4ff; }
   html.is-dark .chat-item.pending { color: #6e6e72; }
   html.is-dark .chat-item.pending.active { color: #7dc4ff; }
+  html.is-dark .chat-menu-btn { color: #9a9aa0; }
+  html.is-dark .chat-menu-btn:hover { background: rgba(255,255,255,.1); }
+  html.is-dark .chat-menu-drop { background: #232327; border-color: #2e2e33;
+                                  box-shadow: 0 4px 16px rgba(0,0,0,.4); }
+  html.is-dark .chat-menu-drop-item { color: #c4c4c8; }
+  html.is-dark .chat-menu-drop-item:hover { background: #2a2a2e; }
+  html.is-dark .chat-menu-drop-item.danger { color: #f87171; }
+  html.is-dark .chat-menu-drop-item.danger:hover { background: #3a1c1c; }
+  html.is-dark dialog.chat-dialog { background: #1c1c1f; color: #e7e7e9; }
+  html.is-dark dialog.chat-dialog::backdrop { background: rgba(0,0,0,.6); }
+  html.is-dark dialog.chat-dialog p { color: #9a9aa0; }
+  html.is-dark dialog.chat-dialog input[type="text"] { background: #232327;
+    color: #e7e7e9; border-color: #2e2e33; }
+  html.is-dark dialog.chat-dialog input[type="text"]:focus { border-color: #7dc4ff; }
+  html.is-dark dialog.chat-dialog .dlg-cancel { background: #232327; color: #c4c4c8;
+    border-color: #2e2e33; }
+  html.is-dark dialog.chat-dialog .dlg-cancel:hover { background: #2a2a2e; }
   html.is-dark .msg.bot { background: #232327; border-color: #2e2e33; color: #e7e7e9; }
   html.is-dark .blk { background: #232327; border-color: #2e2e33; }
   html.is-dark .blk[open] { border-color: #3a3a40; }
@@ -301,6 +372,30 @@
     </div>
   </div>
 </aside>
+
+<!-- Rename dialog -->
+<dialog class="chat-dialog" id="rename-dialog" aria-labelledby="rename-dialog-title">
+  <div class="dlg-body">
+    <h3 id="rename-dialog-title">Rename chat</h3>
+    <input type="text" id="rename-input" maxlength="200" autocomplete="off">
+  </div>
+  <div class="dlg-actions">
+    <button class="dlg-cancel" id="rename-cancel">Cancel</button>
+    <button class="dlg-save" id="rename-save">Save</button>
+  </div>
+</dialog>
+
+<!-- Delete confirmation dialog -->
+<dialog class="chat-dialog" id="delete-dialog" aria-labelledby="delete-dialog-title">
+  <div class="dlg-body">
+    <h3 id="delete-dialog-title">Delete chat?</h3>
+    <p>This will permanently delete this chat. This action cannot be undone.</p>
+  </div>
+  <div class="dlg-actions">
+    <button class="dlg-cancel" id="delete-cancel">Cancel</button>
+    <button class="dlg-delete" id="delete-confirm">Delete</button>
+  </div>
+</dialog>
 
 <div id="main">
 <div id="log"></div>
@@ -491,15 +586,142 @@ function renderSidebar() {
     return;
   }
   for (const c of display) {
+    const wrap = document.createElement('div');
+    const isActive = c.thread_id === sessionId;
+    wrap.className = 'chat-item-wrap' + (isActive ? ' wrap-active' : '');
+
     const a = document.createElement('a');
     a.className = 'chat-item'
-      + (c.thread_id === sessionId ? ' active' : '')
+      + (isActive ? ' active' : '')
       + (c._pending ? ' pending' : '');
     a.href = '/?session=' + encodeURIComponent(c.thread_id);
     a.title = c.title;
     a.textContent = c.title;
-    list.appendChild(a);
+    wrap.appendChild(a);
+
+    if (!c._pending) {
+      const menuBtn = document.createElement('button');
+      menuBtn.className = 'chat-menu-btn';
+      menuBtn.setAttribute('aria-label', 'Chat options');
+      menuBtn.setAttribute('aria-expanded', 'false');
+      menuBtn.textContent = '•••';
+      menuBtn.addEventListener('click', e => {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleChatMenu(menuBtn, c.thread_id, c.title);
+      });
+      wrap.appendChild(menuBtn);
+    }
+
+    list.appendChild(wrap);
   }
+}
+
+// --- Chat item context menu ---
+// A single shared dropdown rendered into <body> as fixed-position so it
+// isn't clipped by the sidebar's overflow-y: auto scroll container.
+const chatMenuDrop = document.createElement('div');
+chatMenuDrop.className = 'chat-menu-drop';
+chatMenuDrop.hidden = true;
+document.body.appendChild(chatMenuDrop);
+
+let activeMenuBtn = null;
+
+function closeChatMenu() {
+  if (activeMenuBtn) {
+    activeMenuBtn.setAttribute('aria-expanded', 'false');
+    activeMenuBtn = null;
+  }
+  chatMenuDrop.hidden = true;
+}
+
+function toggleChatMenu(btn, threadId, title) {
+  if (activeMenuBtn === btn) { closeChatMenu(); return; }
+  closeChatMenu();
+
+  activeMenuBtn = btn;
+  btn.setAttribute('aria-expanded', 'true');
+
+  // Populate options
+  chatMenuDrop.innerHTML = '';
+  const renameItem = document.createElement('button');
+  renameItem.className = 'chat-menu-drop-item';
+  renameItem.textContent = 'Rename';
+  renameItem.addEventListener('click', () => { closeChatMenu(); openRenameDialog(threadId, title); });
+  const deleteItem = document.createElement('button');
+  deleteItem.className = 'chat-menu-drop-item danger';
+  deleteItem.textContent = 'Delete';
+  deleteItem.addEventListener('click', () => { closeChatMenu(); openDeleteDialog(threadId); });
+  chatMenuDrop.appendChild(renameItem);
+  chatMenuDrop.appendChild(deleteItem);
+
+  // Position below the button, aligned to its right edge
+  const rect = btn.getBoundingClientRect();
+  chatMenuDrop.style.top = (rect.bottom + 4) + 'px';
+  chatMenuDrop.style.left = '';
+  chatMenuDrop.style.right = (window.innerWidth - rect.right) + 'px';
+  chatMenuDrop.hidden = false;
+}
+
+document.addEventListener('click', e => {
+  if (!chatMenuDrop.hidden && !chatMenuDrop.contains(e.target)) closeChatMenu();
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && !chatMenuDrop.hidden) closeChatMenu();
+});
+
+// --- Rename dialog ---
+const renameDialog = document.getElementById('rename-dialog');
+const renameInput  = document.getElementById('rename-input');
+
+document.getElementById('rename-cancel').addEventListener('click', () => renameDialog.close());
+document.getElementById('rename-save').addEventListener('click', saveRename);
+renameInput.addEventListener('keydown', e => { if (e.key === 'Enter') saveRename(); });
+
+function openRenameDialog(threadId, currentTitle) {
+  renameInput.value = currentTitle;
+  renameInput.dataset.threadId = threadId;
+  renameDialog.showModal();
+  renameInput.select();
+}
+
+async function saveRename() {
+  const threadId = renameInput.dataset.threadId;
+  const newTitle = renameInput.value.trim();
+  if (!newTitle) return;
+  renameDialog.close();
+  try {
+    await fetch('/api/conversations/' + encodeURIComponent(threadId), {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: newTitle }),
+    });
+    loadSidebar();
+  } catch (_) { /* silent — sidebar refresh will show real state */ }
+}
+
+// --- Delete confirmation dialog ---
+const deleteDialog = document.getElementById('delete-dialog');
+
+document.getElementById('delete-cancel').addEventListener('click', () => deleteDialog.close());
+document.getElementById('delete-confirm').addEventListener('click', confirmDelete);
+
+function openDeleteDialog(threadId) {
+  deleteDialog.dataset.threadId = threadId;
+  deleteDialog.showModal();
+}
+
+async function confirmDelete() {
+  const threadId = deleteDialog.dataset.threadId;
+  deleteDialog.close();
+  try {
+    await fetch('/api/conversations/' + encodeURIComponent(threadId), { method: 'DELETE' });
+    if (threadId === sessionId) {
+      window.location.href = '/';
+    } else {
+      loadSidebar();
+    }
+  } catch (_) { /* silent — sidebar refresh will show real state */ }
 }
 
 async function loadSidebar() {

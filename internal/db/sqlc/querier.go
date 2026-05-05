@@ -10,6 +10,7 @@ import (
 
 type Querier interface {
 	DeleteConversation(ctx context.Context, arg DeleteConversationParams) error
+	RenameConversation(ctx context.Context, arg RenameConversationParams) error
 	DeleteGithubInstallation(ctx context.Context, installationID int64) error
 	DeleteGithubReposByInstallation(ctx context.Context, installationID int64) error
 	// Used by the sync routine: after upserting the current set of repos,
