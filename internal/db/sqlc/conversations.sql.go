@@ -27,7 +27,7 @@ func (q *Queries) DeleteConversation(ctx context.Context, arg DeleteConversation
 
 const getConversation = `-- name: GetConversation :one
 SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, response_blocks,
-       github_owner, github_repo
+       github_owner, github_repo, custom_title
 FROM conversations
 WHERE org_id = $1 AND thread_id = $2
 `
@@ -49,6 +49,7 @@ type GetConversationRow struct {
 	ResponseBlocks [][]byte           `json:"response_blocks"`
 	GithubOwner    string             `json:"github_owner"`
 	GithubRepo     string             `json:"github_repo"`
+	CustomTitle    string             `json:"custom_title"`
 }
 
 func (q *Queries) GetConversation(ctx context.Context, arg GetConversationParams) (GetConversationRow, error) {
@@ -66,13 +67,14 @@ func (q *Queries) GetConversation(ctx context.Context, arg GetConversationParams
 		&i.ResponseBlocks,
 		&i.GithubOwner,
 		&i.GithubRepo,
+		&i.CustomTitle,
 	)
 	return i, err
 }
 
 const listConversationsByOrg = `-- name: ListConversationsByOrg :many
 SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, response_blocks,
-       github_owner, github_repo
+       github_owner, github_repo, custom_title
 FROM conversations
 WHERE org_id = $1
 ORDER BY updated_at DESC
@@ -90,6 +92,7 @@ type ListConversationsByOrgRow struct {
 	ResponseBlocks [][]byte           `json:"response_blocks"`
 	GithubOwner    string             `json:"github_owner"`
 	GithubRepo     string             `json:"github_repo"`
+	CustomTitle    string             `json:"custom_title"`
 }
 
 func (q *Queries) ListConversationsByOrg(ctx context.Context, orgID string) ([]ListConversationsByOrgRow, error) {
@@ -113,6 +116,7 @@ func (q *Queries) ListConversationsByOrg(ctx context.Context, orgID string) ([]L
 			&i.ResponseBlocks,
 			&i.GithubOwner,
 			&i.GithubRepo,
+			&i.CustomTitle,
 		); err != nil {
 			return nil, err
 		}
@@ -122,6 +126,25 @@ func (q *Queries) ListConversationsByOrg(ctx context.Context, orgID string) ([]L
 		return nil, err
 	}
 	return items, nil
+}
+
+const renameConversation = `-- name: RenameConversation :execrows
+UPDATE conversations SET custom_title = $3
+WHERE org_id = $1 AND thread_id = $2
+`
+
+type RenameConversationParams struct {
+	OrgID       string `json:"org_id"`
+	ThreadID    string `json:"thread_id"`
+	CustomTitle string `json:"custom_title"`
+}
+
+func (q *Queries) RenameConversation(ctx context.Context, arg RenameConversationParams) (int64, error) {
+	result, err := q.db.Exec(ctx, renameConversation, arg.OrgID, arg.ThreadID, arg.CustomTitle)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const upsertConversation = `-- name: UpsertConversation :one
@@ -141,7 +164,7 @@ ON CONFLICT (org_id, thread_id) DO UPDATE SET
     github_repo     = EXCLUDED.github_repo,
     updated_at      = NOW()
 RETURNING org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, response_blocks,
-          github_owner, github_repo
+          github_owner, github_repo, custom_title
 `
 
 type UpsertConversationParams struct {
@@ -168,6 +191,7 @@ type UpsertConversationRow struct {
 	ResponseBlocks [][]byte           `json:"response_blocks"`
 	GithubOwner    string             `json:"github_owner"`
 	GithubRepo     string             `json:"github_repo"`
+	CustomTitle    string             `json:"custom_title"`
 }
 
 func (q *Queries) UpsertConversation(ctx context.Context, arg UpsertConversationParams) (UpsertConversationRow, error) {
@@ -195,6 +219,7 @@ func (q *Queries) UpsertConversation(ctx context.Context, arg UpsertConversation
 		&i.ResponseBlocks,
 		&i.GithubOwner,
 		&i.GithubRepo,
+		&i.CustomTitle,
 	)
 	return i, err
 }

@@ -47,6 +47,7 @@ type Querier interface {
 	// of Slack connection," write a different query — don't rename this
 	// one.
 	ListOrgConfigsWithSlack(ctx context.Context) ([]OrgConfig, error)
+	RenameConversation(ctx context.Context, arg RenameConversationParams) (int64, error)
 	UpsertConversation(ctx context.Context, arg UpsertConversationParams) (UpsertConversationRow, error)
 	// Queries for the GitHub App installation cache: installations, the
 	// repos they grant access to, and (for Organization installs) team

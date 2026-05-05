@@ -45,6 +45,10 @@ type Record struct {
 	// as the owner/name selection.
 	GitHubOwner string
 	GitHubRepo  string
+	// CustomTitle is the user-provided name for the conversation. When
+	// non-empty it overrides the auto-generated title derived from the
+	// first user turn.
+	CustomTitle string
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }
@@ -139,6 +143,27 @@ func (s *Store) Delete(ctx context.Context, orgID, threadID string) error {
 	return nil
 }
 
+// Rename sets the custom title for the conversation. Returns ErrNotFound
+// if no row exists for (orgID, threadID) so the handler can answer 404
+// instead of pretending the write succeeded. No-op if the store is nil.
+func (s *Store) Rename(ctx context.Context, orgID, threadID, title string) error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+	rows, err := s.db.Queries.RenameConversation(ctx, sqlc.RenameConversationParams{
+		OrgID:       orgID,
+		ThreadID:    threadID,
+		CustomTitle: title,
+	})
+	if err != nil {
+		return fmt.Errorf("rename conversation: %w", err)
+	}
+	if rows == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // encodeBlocks marshals each per-turn []Block to a JSONB element. A nil
 // or empty slice for a turn becomes the JSON literal `[]` so the column
 // stays NOT NULL-clean and decode round-trips to a non-nil empty slice.
@@ -194,6 +219,7 @@ func recordFromGetRow(row sqlc.GetConversationRow) (Record, error) {
 		ResponseBlocks: bs,
 		GitHubOwner:    row.GithubOwner,
 		GitHubRepo:     row.GithubRepo,
+		CustomTitle:    row.CustomTitle,
 		CreatedAt:      row.CreatedAt.Time,
 		UpdatedAt:      row.UpdatedAt.Time,
 	}, nil
@@ -214,6 +240,7 @@ func recordFromListRow(row sqlc.ListConversationsByOrgRow) (Record, error) {
 		ResponseBlocks: bs,
 		GitHubOwner:    row.GithubOwner,
 		GitHubRepo:     row.GithubRepo,
+		CustomTitle:    row.CustomTitle,
 		CreatedAt:      row.CreatedAt.Time,
 		UpdatedAt:      row.UpdatedAt.Time,
 	}, nil
