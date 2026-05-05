@@ -56,6 +56,14 @@ const (
 // Block is the persisted, typed unit shown in the chat UI and
 // summarised on Slack. JSON tags drive both the SSE wire format and
 // the Postgres JSONB[] column.
+//
+// Note on `omitzero`: this is a stdlib `encoding/json` tag added in
+// Go 1.24 (see release notes). It calls IsZero() on time.Time so an
+// unset timestamp is omitted from JSON output rather than serialised
+// as the sentinel "0001-01-01T00:00:00Z" — exactly what we want for a
+// streaming block whose EndedAt isn't set until Done/Fail. Don't
+// "fix" this back to omitempty: omitempty has no effect on time.Time
+// because time.Time isn't a comparable-to-zero scalar.
 type Block struct {
 	ID        string         `json:"id"`
 	Kind      Kind           `json:"kind"`

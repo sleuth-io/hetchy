@@ -29,6 +29,16 @@ type sseEvent struct {
 // Writes go onto an internal channel so the bot goroutine never blocks
 // on a slow client; the chatHandler drains the channel and writes to
 // the response.
+//
+// Concurrency contract: every Start/Append/Done/Fail/Notify/Result/
+// Error call MUST happen on the same goroutine that eventually calls
+// Close. The closed-flag check in push is a check-then-send pattern
+// that's only race-free if push and Close don't interleave — that's
+// guaranteed today because chatHandler launches HandleRequest on a
+// dedicated goroutine and calls Close via defer in that same
+// goroutine. Don't move Close to a different goroutine without first
+// switching the channel-send to a recover-based or mutex-protected
+// pattern.
 type webEmitter struct {
 	idGen  atomic.Uint64
 	events chan webSSE

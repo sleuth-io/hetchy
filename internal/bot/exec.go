@@ -93,7 +93,13 @@ func (b *Bot) shLines(ctx context.Context, sb *daytona.Sandbox, sessionID, step,
 	}
 	finalFlush(&outTail, "stdout")
 	finalFlush(&errTail, "stderr")
-	<-streamDone
+	// Surface a mid-run stream error in logs even when the exit-code
+	// check below supersedes it — without this, a network blip that
+	// truncates stdout/stderr looks indistinguishable from a clean
+	// short run during debugging.
+	if streamErr := <-streamDone; streamErr != nil {
+		b.log.Warn("sandbox log stream error", "sandbox", sb.ID, "step", step, "error", streamErr)
+	}
 
 	var status map[string]any
 	err = b.retryWithBackoff(ctx, "get command status", func() error {

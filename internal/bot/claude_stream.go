@@ -221,7 +221,10 @@ func (p *claudeStreamParser) closeText(summary string) {
 
 // streamEnvelope is the loose union we accept from claude
 // --output-format stream-json. We only decode the fields we care
-// about and let json.Unmarshal ignore the rest.
+// about and let json.Unmarshal ignore the rest. `omitzero` here
+// (stdlib, Go 1.24+) documents that an envelope without a `message`
+// is valid — it has no runtime effect on unmarshal but the type may
+// later be marshalled in tests / debug helpers.
 type streamEnvelope struct {
 	Type    string        `json:"type"`
 	Subtype string        `json:"subtype,omitempty"`
