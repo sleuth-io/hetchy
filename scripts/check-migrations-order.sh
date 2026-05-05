@@ -59,7 +59,12 @@ if [ -z "$threshold" ]; then
         | grep -E "$migration_re" \
         | sed -E 's|db/migrations/([0-9]+)_.*|\1|' \
         | sort -n | tail -1 || true)
-    threshold="${threshold:-0}"
+    if [ -z "$threshold" ]; then
+        # No migrations on the base ref — likely a misconfigured --base.
+        # Don't pretend the check ran cleanly.
+        echo "check-migrations-order: warning: $base has no migrations; check is inconclusive" >&2
+        threshold=0
+    fi
     threshold_label="$base max"
 else
     threshold_label="DB version"

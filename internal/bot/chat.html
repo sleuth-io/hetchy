@@ -786,7 +786,13 @@ let pendingChatTitle = null;
 // Empty string means "All". Persisted in localStorage so navigating to a
 // chat (which reloads the page) doesn't snap the filter back to "Me".
 // Defaults to the current user on first visit.
-const userFilterStorageKey = 'hetchy.userFilter';
+//
+// Key is suffixed with the current user_id so a shared browser doesn't
+// carry one user's saved filter into another's session — that user's
+// id wouldn't match any option in the new account's dropdown, the
+// dropdown would silently fall back to "All", and the sidebar would
+// appear empty until the user manually re-picked.
+const userFilterStorageKey = 'hetchy.userFilter.' + currentUserID;
 let userFilter = (function () {
   try {
     const saved = localStorage.getItem(userFilterStorageKey);
@@ -1231,7 +1237,13 @@ async function loadMembers() {
     addOption(sel, '', 'All');
     for (const m of members) {
       const label = m.display_name || m.email;
-      addOption(sel, m.user_id, m.user_id === currentUserID ? 'Me (' + label + ')' : label);
+      let text;
+      if (m.user_id === currentUserID) {
+        text = label ? 'Me (' + label + ')' : 'Me';
+      } else {
+        text = label || m.user_id;
+      }
+      addOption(sel, m.user_id, text);
     }
   } catch (e) {
     // Network or server error: render a minimal dropdown so the label

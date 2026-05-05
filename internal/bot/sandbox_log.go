@@ -3,8 +3,23 @@ package bot
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 )
+
+// lazySandboxLine defers summarizeSandboxLine until the slog handler
+// has decided to emit the record. slog evaluates positional arguments
+// to log.Debug eagerly, so passing summarizeSandboxLine(line) directly
+// would parse JSON for every sandbox line even at LOG_LEVEL=INFO. The
+// LogValuer detour confines that work to the LOG_LEVEL=DEBUG path.
+type lazySandboxLine struct{ raw string }
+
+// LogValue is invoked by slog only when the record is actually
+// formatted, which (with default level INFO) is never for our Debug
+// call sites — making this a true no-op outside debug mode.
+func (l lazySandboxLine) LogValue() slog.Value {
+	return slog.StringValue(summarizeSandboxLine(l.raw))
+}
 
 // maxSandboxLineLogLen caps the rendered length of a sandbox line in
 // debug logs. Claude Code stream-json events can be tens of kilobytes
@@ -12,6 +27,12 @@ import (
 // terminal at LOG_LEVEL=DEBUG unreadable. The limit is a tradeoff
 // between "see what's happening" and "still fits on a screen".
 const maxSandboxLineLogLen = 280
+
+// maxSummarizedContentBlocks caps how many content-block summaries we
+// emit per turn. A pathological loop could attach hundreds of
+// tool_results in one message; without a cap the joined summary blows
+// past the 280-char ceiling truncateForLog enforces for non-JSON.
+const maxSummarizedContentBlocks = 12
 
 // summarizeSandboxLine turns a raw line from a sandbox stream into a
 // single-line, terminal-friendly representation for debug logs.
@@ -93,7 +114,12 @@ func summarizeContentBlocks(blocks []json.RawMessage) string {
 		return ""
 	}
 	parts := make([]string, 0, len(blocks))
+	overflow := 0
 	for _, raw := range blocks {
+		if len(parts) >= maxSummarizedContentBlocks {
+			overflow++
+			continue
+		}
 		var head struct {
 			Type      string `json:"type"`
 			Thinking  string `json:"thinking,omitempty"`
@@ -130,6 +156,9 @@ func summarizeContentBlocks(blocks []json.RawMessage) string {
 				parts = append(parts, "?")
 			}
 		}
+	}
+	if overflow > 0 {
+		parts = append(parts, fmt.Sprintf("…(+%d more)", overflow))
 	}
 	return strings.Join(parts, ",")
 }

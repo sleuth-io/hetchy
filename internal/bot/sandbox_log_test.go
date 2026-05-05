@@ -108,3 +108,28 @@ func TestSummarizeSandboxLine_MultipleContentBlocksJoined(t *testing.T) {
 		t.Errorf("blocks not joined as expected: %s", got)
 	}
 }
+
+func TestSummarizeContentBlocks_RespectsMaxCount(t *testing.T) {
+	// 30 tool_result blocks should produce 12 entries plus a tail
+	// indicating 18 were dropped — keeps the summary inside the
+	// terminal-friendly budget even on pathological turns.
+	var b strings.Builder
+	b.WriteString(`{"type":"user","message":{"role":"user","content":[`)
+	for i := range 30 {
+		if i > 0 {
+			b.WriteString(",")
+		}
+		b.WriteString(`{"type":"tool_result","tool_use_id":"toolu_xxxxxxAAAAAA"}`)
+	}
+	b.WriteString(`]}}`)
+
+	got := summarizeSandboxLine(b.String())
+	if !strings.Contains(got, "(+18 more)") {
+		t.Errorf("expected '(+18 more)' tail, got: %s", got)
+	}
+	// 12 commas in the kept entries + 1 separating the tail = 12 commas
+	// surrounding 13 tokens. Easier to assert on tool_result count.
+	if c := strings.Count(got, "tool_result("); c != maxSummarizedContentBlocks {
+		t.Errorf("kept %d tool_result entries, want %d: %s", c, maxSummarizedContentBlocks, got)
+	}
+}
