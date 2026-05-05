@@ -1,4 +1,4 @@
-.PHONY: help build install test ci lint format clean tidy deps verify update-deps init prepush postpull bot bot-tee logs dev daytona-up daytona-down daytona-logs snapshot push-snapshot db-up db-down db-status db-new sqlc-generate pg-up pg-down pg-logs pg-psql pg-reset slack-app
+.PHONY: help build install test ci lint format clean tidy deps verify update-deps init prepush postpull bot bot-with-logs logs dev daytona-up daytona-down daytona-logs snapshot push-snapshot db-up db-down db-status db-new sqlc-generate pg-up pg-down pg-logs pg-psql pg-reset slack-app
 
 # Default target
 help: ## Show this help message
@@ -101,12 +101,19 @@ bot: ## Run the bot with live-reload (rebuilds on file changes)
 	@which doppler > /dev/null || (echo "doppler CLI not found. Install: https://docs.doppler.com/docs/install-cli" && exit 1)
 	@HETCHY_ENV=dev COOKIE_INSECURE=1 doppler run -- $(AIR)
 
-bot-tee: build ## Run the bot once (no live-reload), mirroring logs to $(LOG_FILE) so another shell can `make logs`
+bot-with-logs: ## Run the bot with live-reload AND mirror logs to $(LOG_FILE) so another shell can `make logs`
 	@which doppler > /dev/null || (echo "doppler CLI not found. Install: https://docs.doppler.com/docs/install-cli" && exit 1)
 	@echo "Logging to $(LOG_FILE) (tail with 'make logs')"
-	@HETCHY_ENV=dev COOKIE_INSECURE=1 doppler run -- $(BUILD_DIR)/$(BINARY_NAME) 2>&1 | tee $(LOG_FILE)
+	@# `exec` + process substitution instead of a `| tee` pipeline so Ctrl-C
+	@# cleanly tears down the bot. With a real pipe, `tee` exits first on
+	@# SIGINT, doppler then dies via SIGPIPE before forwarding the signal,
+	@# `air` is orphaned, and the bot is left holding port 8080. With
+	@# process substitution, `tee` is a sibling reading a FIFO; SIGINT
+	@# goes straight to doppler (now the direct child via `exec`), which
+	@# propagates to air -> bot, and `tee` exits on EOF when stdout closes.
+	@HETCHY_ENV=dev COOKIE_INSECURE=1 bash -c 'exec doppler run -- $(AIR) > >(tee $(LOG_FILE)) 2>&1'
 
-logs: ## Tail the log file written by `make bot-tee` (LOG_FILE=$(LOG_FILE))
+logs: ## Tail the log file written by `make bot-with-logs` (LOG_FILE=$(LOG_FILE))
 	@touch $(LOG_FILE)
 	@tail -F $(LOG_FILE)
 
