@@ -151,6 +151,65 @@ func TestClaudeStream_IgnoresMalformedLines(t *testing.T) {
 	}
 }
 
+// The tool_use summary lands in Done's summary parameter (or Fail's,
+// for is_error). The chat UI uses it to render Claude Code-style "—
+// 287 lines" tails after the title. Pin a representative subset here
+// so a regression in summarizeToolResult doesn't slip through; the
+// pure-function table test below covers the per-tool branches.
+func TestClaudeStream_PassesToolSummaryToDone(t *testing.T) {
+	emit := newCaptureEmitter()
+	p := newClaudeStreamParser(emit)
+	p.Line(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_1","name":"Read","input":{"file_path":"/work/x.go"}}]}}`)
+	p.Line(`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"line1\nline2\nline3"}]}}`)
+	if got := emit.Blocks[0].Summary; got != "3 lines" {
+		t.Errorf("want summary %q, got %q", "3 lines", got)
+	}
+}
+
+func TestClaudeStream_PassesErrorSummaryToFail(t *testing.T) {
+	emit := newCaptureEmitter()
+	p := newClaudeStreamParser(emit)
+	p.Line(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_2","name":"Bash","input":{"command":"false"}}]}}`)
+	p.Line(`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_2","content":"command not found: foo","is_error":true}]}}`)
+	if !strings.HasPrefix(emit.Blocks[0].Summary, "failed") {
+		t.Errorf("want failure summary, got %q", emit.Blocks[0].Summary)
+	}
+}
+
+func TestSummarizeToolResult(t *testing.T) {
+	cases := []struct {
+		name    string
+		tool    string
+		input   map[string]any
+		body    string
+		isError bool
+		want    string
+	}{
+		{"read counts lines", "Read", nil, "a\nb\nc", false, "3 lines"},
+		{"read empty", "Read", nil, "", false, "0 lines"},
+		{"grep no matches blank", "Grep", nil, "", false, "no matches"},
+		{"grep with matches", "Grep", nil, "foo.go: hit\nbar.go: hit", false, "2 matches"},
+		{"grep single match", "Grep", nil, "foo.go: hit", false, "1 match"},
+		{"glob multiple", "Glob", nil, "a.go\nb.go\nc.go", false, "3 files"},
+		{"bash first line", "Bash", nil, "the answer\nmore noise", false, "the answer"},
+		{"bash empty", "Bash", nil, "", false, "no output"},
+		{"write counts lines from input", "Write", map[string]any{"content": "a\nb\nc"}, "File created", false, "3 lines"},
+		{"write missing input falls back to ok", "Write", nil, "File created", false, "ok"},
+		{"edit counts new_string lines", "Edit", map[string]any{"new_string": "x\ny\nz\nw"}, "File updated", false, "4 lines"},
+		{"edit missing input falls back to ok", "Edit", nil, "File updated", false, "ok"},
+		{"unknown tool stays quiet", "Sparkle", nil, "anything", false, ""},
+		{"error with body", "Bash", nil, "permission denied: foo", true, "failed: permission denied: foo"},
+		{"error empty body", "Read", nil, "", true, "failed"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := summarizeToolResult(tc.tool, tc.input, tc.body, tc.isError); got != tc.want {
+				t.Errorf("summarizeToolResult(%q, %v, %q, %v) = %q, want %q", tc.tool, tc.input, tc.body, tc.isError, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestToolTitle(t *testing.T) {
 	cases := []struct {
 		name  string

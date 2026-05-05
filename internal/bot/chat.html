@@ -243,6 +243,42 @@
   .blk-kind-error       { border-color: #f4b6ad; }
   .blk-kind-result      { border-color: #b6e0c4; }
 
+  /* Tool-use blocks render as compact one-line log rows (matching
+     Claude Code's terminal `● Read(file.go) — 287 lines` style). The
+     web emitter drops the streamed body for tool_use, so the body
+     div stays empty and we hide it; the caret is removed and the
+     summary cursor is default to make the row visually inert. */
+  .blk-kind-tool_use { border-color: transparent; background: transparent;
+                        border-radius: 0; }
+  .blk-kind-tool_use > summary { padding: .2rem .25rem; cursor: default; }
+  .blk-kind-tool_use > summary .caret { display: none; }
+  .blk-kind-tool_use > .blk-body { display: none; }
+  /* Failed tools surface the truncated error in the summary slot —
+     bump it so it's not dim like a happy-path "287 lines". */
+  .blk-kind-tool_use.blk-kind-error > summary .blk-summary {
+    color: #c0392b; font-weight: 500;
+  }
+
+  /* "Phase" boxes group a Claude prose paragraph with the tool calls
+     it triggered. The box header carries the prose's first line as a
+     scannable title; the body shows the full prose (when there's more
+     than one line) followed by the tool one-liners. When the next
+     phase or a terminal block starts, the previous phase collapses
+     and its right-side summary updates with the step count. */
+  .blk-kind-phase > summary .blk-icon { color: #6b46c1; }
+  .blk-kind-phase > .blk-body { padding: .35rem .85rem .65rem; }
+  .phase-prose { font-size: .9rem; line-height: 1.5; color: #1a1a1a; }
+  .phase-prose:empty { display: none; }
+  .phase-prose p { margin: .25rem 0; }
+  .phase-prose p:first-child { margin-top: 0; }
+  .phase-prose p:last-child { margin-bottom: 0; }
+  .phase-prose code { background: #f0f0f3; border-radius: .25rem;
+                      padding: 0 .2rem; font-size: .85em; }
+  .phase-prose a { color: #0b5ec0; }
+  .phase-tools { margin-top: .25rem; }
+  .phase-tools:empty { margin-top: 0; }
+
+
   /* Spinner for streaming blocks (status="streaming"). */
   .blk-streaming > summary .blk-icon::after {
     content: ''; display: inline-block; width: .75rem; height: .75rem;
@@ -304,6 +340,11 @@
   html.is-dark .blk-body a { color: #7dc4ff; }
   html.is-dark .blk-kind-error  { border-color: #6b2a23; }
   html.is-dark .blk-kind-result { border-color: #265a3a; }
+  html.is-dark .blk-kind-tool_use { background: transparent; border-color: transparent; }
+  html.is-dark .blk-kind-tool_use.blk-kind-error > summary .blk-summary { color: #f87171; }
+  html.is-dark .phase-prose { color: #e7e7e9; }
+  html.is-dark .phase-prose code { background: #2a2a2e; }
+  html.is-dark .phase-prose a { color: #7dc4ff; }
   html.is-dark #empty-state { color: #9a9aa0; }
   html.is-dark #empty-state h2 { color: #e7e7e9; }
   html.is-dark #bar { background: #1c1c1f; border-top-color: #2a2a2d; }
@@ -470,6 +511,7 @@ const BLK_ICON = {
   tool_use:    '⚙', // ⚙
   result:      '✓', // ✓
   error:       '✗', // ✗
+  phase:       '✎', // ✎ — phase boxes group prose + tools, share the prose icon
 };
 
 // renderMarkdown converts a markdown body into sanitized HTML. We
@@ -484,7 +526,10 @@ function renderMarkdown(md) {
 }
 
 // startBotTurn ensures there's a container the streaming blocks are
-// appended into. One container per user → bot exchange.
+// appended into. One container per user → bot exchange. The active
+// block's icon spinner is the run's "still alive" indicator —
+// there's no separate turn-level pulse because it would duplicate
+// the spinner inside whichever block is currently streaming.
 function startBotTurn() {
   const empty = document.getElementById('empty-state');
   if (empty) empty.remove();
@@ -495,14 +540,24 @@ function startBotTurn() {
   return d;
 }
 
-// renderBlock builds a <details> element for one block and appends it
-// into the supplied turn container. Returns the element so subsequent
-// append/done events can update it.
+// renderBlock builds a collapsible block element and appends it into
+// the supplied turn container. Used for setup, notify, result, and
+// error kinds — claude_text and tool_use go through phase boxes
+// (openPhase / addToolToPhase) instead so the user sees the prose +
+// tools as a single grouped unit.
+//
+// tool_use is still handled here for the standalone case (no phase
+// has been opened yet), though in practice the phase model creates
+// one on first contact. We keep the standalone branch so a future
+// emitter that fires tool_use without a wrapping claude_text doesn't
+// silently drop on the floor.
 function renderBlock(turn, block, opts) {
-  const open = !!(opts && opts.open);
+  const isToolUse = block.kind === 'tool_use';
+  const open = !!(opts && opts.open) && !isToolUse;
   const el = document.createElement('details');
   el.className = 'blk blk-kind-' + block.kind
-                 + (block.status === 'streaming' ? ' blk-streaming' : '');
+                 + (block.status === 'streaming' ? ' blk-streaming' : '')
+                 + (block.status === 'error' ? ' blk-kind-error' : '');
   if (open) el.open = true;
   el.dataset.blockId = block.id;
   el.id = 'block-' + block.id;
@@ -514,8 +569,141 @@ function renderBlock(turn, block, opts) {
     + '</summary><div class="blk-body"></div>';
   el.querySelector('.blk-title').textContent = block.title || '';
   el.querySelector('.blk-summary').textContent = block.summary || '';
-  el.querySelector('.blk-body').innerHTML = renderMarkdown(block.body || '');
+  if (!isToolUse) {
+    el.querySelector('.blk-body').innerHTML = renderMarkdown(block.body || '');
+  }
+  if (isToolUse) {
+    // Suppress the native <details> click-to-toggle so the body never
+    // opens (it would reveal an empty pane).
+    el.querySelector('summary').addEventListener('click', e => e.preventDefault());
+  }
   turn.appendChild(el);
+  return el;
+}
+
+// openPhase creates a new phase box ("group" of one Claude prose
+// paragraph + the tool calls it triggers). The box stays expanded
+// while it's the active phase; closePhase below collapses it and
+// stamps the right-hand summary with the step count.
+//
+// The header title is set on creation from the first claude_text
+// chunk's first line (or "Working" when a tool_use opens the phase
+// without a leading prose chunk). The body holds two regions: a
+// .phase-prose block that streams the rest of the paragraph, and a
+// .phase-tools wrapper that subsequent tool_uses are appended into.
+function openPhase(turn, headerTitle) {
+  const el = document.createElement('details');
+  el.className = 'blk blk-kind-phase blk-streaming';
+  el.open = true;
+  el.innerHTML = '<summary>'
+    + '<span class="caret">▶</span>'
+    + '<span class="blk-icon"><span>' + BLK_ICON.phase + '</span></span>'
+    + '<span class="blk-title"></span>'
+    + '<span class="blk-summary"></span>'
+    + '</summary>'
+    + '<div class="blk-body">'
+    +   '<div class="phase-prose"></div>'
+    +   '<div class="phase-tools"></div>'
+    + '</div>';
+  const phase = {
+    el,
+    titleEl: el.querySelector('.blk-title'),
+    summaryEl: el.querySelector('.blk-summary'),
+    proseEl: el.querySelector('.phase-prose'),
+    toolsEl: el.querySelector('.phase-tools'),
+    proseRaw: '',
+    toolCount: 0,
+    titleLocked: false,
+    proseRenderQueued: false,
+  };
+  phase.titleEl.textContent = headerTitle || 'Working';
+  if (headerTitle) phase.titleLocked = true;
+  turn.appendChild(el);
+  return phase;
+}
+
+// closePhase collapses the phase and updates its right-hand summary
+// with the step count so the user sees "5 steps" once it's done.
+// Idempotent — safe to call on a phase that's already closed.
+function closePhase(phase) {
+  if (!phase || phase._closed) return;
+  phase._closed = true;
+  phase.el.classList.remove('blk-streaming');
+  phase.el.open = false;
+  if (phase.toolCount > 0) {
+    phase.summaryEl.textContent = phase.toolCount === 1
+      ? '1 step'
+      : phase.toolCount + ' steps';
+  }
+}
+
+// appendPhaseProse buffers the delta into the phase's prose buffer
+// and schedules a single rAF-coalesced re-render — same coalescing
+// rationale as the original appendToBlock (avoid O(n²) full re-parse
+// per token on long prose chunks).
+//
+// Once the prose contains its first newline the header title is
+// frozen with `titleLocked = true`. Without that latch, every
+// subsequent delta would re-run `indexOf('\n')` over the growing
+// buffer for nothing — the title can't change after the first line
+// is complete. Until the newline arrives, we keep updating the
+// title from the running first-line preview so streaming feels live.
+function appendPhaseProse(phase, delta) {
+  if (!phase) return;
+  phase.proseRaw += delta;
+  if (!phase.titleLocked) {
+    const nl = phase.proseRaw.indexOf('\n');
+    const head = nl >= 0 ? phase.proseRaw.slice(0, nl) : phase.proseRaw;
+    const firstLine = head.trim();
+    if (firstLine) {
+      phase.titleEl.textContent = firstLine.length > 100
+        ? firstLine.slice(0, 100) + '…'
+        : firstLine;
+    }
+    if (nl >= 0) phase.titleLocked = true;
+  }
+  if (phase.proseRenderQueued) return;
+  phase.proseRenderQueued = true;
+  requestAnimationFrame(() => {
+    phase.proseRenderQueued = false;
+    phase.proseEl.innerHTML = renderMarkdown(phase.proseRaw);
+    log.scrollTop = log.scrollHeight;
+  });
+}
+
+// finishPhaseProse flushes any pending render (so the last delta
+// always lands) and commits the title. The phase itself stays open —
+// the trailing tool_uses are still arriving and belong inside it.
+function finishPhaseProse(phase) {
+  if (!phase) return;
+  phase.titleLocked = true;
+  phase.proseEl.innerHTML = renderMarkdown(phase.proseRaw);
+}
+
+// addToolToPhase renders a tool_use one-liner inside the supplied
+// phase. Mirrors the standalone tool_use rendering in renderBlock so
+// the row looks identical whether or not it's inside a phase; this
+// is what keeps the visual treatment consistent across rows that
+// happen to be standalone (no preceding prose) and rows inside a
+// phase.
+function addToolToPhase(phase, payload) {
+  const el = document.createElement('details');
+  el.className = 'blk blk-kind-tool_use'
+                 + (payload.status === 'streaming' ? ' blk-streaming' : '')
+                 + (payload.status === 'error' ? ' blk-kind-error' : '');
+  el.dataset.blockId = payload.id;
+  el.id = 'block-' + payload.id;
+  el.innerHTML = '<summary>'
+    + '<span class="caret">▶</span>'
+    + '<span class="blk-icon"><span>' + BLK_ICON.tool_use + '</span></span>'
+    + '<span class="blk-title"></span>'
+    + '<span class="blk-summary"></span>'
+    + '</summary><div class="blk-body"></div>';
+  el.querySelector('.blk-title').textContent = payload.title || '';
+  el.querySelector('.blk-summary').textContent = payload.summary || '';
+  el.querySelector('summary').addEventListener('click', e => e.preventDefault());
+  phase.toolsEl.appendChild(el);
+  phase.toolCount++;
   return el;
 }
 
@@ -537,9 +725,11 @@ function scheduleBlockRender(el) {
   el._renderQueued = true;
   requestAnimationFrame(() => {
     el._renderQueued = false;
-    // Collapsed blocks aren't visible; skip the markdown work and
-    // catch up on the next render (or on finishBlock).
-    if (!el.open) return;
+    // Collapsible <details> blocks hide the body when closed, so the
+    // markdown render is wasted work — catch up on the next render
+    // (or on finishBlock). Flat claude_text blocks are always visible,
+    // so we always paint.
+    if (el.tagName === 'DETAILS' && !el.open) return;
     const body = el.querySelector('.blk-body');
     body.innerHTML = renderMarkdown(body.dataset.raw || '');
     log.scrollTop = log.scrollHeight;
@@ -549,7 +739,8 @@ function scheduleBlockRender(el) {
 function finishBlock(el, status, summary) {
   if (!el) return;
   el.classList.remove('blk-streaming');
-  if (summary) el.querySelector('.blk-summary').textContent = summary;
+  const summaryEl = el.querySelector('.blk-summary');
+  if (summary && summaryEl) summaryEl.textContent = summary;
   if (status === 'error') {
     el.classList.add('blk-kind-error');
   }
@@ -557,7 +748,7 @@ function finishBlock(el, status, summary) {
   // is collapsed by the next block_start (a collapsed block skips its
   // queued render, so we'd otherwise miss the last few tokens).
   const body = el.querySelector('.blk-body');
-  body.innerHTML = renderMarkdown(body.dataset.raw || '');
+  if (body) body.innerHTML = renderMarkdown(body.dataset.raw || '');
 }
 
 function showEmptyState() {
@@ -799,14 +990,30 @@ async function loadHistory() {
       addUserMsg(history[i]);
       const blocks = turns[i] || [];
       const turn = startBotTurn();
+      // Reconstruct the live phase grouping from the persisted block
+      // sequence. The streamed turn paints the same phase boxes as
+      // it goes; replay does it in one shot from the recorded list.
+      let phase = null;
+      const isLastTurn = i === history.length - 1;
       for (const b of blocks) {
-        // Replay paints every block in its final state (collapsed,
-        // status=done|error). The result/error block on the latest
-        // turn is opened so the user sees it without an extra click.
-        const isLastTurn = i === history.length - 1;
-        const open = isLastTurn && (b.kind === 'result' || b.kind === 'error');
-        renderBlock(turn, b, { open });
+        if (b.kind === 'claude_text') {
+          if (phase) closePhase(phase);
+          phase = openPhase(turn, b.title);
+          phase.proseRaw = b.body || '';
+          phase.proseEl.innerHTML = renderMarkdown(phase.proseRaw);
+        } else if (b.kind === 'tool_use') {
+          if (!phase) phase = openPhase(turn, '');
+          addToolToPhase(phase, {
+            id: b.id, title: b.title, summary: b.summary,
+            status: b.status,
+          });
+        } else {
+          if (phase) { closePhase(phase); phase = null; }
+          const open = isLastTurn && (b.kind === 'result' || b.kind === 'error');
+          renderBlock(turn, b, { open });
+        }
       }
+      if (phase) closePhase(phase);
     }
     // Honour #block-<id> deep links by expanding + scrolling to the
     // referenced block.
@@ -845,11 +1052,26 @@ async function send() {
   }
 
   const turn = startBotTurn();
-  // blockEls is the per-id map of <details> we mutate as the SSE
-  // stream comes in. The "active" block stays open; when a new block
-  // starts we collapse the previous one (latest visible policy).
-  const blockEls = new Map();
-  let activeEl = null;
+  // blockRefs is the per-id map of "what to do on append/done". Each
+  // ref is a tagged shape:
+  //   { kind: 'phase-prose', phase }      — claude_text inside a phase
+  //   { kind: 'tool',        el, phase }  — tool_use inside a phase
+  //   { kind: 'standalone',  el }         — setup/notify/result/error
+  // Phase-prose appends update the phase body; tool appends are
+  // dropped (the web emitter never fires them); standalone appends
+  // go through the original appendToBlock path.
+  const blockRefs = new Map();
+  // currentPhase is the open phase box accepting new tool_uses. Set
+  // when claude_text or the first tool_use opens one; cleared when a
+  // standalone block (setup/notify/result/error) starts and closes
+  // it.
+  let currentPhase = null;
+  // lastStandaloneEl is the most recently rendered standalone block
+  // (setup, notify, result, error). When the *next* block of any
+  // kind starts, we collapse this one so the user always sees the
+  // freshest activity expanded — e.g. the long Sandbox setup body
+  // tucks itself away when Claude starts streaming its first phase.
+  let lastStandaloneEl = null;
 
   const res = await fetch('/chat', {
     method: 'POST',
@@ -882,28 +1104,71 @@ async function send() {
       let payload;
       try { payload = JSON.parse(data); } catch (e) { continue; }
       if (event === 'block_start') {
-        // Collapse the previous block as soon as the next one starts,
-        // so the user always sees the freshest activity expanded.
-        if (activeEl) activeEl.open = false;
-        activeEl = renderBlock(turn, {
-          id: payload.id, kind: payload.kind, title: payload.title,
-          body: '', status: 'streaming',
-        }, { open: true });
-        blockEls.set(payload.id, activeEl);
+        // Any new block_start collapses the most recent standalone
+        // block (setup / notify / result / error) so the latest
+        // activity stays expanded. Phase boxes manage their own
+        // collapse via closePhase() below.
+        if (lastStandaloneEl) {
+          lastStandaloneEl.open = false;
+          lastStandaloneEl = null;
+        }
+        if (payload.kind === 'claude_text') {
+          // A new prose chunk starts a fresh phase: collapse the prior
+          // phase (if any) and open a new box with this paragraph as
+          // the header.
+          if (currentPhase) closePhase(currentPhase);
+          currentPhase = openPhase(turn, payload.title);
+          blockRefs.set(payload.id, { kind: 'phase-prose', phase: currentPhase });
+        } else if (payload.kind === 'tool_use') {
+          // Tool calls go inside the current phase; if no phase is
+          // open (Claude jumped straight to tools without prose),
+          // open one with a generic title so the visual treatment
+          // stays consistent.
+          if (!currentPhase) currentPhase = openPhase(turn, '');
+          const el = addToolToPhase(currentPhase, payload);
+          blockRefs.set(payload.id, { kind: 'tool', el, phase: currentPhase });
+        } else {
+          // Standalone block (setup, notify, result, error) — these
+          // aren't part of a phase. Close any open phase first so the
+          // step count stamps correctly, then render normally.
+          if (currentPhase) {
+            closePhase(currentPhase);
+            currentPhase = null;
+          }
+          const el = renderBlock(turn, {
+            id: payload.id, kind: payload.kind, title: payload.title,
+            body: '', status: 'streaming',
+          }, { open: true });
+          blockRefs.set(payload.id, { kind: 'standalone', el });
+          lastStandaloneEl = el;
+        }
         log.scrollTop = log.scrollHeight;
       } else if (event === 'block_append') {
-        appendToBlock(blockEls.get(payload.id), payload.delta || '');
+        const ref = blockRefs.get(payload.id);
+        if (!ref) continue;
+        if (ref.kind === 'phase-prose') {
+          appendPhaseProse(ref.phase, payload.delta || '');
+        } else if (ref.kind === 'standalone') {
+          appendToBlock(ref.el, payload.delta || '');
+        }
+        // tool appends are dropped by the web emitter and never reach here.
       } else if (event === 'block_done') {
-        finishBlock(blockEls.get(payload.id), payload.status, payload.summary);
-        if (activeEl === blockEls.get(payload.id)) {
-          // The terminating block stays open — it's the latest user-
-          // facing output (a result or error). Tool/text blocks that
-          // are followed by another block will get collapsed by the
-          // next block_start above.
+        const ref = blockRefs.get(payload.id);
+        if (!ref) continue;
+        if (ref.kind === 'phase-prose') {
+          finishPhaseProse(ref.phase);
+        } else if (ref.kind === 'tool') {
+          finishBlock(ref.el, payload.status, payload.summary);
+        } else if (ref.kind === 'standalone') {
+          finishBlock(ref.el, payload.status, payload.summary);
         }
       }
     }
   }
+  // The SSE stream closed. Idempotent close for any phase that
+  // didn't receive a terminal block to push it closed (defensive —
+  // a dropped connection should still produce a clean final state).
+  if (currentPhase) closePhase(currentPhase);
   btn.disabled = false;
   inp.focus();
   // Refresh the sidebar after every turn so the row's title (server-side)

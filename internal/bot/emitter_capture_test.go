@@ -30,11 +30,12 @@ type captureEmitter struct {
 }
 
 type captureBlock struct {
-	ID     string
-	Kind   blocks.Kind
-	Title  string
-	Body   strings.Builder
-	Status blocks.Status
+	ID      string
+	Kind    blocks.Kind
+	Title   string
+	Body    strings.Builder
+	Status  blocks.Status
+	Summary string
 }
 
 func newCaptureEmitter() *captureEmitter {
@@ -59,20 +60,22 @@ func (e *captureEmitter) Append(id, delta string) {
 	}
 }
 
-func (e *captureEmitter) Done(id, _ string) {
+func (e *captureEmitter) Done(id, summary string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if idx, ok := e.open[id]; ok {
 		e.Blocks[idx].Status = blocks.StatusDone
+		e.Blocks[idx].Summary = summary
 		delete(e.open, id)
 	}
 }
 
-func (e *captureEmitter) Fail(id, _ string) {
+func (e *captureEmitter) Fail(id, summary string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if idx, ok := e.open[id]; ok {
 		e.Blocks[idx].Status = blocks.StatusError
+		e.Blocks[idx].Summary = summary
 		delete(e.open, id)
 	}
 }

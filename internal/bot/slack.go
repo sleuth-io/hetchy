@@ -305,11 +305,17 @@ func (b *Bot) handleSlackEvent(ctx context.Context, oc orgcfg.Config, ev incomin
 		reaction = "recycle"
 	}
 	addReaction(b.log, cli, ev.channel, threadID, reaction)
-	replyInThread(b.log, cli, ev.channel, replyTo, fmt.Sprintf("<@%s> Working on it…", ev.user))
+	// Drop the @mention here: the user just typed in the thread, so
+	// they're already paying attention. We reserve mentions for the
+	// terminal Done/Error message that tells them to come back. The
+	// check matches the milestone-style icon the Notify posts use —
+	// "Working on it" is itself a *milestone* (we acknowledged the
+	// request), so it shouldn't read as still-pending.
+	replyInThread(b.log, cli, ev.channel, replyTo, ":white_check_mark: Working on it…")
 
 	requestID := strings.ReplaceAll(ev.ts, ".", "")
 	conversationURL := b.cfg.PublicBaseURL() + "/?session=" + threadID
-	emit := newSlackEmitter(b.log, cli, ev.channel, replyTo, ev.user, conversationURL)
+	emit := newSlackEmitter(b.log, cli, ev.channel, replyTo, ev.user, conversationURL, text)
 	b.HandleRequest(ctx, oc, text, requestID, threadID, emit)
 	// Reaction bookkeeping: only swap the eyes/recycle that signalled
 	// "working on it" for a final ✓/✗ when the run actually reached a

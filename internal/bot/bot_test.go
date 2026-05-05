@@ -177,6 +177,11 @@ func TestTruncate(t *testing.T) {
 		{"longer", "hello world", 5, "hello..."},
 		{"empty", "", 5, ""},
 		{"zero", "anything", 0, "..."},
+		// Rune-aware: emoji are 4-byte UTF-8. A byte-slice truncate
+		// would split the second hammer mid-codepoint and surface as
+		// mojibake; rune-slice truncate keeps each glyph whole.
+		{"runes keep emoji whole", "🔨🔨🔨🔨", 2, "🔨🔨..."},
+		{"runes keep cjk whole", "日本語テスト", 3, "日本語..."},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
