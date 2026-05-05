@@ -18,6 +18,9 @@
 #   SNAPSHOT_TAG              default: 1
 #   LOCAL_REGISTRY_HOST_PORT  default: localhost:6000
 #   LOCAL_REGISTRY_INTERNAL   default: registry:6000
+#   SNAPSHOT_CPU              default: 2 (vCPUs per sandbox)
+#   SNAPSHOT_MEMORY_GB        default: 3 (memory per sandbox, GB)
+#   SNAPSHOT_DISK_GB          default: 3 (disk per sandbox, GB)
 set -euo pipefail
 
 SNAPSHOT_NAME="${SNAPSHOT_NAME:-universal-coding}"
@@ -25,6 +28,16 @@ SNAPSHOT_TAG="${SNAPSHOT_TAG:-1}"
 LOCAL_REGISTRY_HOST_PORT="${LOCAL_REGISTRY_HOST_PORT:-localhost:6000}"
 LOCAL_REGISTRY_INTERNAL="${LOCAL_REGISTRY_INTERNAL:-registry:6000}"
 API_URL="${DAYTONA_API_URL:-https://app.daytona.io/api}"
+
+# Per-sandbox resource sizing. Daytona attaches these to the snapshot
+# at registration time and every sandbox spawned from it inherits the
+# values — the SDK's SnapshotParams used at create time has no resource
+# fields, so this is the only programmatic place to set sizing without
+# clicking through the dashboard. Tuned for Claude Code: 2 vCPU + 3 GB
+# RAM avoids the OOMs we saw at the CLI default of 1 GB.
+SNAPSHOT_CPU="${SNAPSHOT_CPU:-2}"
+SNAPSHOT_MEMORY_GB="${SNAPSHOT_MEMORY_GB:-3}"
+SNAPSHOT_DISK_GB="${SNAPSHOT_DISK_GB:-3}"
 
 if [[ -z "${DAYTONA_API_KEY:-}" ]]; then
   echo "ERROR: DAYTONA_API_KEY is not set. Run via 'doppler run -- $0' or export it manually." >&2
@@ -39,6 +52,7 @@ fi
 echo "doppler:         ${DOPPLER_PROJECT:-?}/${DOPPLER_CONFIG:-?}"
 echo "DAYTONA_API_URL: $API_URL"
 echo "snapshot:        $SNAPSHOT_NAME (from local image $SNAPSHOT_NAME:$SNAPSHOT_TAG)"
+echo "resources:       cpu=${SNAPSHOT_CPU} memory=${SNAPSHOT_MEMORY_GB}GB disk=${SNAPSHOT_DISK_GB}GB"
 echo
 
 api() {
@@ -98,7 +112,7 @@ if $is_local; then
 
   echo "→ registering snapshot via POST /snapshots"
   api -X POST "$API_URL/snapshots" \
-    -d "{\"name\":\"$SNAPSHOT_NAME\",\"imageName\":\"$LOCAL_REGISTRY_INTERNAL/$SNAPSHOT_NAME:$SNAPSHOT_TAG\"}" \
+    -d "{\"name\":\"$SNAPSHOT_NAME\",\"imageName\":\"$LOCAL_REGISTRY_INTERNAL/$SNAPSHOT_NAME:$SNAPSHOT_TAG\",\"cpu\":${SNAPSHOT_CPU},\"memory\":${SNAPSHOT_MEMORY_GB},\"disk\":${SNAPSHOT_DISK_GB}}" \
     -o /dev/null
 
   wait_until_active
@@ -109,7 +123,8 @@ else
   # doesn't shadow the CLI's persisted credentials. Push handles overwrite
   # of an existing snapshot of the same name on its own.
   env -u DAYTONA_API_KEY -u DAYTONA_API_URL \
-    daytona snapshot push "$SNAPSHOT_NAME:$SNAPSHOT_TAG" --name "$SNAPSHOT_NAME"
+    daytona snapshot push "$SNAPSHOT_NAME:$SNAPSHOT_TAG" --name "$SNAPSHOT_NAME" \
+      --cpu "$SNAPSHOT_CPU" --memory "$SNAPSHOT_MEMORY_GB" --disk "$SNAPSHOT_DISK_GB"
 fi
 
 echo
