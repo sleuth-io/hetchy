@@ -1,3 +1,22 @@
+```
+██╗  ██╗███████╗████████╗ ██████╗██╗  ██╗██╗   ██╗
+██║  ██║██╔════╝╚══██╔══╝██╔════╝██║  ██║╚██╗ ██╔╝
+███████║█████╗     ██║   ██║     ███████║ ╚████╔╝
+██╔══██║██╔══╝     ██║   ██║     ██╔══██║  ╚██╔╝
+██║  ██║███████╗   ██║   ╚██████╗██║  ██║   ██║
+╚═╝  ╚═╝╚══════╝   ╚═╝    ╚═════╝╚═╝  ╚═╝   ╚═╝
+
+  .------------------------.
+  |  @bot: fix that bug    |  slack -> claude -> PR
+  |  🤖 on it!             |  automagically
+  '------------------------'
+       \   .-"""""-.
+        \ /  o   o  \
+          |    ∆    |
+          \  '---'  /
+           '-.....-'
+```
+
 # Hetchy
 
 A Slack bot and web UI that converts natural language requests into pull requests by running [Claude Code](https://claude.com/claude-code) inside isolated [Daytona](https://daytona.io) sandboxes.
