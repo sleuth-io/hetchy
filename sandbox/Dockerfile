@@ -81,10 +81,13 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
  && rm -rf /var/lib/apt/lists/*
 
 # ---------------------------------------------------------------------------
-# yq (jq is in apt above).
+# yq (jq is in apt above). Pinned so two image rebuilds on different days
+# install the same binary — a `/latest/` URL would silently drift across
+# yq major versions whose CLI semantics differ.
 # ---------------------------------------------------------------------------
+ARG YQ_VERSION=v4.44.3
 RUN curl -fsSL -o /usr/local/bin/yq \
-        https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 \
+        "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64" \
  && chmod +x /usr/local/bin/yq
 
 # ---------------------------------------------------------------------------
