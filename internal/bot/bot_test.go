@@ -138,8 +138,30 @@ func TestHandleRequest_MissingAnthropic(t *testing.T) {
 	}
 	emit := newCaptureEmitter()
 	b.HandleRequest(context.Background(), orgcfg.Config{OrgID: "o"}, "do something", "req", "thread", emit)
-	if !emit.hasCall("error", "Anthropic API key") {
-		t.Errorf("expected Error call with 'Anthropic API key', got Calls=%v", emit.Calls)
+	if !emit.hasCall("error", "Missing Claude credentials") {
+		t.Errorf("expected Error call with 'Missing Claude credentials', got Calls=%v", emit.Calls)
+	}
+}
+
+// TestHandleRequest_SubscriptionTokenSatisfiesCredCheck verifies that
+// an org with only a Claude Code OAuth token (no API key) still passes
+// the credential check at HandleRequest. The "missing creds" error
+// should not fire — the request should advance to the next branch
+// (which here trips the no-default-repo Notify, since we don't bother
+// configuring a sandbox in this test).
+func TestHandleRequest_SubscriptionTokenSatisfiesCredCheck(t *testing.T) {
+	b := &Bot{log: discardLogger(), convs: convstore.New(nil), retryBackoff: 0}
+	b.createFn = func(context.Context, any) (*daytona.Sandbox, error) {
+		t.Fatal("sandbox should not be created when no default repo is set")
+		return nil, errors.New("unreachable")
+	}
+	emit := newCaptureEmitter()
+	b.HandleRequest(context.Background(), orgcfg.Config{OrgID: "o", ClaudeCodeOAuthToken: "sk-ant-oat01-…"}, "do something", "req", "thread", emit)
+	if emit.hasCall("error", "Missing Claude credentials") {
+		t.Errorf("subscription token alone should satisfy cred check, got Calls=%v", emit.Calls)
+	}
+	if !emit.hasCall("notify", "Which repository") {
+		t.Errorf("expected to advance to repo prompt, got Calls=%v", emit.Calls)
 	}
 }
 

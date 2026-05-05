@@ -61,14 +61,15 @@ type GithubTeamMember struct {
 }
 
 type OrgConfig struct {
-	OrgID                     string             `json:"org_id"`
-	SlackBotTokenEncrypted    []byte             `json:"slack_bot_token_encrypted"`
-	SlackSocketTokenEncrypted []byte             `json:"slack_socket_token_encrypted"`
-	SxKeyEncrypted            []byte             `json:"sx_key_encrypted"`
-	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
-	AnthropicApiKeyEncrypted  []byte             `json:"anthropic_api_key_encrypted"`
-	SlackTeamID               *string            `json:"slack_team_id"`
-	DefaultGithubOwner        string             `json:"default_github_owner"`
-	DefaultGithubRepo         string             `json:"default_github_repo"`
+	OrgID                         string             `json:"org_id"`
+	SlackBotTokenEncrypted        []byte             `json:"slack_bot_token_encrypted"`
+	SlackSocketTokenEncrypted     []byte             `json:"slack_socket_token_encrypted"`
+	SxKeyEncrypted                []byte             `json:"sx_key_encrypted"`
+	CreatedAt                     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                     pgtype.Timestamptz `json:"updated_at"`
+	AnthropicApiKeyEncrypted      []byte             `json:"anthropic_api_key_encrypted"`
+	SlackTeamID                   *string            `json:"slack_team_id"`
+	DefaultGithubOwner            string             `json:"default_github_owner"`
+	DefaultGithubRepo             string             `json:"default_github_repo"`
+	ClaudeCodeOauthTokenEncrypted []byte             `json:"claude_code_oauth_token_encrypted"`
 }

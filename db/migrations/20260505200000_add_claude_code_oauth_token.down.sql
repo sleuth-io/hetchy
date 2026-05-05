@@ -1,0 +1,1 @@
+ALTER TABLE org_configs DROP COLUMN claude_code_oauth_token_encrypted;
