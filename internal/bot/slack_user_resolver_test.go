@@ -25,7 +25,7 @@ func newTestResolver(emailFn func(string) (string, error), memberFn func(string,
 			memberCalls.Add(1)
 			return memberFn(orgID, email)
 		},
-		cache: make(map[string]string),
+		cache: make(map[resolverKey]string),
 	}
 	return r, &emailCalls, &memberCalls
 }
@@ -117,7 +117,7 @@ func TestSlackUserResolver_EmailErrorIsNotCached(t *testing.T) {
 		memberLookup: func(_ context.Context, _, _ string) (string, error) {
 			return "user_123", nil
 		},
-		cache: make(map[string]string),
+		cache: make(map[resolverKey]string),
 	}
 	if got := r.Resolve(context.Background(), nil, "org_a", "U_ALICE"); got != "" {
 		t.Fatalf("first call (error path): got %q, want empty", got)
@@ -140,7 +140,7 @@ func TestSlackUserResolver_MemberErrorIsNotCached(t *testing.T) {
 			}
 			return "user_123", nil
 		},
-		cache: make(map[string]string),
+		cache: make(map[resolverKey]string),
 	}
 	if got := r.Resolve(context.Background(), nil, "org_a", "U_ALICE"); got != "" {
 		t.Fatalf("first call (error): got %q, want empty", got)

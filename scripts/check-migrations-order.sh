@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Detect migrations on this branch that golang-migrate will silently skip.
 #
-# golang-migrate stores a single "current version" in schema_migrations.
-# Any migration file with a timestamp <= that version is treated as
-# already applied — even if it never actually ran. The classic way this
-# bites: branch A adds migration T1; branch B adds T2>T1 and merges
-# first. Anyone whose DB has been advanced to T2 will never apply T1.
+# golang-migrate stores a single "current version" V in schema_migrations.
+# A migration file with timestamp T == V was applied (V *is* its
+# version). A migration file with timestamp T < V is treated as already
+# applied, even if it never actually ran — which is the bug we're
+# guarding against. The classic way this bites: branch A adds migration
+# T1; branch B adds T2 > T1 and merges first. Anyone whose DB has been
+# advanced to T2 will never apply T1.
 #
 # This script catches that by comparing branch-added migration files
 # against a threshold timestamp and erroring if any are <= it.

@@ -36,7 +36,14 @@ type slackUserResolver struct {
 	memberLookup func(ctx context.Context, orgID, email string) (string, error)
 
 	mu    sync.Mutex
-	cache map[string]string // "orgID|slackUserID" -> workosUserID ("" = no match)
+	cache map[resolverKey]string // (orgID, slackUserID) -> workosUserID ("" = no match)
+}
+
+// resolverKey is a struct rather than a delimited string so a value
+// containing the delimiter (or any other char) can never collide two
+// distinct (orgID, slackUserID) pairs onto the same cache entry.
+type resolverKey struct {
+	orgID, slackUserID string
 }
 
 // newSlackUserResolver wires the resolver to live Slack + WorkOS lookups
@@ -65,7 +72,7 @@ func newSlackUserResolver(log *slog.Logger, a *auth.Service) *slackUserResolver 
 			}
 			return p.UserID, nil
 		},
-		cache: make(map[string]string),
+		cache: make(map[resolverKey]string),
 	}
 }
 
@@ -76,7 +83,7 @@ func (r *slackUserResolver) Resolve(ctx context.Context, cli *slack.Client, orgI
 	if orgID == "" || slackUserID == "" {
 		return ""
 	}
-	key := orgID + "|" + slackUserID
+	key := resolverKey{orgID: orgID, slackUserID: slackUserID}
 
 	r.mu.Lock()
 	if v, ok := r.cache[key]; ok {
@@ -110,7 +117,7 @@ func (r *slackUserResolver) Resolve(ctx context.Context, cli *slack.Client, orgI
 	return workosID
 }
 
-func (r *slackUserResolver) store(key, val string) {
+func (r *slackUserResolver) store(key resolverKey, val string) {
 	r.mu.Lock()
 	r.cache[key] = val
 	r.mu.Unlock()

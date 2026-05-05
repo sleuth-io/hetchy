@@ -1088,6 +1088,14 @@ func (b *Bot) membersHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]memberSummary, 0, len(members))
 	for _, m := range members {
+		// Inactive memberships (removed users) and pending ones
+		// (invited but not yet accepted) can never be the creator of a
+		// conversation, so they'd only appear in the dropdown to
+		// produce an empty list when chosen — and surfacing former
+		// teammates by name is mildly information-leaky.
+		if m.Status != "active" {
+			continue
+		}
 		out = append(out, memberSummary{
 			UserID:      m.UserID,
 			DisplayName: m.DisplayName(),
