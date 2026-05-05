@@ -17,6 +17,8 @@ type Querier interface {
 	DeleteGithubReposByInstallationExcept(ctx context.Context, arg DeleteGithubReposByInstallationExceptParams) error
 	DeleteGithubTeamMembersForTeam(ctx context.Context, arg DeleteGithubTeamMembersForTeamParams) error
 	DeleteGithubTeamsByInstallationExcept(ctx context.Context, arg DeleteGithubTeamsByInstallationExceptParams) error
+	DeleteRepoSecretValue(ctx context.Context, arg DeleteRepoSecretValueParams) error
+	DeleteRepoSetupSpec(ctx context.Context, arg DeleteRepoSetupSpecParams) error
 	GetConversation(ctx context.Context, arg GetConversationParams) (GetConversationRow, error)
 	GetGithubInstallation(ctx context.Context, installationID int64) (GithubAppInstallation, error)
 	// Resolves an (owner, name) the user typed in chat to a concrete
@@ -28,6 +30,8 @@ type Querier interface {
 	GetGithubRepoForOrg(ctx context.Context, arg GetGithubRepoForOrgParams) (GithubRepo, error)
 	GetOrgConfig(ctx context.Context, orgID string) (OrgConfig, error)
 	GetOrgConfigBySlackTeamID(ctx context.Context, slackTeamID *string) (OrgConfig, error)
+	GetRepoSecretValue(ctx context.Context, arg GetRepoSecretValueParams) (RepoSecretValue, error)
+	GetRepoSetupSpec(ctx context.Context, arg GetRepoSetupSpecParams) (RepoSetupSpec, error)
 	ListConversationsByOrg(ctx context.Context, orgID string) ([]ListConversationsByOrgRow, error)
 	ListConversationsByOrgAndUser(ctx context.Context, arg ListConversationsByOrgAndUserParams) ([]ListConversationsByOrgAndUserRow, error)
 	ListGithubInstallationsByOrg(ctx context.Context, orgID string) ([]GithubAppInstallation, error)
@@ -48,7 +52,19 @@ type Querier interface {
 	// of Slack connection," write a different query — don't rename this
 	// one.
 	ListOrgConfigsWithSlack(ctx context.Context) ([]OrgConfig, error)
+	// Used by the bootstrap apply step to build the env block, and by the
+	// settings UI to show which keys are filled in vs. blank.
+	ListRepoSecretValues(ctx context.Context, arg ListRepoSecretValuesParams) ([]RepoSecretValue, error)
+	// All paths for a given (installation, repo). Powers the monorepo UI
+	// where the user can see every target Hetchy has bootstrapped under
+	// one repository.
+	ListRepoSetupSpecs(ctx context.Context, arg ListRepoSetupSpecsParams) ([]RepoSetupSpec, error)
 	RenameConversation(ctx context.Context, arg RenameConversationParams) (int64, error)
+	// Lightweight status update used by the runtime apply path: bumps
+	// success/failure counters and the validation_status without
+	// rewriting the whole spec. Avoids re-encoding all the JSONB blobs on
+	// every successful task.
+	UpdateRepoSetupSpecStatus(ctx context.Context, arg UpdateRepoSetupSpecStatusParams) error
 	UpsertConversation(ctx context.Context, arg UpsertConversationParams) (UpsertConversationRow, error)
 	// Queries for the GitHub App installation cache: installations, the
 	// repos they grant access to, and (for Organization installs) team
@@ -65,6 +81,14 @@ type Querier interface {
 	UpsertGithubTeam(ctx context.Context, arg UpsertGithubTeamParams) error
 	UpsertGithubTeamMember(ctx context.Context, arg UpsertGithubTeamMemberParams) error
 	UpsertOrgConfig(ctx context.Context, arg UpsertOrgConfigParams) (OrgConfig, error)
+	// Repo-scoped secrets ---------------------------------------------------
+	// Inserts a placeholder row (value_encrypted=NULL) when bootstrap
+	// declares a required secret, and updates the encrypted value when the
+	// user fills it in via the settings UI. Two-phase so the UI knows what
+	// to ask for even before the user types anything.
+	UpsertRepoSecretValue(ctx context.Context, arg UpsertRepoSecretValueParams) error
+	// Queries for repo bootstrap specs and per-repo secret values.
+	UpsertRepoSetupSpec(ctx context.Context, arg UpsertRepoSetupSpecParams) (RepoSetupSpec, error)
 }
 
 var _ Querier = (*Queries)(nil)

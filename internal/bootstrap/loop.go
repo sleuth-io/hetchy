@@ -1,0 +1,271 @@
+package bootstrap
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"maps"
+	"os"
+	"path/filepath"
+	"sort"
+)
+
+// Runner abstracts the sandbox-side script execution so the loop can
+// be unit-tested without spinning up a real Daytona sandbox. The
+// production implementation lives in internal/bot and bridges to the
+// existing runScript helper.
+//
+// Run executes scriptBody in the sandbox with env exposed and returns
+// when the script exits. ReadFile fetches a path from the sandbox
+// (used to extract the agent's artifacts after the bootstrap script
+// completes). WriteFile is symmetric (used to drop the prompt body in).
+type Runner interface {
+	Run(ctx context.Context, label, scriptBody string, env map[string]string) error
+	ReadFile(ctx context.Context, path string) ([]byte, error)
+	WriteFile(ctx context.Context, path string, data []byte) error
+}
+
+// LoopInput carries everything the bootstrap loop needs.
+type LoopInput struct {
+	OwnerRepo       string
+	Path            string
+	Hints           *Hints
+	SuppliedSecrets map[string]string // injected into the sandbox env
+}
+
+// LoopResult is what the loop produces: a Spec ready to be persisted,
+// plus the raw transcript captured from the sandbox (for the
+// bootstrap_log column).
+type LoopResult struct {
+	Spec     *Spec
+	Manifest *Manifest
+	Log      string
+}
+
+// ErrLoopFailed signals that bootstrap exhausted its iteration budget
+// or the agent produced unusable artifacts. Callers turn this into the
+// "I couldn't get the repo running" user-facing message described in
+// the spec doc's "When bootstrap can't fully succeed" section.
+var ErrLoopFailed = errors.New("bootstrap: loop failed")
+
+// Run drives the bootstrap loop end to end:
+//
+//  1. Render the bootstrap prompt from hints + args.
+//  2. Drop the prompt + bootstrap.sh into the sandbox.
+//  3. Invoke bootstrap.sh, which calls Claude Code, runs the agent's
+//     setup/start/health, and emits the four artifacts at known paths.
+//  4. Read back the artifacts, parse the manifest, decide validation
+//     status (validated vs. partial vs. failing).
+//  5. Compute the source fingerprint from the host-side hints.
+//
+// The loop does NOT persist on its own — callers Save() the returned
+// LoopResult.Spec via the Store. This separation lets the auto-heal
+// path replay a loop without having to reconcile DB writes itself.
+func Run(ctx context.Context, runner Runner, in LoopInput) (*LoopResult, error) {
+	if runner == nil {
+		return nil, errors.New("bootstrap: runner is required")
+	}
+	if in.Hints == nil {
+		return nil, errors.New("bootstrap: hints are required")
+	}
+
+	prompt := BuildPrompt(in.Hints, PromptArgs{
+		OwnerRepo:       in.OwnerRepo,
+		Path:            in.Path,
+		SuppliedSecrets: sortedNames(in.SuppliedSecrets),
+	})
+
+	if err := runner.WriteFile(ctx, "/tmp/hetchy-bootstrap-prompt.txt", []byte(prompt)); err != nil {
+		return nil, fmt.Errorf("bootstrap: write prompt: %w", err)
+	}
+
+	env := map[string]string{
+		"HETCHY_BOOTSTRAP_PROMPT_FILE": "/tmp/hetchy-bootstrap-prompt.txt",
+		"HETCHY_BOOTSTRAP_OUT_DIR":     "/tmp/hetchy-spec",
+	}
+	maps.Copy(env, in.SuppliedSecrets)
+
+	if err := runner.Run(ctx, "bootstrap", BootstrapScript, env); err != nil {
+		// We still try to read whatever artifacts the agent produced,
+		// since a non-zero exit can mean "verification failed but the
+		// agent wrote something." Useful for auto-heal seeding.
+		partial := readArtifactsBestEffort(ctx, runner)
+		return &LoopResult{Spec: nil, Manifest: partial, Log: ""},
+			fmt.Errorf("%w: %w", ErrLoopFailed, err)
+	}
+
+	manifestBytes, err := runner.ReadFile(ctx, "/tmp/hetchy-spec/manifest.json")
+	if err != nil {
+		return nil, fmt.Errorf("bootstrap: read manifest: %w", err)
+	}
+	manifest, err := ParseManifest(manifestBytes)
+	if err != nil {
+		return nil, fmt.Errorf("bootstrap: parse manifest: %w", err)
+	}
+
+	setup, err := runner.ReadFile(ctx, "/tmp/hetchy-spec/setup.sh")
+	if err != nil {
+		return nil, fmt.Errorf("bootstrap: read setup.sh: %w", err)
+	}
+	start, err := runner.ReadFile(ctx, "/tmp/hetchy-spec/start.sh")
+	if err != nil {
+		return nil, fmt.Errorf("bootstrap: read start.sh: %w", err)
+	}
+	health, err := runner.ReadFile(ctx, "/tmp/hetchy-spec/health.sh")
+	if err != nil {
+		return nil, fmt.Errorf("bootstrap: read health.sh: %w", err)
+	}
+
+	status := StatusValidated
+	if manifest.HasDeferred() {
+		status = StatusPartial
+	}
+
+	spec := &Spec{
+		Path:                 in.Path,
+		SpecVersion:          1,
+		Kind:                 manifest.Kind,
+		SetupScript:          string(setup),
+		StartScript:          string(start),
+		HealthCheck:          string(health),
+		Services:             manifest.Services,
+		RequiredSecrets:      manifest.RequiredSecrets,
+		DeferredCapabilities: manifest.DeferredCapabilities,
+		SuggestedRepoChanges: manifest.SuggestedRepoChanges,
+		SourceFingerprint:    Fingerprint(in.Hints),
+		ValidationStatus:     status,
+	}
+	return &LoopResult{Spec: spec, Manifest: manifest}, nil
+}
+
+// readArtifactsBestEffort tries to grab a manifest even when the
+// bootstrap script failed. Used to seed auto-heal — knowing what the
+// agent declared (even if verification didn't pass) is better than
+// starting from scratch.
+func readArtifactsBestEffort(ctx context.Context, runner Runner) *Manifest {
+	data, err := runner.ReadFile(ctx, "/tmp/hetchy-spec/manifest.json")
+	if err != nil {
+		return nil
+	}
+	m, err := ParseManifest(data)
+	if err != nil {
+		return nil
+	}
+	return m
+}
+
+// Fingerprint hashes the detection-relevant subset of the repo. If
+// this hash changes between runs, the saved spec is stale and must be
+// re-validated (or, more likely, re-bootstrapped).
+//
+// We hash the *content* of every file the detect cascade examined. A
+// rename or content change to any of them flips the hash. We don't
+// hash the readme excerpt's ENTIRE content — just the first 200 lines
+// the cascade actually examined — so a benign README addendum below
+// line 200 doesn't cause spurious re-validation.
+func Fingerprint(h *Hints) string {
+	if h == nil {
+		return ""
+	}
+	hasher := sha256.New()
+	addPath := func(rel string) {
+		full := filepath.Join(h.Path, rel)
+		data, err := os.ReadFile(full)
+		if err != nil {
+			return
+		}
+		fmt.Fprintf(hasher, "%s\n%x\n", rel, sha256.Sum256(data))
+	}
+	if h.DevContainer != nil {
+		addPath(h.DevContainer.Path)
+	}
+	for _, candidate := range []string{
+		"AGENTS.md", "agents.md",
+		"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml",
+		"Dockerfile", "Makefile", "package.json", "go.mod",
+		".env.example", ".env.sample", ".env.template",
+	} {
+		addPath(candidate)
+	}
+	// README excerpt — only the part the cascade actually feeds the
+	// LLM. Hashing the full file would over-trigger drift.
+	if h.ReadmeExcerpt != "" {
+		fmt.Fprintf(hasher, "readme:%x\n", sha256.Sum256([]byte(h.ReadmeExcerpt)))
+	}
+	return hex.EncodeToString(hasher.Sum(nil))
+}
+
+func sortedNames(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// BootstrapScript is the embedded shell script that runs inside the
+// sandbox. It hands the bootstrap prompt off to claude (the same way
+// agent.sh does for the main agent flow), then enforces the four
+// success checks before declaring the run complete.
+//
+// It is deliberately defensive: every artifact path must exist with
+// non-empty content; setup.sh must be idempotent (runs twice in a
+// row); start.sh is backgrounded and we wait for health.sh to pass
+// before returning success.
+//
+// The script writes its own log to stderr so a non-zero exit's tail
+// is what the bot persists into bootstrap_log for auto-heal context.
+const BootstrapScript = `#!/bin/bash
+set -euo pipefail
+
+: "${HETCHY_BOOTSTRAP_PROMPT_FILE:?required}"
+: "${HETCHY_BOOTSTRAP_OUT_DIR:?required}"
+
+mkdir -p "${HETCHY_BOOTSTRAP_OUT_DIR}"
+
+echo "[hetchy-bootstrap] invoking claude" >&2
+# stream-json + verbose mirrors agent.sh — gives the bot typed Block
+# updates in real time. The agent is told (in the prompt) to write
+# its four artifacts to ${HETCHY_BOOTSTRAP_OUT_DIR}; we just verify
+# they show up.
+claude --print --dangerously-skip-permissions \
+       --output-format stream-json --verbose \
+       < "${HETCHY_BOOTSTRAP_PROMPT_FILE}"
+
+echo "[hetchy-bootstrap] verifying artifacts" >&2
+for f in setup.sh start.sh health.sh manifest.json; do
+  path="${HETCHY_BOOTSTRAP_OUT_DIR}/${f}"
+  if [[ ! -s "$path" ]]; then
+    echo "[hetchy-bootstrap] missing or empty: $path" >&2
+    exit 70
+  fi
+done
+
+chmod +x "${HETCHY_BOOTSTRAP_OUT_DIR}/setup.sh" \
+         "${HETCHY_BOOTSTRAP_OUT_DIR}/start.sh" \
+         "${HETCHY_BOOTSTRAP_OUT_DIR}/health.sh"
+
+echo "[hetchy-bootstrap] running setup.sh (idempotency check: run twice)" >&2
+"${HETCHY_BOOTSTRAP_OUT_DIR}/setup.sh"
+"${HETCHY_BOOTSTRAP_OUT_DIR}/setup.sh"
+
+echo "[hetchy-bootstrap] starting app in background" >&2
+"${HETCHY_BOOTSTRAP_OUT_DIR}/start.sh" &
+START_PID=$!
+trap 'kill ${START_PID} 2>/dev/null || true' EXIT
+
+echo "[hetchy-bootstrap] polling health.sh (90s budget)" >&2
+for i in {1..90}; do
+  if "${HETCHY_BOOTSTRAP_OUT_DIR}/health.sh" >/dev/null 2>&1; then
+    echo "[hetchy-bootstrap] healthy after ${i}s" >&2
+    exit 0
+  fi
+  sleep 1
+done
+
+echo "[hetchy-bootstrap] health check never passed" >&2
+exit 71
+`

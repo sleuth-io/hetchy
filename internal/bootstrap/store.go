@@ -1,0 +1,283 @@
+package bootstrap
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+
+	"github.com/hetchyhq/hetchy/internal/db"
+	"github.com/hetchyhq/hetchy/internal/db/sqlc"
+	"github.com/hetchyhq/hetchy/internal/secrets"
+)
+
+// ErrNotFound signals that no spec exists for the given (installation,
+// repo, path). Callers translate this into "first encounter, run
+// bootstrap synchronously".
+var ErrNotFound = errors.New("bootstrap: spec not found")
+
+// Store wraps the sqlc Queries with the typed Spec/Secret model and
+// transparent encryption for secret values. It mirrors the
+// orgcfg.Store pattern: callers see plaintext, the DB sees ciphertext.
+type Store struct {
+	db     *db.Store
+	cipher *secrets.Cipher
+}
+
+// New constructs a Store. The cipher is required even though specs
+// themselves contain no secrets — repo_secret_values does, and the
+// Store handles both halves of the bootstrap state.
+func New(d *db.Store, c *secrets.Cipher) *Store {
+	return &Store{db: d, cipher: c}
+}
+
+// GetSpec returns the saved spec for (installation, repo, path), or
+// ErrNotFound. path is "" for single-target repos.
+func (s *Store) GetSpec(ctx context.Context, installationID, repoID int64, path string) (*Spec, error) {
+	row, err := s.db.Queries.GetRepoSetupSpec(ctx, sqlc.GetRepoSetupSpecParams{
+		InstallationID: installationID,
+		RepoID:         repoID,
+		Path:           path,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("bootstrap: get spec: %w", err)
+	}
+	return rowToSpec(row)
+}
+
+// SaveSpec writes (or upserts) a spec. The fingerprint must be
+// recomputed and supplied by the caller — Store does not re-hash the
+// repo on every save. validation_status is set on the input Spec.
+func (s *Store) SaveSpec(ctx context.Context, spec *Spec) error {
+	services, err := json.Marshal(nonNilServices(spec.Services))
+	if err != nil {
+		return fmt.Errorf("bootstrap: marshal services: %w", err)
+	}
+	required, err := json.Marshal(nonNilSecrets(spec.RequiredSecrets))
+	if err != nil {
+		return fmt.Errorf("bootstrap: marshal required secrets: %w", err)
+	}
+	deferred, err := json.Marshal(nonNilStrings(spec.DeferredCapabilities))
+	if err != nil {
+		return fmt.Errorf("bootstrap: marshal deferred: %w", err)
+	}
+	suggestions, err := json.Marshal(nonNilStrings(spec.SuggestedRepoChanges))
+	if err != nil {
+		return fmt.Errorf("bootstrap: marshal suggestions: %w", err)
+	}
+	var stop *string
+	if spec.StopScript != "" {
+		stop = &spec.StopScript
+	}
+	var bootLog *string
+	if spec.BootstrapLog != "" {
+		bootLog = &spec.BootstrapLog
+	}
+	_, err = s.db.Queries.UpsertRepoSetupSpec(ctx, sqlc.UpsertRepoSetupSpecParams{
+		InstallationID:       spec.InstallationID,
+		RepoID:               spec.RepoID,
+		Path:                 spec.Path,
+		SpecVersion:          spec.SpecVersion,
+		Kind:                 spec.Kind,
+		SetupScript:          spec.SetupScript,
+		StartScript:          spec.StartScript,
+		HealthCheck:          spec.HealthCheck,
+		StopScript:           stop,
+		Services:             services,
+		RequiredSecrets:      required,
+		DeferredCapabilities: deferred,
+		SuggestedRepoChanges: suggestions,
+		SourceFingerprint:    spec.SourceFingerprint,
+		ValidationStatus:     string(spec.ValidationStatus),
+		LastValidatedAt:      pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		SuccessCount:         spec.SuccessCount,
+		FailureCount:         spec.FailureCount,
+		BootstrapLog:         bootLog,
+	})
+	if err != nil {
+		return fmt.Errorf("bootstrap: upsert spec: %w", err)
+	}
+	return nil
+}
+
+// MarkApplied bumps success/failure counters and validation_status
+// without rewriting the (large) script + JSONB payload. Called by the
+// runtime apply path on every task.
+func (s *Store) MarkApplied(
+	ctx context.Context,
+	installationID, repoID int64,
+	path string,
+	status ValidationStatus,
+	success, failure int32,
+) error {
+	err := s.db.Queries.UpdateRepoSetupSpecStatus(ctx, sqlc.UpdateRepoSetupSpecStatusParams{
+		InstallationID:   installationID,
+		RepoID:           repoID,
+		Path:             path,
+		ValidationStatus: string(status),
+		LastValidatedAt:  pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		SuccessCount:     success,
+		FailureCount:     failure,
+	})
+	if err != nil {
+		return fmt.Errorf("bootstrap: update status: %w", err)
+	}
+	return nil
+}
+
+// SecretValues holds the plaintext values the user has supplied for a
+// repo's required secrets. Keyed by env var name. Missing keys mean
+// "not supplied yet" — the apply path should pause and ask the user
+// to fill them in via the settings UI.
+type SecretValues map[string]string
+
+// GetSecrets returns the decrypted set of repo-scoped secrets for
+// (installation, repo, path). Empty values (NULL ciphertext) are
+// elided — only filled-in keys appear in the returned map.
+func (s *Store) GetSecrets(ctx context.Context, installationID, repoID int64, path string) (SecretValues, error) {
+	rows, err := s.db.Queries.ListRepoSecretValues(ctx, sqlc.ListRepoSecretValuesParams{
+		InstallationID: installationID,
+		RepoID:         repoID,
+		Path:           path,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("bootstrap: list secrets: %w", err)
+	}
+	out := make(SecretValues, len(rows))
+	for _, row := range rows {
+		plain, err := s.cipher.Decrypt(row.ValueEncrypted)
+		if err != nil {
+			return nil, fmt.Errorf("bootstrap: decrypt %s: %w", row.Name, err)
+		}
+		if plain == "" {
+			// Placeholder row (declared but not yet filled in). Skip
+			// rather than return an empty string so the apply path can
+			// detect missing-secret with a simple `_, ok := vals[name]`.
+			continue
+		}
+		out[row.Name] = plain
+	}
+	return out, nil
+}
+
+// SetSecret writes one repo-scoped secret. value="" creates or clears
+// the placeholder row (so the UI knows about the key without a real
+// value). Any non-empty value is encrypted on the way in.
+func (s *Store) SetSecret(ctx context.Context, installationID, repoID int64, path, name, value string) error {
+	cipher, err := s.cipher.Encrypt(value)
+	if err != nil {
+		return fmt.Errorf("bootstrap: encrypt %s: %w", name, err)
+	}
+	err = s.db.Queries.UpsertRepoSecretValue(ctx, sqlc.UpsertRepoSecretValueParams{
+		InstallationID: installationID,
+		RepoID:         repoID,
+		Path:           path,
+		Name:           name,
+		ValueEncrypted: cipher,
+	})
+	if err != nil {
+		return fmt.Errorf("bootstrap: upsert secret: %w", err)
+	}
+	return nil
+}
+
+// DeclareRequiredSecret inserts a placeholder row for a secret the
+// bootstrap manifest declared but the user hasn't filled in yet.
+// Idempotent: if the row exists with a real value, the value is
+// preserved (we re-upsert NULL only when no row existed).
+//
+// Implemented as a check-then-insert. The race window where two
+// concurrent bootstraps both try to declare the same key is harmless
+// — the second one's value=NULL update is a no-op against the first
+// one's also-NULL row.
+func (s *Store) DeclareRequiredSecret(ctx context.Context, installationID, repoID int64, path, name string) error {
+	existing, err := s.db.Queries.GetRepoSecretValue(ctx, sqlc.GetRepoSecretValueParams{
+		InstallationID: installationID,
+		RepoID:         repoID,
+		Path:           path,
+		Name:           name,
+	})
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("bootstrap: check secret: %w", err)
+	}
+	if err == nil && existing.ValueEncrypted != nil {
+		// Already filled in — don't clobber.
+		return nil
+	}
+	return s.db.Queries.UpsertRepoSecretValue(ctx, sqlc.UpsertRepoSecretValueParams{
+		InstallationID: installationID,
+		RepoID:         repoID,
+		Path:           path,
+		Name:           name,
+		ValueEncrypted: nil,
+	})
+}
+
+// rowToSpec decodes the raw sqlc row (with JSONB blobs as []byte) into
+// the typed Spec.
+func rowToSpec(row sqlc.RepoSetupSpec) (*Spec, error) {
+	spec := &Spec{
+		InstallationID:    row.InstallationID,
+		RepoID:            row.RepoID,
+		Path:              row.Path,
+		SpecVersion:       row.SpecVersion,
+		Kind:              row.Kind,
+		SetupScript:       row.SetupScript,
+		StartScript:       row.StartScript,
+		HealthCheck:       row.HealthCheck,
+		SourceFingerprint: row.SourceFingerprint,
+		ValidationStatus:  ValidationStatus(row.ValidationStatus),
+		SuccessCount:      row.SuccessCount,
+		FailureCount:      row.FailureCount,
+	}
+	if row.StopScript != nil {
+		spec.StopScript = *row.StopScript
+	}
+	if row.BootstrapLog != nil {
+		spec.BootstrapLog = *row.BootstrapLog
+	}
+	if err := json.Unmarshal(row.Services, &spec.Services); err != nil {
+		return nil, fmt.Errorf("bootstrap: decode services: %w", err)
+	}
+	if err := json.Unmarshal(row.RequiredSecrets, &spec.RequiredSecrets); err != nil {
+		return nil, fmt.Errorf("bootstrap: decode required secrets: %w", err)
+	}
+	if err := json.Unmarshal(row.DeferredCapabilities, &spec.DeferredCapabilities); err != nil {
+		return nil, fmt.Errorf("bootstrap: decode deferred: %w", err)
+	}
+	if err := json.Unmarshal(row.SuggestedRepoChanges, &spec.SuggestedRepoChanges); err != nil {
+		return nil, fmt.Errorf("bootstrap: decode suggestions: %w", err)
+	}
+	return spec, nil
+}
+
+// nonNil* helpers normalize nil → empty slice so json.Marshal emits
+// "[]" rather than "null", matching the JSONB DEFAULT '[]'::jsonb on
+// the column.
+func nonNilServices(s []Service) []Service {
+	if s == nil {
+		return []Service{}
+	}
+	return s
+}
+
+func nonNilSecrets(s []Secret) []Secret {
+	if s == nil {
+		return []Secret{}
+	}
+	return s
+}
+
+func nonNilStrings(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
+}
