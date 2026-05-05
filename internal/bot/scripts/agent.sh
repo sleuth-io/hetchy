@@ -66,12 +66,17 @@ echo "[hetchy] env scan: $(env | { grep -E '^(ANTHROPIC_|CLAUDE_)' || true; } | 
 echo "[hetchy] setting up git auth"
 git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
 
-echo "[hetchy] cloning ${SF_REPO}"
-git clone "https://github.com/${SF_REPO}.git" "${SF_WORKDIR}"
-cd "${SF_WORKDIR}"
-git checkout "${SF_BASE_BRANCH}"
-git config user.email 'hetchy-bot@users.noreply.github.com'
-git config user.name 'hetchy-bot'
+if [[ -d "${SF_WORKDIR}/.git" ]]; then
+  echo "[hetchy] reusing existing checkout at ${SF_WORKDIR}"
+  cd "${SF_WORKDIR}"
+else
+  echo "[hetchy] cloning ${SF_REPO}"
+  git clone "https://github.com/${SF_REPO}.git" "${SF_WORKDIR}"
+  cd "${SF_WORKDIR}"
+  git checkout "${SF_BASE_BRANCH}"
+  git config user.email 'hetchy-bot@users.noreply.github.com'
+  git config user.name 'hetchy-bot'
+fi
 
 echo "[hetchy] verifying claude"
 which claude
