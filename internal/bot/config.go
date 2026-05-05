@@ -94,7 +94,7 @@ func LoadConfig() (Config, error) {
 	}
 	var missing []string
 	for _, key := range required {
-		if os.Getenv(key) == "" {
+		if strings.TrimSpace(os.Getenv(key)) == "" {
 			missing = append(missing, key)
 		}
 	}
@@ -117,7 +117,7 @@ func LoadConfig() (Config, error) {
 
 	return Config{
 		Env:                   getenvDefault("HETCHY_ENV", "prod"),
-		DaytonaAPIURL:         os.Getenv("DAYTONA_API_URL"),
+		DaytonaAPIURL:         strings.TrimSpace(os.Getenv("DAYTONA_API_URL")),
 		Snapshot:              os.Getenv("DAYTONA_SNAPSHOT"),
 		DatabaseURL:           os.Getenv("DATABASE_URL"),
 		WebPort:               port,
