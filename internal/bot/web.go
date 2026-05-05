@@ -1094,6 +1094,12 @@ func (b *Bot) membersHandler(w http.ResponseWriter, r *http.Request) {
 			Email:       m.Email,
 		})
 	}
+	// Member lists change rarely (an admin invites or removes someone)
+	// but are fetched on every initial chat-page load. ListMembers does
+	// O(N) per-user GETs to WorkOS, so a short browser-side cache cuts
+	// most of those round-trips for repeat navigations within the
+	// 5-minute window without making membership changes feel stuck.
+	w.Header().Set("Cache-Control", "private, max-age=300")
 	writeJSON(w, out)
 }
 

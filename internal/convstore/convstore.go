@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/hetchyhq/hetchy/internal/blocks"
 	"github.com/hetchyhq/hetchy/internal/db"
@@ -233,68 +234,72 @@ func decodeBlocks(raw [][]byte) ([][]blocks.Block, error) {
 	return out, nil
 }
 
-func recordFromGetRow(row sqlc.GetConversationRow) (Record, error) {
-	bs, err := decodeBlocks(row.ResponseBlocks)
+// rowFields is the scalar projection shared by every conversations
+// query (Get / ListByOrg / ListByOrgAndUser). The sqlc-generated row
+// types are distinct (one per query), so a helper keyed on this value
+// lets every typed wrapper share one builder — adding a column means
+// updating recordFromFields and the per-query mapping, not three nearly
+// identical 14-line builders.
+type rowFields struct {
+	OrgID, ThreadID, SandboxID, Branch, PrUrl string
+	History                                   []string
+	ResponseBlocks                            [][]byte
+	GithubOwner, GithubRepo, CustomTitle      string
+	CreatorID                                 string
+	CreatedAt, UpdatedAt                      pgtype.Timestamptz
+}
+
+func recordFromFields(f rowFields) (Record, error) {
+	bs, err := decodeBlocks(f.ResponseBlocks)
 	if err != nil {
 		return Record{}, err
 	}
 	return Record{
-		OrgID:          row.OrgID,
-		ThreadID:       row.ThreadID,
-		SandboxID:      row.SandboxID,
-		Branch:         row.Branch,
-		PRURL:          row.PrUrl,
-		History:        row.History,
+		OrgID:          f.OrgID,
+		ThreadID:       f.ThreadID,
+		SandboxID:      f.SandboxID,
+		Branch:         f.Branch,
+		PRURL:          f.PrUrl,
+		History:        f.History,
 		ResponseBlocks: bs,
-		GitHubOwner:    row.GithubOwner,
-		GitHubRepo:     row.GithubRepo,
-		CustomTitle:    row.CustomTitle,
-		CreatorID:      row.CreatorID,
-		CreatedAt:      row.CreatedAt.Time,
-		UpdatedAt:      row.UpdatedAt.Time,
+		GitHubOwner:    f.GithubOwner,
+		GitHubRepo:     f.GithubRepo,
+		CustomTitle:    f.CustomTitle,
+		CreatorID:      f.CreatorID,
+		CreatedAt:      f.CreatedAt.Time,
+		UpdatedAt:      f.UpdatedAt.Time,
 	}, nil
+}
+
+func recordFromGetRow(row sqlc.GetConversationRow) (Record, error) {
+	return recordFromFields(rowFields{
+		OrgID: row.OrgID, ThreadID: row.ThreadID, SandboxID: row.SandboxID,
+		Branch: row.Branch, PrUrl: row.PrUrl, History: row.History,
+		ResponseBlocks: row.ResponseBlocks,
+		GithubOwner:    row.GithubOwner, GithubRepo: row.GithubRepo,
+		CustomTitle: row.CustomTitle, CreatorID: row.CreatorID,
+		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+	})
 }
 
 func recordFromListRow(row sqlc.ListConversationsByOrgRow) (Record, error) {
-	bs, err := decodeBlocks(row.ResponseBlocks)
-	if err != nil {
-		return Record{}, err
-	}
-	return Record{
-		OrgID:          row.OrgID,
-		ThreadID:       row.ThreadID,
-		SandboxID:      row.SandboxID,
-		Branch:         row.Branch,
-		PRURL:          row.PrUrl,
-		History:        row.History,
-		ResponseBlocks: bs,
-		GitHubOwner:    row.GithubOwner,
-		GitHubRepo:     row.GithubRepo,
-		CustomTitle:    row.CustomTitle,
-		CreatorID:      row.CreatorID,
-		CreatedAt:      row.CreatedAt.Time,
-		UpdatedAt:      row.UpdatedAt.Time,
-	}, nil
+	return recordFromFields(rowFields{
+		OrgID: row.OrgID, ThreadID: row.ThreadID, SandboxID: row.SandboxID,
+		Branch: row.Branch, PrUrl: row.PrUrl, History: row.History,
+		ResponseBlocks: row.ResponseBlocks,
+		GithubOwner:    row.GithubOwner, GithubRepo: row.GithubRepo,
+		CustomTitle: row.CustomTitle, CreatorID: row.CreatorID,
+		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+	})
 }
 
 func recordFromListByUserRow(row sqlc.ListConversationsByOrgAndUserRow) (Record, error) {
-	bs, err := decodeBlocks(row.ResponseBlocks)
-	if err != nil {
-		return Record{}, err
-	}
-	return Record{
-		OrgID:          row.OrgID,
-		ThreadID:       row.ThreadID,
-		SandboxID:      row.SandboxID,
-		Branch:         row.Branch,
-		PRURL:          row.PrUrl,
-		History:        row.History,
-		ResponseBlocks: bs,
-		GitHubOwner:    row.GithubOwner,
-		GitHubRepo:     row.GithubRepo,
-		CustomTitle:    row.CustomTitle,
-		CreatorID:      row.CreatorID,
-		CreatedAt:      row.CreatedAt.Time,
-		UpdatedAt:      row.UpdatedAt.Time,
-	}, nil
+	return recordFromFields(rowFields{
+		OrgID: row.OrgID, ThreadID: row.ThreadID, SandboxID: row.SandboxID,
+		Branch: row.Branch, PrUrl: row.PrUrl, History: row.History,
+		ResponseBlocks: row.ResponseBlocks,
+		GithubOwner:    row.GithubOwner, GithubRepo: row.GithubRepo,
+		CustomTitle: row.CustomTitle, CreatorID: row.CreatorID,
+		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+	})
 }

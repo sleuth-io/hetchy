@@ -1211,23 +1211,29 @@ async function send() {
 // Sidebar user filter — populate the <select> with org members and wire up
 // the change handler to refresh the conversation list.
 async function loadMembers() {
+  const sel = document.getElementById('user-filter');
   try {
     const res = await fetch('/api/members', { headers: { 'Accept': 'application/json' } });
-    if (!res.ok) return;
+    if (!res.ok) throw new Error('members fetch failed: ' + res.status);
     const members = (await res.json()) || [];
-    const sel = document.getElementById('user-filter');
     sel.innerHTML = '<option value="">All</option>';
     for (const m of members) {
       const opt = document.createElement('option');
       opt.value = m.user_id;
-      opt.textContent = m.user_id === currentUserID
-        ? (m.display_name || m.email)
-        : (m.display_name || m.email);
+      const label = m.display_name || m.email;
+      opt.textContent = m.user_id === currentUserID ? 'Me (' + label + ')' : label;
       sel.appendChild(opt);
     }
     sel.value = userFilter;
   } catch (e) {
-    // Leave the "All" fallback option in place.
+    // Network or server error: render a minimal dropdown so the label
+    // matches the actual filter state. Without "Me" here, the dropdown
+    // would read "All" while the sidebar is in fact scoped to the
+    // current user (userFilter defaults to currentUserID), which looks
+    // like a bug to anyone trying to widen the view.
+    sel.innerHTML = '<option value="">All</option>'
+      + (currentUserID ? '<option value="' + currentUserID + '">Me</option>' : '');
+    sel.value = userFilter;
   }
 }
 
