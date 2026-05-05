@@ -37,8 +37,14 @@ type slackEmitter struct {
 	threadTS        string
 	user            string
 	conversationURL string
-	idGen           atomic.Uint64
-	open            map[string]openBlock
+	// request is the user's original prompt for this turn. Stamped
+	// into the live message's terminal-state header so the final
+	// summary line reads "Done — make the readme smaller…" rather
+	// than a bare "Done" — gives the thread some at-a-glance context
+	// for what this run was about.
+	request string
+	idGen   atomic.Uint64
+	open    map[string]openBlock
 
 	// liveTS is the timestamp of the live status message in the
 	// thread, set after the first PostMessage. Empty until then.
@@ -78,7 +84,7 @@ type openBlock struct {
 
 const slackUpdateMinInterval = 800 * time.Millisecond
 
-func newSlackEmitter(log *slog.Logger, cli *slack.Client, channel, threadTS, user, conversationURL string) *slackEmitter {
+func newSlackEmitter(log *slog.Logger, cli *slack.Client, channel, threadTS, user, conversationURL, request string) *slackEmitter {
 	return &slackEmitter{
 		log:             log,
 		cli:             cli,
@@ -86,6 +92,7 @@ func newSlackEmitter(log *slog.Logger, cli *slack.Client, channel, threadTS, use
 		threadTS:        threadTS,
 		user:            user,
 		conversationURL: conversationURL,
+		request:         request,
 		open:            map[string]openBlock{},
 		counters:        map[string]int{},
 	}
@@ -94,11 +101,14 @@ func newSlackEmitter(log *slog.Logger, cli *slack.Client, channel, threadTS, use
 func (e *slackEmitter) Start(kind blocks.Kind, title string, _ map[string]any) string {
 	id := "s" + strconv.FormatUint(e.idGen.Add(1), 10)
 	e.open[id] = openBlock{kind: kind, title: title}
-	// Notify blocks are user-attention messages — keep posting them
-	// as their own thread message. Everything else feeds the live
-	// status message instead of spawning a per-block post.
+	// Notify blocks are status messages — keep posting them as their
+	// own thread message. They no longer @mention the user: the
+	// user is already in the thread (they just sent a message), and
+	// pinging them on every status step is overkill. We reserve the
+	// mention for the terminal Result/Error post that tells them
+	// they need to come back and look.
 	if kind == blocks.KindNotify {
-		e.post(fmt.Sprintf("<@%s> %s", e.user, title))
+		e.post(title)
 		return id
 	}
 	e.current = title
@@ -156,7 +166,7 @@ func (e *slackEmitter) Fail(id, summary string) {
 }
 
 func (e *slackEmitter) Notify(title, body string) {
-	msg := fmt.Sprintf("<@%s> %s", e.user, title)
+	msg := title
 	if body != "" {
 		msg += "\n" + body
 	}
@@ -230,6 +240,12 @@ func (e *slackEmitter) refreshLive() {
 
 // renderLive composes the live status message body from the current
 // block title, per-category counters, and elapsed time.
+//
+// On terminal states the header pulls in the user's original prompt
+// so the final summary reads "✅ Done — make the readme smaller and
+// open a PR" rather than the bare "Done" the previous version had.
+// Slack-thread context is fleeting, and giving the live message a
+// recap header makes it useful long after the run finishes.
 func (e *slackEmitter) renderLive() string {
 	icon := ":hourglass_flowing_sand:"
 	header := "Working…"
@@ -244,6 +260,9 @@ func (e *slackEmitter) renderLive() string {
 			icon = ":white_check_mark:"
 			header = "Done"
 		}
+		if r := compactRequest(e.request); r != "" {
+			header += " — " + r
+		}
 	}
 	parts := []string{icon + " " + header}
 	tail := e.renderCountersAndElapsed()
@@ -251,6 +270,32 @@ func (e *slackEmitter) renderLive() string {
 		parts = append(parts, tail)
 	}
 	return strings.Join(parts, "\n")
+}
+
+// compactRequest collapses the user's prompt to a single line for
+// inclusion in the live message header, capped at 80 runes so the
+// header doesn't wrap on narrow Slack columns. Returns "" for empty
+// input so the caller can skip the separator entirely.
+//
+// Rune-aware so a prompt full of multi-byte chars (emoji, CJK) doesn't
+// truncate mid-codepoint and surface as mojibake. Trailing whitespace
+// is trimmed before the ellipsis so we don't produce "… we use …"-
+// style oddities.
+func compactRequest(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	// Collapse internal whitespace runs (incl. newlines) to single
+	// spaces. A multi-line prompt would otherwise inject line
+	// breaks into the live message header.
+	s = strings.Join(strings.Fields(s), " ")
+	runes := []rune(s)
+	const max = 80
+	if len(runes) <= max {
+		return s
+	}
+	return strings.TrimRight(string(runes[:max-1]), " ") + "…"
 }
 
 func (e *slackEmitter) renderCountersAndElapsed() string {

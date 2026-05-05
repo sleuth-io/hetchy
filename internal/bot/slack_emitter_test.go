@@ -1,8 +1,10 @@
 package bot
 
 import (
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/hetchyhq/hetchy/internal/blocks"
 )
@@ -38,6 +40,49 @@ func TestCategorise(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := categorise(tc.kind, tc.title); got != tc.want {
 				t.Errorf("categorise(%v, %q) = %q, want %q", tc.kind, tc.title, got, tc.want)
+			}
+		})
+	}
+}
+
+// compactRequest cleans up the user's prompt for inclusion in the
+// terminal-state live message header. Multi-line prompts must
+// collapse to one line, pathological lengths must truncate, and
+// truncation must be rune-aware (no mid-codepoint cuts on multi-byte
+// emoji prompts).
+func TestCompactRequest(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"empty", "", ""},
+		{"whitespace only", "   \n  ", ""},
+		{"short prompt", "make the readme smaller", "make the readme smaller"},
+		{"collapses newlines", "line one\nline two", "line one line two"},
+		{"collapses runs", "a    b\t\tc", "a b c"},
+		{
+			name: "truncates long prompt and trims trailing space before ellipsis",
+			in:   "this is a really long prompt that goes well past the eighty-char column we use to keep slack headers tidy",
+			want: "this is a really long prompt that goes well past the eighty-char column we use…",
+		},
+		{
+			name: "rune-aware truncation on emoji-heavy input",
+			// 80 hammers (4 bytes each in UTF-8) → trims to 79 runes
+			// + ellipsis, never mid-codepoint.
+			in:   strings.Repeat("🔨", 100),
+			want: strings.Repeat("🔨", 79) + "…",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := compactRequest(tc.in)
+			if got != tc.want {
+				t.Errorf("compactRequest(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+			// Header cap is 80 runes — assert the contract directly.
+			if n := utf8.RuneCountInString(got); n > 80 {
+				t.Errorf("output exceeds 80-rune cap: %d runes (%q)", n, got)
 			}
 		})
 	}
