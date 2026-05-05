@@ -14,7 +14,7 @@ type Kind string
 
 const (
 	// KindSetup is the sandbox bootstrap block. One per turn at most;
-	// receives [sf] echoes from agent.sh / followup.sh as appended
+	// receives [hetchy] echoes from agent.sh / followup.sh as appended
 	// lines and closes when the Claude NDJSON stream begins.
 	KindSetup Kind = "setup"
 

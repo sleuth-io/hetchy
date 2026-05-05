@@ -15,7 +15,7 @@ import (
 // error with the trailing 2 KB of output included so the caller can
 // surface it.
 //
-// Line-buffering matters for two downstream consumers: the [sf] bash
+// Line-buffering matters for two downstream consumers: the [hetchy] bash
 // echoes need to land in the setup block as discrete lines (Daytona
 // chunks stdout at arbitrary byte boundaries, which would otherwise
 // wrap them mid-token in the UI), and the Claude --output-format
