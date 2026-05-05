@@ -3,6 +3,13 @@
 <head>
 <meta charset="utf-8">
 <title>Hetchy</title>
+<!-- Markdown rendering for bot blocks. DOMPurify sanitizes the HTML
+     marked produces — we render server-supplied content (Claude's
+     stream-json text, tool inputs/results) and never want raw HTML
+     bleeding in. CDN-pinned to specific minor versions so a publish
+     can't silently change behaviour. -->
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
 <script>
 // Theme bootstrap — runs before any styles are applied so the page paints
 // in the chosen theme on first frame (no flash of light content). The
@@ -122,6 +129,73 @@
                                      flex-shrink: 0; color: #555; }
   .user-menu-dropdown .divider { border-top: 1px solid #f0f0f0; margin: .25rem 0; }
 
+  /* Block-style bot messages. The bot's per-turn output is a sequence
+     of typed Blocks (sandbox setup, claude_text, tool_use, notify,
+     result, error). Each block renders as a <details> element that
+     auto-collapses when the next one starts; the active streaming
+     block stays open. */
+  /* Fixed-width container so the block stack doesn't jump around as
+     content streams in and blocks open/close. The blocks inside (which
+     are <details> elements, block-level by default) stretch to fill
+     this width, keeping every row the same size regardless of which
+     block is currently widest. Pinned to the left at 80% so bot turns
+     read as a response distinct from the right-aligned user bubble. */
+  .bot-turn { display: flex; flex-direction: column; gap: .35rem;
+              align-self: flex-start; width: 80%; min-width: 0; }
+  .blk { border: 1px solid #e2e2e6; border-radius: .55rem; background: #fff;
+         overflow: hidden; transition: border-color .15s; }
+  .blk[open] { border-color: #c8c8cc; }
+  .blk > summary { display: flex; align-items: center; gap: .5rem;
+                   padding: .45rem .75rem; cursor: pointer; user-select: none;
+                   font-size: .82rem; color: #444; list-style: none; }
+  .blk > summary::-webkit-details-marker { display: none; }
+  .blk > summary .caret { color: #999; font-size: .7rem; width: .8rem;
+                          display: inline-block; text-align: center;
+                          transition: transform .15s; }
+  .blk[open] > summary .caret { transform: rotate(90deg); }
+  .blk > summary .blk-icon { font-size: .9rem; line-height: 1;
+                             flex-shrink: 0; width: 1rem; text-align: center; }
+  .blk > summary .blk-title { flex: 1; min-width: 0; font-weight: 500;
+                              white-space: nowrap; overflow: hidden;
+                              text-overflow: ellipsis; }
+  .blk > summary .blk-summary { color: #888; font-weight: 400;
+                                font-size: .75rem; flex-shrink: 0; }
+  .blk-body { padding: .5rem .85rem .8rem; font-size: .88rem;
+              line-height: 1.5; color: #1a1a1a; }
+  .blk-body p { margin: .35rem 0; }
+  .blk-body p:first-child { margin-top: 0; }
+  .blk-body p:last-child { margin-bottom: 0; }
+  .blk-body pre { background: #f3f3f5; border: 1px solid #e6e6ea;
+                  border-radius: .35rem; padding: .5rem .65rem;
+                  overflow-x: auto; font-size: .8rem; line-height: 1.4;
+                  margin: .35rem 0; }
+  .blk-body code { background: #f0f0f3; border-radius: .25rem;
+                   padding: 0 .2rem; font-size: .85em; }
+  .blk-body pre code { background: transparent; padding: 0; font-size: 1em; }
+  .blk-body a { color: #0b5ec0; }
+  .blk-body ul, .blk-body ol { margin: .35rem 0 .35rem 1.25rem; }
+
+  /* Per-kind accents on the icon column. */
+  .blk-kind-setup       > summary .blk-icon { color: #888; }
+  .blk-kind-notify      > summary .blk-icon { color: #0b93f6; }
+  .blk-kind-claude_text > summary .blk-icon { color: #6b46c1; }
+  .blk-kind-tool_use    > summary .blk-icon { color: #2b8a3e; }
+  .blk-kind-result      > summary .blk-icon { color: #2b8a3e; }
+  .blk-kind-error       > summary .blk-icon { color: #c0392b; }
+  .blk-kind-error       { border-color: #f4b6ad; }
+  .blk-kind-result      { border-color: #b6e0c4; }
+
+  /* Spinner for streaming blocks (status="streaming"). */
+  .blk-streaming > summary .blk-icon::after {
+    content: ''; display: inline-block; width: .75rem; height: .75rem;
+    border: 2px solid currentColor; border-right-color: transparent;
+    border-radius: 50%; animation: blk-spin .7s linear infinite;
+    vertical-align: -.15em;
+  }
+  .blk-streaming > summary .blk-icon { color: #888; }
+  .blk-streaming > summary .blk-icon > * { display: none; }
+  @keyframes blk-spin { to { transform: rotate(360deg); } }
+
   /* Dark theme — applied via html.is-dark by the bootstrap script. Kept
      as overrides on top of the light defaults so the light path stays
      untouched and either rule set is easy to find when tweaking colors. */
@@ -141,6 +215,17 @@
   html.is-dark .chat-item.pending { color: #6e6e72; }
   html.is-dark .chat-item.pending.active { color: #7dc4ff; }
   html.is-dark .msg.bot { background: #232327; border-color: #2e2e33; color: #e7e7e9; }
+  html.is-dark .blk { background: #232327; border-color: #2e2e33; }
+  html.is-dark .blk[open] { border-color: #3a3a40; }
+  html.is-dark .blk > summary { color: #c4c4c8; }
+  html.is-dark .blk > summary .caret,
+  html.is-dark .blk > summary .blk-summary { color: #8a8a90; }
+  html.is-dark .blk-body { color: #e7e7e9; }
+  html.is-dark .blk-body pre { background: #1c1c1f; border-color: #2e2e33; }
+  html.is-dark .blk-body code { background: #2a2a2e; }
+  html.is-dark .blk-body a { color: #7dc4ff; }
+  html.is-dark .blk-kind-error  { border-color: #6b2a23; }
+  html.is-dark .blk-kind-result { border-color: #265a3a; }
   html.is-dark #empty-state { color: #9a9aa0; }
   html.is-dark #empty-state h2 { color: #e7e7e9; }
   html.is-dark #bar { background: #1c1c1f; border-top-color: #2a2a2d; }
@@ -261,17 +346,116 @@ document.getElementById('session-label').textContent = sessionId;
 
 inp.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
 
-function addMsg(text, cls) {
+function addUserMsg(text) {
   // Replace the empty-state placeholder the first time we add a message
   // so the welcome card disappears as the conversation begins.
   const empty = document.getElementById('empty-state');
   if (empty) empty.remove();
   const d = document.createElement('div');
-  d.className = 'msg ' + cls;
+  d.className = 'msg user';
   d.textContent = text;
   log.appendChild(d);
   log.scrollTop = log.scrollHeight;
   return d;
+}
+
+// Per-kind icon glyphs shown in the collapsed summary. Spinner takes
+// over when a block is streaming, so this is just the resting icon.
+const BLK_ICON = {
+  setup:       '□', // ▢
+  notify:      '●', // ●
+  claude_text: '✎', // ✎
+  tool_use:    '⚙', // ⚙
+  result:      '✓', // ✓
+  error:       '✗', // ✗
+};
+
+// renderMarkdown converts a markdown body into sanitized HTML. We
+// trust marked's output shape but run it through DOMPurify because
+// the body comes from Claude / sandbox stdout and could contain
+// arbitrary text — some of which (e.g. tool result JSON) might look
+// like an HTML tag to a careless parser.
+function renderMarkdown(md) {
+  if (!md) return '';
+  const html = marked.parse(md, { breaks: true, gfm: true });
+  return DOMPurify.sanitize(html);
+}
+
+// startBotTurn ensures there's a container the streaming blocks are
+// appended into. One container per user → bot exchange.
+function startBotTurn() {
+  const empty = document.getElementById('empty-state');
+  if (empty) empty.remove();
+  const d = document.createElement('div');
+  d.className = 'bot-turn';
+  log.appendChild(d);
+  log.scrollTop = log.scrollHeight;
+  return d;
+}
+
+// renderBlock builds a <details> element for one block and appends it
+// into the supplied turn container. Returns the element so subsequent
+// append/done events can update it.
+function renderBlock(turn, block, opts) {
+  const open = !!(opts && opts.open);
+  const el = document.createElement('details');
+  el.className = 'blk blk-kind-' + block.kind
+                 + (block.status === 'streaming' ? ' blk-streaming' : '');
+  if (open) el.open = true;
+  el.dataset.blockId = block.id;
+  el.id = 'block-' + block.id;
+  el.innerHTML = '<summary>'
+    + '<span class="caret">▶</span>'
+    + '<span class="blk-icon"><span>' + (BLK_ICON[block.kind] || '•') + '</span></span>'
+    + '<span class="blk-title"></span>'
+    + '<span class="blk-summary"></span>'
+    + '</summary><div class="blk-body"></div>';
+  el.querySelector('.blk-title').textContent = block.title || '';
+  el.querySelector('.blk-summary').textContent = block.summary || '';
+  el.querySelector('.blk-body').innerHTML = renderMarkdown(block.body || '');
+  turn.appendChild(el);
+  return el;
+}
+
+// appendToBlock buffers the delta into the block's raw markdown and
+// schedules a single rAF-coalesced re-render. A naive "re-render on
+// every delta" would be O(n²): each chunk re-parses + re-sanitises the
+// full body, which visibly stutters the browser on long Claude streams
+// (thousands of small text deltas). Coalescing collapses bursts of
+// deltas into one paint per frame.
+function appendToBlock(el, delta) {
+  if (!el) return;
+  const body = el.querySelector('.blk-body');
+  body.dataset.raw = (body.dataset.raw || '') + delta;
+  scheduleBlockRender(el);
+}
+
+function scheduleBlockRender(el) {
+  if (el._renderQueued) return;
+  el._renderQueued = true;
+  requestAnimationFrame(() => {
+    el._renderQueued = false;
+    // Collapsed blocks aren't visible; skip the markdown work and
+    // catch up on the next render (or on finishBlock).
+    if (!el.open) return;
+    const body = el.querySelector('.blk-body');
+    body.innerHTML = renderMarkdown(body.dataset.raw || '');
+    log.scrollTop = log.scrollHeight;
+  });
+}
+
+function finishBlock(el, status, summary) {
+  if (!el) return;
+  el.classList.remove('blk-streaming');
+  if (summary) el.querySelector('.blk-summary').textContent = summary;
+  if (status === 'error') {
+    el.classList.add('blk-kind-error');
+  }
+  // Force a final render so any pending deltas land before the block
+  // is collapsed by the next block_start (a collapsed block skips its
+  // queued render, so we'd otherwise miss the last few tokens).
+  const body = el.querySelector('.blk-body');
+  body.innerHTML = renderMarkdown(body.dataset.raw || '');
 }
 
 function showEmptyState() {
@@ -356,16 +540,27 @@ async function loadHistory() {
     const detail = await res.json();
     log.innerHTML = '';
     const history = detail.history || [];
-    const responses = detail.responses || [];
+    const turns = detail.response_blocks || [];
     for (let i = 0; i < history.length; i++) {
-      addMsg(history[i], 'user');
-      // Older rows persisted before we tracked bot transcripts won't have
-      // a paired response — fall back to the PR URL on the last turn so
-      // the chat doesn't look one-sided.
-      if (responses[i]) {
-        addMsg(responses[i], 'bot');
-      } else if (i === history.length - 1 && detail.pr_url) {
-        addMsg('Done! 🎉 ' + detail.pr_url, 'bot');
+      addUserMsg(history[i]);
+      const blocks = turns[i] || [];
+      const turn = startBotTurn();
+      for (const b of blocks) {
+        // Replay paints every block in its final state (collapsed,
+        // status=done|error). The result/error block on the latest
+        // turn is opened so the user sees it without an extra click.
+        const isLastTurn = i === history.length - 1;
+        const open = isLastTurn && (b.kind === 'result' || b.kind === 'error');
+        renderBlock(turn, b, { open });
+      }
+    }
+    // Honour #block-<id> deep links by expanding + scrolling to the
+    // referenced block.
+    if (window.location.hash && window.location.hash.startsWith('#block-')) {
+      const target = document.getElementById(window.location.hash.slice(1));
+      if (target) {
+        target.open = true;
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
     }
   } catch (e) {
@@ -384,8 +579,7 @@ async function send() {
   inp.value = '';
   btn.disabled = true;
   const isFirstTurn = log.querySelectorAll('.msg').length === 0;
-  addMsg(text, 'user');
-  const bot = addMsg('…', 'bot');
+  addUserMsg(text);
 
   // Show the chat in the sidebar immediately on the first turn — the
   // backend doesn't persist the row until the agent finishes, which can
@@ -396,6 +590,13 @@ async function send() {
     renderSidebar();
   }
 
+  const turn = startBotTurn();
+  // blockEls is the per-id map of <details> we mutate as the SSE
+  // stream comes in. The "active" block stays open; when a new block
+  // starts we collapse the previous one (latest visible policy).
+  const blockEls = new Map();
+  let activeEl = null;
+
   const res = await fetch('/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -405,8 +606,9 @@ async function send() {
   const reader = res.body.getReader();
   const dec = new TextDecoder();
   let buf = '';
-  bot.textContent = '';
 
+  // SSE parser — each event is `event: <name>\n data: <json>\n\n`. We
+  // accumulate bytes in `buf` and consume whole frames as they arrive.
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -414,9 +616,37 @@ async function send() {
     const parts = buf.split('\n\n');
     buf = parts.pop();
     for (const part of parts) {
-      if (part.startsWith('data: ')) {
-        bot.textContent += (bot.textContent ? '\n' : '') + JSON.parse(part.slice(6));
+      // SSE comment frames (`: keepalive`) — ignore.
+      if (part.startsWith(':')) continue;
+      let event = 'message';
+      let data = '';
+      for (const line of part.split('\n')) {
+        if (line.startsWith('event: ')) event = line.slice(7).trim();
+        else if (line.startsWith('data: ')) data += (data ? '\n' : '') + line.slice(6);
+      }
+      if (!data) continue;
+      let payload;
+      try { payload = JSON.parse(data); } catch (e) { continue; }
+      if (event === 'block_start') {
+        // Collapse the previous block as soon as the next one starts,
+        // so the user always sees the freshest activity expanded.
+        if (activeEl) activeEl.open = false;
+        activeEl = renderBlock(turn, {
+          id: payload.id, kind: payload.kind, title: payload.title,
+          body: '', status: 'streaming',
+        }, { open: true });
+        blockEls.set(payload.id, activeEl);
         log.scrollTop = log.scrollHeight;
+      } else if (event === 'block_append') {
+        appendToBlock(blockEls.get(payload.id), payload.delta || '');
+      } else if (event === 'block_done') {
+        finishBlock(blockEls.get(payload.id), payload.status, payload.summary);
+        if (activeEl === blockEls.get(payload.id)) {
+          // The terminating block stays open — it's the latest user-
+          // facing output (a result or error). Tool/text blocks that
+          // are followed by another block will get collapsed by the
+          // next block_start above.
+        }
       }
     }
   }

@@ -1,30 +1,77 @@
-# Custom Daytona sandbox image for running Claude Code.
+# Daytona sandbox image for general-purpose coding agents.
 #
-# We build on the slim Daytona base, which already ships:
-#   - Daytona user (uid 1000)
-#   - Node 22 (via nvm) + npm
+# Built on the slim Daytona base (~430 MB) which provides:
+#   - daytona user (uid 1000) with NOPASSWD sudo — runner expects this
+#   - sleep-infinity entrypoint behavior (we wrap it to also start dockerd)
+#   - Node 22 (via nvm at /usr/local/nvm) + npm on PATH
 #   - Python 3.11 + pip + pipx
 #   - curl, sudo, bash
-# Slim is ~430 MB on disk vs ~2.6 GB for the full image (which carries
-# Chromium/Playwright/Claude Code we don't need pre-baked here).
 #
-# Pinned to 0.6.0-slim so rebuilds are reproducible.
+# Layered on top: a polyglot toolchain (Ruby, PHP, Java, Rust, Go, C/C++),
+# Postgres 16, Redis, Docker engine, Playwright, and the
+# Claude / Codex / Gemini AI CLIs.
 FROM daytonaio/sandbox:0.6.0-slim
 
 USER root
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# Minimal apt deps:
-#   git, ca-certificates, gnupg — functional needs (clone over HTTPS, gh keyring)
-#   wget, jq                    — dev conveniences
+# ---------------------------------------------------------------------------
+# Core OS packages: utilities, build toolchain, Java, Ruby base, C/C++.
+# ---------------------------------------------------------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        git ca-certificates gnupg \
-        wget jq \
+        ca-certificates curl gnupg lsb-release \
+        git wget jq tmux vim nano ripgrep unzip xz-utils \
+        build-essential gcc g++ clang make cmake ninja-build pkg-config \
+        openjdk-21-jdk maven gradle \
+        ruby ruby-dev rbenv ruby-build \
+        zlib1g-dev libssl-dev libffi-dev libreadline-dev libsqlite3-dev \
+        libyaml-dev libxml2-dev libxslt1-dev \
+        redis-server \
  && rm -rf /var/lib/apt/lists/*
 
-# Claude Code CLI (Node + npm already in the base image).
-RUN npm install -g @anthropic-ai/claude-code
+# ---------------------------------------------------------------------------
+# PHP 8.4 from sury.org (Debian's default PHP is older) + Composer.
+# ---------------------------------------------------------------------------
+RUN curl -sSL https://packages.sury.org/php/apt.gpg \
+        -o /usr/share/keyrings/debsuryorg-archive-keyring.gpg \
+ && echo "deb [signed-by=/usr/share/keyrings/debsuryorg-archive-keyring.gpg] https://packages.sury.org/php/ $(lsb_release -sc) main" \
+        > /etc/apt/sources.list.d/php.list \
+ && apt-get update && apt-get install -y --no-install-recommends \
+        php8.4 php8.4-cli php8.4-curl php8.4-mbstring php8.4-xml php8.4-zip \
+ && curl -sS https://getcomposer.org/installer \
+        | php -- --install-dir=/usr/local/bin --filename=composer \
+ && rm -rf /var/lib/apt/lists/*
 
-# GitHub CLI — used by the agent inside the sandbox to push branches and open PRs.
+# ---------------------------------------------------------------------------
+# PostgreSQL 16 from the official PGDG apt repo.
+# ---------------------------------------------------------------------------
+RUN install -d /usr/share/postgresql-common/pgdg \
+ && curl -fsSLo /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+        https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+ && echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -sc)-pgdg main" \
+        > /etc/apt/sources.list.d/pgdg.list \
+ && apt-get update && apt-get install -y --no-install-recommends \
+        postgresql-16 postgresql-client-16 \
+ && rm -rf /var/lib/apt/lists/*
+
+# ---------------------------------------------------------------------------
+# Docker engine + CLI + compose plugin (Docker-in-Docker).
+# Daemon is started by the entrypoint script — sandbox needs --privileged.
+# ---------------------------------------------------------------------------
+RUN install -m 0755 -d /etc/apt/keyrings \
+ && curl -fsSL https://download.docker.com/linux/debian/gpg \
+        -o /etc/apt/keyrings/docker.asc \
+ && chmod a+r /etc/apt/keyrings/docker.asc \
+ && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $(. /etc/os-release && echo $VERSION_CODENAME) stable" \
+        > /etc/apt/sources.list.d/docker.list \
+ && apt-get update && apt-get install -y --no-install-recommends \
+        docker-ce docker-ce-cli containerd.io \
+        docker-buildx-plugin docker-compose-plugin \
+ && rm -rf /var/lib/apt/lists/*
+
+# ---------------------------------------------------------------------------
+# GitHub CLI — used by the agent to push branches and open PRs.
+# ---------------------------------------------------------------------------
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
         | tee /usr/share/keyrings/githubcli-archive-keyring.gpg > /dev/null \
  && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
@@ -33,13 +80,78 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
  && apt-get update && apt-get install -y --no-install-recommends gh \
  && rm -rf /var/lib/apt/lists/*
 
-# Go toolchain.
+# ---------------------------------------------------------------------------
+# yq (jq is in apt above). Pinned so two image rebuilds on different days
+# install the same binary — a `/latest/` URL would silently drift across
+# yq major versions whose CLI semantics differ.
+# ---------------------------------------------------------------------------
+ARG YQ_VERSION=v4.44.3
+RUN curl -fsSL -o /usr/local/bin/yq \
+        "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64" \
+ && chmod +x /usr/local/bin/yq
+
+# ---------------------------------------------------------------------------
+# Go toolchain (pinned).
+# ---------------------------------------------------------------------------
 ARG GO_VERSION=1.25.6
 RUN curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" \
       | tar -C /usr/local -xz \
  && ln -s /usr/local/go/bin/go /usr/local/bin/go \
  && ln -s /usr/local/go/bin/gofmt /usr/local/bin/gofmt
 
-# Drop back to the unprivileged sandbox user the runner expects.
+# ---------------------------------------------------------------------------
+# Rust (rustup) — installed system-wide, symlinked into /usr/local/bin so
+# login-shell PATH resets don't hide it.
+# ---------------------------------------------------------------------------
+ENV RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    PATH=/usr/local/cargo/bin:$PATH
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+      | sh -s -- -y --no-modify-path --default-toolchain stable --profile minimal \
+ && chmod -R a+rwX "$RUSTUP_HOME" "$CARGO_HOME" \
+ && for f in /usr/local/cargo/bin/*; do ln -sf "$f" /usr/local/bin/$(basename "$f"); done
+
+# ---------------------------------------------------------------------------
+# Python tooling via pipx (each tool isolated, exposed in /usr/local/bin).
+# ---------------------------------------------------------------------------
+ENV PIPX_HOME=/opt/pipx \
+    PIPX_BIN_DIR=/usr/local/bin
+RUN for pkg in poetry uv ruff black mypy pytest conan; do \
+        pipx install "$pkg" || exit 1; \
+    done
+
+# ---------------------------------------------------------------------------
+# Node global tooling + AI CLIs + Playwright + browsers. Symlink active node
+# bin into /usr/local/bin so the daytona user (login shell with reset PATH)
+# can find every tool.
+# ---------------------------------------------------------------------------
+RUN npm install -g \
+        pnpm yarn bun \
+        eslint prettier chromedriver \
+        @anthropic-ai/claude-code \
+        @openai/codex \
+        @google/gemini-cli \
+        playwright \
+ && npx --yes playwright install --with-deps \
+ && NODE_BIN=$(dirname "$(readlink -f "$(command -v node)")") \
+ && for f in "$NODE_BIN"/*; do ln -sf "$f" "/usr/local/bin/$(basename "$f")"; done
+
+# ---------------------------------------------------------------------------
+# Add daytona to the docker group so the user can talk to dockerd via the
+# unix socket without sudo (entrypoint chgrps the socket on startup).
+# ---------------------------------------------------------------------------
+RUN usermod -aG docker daytona
+
+# ---------------------------------------------------------------------------
+# Entrypoint that auto-starts dockerd in the background and then sleeps
+# forever — preserves Daytona's long-running-pid-1 requirement while making
+# Docker available out of the box (sandbox must run with --privileged).
+# ---------------------------------------------------------------------------
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
 USER daytona
 WORKDIR /home/daytona
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+CMD []

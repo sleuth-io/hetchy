@@ -153,3 +153,17 @@ func getenvDefault(key, def string) string {
 	}
 	return def
 }
+
+// PublicBaseURL returns the externally-reachable base URL for the web
+// app (no trailing slash). Doppler sets LOGOUT_RETURN_TO per-env (it's
+// the canonical "public app root" — required by WorkOS for the logout
+// redirect), so we reuse it here for any link that needs to point back
+// into our running instance from elsewhere (e.g. Slack deep links).
+// Falls back to the local bind URL when LOGOUT_RETURN_TO is unset, so
+// dev without Doppler still works.
+func (c Config) PublicBaseURL() string {
+	if base := strings.TrimSuffix(c.LogoutReturnTo, "/"); base != "" {
+		return base
+	}
+	return "http://localhost:" + c.WebPort
+}

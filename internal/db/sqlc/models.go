@@ -9,17 +9,17 @@ import (
 )
 
 type Conversation struct {
-	OrgID       string             `json:"org_id"`
-	ThreadID    string             `json:"thread_id"`
-	SandboxID   string             `json:"sandbox_id"`
-	Branch      string             `json:"branch"`
-	PrUrl       string             `json:"pr_url"`
-	History     []string           `json:"history"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
-	Responses   []string           `json:"responses"`
-	GithubOwner string             `json:"github_owner"`
-	GithubRepo  string             `json:"github_repo"`
+	OrgID          string             `json:"org_id"`
+	ThreadID       string             `json:"thread_id"`
+	SandboxID      string             `json:"sandbox_id"`
+	Branch         string             `json:"branch"`
+	PrUrl          string             `json:"pr_url"`
+	History        []string           `json:"history"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	GithubOwner    string             `json:"github_owner"`
+	GithubRepo     string             `json:"github_repo"`
+	ResponseBlocks [][]byte           `json:"response_blocks"`
 }
 
 type GithubAppInstallation struct {

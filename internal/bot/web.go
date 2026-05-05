@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/hetchyhq/hetchy/internal/auth"
+	"github.com/hetchyhq/hetchy/internal/blocks"
 	"github.com/hetchyhq/hetchy/internal/convstore"
 	"github.com/hetchyhq/hetchy/internal/db/sqlc"
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
@@ -103,15 +104,8 @@ func (b *Bot) runWeb(ctx context.Context) error {
 	// Log both the bind address (where the kernel will accept
 	// connections) and the public URL the user should hit in a
 	// browser (which differs in dev when /etc/hosts maps a real-
-	// looking hostname to localhost). LogoutReturnTo doubles as our
-	// canonical "public app root" — it's the only URL the WorkOS
-	// SDK requires us to know, and Doppler per-env config sets it
-	// correctly for dev (dev.hetchy.ai), staging, and prod.
-	publicURL := strings.TrimSuffix(b.cfg.LogoutReturnTo, "/")
-	if publicURL == "" {
-		publicURL = "http://localhost" + addr
-	}
-	b.log.Info("web ui listening", "addr", addr, "public_url", publicURL)
+	// looking hostname to localhost).
+	b.log.Info("web ui listening", "addr", addr, "public_url", b.cfg.PublicBaseURL())
 	if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("web server: %w", err)
 	}
@@ -891,47 +885,35 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
 
-	requestID := strconv.FormatInt(time.Now().UnixMilli(), 10)
+	// Nanosecond precision (base 36 to keep the resulting branch
+	// suffix short) so two concurrent requests don't generate the
+	// same `feature/sf-<id>` branch name. Millisecond precision was
+	// realistic to collide under load.
+	requestID := strconv.FormatInt(time.Now().UnixNano(), 36)
 	if sessionID == "" {
 		sessionID = requestID
 	}
 
-	updates := make(chan string, 8)
+	we := newWebEmitter()
 
 	go func() {
-		defer close(updates)
-		sendUpdate := func(msg string) {
-			select {
-			case updates <- msg:
-			case <-parentCtx.Done():
-			}
-		}
-		b.HandleRequest(parentCtx, oc, text, requestID, sessionID,
-			sendUpdate, // onUpdate: raw sandbox logs streamed to browser
-			sendUpdate, // onNotify: bot status updates streamed to browser
-			func(msg string) { sendUpdate("Done! :tada: " + msg) }, // onComplete
-			sendUpdate, // onError
-		)
+		defer we.Close()
+		b.HandleRequest(parentCtx, oc, text, requestID, sessionID, we)
 	}()
 
-	// Keepalive ticker: proxies (nginx, etc.) drop idle SSE connections after
-	// ~60 s. Claude can run silently for several minutes, so we send SSE
-	// comment frames periodically to keep the connection alive.
-	keepalive := time.NewTicker(30 * time.Second)
+	// Keepalive ticker: proxies (nginx, etc.) drop idle SSE connections
+	// after ~60 s. Claude can run silently for minutes, so we send a
+	// comment frame periodically to keep the connection alive.
+	keepalive := time.NewTicker(keepaliveInterval)
 	defer keepalive.Stop()
 
 	for {
 		select {
-		case msg, ok := <-updates:
+		case ev, ok := <-we.Events():
 			if !ok {
 				return
 			}
-			data, err := json.Marshal(msg)
-			if err != nil {
-				b.log.Error("json marshal failed", "error", err)
-				return
-			}
-			if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
+			if err := writeSSE(w, ev); err != nil {
 				return
 			}
 			flusher.Flush()
@@ -941,8 +923,10 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 			}
 			flusher.Flush()
 		case <-r.Context().Done():
+			// Drain in background so the HandleRequest goroutine can
+			// finish without blocking on a full channel.
 			go func() {
-				for range updates {
+				for range we.Events() {
 				}
 			}()
 			return
@@ -961,18 +945,16 @@ type conversationSummary struct {
 }
 
 // conversationDetail is the shape returned by GET /api/conversations/{id}.
-// History and Responses are paired by index: history[i] is the user turn
-// and responses[i] is the full bot transcript that streamed back for it
-// (status updates + sandbox logs + the final PR URL or error). Older
-// rows from before the responses column existed will have a shorter
-// responses slice; the UI tolerates that.
+// History and ResponseBlocks are paired by index: history[i] is the
+// user turn and response_blocks[i] is the typed-block transcript the
+// user saw streamed back for it.
 type conversationDetail struct {
-	ThreadID  string   `json:"thread_id"`
-	Title     string   `json:"title"`
-	PRURL     string   `json:"pr_url,omitempty"`
-	History   []string `json:"history"`
-	Responses []string `json:"responses"`
-	UpdatedAt string   `json:"updated_at"`
+	ThreadID       string           `json:"thread_id"`
+	Title          string           `json:"title"`
+	PRURL          string           `json:"pr_url,omitempty"`
+	History        []string         `json:"history"`
+	ResponseBlocks [][]blocks.Block `json:"response_blocks"`
+	UpdatedAt      string           `json:"updated_at"`
 }
 
 func (b *Bot) conversationsHandler(w http.ResponseWriter, r *http.Request) {
@@ -1025,12 +1007,12 @@ func (b *Bot) conversationDetailHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, conversationDetail{
-		ThreadID:  rec.ThreadID,
-		Title:     conversationTitle(rec),
-		PRURL:     rec.PRURL,
-		History:   rec.History,
-		Responses: rec.Responses,
-		UpdatedAt: rec.UpdatedAt.UTC().Format(time.RFC3339),
+		ThreadID:       rec.ThreadID,
+		Title:          conversationTitle(rec),
+		PRURL:          rec.PRURL,
+		History:        rec.History,
+		ResponseBlocks: rec.ResponseBlocks,
+		UpdatedAt:      rec.UpdatedAt.UTC().Format(time.RFC3339),
 	})
 }
 

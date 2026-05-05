@@ -5,12 +5,12 @@ import (
 	_ "embed"
 	"encoding/base64"
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
 
+	"github.com/hetchyhq/hetchy/internal/blocks"
 	"github.com/hetchyhq/hetchy/internal/convstore"
 )
 
@@ -19,8 +19,6 @@ var agentScript string
 
 //go:embed scripts/followup.sh
 var followupScript string
-
-var prURLRe = regexp.MustCompile(`https://github\.com/[^\s]+/pull/\d+`)
 
 const agentPromptTemplate = `You are working inside a fresh sandbox. The repo %s has been cloned
 to %s and %s is checked out. Your task is the user request below.
@@ -71,7 +69,7 @@ type repoCtx struct {
 	TokenExpires time.Time
 }
 
-func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, anthropicAPIKey, sxKey, userRequest, requestID string, onUpdate func(string)) (string, error) {
+func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, anthropicAPIKey, sxKey, userRequest, requestID string, emit blocks.Emitter) (string, error) {
 	prompt := fmt.Sprintf(agentPromptTemplate,
 		repo.Slug, workdir, repo.BaseBranch,
 		userRequest, requestID, repo.BaseBranch,
@@ -87,14 +85,14 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, a
 	if sxKey != "" {
 		env["SX_KEY"] = sxKey
 	}
-	return b.runScript(ctx, sb, "agent-"+requestID, "agent", agentScript, env, onUpdate)
+	return b.runScript(ctx, sb, "agent-"+requestID, "agent", agentScript, env, emit)
 }
 
 // runFollowUp resumes work in an existing sandbox. The installation
 // token is freshly minted and passed per-run (not just at sandbox-create
 // time) so a token rotation or a re-installed App takes effect on the
 // very next follow-up rather than only on a freshly-created sandbox.
-func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, anthropicAPIKey string, rec convstore.Record, userRequest, requestID string, onUpdate func(string)) (string, error) {
+func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, anthropicAPIKey string, rec convstore.Record, userRequest, requestID string, emit blocks.Emitter) (string, error) {
 	history := strings.Join(rec.History, "\n---\n")
 	prompt := fmt.Sprintf(agentFollowUpPromptTemplate,
 		workdir, rec.Branch, rec.PRURL,
@@ -106,14 +104,16 @@ func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx
 		"SF_PROMPT_B64":     base64.StdEncoding.EncodeToString([]byte(prompt)),
 		"ANTHROPIC_API_KEY": anthropicAPIKey,
 		"GITHUB_TOKEN":      repo.GitHubToken,
-	}, onUpdate)
+	}, emit)
 }
 
-// runScript writes scriptBody to /tmp/sf-<label>.sh inside the sandbox,
-// runs it with the given env vars prefixed on the command line, and
-// returns the captured stdout+stderr. It looks for a GitHub PR URL in the
-// output and returns an error if none is found.
-func (b *Bot) runScript(ctx context.Context, sb *daytona.Sandbox, sessionID, label, scriptBody string, env map[string]string, onUpdate func(string)) (string, error) {
+// runScript writes scriptBody to /tmp/sf-<label>.sh inside the sandbox
+// and runs it with the given env vars prefixed on the command line. It
+// streams Block-shaped updates via emit (sandbox bootstrap goes into a
+// "setup" block; the Claude stream-json output is parsed line-by-line
+// into typed blocks). Returns the PR URL extracted from the final
+// assistant message in the Claude stream.
+func (b *Bot) runScript(ctx context.Context, sb *daytona.Sandbox, sessionID, label, scriptBody string, env map[string]string, emit blocks.Emitter) (string, error) {
 	if err := sb.Process.CreateSession(ctx, sessionID); err != nil {
 		return "", fmt.Errorf("create session: %w", err)
 	}
@@ -123,9 +123,19 @@ func (b *Bot) runScript(ctx context.Context, sb *daytona.Sandbox, sessionID, lab
 		})
 	}()
 
+	// Writing the script generates no user-visible output; pass a noop
+	// line handler so it doesn't open a stray block.
+	//
+	// Heredoc terminator MUST sit on its own line. The embedded scripts
+	// end with "\n" today, but an edit that drops the trailing newline
+	// would put `SFEOF` on the same line as the last script line and
+	// the heredoc would hang waiting for a bare terminator. Trim any
+	// trailing newlines and emit our own so the construction is
+	// invariant to the script body's exact whitespace.
 	scriptPath := "/tmp/sf-" + label + ".sh"
-	writeCmd := fmt.Sprintf("cat > %s << 'SFEOF'\n%sSFEOF\nchmod +x %s", scriptPath, scriptBody, scriptPath)
-	if _, err := b.sh(ctx, sb, sessionID, "write-script", writeCmd, 15*time.Second, onUpdate); err != nil {
+	body := strings.TrimRight(scriptBody, "\n")
+	writeCmd := fmt.Sprintf("cat > %s << 'SFEOF'\n%s\nSFEOF\nchmod +x %s", scriptPath, body, scriptPath)
+	if _, err := b.shLines(ctx, sb, sessionID, "write-script", writeCmd, 15*time.Second, func(string) {}); err != nil {
 		return "", err
 	}
 
@@ -138,18 +148,21 @@ func (b *Bot) runScript(ctx context.Context, sb *daytona.Sandbox, sessionID, lab
 	}
 	runCmd := prefix.String() + "bash " + scriptPath
 
-	out, err := b.sh(ctx, sb, sessionID, "run-script", runCmd, 20*time.Minute, onUpdate)
-	if err != nil {
+	router := newAgentLineRouter(emit)
+	if _, err := b.shLines(ctx, sb, sessionID, "run-script", runCmd, 20*time.Minute, router.Line); err != nil {
+		router.Abort()
 		return "", err
 	}
-
-	match := prURLRe.FindString(out)
-	if match == "" {
-		tail := out
-		if len(tail) > 1500 {
-			tail = tail[len(tail)-1500:]
+	prURL := router.Finish()
+	if prURL == "" {
+		// Distinguish "setup never reached claude" from "claude ran
+		// but didn't post a URL". Both surface here but they need
+		// different remediation, so on-call shouldn't have to tail
+		// logs to tell them apart.
+		if !router.ReachedAgent() {
+			return "", fmt.Errorf("setup script for %s exited before invoking claude — check the sandbox setup block for the failing step", label)
 		}
-		return "", fmt.Errorf("no PR URL found in %s output. Tail:\n%s", label, tail)
+		return "", fmt.Errorf("claude finished the %s run without posting a PR URL — check the agent transcript blocks", label)
 	}
-	return match, nil
+	return prURL, nil
 }

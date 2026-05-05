@@ -16,7 +16,7 @@ LDFLAGS=-ldflags "-X github.com/hetchyhq/hetchy/internal/buildinfo.Version=$(VER
 
 # Daytona dev stack
 DAYTONA_DIR   ?= $(HOME)/src/daytona
-SNAPSHOT_NAME ?= claude-playwright
+SNAPSHOT_NAME ?= universal-coding
 SNAPSHOT_TAG  ?= 1
 COMPOSE       = docker compose -f "$(DAYTONA_DIR)/docker/docker-compose.yaml"
 LOG_FILE      ?= /tmp/hetchy.log

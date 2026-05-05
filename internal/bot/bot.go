@@ -18,6 +18,7 @@ import (
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/types"
 
 	"github.com/hetchyhq/hetchy/internal/auth"
+	"github.com/hetchyhq/hetchy/internal/blocks"
 	"github.com/hetchyhq/hetchy/internal/convstore"
 	"github.com/hetchyhq/hetchy/internal/db"
 	"github.com/hetchyhq/hetchy/internal/db/sqlc"
@@ -25,6 +26,13 @@ import (
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
 	"github.com/hetchyhq/hetchy/internal/secrets"
 )
+
+// maxBlocksPerTurn caps how many blocks we persist per turn. The full
+// stream still reaches the user in real time via SSE; the persisted copy
+// only needs enough blocks for a reopened chat to be readable. A long
+// agent run with verbose tool output can otherwise easily push hundreds
+// of blocks into a single JSONB[] cell.
+const maxBlocksPerTurn = 200
 
 const (
 	maxRetries        = 3
@@ -233,15 +241,9 @@ func (b *Bot) Run(ctx context.Context) error {
 // config — callers (web/slack) pull oc from the principal's org id (web)
 // or the org that owns the inbound socket (slack) and pass it in.
 //
-// Callbacks:
-//   - onUpdate receives raw sandbox log chunks (stdout/stderr from Claude
-//     Code and shell steps). The web UI streams these to the browser; Slack
-//     suppresses them to avoid flooding threads.
-//   - onNotify receives important status messages from the bot itself
-//     ("Spinning up…", "Resuming work on PR…"). Both transports surface
-//     these.
-//   - onComplete fires once with the PR URL on success.
-//   - onError fires once with a human-readable failure message.
+// `out` is the transport-side Emitter (web SSE, Slack, …). HandleRequest
+// wraps it with a Recorder so the same blocks reach both the user and
+// persistence.
 //
 // Per-conversation state machine: when no conversation row exists for
 // (org, thread), the request opens a new one. The repo is resolved
@@ -250,7 +252,7 @@ func (b *Bot) Run(ctx context.Context) error {
 // user to reply with `owner/name`. The next message into a conversation
 // in that "awaiting repo" state is interpreted as the repo selection,
 // not as a new task.
-func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, requestID, threadID string, onUpdate func(string), onNotify func(string), onComplete func(string), onError func(string)) {
+func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, requestID, threadID string, out blocks.Emitter) {
 	b.log.Info("request received",
 		"org", oc.OrgID,
 		"request_id", requestID,
@@ -259,60 +261,60 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		"text_preview", truncate(text, 200),
 	)
 
-	// Wrap callbacks so every line streamed to the user is also captured
-	// in `transcript`. We persist that string alongside the user turn so
-	// reopening the chat replays the same bot output the user originally
-	// saw — status updates, sandbox logs, and the final PR URL.
-	transcript := &strings.Builder{}
-	wOnUpdate := wrapTranscript(transcript, onUpdate)
-	wOnNotify := wrapTranscript(transcript, onNotify)
-	wOnComplete := wrapTranscript(transcript, onComplete)
-	wOnError := wrapTranscript(transcript, onError)
+	// Wrap the transport emitter with a Recorder so every block streamed
+	// to the user is also captured for persistence. A reopened chat
+	// replays the same block tree the user originally saw.
+	recorder := blocks.NewRecorder(maxBlocksPerTurn)
+	emit := blocks.Tee(recorder, out)
 
 	if oc.AnthropicAPIKey == "" {
 		b.log.Warn("org missing anthropic api key", "org", oc.OrgID)
-		wOnError("This organization is missing an Anthropic API key. Set it at /settings/org.")
+		emit.Error("Missing Anthropic API key", "This organization is missing an Anthropic API key. Set it at /settings/org.")
 		return
 	}
 
 	rec, err := b.convs.Get(ctx, oc.OrgID, threadID)
 	switch {
+	case err == nil && rec.SandboxID != "" && rec.PRURL != "":
+		// Live conversation — agent succeeded at least once, PR exists.
+		b.handleFollowUp(ctx, oc, rec, text, requestID, recorder, emit)
+		return
 	case err == nil && rec.SandboxID != "":
-		// Live conversation — agent has run before, pinning is set.
-		b.handleFollowUp(ctx, oc, rec, text, requestID, transcript, wOnUpdate, wOnNotify, wOnComplete, wOnError)
+		// Sandbox was created but the agent failed before producing a
+		// PR. Retry: archive the orphan sandbox + spawn a fresh one.
+		b.handleRetryAfterFailure(ctx, oc, rec, text, requestID, recorder, emit)
 		return
 	case err == nil:
-		// Conversation exists but the agent has not run yet (no sandbox).
-		// This covers two cases:
-		//   1. We asked for a repo and the user is now answering. The
-		//      partial row has GitHubOwner == "".
-		//   2. A previous fresh-agent attempt resolved a repo but
-		//      then failed — we now treat the user's *new* message as
-		//      a fresh repo answer, having already cleared
-		//      GitHubOwner/Repo on that failure path. (Belt-and-
-		//      suspenders: if a row somehow has GitHubOwner set with no
-		//      sandbox, we fall back to the awaiting-reply handler too,
-		//      because the user's new text is what they want acted on
-		//      — not a stale History[0].)
-		b.handleAwaitingRepoReply(ctx, oc, rec, text, requestID, transcript, wOnUpdate, wOnNotify, wOnComplete, wOnError)
+		// No sandbox was ever created. Two sub-states distinguished by
+		// GitHubOwner:
+		//   1. GitHubOwner == "" → we asked for a repo and the user is
+		//      answering. handleAwaitingRepoReply parses owner/name.
+		//   2. GitHubOwner != "" → resolveRepo+sandbox-create failed.
+		//      The repo isn't the problem; treat the new message as
+		//      the new request and re-run on the same repo.
+		if rec.GitHubOwner != "" && rec.GitHubRepo != "" {
+			b.handleRetryAfterFailure(ctx, oc, rec, text, requestID, recorder, emit)
+			return
+		}
+		b.handleAwaitingRepoReply(ctx, oc, rec, text, requestID, recorder, emit)
 		return
 	case errors.Is(err, convstore.ErrNotFound):
 		// fall through — new conversation
 	default:
 		b.log.Error("convstore get", "error", err)
-		wOnError(fmt.Sprintf("Conversation lookup failed: `%v`", err))
+		emit.Error("Conversation lookup failed", fmt.Sprintf("`%v`", err))
 		return
 	}
 
 	// New conversation. Use the org's default repo if set; otherwise
 	// stash the request and ask the user which repo to use.
 	if oc.DefaultGitHubOwner == "" || oc.DefaultGitHubRepo == "" {
-		wOnNotify("Which repository should I work in? Reply with `owner/name`.\n(You can save a default at /settings/org → Integrations.)")
+		emit.Notify("Which repository?", "Reply with `owner/name`.\n(You can save a default at /settings/org → Integrations.)")
 		partial := convstore.Record{
-			OrgID:     oc.OrgID,
-			ThreadID:  threadID,
-			History:   []string{text},
-			Responses: []string{capTranscript(transcript.String())},
+			OrgID:          oc.OrgID,
+			ThreadID:       threadID,
+			History:        []string{text},
+			ResponseBlocks: [][]blocks.Block{recorder.Snapshot()},
 		}
 		if err := b.convs.Upsert(ctx, partial); err != nil {
 			b.log.Error("convstore upsert (awaiting repo)", "error", err, "org", oc.OrgID, "thread", threadID)
@@ -327,7 +329,7 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		GitHubOwner: oc.DefaultGitHubOwner,
 		GitHubRepo:  oc.DefaultGitHubRepo,
 	}
-	b.runFreshAgent(ctx, oc, rec, text, requestID, transcript, wOnUpdate, wOnNotify, wOnComplete, wOnError)
+	b.runFreshAgent(ctx, oc, rec, text, requestID, recorder, emit)
 }
 
 // handleAwaitingRepoReply parses the user's reply as `owner/name`. On
@@ -339,13 +341,13 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 // rec on entry may have GitHubOwner already set (from a previous
 // resolve-failed attempt); we'll overwrite both with whatever this
 // message resolves to.
-func (b *Bot) handleAwaitingRepoReply(ctx context.Context, oc orgcfg.Config, rec convstore.Record, text, requestID string, transcript *strings.Builder, onUpdate func(string), onNotify func(string), onComplete func(string), onError func(string)) {
+func (b *Bot) handleAwaitingRepoReply(ctx context.Context, oc orgcfg.Config, rec convstore.Record, text, requestID string, recorder *blocks.Recorder, emit blocks.Emitter) {
 	owner, name, ok := parseOwnerRepo(text)
 	if !ok {
-		onNotify("I couldn't parse that as `owner/name`. Try again — for example `acme/website`.")
+		emit.Notify("Try again", "I couldn't parse that as `owner/name`. For example `acme/website`.")
 		// Persist the bot's nudge so a UI replay shows it; keep the
 		// row otherwise unchanged.
-		appendResponseToFirstTurn(&rec, transcript.String())
+		appendBlocksToFirstTurn(&rec, recorder.Snapshot())
 		if err := b.convs.Upsert(ctx, rec); err != nil {
 			b.log.Error("convstore upsert (parse retry)", "error", err)
 		}
@@ -361,7 +363,7 @@ func (b *Bot) handleAwaitingRepoReply(ctx context.Context, oc orgcfg.Config, rec
 	rec.GitHubOwner = owner
 	rec.GitHubRepo = name
 	originalRequest := rec.History[0]
-	b.runFreshAgent(ctx, oc, rec, originalRequest, requestID, transcript, onUpdate, onNotify, onComplete, onError)
+	b.runFreshAgent(ctx, oc, rec, originalRequest, requestID, recorder, emit)
 }
 
 // clearRepoOnFailure rewrites a partial conversation back to the
@@ -375,28 +377,61 @@ func clearRepoOnFailure(rec *convstore.Record) {
 	rec.GitHubRepo = ""
 }
 
+// handleRetryAfterFailure resumes a fresh-agent attempt that
+// previously failed (either before producing a sandbox or after the
+// agent crashed mid-run). The repo was resolved successfully on the
+// prior turn, so we keep it and re-run with the new user message as
+// the request — the repo isn't the problem and forcing the user to
+// retype `owner/name` would be noise. The new message replaces
+// History[0] (this is still the first real turn — the row exists only
+// because we persisted the failure blocks for refresh visibility) so a
+// follow-up only sees the request that actually shipped.
+//
+// If the failed attempt left an orphan sandbox (rec.SandboxID set,
+// rec.PRURL empty), archive it best-effort before spawning a fresh
+// one. The user retrying is the signal that they're done debugging
+// the previous failure; without this we'd leak a Daytona sandbox per
+// retry.
+func (b *Bot) handleRetryAfterFailure(ctx context.Context, oc orgcfg.Config, rec convstore.Record, text, requestID string, recorder *blocks.Recorder, emit blocks.Emitter) {
+	if rec.SandboxID != "" {
+		if sb, err := b.daytona.Get(ctx, rec.SandboxID); err == nil {
+			if err := sb.Stop(ctx); err != nil {
+				b.log.Warn("orphan sandbox stop failed", "sandbox", rec.SandboxID, "error", err)
+			} else if err := sb.Archive(ctx); err != nil {
+				b.log.Warn("orphan sandbox archive failed", "sandbox", rec.SandboxID, "error", err)
+			}
+		} else {
+			b.log.Warn("orphan sandbox lookup failed; assuming already gone", "sandbox", rec.SandboxID, "error", err)
+		}
+		rec.SandboxID = ""
+	}
+	rec.History = []string{text}
+	rec.ResponseBlocks = nil
+	b.runFreshAgent(ctx, oc, rec, text, requestID, recorder, emit)
+}
+
 // runFreshAgent creates a new sandbox, mints an installation token
 // scoped to rec's repo, runs the agent on userRequest, and persists
 // the resulting conversation. Shared by the new-conversation, awaiting-
 // repo-reply, and "had repo but no sandbox" paths so they all stamp
 // the row identically.
-func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore.Record, userRequest, requestID string, transcript *strings.Builder, onUpdate func(string), onNotify func(string), onComplete func(string), onError func(string)) {
+func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore.Record, userRequest, requestID string, recorder *blocks.Recorder, emit blocks.Emitter) {
 	repo, err := b.resolveRepo(ctx, oc.OrgID, rec.GitHubOwner, rec.GitHubRepo)
 	if err != nil {
 		b.log.Warn("resolve repo failed", "org", oc.OrgID, "owner", rec.GitHubOwner, "name", rec.GitHubRepo, "error", err)
-		onError(fmt.Sprintf("`%s/%s` isn't accessible to this organization's GitHub App installations. Install the App on it at /settings/org → Integrations and try again, or reply with a different `owner/name`.", rec.GitHubOwner, rec.GitHubRepo))
+		emit.Error("Repo not accessible", fmt.Sprintf("`%s/%s` isn't accessible to this organization's GitHub App installations. Install the App on it at /settings/org → Integrations and try again, or reply with a different `owner/name`.", rec.GitHubOwner, rec.GitHubRepo))
 		// Drop back to the awaiting-repo state so the user's next
 		// message can pick a different repo without being interpreted
 		// as a follow-up to a half-launched conversation.
 		clearRepoOnFailure(&rec)
-		appendResponseToFirstTurn(&rec, transcript.String())
+		appendBlocksToFirstTurn(&rec, recorder.Snapshot())
 		if err := b.convs.Upsert(ctx, rec); err != nil {
 			b.log.Error("convstore upsert (resolve fail)", "error", err)
 		}
 		return
 	}
 
-	onNotify(fmt.Sprintf("Spinning up an isolated sandbox for your request in `%s` (base: `%s`)…", repo.Slug, repo.BaseBranch))
+	emit.Notify("Starting", fmt.Sprintf("Spinning up an isolated sandbox for your request in `%s` (base: `%s`)…", repo.Slug, repo.BaseBranch))
 
 	envVars := map[string]string{}
 	if oc.SXKey != "" {
@@ -409,21 +444,42 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 	if err != nil {
 		if ctx.Err() != nil {
 			b.log.Error("sandbox create cancelled", "request_id", requestID, "error", err)
-			onError("Sandbox creation was cancelled before it could start. Try again.")
-			return
+			emit.Error("Sandbox cancelled", "Sandbox creation was cancelled before it could start. Try again.")
+		} else {
+			b.log.Error("sandbox create failed", "request_id", requestID, "error", err)
+			emit.Error("Sandbox failed", "Couldn't start a sandbox for your request. Check the server logs for details and try again.")
 		}
-		b.log.Error("sandbox create failed", "request_id", requestID, "error", err)
-		onError("Couldn't start a sandbox for your request. Check the server logs for details and try again.")
+		// Persist the streamed blocks so a refresh shows the failure
+		// instead of an empty chat. For a brand-new conversation the
+		// row hasn't been written yet — without this the user loses
+		// every block they just watched stream by. The dispatcher
+		// recognises (GitHubOwner != "" && SandboxID == "" && first
+		// turn already has blocks) as "retry pending" and re-runs on
+		// the next message instead of asking for a repo.
+		appendBlocksToFirstTurn(&rec, recorder.Snapshot())
+		if uerr := b.convs.Upsert(ctx, rec); uerr != nil {
+			b.log.Error("convstore upsert (sandbox create fail)", "error", uerr)
+		}
 		return
 	}
 	b.log.Info("sandbox created", "id", sb.ID, "request_id", requestID)
-	onNotify(fmt.Sprintf("Sandbox `%s` ready — cloning repo and starting Claude Code.", sb.ID))
+	emit.Notify("Sandbox ready", fmt.Sprintf("Sandbox `%s` ready — cloning repo and starting Claude Code.", sb.ID))
 
 	branch := "feature/sf-" + requestID
-	prURL, runErr := b.runAgent(ctx, sb, repo, oc.AnthropicAPIKey, oc.SXKey, userRequest, requestID, onUpdate)
+	prURL, runErr := b.runAgent(ctx, sb, repo, oc.AnthropicAPIKey, oc.SXKey, userRequest, requestID, emit)
 	if runErr != nil {
 		b.log.Error("agent run failed", "sandbox", sb.ID, "request_id", requestID, "error", runErr)
-		onError(fmt.Sprintf("Something went wrong while running the agent. Sandbox `%s` is left running for debugging — check the server logs for details.", sb.ID))
+		emit.Error("Agent failed", fmt.Sprintf("Something went wrong while running the agent. Sandbox `%s` is left running for debugging — reply here to retry (the orphan sandbox will be archived automatically) or check the server logs for details.", sb.ID))
+		// Persist sb.ID so handleRetryAfterFailure can archive the
+		// stale sandbox on the next user message — without this we'd
+		// leak a sandbox per retry. PRURL stays empty, which is how
+		// the dispatcher tells "agent failed mid-run, clean up first"
+		// apart from a real follow-up.
+		rec.SandboxID = sb.ID
+		appendBlocksToFirstTurn(&rec, recorder.Snapshot())
+		if err := b.convs.Upsert(ctx, rec); err != nil {
+			b.log.Error("convstore upsert (agent fail)", "error", err)
+		}
 		return
 	}
 
@@ -433,53 +489,69 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 		b.log.Error("sandbox archive failed", "sandbox", sb.ID, "error", err)
 	}
 
-	onComplete(prURL + "\nReply here to make further changes to this PR.")
+	emit.Result("Done!", prURL+"\n\nReply here to make further changes to this PR.")
 
 	rec.SandboxID = sb.ID
 	rec.Branch = branch
 	rec.PRURL = prURL
-	if len(rec.Responses) == 0 {
-		rec.Responses = []string{capTranscript(transcript.String())}
-	} else {
-		rec.Responses[0] = capTranscript(rec.Responses[0] + "\n" + transcript.String())
-	}
+	appendBlocksToFirstTurn(&rec, recorder.Snapshot())
 	if err := b.convs.Upsert(ctx, rec); err != nil {
 		b.log.Error("convstore upsert", "error", err)
 	}
 }
 
-func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstore.Record, text, requestID string, transcript *strings.Builder, onUpdate func(string), onNotify func(string), onComplete func(string), onError func(string)) {
+func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstore.Record, text, requestID string, recorder *blocks.Recorder, emit blocks.Emitter) {
 	b.log.Info("follow-up received", "org", oc.OrgID, "sandbox", rec.SandboxID, "branch", rec.Branch, "pr", rec.PRURL)
-	onNotify(fmt.Sprintf("Resuming work on %s…", rec.PRURL))
+	emit.Notify("Resuming", fmt.Sprintf("Resuming work on %s…", rec.PRURL))
 
 	repo, err := b.resolveRepo(ctx, oc.OrgID, rec.GitHubOwner, rec.GitHubRepo)
 	if err != nil {
 		b.log.Warn("resolve repo for follow-up failed", "org", oc.OrgID, "owner", rec.GitHubOwner, "name", rec.GitHubRepo, "error", err)
-		onError(fmt.Sprintf("Lost access to `%s/%s` — check the GitHub App install at /settings/org → Integrations.", rec.GitHubOwner, rec.GitHubRepo))
+		emit.Error("Repo access lost", fmt.Sprintf("Lost access to `%s/%s` — check the GitHub App install at /settings/org → Integrations.", rec.GitHubOwner, rec.GitHubRepo))
+		appendBlocksAsNewTurn(&rec, text, recorder.Snapshot())
+		if err := b.convs.Upsert(ctx, rec); err != nil {
+			b.log.Error("convstore upsert (follow-up resolve fail)", "error", err)
+		}
 		return
 	}
 
 	sb, err := b.daytona.Get(ctx, rec.SandboxID)
 	if err != nil {
 		b.log.Error("sandbox get failed", "sandbox", rec.SandboxID, "request_id", requestID, "error", err)
-		onError(fmt.Sprintf("Could not find sandbox `%s` — it may have been archived or removed. Start a new chat to continue.", rec.SandboxID))
+		emit.Error("Sandbox missing", fmt.Sprintf("Could not find sandbox `%s` — it may have been archived or removed. Start a new chat to continue.", rec.SandboxID))
+		appendBlocksAsNewTurn(&rec, text, recorder.Snapshot())
+		if err := b.convs.Upsert(ctx, rec); err != nil {
+			b.log.Error("convstore upsert (follow-up sandbox missing)", "error", err)
+		}
 		return
 	}
 	if err := sb.Start(ctx); err != nil {
 		b.log.Error("sandbox start failed", "sandbox", sb.ID, "request_id", requestID, "error", err)
-		onError(fmt.Sprintf("Failed to resume sandbox `%s`. Check the server logs for details.", sb.ID))
+		emit.Error("Sandbox start failed", fmt.Sprintf("Failed to resume sandbox `%s`. Check the server logs for details.", sb.ID))
+		appendBlocksAsNewTurn(&rec, text, recorder.Snapshot())
+		if err := b.convs.Upsert(ctx, rec); err != nil {
+			b.log.Error("convstore upsert (follow-up sandbox start)", "error", err)
+		}
 		return
 	}
 	if err := sb.WaitForStart(ctx, 2*time.Minute); err != nil {
 		b.log.Error("sandbox wait-for-start failed", "sandbox", sb.ID, "request_id", requestID, "error", err)
-		onError(fmt.Sprintf("Sandbox `%s` did not start in time. Try again, or open a fresh chat.", sb.ID))
+		emit.Error("Sandbox slow to start", fmt.Sprintf("Sandbox `%s` did not start in time. Try again, or open a fresh chat.", sb.ID))
+		appendBlocksAsNewTurn(&rec, text, recorder.Snapshot())
+		if err := b.convs.Upsert(ctx, rec); err != nil {
+			b.log.Error("convstore upsert (follow-up sandbox wait)", "error", err)
+		}
 		return
 	}
 
-	prURL, err := b.runFollowUp(ctx, sb, repo, oc.AnthropicAPIKey, rec, text, requestID, onUpdate)
+	prURL, err := b.runFollowUp(ctx, sb, repo, oc.AnthropicAPIKey, rec, text, requestID, emit)
 	if err != nil {
 		b.log.Error("follow-up failed", "sandbox", sb.ID, "request_id", requestID, "error", err)
-		onError(fmt.Sprintf("Something went wrong while running the agent. Sandbox `%s` is left running for debugging — check the server logs for details.", sb.ID))
+		emit.Error("Agent failed", fmt.Sprintf("Something went wrong while running the agent. Sandbox `%s` is left running for debugging — check the server logs for details.", sb.ID))
+		appendBlocksAsNewTurn(&rec, text, recorder.Snapshot())
+		if err := b.convs.Upsert(ctx, rec); err != nil {
+			b.log.Error("convstore upsert (follow-up agent fail)", "error", err)
+		}
 		return
 	}
 
@@ -489,13 +561,12 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 		b.log.Error("sandbox archive failed", "sandbox", sb.ID, "error", err)
 	}
 
-	// onComplete first so the transcript captures the closing line,
-	// then upsert with the user turn + this turn's bot transcript.
-	onComplete(prURL)
+	// Result first so the recorded snapshot includes the closing block,
+	// then upsert with the new user turn + this turn's blocks.
+	emit.Result("Done!", prURL)
 
 	rec.PRURL = prURL
-	rec.History = append(rec.History, text)
-	rec.Responses = append(rec.Responses, capTranscript(transcript.String()))
+	appendBlocksAsNewTurn(&rec, text, recorder.Snapshot())
 	if err := b.convs.Upsert(ctx, rec); err != nil {
 		b.log.Error("convstore upsert", "error", err)
 	}
@@ -598,19 +669,29 @@ func validGitHubName(s string) bool {
 	return true
 }
 
-// appendResponseToFirstTurn appends `next` to rec.Responses[0],
-// allocating the slice if empty. Used to grow the bot's response
-// transcript across multi-step interactions (ask-for-repo → answer →
-// agent run) without changing rec.History.
-func appendResponseToFirstTurn(rec *convstore.Record, next string) {
-	if next == "" {
+// appendBlocksToFirstTurn appends `next` to rec.ResponseBlocks[0],
+// allocating the slice if empty. Used to grow the bot's response across
+// multi-step interactions on the original turn (ask-for-repo → answer →
+// agent run) without adding a History entry.
+func appendBlocksToFirstTurn(rec *convstore.Record, next []blocks.Block) {
+	if len(next) == 0 {
 		return
 	}
-	if len(rec.Responses) == 0 {
-		rec.Responses = []string{capTranscript(next)}
+	if len(rec.ResponseBlocks) == 0 {
+		rec.ResponseBlocks = [][]blocks.Block{next}
 		return
 	}
-	rec.Responses[0] = capTranscript(rec.Responses[0] + "\n" + next)
+	rec.ResponseBlocks[0] = append(rec.ResponseBlocks[0], next...)
+}
+
+// appendBlocksAsNewTurn appends a new (text, blocks) entry to History
+// and ResponseBlocks, keeping them index-paired.
+func appendBlocksAsNewTurn(rec *convstore.Record, text string, next []blocks.Block) {
+	rec.History = append(rec.History, text)
+	if next == nil {
+		next = []blocks.Block{}
+	}
+	rec.ResponseBlocks = append(rec.ResponseBlocks, next)
 }
 
 // isTransientError reports whether err is a retryable Daytona API error:
@@ -628,38 +709,6 @@ func isTransientError(err error) bool {
 			(dayErr.StatusCode >= 500 && dayErr.StatusCode < 600)
 	}
 	return false
-}
-
-// wrapTranscript returns a callback that streams to the original
-// `next` and also appends to `buf` on a fresh line. Used to capture
-// the bot's full per-turn output for persistence so a reopened chat
-// can replay what the user originally saw.
-func wrapTranscript(buf *strings.Builder, next func(string)) func(string) {
-	return func(s string) {
-		if buf.Len() > 0 {
-			buf.WriteByte('\n')
-		}
-		buf.WriteString(s)
-		next(s)
-	}
-}
-
-// maxTranscriptBytes caps the per-turn transcript before it goes into
-// Postgres. The full stream still reaches the user in real time via SSE;
-// the persisted copy only needs enough context for a reopened chat to
-// be readable. A long agent run with verbose tool output can otherwise
-// easily push hundreds of KB into a single TEXT[] cell.
-const maxTranscriptBytes = 64 * 1024
-
-// capTranscript trims s from the front when it exceeds the cap so that
-// the most recent content — which contains the completion message
-// (PR URL or error) — is always preserved.
-func capTranscript(s string) string {
-	if len(s) <= maxTranscriptBytes {
-		return s
-	}
-	const marker = "[…transcript truncated…]\n"
-	return marker + s[len(s)-maxTranscriptBytes:]
 }
 
 func shellQuote(s string) string {

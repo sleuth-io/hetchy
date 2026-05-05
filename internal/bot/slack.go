@@ -14,6 +14,7 @@ import (
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
 
+	"github.com/hetchyhq/hetchy/internal/blocks"
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
 )
 
@@ -307,26 +308,23 @@ func (b *Bot) handleSlackEvent(ctx context.Context, oc orgcfg.Config, ev incomin
 	replyInThread(b.log, cli, ev.channel, replyTo, fmt.Sprintf("<@%s> Working on it…", ev.user))
 
 	requestID := strings.ReplaceAll(ev.ts, ".", "")
-	b.HandleRequest(ctx, oc, text, requestID, threadID,
-		func(msg string) {
-			// onUpdate: raw sandbox log chunks — logged locally only, never posted to Slack.
-			b.log.Debug("sandbox log", "org", oc.OrgID, "channel", ev.channel, "thread", threadID, "msg", msg)
-		},
-		func(msg string) {
-			// onNotify: important status updates from the bot itself.
-			replyInThread(b.log, cli, ev.channel, replyTo, fmt.Sprintf("<@%s> %s", ev.user, msg))
-		},
-		func(msg string) {
-			replyInThread(b.log, cli, ev.channel, replyTo, fmt.Sprintf("<@%s> Done! :tada: %s", ev.user, msg))
-			removeReaction(b.log, cli, ev.channel, threadID, reaction)
-			addReaction(b.log, cli, ev.channel, threadID, "white_check_mark")
-		},
-		func(msg string) {
-			replyInThread(b.log, cli, ev.channel, replyTo, fmt.Sprintf("<@%s> %s", ev.user, msg))
-			removeReaction(b.log, cli, ev.channel, threadID, reaction)
+	conversationURL := b.cfg.PublicBaseURL() + "/?session=" + threadID
+	emit := newSlackEmitter(b.log, cli, ev.channel, replyTo, ev.user, conversationURL)
+	b.HandleRequest(ctx, oc, text, requestID, threadID, emit)
+	// Reaction bookkeeping: only swap the eyes/recycle that signalled
+	// "working on it" for a final ✓/✗ when the run actually reached a
+	// terminal state. Bot-driven question turns ("Which repository?"
+	// / "Try again") leave the running reaction in place — stamping
+	// a green check on a question is misleading, and stamping ✗ on a
+	// nudge is worse.
+	if emit.terminated {
+		removeReaction(b.log, cli, ev.channel, threadID, reaction)
+		if emit.lastTerminalKind == blocks.KindError {
 			addReaction(b.log, cli, ev.channel, threadID, "x")
-		},
-	)
+		} else {
+			addReaction(b.log, cli, ev.channel, threadID, "white_check_mark")
+		}
+	}
 }
 
 func replyInThread(log *slog.Logger, cli *slack.Client, channel, threadTS, msg string) {

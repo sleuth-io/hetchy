@@ -101,51 +101,32 @@ func TestShellQuote_RoundTrip(t *testing.T) {
 	}
 }
 
-// TestHandleRequest_CallbackRouting verifies that bot status messages go to
-// onNotify (not onUpdate) and that onError fires when sandbox creation
-// fails. Raw sandbox output isn't exercised here because no sandbox is
-// created — that path is covered by integration tests.
-func TestHandleRequest_CallbackRouting(t *testing.T) {
+// TestHandleRequest_AskForRepo verifies that when the org has no
+// default repo, HandleRequest emits a Notify telling the user to
+// reply with owner/name and does not try to create a sandbox.
+func TestHandleRequest_AskForRepo(t *testing.T) {
 	b := &Bot{
 		log:          discardLogger(),
 		convs:        convstore.New(nil),
 		retryBackoff: 0,
 	}
 	b.createFn = func(context.Context, any) (*daytona.Sandbox, error) {
+		t.Fatal("sandbox should not be created when no default repo is set")
 		return nil, sdkerrors.NewDaytonaError("forced failure", 401, nil)
 	}
-
-	// Org has no default repo set, so HandleRequest takes the
-	// "ask for a repo" branch — it should not try to create a
-	// sandbox at all. That makes this test specifically about the
-	// missing-default flow rather than about sandbox failures; the
-	// ask path is the new entry point and exercising it here
-	// guards the same callback-routing invariants.
 	oc := orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "ant"}
 
-	var updates, notifies []string
-	b.HandleRequest(context.Background(), oc, "do something", "req-1", "thread-1",
-		func(msg string) { updates = append(updates, msg) },
-		func(msg string) { notifies = append(notifies, msg) },
-		func(msg string) { t.Errorf("unexpected onComplete: %s", msg) },
-		func(msg string) {
-			t.Errorf("unexpected onError when no default repo (the ask flow should handle this): %s", msg)
-		},
-	)
+	emit := newCaptureEmitter()
+	b.HandleRequest(context.Background(), oc, "do something", "req-1", "thread-1", emit)
 
-	foundAsk := false
-	for _, m := range notifies {
-		if strings.Contains(m, "Which repository") {
-			foundAsk = true
-		}
+	if !emit.hasCall("notify", "Which repository") {
+		t.Errorf("expected a Notify with 'Which repository', got Calls=%v", emit.Calls)
 	}
-	if !foundAsk {
-		t.Errorf("expected 'Which repository' in onNotify, got notifies=%v", notifies)
+	if emit.hasCall("error", "") {
+		t.Errorf("did not expect any Error call, got Calls=%v", emit.Calls)
 	}
-	for _, m := range updates {
-		if strings.Contains(m, "Which repository") {
-			t.Errorf("'Which repository' should not appear in onUpdate, got: %s", m)
-		}
+	if emit.hasCall("result", "") {
+		t.Errorf("did not expect any Result call, got Calls=%v", emit.Calls)
 	}
 }
 
@@ -155,15 +136,10 @@ func TestHandleRequest_MissingAnthropic(t *testing.T) {
 		t.Fatal("sandbox should not be created when config is incomplete")
 		return nil, errors.New("unreachable")
 	}
-	var errMsg string
-	b.HandleRequest(context.Background(), orgcfg.Config{OrgID: "o"}, "do something", "req", "thread",
-		func(string) {},
-		func(string) {},
-		func(string) { t.Error("unexpected onComplete") },
-		func(msg string) { errMsg = msg },
-	)
-	if !strings.Contains(errMsg, "Anthropic API key") {
-		t.Errorf("error %q missing 'Anthropic API key'", errMsg)
+	emit := newCaptureEmitter()
+	b.HandleRequest(context.Background(), orgcfg.Config{OrgID: "o"}, "do something", "req", "thread", emit)
+	if !emit.hasCall("error", "Anthropic API key") {
+		t.Errorf("expected Error call with 'Anthropic API key', got Calls=%v", emit.Calls)
 	}
 }
 
