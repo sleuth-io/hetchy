@@ -128,7 +128,7 @@ func (q *Queries) ListConversationsByOrg(ctx context.Context, orgID string) ([]L
 	return items, nil
 }
 
-const renameConversation = `-- name: RenameConversation :exec
+const renameConversation = `-- name: RenameConversation :execrows
 UPDATE conversations SET custom_title = $3
 WHERE org_id = $1 AND thread_id = $2
 `
@@ -139,9 +139,12 @@ type RenameConversationParams struct {
 	CustomTitle string `json:"custom_title"`
 }
 
-func (q *Queries) RenameConversation(ctx context.Context, arg RenameConversationParams) error {
-	_, err := q.db.Exec(ctx, renameConversation, arg.OrgID, arg.ThreadID, arg.CustomTitle)
-	return err
+func (q *Queries) RenameConversation(ctx context.Context, arg RenameConversationParams) (int64, error) {
+	result, err := q.db.Exec(ctx, renameConversation, arg.OrgID, arg.ThreadID, arg.CustomTitle)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const upsertConversation = `-- name: UpsertConversation :one

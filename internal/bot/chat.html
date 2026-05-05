@@ -610,6 +610,7 @@ function renderSidebar() {
       const menuBtn = document.createElement('button');
       menuBtn.className = 'chat-menu-btn';
       menuBtn.setAttribute('aria-label', 'Chat options');
+      menuBtn.setAttribute('aria-haspopup', 'menu');
       menuBtn.setAttribute('aria-expanded', 'false');
       menuBtn.textContent = '•••';
       menuBtn.addEventListener('click', e => {
@@ -676,6 +677,11 @@ document.addEventListener('click', e => {
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && !chatMenuDrop.hidden) closeChatMenu();
 });
+// The dropdown is body-positioned (fixed coords) so it doesn't move with
+// the sidebar — close it on scroll instead of trying to track the button.
+document.getElementById('chat-list').addEventListener('scroll', () => {
+  if (!chatMenuDrop.hidden) closeChatMenu();
+}, { passive: true });
 
 // --- Rename dialog ---
 const renameDialog = document.getElementById('rename-dialog');
@@ -696,15 +702,23 @@ async function saveRename() {
   const threadId = renameInput.dataset.threadId;
   const newTitle = renameInput.value.trim();
   if (!newTitle) return;
-  renameDialog.close();
+  let res;
   try {
-    await fetch('/api/conversations/' + encodeURIComponent(threadId), {
+    res = await fetch('/api/conversations/' + encodeURIComponent(threadId), {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ title: newTitle }),
     });
-    loadSidebar();
-  } catch (_) { /* silent — sidebar refresh will show real state */ }
+  } catch (_) {
+    alert('Could not rename: network error. Try again.');
+    return;
+  }
+  if (!res.ok) {
+    alert('Could not rename: ' + res.status + ' ' + res.statusText);
+    return;
+  }
+  renameDialog.close();
+  loadSidebar();
 }
 
 // --- Delete confirmation dialog ---
@@ -720,15 +734,23 @@ function openDeleteDialog(threadId) {
 
 async function confirmDelete() {
   const threadId = deleteDialog.dataset.threadId;
-  deleteDialog.close();
+  let res;
   try {
-    await fetch('/api/conversations/' + encodeURIComponent(threadId), { method: 'DELETE' });
-    if (threadId === sessionId) {
-      window.location.href = '/';
-    } else {
-      loadSidebar();
-    }
-  } catch (_) { /* silent — sidebar refresh will show real state */ }
+    res = await fetch('/api/conversations/' + encodeURIComponent(threadId), { method: 'DELETE' });
+  } catch (_) {
+    alert('Could not delete: network error. Try again.');
+    return;
+  }
+  if (!res.ok) {
+    alert('Could not delete: ' + res.status + ' ' + res.statusText);
+    return;
+  }
+  deleteDialog.close();
+  if (threadId === sessionId) {
+    window.location.href = '/';
+  } else {
+    loadSidebar();
+  }
 }
 
 async function loadSidebar() {

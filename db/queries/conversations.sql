@@ -33,6 +33,6 @@ RETURNING org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, up
 -- name: DeleteConversation :exec
 DELETE FROM conversations WHERE org_id = $1 AND thread_id = $2;
 
--- name: RenameConversation :exec
+-- name: RenameConversation :execrows
 UPDATE conversations SET custom_title = $3
 WHERE org_id = $1 AND thread_id = $2;

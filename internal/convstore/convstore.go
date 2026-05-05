@@ -143,17 +143,23 @@ func (s *Store) Delete(ctx context.Context, orgID, threadID string) error {
 	return nil
 }
 
-// Rename sets the custom title for the conversation. No-op if the store is nil.
+// Rename sets the custom title for the conversation. Returns ErrNotFound
+// if no row exists for (orgID, threadID) so the handler can answer 404
+// instead of pretending the write succeeded. No-op if the store is nil.
 func (s *Store) Rename(ctx context.Context, orgID, threadID, title string) error {
 	if s == nil || s.db == nil {
 		return nil
 	}
-	if err := s.db.Queries.RenameConversation(ctx, sqlc.RenameConversationParams{
+	rows, err := s.db.Queries.RenameConversation(ctx, sqlc.RenameConversationParams{
 		OrgID:       orgID,
 		ThreadID:    threadID,
 		CustomTitle: title,
-	}); err != nil {
+	})
+	if err != nil {
 		return fmt.Errorf("rename conversation: %w", err)
+	}
+	if rows == 0 {
+		return ErrNotFound
 	}
 	return nil
 }

@@ -10,7 +10,6 @@ import (
 
 type Querier interface {
 	DeleteConversation(ctx context.Context, arg DeleteConversationParams) error
-	RenameConversation(ctx context.Context, arg RenameConversationParams) error
 	DeleteGithubInstallation(ctx context.Context, installationID int64) error
 	DeleteGithubReposByInstallation(ctx context.Context, installationID int64) error
 	// Used by the sync routine: after upserting the current set of repos,
@@ -48,6 +47,7 @@ type Querier interface {
 	// of Slack connection," write a different query — don't rename this
 	// one.
 	ListOrgConfigsWithSlack(ctx context.Context) ([]OrgConfig, error)
+	RenameConversation(ctx context.Context, arg RenameConversationParams) (int64, error)
 	UpsertConversation(ctx context.Context, arg UpsertConversationParams) (UpsertConversationRow, error)
 	// Queries for the GitHub App installation cache: installations, the
 	// repos they grant access to, and (for Organization installs) team

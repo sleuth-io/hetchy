@@ -1035,7 +1035,18 @@ func (b *Bot) conversationDetailHandler(w http.ResponseWriter, r *http.Request) 
 			http.Error(w, "title is required", http.StatusBadRequest)
 			return
 		}
+		// Cap server-side at 200 runes — the chat.html input has the same
+		// maxlength, but a direct API client could otherwise persist an
+		// unbounded string into the DB.
+		if runes := []rune(title); len(runes) > 200 {
+			http.Error(w, "title must be 200 characters or fewer", http.StatusBadRequest)
+			return
+		}
 		if err := b.convs.Rename(r.Context(), p.OrgID, threadID, title); err != nil {
+			if errors.Is(err, convstore.ErrNotFound) {
+				http.Error(w, "conversation not found", http.StatusNotFound)
+				return
+			}
 			b.log.Error("rename conversation", "error", err, "org", p.OrgID, "thread", threadID)
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
