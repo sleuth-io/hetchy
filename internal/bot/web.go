@@ -250,23 +250,24 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 			b.log.Warn("workos: org name lookup failed", "org", p.OrgID, "error", err)
 		}
 		data := map[string]any{
-			"OrgID":                   p.OrgID,
-			"OrgName":                 orgName,
-			"Email":                   p.Email,
-			"PrincipalUserID":         p.UserID,
-			"IsAdmin":                 isAdmin(p),
-			"Tab":                     tab,
-			"Saved":                   r.URL.Query().Get("saved") == "1",
-			"SavedMessage":            savedMessage(r.URL.Query().Get("saved")),
-			"AnthropicAPIKeyPreview":  previewSecret(current.AnthropicAPIKey),
-			"SlackBotTokenPreview":    previewSecret(current.SlackBotToken),
-			"SlackSocketTokenPreview": previewSecret(current.SlackSocketToken),
-			"SlackTeamID":             current.SlackTeamID,
-			"SlackOAuthEnabled":       b.slackOAuthConfigured(),
-			"IsDev":                   b.cfg.Env == "dev",
-			"SXKeyPreview":            previewSecret(current.SXKey),
-			"GitHubAppEnabled":        b.app != nil,
-			"DefaultRepoSlug":         defaultRepoSlug,
+			"OrgID":                       p.OrgID,
+			"OrgName":                     orgName,
+			"Email":                       p.Email,
+			"PrincipalUserID":             p.UserID,
+			"IsAdmin":                     isAdmin(p),
+			"Tab":                         tab,
+			"Saved":                       r.URL.Query().Get("saved") == "1",
+			"SavedMessage":                savedMessage(r.URL.Query().Get("saved")),
+			"AnthropicAPIKeyPreview":      previewSecret(current.AnthropicAPIKey),
+			"ClaudeCodeOAuthTokenPreview": previewSecret(current.ClaudeCodeOAuthToken),
+			"SlackBotTokenPreview":        previewSecret(current.SlackBotToken),
+			"SlackSocketTokenPreview":     previewSecret(current.SlackSocketToken),
+			"SlackTeamID":                 current.SlackTeamID,
+			"SlackOAuthEnabled":           b.slackOAuthConfigured(),
+			"IsDev":                       b.cfg.Env == "dev",
+			"SXKeyPreview":                previewSecret(current.SXKey),
+			"GitHubAppEnabled":            b.app != nil,
+			"DefaultRepoSlug":             defaultRepoSlug,
 		}
 		if tab == "integrations" {
 			installs, repos, err := b.loadIntegrationsView(r.Context(), p.OrgID)
@@ -337,29 +338,8 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	current.OrgID = p.OrgID
 
-	// Default repo for chats/Slack messages that don't specify one.
-	// Empty string is allowed — orgs that always pick per-conversation
-	// (web UI workflow) don't need a default. If a non-empty value is
-	// supplied, it must parse as owner/name AND be accessible to one
-	// of this org's GitHub App installations.
-	defaultRepo := strings.TrimSpace(r.FormValue("default_repo"))
-	if defaultRepo == "" {
-		current.DefaultGitHubOwner = ""
-		current.DefaultGitHubRepo = ""
-	} else {
-		owner, name, ok := parseOwnerRepo(defaultRepo)
-		if !ok {
-			http.Error(w, "default_repo must be in owner/name format", http.StatusBadRequest)
-			return
-		}
-		if _, err := b.store.Queries.GetGithubRepoForOrg(r.Context(), sqlc.GetGithubRepoForOrgParams{
-			OrgID: p.OrgID, Owner: owner, Name: name,
-		}); err != nil {
-			http.Error(w, fmt.Sprintf("default_repo %s/%s isn't in this org's GitHub App installations — install the App on it first.", owner, name), http.StatusBadRequest)
-			return
-		}
-		current.DefaultGitHubOwner = owner
-		current.DefaultGitHubRepo = name
+	if !b.applyDefaultRepoChange(w, r, p.OrgID, &current) {
+		return
 	}
 
 	current.SlackBotToken = applyTokenChange(r, "slack_bot_token", current.SlackBotToken)
@@ -367,7 +347,7 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 	// SlackTeamID is set by the OAuth callback, not the form — only the
 	// HTTP transport needs it, and OAuth is its source of truth.
 	current.SXKey = applyTokenChange(r, "sx_key", current.SXKey)
-	current.AnthropicAPIKey = applyTokenChange(r, "anthropic_api_key", current.AnthropicAPIKey)
+	applyAnthropicCredsChange(r, &current)
 	// Anthropic is required at chat-launch time (HandleRequest enforces
 	// it), but no longer required at settings-save time: each
 	// integration on the new card-based UI is its own form, and saving
@@ -389,6 +369,7 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 		"has_slack_team_id", saved.SlackTeamID != "",
 		"has_sx", saved.SXKey != "",
 		"has_anthropic", saved.AnthropicAPIKey != "",
+		"has_claude_code_oauth", saved.ClaudeCodeOAuthToken != "",
 	)
 	// Slack creds may have changed; rebuild that org's connection.
 	b.slack.RestartOrg(r.Context(), p.OrgID)
@@ -795,17 +776,110 @@ func previewSecret(s string) string {
 	return s[:6] + "••••••" + s[len(s)-4:]
 }
 
+// applyDefaultRepoChange mutates current.DefaultGitHub{Owner,Repo}
+// based on the `default_repo` form field, returning false (after
+// writing an HTTP error) if the value is malformed or unauthorized.
+//
+// Precondition: r.ParseForm() must have been called by the caller —
+// the helper reads r.PostForm directly to distinguish "field absent"
+// from "field present and blank", and PostForm is nil until ParseForm
+// runs.
+//
+// Each integration card on the settings page is its own <form>, so a
+// POST that doesn't include `default_repo` isn't making a claim about
+// it — we MUST leave the saved value alone in that case. The presence
+// check on r.PostForm distinguishes "field absent from this submission"
+// (Anthropic / SX / Slack card was saved) from "field present and
+// explicitly blank" (the GitHub form was saved with the dropdown set
+// to "no default").
+//
+// Returns true on success (handler should continue), false on error
+// (handler should return — error already written to w).
+func (b *Bot) applyDefaultRepoChange(w http.ResponseWriter, r *http.Request, orgID string, current *orgcfg.Config) bool {
+	if _, present := r.PostForm["default_repo"]; !present {
+		return true
+	}
+	defaultRepo := strings.TrimSpace(r.PostFormValue("default_repo"))
+	if defaultRepo == "" {
+		current.DefaultGitHubOwner = ""
+		current.DefaultGitHubRepo = ""
+		return true
+	}
+	owner, name, ok := parseOwnerRepo(defaultRepo)
+	if !ok {
+		http.Error(w, "default_repo must be in owner/name format", http.StatusBadRequest)
+		return false
+	}
+	if _, err := b.store.Queries.GetGithubRepoForOrg(r.Context(), sqlc.GetGithubRepoForOrgParams{
+		OrgID: orgID, Owner: owner, Name: name,
+	}); err != nil {
+		http.Error(w, fmt.Sprintf("default_repo %s/%s isn't in this org's GitHub App installations — install the App on it first.", owner, name), http.StatusBadRequest)
+		return false
+	}
+	current.DefaultGitHubOwner = owner
+	current.DefaultGitHubRepo = name
+	return true
+}
+
+// applyAnthropicCredsChange updates the API key + OAuth token fields
+// from the form, then enforces the mutually-exclusive contract: when
+// the user pastes a *new* value into one credential field, the other
+// is cleared. Without that, both end up stored, claudeAuthEnv silently
+// prefers OAuth at chat time, and the user thinks the API key they
+// just pasted is broken when actually the stale OAuth token is still
+// winning. A pure rotation (same value repasted) or a Remove (which
+// empties the field) doesn't trigger the clear; only a non-empty
+// value that differs from before does.
+//
+// If both fields receive new values in the same submit (pathological
+// — the tabbed UI doesn't allow it without JS-level shenanigans), we
+// pick OAuth because that's what claudeAuthEnv returns; storing the
+// API key alongside would mismatch the dispatch behavior.
+func applyAnthropicCredsChange(r *http.Request, current *orgcfg.Config) {
+	beforeAPI := current.AnthropicAPIKey
+	beforeOAuth := current.ClaudeCodeOAuthToken
+	current.AnthropicAPIKey = applyTokenChange(r, "anthropic_api_key", current.AnthropicAPIKey)
+	current.ClaudeCodeOAuthToken = applyTokenChange(r, "claude_code_oauth_token", current.ClaudeCodeOAuthToken)
+	apiNew := current.AnthropicAPIKey != "" && current.AnthropicAPIKey != beforeAPI
+	oauthNew := current.ClaudeCodeOAuthToken != "" && current.ClaudeCodeOAuthToken != beforeOAuth
+	switch {
+	case apiNew && oauthNew:
+		current.AnthropicAPIKey = ""
+	case apiNew:
+		current.ClaudeCodeOAuthToken = ""
+	case oauthNew:
+		current.AnthropicAPIKey = ""
+	}
+}
+
+// credLineBreakStripper drops CR and LF that sneak into pasted
+// credentials (terminal-wrapped `claude setup-token` output, in
+// particular). Hoisted to package scope so applyTokenChange doesn't
+// allocate a fresh Replacer per request.
+var credLineBreakStripper = strings.NewReplacer("\r", "", "\n", "")
+
 // applyTokenChange resolves the new value for a token field given an
 // explicit set/keep/remove signal from the settings form. The form posts
 // a hidden `<field>_action` of "remove" when the user ticks the
 // remove checkbox; otherwise a non-blank `<field>` rotates and a blank
 // `<field>` keeps the existing value. This avoids overloading a single
 // text input with destructive semantics ("type - to clear").
+//
+// Internal CR/LF are stripped because copy-pasted credentials commonly
+// carry a stray newline from a wrapped terminal output (e.g. the multi-
+// line `claude setup-token` output). HTML `<input>` strips them on
+// paste in some browsers but not all, and a token with an embedded
+// newline silently fails downstream — Anthropic returns "Invalid bearer
+// token" for the partial value, or claude rejects it locally as an
+// invalid HTTP header. None of the credentials we store have legitimate
+// internal whitespace, so stripping it is safe and saves the user a
+// confusing round of 401s.
 func applyTokenChange(r *http.Request, field, existing string) string {
 	if r.PostFormValue(field+"_action") == "remove" {
 		return ""
 	}
-	val := strings.TrimSpace(r.PostFormValue(field))
+	raw := r.PostFormValue(field)
+	val := strings.TrimSpace(credLineBreakStripper.Replace(raw))
 	if val == "" {
 		return existing
 	}

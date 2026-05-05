@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/joho/godotenv"
@@ -16,6 +17,24 @@ import (
 	"github.com/hetchyhq/hetchy/internal/buildinfo"
 )
 
+// parseLogLevel maps LOG_LEVEL to slog.Level. Unset or unrecognized
+// values fall back to Info — same as the original hardcoded default.
+// Setting LOG_LEVEL=debug locally surfaces the per-line sandbox stdout
+// /stderr logs that exec.go emits at Debug, so `make bot-with-logs`
+// shows what the agent is doing inside the container in real time.
+func parseLogLevel(s string) slog.Level {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "debug":
+		return slog.LevelDebug
+	case "warn", "warning":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
+}
+
 func main() {
 	migrateFlag := flag.Bool("migrate", false, "Apply all pending database migrations and exit")
 	migrateDown := flag.Int("migrate-down", -1, "Roll back N migrations and exit (0 means roll back everything)")
@@ -24,11 +43,13 @@ func main() {
 
 	_ = godotenv.Load()
 
-	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	level := parseLogLevel(os.Getenv("LOG_LEVEL"))
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 	log.Info("hetchy starting",
 		"version", buildinfo.Version,
 		"commit", buildinfo.Commit,
 		"date", buildinfo.Date,
+		"log_level", level.String(),
 	)
 
 	if *migrateFlag || *migrateDown >= 0 || *migrateStatus {

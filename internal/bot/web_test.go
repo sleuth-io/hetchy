@@ -127,30 +127,40 @@ func TestSettingsTemplate_IntegrationsTab(t *testing.T) {
 			name: "all disabled — every Enable button + every modal pre-rendered",
 			data: map[string]any{
 				"OrgID": "org_x", "OrgName": "Acme", "Email": "u@x", "Tab": "integrations",
-				"GitHubAppEnabled":        true,
-				"GitHubInstallations":     nil,
-				"GitHubRepos":             nil,
-				"DefaultRepoSlug":         "",
-				"SlackOAuthEnabled":       true,
-				"SlackTeamID":             "",
-				"SlackBotTokenPreview":    "",
-				"SlackSocketTokenPreview": "",
-				"SXKeyPreview":            "",
-				"AnthropicAPIKeyPreview":  "",
+				"GitHubAppEnabled":            true,
+				"GitHubInstallations":         nil,
+				"GitHubRepos":                 nil,
+				"DefaultRepoSlug":             "",
+				"SlackOAuthEnabled":           true,
+				"SlackTeamID":                 "",
+				"SlackBotTokenPreview":        "",
+				"SlackSocketTokenPreview":     "",
+				"SXKeyPreview":                "",
+				"AnthropicAPIKeyPreview":      "",
+				"ClaudeCodeOAuthTokenPreview": "",
 			},
 			want: []string{
 				// GitHub Enable button is a real link (OAuth flow)
 				`href="/integrations/github/install"`,
 				// Slack Enable is a real link too
 				`href="/slack/install"`,
-				// Anthropic + SX Enable buttons open modals (no link)
-				`data-open-modal="modal-anthropic"`,
+				// SX Enable button opens its modal
 				`data-open-modal="modal-sx"`,
-				// Each modal is pre-rendered in the DOM
-				`id="modal-anthropic"`,
 				`id="modal-sx"`,
+				// Anthropic Enable now toggles the card open (tabbed UI
+				// inside the card replaces the old single-input modal).
+				`data-toggle-card`,
+				`data-cred-tab="api-key"`,
+				`data-cred-tab="subscription"`,
+				`name="anthropic_api_key"`,
+				`name="claude_code_oauth_token"`,
 				// Anthropic carries the Required tag
 				`<span class="tag required">Required</span>`,
+			},
+			notWant: []string{
+				// The old modal-based onboarding for Anthropic is gone.
+				`data-open-modal="modal-anthropic"`,
+				`id="modal-anthropic"`,
 			},
 		},
 		{
@@ -177,6 +187,7 @@ func TestSettingsTemplate_IntegrationsTab(t *testing.T) {
 				"SlackOAuthEnabled":    false,
 				"SlackBotTokenPreview": "", "SlackSocketTokenPreview": "",
 				"SXKeyPreview": "", "AnthropicAPIKeyPreview": "",
+				"ClaudeCodeOAuthTokenPreview": "",
 			},
 			want: []string{
 				`<strong>acme</strong>`,
@@ -194,8 +205,9 @@ func TestSettingsTemplate_IntegrationsTab(t *testing.T) {
 				"GitHubAppEnabled": false, "DefaultRepoSlug": "",
 				"SlackOAuthEnabled":    true,
 				"SlackBotTokenPreview": "", "SlackSocketTokenPreview": "",
-				"SXKeyPreview":           "",
-				"AnthropicAPIKeyPreview": "",
+				"SXKeyPreview":                "",
+				"AnthropicAPIKeyPreview":      "",
+				"ClaudeCodeOAuthTokenPreview": "",
 			},
 			want: []string{`Not configured for this env`},
 			notWant: []string{
@@ -260,6 +272,8 @@ func TestApplyTokenChange(t *testing.T) {
 		{name: "remove action wins over input", form: map[string]string{"k": "ignored", "k_action": "remove"}, existing: "old", want: ""},
 		{name: "no field at all keeps existing", form: map[string]string{}, existing: "old", want: "old"},
 		{name: "whitespace input keeps existing", form: map[string]string{"k": "   "}, existing: "old", want: "old"},
+		{name: "embedded newline stripped (terminal-wrap paste)", form: map[string]string{"k": "sk-ant-oat01-abc\nxyz"}, existing: "old", want: "sk-ant-oat01-abcxyz"},
+		{name: "embedded CRLF stripped", form: map[string]string{"k": "sk-ant-api03-abc\r\nxyz"}, existing: "old", want: "sk-ant-api03-abcxyz"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -282,8 +296,9 @@ func TestSettingsTemplate_RendersMembersTab(t *testing.T) {
 	b.renderTemplate(rec, settingsHTMLTpl, map[string]any{
 		"OrgID": "org_y", "OrgName": "Acme", "Email": "u@y", "PrincipalUserID": "user_me",
 		"IsAdmin": true, "Tab": "members", "Saved": false, "SavedMessage": "",
-		"AnthropicAPIKeyPreview": "",
-		"SlackBotTokenPreview":   "", "SlackSocketTokenPreview": "", "SXKeyPreview": "",
+		"AnthropicAPIKeyPreview":      "",
+		"ClaudeCodeOAuthTokenPreview": "",
+		"SlackBotTokenPreview":        "", "SlackSocketTokenPreview": "", "SXKeyPreview": "",
 		// Real auth.Member / auth.Invitation structs so the template's
 		// .DisplayName invocation actually exercises the method, not a
 		// map-key lookup.
@@ -334,8 +349,9 @@ func TestSettingsTemplate_HidesMembersTabForNonAdmin(t *testing.T) {
 	b.renderTemplate(rec, settingsHTMLTpl, map[string]any{
 		"OrgID": "o", "OrgName": "o", "Email": "u", "PrincipalUserID": "u",
 		"IsAdmin": false, "Tab": "general",
-		"AnthropicAPIKeyPreview": "",
-		"SlackBotTokenPreview":   "", "SlackSocketTokenPreview": "", "SXKeyPreview": "",
+		"AnthropicAPIKeyPreview":      "",
+		"ClaudeCodeOAuthTokenPreview": "",
+		"SlackBotTokenPreview":        "", "SlackSocketTokenPreview": "", "SXKeyPreview": "",
 	})
 	if strings.Contains(rec.Body.String(), `href="/settings/org?tab=members"`) {
 		t.Errorf("non-admin should not see Members tab in sidebar")

@@ -20,7 +20,8 @@ SELECT
     anthropic_api_key_encrypted,
     slack_team_id,
     default_github_owner,
-    default_github_repo
+    default_github_repo,
+    claude_code_oauth_token_encrypted
 FROM org_configs
 WHERE org_id = $1
 `
@@ -39,6 +40,7 @@ func (q *Queries) GetOrgConfig(ctx context.Context, orgID string) (OrgConfig, er
 		&i.SlackTeamID,
 		&i.DefaultGithubOwner,
 		&i.DefaultGithubRepo,
+		&i.ClaudeCodeOauthTokenEncrypted,
 	)
 	return i, err
 }
@@ -54,7 +56,8 @@ SELECT
     anthropic_api_key_encrypted,
     slack_team_id,
     default_github_owner,
-    default_github_repo
+    default_github_repo,
+    claude_code_oauth_token_encrypted
 FROM org_configs
 WHERE slack_team_id = $1
 `
@@ -73,6 +76,7 @@ func (q *Queries) GetOrgConfigBySlackTeamID(ctx context.Context, slackTeamID *st
 		&i.SlackTeamID,
 		&i.DefaultGithubOwner,
 		&i.DefaultGithubRepo,
+		&i.ClaudeCodeOauthTokenEncrypted,
 	)
 	return i, err
 }
@@ -88,7 +92,8 @@ SELECT
     anthropic_api_key_encrypted,
     slack_team_id,
     default_github_owner,
-    default_github_repo
+    default_github_repo,
+    claude_code_oauth_token_encrypted
 FROM org_configs
 WHERE slack_bot_token_encrypted IS NOT NULL
   AND slack_socket_token_encrypted IS NOT NULL
@@ -123,6 +128,7 @@ func (q *Queries) ListOrgConfigsWithSlack(ctx context.Context) ([]OrgConfig, err
 			&i.SlackTeamID,
 			&i.DefaultGithubOwner,
 			&i.DefaultGithubRepo,
+			&i.ClaudeCodeOauthTokenEncrypted,
 		); err != nil {
 			return nil, err
 		}
@@ -143,19 +149,21 @@ INSERT INTO org_configs (
     anthropic_api_key_encrypted,
     slack_team_id,
     default_github_owner,
-    default_github_repo
+    default_github_repo,
+    claude_code_oauth_token_encrypted
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8
+    $1, $2, $3, $4, $5, $6, $7, $8, $9
 )
 ON CONFLICT (org_id) DO UPDATE SET
-    slack_bot_token_encrypted    = EXCLUDED.slack_bot_token_encrypted,
-    slack_socket_token_encrypted = EXCLUDED.slack_socket_token_encrypted,
-    sx_key_encrypted             = EXCLUDED.sx_key_encrypted,
-    anthropic_api_key_encrypted  = EXCLUDED.anthropic_api_key_encrypted,
-    slack_team_id                = EXCLUDED.slack_team_id,
-    default_github_owner         = EXCLUDED.default_github_owner,
-    default_github_repo          = EXCLUDED.default_github_repo,
-    updated_at                   = NOW()
+    slack_bot_token_encrypted         = EXCLUDED.slack_bot_token_encrypted,
+    slack_socket_token_encrypted      = EXCLUDED.slack_socket_token_encrypted,
+    sx_key_encrypted                  = EXCLUDED.sx_key_encrypted,
+    anthropic_api_key_encrypted       = EXCLUDED.anthropic_api_key_encrypted,
+    slack_team_id                     = EXCLUDED.slack_team_id,
+    default_github_owner              = EXCLUDED.default_github_owner,
+    default_github_repo               = EXCLUDED.default_github_repo,
+    claude_code_oauth_token_encrypted = EXCLUDED.claude_code_oauth_token_encrypted,
+    updated_at                        = NOW()
 RETURNING
     org_id,
     slack_bot_token_encrypted,
@@ -166,18 +174,20 @@ RETURNING
     anthropic_api_key_encrypted,
     slack_team_id,
     default_github_owner,
-    default_github_repo
+    default_github_repo,
+    claude_code_oauth_token_encrypted
 `
 
 type UpsertOrgConfigParams struct {
-	OrgID                     string  `json:"org_id"`
-	SlackBotTokenEncrypted    []byte  `json:"slack_bot_token_encrypted"`
-	SlackSocketTokenEncrypted []byte  `json:"slack_socket_token_encrypted"`
-	SxKeyEncrypted            []byte  `json:"sx_key_encrypted"`
-	AnthropicApiKeyEncrypted  []byte  `json:"anthropic_api_key_encrypted"`
-	SlackTeamID               *string `json:"slack_team_id"`
-	DefaultGithubOwner        string  `json:"default_github_owner"`
-	DefaultGithubRepo         string  `json:"default_github_repo"`
+	OrgID                         string  `json:"org_id"`
+	SlackBotTokenEncrypted        []byte  `json:"slack_bot_token_encrypted"`
+	SlackSocketTokenEncrypted     []byte  `json:"slack_socket_token_encrypted"`
+	SxKeyEncrypted                []byte  `json:"sx_key_encrypted"`
+	AnthropicApiKeyEncrypted      []byte  `json:"anthropic_api_key_encrypted"`
+	SlackTeamID                   *string `json:"slack_team_id"`
+	DefaultGithubOwner            string  `json:"default_github_owner"`
+	DefaultGithubRepo             string  `json:"default_github_repo"`
+	ClaudeCodeOauthTokenEncrypted []byte  `json:"claude_code_oauth_token_encrypted"`
 }
 
 func (q *Queries) UpsertOrgConfig(ctx context.Context, arg UpsertOrgConfigParams) (OrgConfig, error) {
@@ -190,6 +200,7 @@ func (q *Queries) UpsertOrgConfig(ctx context.Context, arg UpsertOrgConfigParams
 		arg.SlackTeamID,
 		arg.DefaultGithubOwner,
 		arg.DefaultGithubRepo,
+		arg.ClaudeCodeOauthTokenEncrypted,
 	)
 	var i OrgConfig
 	err := row.Scan(
@@ -203,6 +214,7 @@ func (q *Queries) UpsertOrgConfig(ctx context.Context, arg UpsertOrgConfigParams
 		&i.SlackTeamID,
 		&i.DefaultGithubOwner,
 		&i.DefaultGithubRepo,
+		&i.ClaudeCodeOauthTokenEncrypted,
 	)
 	return i, err
 }

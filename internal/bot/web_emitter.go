@@ -43,6 +43,13 @@ type webEmitter struct {
 	idGen  atomic.Uint64
 	events chan webSSE
 	closed atomic.Bool
+
+	// kinds tracks the block kind for each open id so Append can
+	// drop streamed body for tool_use blocks (the chat UI renders
+	// those as one-line rows à la Claude Code's terminal — no
+	// expandable body to populate). Mutated only on the bot
+	// goroutine, in lockstep with the rest of webEmitter.
+	kinds map[string]blocks.Kind
 }
 
 type webSSE struct {
@@ -51,7 +58,10 @@ type webSSE struct {
 }
 
 func newWebEmitter() *webEmitter {
-	return &webEmitter{events: make(chan webSSE, 64)}
+	return &webEmitter{
+		events: make(chan webSSE, 64),
+		kinds:  map[string]blocks.Kind{},
+	}
 }
 
 func (e *webEmitter) Events() <-chan webSSE { return e.events }
@@ -78,6 +88,7 @@ func (e *webEmitter) push(ev webSSE) {
 
 func (e *webEmitter) Start(kind blocks.Kind, title string, meta map[string]any) string {
 	id := "w" + strconv.FormatUint(e.idGen.Add(1), 10)
+	e.kinds[id] = kind
 	e.push(webSSE{Event: "block_start", Data: sseEvent{
 		ID:    id,
 		Kind:  kind,
@@ -87,24 +98,44 @@ func (e *webEmitter) Start(kind blocks.Kind, title string, meta map[string]any) 
 	return id
 }
 
+// Append drops streaming body for tool_use blocks because the chat UI
+// renders them as compact one-liners (matching Claude Code's terminal
+// `● Tool(args) — summary` rows). The full body still reaches the
+// recorder via Tee, so the persisted transcript is unchanged and a
+// future "raw view" toggle has the data. Errors get their summary back
+// in the block_done event below.
 func (e *webEmitter) Append(id, delta string) {
+	if e.kinds[id] == blocks.KindToolUse {
+		return
+	}
 	e.push(webSSE{Event: "block_append", Data: sseEvent{ID: id, Delta: delta}})
 }
 
 func (e *webEmitter) Done(id, summary string) {
+	delete(e.kinds, id)
 	e.push(webSSE{Event: "block_done", Data: sseEvent{ID: id, Status: blocks.StatusDone, Summary: summary}})
 }
 
 func (e *webEmitter) Fail(id, summary string) {
+	delete(e.kinds, id)
 	e.push(webSSE{Event: "block_done", Data: sseEvent{ID: id, Status: blocks.StatusError, Summary: summary}})
 }
 
+// oneShot routes through Done/Fail rather than pushing block_done
+// directly so the kinds map entry created by Start is cleaned up.
+// Bypassing Done/Fail used to silently violate the same cleanup
+// contract that TestWebEmitter_ClearsKindOnTerminate pins for the
+// streaming path.
 func (e *webEmitter) oneShot(kind blocks.Kind, title, body string, status blocks.Status) {
 	id := e.Start(kind, title, nil)
 	if body != "" {
 		e.Append(id, body)
 	}
-	e.push(webSSE{Event: "block_done", Data: sseEvent{ID: id, Status: status}})
+	if status == blocks.StatusError {
+		e.Fail(id, "")
+	} else {
+		e.Done(id, "")
+	}
 }
 
 func (e *webEmitter) Notify(title, body string) {

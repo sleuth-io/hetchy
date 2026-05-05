@@ -28,15 +28,26 @@ var ErrNotFound = errors.New("orgcfg: not found")
 
 // Config is the decrypted, app-friendly view of a row in org_configs.
 // All token fields are plaintext; do not log them.
+//
+// AnthropicAPIKey and ClaudeCodeOAuthToken are alternative ways to
+// authenticate Claude Code: an Anthropic Console API key (sk-ant-...)
+// or a long-lived OAuth token minted by `claude setup-token` against
+// the user's Pro/Max subscription. At least one is required at chat
+// time; HandleRequest enforces that. They map to different env vars
+// in the sandbox (ANTHROPIC_API_KEY vs CLAUDE_CODE_OAUTH_TOKEN), and
+// the form handler clears the other when a new value is pasted into
+// one — both stored at once would mean claudeAuthEnv silently picks
+// OAuth over the API key the user thought they switched to.
 type Config struct {
-	OrgID              string
-	AnthropicAPIKey    string
-	SlackBotToken      string
-	SlackSocketToken   string
-	SlackTeamID        string
-	SXKey              string
-	DefaultGitHubOwner string
-	DefaultGitHubRepo  string
+	OrgID                string
+	AnthropicAPIKey      string
+	ClaudeCodeOAuthToken string
+	SlackBotToken        string
+	SlackSocketToken     string
+	SlackTeamID          string
+	SXKey                string
+	DefaultGitHubOwner   string
+	DefaultGitHubRepo    string
 }
 
 // Store wires a *db.Store to a *secrets.Cipher and exposes plaintext
@@ -122,20 +133,25 @@ func (s *Store) Upsert(ctx context.Context, c Config) (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("encrypt anthropic api key: %w", err)
 	}
+	cc, err := s.cipher.Encrypt(c.ClaudeCodeOAuthToken)
+	if err != nil {
+		return Config{}, fmt.Errorf("encrypt claude code oauth token: %w", err)
+	}
 	var teamID *string
 	if c.SlackTeamID != "" {
 		t := c.SlackTeamID
 		teamID = &t
 	}
 	row, err := s.db.Queries.UpsertOrgConfig(ctx, sqlc.UpsertOrgConfigParams{
-		OrgID:                     c.OrgID,
-		SlackBotTokenEncrypted:    sb,
-		SlackSocketTokenEncrypted: ss,
-		SxKeyEncrypted:            sx,
-		AnthropicApiKeyEncrypted:  ak,
-		SlackTeamID:               teamID,
-		DefaultGithubOwner:        c.DefaultGitHubOwner,
-		DefaultGithubRepo:         c.DefaultGitHubRepo,
+		OrgID:                         c.OrgID,
+		SlackBotTokenEncrypted:        sb,
+		SlackSocketTokenEncrypted:     ss,
+		SxKeyEncrypted:                sx,
+		AnthropicApiKeyEncrypted:      ak,
+		ClaudeCodeOauthTokenEncrypted: cc,
+		SlackTeamID:                   teamID,
+		DefaultGithubOwner:            c.DefaultGitHubOwner,
+		DefaultGithubRepo:             c.DefaultGitHubRepo,
 	})
 	if err != nil {
 		return Config{}, fmt.Errorf("upsert org config: %w", err)
@@ -160,18 +176,23 @@ func (s *Store) decrypt(row sqlc.OrgConfig) (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("decrypt anthropic api key: %w", err)
 	}
+	cc, err := s.cipher.Decrypt(row.ClaudeCodeOauthTokenEncrypted)
+	if err != nil {
+		return Config{}, fmt.Errorf("decrypt claude code oauth token: %w", err)
+	}
 	teamID := ""
 	if row.SlackTeamID != nil {
 		teamID = *row.SlackTeamID
 	}
 	return Config{
-		OrgID:              row.OrgID,
-		SlackBotToken:      sb,
-		SlackSocketToken:   ss,
-		SlackTeamID:        teamID,
-		SXKey:              sx,
-		AnthropicAPIKey:    ak,
-		DefaultGitHubOwner: row.DefaultGithubOwner,
-		DefaultGitHubRepo:  row.DefaultGithubRepo,
+		OrgID:                row.OrgID,
+		SlackBotToken:        sb,
+		SlackSocketToken:     ss,
+		SlackTeamID:          teamID,
+		SXKey:                sx,
+		AnthropicAPIKey:      ak,
+		ClaudeCodeOAuthToken: cc,
+		DefaultGitHubOwner:   row.DefaultGithubOwner,
+		DefaultGitHubRepo:    row.DefaultGithubRepo,
 	}, nil
 }

@@ -158,6 +158,27 @@
   .body-section:first-child { border-top: 0; padding-top: .75rem; margin-top: .25rem; }
   .body-section legend { padding-top: 0; }
 
+  /* Credential tabs (Anthropic integration: API key vs subscription token).
+     Two mutually exclusive panels share one form so a single Save covers
+     either. The non-active panel is display:none so its hidden inputs
+     still post (and applyTokenChange treats blank as "keep existing"). */
+  .cred-tabs { display: flex; gap: 0; border-bottom: 1px solid #e6e6e6;
+               margin: 0 0 1rem; }
+  .cred-tab { background: none; border: none; padding: .55rem .9rem;
+              font-size: .85rem; color: #666; cursor: pointer;
+              border-bottom: 2px solid transparent; margin-bottom: -1px;
+              font-family: inherit; }
+  .cred-tab:hover { color: #222; }
+  .cred-tab.active { color: #0b93f6; border-bottom-color: #0b93f6;
+                     font-weight: 500; }
+  .cred-panel { display: none; }
+  .cred-panel.active { display: block; }
+  .cred-help { font-size: .8rem; color: #777; margin: 0 0 .75rem;
+               line-height: 1.4; }
+  .cred-help code { background: #f3f3f5; padding: .05rem .3rem;
+                    border-radius: .25rem; font-size: .85em;
+                    font-family: ui-monospace, monospace; }
+
   /* Modal dialogs (used by API-key integrations) */
   dialog.api-modal { border: none; border-radius: .5rem; padding: 0;
                      box-shadow: 0 24px 64px rgba(0,0,0,.35);
@@ -233,6 +254,12 @@
   html.is-dark .hint { color: #6e6e72; }
   html.is-dark .secret-actions-overlay { background: #1a1a1d; color: #6e6e72; }
   html.is-dark .secret-actions { color: #6e6e72; }
+  html.is-dark .cred-tabs { border-bottom-color: #2a2a2d; }
+  html.is-dark .cred-tab { color: #9a9aa0; }
+  html.is-dark .cred-tab:hover { color: #e7e7e9; }
+  html.is-dark .cred-tab.active { color: #4da6ff; border-bottom-color: #4da6ff; }
+  html.is-dark .cred-help { color: #9a9aa0; }
+  html.is-dark .cred-help code { background: #2a2a2e; }
   html.is-dark .sep { color: #3a3a40; }
   html.is-dark .link-btn { color: #9a9aa0; }
   html.is-dark .link-btn:hover { color: #e7e7e9; }
@@ -362,7 +389,6 @@
     {{template "integration_sx" .}}
   </div>
 
-  {{template "modal_anthropic" .}}
   {{template "modal_sx" .}}
 {{end}}
 
@@ -526,7 +552,14 @@
 {{end}}
 
 {{define "integration_anthropic"}}
-  {{$enabled := ne .AnthropicAPIKeyPreview ""}}
+  {{$hasKey := ne .AnthropicAPIKeyPreview ""}}
+  {{$hasSub := ne .ClaudeCodeOAuthTokenPreview ""}}
+  {{$enabled := or $hasKey $hasSub}}
+  {{/* Default tab: subscription if that's the only one set; else API key.
+       Lets a user who's already on subscription auth land on their own
+       credential rather than the empty API-key tab on every page load. */}}
+  {{$activeTab := "api-key"}}
+  {{if and (not $hasKey) $hasSub}}{{$activeTab = "subscription"}}{{end}}
   <article class="integration required{{if $enabled}} enabled{{end}}" data-integration="anthropic">
     <div class="integration-head">
       <div class="integration-icon">
@@ -539,30 +572,39 @@
         <strong>Claude (Anthropic)</strong>
         <span class="tag required">Required</span>
         <span class="tag">AI</span>
-        <p>Powers the Claude Code agent that reads your repo, plans the change, and writes the diff inside the sandbox. Get a key at <a href="https://console.anthropic.com/" target="_blank" rel="noopener">console.anthropic.com</a>.</p>
+        <p>Powers the Claude Code agent that reads your repo, plans the change, and writes the diff inside the sandbox. Authenticate with an Anthropic API key or a Claude Pro/Max subscription token.</p>
       </div>
       <div class="integration-status">
         {{if $enabled}}
           <span class="btn-enabled">✓ Enabled</span>
         {{else}}
-          <button class="btn-enable" type="button" data-open-modal="modal-anthropic">Enable</button>
+          <button class="btn-enable" type="button" data-toggle-card data-focus-field="anthropic_api_key">Enable</button>
         {{end}}
         <button class="caret" type="button" aria-label="Toggle details">
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><polyline points="4,6 8,10 12,6"/></svg>
         </button>
       </div>
     </div>
-    {{if $enabled}}
     <div class="integration-body">
       <div class="body-section">
-        <legend>API key</legend>
+        <legend>Credentials</legend>
         <form method="POST" action="/settings/org?tab=integrations">
-          {{template "secret" dict "Field" "anthropic_api_key" "Label" "Claude API key" "Preview" .AnthropicAPIKeyPreview "Placeholder" "sk-ant-…" "Required" true}}
+          <div class="cred-tabs" role="tablist">
+            <button type="button" class="cred-tab{{if eq $activeTab "api-key"}} active{{end}}" data-cred-tab="api-key" role="tab" aria-selected="{{if eq $activeTab "api-key"}}true{{else}}false{{end}}">API key</button>
+            <button type="button" class="cred-tab{{if eq $activeTab "subscription"}} active{{end}}" data-cred-tab="subscription" role="tab" aria-selected="{{if eq $activeTab "subscription"}}true{{else}}false{{end}}">Subscription key</button>
+          </div>
+          <div class="cred-panel{{if eq $activeTab "api-key"}} active{{end}}" data-cred-panel="api-key">
+            <p class="cred-help">Generate at <a href="https://console.anthropic.com/" target="_blank" rel="noopener">console.anthropic.com</a> — billed per usage.</p>
+            {{template "secret" dict "Field" "anthropic_api_key" "Label" "Claude API key" "Preview" .AnthropicAPIKeyPreview "Placeholder" "sk-ant-…" "Required" false}}
+          </div>
+          <div class="cred-panel{{if eq $activeTab "subscription"}} active{{end}}" data-cred-panel="subscription">
+            <p class="cred-help">Run <code>claude setup-token</code> on your machine, complete the browser login, and paste the long-lived token here.</p>
+            {{template "secret" dict "Field" "claude_code_oauth_token" "Label" "Subscription token" "Preview" .ClaudeCodeOAuthTokenPreview "Placeholder" "sk-ant-oat01-…" "Required" false}}
+          </div>
           <button class="primary" type="submit">Save</button>
         </form>
       </div>
     </div>
-    {{end}}
   </article>
 {{end}}
 
@@ -608,22 +650,6 @@
   </article>
 {{end}}
 
-{{define "modal_anthropic"}}
-<dialog class="api-modal" id="modal-anthropic">
-  <form method="POST" action="/settings/org?tab=integrations">
-    <div class="body">
-      <h2>Claude API key — <a href="https://console.anthropic.com/" target="_blank" rel="noopener">generate</a></h2>
-      <label for="modal-anthropic-input">API key</label>
-      <input id="modal-anthropic-input" type="password" name="anthropic_api_key" placeholder="sk-ant-…" autocomplete="off" required>
-      <p>Get a key at <a href="https://console.anthropic.com/" target="_blank" rel="noopener">console.anthropic.com</a> — you'll need to add billing.</p>
-    </div>
-    <div class="actions">
-      <button type="button" class="cancel" data-close-modal>Cancel</button>
-      <button type="submit" class="save">Save</button>
-    </div>
-  </form>
-</dialog>
-{{end}}
 
 {{define "modal_sx"}}
 <dialog class="api-modal" id="modal-sx">
@@ -815,6 +841,46 @@
       document.getElementById(field + '-preview').classList.add('removing');
       btn.textContent = 'Will be removed on Save';
       btn.disabled = true;
+    });
+  });
+
+  // Credential tabs (Anthropic integration).
+  // Mutually exclusive tabs: only the active panel's inputs are
+  // submittable. Hidden panels get `disabled` set on every input and
+  // hidden field — without this, both panels' values post on every
+  // save (display:none doesn't suppress submission), so a stale
+  // `_action=remove` from the inactive tab could nuke a saved value
+  // the user can't even see, and a user submitting via Enter from a
+  // programmatically-focused hidden field could hit either tab's
+  // handler. Server-side already clears "the other" credential when
+  // a new one is pasted, but disabling here keeps the wire form
+  // honest.
+  // Tab buttons live outside panels; tab-internal buttons (rotate
+  // /remove/cancel) and inputs all need to follow the panel's
+  // active/inactive state.
+  function setCredPanelDisabled(panel, disabled) {
+    panel.querySelectorAll('input, button[data-rotate], button[data-remove], button[data-cancel]').forEach(el => {
+      el.disabled = disabled;
+    });
+  }
+  document.querySelectorAll('[data-cred-panel]').forEach(p => {
+    setCredPanelDisabled(p, !p.classList.contains('active'));
+  });
+  document.querySelectorAll('[data-cred-tab]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tab = btn.dataset.credTab;
+      const form = btn.closest('form');
+      if (!form) return;
+      form.querySelectorAll('[data-cred-tab]').forEach(t => {
+        const active = t.dataset.credTab === tab;
+        t.classList.toggle('active', active);
+        t.setAttribute('aria-selected', active ? 'true' : 'false');
+      });
+      form.querySelectorAll('[data-cred-panel]').forEach(p => {
+        const active = p.dataset.credPanel === tab;
+        p.classList.toggle('active', active);
+        setCredPanelDisabled(p, !active);
+      });
     });
   });
 

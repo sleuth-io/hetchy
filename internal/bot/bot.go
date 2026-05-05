@@ -267,9 +267,9 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 	recorder := blocks.NewRecorder(maxBlocksPerTurn)
 	emit := blocks.Tee(recorder, out)
 
-	if oc.AnthropicAPIKey == "" {
-		b.log.Warn("org missing anthropic api key", "org", oc.OrgID)
-		emit.Error("Missing Anthropic API key", "This organization is missing an Anthropic API key. Set it at /settings/org.")
+	if oc.AnthropicAPIKey == "" && oc.ClaudeCodeOAuthToken == "" {
+		b.log.Warn("org missing claude credentials", "org", oc.OrgID)
+		emit.Error("Missing Claude credentials", "This organization has neither a Claude API key nor a subscription token set. Add one at /settings/org → Integrations → Claude (Anthropic).")
 		return
 	}
 
@@ -465,10 +465,10 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 		return
 	}
 	b.log.Info("sandbox created", "id", sb.ID, "request_id", requestID)
-	emit.Notify("Sandbox ready", fmt.Sprintf("Sandbox `%s` ready — cloning repo and starting Claude Code.", sb.ID))
+	emit.Notify("Sandbox ready", fmt.Sprintf("`%s` is up — cloning repo and starting Claude Code.", sb.ID))
 
 	branch := "feature/sf-" + requestID
-	prURL, runErr := b.runAgent(ctx, sb, repo, oc.AnthropicAPIKey, oc.SXKey, userRequest, requestID, emit)
+	prURL, runErr := b.runAgent(ctx, sb, repo, oc, userRequest, requestID, emit)
 	if runErr != nil {
 		b.log.Error("agent run failed", "sandbox", sb.ID, "request_id", requestID, "error", runErr)
 		emit.Error("Agent failed", fmt.Sprintf("Something went wrong while running the agent. Sandbox `%s` is left running for debugging — reply here to retry (the orphan sandbox will be archived automatically) or check the server logs for details.", sb.ID))
@@ -546,7 +546,7 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 		return
 	}
 
-	prURL, err := b.runFollowUp(ctx, sb, repo, oc.AnthropicAPIKey, rec, text, requestID, emit)
+	prURL, err := b.runFollowUp(ctx, sb, repo, oc, rec, text, requestID, emit)
 	if err != nil {
 		b.log.Error("follow-up failed", "sandbox", sb.ID, "request_id", requestID, "error", err)
 		emit.Error("Agent failed", fmt.Sprintf("Something went wrong while running the agent. Sandbox `%s` is left running for debugging — check the server logs for details.", sb.ID))
@@ -717,11 +717,16 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
+// truncate caps s to at most n runes, appending "..." when it cuts.
+// Rune-aware (not byte-aware) so multi-byte characters (emoji, CJK,
+// non-ASCII filenames in Bash command titles) don't get split mid-
+// codepoint and surface as mojibake in the UI.
 func truncate(s string, n int) string {
-	if len(s) <= n {
+	runes := []rune(s)
+	if len(runes) <= n {
 		return s
 	}
-	return s[:n] + "..."
+	return string(runes[:n]) + "..."
 }
 
 // retryWithBackoff executes fn up to maxRetries times with exponential backoff

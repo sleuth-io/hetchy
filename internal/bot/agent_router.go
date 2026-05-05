@@ -11,7 +11,7 @@ import (
 // agentLineRouter consumes the line-by-line output of agent.sh /
 // followup.sh, opens a single "Sandbox setup" block for the bash
 // echoes, and switches to a Claude NDJSON parser once the script
-// reaches `[sf] running claude` (after which every line is a
+// reaches `[hetchy] running claude` (after which every line is a
 // stream-json event from `claude --output-format stream-json`).
 //
 // The router owns the lifetime of both blocks: the setup block closes
@@ -36,7 +36,7 @@ type agentLineRouter struct {
 // Exact-match (not HasPrefix) so a future debug echo whose prefix
 // happens to overlap can't accidentally flip the router and start
 // dropping setup lines as malformed JSON.
-const setupSwitchMarker = "[sf] running claude"
+const setupSwitchMarker = "[hetchy] running claude"
 
 func newAgentLineRouter(emit blocks.Emitter) *agentLineRouter {
 	return &agentLineRouter{emit: emit}
@@ -76,7 +76,7 @@ func (r *agentLineRouter) Finish() string {
 }
 
 // ReachedAgent reports whether the line stream crossed the
-// `[sf] running claude` marker. False means the setup script exited
+// `[hetchy] running claude` marker. False means the setup script exited
 // (cleanly or otherwise) before invoking claude — the caller can
 // surface a setup-specific error instead of the generic "no PR URL
 // found".
@@ -100,14 +100,14 @@ func (r *agentLineRouter) appendSetup(line string) {
 		r.setupOpen = true
 	}
 	r.setupSteps++
-	// The bash echoes are tagged `[sf] ` for grep-ability in the raw
+	// The bash echoes are tagged `[hetchy] ` for grep-ability in the raw
 	// sandbox logs, but the bucket already says "Sandbox setup" — so
 	// strip the prefix and capitalise the message for display.
 	r.emit.Append(r.setupID, prettySetupLine(line)+"\n")
 }
 
 func prettySetupLine(line string) string {
-	rest, ok := strings.CutPrefix(line, "[sf] ")
+	rest, ok := strings.CutPrefix(line, "[hetchy] ")
 	if !ok {
 		return line
 	}

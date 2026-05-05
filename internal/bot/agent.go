@@ -12,6 +12,7 @@ import (
 
 	"github.com/hetchyhq/hetchy/internal/blocks"
 	"github.com/hetchyhq/hetchy/internal/convstore"
+	"github.com/hetchyhq/hetchy/internal/orgcfg"
 )
 
 //go:embed scripts/agent.sh
@@ -69,42 +70,60 @@ type repoCtx struct {
 	TokenExpires time.Time
 }
 
-func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, anthropicAPIKey, sxKey, userRequest, requestID string, emit blocks.Emitter) (string, error) {
+func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, userRequest, requestID string, emit blocks.Emitter) (string, error) {
 	prompt := fmt.Sprintf(agentPromptTemplate,
 		repo.Slug, workdir, repo.BaseBranch,
 		userRequest, requestID, repo.BaseBranch,
 	)
 	env := map[string]string{
-		"SF_REPO":           repo.Slug,
-		"SF_WORKDIR":        workdir,
-		"SF_BASE_BRANCH":    repo.BaseBranch,
-		"SF_PROMPT_B64":     base64.StdEncoding.EncodeToString([]byte(prompt)),
-		"ANTHROPIC_API_KEY": anthropicAPIKey,
-		"GITHUB_TOKEN":      repo.GitHubToken,
+		"SF_REPO":        repo.Slug,
+		"SF_WORKDIR":     workdir,
+		"SF_BASE_BRANCH": repo.BaseBranch,
+		"SF_PROMPT_B64":  base64.StdEncoding.EncodeToString([]byte(prompt)),
+		"GITHUB_TOKEN":   repo.GitHubToken,
 	}
-	if sxKey != "" {
-		env["SX_KEY"] = sxKey
+	authKey, authVal := claudeAuthEnv(oc)
+	env[authKey] = authVal
+	if oc.SXKey != "" {
+		env["SX_KEY"] = oc.SXKey
 	}
 	return b.runScript(ctx, sb, "agent-"+requestID, "agent", agentScript, env, emit)
+}
+
+// claudeAuthEnv picks the env-var name + value to inject into the
+// sandbox so the `claude` binary authenticates correctly. It prefers
+// the subscription OAuth token over an API key when both are set:
+// Claude Code's own precedence puts ANTHROPIC_API_KEY ahead of
+// CLAUDE_CODE_OAUTH_TOKEN, so injecting both would silently fall back
+// to the API key, which is not what an org that pasted a subscription
+// token expects. Callers must have already verified that at least one
+// of the two is non-empty (HandleRequest does this).
+func claudeAuthEnv(oc orgcfg.Config) (name, value string) {
+	if oc.ClaudeCodeOAuthToken != "" {
+		return "CLAUDE_CODE_OAUTH_TOKEN", oc.ClaudeCodeOAuthToken
+	}
+	return "ANTHROPIC_API_KEY", oc.AnthropicAPIKey
 }
 
 // runFollowUp resumes work in an existing sandbox. The installation
 // token is freshly minted and passed per-run (not just at sandbox-create
 // time) so a token rotation or a re-installed App takes effect on the
 // very next follow-up rather than only on a freshly-created sandbox.
-func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, anthropicAPIKey string, rec convstore.Record, userRequest, requestID string, emit blocks.Emitter) (string, error) {
+func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, rec convstore.Record, userRequest, requestID string, emit blocks.Emitter) (string, error) {
 	history := strings.Join(rec.History, "\n---\n")
 	prompt := fmt.Sprintf(agentFollowUpPromptTemplate,
 		workdir, rec.Branch, rec.PRURL,
 		history, userRequest,
 	)
-	return b.runScript(ctx, sb, "followup-"+requestID, "followup", followupScript, map[string]string{
-		"SF_WORKDIR":        workdir,
-		"SF_BRANCH":         rec.Branch,
-		"SF_PROMPT_B64":     base64.StdEncoding.EncodeToString([]byte(prompt)),
-		"ANTHROPIC_API_KEY": anthropicAPIKey,
-		"GITHUB_TOKEN":      repo.GitHubToken,
-	}, emit)
+	env := map[string]string{
+		"SF_WORKDIR":    workdir,
+		"SF_BRANCH":     rec.Branch,
+		"SF_PROMPT_B64": base64.StdEncoding.EncodeToString([]byte(prompt)),
+		"GITHUB_TOKEN":  repo.GitHubToken,
+	}
+	authKey, authVal := claudeAuthEnv(oc)
+	env[authKey] = authVal
+	return b.runScript(ctx, sb, "followup-"+requestID, "followup", followupScript, env, emit)
 }
 
 // runScript writes scriptBody to /tmp/sf-<label>.sh inside the sandbox

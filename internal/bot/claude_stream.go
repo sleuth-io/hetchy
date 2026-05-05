@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/hetchyhq/hetchy/internal/blocks"
@@ -44,6 +45,20 @@ type claudeStreamParser struct {
 	// the result comes back)
 	tools map[string]string
 
+	// tool_use_id → tool name. Captured at the assistant turn so
+	// the user-turn that delivers the matching tool_result can
+	// produce a per-tool summary string ("287 lines", "exit 0", …)
+	// without re-parsing the assistant content. Cleared in lockstep
+	// with `tools`.
+	toolNames map[string]string
+
+	// tool_use_id → input map. Some tools (Write, Edit) only have
+	// useful summary info on the *input* side — the matching
+	// tool_result is just an "ok" string. We retain the raw input
+	// so summarizeToolResult can pull `content` / `new_string`
+	// line counts at Done time.
+	toolInputs map[string]map[string]any
+
 	// Captured text candidates we may pull a PR URL out of, in
 	// preference order. We accumulate everywhere a URL might land
 	// because Claude doesn't guarantee a specific output shape: the
@@ -59,7 +74,12 @@ type claudeStreamParser struct {
 var prURLRe = regexp.MustCompile(`https://github\.com/[^\s)]+/pull/\d+`)
 
 func newClaudeStreamParser(emit blocks.Emitter) *claudeStreamParser {
-	return &claudeStreamParser{emit: emit, tools: map[string]string{}}
+	return &claudeStreamParser{
+		emit:       emit,
+		tools:      map[string]string{},
+		toolNames:  map[string]string{},
+		toolInputs: map[string]map[string]any{},
+	}
 }
 
 // Line consumes a single NDJSON line (no trailing newline). Lines
@@ -103,6 +123,8 @@ func (p *claudeStreamParser) Finish() string {
 		p.emit.Done(id, "")
 	}
 	p.tools = map[string]string{}
+	p.toolNames = map[string]string{}
+	p.toolInputs = map[string]map[string]any{}
 	if m := prURLRe.FindString(p.finalText); m != "" {
 		return m
 	}
@@ -137,6 +159,8 @@ func (p *claudeStreamParser) Abort() {
 		p.emit.Fail(id, "")
 	}
 	p.tools = map[string]string{}
+	p.toolNames = map[string]string{}
+	p.toolInputs = map[string]map[string]any{}
 }
 
 func (p *claudeStreamParser) handleAssistant(env streamEnvelope) {
@@ -164,6 +188,8 @@ func (p *claudeStreamParser) handleAssistant(env streamEnvelope) {
 			}
 			if c.ID != "" {
 				p.tools[c.ID] = id
+				p.toolNames[c.ID] = c.Name
+				p.toolInputs[c.ID] = c.Input
 			} else {
 				// No id to match a future result against — close
 				// immediately so the spinner doesn't hang.
@@ -192,13 +218,15 @@ func (p *claudeStreamParser) handleUser(env streamEnvelope) {
 			p.toolResultBuf.WriteString(body)
 			p.toolResultBuf.WriteByte('\n')
 		}
-		summary := ""
+		summary := summarizeToolResult(p.toolNames[c.ToolUseID], p.toolInputs[c.ToolUseID], body, c.IsError)
 		if c.IsError {
 			p.emit.Fail(blockID, summary)
 		} else {
 			p.emit.Done(blockID, summary)
 		}
 		delete(p.tools, c.ToolUseID)
+		delete(p.toolNames, c.ToolUseID)
+		delete(p.toolInputs, c.ToolUseID)
 	}
 }
 
@@ -387,4 +415,83 @@ func firstLine(s string) string {
 		}
 	}
 	return ""
+}
+
+// summarizeToolResult derives a short tail string for a finished tool
+// invocation, shown after the tool title in the UI ("Reading slack.go
+// — 287 lines"). Mirrors the Claude Code terminal's per-tool blurbs
+// rather than dumping the full result body. Best-effort and conservative:
+// returns "" when nothing useful can be extracted, in which case the UI
+// shows just the title.
+//
+// Some tools (Write, Edit) only have signal on the *input* side — the
+// matching tool_result is just an "ok"-style string Claude doesn't
+// look at — so the parser threads `input` through alongside `body`.
+func summarizeToolResult(name string, input map[string]any, body string, isError bool) string {
+	body = strings.TrimSpace(body)
+	if isError {
+		if body == "" {
+			return "failed"
+		}
+		return "failed: " + truncate(firstLine(body), 60)
+	}
+	switch name {
+	case "Read":
+		if body == "" {
+			return "0 lines"
+		}
+		return strconv.Itoa(strings.Count(body, "\n")+1) + " lines"
+	case "Grep":
+		if body == "" {
+			return "no matches"
+		}
+		// Grep output is a list of matching lines, optionally
+		// preceded by a "Found N matches" header. Counting
+		// non-empty lines is a close-enough match count without
+		// trying to parse Claude Code's exact wording.
+		n := 0
+		for line := range strings.SplitSeq(body, "\n") {
+			if strings.TrimSpace(line) != "" {
+				n++
+			}
+		}
+		if n == 0 {
+			return "no matches"
+		}
+		if n == 1 {
+			return "1 match"
+		}
+		return strconv.Itoa(n) + " matches"
+	case "Glob":
+		if body == "" {
+			return "0 files"
+		}
+		n := 0
+		for line := range strings.SplitSeq(body, "\n") {
+			if strings.TrimSpace(line) != "" {
+				n++
+			}
+		}
+		if n == 1 {
+			return "1 file"
+		}
+		return strconv.Itoa(n) + " files"
+	case "Bash":
+		if body == "" {
+			return "no output"
+		}
+		return truncate(firstLine(body), 60)
+	case "Write":
+		if c, ok := input["content"].(string); ok && c != "" {
+			return strconv.Itoa(strings.Count(c, "\n")+1) + " lines"
+		}
+		return "ok"
+	case "Edit":
+		if ns, ok := input["new_string"].(string); ok && ns != "" {
+			return strconv.Itoa(strings.Count(ns, "\n")+1) + " lines"
+		}
+		return "ok"
+	default:
+		return ""
+	}
 }

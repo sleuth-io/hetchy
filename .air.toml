@@ -8,14 +8,20 @@ tmp_dir = ".air-tmp"
 [build]
   cmd = "go build -o ./.air-tmp/hetchy ./cmd/hetchy"
   bin = "./.air-tmp/hetchy"
-  include_ext = ["go", "html", "sql"]
+  # `sh` is here so the //go:embed at internal/bot/scripts/ picks up
+  # edits to agent.sh / followup.sh on save — without it, the binary
+  # keeps running with whatever scripts were embedded at last `.go`
+  # rebuild, and you can chase a "fixed" bug for hours wondering why.
+  include_ext = ["go", "html", "sql", "sh"]
   exclude_dir = [
     "dist",
     ".air-tmp",
     "db/migrations",
     "internal/db/sqlc",
     "sandbox",
-    "scripts",
+    # Top-level scripts/ only (push-snapshot, create-slack-app) — the
+    # embedded scripts at internal/bot/scripts/ MUST be watched.
+    "./scripts",
     "docs",
   ]
   exclude_regex = ["_test\\.go$"]
