@@ -973,8 +973,42 @@
           </header>
 
           {{if $bs.Slug}}
-            {{if and (not $bs.Secrets) (not $bs.DeferredCapabilities)}}
+            {{/* "Fully bootstrapped" celebration shows when there's
+                 nothing left for the user to act on: no deferred
+                 capabilities AND either no declared secrets at all or
+                 every declared secret has a value. AllFilled is
+                 precomputed in loadBootstrapStatus so the template
+                 stays out of the range-and-reduce business. */}}
+            {{if and (not $bs.DeferredCapabilities) (or (not $bs.Secrets) $bs.AllFilled)}}
               <p class="repo-card-allset">Fully bootstrapped — every task on this repo gets end-to-end validation.</p>
+              {{if $bs.Secrets}}
+                <details class="repo-card-secrets-collapsed">
+                  <summary>Manage saved secret values ({{len $bs.Secrets}})</summary>
+                  <ul class="repo-secret-edit-list">
+                    {{$repo := .}}
+                    {{range $bs.Secrets}}
+                      <li>
+                        <details class="repo-secret-edit is-filled">
+                          <summary>
+                            <code>{{.Name}}</code>
+                            <span class="repo-secret-state is-set">set</span>
+                          </summary>
+                          <form class="repo-secret-form" data-owner="{{$repo.Owner}}" data-name="{{$repo.Name}}" data-secret="{{.Name}}" data-filled="1">
+                            <input type="password" name="value" placeholder="Paste a new value to replace…" autocomplete="off" required>
+                            <div class="repo-secret-form-actions">
+                              <button type="button" class="link-btn repo-secret-clear danger-link">Clear value</button>
+                              <span class="repo-secret-spacer"></span>
+                              <button type="button" class="link-btn repo-secret-cancel">Cancel</button>
+                              <button type="submit" class="primary repo-secret-save">Replace</button>
+                            </div>
+                            <p class="repo-secret-status hint" hidden></p>
+                          </form>
+                        </details>
+                      </li>
+                    {{end}}
+                  </ul>
+                </details>
+              {{end}}
             {{else}}
               <div class="repo-card-cols">
                 {{if $bs.Secrets}}
@@ -993,9 +1027,10 @@
                             <form class="repo-secret-form" data-owner="{{$repo.Owner}}" data-name="{{$repo.Name}}" data-secret="{{.Name}}" data-filled="{{if .Filled}}1{{else}}0{{end}}">
                               <input type="password" name="value" placeholder="{{if .Filled}}Paste a new value to replace…{{else}}Paste value…{{end}}" autocomplete="off" required>
                               <div class="repo-secret-form-actions">
-                                {{if .Filled}}
-                                  <button type="button" class="link-btn repo-secret-clear danger-link" data-confirm-clear="1">Clear value</button>
-                                {{end}}
+                                {{/* Always rendered, hidden initially when the row is unset.
+                                     flipSecretRow() toggles `hidden` based on the new state,
+                                     so a row filled in-session can be cleared without a reload. */}}
+                                <button type="button" class="link-btn repo-secret-clear danger-link"{{if not .Filled}} hidden{{end}}>Clear value</button>
                                 <span class="repo-secret-spacer"></span>
                                 <button type="button" class="link-btn repo-secret-cancel">Cancel</button>
                                 <button type="submit" class="primary repo-secret-save">{{if .Filled}}Replace{{else}}Save{{end}}</button>

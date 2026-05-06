@@ -388,10 +388,17 @@ type integrationRepo struct {
 // the Repositories tab. Slug is "owner/name"; the rest is a compact
 // summary the template renders without further joining.
 type repoBootstrapStatusView struct {
-	Slug                 string
-	Status               string
-	Kind                 string
+	Slug   string
+	Status string
+	Kind   string
+	// Secrets is every declared secret on the spec (set + unset).
+	// AllFilled is the precomputed "every entry is filled" bool — the
+	// template uses it to decide whether to show the management UI or
+	// the "Fully bootstrapped" celebration. Computing it server-side
+	// keeps the template branch shape simple and avoids range-and-
+	// reduce gymnastics in html/template.
 	Secrets              []repoSecretView
+	AllFilled            bool
 	DeferredCapabilities []string
 }
 
@@ -435,14 +442,19 @@ func (b *Bot) loadBootstrapStatus(ctx context.Context, repos []integrationRepo) 
 			continue
 		}
 		secretsView := make([]repoSecretView, 0, len(summaries))
+		allFilled := true
 		for _, s := range summaries {
 			secretsView = append(secretsView, repoSecretView{Name: s.Name, Filled: s.Filled})
+			if !s.Filled {
+				allFilled = false
+			}
 		}
 		out[repo.Owner+"/"+repo.Name] = repoBootstrapStatusView{
 			Slug:                 repo.Owner + "/" + repo.Name,
 			Status:               string(spec.ValidationStatus),
 			Kind:                 spec.Kind,
 			Secrets:              secretsView,
+			AllFilled:            allFilled,
 			DeferredCapabilities: spec.DeferredCapabilities,
 		}
 	}

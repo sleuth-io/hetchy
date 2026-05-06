@@ -219,14 +219,15 @@ func (b *Bot) ensureBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo
 	spec, err := b.bootstrap.GetSpec(ctx, repo.InstallID, repo.RepoID, "")
 	switch {
 	case err == nil:
-		// Spec exists; treat it as fresh and return it. Drift detection
-		// (bootstrap.CheckSpec / IsStale) is implemented but deliberately
-		// not wired here — running it on every task would re-fingerprint
-		// against the live repo, which today means another sandbox-side
-		// detect pass and the multi-minute cost that goes with it. When
-		// we have a cheaper "has anything material changed since last
-		// bootstrap?" signal (e.g. a repo-tree hash from the App
-		// webhook), this is where it would gate a re-run.
+		// Spec exists; treat it as fresh and return it. The drift-
+		// detection logic itself is fully implemented in
+		// bootstrap.CheckSpec / IsStale (see drift.go) — the gap is
+		// the wiring call from this branch. We deliberately don't
+		// wire it yet because the only detect path we have today
+		// re-clones the repo, which is multi-minute and runs on
+		// every task. Wire here when a cheaper "has anything
+		// material changed since last bootstrap?" signal lands
+		// (e.g. a repo-tree hash from the GitHub App webhook).
 		return spec, nil
 	case errors.Is(err, bootstrap.ErrNotFound):
 		// Fall through and bootstrap.

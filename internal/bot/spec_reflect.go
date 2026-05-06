@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -82,12 +83,39 @@ func (b *Bot) applySpecImprovements(ctx context.Context, sb *daytona.Sandbox, se
 		return
 	}
 
+	// Re-fetch the spec before patching. Between the start of this
+	// task and now the user may have clicked Delete bootstrap on the
+	// Repositories tab — that DELETE drops the row, but the in-memory
+	// `*spec` we loaded at task start still looks valid. SaveSpec is
+	// a generic UPSERT, so writing the patched version would silently
+	// resurrect the deleted row with SpecVersion+1, which from the
+	// user's perspective looks like the Delete button doesn't work.
+	// ErrNotFound here is the legitimate "deleted during the run"
+	// signal; bail with a debug log.
+	if _, err := b.bootstrap.GetSpec(ctx, spec.InstallationID, spec.RepoID, spec.Path); err != nil {
+		if errors.Is(err, bootstrap.ErrNotFound) {
+			b.log.Debug("spec-improvements: spec deleted during run, skipping",
+				"repo", repo.Slug)
+			return
+		}
+		b.log.Warn("spec-improvements: re-fetch spec",
+			"error", err, "repo", repo.Slug)
+		return
+	}
+
 	// Patch the existing spec in-place: keep services, secrets, deferred
 	// capabilities, success/failure counts, fingerprint — only the
 	// scripts the agent rewrote should change. SpecVersion bumps so any
 	// future drift detection can see "this is a different generation."
+	// ValidationStatus drops to Stale because the new scripts have
+	// never actually been executed; store.go writes NULL for
+	// last_validated_at on stale specs, which keeps a future drift
+	// check from treating the un-tested replacements as "freshly
+	// proven good." The next task on this repo runs the new scripts
+	// for real, and SaveSpec will stamp validated then.
 	patched := *spec
 	patched.SpecVersion++
+	patched.ValidationStatus = bootstrap.StatusStale
 	var changed []string
 	if hasSetup {
 		patched.SetupScript = improvedSetup
