@@ -320,7 +320,11 @@ func (b *Bot) handleSlackEvent(ctx context.Context, oc orgcfg.Config, ev incomin
 	// the chat appears under their LHN filter. Empty string when the
 	// author has no matching org member; HandleRequest tolerates that.
 	creatorID := b.slackUsers.Resolve(ctx, cli, oc.OrgID, ev.user)
-	b.HandleRequest(ctx, oc, text, requestID, threadID, creatorID, emit)
+	// Slack always validates — there's no UI surface to opt out (and
+	// users routing through Slack typically aren't iterating on
+	// trivial changes). If we add a Slack-side toggle later, plumb
+	// it here.
+	b.HandleRequest(ctx, oc, text, requestID, threadID, creatorID, true, emit)
 	// Reaction bookkeeping: only swap the eyes/recycle that signalled
 	// "working on it" for a final ✓/✗ when the run actually reached a
 	// terminal state. Bot-driven question turns ("Which repository?"

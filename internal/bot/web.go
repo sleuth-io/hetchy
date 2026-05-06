@@ -1005,6 +1005,12 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 	var body struct {
 		Text      string `json:"text"`
 		SessionID string `json:"session_id"`
+		// Validate is the "Validate changes with end-to-end testing"
+		// checkbox state from the new-chat UI. Pointer so missing
+		// field (e.g. follow-up turns, Slack callers, older clients)
+		// is distinguishable from explicit false. Missing = treat as
+		// true so opting out is always an explicit user action.
+		Validate *bool `json:"validate,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
@@ -1016,6 +1022,7 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 		return
 	}
 	sessionID := strings.TrimSpace(body.SessionID)
+	validate := body.Validate == nil || *body.Validate
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -1041,7 +1048,7 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 
 	go func() {
 		defer we.Close()
-		b.HandleRequest(parentCtx, oc, text, requestID, sessionID, p.UserID, we)
+		b.HandleRequest(parentCtx, oc, text, requestID, sessionID, p.UserID, validate, we)
 	}()
 
 	// Keepalive ticker: proxies (nginx, etc.) drop idle SSE connections

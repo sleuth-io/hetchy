@@ -93,9 +93,15 @@ type repoCtx struct {
 	TokenExpires time.Time
 }
 
-func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, userRequest, requestID string, emit blocks.Emitter) (string, error) {
+func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, userRequest, requestID string, validate bool, emit blocks.Emitter) (string, error) {
 	var spec *bootstrap.Spec
-	if b.bootstrap != nil && repo.InstallID != 0 && repo.RepoID != 0 {
+	// validate=false is the user's explicit "skip end-to-end testing"
+	// opt-out from the new-chat UI. We honour it by not running
+	// bootstrap (which can take minutes on a fresh repo) and not
+	// merging the validation prompt — the agent then behaves the
+	// way it did before this pipeline existed: make the change,
+	// open the PR, done. Slack and follow-ups always pass true.
+	if validate && b.bootstrap != nil && repo.InstallID != 0 && repo.RepoID != 0 {
 		s, err := b.ensureBootstrapSpec(ctx, sb, repo, oc, requestID, emit)
 		if err != nil {
 			// Bootstrap is best-effort: a failure here logs + continues
