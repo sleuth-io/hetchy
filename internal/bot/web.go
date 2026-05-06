@@ -385,14 +385,22 @@ type integrationRepo struct {
 }
 
 // repoBootstrapStatusView is the per-repo bootstrap status shown in
-// the Integrations tab. Slug is "owner/name"; the rest is a compact
+// the Repositories tab. Slug is "owner/name"; the rest is a compact
 // summary the template renders without further joining.
 type repoBootstrapStatusView struct {
 	Slug                 string
 	Status               string
 	Kind                 string
-	UnfilledSecrets      []string
+	Secrets              []repoSecretView
 	DeferredCapabilities []string
+}
+
+// repoSecretView is one declared secret row rendered on the
+// Repositories tab. Filled drives the visual treatment (set vs not
+// set) and which inline action the template offers (clear vs set).
+type repoSecretView struct {
+	Name   string
+	Filled bool
 }
 
 // loadBootstrapStatus returns a map keyed by "owner/name" so the
@@ -422,21 +430,19 @@ func (b *Bot) loadBootstrapStatus(ctx context.Context, repos []integrationRepo) 
 		// same helper for the Manage tab. Asymmetry between the two
 		// surfaces was how earlier iterations drifted on what counts as
 		// "filled" (e.g. empty-string vs nil-bytes).
-		secrets, err := b.bootstrap.ListSecrets(ctx, row.InstallationID, row.RepoID, "")
+		summaries, err := b.bootstrap.ListSecrets(ctx, row.InstallationID, row.RepoID, "")
 		if err != nil {
 			continue
 		}
-		var unfilled []string
-		for _, s := range secrets {
-			if !s.Filled {
-				unfilled = append(unfilled, s.Name)
-			}
+		secretsView := make([]repoSecretView, 0, len(summaries))
+		for _, s := range summaries {
+			secretsView = append(secretsView, repoSecretView{Name: s.Name, Filled: s.Filled})
 		}
 		out[repo.Owner+"/"+repo.Name] = repoBootstrapStatusView{
 			Slug:                 repo.Owner + "/" + repo.Name,
 			Status:               string(spec.ValidationStatus),
 			Kind:                 spec.Kind,
-			UnfilledSecrets:      unfilled,
+			Secrets:              secretsView,
 			DeferredCapabilities: spec.DeferredCapabilities,
 		}
 	}
