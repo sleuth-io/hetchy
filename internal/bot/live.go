@@ -138,29 +138,12 @@ func newLiveRegistry() *liveRegistry {
 
 func liveKey(orgID, threadID string) string { return orgID + "\x00" + threadID }
 
-// Register replaces any prior run for this (orgID, threadID). The
-// previous run's subscribers see a clean close — they fall back to
-// reattach (which now finds the new run) on the next reload.
-func (r *liveRegistry) Register(orgID, threadID string) *liveRun {
-	run := newLiveRun()
-	key := liveKey(orgID, threadID)
-	r.mu.Lock()
-	prev := r.runs[key]
-	r.runs[key] = run
-	r.mu.Unlock()
-	if prev != nil {
-		prev.Close()
-	}
-	return run
-}
-
 // RegisterIfAbsent atomically claims the slot for (orgID, threadID),
 // returning (run, true) on the winning call and (existing, false)
 // when another goroutine already holds it. chatHandler uses this to
-// reject concurrent POSTs on the same session without the
-// Get-then-Register TOCTOU window where two requests could each
-// observe an empty slot and both Register, the second Close()ing
-// the first.
+// reject concurrent POSTs on the same session — the second caller
+// gets a 409 and the UI's reload-to-reattach path takes over via
+// /chat/stream.
 func (r *liveRegistry) RegisterIfAbsent(orgID, threadID string) (*liveRun, bool) {
 	key := liveKey(orgID, threadID)
 	r.mu.Lock()

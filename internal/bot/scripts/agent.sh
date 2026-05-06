@@ -122,8 +122,20 @@ if [[ -n "${SF_SPEC_SETUP_B64:-}" && -n "${SF_SPEC_START_B64:-}" && -n "${SF_SPE
   echo "${SF_SPEC_HEALTH_B64}" | base64 -d > /tmp/hetchy-spec/health.sh
   chmod +x /tmp/hetchy-spec/setup.sh /tmp/hetchy-spec/start.sh /tmp/hetchy-spec/health.sh
 
+  # Soft-fail setup.sh: a non-zero exit from the saved spec must not
+  # abort the agent run. Under `set -euo pipefail` an unguarded call
+  # would propagate the failure and tear the script down before claude
+  # gets to run, leaving the user with no agent output and a sandbox
+  # they can't iterate on. We log the exit code and continue — the
+  # health poll below is the authoritative signal of "is the app
+  # actually up", and the agent still has a working repo to work in
+  # even when bootstrap is broken.
   echo "[hetchy] running setup.sh"
-  /tmp/hetchy-spec/setup.sh
+  if /tmp/hetchy-spec/setup.sh; then
+    echo "[hetchy] setup.sh succeeded"
+  else
+    echo "[hetchy] WARNING: setup.sh exited non-zero ($?); continuing anyway"
+  fi
 
   echo "[hetchy] starting app via start.sh (background)"
   /tmp/hetchy-spec/start.sh &

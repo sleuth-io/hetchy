@@ -449,8 +449,9 @@ func clearRepoOnFailure(rec *convstore.Record) {
 // prior turn, so we keep it and re-run with the new user message as
 // the request — the repo isn't the problem and forcing the user to
 // retype `owner/name` would be noise. The new message replaces
-// History[0] (this is still the first real turn — the row exists only
-// because we persisted the failure blocks for refresh visibility) so a
+// History[0] (this is still the first real turn — the row exists from
+// the entry-Upsert HandleRequest does before the agent even starts,
+// plus any failure blocks the persister recorded mid-run) so a
 // follow-up only sees the request that actually shipped.
 //
 // If the failed attempt left an orphan sandbox (rec.SandboxID set,

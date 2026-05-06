@@ -441,15 +441,18 @@ func (b *Bot) loadBootstrapStatus(ctx context.Context, repos []integrationRepo) 
 		if err != nil {
 			continue
 		}
-		secrets, err := b.store.Queries.ListRepoSecretValues(ctx, sqlc.ListRepoSecretValuesParams{
-			InstallationID: row.InstallationID, RepoID: row.RepoID, Path: "",
-		})
+		// Route through bootstrap.ListSecrets so the Filled vs unfilled
+		// flag computation lives in one place — repo_secrets.go uses the
+		// same helper for the Manage tab. Asymmetry between the two
+		// surfaces was how earlier iterations drifted on what counts as
+		// "filled" (e.g. empty-string vs nil-bytes).
+		secrets, err := b.bootstrap.ListSecrets(ctx, row.InstallationID, row.RepoID, "")
 		if err != nil {
 			continue
 		}
 		var unfilled []string
 		for _, s := range secrets {
-			if len(s.ValueEncrypted) == 0 {
+			if !s.Filled {
 				unfilled = append(unfilled, s.Name)
 			}
 		}

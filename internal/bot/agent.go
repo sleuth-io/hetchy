@@ -209,11 +209,14 @@ func (b *Bot) ensureBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo
 	spec, err := b.bootstrap.GetSpec(ctx, repo.InstallID, repo.RepoID, "")
 	switch {
 	case err == nil:
-		// Spec exists; future work will add drift detection here. For
-		// now treat any saved spec as fresh — the fingerprint check
-		// happens once we have a way to detect against the live repo
-		// without re-cloning, since the sandbox-side detect we have here
-		// is too expensive to run on every task.
+		// Spec exists; treat it as fresh and return it. Drift detection
+		// (bootstrap.CheckSpec / IsStale) is implemented but deliberately
+		// not wired here — running it on every task would re-fingerprint
+		// against the live repo, which today means another sandbox-side
+		// detect pass and the multi-minute cost that goes with it. When
+		// we have a cheaper "has anything material changed since last
+		// bootstrap?" signal (e.g. a repo-tree hash from the App
+		// webhook), this is where it would gate a re-run.
 		return spec, nil
 	case errors.Is(err, bootstrap.ErrNotFound):
 		// Fall through and bootstrap.
@@ -419,6 +422,22 @@ func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx
 	}
 	authKey, authVal := claudeAuthEnv(oc)
 	env[authKey] = authVal
+	// A follow-up lands in an unarchived sandbox where any background
+	// processes from the original run are gone — including the
+	// `start.sh &` invocation that brought the app up. Without this
+	// step the agent's validation prompt assumes "the app is running"
+	// against a dead port. Ship the saved spec so followup.sh can
+	// re-run setup → start → poll health, mirroring agent.sh. Errors
+	// here are best-effort: a missing spec just means the follow-up
+	// runs without a live app, same as before.
+	if b.bootstrap != nil && repo.InstallID != 0 && repo.RepoID != 0 {
+		spec, err := b.bootstrap.GetSpec(ctx, repo.InstallID, repo.RepoID, "")
+		if err == nil && spec.SetupScript != "" && spec.StartScript != "" && spec.HealthCheck != "" {
+			env["SF_SPEC_SETUP_B64"] = base64.StdEncoding.EncodeToString([]byte(spec.SetupScript))
+			env["SF_SPEC_START_B64"] = base64.StdEncoding.EncodeToString([]byte(spec.StartScript))
+			env["SF_SPEC_HEALTH_B64"] = base64.StdEncoding.EncodeToString([]byte(spec.HealthCheck))
+		}
+	}
 	return b.runScript(ctx, sb, "followup-"+requestID, "followup", followupScript, env, emit)
 }
 

@@ -44,6 +44,51 @@ git fetch origin
 git checkout "${SF_BRANCH}"
 git pull --rebase origin "${SF_BRANCH}"
 
+# Re-apply the saved bootstrap spec, if attached. The follow-up lands
+# in an unarchived sandbox where the original `start.sh &` background
+# process is gone, so the validation prompt's "the app is running"
+# assertion is false unless we re-run setup → start (bg) → poll
+# health here. Mirrors the block in agent.sh and applies the same
+# soft-fail discipline so a broken spec doesn't tear down the run
+# before claude gets to do anything useful.
+if [[ -n "${SF_SPEC_SETUP_B64:-}" && -n "${SF_SPEC_START_B64:-}" && -n "${SF_SPEC_HEALTH_B64:-}" ]]; then
+  echo "[hetchy] applying saved repo setup spec"
+  mkdir -p /tmp/hetchy-spec
+  echo "${SF_SPEC_SETUP_B64}"  | base64 -d > /tmp/hetchy-spec/setup.sh
+  echo "${SF_SPEC_START_B64}"  | base64 -d > /tmp/hetchy-spec/start.sh
+  echo "${SF_SPEC_HEALTH_B64}" | base64 -d > /tmp/hetchy-spec/health.sh
+  chmod +x /tmp/hetchy-spec/setup.sh /tmp/hetchy-spec/start.sh /tmp/hetchy-spec/health.sh
+
+  echo "[hetchy] running setup.sh"
+  if /tmp/hetchy-spec/setup.sh; then
+    echo "[hetchy] setup.sh succeeded"
+  else
+    echo "[hetchy] WARNING: setup.sh exited non-zero ($?); continuing anyway"
+  fi
+
+  echo "[hetchy] starting app via start.sh (background)"
+  /tmp/hetchy-spec/start.sh &
+  SF_SPEC_START_PID=$!
+
+  echo "[hetchy] polling health.sh (90s budget)"
+  spec_healthy=0
+  for i in {1..90}; do
+    if ! kill -0 "${SF_SPEC_START_PID}" 2>/dev/null; then
+      echo "[hetchy] start.sh exited early (pid ${SF_SPEC_START_PID})"
+      break
+    fi
+    if /tmp/hetchy-spec/health.sh >/dev/null 2>&1; then
+      echo "[hetchy] healthy after ${i}s"
+      spec_healthy=1
+      break
+    fi
+    sleep 1
+  done
+  if [[ ${spec_healthy} -ne 1 ]]; then
+    echo "[hetchy] WARNING: spec health check never passed; agent will see a non-running app"
+  fi
+fi
+
 echo "[hetchy] running claude"
 echo "${SF_PROMPT_B64}" | base64 -d > /tmp/sf-prompt.txt
 # See agent.sh for the rationale behind stream-json.
