@@ -135,6 +135,9 @@
   #empty-state { margin: auto; text-align: center; color: #888; font-size: .95rem; }
   #empty-state h2 { font-size: 1.5rem; font-weight: 500; margin-bottom: .5rem;
                     color: #333; }
+  #empty-state pre { font-family: monospace; font-size: .75rem; line-height: 1.3;
+                     margin: 0 auto .75rem; display: inline-block; text-align: left;
+                     color: inherit; }
   #bar  { display: flex; gap: .5rem; padding: 1rem; background: #fff;
           border-top: 1px solid #ddd; }
   #inp  { flex: 1; padding: .6rem 1rem; border: 1px solid #ccc; border-radius: 2rem;
@@ -771,7 +774,21 @@ function showEmptyState() {
   log.innerHTML = '';
   const d = document.createElement('div');
   d.id = 'empty-state';
-  d.innerHTML = '<h2>Start a new chat</h2><div>Describe a feature, fix, or refactor and Hetchy will open a PR.</div>';
+  d.innerHTML = [
+    '<pre>',
+    '     .-------.     ',
+    '    /  o   o  \\   ',
+    '   |     ^     |   ',
+    '   |  \\_____/  |  ',
+    '    \\         /   ',
+    '     \'-------\'    ',
+    '       |   |       ',
+    '    ---+---+---    ',
+    '      /|   |\\     ',
+    '</pre>',
+    '<h2>Start a new chat</h2>',
+    '<div>Describe a feature, fix, or refactor and Hetchy will open a PR.</div>',
+  ].join('\n');
   log.appendChild(d);
 }
 
