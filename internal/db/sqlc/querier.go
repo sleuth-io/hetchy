@@ -83,6 +83,14 @@ type Querier interface {
 	// every successful task.
 	UpdateRepoSetupSpecStatus(ctx context.Context, arg UpdateRepoSetupSpecStatusParams) error
 	UpsertConversation(ctx context.Context, arg UpsertConversationParams) (UpsertConversationRow, error)
+	// Failing-bootstrap upsert. Diverges from UpsertRepoSetupSpec in two
+	// ways: success_count is left untouched (we only ever write a failing
+	// row, never reset successes), and failure_count is incremented on
+	// conflict instead of replaced. This way "stop retrying after N
+	// consecutive failures" guards built on failure_count actually trip,
+	// and AutoHealPromptPreamble's "this is attempt N" framing stays
+	// accurate across retries.
+	UpsertFailingRepoSetupSpec(ctx context.Context, arg UpsertFailingRepoSetupSpecParams) (RepoSetupSpec, error)
 	// Queries for the GitHub App installation cache: installations, the
 	// repos they grant access to, and (for Organization installs) team
 	// + membership snapshots.

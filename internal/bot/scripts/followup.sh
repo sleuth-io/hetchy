@@ -63,6 +63,7 @@ mkdir -p /tmp/hetchy-spec/improved
 if [[ -n "${SF_SPEC_SETUP_B64:-}" && -n "${SF_SPEC_START_B64:-}" && -n "${SF_SPEC_HEALTH_B64:-}" ]]; then
   echo "[hetchy] applying saved repo setup spec"
   mkdir -p /tmp/hetchy-spec
+  rm -f /tmp/hetchy-spec/UNHEALTHY
   echo "${SF_SPEC_SETUP_B64}"  | base64 -d > /tmp/hetchy-spec/setup.sh
   echo "${SF_SPEC_START_B64}"  | base64 -d > /tmp/hetchy-spec/start.sh
   echo "${SF_SPEC_HEALTH_B64}" | base64 -d > /tmp/hetchy-spec/health.sh
@@ -76,7 +77,9 @@ if [[ -n "${SF_SPEC_SETUP_B64:-}" && -n "${SF_SPEC_START_B64:-}" && -n "${SF_SPE
   fi
 
   echo "[hetchy] starting app via start.sh (background)"
-  /tmp/hetchy-spec/start.sh &
+  # See agent.sh for the rationale: keep start.sh's noise out of the
+  # chat block stream and into a log the agent can grep on demand.
+  /tmp/hetchy-spec/start.sh > /tmp/hetchy-spec/start.log 2>&1 &
   SF_SPEC_START_PID=$!
 
   echo "[hetchy] polling health.sh (90s budget)"
@@ -95,6 +98,7 @@ if [[ -n "${SF_SPEC_SETUP_B64:-}" && -n "${SF_SPEC_START_B64:-}" && -n "${SF_SPE
   done
   if [[ ${spec_healthy} -ne 1 ]]; then
     echo "[hetchy] WARNING: spec health check never passed; agent will see a non-running app"
+    : > /tmp/hetchy-spec/UNHEALTHY
   fi
 fi
 

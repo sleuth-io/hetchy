@@ -1003,6 +1003,25 @@ var templateFuncs = template.FuncMap{
 		return m, nil
 	},
 	"minus": func(a, b int) int { return a - b },
+	// statusExplain renders a human-friendly tooltip for one of the
+	// bootstrap ValidationStatus values. The Status column is shown as
+	// a small pill in the Repositories tab; users were asking what
+	// "partial" actually meant in practice — sub-words from the spec
+	// constants don't carry the same meaning when stripped of context.
+	"statusExplain": func(s string) string {
+		switch s {
+		case "validated":
+			return "Bootstrap fully succeeded — every task on this repo gets end-to-end validation."
+		case "partial":
+			return "Bootstrap finished but some capabilities are deferred (auth bypassed, downstream services skipped or mocked, etc.). Tasks that don't touch a deferred capability can still be validated end-to-end; tasks that do are validated as far as they can go."
+		case "stale":
+			return "The repo has changed since this spec was last validated. The next task on this repo will re-bootstrap before applying."
+		case "failing":
+			return "The most recent bootstrap attempt couldn't reach even partial success. The next task will retry with the prior failure trace seeded as auto-heal context."
+		default:
+			return s
+		}
+	},
 }
 
 func (b *Bot) renderTemplate(w http.ResponseWriter, body string, data any) {

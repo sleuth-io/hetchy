@@ -293,6 +293,118 @@ func (q *Queries) UpdateRepoSetupSpecStatus(ctx context.Context, arg UpdateRepoS
 	return err
 }
 
+const upsertFailingRepoSetupSpec = `-- name: UpsertFailingRepoSetupSpec :one
+INSERT INTO repo_setup_specs (
+    installation_id, repo_id, path,
+    spec_version, kind,
+    setup_script, start_script, health_check, stop_script,
+    services, required_secrets, deferred_capabilities, suggested_repo_changes,
+    source_fingerprint,
+    validation_status, last_validated_at,
+    success_count, failure_count, bootstrap_log,
+    updated_at
+) VALUES (
+    $1, $2, $3,
+    $4, $5,
+    $6, $7, $8, $9,
+    $10, $11, $12, $13,
+    $14,
+    $15, NULL,
+    0, 1, $16,
+    NOW()
+)
+ON CONFLICT (installation_id, repo_id, path) DO UPDATE SET
+    spec_version           = EXCLUDED.spec_version,
+    kind                   = EXCLUDED.kind,
+    setup_script           = EXCLUDED.setup_script,
+    start_script           = EXCLUDED.start_script,
+    health_check           = EXCLUDED.health_check,
+    stop_script            = EXCLUDED.stop_script,
+    services               = EXCLUDED.services,
+    required_secrets       = EXCLUDED.required_secrets,
+    deferred_capabilities  = EXCLUDED.deferred_capabilities,
+    suggested_repo_changes = EXCLUDED.suggested_repo_changes,
+    source_fingerprint     = EXCLUDED.source_fingerprint,
+    validation_status      = EXCLUDED.validation_status,
+    failure_count          = repo_setup_specs.failure_count + 1,
+    bootstrap_log          = EXCLUDED.bootstrap_log,
+    updated_at             = NOW()
+RETURNING id, installation_id, repo_id, path, spec_version, kind, setup_script, start_script, health_check, stop_script, services, required_secrets, deferred_capabilities, suggested_repo_changes, source_fingerprint, validation_status, last_validated_at, success_count, failure_count, bootstrap_log, created_at, updated_at
+`
+
+type UpsertFailingRepoSetupSpecParams struct {
+	InstallationID       int64   `json:"installation_id"`
+	RepoID               int64   `json:"repo_id"`
+	Path                 string  `json:"path"`
+	SpecVersion          int32   `json:"spec_version"`
+	Kind                 string  `json:"kind"`
+	SetupScript          string  `json:"setup_script"`
+	StartScript          string  `json:"start_script"`
+	HealthCheck          string  `json:"health_check"`
+	StopScript           *string `json:"stop_script"`
+	Services             []byte  `json:"services"`
+	RequiredSecrets      []byte  `json:"required_secrets"`
+	DeferredCapabilities []byte  `json:"deferred_capabilities"`
+	SuggestedRepoChanges []byte  `json:"suggested_repo_changes"`
+	SourceFingerprint    string  `json:"source_fingerprint"`
+	ValidationStatus     string  `json:"validation_status"`
+	BootstrapLog         *string `json:"bootstrap_log"`
+}
+
+// Failing-bootstrap upsert. Diverges from UpsertRepoSetupSpec in two
+// ways: success_count is left untouched (we only ever write a failing
+// row, never reset successes), and failure_count is incremented on
+// conflict instead of replaced. This way "stop retrying after N
+// consecutive failures" guards built on failure_count actually trip,
+// and AutoHealPromptPreamble's "this is attempt N" framing stays
+// accurate across retries.
+func (q *Queries) UpsertFailingRepoSetupSpec(ctx context.Context, arg UpsertFailingRepoSetupSpecParams) (RepoSetupSpec, error) {
+	row := q.db.QueryRow(ctx, upsertFailingRepoSetupSpec,
+		arg.InstallationID,
+		arg.RepoID,
+		arg.Path,
+		arg.SpecVersion,
+		arg.Kind,
+		arg.SetupScript,
+		arg.StartScript,
+		arg.HealthCheck,
+		arg.StopScript,
+		arg.Services,
+		arg.RequiredSecrets,
+		arg.DeferredCapabilities,
+		arg.SuggestedRepoChanges,
+		arg.SourceFingerprint,
+		arg.ValidationStatus,
+		arg.BootstrapLog,
+	)
+	var i RepoSetupSpec
+	err := row.Scan(
+		&i.ID,
+		&i.InstallationID,
+		&i.RepoID,
+		&i.Path,
+		&i.SpecVersion,
+		&i.Kind,
+		&i.SetupScript,
+		&i.StartScript,
+		&i.HealthCheck,
+		&i.StopScript,
+		&i.Services,
+		&i.RequiredSecrets,
+		&i.DeferredCapabilities,
+		&i.SuggestedRepoChanges,
+		&i.SourceFingerprint,
+		&i.ValidationStatus,
+		&i.LastValidatedAt,
+		&i.SuccessCount,
+		&i.FailureCount,
+		&i.BootstrapLog,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const upsertRepoSecretValue = `-- name: UpsertRepoSecretValue :exec
 
 INSERT INTO repo_secret_values (

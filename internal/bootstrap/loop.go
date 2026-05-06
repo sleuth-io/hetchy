@@ -54,10 +54,27 @@ type LoopInput struct {
 // LoopResult is what the loop produces: a Spec ready to be persisted,
 // plus the raw transcript captured from the sandbox (for the
 // bootstrap_log column).
+//
+// On the failure path Spec is nil but Manifest and PartialScripts may
+// be populated from a best-effort read of /tmp/hetchy-spec — what the
+// agent wrote before the loop tripped. AutoHeal-via-StatusFailing
+// uses these so the next attempt sees the prior scripts in the heal
+// preamble rather than empty placeholders.
 type LoopResult struct {
-	Spec     *Spec
-	Manifest *Manifest
-	Log      string
+	Spec           *Spec
+	Manifest       *Manifest
+	PartialScripts PartialScripts
+	Log            string
+}
+
+// PartialScripts holds whichever of setup.sh/start.sh/health.sh the
+// agent managed to write before the bootstrap loop failed. All three
+// are independently optional — a script that didn't get written is an
+// empty string.
+type PartialScripts struct {
+	Setup  string
+	Start  string
+	Health string
 }
 
 // ErrLoopFailed signals that bootstrap exhausted its iteration budget
@@ -119,8 +136,8 @@ func Run(ctx context.Context, runner Runner, in LoopInput) (*LoopResult, error) 
 		// We still try to read whatever artifacts the agent produced,
 		// since a non-zero exit can mean "verification failed but the
 		// agent wrote something." Useful for auto-heal seeding.
-		partial := readArtifactsBestEffort(ctx, runner, bootstrapOutDir)
-		return &LoopResult{Spec: nil, Manifest: partial, Log: log},
+		partial, scripts := readArtifactsBestEffort(ctx, runner, bootstrapOutDir)
+		return &LoopResult{Spec: nil, Manifest: partial, PartialScripts: scripts, Log: log},
 			fmt.Errorf("%w: %w", ErrLoopFailed, err)
 	}
 
@@ -168,22 +185,37 @@ func Run(ctx context.Context, runner Runner, in LoopInput) (*LoopResult, error) 
 	return &LoopResult{Spec: spec, Manifest: manifest, Log: log}, nil
 }
 
-// readArtifactsBestEffort tries to grab a manifest even when the
-// bootstrap script failed. Used to seed auto-heal — knowing what the
-// agent declared (even if verification didn't pass) is better than
-// starting from scratch. outDir comes from the same const Run uses
-// to build the env for the script, so the host- and sandbox-side
-// reads can't drift.
-func readArtifactsBestEffort(ctx context.Context, runner Runner, outDir string) *Manifest {
-	data, err := runner.ReadFile(ctx, outDir+"/manifest.json")
-	if err != nil {
-		return nil
+// readArtifactsBestEffort tries to grab whichever of the four
+// artifacts the agent managed to write before the bootstrap script
+// failed. Used to seed auto-heal — knowing what the agent declared
+// (even if verification didn't pass) is better than starting from
+// scratch. outDir comes from the same const Run uses to build the
+// env for the script, so the host- and sandbox-side reads can't
+// drift.
+//
+// Each read is independently best-effort: a missing or unreadable
+// file returns the zero value for that slot, never an error. The
+// caller treats anything non-empty as "the agent got this far"
+// context for the heal preamble.
+func readArtifactsBestEffort(ctx context.Context, runner Runner, outDir string) (*Manifest, PartialScripts) {
+	var manifest *Manifest
+	if data, err := runner.ReadFile(ctx, outDir+"/manifest.json"); err == nil {
+		if m, err := ParseManifest(data); err == nil {
+			manifest = m
+		}
 	}
-	m, err := ParseManifest(data)
-	if err != nil {
-		return nil
+	read := func(name string) string {
+		data, err := runner.ReadFile(ctx, outDir+"/"+name)
+		if err != nil {
+			return ""
+		}
+		return string(data)
 	}
-	return m
+	return manifest, PartialScripts{
+		Setup:  read("setup.sh"),
+		Start:  read("start.sh"),
+		Health: read("health.sh"),
+	}
 }
 
 // Fingerprint hashes the detection-relevant subset of the repo. If
@@ -261,6 +293,15 @@ mkdir -p "${HETCHY_BOOTSTRAP_OUT_DIR}"
 # preceding setup-clone step doesn't survive. cd here so the agent's
 # tools (Read/Edit/Bash) operate on the cloned repo by default.
 cd "${HETCHY_BOOTSTRAP_REPO_DIR}"
+
+# Same pre-create as agent.sh / followup.sh — the Playwright MCP
+# server's allowed-roots check rejects screenshot writes if the dir
+# doesn't exist yet, and step 7 of the bootstrap prompt tells the
+# agent to take a screenshot of every UI service. Without this line
+# the bootstrap LLM hits "File access denied" on its first
+# browser_take_screenshot and recovers by mkdir-ing the dir itself,
+# wasting a round-trip.
+mkdir -p .playwright-mcp
 
 # Strip out the alternate credential — claude's auth precedence puts
 # ANTHROPIC_API_KEY ahead of CLAUDE_CODE_OAUTH_TOKEN, so a stray value

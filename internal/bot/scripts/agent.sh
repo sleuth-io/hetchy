@@ -132,6 +132,10 @@ fi
 if [[ -n "${SF_SPEC_SETUP_B64:-}" && -n "${SF_SPEC_START_B64:-}" && -n "${SF_SPEC_HEALTH_B64:-}" ]]; then
   echo "[hetchy] applying saved repo setup spec"
   mkdir -p /tmp/hetchy-spec
+  # Clear any sentinel left over from a prior attempt in the same
+  # sandbox; the spec-apply block below will re-create UNHEALTHY only
+  # if THIS run's health poll fails.
+  rm -f /tmp/hetchy-spec/UNHEALTHY
   echo "${SF_SPEC_SETUP_B64}"  | base64 -d > /tmp/hetchy-spec/setup.sh
   echo "${SF_SPEC_START_B64}"  | base64 -d > /tmp/hetchy-spec/start.sh
   echo "${SF_SPEC_HEALTH_B64}" | base64 -d > /tmp/hetchy-spec/health.sh
@@ -153,7 +157,13 @@ if [[ -n "${SF_SPEC_SETUP_B64:-}" && -n "${SF_SPEC_START_B64:-}" && -n "${SF_SPE
   fi
 
   echo "[hetchy] starting app via start.sh (background)"
-  /tmp/hetchy-spec/start.sh &
+  # Redirect to a captured log instead of inheriting agent.sh's
+  # stdout/stderr — otherwise framework banners, request logs, and
+  # migration noise from the user's app interleave with claude's
+  # stream-json events in the chat block stream. The validation
+  # prompt tells the agent to read /tmp/hetchy-spec/start.log when
+  # it needs to triage why the app isn't responding.
+  /tmp/hetchy-spec/start.sh > /tmp/hetchy-spec/start.log 2>&1 &
   SF_SPEC_START_PID=$!
 
   echo "[hetchy] polling health.sh (90s budget)"
@@ -174,6 +184,16 @@ if [[ -n "${SF_SPEC_SETUP_B64:-}" && -n "${SF_SPEC_START_B64:-}" && -n "${SF_SPE
   done
   if [[ ${spec_healthy} -ne 1 ]]; then
     echo "[hetchy] WARNING: spec health check never passed; agent will see a non-running app"
+    # Sentinel for the validation prompt: when this file exists the
+    # agent knows the spec couldn't bring the app up and should write
+    # "Validation: incomplete — <reason>" rather than burn time poking
+    # a dead port. The prompt always reads "the app is running"
+    # because it's templated server-side before agent.sh runs; this
+    # in-sandbox marker is the truth-source the agent checks at the
+    # start of validation. Cleared at the top of the spec-apply block
+    # to make sure a stale marker from a prior run can't poison this
+    # one.
+    : > /tmp/hetchy-spec/UNHEALTHY
   fi
 fi
 

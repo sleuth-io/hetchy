@@ -324,6 +324,17 @@ func (b *Bot) ensureBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo
 // the next attempt. Best-effort: any error here just gets logged —
 // we don't propagate, because the caller is already returning the
 // original ErrLoopFailed.
+//
+// Two non-obvious behaviours:
+//   - Partial scripts (whatever the agent wrote to setup.sh /
+//     start.sh / health.sh before the loop tripped) are pulled out of
+//     LoopResult.PartialScripts and persisted on the row, so
+//     AutoHealPromptPreamble surfaces them as "Prior X.sh:" sections
+//     instead of empty placeholders.
+//   - failure_count is incremented at the SQL layer (not replaced),
+//     so retry counters accumulate across attempts. Today the bot
+//     only writes a failing row on first encounter, but a future
+//     retry-on-failure path needs the column to be monotonic.
 func (b *Bot) persistFailingBootstrap(ctx context.Context, res *bootstrap.LoopResult, repo repoCtx, hints *bootstrap.Hints) {
 	kind := ""
 	var requiredSecrets []bootstrap.Secret
@@ -338,14 +349,16 @@ func (b *Bot) persistFailingBootstrap(ctx context.Context, res *bootstrap.LoopRe
 		RepoID:               repo.RepoID,
 		SpecVersion:          1,
 		Kind:                 kind,
+		SetupScript:          res.PartialScripts.Setup,
+		StartScript:          res.PartialScripts.Start,
+		HealthCheck:          res.PartialScripts.Health,
 		RequiredSecrets:      requiredSecrets,
 		DeferredCapabilities: deferred,
 		SourceFingerprint:    bootstrap.Fingerprint(hints),
 		ValidationStatus:     bootstrap.StatusFailing,
-		FailureCount:         1,
 		BootstrapLog:         truncateLogTail(res.Log),
 	}
-	if err := b.bootstrap.SaveSpec(ctx, failingSpec); err != nil {
+	if err := b.bootstrap.SaveFailingSpec(ctx, failingSpec); err != nil {
 		b.log.Warn("save failing spec", "repo", repo.Slug, "error", err)
 	}
 }

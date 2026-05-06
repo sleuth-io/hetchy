@@ -47,7 +47,17 @@ func BuildValidationPrompt(spec *Spec, args ValidationArgs) string {
 	fmt.Fprintf(&b, `Your code change is ready. Before opening the PR for %s on branch %s,
 produce evidence that the change works end-to-end.
 
-The setup spec for this repo has been re-applied; the app is running:
+The host attempted to re-apply the spec and bring the app up. CHECK
+WHETHER IT SUCCEEDED before assuming you can hit a live URL:
+
+  - If /tmp/hetchy-spec/UNHEALTHY exists, the spec ran but the health
+    check never passed within the 90s budget. The app is NOT running.
+    Look at /tmp/hetchy-spec/start.log for stderr/stdout from start.sh
+    (timeouts, port conflicts, missing deps), record what you see in
+    summary.md as "Validation: incomplete — <reason>", and skip the
+    end-to-end probing below. Do NOT spend tool calls poking dead
+    ports — record the failure and proceed to PR.
+  - Otherwise the app is running:
 
 `, args.OwnerRepo, args.Branch)
 

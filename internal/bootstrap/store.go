@@ -136,6 +136,66 @@ func (s *Store) SaveSpec(ctx context.Context, spec *Spec) error {
 	return nil
 }
 
+// SaveFailingSpec writes a StatusFailing row using the dedicated
+// upsert that increments failure_count on conflict instead of
+// replacing it. Use this on the bootstrap-failure path so retry
+// counts accumulate across attempts — the AutoHeal preamble reads
+// failure_count to frame "this is attempt N", and a "give up after K
+// failures" guard built on this column needs the increment to ever
+// trip. The supplied spec.FailureCount/SuccessCount are ignored;
+// the SQL handles both.
+func (s *Store) SaveFailingSpec(ctx context.Context, spec *Spec) error {
+	if spec.ValidationStatus != StatusFailing {
+		return fmt.Errorf("bootstrap: SaveFailingSpec called with status=%s; use SaveSpec for non-failing rows", spec.ValidationStatus)
+	}
+	services, err := json.Marshal(nonNilServices(spec.Services))
+	if err != nil {
+		return fmt.Errorf("bootstrap: marshal services: %w", err)
+	}
+	required, err := json.Marshal(nonNilSecrets(spec.RequiredSecrets))
+	if err != nil {
+		return fmt.Errorf("bootstrap: marshal required secrets: %w", err)
+	}
+	deferred, err := json.Marshal(nonNilStrings(spec.DeferredCapabilities))
+	if err != nil {
+		return fmt.Errorf("bootstrap: marshal deferred: %w", err)
+	}
+	suggestions, err := json.Marshal(nonNilStrings(spec.SuggestedRepoChanges))
+	if err != nil {
+		return fmt.Errorf("bootstrap: marshal suggestions: %w", err)
+	}
+	var stop *string
+	if spec.StopScript != "" {
+		stop = &spec.StopScript
+	}
+	var bootLog *string
+	if spec.BootstrapLog != "" {
+		bootLog = &spec.BootstrapLog
+	}
+	_, err = s.db.Queries.UpsertFailingRepoSetupSpec(ctx, sqlc.UpsertFailingRepoSetupSpecParams{
+		InstallationID:       spec.InstallationID,
+		RepoID:               spec.RepoID,
+		Path:                 spec.Path,
+		SpecVersion:          spec.SpecVersion,
+		Kind:                 spec.Kind,
+		SetupScript:          spec.SetupScript,
+		StartScript:          spec.StartScript,
+		HealthCheck:          spec.HealthCheck,
+		StopScript:           stop,
+		Services:             services,
+		RequiredSecrets:      required,
+		DeferredCapabilities: deferred,
+		SuggestedRepoChanges: suggestions,
+		SourceFingerprint:    spec.SourceFingerprint,
+		ValidationStatus:     string(spec.ValidationStatus),
+		BootstrapLog:         bootLog,
+	})
+	if err != nil {
+		return fmt.Errorf("bootstrap: upsert failing spec: %w", err)
+	}
+	return nil
+}
+
 // MarkApplied bumps success/failure counters and validation_status
 // without rewriting the (large) script + JSONB payload. Called by the
 // runtime apply path on every task.
