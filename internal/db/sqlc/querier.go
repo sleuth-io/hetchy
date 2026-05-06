@@ -68,6 +68,15 @@ type Querier interface {
 	// one repository.
 	ListRepoSetupSpecs(ctx context.Context, arg ListRepoSetupSpecsParams) ([]RepoSetupSpec, error)
 	RenameConversation(ctx context.Context, arg RenameConversationParams) (int64, error)
+	// Periodic mid-run snapshot used by chatPersister. Only writes the
+	// handful of fields that change progressively as the agent emits
+	// blocks (history + response_blocks + creator_id). The fields that
+	// track terminal state (sandbox_id, branch, pr_url, github_owner,
+	// github_repo) are deliberately left alone — their canonical values
+	// are written by UpsertConversation at end-of-turn, and overwriting
+	// them here mid-run would race the dispatcher into the wrong state
+	// machine branch on a concurrent reload.
+	SaveConversationProgress(ctx context.Context, arg SaveConversationProgressParams) error
 	// Lightweight status update used by the runtime apply path: bumps
 	// success/failure counters and the validation_status without
 	// rewriting the whole spec. Avoids re-encoding all the JSONB blobs on

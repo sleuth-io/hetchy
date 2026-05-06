@@ -66,6 +66,10 @@ type Bot struct {
 	// case. We construct one Signer at startup; the underlying
 	// S3 client is safe for concurrent use.
 	screenshots *screenshots.Signer
+	// live tracks in-flight chat turns so the /chat/stream
+	// reattach endpoint can find them and replay buffered
+	// SSE events to a reloading tab. Goroutine-safe.
+	live *liveRegistry
 	// app is the GitHub App handle (per-environment dev/staging/prod).
 	// Nil when GITHUB_APP_* env vars aren't configured — the install
 	// button is hidden and inbound webhooks refused in that case, so
@@ -170,6 +174,7 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 		convs:            convstore.New(store),
 		bootstrap:        bootstrap.New(store, cipher),
 		screenshots:      screenshotSigner,
+		live:             newLiveRegistry(),
 		auth:             authSvc,
 		cipher:           cipher,
 		retryBackoff:     initialBackoff,
@@ -518,6 +523,19 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 	b.log.Info("sandbox created", "id", sb.ID, "request_id", requestID)
 	emit.Notify("Sandbox ready", fmt.Sprintf("`%s` is up — cloning repo and starting Claude Code.", sb.ID))
 
+	// Persist progress every 2 s for the rest of the run so a
+	// reload (or bot crash) doesn't lose blocks. The persister
+	// writes only history + response_blocks + creator_id via
+	// SaveProgress; the terminal Upsert below remains the
+	// canonical write for sandbox_id / branch / pr_url.
+	persister := newChatPersister(b.log, b.convs, recorder, rec, 2*time.Second)
+	persisterCtx, cancelPersister := context.WithCancel(ctx)
+	go persister.Run(persisterCtx)
+	defer func() {
+		cancelPersister()
+		persister.Stop()
+	}()
+
 	branch := "feature/sf-" + requestID
 	prURL, runErr := b.runAgent(ctx, sb, repo, oc, userRequest, requestID, validate, emit)
 	if runErr != nil {
@@ -596,6 +614,20 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 		}
 		return
 	}
+
+	// Persister sees a forward-looking rec where the new user turn's
+	// text is already in history — otherwise a mid-run reload would
+	// render the user's message back in the previous turn instead of
+	// the in-flight one.
+	recForPersist := rec
+	recForPersist.History = append(append([]string(nil), rec.History...), text)
+	persister := newChatPersister(b.log, b.convs, recorder, recForPersist, 2*time.Second)
+	persisterCtx, cancelPersister := context.WithCancel(ctx)
+	go persister.Run(persisterCtx)
+	defer func() {
+		cancelPersister()
+		persister.Stop()
+	}()
 
 	prURL, err := b.runFollowUp(ctx, sb, repo, oc, rec, text, requestID, emit)
 	if err != nil {

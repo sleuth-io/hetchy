@@ -1019,7 +1019,9 @@ async function loadSidebar() {
   }
 }
 
-async function loadHistory() {
+async function loadHistory(opts) {
+  opts = opts || {};
+  const skipLastBotResponse = !!opts.skipLastBotResponse;
   // Fresh chat: don't probe the API, just show the welcome state.
   if (isFreshChat) { showEmptyState(); return; }
   try {
@@ -1039,13 +1041,21 @@ async function loadHistory() {
     const turns = detail.response_blocks || [];
     for (let i = 0; i < history.length; i++) {
       addUserMsg(history[i]);
+      const isLastTurn = i === history.length - 1;
+      // skipLastBotResponse is set when we know a live SSE stream is
+      // about to take over rendering for the active turn — leave the
+      // user message in place but don't paint the (possibly stale)
+      // persisted bot blocks; consumeSSEResponse will paint the
+      // authoritative version next.
+      if (isLastTurn && skipLastBotResponse) {
+        continue;
+      }
       const blocks = turns[i] || [];
       const turn = startBotTurn();
       // Reconstruct the live phase grouping from the persisted block
       // sequence. The streamed turn paints the same phase boxes as
       // it goes; replay does it in one shot from the recorded list.
       let phase = null;
-      const isLastTurn = i === history.length - 1;
       for (const b of blocks) {
         if (b.kind === 'claude_text') {
           if (phase) closePhase(phase);
@@ -1085,23 +1095,11 @@ function makePendingTitle(text) {
   return oneLine.length > 80 ? oneLine.slice(0, 80) + '…' : oneLine;
 }
 
-async function send() {
-  const text = inp.value.trim();
-  if (!text) return;
-  inp.value = '';
-  btn.disabled = true;
-  const isFirstTurn = log.querySelectorAll('.msg').length === 0;
-  addUserMsg(text);
-
-  // Show the chat in the sidebar immediately on the first turn — the
-  // backend doesn't persist the row until the agent finishes, which can
-  // take minutes, and the user expects to see their chat appear right
-  // away (and to be able to navigate back to it mid-run).
-  if (isFirstTurn) {
-    pendingChatTitle = makePendingTitle(text);
-    renderSidebar();
-  }
-
+// consumeSSEResponse reads a server-sent-event stream from `res` and
+// renders blocks into a fresh bot turn. Used by both the original
+// POST-/chat send() flow and the GET-/chat/stream reload reattach
+// flow — the event shape is identical, only the source URL differs.
+async function consumeSSEResponse(res) {
   const turn = startBotTurn();
   // blockRefs is the per-id map of "what to do on append/done". Each
   // ref is a tagged shape:
@@ -1109,7 +1107,7 @@ async function send() {
   //   { kind: 'tool',        el, phase }  — tool_use inside a phase
   //   { kind: 'standalone',  el }         — setup/notify/result/error
   // Phase-prose appends update the phase body; tool appends are
-  // dropped (the web emitter never fires them); standalone appends
+  // dropped (the live emitter never fires them); standalone appends
   // go through the original appendToBlock path.
   const blockRefs = new Map();
   // currentPhase is the open phase box accepting new tool_uses. Set
@@ -1123,20 +1121,6 @@ async function send() {
   // freshest activity expanded — e.g. the long Sandbox setup body
   // tucks itself away when Claude starts streaming its first phase.
   let lastStandaloneEl = null;
-
-  // Read the validate checkbox from the empty-state if it's still
-  // present (first turn of a chat). Subsequent turns omit the field
-  // entirely; the server defaults to true, which matches Slack.
-  const validateBox = document.getElementById('validate-checkbox');
-  const payload = { text, session_id: sessionId };
-  if (validateBox) {
-    payload.validate = validateBox.checked;
-  }
-  const res = await fetch('/chat', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  });
 
   const reader = res.body.getReader();
   const dec = new TextDecoder();
@@ -1210,7 +1194,7 @@ async function send() {
         } else if (ref.kind === 'standalone') {
           appendToBlock(ref.el, payload.delta || '');
         }
-        // tool appends are dropped by the web emitter and never reach here.
+        // tool appends are dropped by the live emitter and never reach here.
       } else if (event === 'block_done') {
         const ref = blockRefs.get(payload.id);
         if (!ref) continue;
@@ -1228,6 +1212,39 @@ async function send() {
   // didn't receive a terminal block to push it closed (defensive —
   // a dropped connection should still produce a clean final state).
   if (currentPhase) closePhase(currentPhase);
+}
+
+async function send() {
+  const text = inp.value.trim();
+  if (!text) return;
+  inp.value = '';
+  btn.disabled = true;
+  const isFirstTurn = log.querySelectorAll('.msg').length === 0;
+  addUserMsg(text);
+
+  // Show the chat in the sidebar immediately on the first turn — the
+  // backend doesn't persist the row until the agent finishes, which can
+  // take minutes, and the user expects to see their chat appear right
+  // away (and to be able to navigate back to it mid-run).
+  if (isFirstTurn) {
+    pendingChatTitle = makePendingTitle(text);
+    renderSidebar();
+  }
+
+  // Read the validate checkbox from the empty-state if it's still
+  // present (first turn of a chat). Subsequent turns omit the field
+  // entirely; the server defaults to true, which matches Slack.
+  const validateBox = document.getElementById('validate-checkbox');
+  const payload = { text, session_id: sessionId };
+  if (validateBox) {
+    payload.validate = validateBox.checked;
+  }
+  const res = await fetch('/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  await consumeSSEResponse(res);
   btn.disabled = false;
   inp.focus();
   // Refresh the sidebar after every turn so the row's title (server-side)
@@ -1318,10 +1335,49 @@ document.addEventListener('keydown', e => {
   }
 });
 
-// Initial load: paint the sidebar, populate the user filter, and load history.
-loadMembers();
-loadSidebar();
-loadHistory();
+// init paints the sidebar, populates the user filter, and renders the
+// chat. On a reload, it first probes /chat/stream to see if a turn
+// is currently in flight: if so, it loads persisted prior turns AND
+// attaches to the live SSE stream so the user sees the in-progress
+// turn updating in real time. If no turn is in flight, it falls
+// back to rendering the persisted snapshot.
+async function init() {
+  loadMembers();
+  loadSidebar();
+
+  if (isFreshChat) {
+    showEmptyState();
+    return;
+  }
+
+  let liveRes = null;
+  try {
+    const r = await fetch('/chat/stream?session=' + encodeURIComponent(sessionId), {
+      headers: { 'Accept': 'text/event-stream' },
+    });
+    if (r.ok) {
+      liveRes = r;
+    } else if (r.body) {
+      // 404 / other — drain so the connection releases promptly.
+      try { await r.body.cancel(); } catch (e) {}
+    }
+  } catch (e) {
+    // Network blip — fall back to the persisted snapshot.
+  }
+
+  await loadHistory({ skipLastBotResponse: !!liveRes });
+  if (liveRes) {
+    btn.disabled = true;
+    await consumeSSEResponse(liveRes);
+    btn.disabled = false;
+    inp.focus();
+    // Refresh the sidebar so the just-completed turn's metadata
+    // (title, ordering) lines up with what the server saved.
+    loadSidebar();
+  }
+}
+
+init();
 </script>
 </body>
 </html>

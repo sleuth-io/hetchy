@@ -214,6 +214,49 @@ func (q *Queries) RenameConversation(ctx context.Context, arg RenameConversation
 	return result.RowsAffected(), nil
 }
 
+const saveConversationProgress = `-- name: SaveConversationProgress :exec
+INSERT INTO conversations (
+    org_id, thread_id, history, response_blocks, creator_id
+) VALUES (
+    $1, $2, $3, $4, $5
+)
+ON CONFLICT (org_id, thread_id) DO UPDATE SET
+    history         = EXCLUDED.history,
+    response_blocks = EXCLUDED.response_blocks,
+    creator_id      = CASE
+                          WHEN conversations.creator_id = '' THEN EXCLUDED.creator_id
+                          ELSE conversations.creator_id
+                      END,
+    updated_at      = NOW()
+`
+
+type SaveConversationProgressParams struct {
+	OrgID          string   `json:"org_id"`
+	ThreadID       string   `json:"thread_id"`
+	History        []string `json:"history"`
+	ResponseBlocks [][]byte `json:"response_blocks"`
+	CreatorID      string   `json:"creator_id"`
+}
+
+// Periodic mid-run snapshot used by chatPersister. Only writes the
+// handful of fields that change progressively as the agent emits
+// blocks (history + response_blocks + creator_id). The fields that
+// track terminal state (sandbox_id, branch, pr_url, github_owner,
+// github_repo) are deliberately left alone — their canonical values
+// are written by UpsertConversation at end-of-turn, and overwriting
+// them here mid-run would race the dispatcher into the wrong state
+// machine branch on a concurrent reload.
+func (q *Queries) SaveConversationProgress(ctx context.Context, arg SaveConversationProgressParams) error {
+	_, err := q.db.Exec(ctx, saveConversationProgress,
+		arg.OrgID,
+		arg.ThreadID,
+		arg.History,
+		arg.ResponseBlocks,
+		arg.CreatorID,
+	)
+	return err
+}
+
 const upsertConversation = `-- name: UpsertConversation :one
 INSERT INTO conversations (
     org_id, thread_id, sandbox_id, branch, pr_url, history, response_blocks,

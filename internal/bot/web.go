@@ -84,6 +84,7 @@ func (b *Bot) runWeb(ctx context.Context) error {
 	mux.Handle("/chat", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b.chatHandler(ctx, w, r)
 	}))))
+	mux.Handle("/chat/stream", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.chatStreamHandler))))
 	mux.Handle("/api/repo-secrets", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.repoSecretsHandler))))
 	mux.Handle("/api/conversations", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.conversationsHandler))))
 	mux.Handle("/api/conversations/", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.conversationDetailHandler))))
@@ -1030,6 +1031,17 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 		return
 	}
 
+	// Reject a duplicate POST against an in-flight session. Without
+	// this, two tabs sending "send" simultaneously would each spawn
+	// their own HandleRequest, both racing on the convstore row and
+	// the sandbox. The reload reattach path uses /chat/stream — the
+	// retry POST flow only fires when the prior turn has already
+	// terminated.
+	if existing := b.live.Get(p.OrgID, sessionID); existing != nil {
+		http.Error(w, "this chat already has a turn in flight; reload to reattach", http.StatusConflict)
+		return
+	}
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -1044,41 +1056,95 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 		sessionID = requestID
 	}
 
-	we := newWebEmitter()
+	run := b.live.Register(p.OrgID, sessionID)
+	emitter := newLiveEmitter(run)
 
 	go func() {
-		defer we.Close()
-		b.HandleRequest(parentCtx, oc, text, requestID, sessionID, p.UserID, validate, we)
+		defer b.live.Done(p.OrgID, sessionID, run)
+		b.HandleRequest(parentCtx, oc, text, requestID, sessionID, p.UserID, validate, emitter)
 	}()
 
-	// Keepalive ticker: proxies (nginx, etc.) drop idle SSE connections
-	// after ~60 s. Claude can run silently for minutes, so we send a
-	// comment frame periodically to keep the connection alive.
-	keepalive := time.NewTicker(keepaliveInterval)
-	defer keepalive.Stop()
+	sub := run.Subscribe()
+	defer run.Unsubscribe(sub)
+	b.streamLiveSubscription(w, flusher, r.Context(), sub)
+}
 
+// chatStreamHandler is the reattach endpoint. Hit by chat.html on
+// page load: if a live run is in flight for this (org, session) the
+// browser receives the full event history (replayed) followed by
+// the live event stream until the run ends. If no run is active,
+// returns 404 — the client falls back to /api/conversations to
+// render the persisted snapshot.
+func (b *Bot) chatStreamHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	p, _ := auth.FromContext(r.Context())
+	sessionID := strings.TrimSpace(r.URL.Query().Get("session"))
+	if sessionID == "" {
+		http.Error(w, "session required", http.StatusBadRequest)
+		return
+	}
+	run := b.live.Get(p.OrgID, sessionID)
+	if run == nil {
+		http.Error(w, "no live run", http.StatusNotFound)
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	sub := run.Subscribe()
+	defer run.Unsubscribe(sub)
+	b.streamLiveSubscription(w, flusher, r.Context(), sub)
+}
+
+// streamLiveSubscription drains a liveSubscription to the SSE
+// response. Sends the catch-up history first, then live events
+// until the request context is cancelled or the run closes. Heart-
+// beats every keepaliveLiveInterval to beat proxy idle timeouts.
+func (b *Bot) streamLiveSubscription(w http.ResponseWriter, flusher http.Flusher, ctx context.Context, sub *liveSubscription) {
+	write := func(ev liveEvent) error {
+		if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", ev.Event, ev.Data); err != nil {
+			return err
+		}
+		flusher.Flush()
+		return nil
+	}
+
+	// Replay history. The subscription was created under the run's
+	// mutex, so the history slice is a stable snapshot — no race
+	// with concurrent Emits.
+	for _, ev := range sub.history {
+		if err := write(ev); err != nil {
+			return
+		}
+	}
+
+	keepalive := time.NewTicker(keepaliveLiveInterval)
+	defer keepalive.Stop()
 	for {
 		select {
-		case ev, ok := <-we.Events():
+		case ev, ok := <-sub.ch:
 			if !ok {
 				return
 			}
-			if err := writeSSE(w, ev); err != nil {
+			if err := write(ev); err != nil {
 				return
 			}
-			flusher.Flush()
 		case <-keepalive.C:
 			if _, err := fmt.Fprintf(w, ": keepalive\n\n"); err != nil {
 				return
 			}
 			flusher.Flush()
-		case <-r.Context().Done():
-			// Drain in background so the HandleRequest goroutine can
-			// finish without blocking on a full channel.
-			go func() {
-				for range we.Events() {
-				}
-			}()
+		case <-ctx.Done():
 			return
 		}
 	}
