@@ -173,6 +173,32 @@
   .tag-failing   { background: #f7d6d6; color: #a02020; }
   .tag-pending   { background: #f0f2f5; color: #666; font-style: italic; }
 
+  /* App dialogs — same pattern as chat.html's rename/delete modals.
+     Drop-in: <dialog class="app-dialog"> with .dlg-body / .dlg-actions
+     / .dlg-cancel / .dlg-save | .dlg-delete buttons. */
+  dialog.app-dialog { border: none; border-radius: .55rem; padding: 0;
+                       margin: auto; box-shadow: 0 16px 48px rgba(0,0,0,.22);
+                       max-width: 28rem; width: 90vw; background: #fff;
+                       color: #1a1a1a; }
+  dialog.app-dialog::backdrop { background: rgba(0,0,0,.35); }
+  dialog.app-dialog .dlg-body { padding: 1.25rem 1.25rem 1rem; }
+  dialog.app-dialog h3 { margin: 0 0 .75rem; font-size: 1rem; font-weight: 600; }
+  dialog.app-dialog p { margin: 0 0 .75rem; font-size: .875rem; color: #555;
+                         line-height: 1.45; }
+  dialog.app-dialog code { background: #f0f2f5; padding: .05rem .35rem;
+                            border-radius: .25rem; font-size: .8rem; }
+  dialog.app-dialog .dlg-actions { display: flex; justify-content: flex-end;
+                                    gap: .5rem; padding: .85rem 1.25rem; }
+  dialog.app-dialog .dlg-cancel { padding: .5rem 1rem; background: #f3f3f3;
+    color: #333; border: 1px solid #d8d8d8; border-radius: .4rem; cursor: pointer;
+    font-size: .875rem; font-family: inherit; }
+  dialog.app-dialog .dlg-cancel:hover { background: #ebebeb; }
+  dialog.app-dialog .dlg-delete { padding: .5rem 1rem; background: #c0392b;
+    color: #fff; border: 0; border-radius: .4rem; cursor: pointer;
+    font-size: .875rem; font-family: inherit; }
+  dialog.app-dialog .dlg-delete:hover { background: #a93226; }
+  dialog.app-dialog .dlg-delete[disabled] { opacity: .6; cursor: default; }
+
   /* Toast for in-place actions (delete bootstrap, etc.) */
   .repo-toast { position: fixed; bottom: 1.5rem; left: 50%;
                 transform: translateX(-50%); background: #2a2a2e;
@@ -395,6 +421,14 @@
   html.is-dark .repo-toast { background: #f5f5f7; color: #1a1a1a;
                              box-shadow: 0 4px 16px rgba(0,0,0,.5); }
   html.is-dark .repo-toast-err { background: #f0a0a0; color: #2c0000; }
+
+  html.is-dark dialog.app-dialog { background: #1c1c1f; color: #e7e7e9; }
+  html.is-dark dialog.app-dialog::backdrop { background: rgba(0,0,0,.6); }
+  html.is-dark dialog.app-dialog p { color: #9a9aa0; }
+  html.is-dark dialog.app-dialog code { background: #2e2e33; color: #d4d4d8; }
+  html.is-dark dialog.app-dialog .dlg-cancel { background: #232327; color: #c4c4c8;
+    border-color: #2e2e33; }
+  html.is-dark dialog.app-dialog .dlg-cancel:hover { background: #2a2a2e; }
 
   /* Integration cards */
   html.is-dark .integration { background: #232327; border-color: #2e2e33;
@@ -975,6 +1009,23 @@
       {{end}}
     </div>
     <div id="repo-toast" class="repo-toast" role="status" aria-live="polite" hidden></div>
+
+    <!-- Shared confirm dialog for the Delete bootstrap action. The
+         click handler stamps data-owner / data-name on the dialog
+         right before showModal() so we keep one dialog instance for
+         the whole tab regardless of repo count. -->
+    <dialog class="app-dialog" id="delete-bootstrap-dialog" aria-labelledby="delete-bootstrap-title">
+      <div class="dlg-body">
+        <h3 id="delete-bootstrap-title">Delete bootstrap spec?</h3>
+        <p>Discard the saved bootstrap spec for <code id="delete-bootstrap-slug">repo</code>?</p>
+        <p>This does <strong>not</strong> run anything right now. The next task you start on this repo will re-run the bootstrap loop from scratch (adding several minutes to that one task) so it picks up the latest detection logic and prompt updates.</p>
+        <p>Per-repo secrets are preserved.</p>
+      </div>
+      <div class="dlg-actions">
+        <button type="button" class="dlg-cancel" id="delete-bootstrap-cancel">Cancel</button>
+        <button type="button" class="dlg-delete" id="delete-bootstrap-confirm">Delete bootstrap</button>
+      </div>
+    </dialog>
     <script>
       // Delete-bootstrap flow:
       //   1. Confirm dialog explains the side-effect (a future re-run, not
@@ -1064,61 +1115,101 @@
           });
         });
 
-        document.querySelectorAll('.delete-bootstrap-btn').forEach(function (btn) {
-          btn.addEventListener('click', async function () {
-            var owner = btn.getAttribute('data-owner');
-            var name  = btn.getAttribute('data-name');
-            var slug  = btn.getAttribute('data-slug');
-            var confirmMsg = 'Delete bootstrap spec for ' + slug + '?\n\n' +
-              'This does NOT run anything right now. The next task you start ' +
-              'on this repo will re-run the bootstrap loop from scratch ' +
-              '(adding several minutes to that one task) so it picks up the ' +
-              'latest detection logic and prompt updates.\n\n' +
-              'Per-repo secrets are preserved.';
-            if (!confirm(confirmMsg)) return;
+        // Delete bootstrap flow: clicking the per-card button stamps
+        // the owner/name + a back-pointer to the originating button on
+        // the shared <dialog>, then calls showModal(). The dialog's
+        // own confirm handler reads those off and runs the DELETE +
+        // in-place card swap. One dialog instance serves every card.
+        var dlg          = document.getElementById('delete-bootstrap-dialog');
+        var dlgSlugEl    = document.getElementById('delete-bootstrap-slug');
+        var dlgConfirm   = document.getElementById('delete-bootstrap-confirm');
+        var dlgCancel    = document.getElementById('delete-bootstrap-cancel');
+        var pendingBtn   = null;
 
-            btn.disabled = true;
-            var orig = btn.textContent;
-            btn.textContent = 'Deleting…';
-            try {
-              var qs  = '?owner=' + encodeURIComponent(owner) + '&name=' + encodeURIComponent(name);
-              var res = await fetch('/api/repo-bootstrap' + qs, { method: 'DELETE' });
-              if (!res.ok) {
-                var body = await res.text();
-                showToast('Could not delete: ' + res.status + ' ' + (body || res.statusText), 'error');
-                btn.disabled = false;
-                btn.textContent = orig;
-                return;
-              }
-              showToast('Bootstrap deleted for ' + slug + '. The next task on this repo will re-bootstrap from scratch.');
-              // In-place swap: turn this card into the "not bootstrapped" form.
-              var card = btn.closest('.repo-card');
-              if (card) {
-                var head = card.querySelector('.repo-card-head');
-                if (head) {
-                  head.querySelectorAll('.tag, .repo-card-kind').forEach(function (el) { el.remove(); });
-                  var pending = document.createElement('span');
-                  pending.className = 'tag tag-pending';
-                  pending.textContent = 'not bootstrapped';
-                  head.appendChild(pending);
-                }
-                var body = card.querySelector('.repo-card-body');
-                if (body) body.remove();
-                if (!card.querySelector('.repo-card-empty')) {
-                  var empty = document.createElement('p');
-                  empty.className = 'repo-card-empty';
-                  empty.textContent = 'The first task you start against this repo will trigger an automatic bootstrap. Expect a few extra minutes on that first run; subsequent tasks reuse the cached spec.';
-                  card.insertBefore(empty, card.querySelector('.repo-card-foot'));
-                }
-                var foot = card.querySelector('.repo-card-foot');
-                if (foot) foot.innerHTML = '';
-              }
-            } catch (e) {
-              showToast('Could not delete: ' + e, 'error');
-              btn.disabled = false;
-              btn.textContent = orig;
+        function openDeleteDialog(btn) {
+          pendingBtn = btn;
+          var owner = btn.getAttribute('data-owner');
+          var name  = btn.getAttribute('data-name');
+          var slug  = btn.getAttribute('data-slug');
+          dlg.dataset.owner = owner;
+          dlg.dataset.name  = name;
+          dlg.dataset.slug  = slug;
+          if (dlgSlugEl) dlgSlugEl.textContent = slug;
+          dlgConfirm.disabled = false;
+          dlgConfirm.textContent = 'Delete bootstrap';
+          if (typeof dlg.showModal === 'function') {
+            dlg.showModal();
+          } else {
+            // Defensive fallback for very old browsers without
+            // <dialog> support — fall through to the original
+            // confirm() rather than break the flow entirely.
+            if (window.confirm('Delete bootstrap spec for ' + slug + '? Next task will re-bootstrap from scratch.')) {
+              runDelete();
             }
-          });
+          }
+        }
+
+        if (dlgCancel) dlgCancel.addEventListener('click', function () { dlg.close(); pendingBtn = null; });
+        // Pressing Esc / clicking the backdrop also closes the dialog
+        // — clear pendingBtn so a stale reference can't fire later.
+        if (dlg) dlg.addEventListener('close', function () { pendingBtn = null; });
+
+        async function runDelete() {
+          var owner = dlg.dataset.owner;
+          var name  = dlg.dataset.name;
+          var slug  = dlg.dataset.slug;
+          var btn   = pendingBtn;
+          dlgConfirm.disabled = true;
+          dlgConfirm.textContent = 'Deleting…';
+          if (btn) {
+            btn.disabled = true;
+            btn.textContent = 'Deleting…';
+          }
+          try {
+            var qs  = '?owner=' + encodeURIComponent(owner) + '&name=' + encodeURIComponent(name);
+            var res = await fetch('/api/repo-bootstrap' + qs, { method: 'DELETE' });
+            if (!res.ok) {
+              var body = await res.text();
+              showToast('Could not delete: ' + res.status + ' ' + (body || res.statusText), 'error');
+              dlg.close();
+              if (btn) { btn.disabled = false; btn.textContent = 'Delete bootstrap'; }
+              return;
+            }
+            showToast('Bootstrap deleted for ' + slug + '. The next task on this repo will re-bootstrap from scratch.');
+            dlg.close();
+            // In-place swap: turn this card into the "not bootstrapped" form.
+            var card = btn ? btn.closest('.repo-card') : null;
+            if (card) {
+              var head = card.querySelector('.repo-card-head');
+              if (head) {
+                head.querySelectorAll('.tag, .repo-card-kind').forEach(function (el) { el.remove(); });
+                var pending = document.createElement('span');
+                pending.className = 'tag tag-pending';
+                pending.textContent = 'not bootstrapped';
+                head.appendChild(pending);
+              }
+              card.querySelectorAll('.repo-card-cols, .repo-card-allset').forEach(function (el) { el.remove(); });
+              if (!card.querySelector('.repo-card-empty')) {
+                var empty = document.createElement('p');
+                empty.className = 'repo-card-empty';
+                empty.textContent = 'The first task you start against this repo will trigger an automatic bootstrap. Expect a few extra minutes on that first run; subsequent tasks reuse the cached spec.';
+                card.insertBefore(empty, card.querySelector('.repo-card-foot'));
+              }
+              var foot = card.querySelector('.repo-card-foot');
+              if (foot) foot.innerHTML = '';
+            }
+          } catch (e) {
+            showToast('Could not delete: ' + e, 'error');
+            dlg.close();
+            if (btn) { btn.disabled = false; btn.textContent = 'Delete bootstrap'; }
+          } finally {
+            pendingBtn = null;
+          }
+        }
+        if (dlgConfirm) dlgConfirm.addEventListener('click', runDelete);
+
+        document.querySelectorAll('.delete-bootstrap-btn').forEach(function (btn) {
+          btn.addEventListener('click', function () { openDeleteDialog(btn); });
         });
       })();
     </script>
