@@ -47,6 +47,7 @@ git pull --rebase origin "${SF_BRANCH}"
 echo "[hetchy] running claude"
 echo "${SF_PROMPT_B64}" | base64 -d > /tmp/sf-prompt.txt
 # See agent.sh for the rationale behind stream-json.
-claude --print --dangerously-skip-permissions \
-       --output-format stream-json --verbose \
-       < /tmp/sf-prompt.txt
+# Wrapped via run_claude_with_watchdog (see scripts/claude-watchdog.sh)
+# to reap orphaned background-task children that would otherwise pin
+# the process alive after the agent's turn ends.
+run_claude_with_watchdog /tmp/sf-prompt.txt

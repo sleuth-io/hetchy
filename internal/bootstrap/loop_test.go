@@ -14,6 +14,7 @@ import (
 type fakeRunner struct {
 	written     map[string][]byte
 	scriptCalls []string
+	scriptLog   string
 	scriptErr   error
 	files       map[string][]byte
 	envSeen     map[string]string
@@ -26,10 +27,10 @@ func newFakeRunner() *fakeRunner {
 	}
 }
 
-func (f *fakeRunner) Run(_ context.Context, label, _ string, env map[string]string) error {
+func (f *fakeRunner) Run(_ context.Context, label, _ string, env map[string]string) (string, error) {
 	f.scriptCalls = append(f.scriptCalls, label)
 	f.envSeen = env
-	return f.scriptErr
+	return f.scriptLog, f.scriptErr
 }
 
 func (f *fakeRunner) ReadFile(_ context.Context, path string) ([]byte, error) {

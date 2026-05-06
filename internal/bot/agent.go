@@ -19,13 +19,27 @@ import (
 )
 
 //go:embed scripts/agent.sh
-var agentScript string
+var agentScriptBody string
 
 //go:embed scripts/followup.sh
-var followupScript string
+var followupScriptBody string
 
 //go:embed scripts/setup-clone.sh
 var setupCloneScript string
+
+//go:embed scripts/claude-watchdog.sh
+var claudeWatchdogScript string
+
+// agentScript and followupScript are the on-the-wire script bodies the
+// bot writes to the sandbox. They are claude-watchdog.sh prepended to
+// the user-visible scripts/agent.sh and scripts/followup.sh — the
+// prepend wires the run_claude_with_watchdog function into the same
+// shell scope. We do the join here (vs. having each script `source` a
+// separately-deployed file) so runScript only has to push one file per
+// invocation and there's no chance of a half-deployed pair.
+var agentScript = claudeWatchdogScript + "\n" + agentScriptBody
+
+var followupScript = claudeWatchdogScript + "\n" + followupScriptBody
 
 const agentPromptTemplate = `You are working inside a fresh sandbox. The repo %s has been cloned
 to %s and %s is checked out. Your task is the user request below.
@@ -204,6 +218,17 @@ func (b *Bot) ensureBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo
 
 	res.Spec.InstallationID = repo.InstallID
 	res.Spec.RepoID = repo.RepoID
+	// Trim the captured transcript to the trailing 32 KB before saving.
+	// The bootstrap_log column is meant for auto-heal seeding (last few
+	// hundred lines of failure context), not the full agent transcript
+	// — that runs into hundreds of KB and bloats every spec row. Keep
+	// the tail because the failure surface is at the end.
+	const bootstrapLogMaxBytes = 32 * 1024
+	logTail := res.Log
+	if len(logTail) > bootstrapLogMaxBytes {
+		logTail = "...(truncated)...\n" + logTail[len(logTail)-bootstrapLogMaxBytes:]
+	}
+	res.Spec.BootstrapLog = logTail
 	if err := b.bootstrap.SaveSpec(ctx, res.Spec); err != nil {
 		return nil, fmt.Errorf("save spec: %w", err)
 	}

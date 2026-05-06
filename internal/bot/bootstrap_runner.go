@@ -36,14 +36,22 @@ type botRunner struct {
 
 // Run executes scriptBody inside the sandbox session, emitting any
 // output lines as a "bootstrap" block so the user can watch progress
-// in real time. Mirrors runScript's structure but without the PR-URL
-// extraction (bootstrap doesn't open PRs, it produces specs).
-func (r *botRunner) Run(ctx context.Context, label, scriptBody string, env map[string]string) error {
+// in real time. Returns the script's combined stdout+stderr so
+// bootstrap can persist it in the bootstrap_log column for auto-heal.
+// Mirrors runScript's structure but without the PR-URL extraction
+// (bootstrap doesn't open PRs, it produces specs).
+//
+// The claude-watchdog prelude is prepended unconditionally — it's an
+// inert bash function library until something inside scriptBody calls
+// run_claude_with_watchdog. Bootstrap is the only caller today, and it
+// uses the watchdog to reap orphaned background-task children that
+// would otherwise pin claude alive after the agent's turn ends.
+func (r *botRunner) Run(ctx context.Context, label, scriptBody string, env map[string]string) (string, error) {
 	scriptPath := "/tmp/sf-" + label + ".sh"
-	body := strings.TrimRight(scriptBody, "\n")
+	body := claudeWatchdogScript + "\n" + strings.TrimRight(scriptBody, "\n")
 	writeCmd := fmt.Sprintf("cat > %s << 'SFEOF'\n%s\nSFEOF\nchmod +x %s", scriptPath, body, scriptPath)
 	if _, err := r.b.shLines(ctx, r.sb, r.sessionID, "bootstrap-write-"+label, writeCmd, 30*time.Second, func(string) {}); err != nil {
-		return fmt.Errorf("bootstrap: write script: %w", err)
+		return "", fmt.Errorf("bootstrap: write script: %w", err)
 	}
 
 	merged := make(map[string]string, len(r.baseEnv)+len(env))
@@ -62,12 +70,15 @@ func (r *botRunner) Run(ctx context.Context, label, scriptBody string, env map[s
 	// min by design); add a 5-min cushion at the runScript level for
 	// the verification phase that follows the agent's claude call.
 	router := newBootstrapLineRouter(r.emit)
-	if _, err := r.b.shLines(ctx, r.sb, r.sessionID, "bootstrap-run-"+label, runCmd, 20*time.Minute, router.Line); err != nil {
+	out, err := r.b.shLines(ctx, r.sb, r.sessionID, "bootstrap-run-"+label, runCmd, 20*time.Minute, router.Line)
+	if err != nil {
 		router.Fail("Bootstrap step failed: " + label)
-		return fmt.Errorf("bootstrap: run script: %w", err)
+		// Return the partial output even on failure — auto-heal needs
+		// the failure trace, not just the error message.
+		return out, fmt.Errorf("bootstrap: run script: %w", err)
 	}
 	router.Done("Finished " + label)
-	return nil
+	return out, nil
 }
 
 // ReadFile pulls a file out of the sandbox by cat'ing it. For small
@@ -99,40 +110,114 @@ func (r *botRunner) WriteFile(ctx context.Context, path string, data []byte) err
 	return nil
 }
 
-// newBootstrapLineRouter routes bootstrap-script log lines into a
-// single setup-kind block. Agent runs use a richer stream-json parser
-// (newAgentLineRouter); bootstrap output is plain shell + occasional
-// claude stream-json fragments and doesn't need that, so we render it
-// as a setup-style block.
+// newBootstrapLineRouter routes bootstrap-script log lines through the
+// same three-phase pattern that agentLineRouter uses for agent.sh:
+//
+//  1. Pre-claude bash echoes ("[hetchy-bootstrap] ...") render in a
+//     "Bootstrapping repo" setup block.
+//  2. The marker line `[hetchy-bootstrap] invoking claude` closes that
+//     block and switches to a claudeStreamParser, so the NDJSON output
+//     of `claude --print --output-format stream-json` becomes typed
+//     KindClaudeText / KindToolUse blocks instead of a wall of JSON.
+//  3. The next bash echo (`[hetchy-bootstrap] verifying artifacts` etc.)
+//     closes the parser and opens a "Verifying bootstrap" setup block
+//     for the post-claude verification echoes.
+//
+// The previous router was a dumb line-appender that dumped the entire
+// stream-json transcript into one setup block — readable in raw logs
+// but useless in the chat UI (hundreds of opaque NDJSON lines per
+// bootstrap). Mirroring agentLineRouter keeps both flows consistent
+// and lets the existing block UI render every claude turn the same way.
 func newBootstrapLineRouter(emit blocks.Emitter) *bootstrapLineRouter {
 	return &bootstrapLineRouter{emit: emit}
 }
 
+const (
+	bootstrapEnterClaudeMarker = "[hetchy-bootstrap] invoking claude"
+	bootstrapEchoPrefix        = "[hetchy-bootstrap] "
+)
+
+// bootstrapPhase tracks where in the bootstrap script we are. We can't
+// derive this from the line content alone — the pre-claude and
+// post-claude bash echoes share the same `[hetchy-bootstrap] ` prefix —
+// so the phase decides which setup-block title to open and whether to
+// hand the line off to the claude stream parser.
+type bootstrapPhase int
+
+const (
+	phasePreClaude bootstrapPhase = iota
+	phaseInAgent
+	phasePostClaude
+)
+
 type bootstrapLineRouter struct {
 	emit blocks.Emitter
-	id   string
-	open bool
+
+	phase     bootstrapPhase
+	setupID   string
+	setupOpen bool
+	parser    *claudeStreamParser
 }
 
 func (r *bootstrapLineRouter) Line(s string) {
-	if !r.open {
-		r.id = r.emit.Start(blocks.KindSetup, "Bootstrapping repo", nil)
-		r.open = true
+	switch r.phase {
+	case phaseInAgent:
+		// claude stream-json lines are JSON objects. Our `[hetchy-bootstrap]`
+		// echoes never appear in claude's stdout, so spotting one means
+		// we've crossed back into shell verification.
+		if strings.HasPrefix(s, bootstrapEchoPrefix) {
+			r.parser.Finish()
+			r.parser = nil
+			r.phase = phasePostClaude
+			r.appendSetup(s, "Verifying bootstrap")
+			return
+		}
+		r.parser.Line(s)
+	case phasePreClaude:
+		if s == bootstrapEnterClaudeMarker {
+			r.appendSetup(s, "Bootstrapping repo")
+			r.closeSetup("Sandbox ready, asking claude to characterize the repo")
+			r.parser = newClaudeStreamParser(r.emit)
+			r.phase = phaseInAgent
+			return
+		}
+		r.appendSetup(s, "Bootstrapping repo")
+	case phasePostClaude:
+		r.appendSetup(s, "Verifying bootstrap")
 	}
-	r.emit.Append(r.id, s+"\n")
+}
+
+func (r *bootstrapLineRouter) appendSetup(line, title string) {
+	if !r.setupOpen {
+		r.setupID = r.emit.Start(blocks.KindSetup, title, nil)
+		r.setupOpen = true
+	}
+	r.emit.Append(r.setupID, line+"\n")
+}
+
+func (r *bootstrapLineRouter) closeSetup(summary string) {
+	if r.setupOpen {
+		r.emit.Done(r.setupID, summary)
+		r.setupOpen = false
+	}
 }
 
 func (r *bootstrapLineRouter) Done(summary string) {
-	if r.open {
-		r.emit.Done(r.id, summary)
-		r.open = false
+	if r.parser != nil {
+		r.parser.Finish()
+		r.parser = nil
 	}
+	r.closeSetup(summary)
 }
 
 func (r *bootstrapLineRouter) Fail(summary string) {
-	if r.open {
-		r.emit.Fail(r.id, summary)
-		r.open = false
+	if r.parser != nil {
+		r.parser.Abort()
+		r.parser = nil
+	}
+	if r.setupOpen {
+		r.emit.Fail(r.setupID, summary)
+		r.setupOpen = false
 	}
 }
 

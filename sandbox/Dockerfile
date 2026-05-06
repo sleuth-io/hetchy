@@ -56,7 +56,15 @@ RUN install -d /usr/share/postgresql-common/pgdg \
 
 # ---------------------------------------------------------------------------
 # Docker engine + CLI + compose plugin (Docker-in-Docker).
-# Daemon is started by the entrypoint script — sandbox needs --privileged.
+#
+# The Daytona sandbox doesn't grant the kernel-level capabilities Docker's
+# default overlayfs storage driver needs: an overlay mount with `index=off`
+# from inside the sandbox returns -EINVAL. We work around it by installing
+# fuse-overlayfs (userspace overlay implementation) so dockerd can run
+# unprivileged. The entrypoint configures /etc/docker/daemon.json to
+# select fuse-overlayfs and disables Docker 29's containerd-snapshotter
+# mode, which still requires kernel overlay support even when a different
+# storage driver is selected.
 # ---------------------------------------------------------------------------
 RUN install -m 0755 -d /etc/apt/keyrings \
  && curl -fsSL https://download.docker.com/linux/debian/gpg \
@@ -67,6 +75,7 @@ RUN install -m 0755 -d /etc/apt/keyrings \
  && apt-get update && apt-get install -y --no-install-recommends \
         docker-ce docker-ce-cli containerd.io \
         docker-buildx-plugin docker-compose-plugin \
+        fuse-overlayfs \
  && rm -rf /var/lib/apt/lists/*
 
 # ---------------------------------------------------------------------------

@@ -18,11 +18,13 @@ import (
 // existing runScript helper.
 //
 // Run executes scriptBody in the sandbox with env exposed and returns
-// when the script exits. ReadFile fetches a path from the sandbox
-// (used to extract the agent's artifacts after the bootstrap script
+// when the script exits. The returned string is the script's combined
+// stdout+stderr — bootstrap persists it in the bootstrap_log column so
+// auto-heal runs have the failure trace. ReadFile fetches a path from
+// the sandbox (used to extract the agent's artifacts after bootstrap
 // completes). WriteFile is symmetric (used to drop the prompt body in).
 type Runner interface {
-	Run(ctx context.Context, label, scriptBody string, env map[string]string) error
+	Run(ctx context.Context, label, scriptBody string, env map[string]string) (string, error)
 	ReadFile(ctx context.Context, path string) ([]byte, error)
 	WriteFile(ctx context.Context, path string, data []byte) error
 }
@@ -98,12 +100,13 @@ func Run(ctx context.Context, runner Runner, in LoopInput) (*LoopResult, error) 
 	}
 	maps.Copy(env, in.SuppliedSecrets)
 
-	if err := runner.Run(ctx, "bootstrap", BootstrapScript, env); err != nil {
+	log, err := runner.Run(ctx, "bootstrap", BootstrapScript, env)
+	if err != nil {
 		// We still try to read whatever artifacts the agent produced,
 		// since a non-zero exit can mean "verification failed but the
 		// agent wrote something." Useful for auto-heal seeding.
 		partial := readArtifactsBestEffort(ctx, runner)
-		return &LoopResult{Spec: nil, Manifest: partial, Log: ""},
+		return &LoopResult{Spec: nil, Manifest: partial, Log: log},
 			fmt.Errorf("%w: %w", ErrLoopFailed, err)
 	}
 
@@ -148,7 +151,7 @@ func Run(ctx context.Context, runner Runner, in LoopInput) (*LoopResult, error) 
 		SourceFingerprint:    Fingerprint(in.Hints),
 		ValidationStatus:     status,
 	}
-	return &LoopResult{Spec: spec, Manifest: manifest}, nil
+	return &LoopResult{Spec: spec, Manifest: manifest, Log: log}, nil
 }
 
 // readArtifactsBestEffort tries to grab a manifest even when the
@@ -262,10 +265,10 @@ echo "[hetchy-bootstrap] invoking claude" >&2
 # stream-json + verbose mirrors agent.sh — gives the bot typed Block
 # updates in real time. The agent is told (in the prompt) to write
 # its four artifacts to ${HETCHY_BOOTSTRAP_OUT_DIR}; we just verify
-# they show up.
-claude --print --dangerously-skip-permissions \
-       --output-format stream-json --verbose \
-       < "${HETCHY_BOOTSTRAP_PROMPT_FILE}"
+# they show up. run_claude_with_watchdog is provided by the watchdog
+# prelude that the bot prepends to this script before writing it to
+# the sandbox; see internal/bot/scripts/claude-watchdog.sh.
+run_claude_with_watchdog "${HETCHY_BOOTSTRAP_PROMPT_FILE}"
 
 echo "[hetchy-bootstrap] verifying artifacts" >&2
 for f in setup.sh start.sh health.sh manifest.json; do
