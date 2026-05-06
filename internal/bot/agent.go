@@ -163,6 +163,18 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, o
 		"SF_PROMPT_B64":  base64.StdEncoding.EncodeToString([]byte(finalPrompt)),
 		"GITHUB_TOKEN":   repo.GitHubToken,
 	}
+	// When we have a saved spec, ship its setup/start/health scripts
+	// to agent.sh as base64 env vars. agent.sh decodes them before
+	// invoking claude and runs setup → start (bg) → poll health, so
+	// the validation prompt's "the app is running" assertion holds.
+	// Without this step the cached spec is loaded into the prompt
+	// but the agent finds a dead port and falls back to figuring out
+	// how to start the app from scratch — wasting the bootstrap.
+	if spec != nil && spec.SetupScript != "" && spec.StartScript != "" && spec.HealthCheck != "" {
+		env["SF_SPEC_SETUP_B64"] = base64.StdEncoding.EncodeToString([]byte(spec.SetupScript))
+		env["SF_SPEC_START_B64"] = base64.StdEncoding.EncodeToString([]byte(spec.StartScript))
+		env["SF_SPEC_HEALTH_B64"] = base64.StdEncoding.EncodeToString([]byte(spec.HealthCheck))
+	}
 	if len(slotsManifest) > 0 {
 		// JSON-encode the slot manifest as a single env var. The
 		// agent parses it with `jq` (already in the sandbox) per the
