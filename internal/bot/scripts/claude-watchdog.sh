@@ -42,22 +42,31 @@ run_claude_with_watchdog() {
         fi
         # Poll for clean exit (up to 30s). Claude almost always exits
         # within a second or two; we only get here for the orphan-bash
-        # hang case.
+        # hang case. Note: `((waited++))` returns status 1 when waited
+        # is 0 (post-increment evaluates to the pre-value), which trips
+        # `set -e` and aborts the reader subshell before it reaches the
+        # kill — use pre-increment instead so the arithmetic always
+        # returns 0.
         local waited=0
         while kill -0 "$cpid" 2>/dev/null && (( waited < 30 )); do
           sleep 1
-          ((waited++))
+          ((++waited))
         done
         if kill -0 "$cpid" 2>/dev/null; then
-          local comm=""
-          comm=$(cat "/proc/$cpid/comm" 2>/dev/null || echo "")
-          if [[ "$comm" == "claude" ]]; then
+          # Identity check: setsid made claude its own session leader,
+          # so its session id equals its pid. If a recycled PID now
+          # belongs to an unrelated process, sid won't match. We don't
+          # use /proc/PID/comm because claude is a node-shebang script
+          # and comm reads "node" after exec, which would always skip.
+          local sid=""
+          sid=$(ps -o sid= -p "$cpid" 2>/dev/null | tr -d ' ' || true)
+          if [[ "$sid" == "$cpid" ]]; then
             echo "[hetchy] result event seen; reaping claude pgroup ${cpid}" >&2
             kill -TERM -- "-$cpid" 2>/dev/null || true
             sleep 3
             kill -KILL -- "-$cpid" 2>/dev/null || true
           else
-            echo "[hetchy] watchdog: pid ${cpid} no longer claude (${comm:-unknown}); skipping reap" >&2
+            echo "[hetchy] watchdog: pid ${cpid} sid=${sid:-?} != ${cpid}; skipping reap (PID likely recycled)" >&2
           fi
         fi
         break
