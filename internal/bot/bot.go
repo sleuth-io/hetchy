@@ -387,6 +387,14 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		GitHubRepo:  oc.DefaultGitHubRepo,
 		CreatorID:   userID,
 	}
+	// Persist the row immediately — before we spend 10–30s creating the
+	// sandbox — so the LHN sidebar and /api/conversations both see this
+	// chat as soon as the user clicks Send. Without this, a reload during
+	// sandbox creation finds nothing and the chat disappears from the
+	// list until the first persister tick fires inside runFreshAgent.
+	if err := b.convs.Upsert(ctx, rec); err != nil {
+		b.log.Error("convstore upsert (new chat)", "error", err, "org", oc.OrgID, "thread", threadID)
+	}
 	b.runFreshAgent(ctx, oc, rec, text, requestID, validate, recorder, emit)
 }
 
