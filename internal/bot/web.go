@@ -1355,6 +1355,20 @@ func (b *Bot) conversationDetailHandler(w http.ResponseWriter, r *http.Request) 
 			http.Error(w, err.Error(), http.StatusForbidden)
 			return
 		}
+		// Refuse the delete if a run is currently in flight on
+		// this (org, thread). Otherwise the terminal Upsert that
+		// fires when the agent finishes — bot.go runFreshAgent /
+		// handleFollowUp at end-of-run — would silently re-INSERT
+		// the row we just dropped (UpsertConversation is a generic
+		// UPSERT). Same shape as the Delete-bootstrap race we
+		// already closed in applySpecImprovements via GetSpec
+		// re-check; here we close it from the other side because
+		// teaching every terminal Upsert site to re-fetch is more
+		// invasive than a single 409 here.
+		if run := b.live.Get(p.OrgID, threadID); run != nil {
+			http.Error(w, "this chat has a turn in flight; wait for it to finish before deleting", http.StatusConflict)
+			return
+		}
 		if err := b.convs.Delete(r.Context(), p.OrgID, threadID); err != nil {
 			b.log.Error("delete conversation", "error", err, "org", p.OrgID, "thread", threadID)
 			http.Error(w, "internal server error", http.StatusInternalServerError)

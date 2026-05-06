@@ -41,6 +41,15 @@ func TestBuildValidationPromptCoversThreeFlows(t *testing.T) {
 		"BOOTSTRAP SPEC IMPROVEMENT",
 		"/tmp/hetchy-spec/improved/",
 		"none.txt",
+		// Health-check sentinel + start.log triage path. If these
+		// strings drift the validation prompt would silently stop
+		// teaching the agent how to recover from a failed spec
+		// apply, and the agent would either burn time poking a
+		// dead port or claim a change is validated when nothing
+		// was actually exercised.
+		"/tmp/hetchy-spec/UNHEALTHY",
+		"/tmp/hetchy-spec/start.log",
+		"Validation: incomplete",
 	}
 	for _, want := range mustContain {
 		if !strings.Contains(prompt, want) {

@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -97,8 +98,22 @@ func (b *Bot) shLines(ctx context.Context, sb *daytona.Sandbox, sessionID, step,
 	// check below supersedes it — without this, a network blip that
 	// truncates stdout/stderr looks indistinguishable from a clean
 	// short run during debugging.
+	//
+	// DeadlineExceeded is special: the stream goroutine returns it
+	// when stepCtx fires while bytes are still in flight, leaving
+	// the caller with a partial buffer that may parse as malformed
+	// (e.g. truncated JSON looks like "unexpected end of JSON
+	// input"). Surface it as a real error so the bootstrap-loop
+	// path stops before persisting a half-read manifest. Other
+	// stream errors are still warning-only — most are benign
+	// "stream closed normally after EOF" races we don't want to
+	// upgrade to fatals.
 	if streamErr := <-streamDone; streamErr != nil {
 		b.log.Warn("sandbox log stream error", "sandbox", sb.ID, "step", step, "error", streamErr)
+		if errors.Is(streamErr, context.DeadlineExceeded) {
+			return buf.String(), fmt.Errorf("step %q stream timed out (output may be truncated, %d bytes captured): %w",
+				step, buf.Len(), streamErr)
+		}
 	}
 
 	var status map[string]any

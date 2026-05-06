@@ -46,15 +46,27 @@ func (b *Bot) applySpecImprovements(ctx context.Context, sb *daytona.Sandbox, se
 	defer func() { _ = sb.Process.DeleteSession(ctx, readSessionID) }()
 
 	read := func(path string) (string, bool) {
-		// `[ -f path ] && cat path || true` — exit-0 on either branch
-		// so a missing file is a clean empty read instead of an error.
-		cmd := fmt.Sprintf("if [ -f %s ]; then cat %s; fi", shellQuote(path), shellQuote(path))
+		// `[ -f path ] && head -c 65536 path || true` — exit-0 on
+		// either branch so a missing file is a clean empty read
+		// instead of an error. The 64 KB cap is intentional: the
+		// agent is supposed to drop a small improved script + a
+		// one-paragraph reason, anything materially larger is a
+		// signal the agent got confused (e.g. dumped the whole
+		// repo) and we don't want a multi-MB blob landing in spec
+		// script columns. An exact-cap read is treated as
+		// suspicious by the reflection log so we know the value
+		// was truncated.
+		cmd := fmt.Sprintf("if [ -f %s ]; then head -c 65536 %s; fi", shellQuote(path), shellQuote(path))
 		out, err := b.shLines(ctx, sb, readSessionID, "spec-read", cmd, 30*time.Second, func(string) {})
 		if err != nil {
 			b.log.Warn("spec-improvements: read", "error", err, "path", path, "repo", repo.Slug)
 			return "", false
 		}
 		s := strings.TrimSpace(out)
+		if len(s) >= 65536 {
+			b.log.Warn("spec-improvements: read hit 64 KB cap; suspect truncation",
+				"path", path, "repo", repo.Slug, "bytes", len(s))
+		}
 		return s, s != ""
 	}
 
@@ -131,12 +143,13 @@ func (b *Bot) applySpecImprovements(ctx context.Context, sb *daytona.Sandbox, se
 	}
 	// Append the agent's reason to the bootstrap_log so a future
 	// AutoHeal / debugging session has the rationale alongside the
-	// original transcript.
+	// original transcript. Re-truncate after the append so the
+	// column doesn't grow without bound across N improvements.
 	if reason != "" {
 		ts := time.Now().UTC().Format(time.RFC3339)
 		entry := fmt.Sprintf("\n\n--- spec improvement at %s (changed: %s) ---\n%s\n",
 			ts, strings.Join(changed, ", "), reason)
-		patched.BootstrapLog = strings.TrimRight(patched.BootstrapLog, "\n") + entry
+		patched.BootstrapLog = truncateLogTail(strings.TrimRight(patched.BootstrapLog, "\n") + entry)
 	}
 
 	if err := b.bootstrap.SaveSpec(ctx, &patched); err != nil {

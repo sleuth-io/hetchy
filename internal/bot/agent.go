@@ -203,6 +203,21 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, o
 		// affect the PR. Runs in a fresh session because runScript
 		// deleted the agent's session in its defer.
 		b.applySpecImprovements(ctx, sb, sessionID, spec, repo, emit)
+
+		// Promote the spec back to Validated on a clean run. Two
+		// reasons this matters: (1) applySpecImprovements demotes
+		// the row to Stale before saving improved scripts, so a
+		// next-task verification needs a way to flip it back when
+		// the new scripts work end-to-end; (2) success_count is the
+		// signal AutoHeal's preamble uses to frame "this is attempt
+		// N" — without an increment per success, a once-failing /
+		// once-succeeded spec keeps looking like it has never run.
+		// Best-effort: errors here are logged but don't fail the
+		// PR.
+		if mErr := b.bootstrap.MarkApplied(ctx, repo.InstallID, repo.RepoID, spec.Path,
+			bootstrap.StatusValidated, spec.SuccessCount+1, spec.FailureCount); mErr != nil {
+			b.log.Warn("mark spec applied", "error", mErr, "repo", repo.Slug)
+		}
 	}
 	return prURL, err
 }
