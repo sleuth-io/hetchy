@@ -189,34 +189,22 @@ func (s *Store) SetSecret(ctx context.Context, installationID, repoID int64, pat
 }
 
 // DeclareRequiredSecret inserts a placeholder row for a secret the
-// bootstrap manifest declared but the user hasn't filled in yet.
-// Idempotent: if the row exists with a real value, the value is
-// preserved (we re-upsert NULL only when no row existed).
+// bootstrap manifest declared. Idempotent: a row with a value the user
+// already filled in is preserved unchanged. Concurrent re-bootstraps
+// of the same repo are also safe — at most one INSERT wins, and any
+// later call simply hits the conflict and exits.
 //
-// Implemented as a check-then-insert. The race window where two
-// concurrent bootstraps both try to declare the same key is harmless
-// — the second one's value=NULL update is a no-op against the first
-// one's also-NULL row.
+// Implemented via a single INSERT … ON CONFLICT DO NOTHING so there's
+// no SELECT-then-INSERT window. The previous check-then-insert
+// pattern allowed the user filling in the value via the settings UI
+// to be silently overwritten with NULL when their write landed
+// between the two statements.
 func (s *Store) DeclareRequiredSecret(ctx context.Context, installationID, repoID int64, path, name string) error {
-	existing, err := s.db.Queries.GetRepoSecretValue(ctx, sqlc.GetRepoSecretValueParams{
+	return s.db.Queries.InsertRepoSecretValueIfAbsent(ctx, sqlc.InsertRepoSecretValueIfAbsentParams{
 		InstallationID: installationID,
 		RepoID:         repoID,
 		Path:           path,
 		Name:           name,
-	})
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return fmt.Errorf("bootstrap: check secret: %w", err)
-	}
-	if err == nil && existing.ValueEncrypted != nil {
-		// Already filled in — don't clobber.
-		return nil
-	}
-	return s.db.Queries.UpsertRepoSecretValue(ctx, sqlc.UpsertRepoSecretValueParams{
-		InstallationID: installationID,
-		RepoID:         repoID,
-		Path:           path,
-		Name:           name,
-		ValueEncrypted: nil,
 	})
 }
 

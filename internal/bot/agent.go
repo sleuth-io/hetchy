@@ -266,7 +266,7 @@ func (b *Bot) ensureBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo
 func (b *Bot) runInlineScript(ctx context.Context, sb *daytona.Sandbox, sessionID, label, scriptBody string, env map[string]string, emit blocks.Emitter) error {
 	scriptPath := "/tmp/sf-" + label + ".sh"
 	body := strings.TrimRight(scriptBody, "\n")
-	writeCmd := fmt.Sprintf("cat > %s << 'SFEOF'\n%s\nSFEOF\nchmod +x %s", scriptPath, body, scriptPath)
+	writeCmd := heredocWriteCmd(scriptPath, body, true)
 	if _, err := b.shLines(ctx, sb, sessionID, label+"-write", writeCmd, 30*time.Second, func(string) {}); err != nil {
 		return fmt.Errorf("write %s: %w", label, err)
 	}
@@ -346,13 +346,15 @@ func (b *Bot) runScript(ctx context.Context, sb *daytona.Sandbox, sessionID, lab
 	//
 	// Heredoc terminator MUST sit on its own line. The embedded scripts
 	// end with "\n" today, but an edit that drops the trailing newline
-	// would put `SFEOF` on the same line as the last script line and
-	// the heredoc would hang waiting for a bare terminator. Trim any
-	// trailing newlines and emit our own so the construction is
-	// invariant to the script body's exact whitespace.
+	// would put the terminator on the same line as the last script line
+	// and the heredoc would hang waiting for a bare terminator. Trim any
+	// trailing newlines so the construction is invariant to the script
+	// body's exact whitespace. heredocWriteCmd derives the terminator
+	// from the body's sha256 so a body line containing the terminator
+	// can't silently truncate the file.
 	scriptPath := "/tmp/sf-" + label + ".sh"
 	body := strings.TrimRight(scriptBody, "\n")
-	writeCmd := fmt.Sprintf("cat > %s << 'SFEOF'\n%s\nSFEOF\nchmod +x %s", scriptPath, body, scriptPath)
+	writeCmd := heredocWriteCmd(scriptPath, body, true)
 	if _, err := b.shLines(ctx, sb, sessionID, "write-script", writeCmd, 15*time.Second, func(string) {}); err != nil {
 		return "", err
 	}

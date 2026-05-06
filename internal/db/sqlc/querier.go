@@ -32,6 +32,14 @@ type Querier interface {
 	GetOrgConfigBySlackTeamID(ctx context.Context, slackTeamID *string) (OrgConfig, error)
 	GetRepoSecretValue(ctx context.Context, arg GetRepoSecretValueParams) (RepoSecretValue, error)
 	GetRepoSetupSpec(ctx context.Context, arg GetRepoSetupSpecParams) (RepoSetupSpec, error)
+	// Used by DeclareRequiredSecret to register a placeholder row for a
+	// secret the bootstrap manifest asked for. ON CONFLICT DO NOTHING is
+	// the key distinction from UpsertRepoSecretValue: re-declaring a
+	// secret on a re-bootstrap must NOT clobber a value the user already
+	// filled in via the settings UI. Replaces a SELECT-then-INSERT pattern
+	// whose race window allowed the user's value to be overwritten with
+	// NULL when the user filled it in between the two statements.
+	InsertRepoSecretValueIfAbsent(ctx context.Context, arg InsertRepoSecretValueIfAbsentParams) error
 	ListConversationsByOrg(ctx context.Context, orgID string) ([]ListConversationsByOrgRow, error)
 	ListConversationsByOrgAndUser(ctx context.Context, arg ListConversationsByOrgAndUserParams) ([]ListConversationsByOrgAndUserRow, error)
 	ListGithubInstallationsByOrg(ctx context.Context, orgID string) ([]GithubAppInstallation, error)

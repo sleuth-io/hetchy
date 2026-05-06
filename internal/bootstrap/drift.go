@@ -75,6 +75,11 @@ func AutoHeal(ctx context.Context, runner Runner, in AutoHealInput) (*LoopResult
 		Hints:           in.Hints,
 		SuppliedSecrets: in.SuppliedSecrets,
 		RepoDir:         in.RepoDir,
+		// Seed the agent with "this used to work, here's what changed."
+		// Without this preamble, the heal run is indistinguishable from
+		// a first-encounter run — and the prompt's "bias toward minimal
+		// update" guidance never reaches the agent.
+		Preamble: AutoHealPromptPreamble(in.PriorSpec, in.FailureLog),
 	})
 	if err != nil {
 		return res, err

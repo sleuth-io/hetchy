@@ -42,6 +42,13 @@ type LoopInput struct {
 	// it can't rely on a cwd set by a prior setup step. Empty value
 	// fails the loop early.
 	RepoDir string
+
+	// Preamble, when non-empty, is prepended to the rendered bootstrap
+	// prompt. AutoHeal sets this to AutoHealPromptPreamble(...) so a
+	// heal run reaches the agent with prior-spec context and the
+	// "bias toward minimal update" framing. First-encounter runs leave
+	// it empty.
+	Preamble string
 }
 
 // LoopResult is what the loop produces: a Spec ready to be persisted,
@@ -87,6 +94,7 @@ func Run(ctx context.Context, runner Runner, in LoopInput) (*LoopResult, error) 
 		OwnerRepo:       in.OwnerRepo,
 		Path:            in.Path,
 		SuppliedSecrets: sortedNames(in.SuppliedSecrets),
+		Preamble:        in.Preamble,
 	})
 
 	if err := runner.WriteFile(ctx, "/tmp/hetchy-bootstrap-prompt.txt", []byte(prompt)); err != nil {

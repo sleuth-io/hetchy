@@ -85,6 +85,21 @@ ON CONFLICT (installation_id, repo_id, path, name) DO UPDATE SET
     value_encrypted = EXCLUDED.value_encrypted,
     updated_at      = NOW();
 
+-- name: InsertRepoSecretValueIfAbsent :exec
+-- Used by DeclareRequiredSecret to register a placeholder row for a
+-- secret the bootstrap manifest asked for. ON CONFLICT DO NOTHING is
+-- the key distinction from UpsertRepoSecretValue: re-declaring a
+-- secret on a re-bootstrap must NOT clobber a value the user already
+-- filled in via the settings UI. Replaces a SELECT-then-INSERT pattern
+-- whose race window allowed the user's value to be overwritten with
+-- NULL when the user filled it in between the two statements.
+INSERT INTO repo_secret_values (
+    installation_id, repo_id, path, name, value_encrypted, updated_at
+) VALUES (
+    $1, $2, $3, $4, NULL, NOW()
+)
+ON CONFLICT (installation_id, repo_id, path, name) DO NOTHING;
+
 -- name: GetRepoSecretValue :one
 SELECT * FROM repo_secret_values
 WHERE installation_id = $1 AND repo_id = $2 AND path = $3 AND name = $4;

@@ -6,6 +6,8 @@ package bot
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -724,6 +726,27 @@ func isTransientError(err error) bool {
 
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// heredocWriteCmd builds a shell command that writes body to path via
+// a single-quoted heredoc with a content-derived terminator. If
+// chmodExec is true, the command also `chmod +x` the resulting file.
+//
+// The terminator is "SFEOF_" plus the first 8 hex chars of sha256(body),
+// which makes a collision with a body line cryptographically negligible.
+// The previous hardcoded "SFEOF" terminator silently truncated any file
+// whose body happened to contain a bare line of that text — a real
+// hazard for the bootstrap prompt, which embeds README/Makefile/compose
+// excerpts from arbitrary user repos.
+func heredocWriteCmd(path, body string, chmodExec bool) string {
+	sum := sha256.Sum256([]byte(body))
+	term := "SFEOF_" + hex.EncodeToString(sum[:])[:8]
+	quoted := shellQuote(path)
+	cmd := "cat > " + quoted + " << '" + term + "'\n" + body + "\n" + term
+	if chmodExec {
+		cmd += "\nchmod +x " + quoted
+	}
+	return cmd
 }
 
 // truncate caps s to at most n runes, appending "..." when it cuts.

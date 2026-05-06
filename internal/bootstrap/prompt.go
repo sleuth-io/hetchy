@@ -9,10 +9,17 @@ import (
 // PromptArgs holds the minimum context the bootstrap prompt needs
 // beyond the static hints: which repo we're bootstrapping and which
 // secrets the user has already supplied (names only, never values).
+//
+// Preamble, when non-empty, is prepended verbatim to the rendered
+// prompt. AutoHeal uses it to inject the "this is an AUTO-HEAL run"
+// context (prior scripts + last failure trace) so the agent biases
+// toward a minimal update of the existing spec rather than starting
+// over from scratch.
 type PromptArgs struct {
 	OwnerRepo       string
 	Path            string
 	SuppliedSecrets []string
+	Preamble        string
 }
 
 // BuildPrompt renders the bootstrap prompt the agent will work against.
@@ -36,6 +43,17 @@ type PromptArgs struct {
 //     prompts — the app appears to start, then dies later.
 func BuildPrompt(hints *Hints, args PromptArgs) string {
 	var b strings.Builder
+
+	// AutoHeal injects "this used to work, here's what changed" context
+	// at the top of the prompt. Prepend before the main body so the
+	// agent's first impression is the heal framing rather than a
+	// fresh-bootstrap framing.
+	if args.Preamble != "" {
+		b.WriteString(args.Preamble)
+		if !strings.HasSuffix(args.Preamble, "\n") {
+			b.WriteByte('\n')
+		}
+	}
 
 	pathSuffix := ""
 	if args.Path != "" {

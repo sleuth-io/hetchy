@@ -49,7 +49,7 @@ type botRunner struct {
 func (r *botRunner) Run(ctx context.Context, label, scriptBody string, env map[string]string) (string, error) {
 	scriptPath := "/tmp/sf-" + label + ".sh"
 	body := claudeWatchdogScript + "\n" + strings.TrimRight(scriptBody, "\n")
-	writeCmd := fmt.Sprintf("cat > %s << 'SFEOF'\n%s\nSFEOF\nchmod +x %s", scriptPath, body, scriptPath)
+	writeCmd := heredocWriteCmd(scriptPath, body, true)
 	if _, err := r.b.shLines(ctx, r.sb, r.sessionID, "bootstrap-write-"+label, writeCmd, 30*time.Second, func(string) {}); err != nil {
 		return "", fmt.Errorf("bootstrap: write script: %w", err)
 	}
@@ -103,7 +103,7 @@ func (r *botRunner) ReadFile(ctx context.Context, path string) ([]byte, error) {
 // without us having to escape them.
 func (r *botRunner) WriteFile(ctx context.Context, path string, data []byte) error {
 	body := strings.TrimRight(string(data), "\n")
-	cmd := fmt.Sprintf("cat > %s << 'SFEOF'\n%s\nSFEOF", shellQuote(path), body)
+	cmd := heredocWriteCmd(path, body, false)
 	if _, err := r.b.shLines(ctx, r.sb, r.sessionID, "bootstrap-write", cmd, 30*time.Second, func(string) {}); err != nil {
 		return fmt.Errorf("bootstrap: write %s: %w", path, err)
 	}

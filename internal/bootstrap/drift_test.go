@@ -101,6 +101,18 @@ func TestAutoHealBumpsSpecVersion(t *testing.T) {
 	if res.Spec.SpecVersion != 4 {
 		t.Errorf("spec_version should bump to 4, got %d", res.Spec.SpecVersion)
 	}
+
+	// AutoHeal must feed the prior-spec context through to the agent
+	// via the prompt; otherwise the heal run is indistinguishable from
+	// a first-encounter run and the "bias toward minimal update"
+	// guidance is never delivered. The fakeRunner records the prompt
+	// at /tmp/hetchy-bootstrap-prompt.txt — assert on its content.
+	prompt := string(runner.written["/tmp/hetchy-bootstrap-prompt.txt"])
+	for _, want := range []string{"AUTO-HEAL run", "old setup", "old start", "exit 1"} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("auto-heal prompt missing %q\n%s", want, prompt)
+		}
+	}
 }
 
 func TestAutoHealPreamblePreservesPriorContext(t *testing.T) {
