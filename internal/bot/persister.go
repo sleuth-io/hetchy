@@ -12,6 +12,28 @@ import (
 	"github.com/hetchyhq/hetchy/internal/convstore"
 )
 
+// appendMode controls how the persister stitches the live recorder
+// snapshot into rec.ResponseBlocks. The two modes mirror the
+// terminal-Upsert helpers (appendBlocksToFirstTurn / appendBlocksAsNewTurn)
+// in bot.go — the persister and the terminal save MUST agree on
+// shape, or a tick that lands after the terminal write would corrupt
+// the row (e.g. produce 2 turns where the UI expects 1, dropping the
+// second turn permanently).
+type appendMode int
+
+const (
+	// appendToFirstTurn merges current blocks into rec.ResponseBlocks[0].
+	// Used by every "first encounter" path: new chat with default repo,
+	// awaiting-repo reply, retry-after-failure. The history slice has
+	// exactly one entry (the user's first message) and one bot turn
+	// holds everything that happened.
+	appendToFirstTurn appendMode = iota
+	// appendAsNewTurn appends a fresh turn at the tail. Used by
+	// handleFollowUp where rec.ResponseBlocks already has N completed
+	// turns and the current run is producing turn N+1.
+	appendAsNewTurn
+)
+
 // chatPersister periodically writes the in-flight conversation row to
 // convstore so a mid-run reload (or a bot crash) doesn't lose the
 // blocks accumulated so far. Without this, the only persistence
@@ -38,10 +60,10 @@ type chatPersister struct {
 	creatorID       string
 
 	// priorBlocks captures rec.ResponseBlocks at HandleRequest
-	// entry. For a fresh chat this is nil; for a follow-up it's the
-	// previously-saved turn list. Each tick, we append the recorder
-	// snapshot as the latest turn.
+	// entry. The mode controls how the live recorder snapshot gets
+	// stitched in alongside it (see appendMode).
 	priorBlocks [][]blocks.Block
+	mode        appendMode
 
 	tick    time.Duration
 	stopCh  chan struct{}
@@ -52,7 +74,11 @@ type chatPersister struct {
 
 // newChatPersister captures the immutable handler state. The caller
 // starts the goroutine via Run; Stop blocks until the loop exits.
-func newChatPersister(log *slog.Logger, convs *convstore.Store, recorder *blocks.Recorder, rec convstore.Record, tick time.Duration) *chatPersister {
+// mode MUST match the terminal Upsert's append helper:
+// appendBlocksToFirstTurn → appendToFirstTurn, appendBlocksAsNewTurn
+// → appendAsNewTurn. A mismatch causes a late tick to overwrite the
+// terminal save with a different shape, dropping turns from the UI.
+func newChatPersister(log *slog.Logger, convs *convstore.Store, recorder *blocks.Recorder, rec convstore.Record, mode appendMode, tick time.Duration) *chatPersister {
 	prior := make([][]blocks.Block, len(rec.ResponseBlocks))
 	for i, t := range rec.ResponseBlocks {
 		prior[i] = append([]blocks.Block(nil), t...)
@@ -66,20 +92,38 @@ func newChatPersister(log *slog.Logger, convs *convstore.Store, recorder *blocks
 		history:     append([]string(nil), rec.History...),
 		creatorID:   rec.CreatorID,
 		priorBlocks: prior,
+		mode:        mode,
 		tick:        tick,
 		stopCh:      make(chan struct{}),
 		doneCh:      make(chan struct{}),
 	}
 }
 
-// snapshot builds a Record ready for SaveProgress: immutable fields
-// plus the live recorder snapshot appended as the current turn's
-// blocks.
+// snapshot builds a Record ready for SaveProgress. Mirrors the
+// terminal-Upsert append helper (appendToFirstTurn for first-encounter
+// paths, appendAsNewTurn for follow-ups) so the row's response_blocks
+// shape is identical whether we're writing mid-run or at end-of-turn.
 func (p *chatPersister) snapshot() convstore.Record {
 	current := p.recorder.Snapshot()
-	blocksOut := make([][]blocks.Block, 0, len(p.priorBlocks)+1)
-	blocksOut = append(blocksOut, p.priorBlocks...)
-	blocksOut = append(blocksOut, current)
+	var blocksOut [][]blocks.Block
+	switch p.mode {
+	case appendAsNewTurn:
+		blocksOut = make([][]blocks.Block, 0, len(p.priorBlocks)+1)
+		blocksOut = append(blocksOut, p.priorBlocks...)
+		blocksOut = append(blocksOut, current)
+	case appendToFirstTurn:
+		// Merge the recorder snapshot into the existing first turn
+		// (or seed turn 0 with it when the run started fresh).
+		if len(p.priorBlocks) == 0 {
+			blocksOut = [][]blocks.Block{current}
+		} else {
+			blocksOut = make([][]blocks.Block, len(p.priorBlocks))
+			for i, t := range p.priorBlocks {
+				blocksOut[i] = append([]blocks.Block(nil), t...)
+			}
+			blocksOut[0] = append(blocksOut[0], current...)
+		}
+	}
 	return convstore.Record{
 		OrgID:          p.orgID,
 		ThreadID:       p.threadID,

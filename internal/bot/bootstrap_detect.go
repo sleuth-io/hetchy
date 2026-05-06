@@ -38,18 +38,12 @@ func (b *Bot) detectViaSandbox(ctx context.Context, sb *daytona.Sandbox, session
 	//   - any *.go/.js/.ts/etc. files needed for languageStats
 	// We deliberately skip large/irrelevant trees so the tar stays under
 	// a few MB on big repos.
-	tarCmd := fmt.Sprintf(`cd %s && tar -cz \
-  --ignore-failed-read \
-  --exclude='./.git' \
-  --exclude='./node_modules' \
-  --exclude='./vendor' \
-  --exclude='./dist' \
-  --exclude='./build' \
-  --exclude='./target' \
-  --exclude='./.next' \
-  --exclude='./.venv' \
-  --exclude='./venv' \
-  $(find . -maxdepth 4 \
+	// find -print0 + tar --null pipes the file list through a NUL-
+	// delimited stream so paths containing whitespace or shell
+	// metacharacters survive intact. The previous `tar $(find …)`
+	// pattern was subject to shell word-splitting and silently
+	// dropped any file with a space in its name.
+	tarCmd := fmt.Sprintf(`cd %s && find . -maxdepth 4 \
       \( -name 'devcontainer.json' \
          -o -name '.devcontainer.json' \
          -o -name 'AGENTS.md' -o -name 'agents.md' \
@@ -67,7 +61,19 @@ func (b *Bot) detectViaSandbox(ctx context.Context, sb *daytona.Sandbox, session
         -not -path '*/.git/*' -not -path '*/dist/*' -not -path '*/build/*' \
         -not -path '*/target/*' -not -path '*/.next/*' \
         -not -path '*/.venv/*' -not -path '*/venv/*' \
-   ) | base64`, shellQuote(workdir))
+        -print0 \
+    | tar --null --ignore-failed-read \
+        --exclude='./.git' \
+        --exclude='./node_modules' \
+        --exclude='./vendor' \
+        --exclude='./dist' \
+        --exclude='./build' \
+        --exclude='./target' \
+        --exclude='./.next' \
+        --exclude='./.venv' \
+        --exclude='./venv' \
+        -czT - \
+    | base64`, shellQuote(workdir))
 
 	out, err := b.shLines(ctx, sb, sessionID, "detect-tar", tarCmd, 90*time.Second, func(string) {})
 	if err != nil {

@@ -136,9 +136,16 @@ func (s *Signer) MintSlots(ctx context.Context, prefix string, n int) ([]Slot, e
 	slots := make([]Slot, 0, n)
 	for i := range n {
 		key := fmt.Sprintf("%s/screenshot-%03d.png", prefix, i)
+		// ContentType is baked into the SigV4 signature, so the agent
+		// MUST send `-H "Content-Type: image/png"` on its PUT — the
+		// presign rejects mismatching content types. Without this
+		// constraint a forgotten header lets S3 store the object as
+		// application/octet-stream and GitHub refuses to render it
+		// inline in the PR body.
 		putReq, err := s.presigner.PresignPutObject(ctx, &s3.PutObjectInput{
-			Bucket: aws.String(s.bucket),
-			Key:    aws.String(key),
+			Bucket:      aws.String(s.bucket),
+			Key:         aws.String(key),
+			ContentType: aws.String("image/png"),
 		}, s3.WithPresignExpires(PutExpiry))
 		if err != nil {
 			return nil, fmt.Errorf("screenshots: presign put %s: %w", key, err)

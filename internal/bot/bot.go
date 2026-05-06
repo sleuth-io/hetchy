@@ -528,7 +528,11 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 	// writes only history + response_blocks + creator_id via
 	// SaveProgress; the terminal Upsert below remains the
 	// canonical write for sandbox_id / branch / pr_url.
-	persister := newChatPersister(b.log, b.convs, recorder, rec, 2*time.Second)
+	// appendToFirstTurn matches appendBlocksToFirstTurn used by
+	// every terminal Upsert in this function — a mismatch would
+	// let a late tick overwrite the terminal save with a different
+	// shape and drop turns from the UI.
+	persister := newChatPersister(b.log, b.convs, recorder, rec, appendToFirstTurn, 2*time.Second)
 	persisterCtx, cancelPersister := context.WithCancel(ctx)
 	go persister.Run(persisterCtx)
 	defer func() {
@@ -618,10 +622,11 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 	// Persister sees a forward-looking rec where the new user turn's
 	// text is already in history — otherwise a mid-run reload would
 	// render the user's message back in the previous turn instead of
-	// the in-flight one.
+	// the in-flight one. appendAsNewTurn matches appendBlocksAsNewTurn
+	// used by the terminal Upsert in this function.
 	recForPersist := rec
 	recForPersist.History = append(append([]string(nil), rec.History...), text)
-	persister := newChatPersister(b.log, b.convs, recorder, recForPersist, 2*time.Second)
+	persister := newChatPersister(b.log, b.convs, recorder, recForPersist, appendAsNewTurn, 2*time.Second)
 	persisterCtx, cancelPersister := context.WithCancel(ctx)
 	go persister.Run(persisterCtx)
 	defer func() {

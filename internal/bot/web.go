@@ -1031,22 +1031,6 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 		return
 	}
 
-	// Reject a duplicate POST against an in-flight session. Without
-	// this, two tabs sending "send" simultaneously would each spawn
-	// their own HandleRequest, both racing on the convstore row and
-	// the sandbox. The reload reattach path uses /chat/stream — the
-	// retry POST flow only fires when the prior turn has already
-	// terminated.
-	if existing := b.live.Get(p.OrgID, sessionID); existing != nil {
-		http.Error(w, "this chat already has a turn in flight; reload to reattach", http.StatusConflict)
-		return
-	}
-
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("X-Accel-Buffering", "no")
-
 	// Nanosecond precision (base 36 to keep the resulting branch
 	// suffix short) so two concurrent requests don't generate the
 	// same `feature/sf-<id>` branch name. Millisecond precision was
@@ -1056,7 +1040,23 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 		sessionID = requestID
 	}
 
-	run := b.live.Register(p.OrgID, sessionID)
+	// Atomically claim the in-flight slot. RegisterIfAbsent collapses
+	// the prior Get-then-Register TOCTOU where two concurrent POSTs
+	// could each observe an empty slot, both call Register, and the
+	// second Close()s the first run mid-stream. On a losing call we
+	// reject with 409 — the reload-to-reattach UX path uses
+	// /chat/stream, not a fresh POST.
+	run, registered := b.live.RegisterIfAbsent(p.OrgID, sessionID)
+	if !registered {
+		http.Error(w, "this chat already has a turn in flight; reload to reattach", http.StatusConflict)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
 	emitter := newLiveEmitter(run)
 
 	go func() {

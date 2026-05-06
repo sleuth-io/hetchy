@@ -1219,6 +1219,16 @@ async function send() {
   if (!text) return;
   inp.value = '';
   btn.disabled = true;
+
+  // Capture the validate checkbox state BEFORE addUserMsg runs —
+  // addUserMsg removes #empty-state from the DOM (the welcome card
+  // disappears as the conversation begins), and the checkbox lives
+  // inside that container. Reading after addUserMsg would always
+  // return null and silently fall back to "validate=true on the
+  // server", regardless of the user's choice.
+  const validateBox = document.getElementById('validate-checkbox');
+  const validateChoice = validateBox ? validateBox.checked : null;
+
   const isFirstTurn = log.querySelectorAll('.msg').length === 0;
   addUserMsg(text);
 
@@ -1231,13 +1241,9 @@ async function send() {
     renderSidebar();
   }
 
-  // Read the validate checkbox from the empty-state if it's still
-  // present (first turn of a chat). Subsequent turns omit the field
-  // entirely; the server defaults to true, which matches Slack.
-  const validateBox = document.getElementById('validate-checkbox');
   const payload = { text, session_id: sessionId };
-  if (validateBox) {
-    payload.validate = validateBox.checked;
+  if (validateChoice !== null) {
+    payload.validate = validateChoice;
   }
   const res = await fetch('/chat', {
     method: 'POST',

@@ -258,6 +258,15 @@ func (b *Bot) ensureBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo
 		SuppliedSecrets: suppliedSecrets,
 		RepoDir:         workdir,
 	})
+	// On ErrLoopFailed, bootstrap.Run still returns a partial result
+	// (any artifacts the agent produced + the captured transcript).
+	// Persisting that as a StatusFailing row keeps the trace available
+	// for AutoHeal on the next run — without this, the first failure
+	// for a repo leaves nothing in the DB and the repo can never
+	// auto-heal because AutoHealInput requires a non-nil PriorSpec.
+	if err != nil && errors.Is(err, bootstrap.ErrLoopFailed) && res != nil {
+		b.persistFailingBootstrap(ctx, res, repo, hints)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("bootstrap.Run: %w", err)
 	}
@@ -267,28 +276,7 @@ func (b *Bot) ensureBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo
 
 	res.Spec.InstallationID = repo.InstallID
 	res.Spec.RepoID = repo.RepoID
-	// Trim the captured transcript to the trailing 32 KB before saving.
-	// The bootstrap_log column is meant for auto-heal seeding (last few
-	// hundred lines of failure context), not the full agent transcript
-	// — that runs into hundreds of KB and bloats every spec row. Keep
-	// the tail because the failure surface is at the end.
-	//
-	// Walk forward from the byte cut to the next valid UTF-8 lead byte
-	// before slicing — claude's stream-json regularly contains non-ASCII
-	// (the `…` in agent.sh's auth log, plus emoji and non-ASCII tool
-	// outputs), and Postgres TEXT will reject a row containing an
-	// invalid UTF-8 sequence with `invalid byte sequence for encoding
-	// "UTF8"`, which would drop the entire SaveSpec write.
-	const bootstrapLogMaxBytes = 32 * 1024
-	logTail := res.Log
-	if len(logTail) > bootstrapLogMaxBytes {
-		start := len(logTail) - bootstrapLogMaxBytes
-		for start < len(logTail) && !utf8.RuneStart(logTail[start]) {
-			start++
-		}
-		logTail = "...(truncated)...\n" + logTail[start:]
-	}
-	res.Spec.BootstrapLog = logTail
+	res.Spec.BootstrapLog = truncateLogTail(res.Log)
 	if err := b.bootstrap.SaveSpec(ctx, res.Spec); err != nil {
 		return nil, fmt.Errorf("save spec: %w", err)
 	}
@@ -304,6 +292,53 @@ func (b *Bot) ensureBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo
 		fmt.Sprintf("Saved a `%s` setup for `%s` (status: %s). The agent will now run with end-to-end validation.",
 			res.Spec.Kind, repo.Slug, res.Spec.ValidationStatus))
 	return res.Spec, nil
+}
+
+// persistFailingBootstrap saves a StatusFailing spec row from a
+// partial bootstrap result so AutoHeal has prior context to bias on
+// the next attempt. Best-effort: any error here just gets logged —
+// we don't propagate, because the caller is already returning the
+// original ErrLoopFailed.
+func (b *Bot) persistFailingBootstrap(ctx context.Context, res *bootstrap.LoopResult, repo repoCtx, hints *bootstrap.Hints) {
+	kind := ""
+	var requiredSecrets []bootstrap.Secret
+	var deferred []string
+	if res.Manifest != nil {
+		kind = res.Manifest.Kind
+		requiredSecrets = res.Manifest.RequiredSecrets
+		deferred = res.Manifest.DeferredCapabilities
+	}
+	failingSpec := &bootstrap.Spec{
+		InstallationID:       repo.InstallID,
+		RepoID:               repo.RepoID,
+		SpecVersion:          1,
+		Kind:                 kind,
+		RequiredSecrets:      requiredSecrets,
+		DeferredCapabilities: deferred,
+		SourceFingerprint:    bootstrap.Fingerprint(hints),
+		ValidationStatus:     bootstrap.StatusFailing,
+		FailureCount:         1,
+		BootstrapLog:         truncateLogTail(res.Log),
+	}
+	if err := b.bootstrap.SaveSpec(ctx, failingSpec); err != nil {
+		b.log.Warn("save failing spec", "repo", repo.Slug, "error", err)
+	}
+}
+
+// truncateLogTail returns the trailing 32 KB of s, walking forward to
+// the next valid UTF-8 lead byte so the column write doesn't reject
+// on an invalid byte sequence (Postgres TEXT requires valid UTF-8).
+// Shared by ensureBootstrapSpec and persistFailingBootstrap.
+func truncateLogTail(s string) string {
+	const max = 32 * 1024
+	if len(s) <= max {
+		return s
+	}
+	start := len(s) - max
+	for start < len(s) && !utf8.RuneStart(s[start]) {
+		start++
+	}
+	return "...(truncated)...\n" + s[start:]
 }
 
 // runInlineScript writes scriptBody to the sandbox via heredoc and runs

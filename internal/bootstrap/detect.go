@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 // Hints is the structured output of detection. Every field is optional —
@@ -380,7 +381,15 @@ func truncate(s string, maxBytes int) string {
 	if len(s) <= maxBytes {
 		return s
 	}
-	return s[:maxBytes] + "\n... [truncated]"
+	// Walk back to the next UTF-8 lead byte so we don't slice in
+	// the middle of a multi-byte rune — emoji and CJK chars in
+	// failure logs / PR diffs would otherwise emit invalid UTF-8
+	// into the prompt (and Postgres TEXT columns reject those).
+	end := maxBytes
+	for end > 0 && !utf8.RuneStart(s[end]) {
+		end--
+	}
+	return s[:end] + "\n... [truncated]"
 }
 
 func headLines(s string, n int) string {

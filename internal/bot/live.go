@@ -154,6 +154,25 @@ func (r *liveRegistry) Register(orgID, threadID string) *liveRun {
 	return run
 }
 
+// RegisterIfAbsent atomically claims the slot for (orgID, threadID),
+// returning (run, true) on the winning call and (existing, false)
+// when another goroutine already holds it. chatHandler uses this to
+// reject concurrent POSTs on the same session without the
+// Get-then-Register TOCTOU window where two requests could each
+// observe an empty slot and both Register, the second Close()ing
+// the first.
+func (r *liveRegistry) RegisterIfAbsent(orgID, threadID string) (*liveRun, bool) {
+	key := liveKey(orgID, threadID)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if existing := r.runs[key]; existing != nil {
+		return existing, false
+	}
+	run := newLiveRun()
+	r.runs[key] = run
+	return run, true
+}
+
 // Get returns the active run for this (orgID, threadID), or nil if
 // none is currently in flight. The caller MUST NOT call Close on
 // the returned run — only the registering goroutine owns the
