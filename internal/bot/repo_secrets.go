@@ -169,6 +169,55 @@ func (b *Bot) lookupRepo(r *http.Request, orgID, owner, name string) (sqlc.Githu
 	})
 }
 
+// repoBootstrapResetHandler deletes the saved bootstrap spec for one
+// repo so the next task on that repo runs the bootstrap loop from
+// scratch. The intended use is "we shipped prompt or detect changes
+// and want this repo to pick them up" — there's no UI today for
+// editing a saved spec in place, so resetting + re-running on the
+// next task is the cheapest way to refresh.
+//
+// DELETE /api/repo-bootstrap?owner=X&name=Y[&path=Z]
+//
+// Per-secret values are deliberately preserved — they cost the user
+// time to enter and the new bootstrap will declare the same set
+// (modulo prompt drift). If the new spec genuinely needs a different
+// secret name, the user fills it in via the existing secrets UI.
+func (b *Bot) repoBootstrapResetHandler(w http.ResponseWriter, r *http.Request) {
+	p, ok := auth.FromContext(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if r.Method != http.MethodDelete && r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := requireSameOrigin(r); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	owner := strings.TrimSpace(r.URL.Query().Get("owner"))
+	name := strings.TrimSpace(r.URL.Query().Get("name"))
+	path := strings.TrimSpace(r.URL.Query().Get("path"))
+	if owner == "" || name == "" {
+		http.Error(w, "owner and name required", http.StatusBadRequest)
+		return
+	}
+	repo, err := b.lookupRepo(r, p.OrgID, owner, name)
+	if err != nil {
+		writeRepoErr(w, err)
+		return
+	}
+	if err := b.bootstrap.DeleteSpec(r.Context(), repo.InstallationID, repo.RepoID, path); err != nil {
+		http.Error(w, "delete bootstrap spec: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	b.log.Info("bootstrap spec reset",
+		"org", p.OrgID, "actor", p.UserID,
+		"owner", owner, "repo", name, "path", path)
+	writeJSON(w, map[string]string{"status": "ok"})
+}
+
 func writeRepoErr(w http.ResponseWriter, err error) {
 	if errors.Is(err, pgx.ErrNoRows) {
 		http.Error(w, "repo not found in this org", http.StatusNotFound)

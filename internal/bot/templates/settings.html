@@ -478,7 +478,7 @@
           <legend>Repo bootstrap</legend>
           <p class="hint">When Hetchy first works on a repo, it spends a few minutes figuring out how to run it end-to-end. The cached spec is reused on every subsequent task.</p>
           <table class="grid">
-            <thead><tr><th>Repository</th><th>Status</th><th>Notes</th></tr></thead>
+            <thead><tr><th>Repository</th><th>Status</th><th>Notes</th><th></th></tr></thead>
             <tbody>
               {{range .GitHubRepos}}
                 {{$slug := printf "%s/%s" .Owner .Name}}
@@ -492,14 +492,49 @@
                       {{if $bs.DeferredCapabilities}}<div class="hint">Deferred: {{range $i, $d := $bs.DeferredCapabilities}}{{if $i}}; {{end}}{{$d}}{{end}}</div>{{end}}
                       {{if and (not $bs.UnfilledSecrets) (not $bs.DeferredCapabilities)}}<span class="hint">All set.</span>{{end}}
                     </td>
+                    <td><button type="button" class="reset-bootstrap-btn" data-owner="{{.Owner}}" data-name="{{.Name}}" title="Discard the saved spec so the next task re-bootstraps from scratch (keeps any per-repo secrets you've entered).">Re-bootstrap</button></td>
                   {{else}}
                     <td><span class="hint">not bootstrapped yet</span></td>
                     <td><span class="hint">First task on this repo will trigger bootstrap.</span></td>
+                    <td></td>
                   {{end}}
                 </tr>
               {{end}}
             </tbody>
           </table>
+          <script>
+            // Re-bootstrap deletes the saved spec for one repo. The
+            // server-side handler is idempotent so repeated clicks are
+            // harmless; the page reloads on success so the new
+            // "not bootstrapped yet" state shows immediately.
+            document.querySelectorAll('.reset-bootstrap-btn').forEach(function (btn) {
+              btn.addEventListener('click', async function () {
+                var owner = btn.getAttribute('data-owner');
+                var name  = btn.getAttribute('data-name');
+                if (!confirm('Discard the saved bootstrap spec for ' + owner + '/' + name + '? The next task on this repo will spend several minutes re-bootstrapping from scratch.')) {
+                  return;
+                }
+                btn.disabled = true;
+                btn.textContent = 'Resetting…';
+                try {
+                  var qs  = '?owner=' + encodeURIComponent(owner) + '&name=' + encodeURIComponent(name);
+                  var res = await fetch('/api/repo-bootstrap' + qs, { method: 'DELETE' });
+                  if (!res.ok) {
+                    var msg = await res.text();
+                    alert('Failed to reset bootstrap: ' + res.status + ' ' + msg);
+                    btn.disabled = false;
+                    btn.textContent = 'Re-bootstrap';
+                    return;
+                  }
+                  window.location.reload();
+                } catch (e) {
+                  alert('Failed to reset bootstrap: ' + e);
+                  btn.disabled = false;
+                  btn.textContent = 'Re-bootstrap';
+                }
+              });
+            });
+          </script>
         </div>
       {{end}}
     </div>

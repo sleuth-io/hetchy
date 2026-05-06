@@ -35,6 +35,23 @@ func New(d *db.Store, c *secrets.Cipher) *Store {
 	return &Store{db: d, cipher: c}
 }
 
+// DeleteSpec removes a saved spec for (installation, repo, path). The
+// next task on this repo runs the bootstrap loop from scratch, picking
+// up any prompt updates / detection improvements that landed since the
+// previous spec was written. Idempotent — deleting a row that isn't
+// there returns nil so the caller doesn't have to special-case
+// "already absent".
+func (s *Store) DeleteSpec(ctx context.Context, installationID, repoID int64, path string) error {
+	if err := s.db.Queries.DeleteRepoSetupSpec(ctx, sqlc.DeleteRepoSetupSpecParams{
+		InstallationID: installationID,
+		RepoID:         repoID,
+		Path:           path,
+	}); err != nil {
+		return fmt.Errorf("bootstrap: delete spec: %w", err)
+	}
+	return nil
+}
+
 // GetSpec returns the saved spec for (installation, repo, path), or
 // ErrNotFound. path is "" for single-target repos.
 func (s *Store) GetSpec(ctx context.Context, installationID, repoID int64, path string) (*Spec, error) {
