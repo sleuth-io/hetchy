@@ -75,8 +75,28 @@ RUN install -m 0755 -d /etc/apt/keyrings \
  && apt-get update && apt-get install -y --no-install-recommends \
         docker-ce docker-ce-cli containerd.io \
         docker-buildx-plugin docker-compose-plugin \
-        fuse-overlayfs \
+        docker-ce-rootless-extras \
+        fuse-overlayfs slirp4netns uidmap iproute2 dbus-user-session \
  && rm -rf /var/lib/apt/lists/*
+
+# Pre-create the daytona user's runtime dir so dockerd-rootless.sh
+# can write its socket there without entrypoint-time mkdir
+# acrobatics. /run/user/1000 is the canonical XDG_RUNTIME_DIR for
+# uid 1000; setting it up at build time also pins the ownership so
+# rootful tools (which `sudo install -d` to fix it) aren't needed
+# at startup.
+RUN install -d -o daytona -g daytona -m 0700 /run/user/1000
+
+# Make `docker` route to the rootless socket by default for the
+# daytona user. The rootful socket at /var/run/docker.sock won't
+# exist when we run dockerd-rootless, so a plain `docker info` from
+# the daytona shell would otherwise hit "Cannot connect to the
+# Docker daemon at unix:///var/run/docker.sock". Setting DOCKER_HOST
+# in the user's shell init file routes all client calls to the
+# rootless socket transparently.
+RUN printf '\nexport XDG_RUNTIME_DIR=/run/user/1000\nexport DOCKER_HOST=unix:///run/user/1000/docker.sock\n' \
+        >> /home/daytona/.bashrc \
+ && chown daytona:daytona /home/daytona/.bashrc
 
 # ---------------------------------------------------------------------------
 # GitHub CLI — used by the agent to push branches and open PRs.
