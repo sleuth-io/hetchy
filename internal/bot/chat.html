@@ -135,6 +135,9 @@
   #empty-state { margin: auto; text-align: center; color: #888; font-size: .95rem; }
   #empty-state h2 { font-size: 1.5rem; font-weight: 500; margin-bottom: .5rem;
                     color: #333; }
+  #empty-state .ascii-art { font-family: monospace; font-size: .85rem; line-height: 1.4;
+                             color: #aaa; margin: 0 auto 1rem; white-space: pre;
+                             display: inline-block; }
   #bar  { display: flex; gap: .5rem; padding: 1rem; background: #fff;
           border-top: 1px solid #ddd; }
   #inp  { flex: 1; padding: .6rem 1rem; border: 1px solid #ccc; border-radius: 2rem;
@@ -354,6 +357,7 @@
   html.is-dark .phase-prose a { color: #7dc4ff; }
   html.is-dark #empty-state { color: #9a9aa0; }
   html.is-dark #empty-state h2 { color: #e7e7e9; }
+  html.is-dark #empty-state .ascii-art { color: #4a4a55; }
   html.is-dark #bar { background: #1c1c1f; border-top-color: #2a2a2d; }
   html.is-dark #inp { background: #232327; color: #e7e7e9; border-color: #2e2e33; }
   html.is-dark #session-bar { background: #1c1c1f; border-top-color: #2a2a2d; color: #6e6e72; }
@@ -771,7 +775,18 @@ function showEmptyState() {
   log.innerHTML = '';
   const d = document.createElement('div');
   d.id = 'empty-state';
-  d.innerHTML = '<h2>Start a new chat</h2><div>Describe a feature, fix, or refactor and Hetchy will open a PR.</div>';
+  const ascii = [
+    '   ╔═══════════════╗   ',
+    '   ║  ◉         ◉  ║   ',
+    '   ║    \\  __  /   ║   ',
+    '   ║     \\____/    ║   ',
+    '   ╚══════╦═╦══════╝   ',
+    '          ║ ║          ',
+    '    ╔═════╩═╩═════╗    ',
+    '    ║   H E T C H Y ║    ',
+    '    ╚═══════════════╝    ',
+  ].join('\n');
+  d.innerHTML = `<pre class="ascii-art">${ascii}</pre><h2>Start a new chat</h2><div>Describe a feature, fix, or refactor and Hetchy will open a PR.</div>`;
   log.appendChild(d);
 }
 
