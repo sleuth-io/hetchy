@@ -24,17 +24,41 @@ run_claude_with_watchdog() {
   # kill claude's process group. setsid below makes claude its own
   # session leader, so PGID == claude's PID; `kill -- -PGID` reaches
   # every descendant in one call (bash pollers, MCP servers, etc.).
+  #
+  # PID-reuse hardening: instead of sleeping 5s and hoping the PID still
+  # belongs to claude, poll `kill -0` until the process exits cleanly
+  # (most runs end here — claude only hangs when it spawned an orphan
+  # bash poller). If it's still alive after the grace window, verify
+  # /proc/$cpid/comm reads "claude" before signaling the pgroup; that
+  # closes the (already-narrow) window where the kernel could have
+  # recycled the PID into an unrelated process group on a busy sandbox.
   (
     while IFS= read -r line; do
       if [[ "$line" == *'"type":"result"'* ]]; then
-        sleep 5
         local cpid
         cpid=$(cat "$pid_file" 2>/dev/null || echo "")
-        if [[ -n "$cpid" ]] && kill -0 "$cpid" 2>/dev/null; then
-          echo "[hetchy] result event seen; reaping claude pgroup ${cpid}" >&2
-          kill -TERM -- "-$cpid" 2>/dev/null || true
-          sleep 3
-          kill -KILL -- "-$cpid" 2>/dev/null || true
+        if [[ -z "$cpid" ]]; then
+          break
+        fi
+        # Poll for clean exit (up to 30s). Claude almost always exits
+        # within a second or two; we only get here for the orphan-bash
+        # hang case.
+        local waited=0
+        while kill -0 "$cpid" 2>/dev/null && (( waited < 30 )); do
+          sleep 1
+          ((waited++))
+        done
+        if kill -0 "$cpid" 2>/dev/null; then
+          local comm=""
+          comm=$(cat "/proc/$cpid/comm" 2>/dev/null || echo "")
+          if [[ "$comm" == "claude" ]]; then
+            echo "[hetchy] result event seen; reaping claude pgroup ${cpid}" >&2
+            kill -TERM -- "-$cpid" 2>/dev/null || true
+            sleep 3
+            kill -KILL -- "-$cpid" 2>/dev/null || true
+          else
+            echo "[hetchy] watchdog: pid ${cpid} no longer claude (${comm:-unknown}); skipping reap" >&2
+          fi
         fi
         break
       fi

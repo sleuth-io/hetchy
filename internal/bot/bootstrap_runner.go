@@ -162,6 +162,14 @@ type bootstrapLineRouter struct {
 func (r *bootstrapLineRouter) Line(s string) {
 	switch r.phase {
 	case phaseInAgent:
+		// Defensive nil-check: Done/Fail can be called before a final
+		// shLines `finalFlush` delivers a trailing buffered line, which
+		// arrives here after `r.parser` has already been cleared.
+		// Without this guard the next deref would panic.
+		if r.parser == nil {
+			r.appendSetup(s, "Verifying bootstrap")
+			return
+		}
 		// claude stream-json lines are JSON objects. Our `[hetchy-bootstrap]`
 		// echoes never appear in claude's stdout, so spotting one means
 		// we've crossed back into shell verification.
@@ -207,6 +215,10 @@ func (r *bootstrapLineRouter) Done(summary string) {
 		r.parser.Finish()
 		r.parser = nil
 	}
+	// Drop back to the post-claude phase so any late-arriving line (e.g.
+	// a trailing chunk from shLines' finalFlush) is treated as shell
+	// output rather than dispatched to the now-nil parser.
+	r.phase = phasePostClaude
 	r.closeSetup(summary)
 }
 
@@ -215,6 +227,7 @@ func (r *bootstrapLineRouter) Fail(summary string) {
 		r.parser.Abort()
 		r.parser = nil
 	}
+	r.phase = phasePostClaude
 	if r.setupOpen {
 		r.emit.Fail(r.setupID, summary)
 		r.setupOpen = false

@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
 
@@ -223,10 +224,21 @@ func (b *Bot) ensureBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo
 	// hundred lines of failure context), not the full agent transcript
 	// — that runs into hundreds of KB and bloats every spec row. Keep
 	// the tail because the failure surface is at the end.
+	//
+	// Walk forward from the byte cut to the next valid UTF-8 lead byte
+	// before slicing — claude's stream-json regularly contains non-ASCII
+	// (the `…` in agent.sh's auth log, plus emoji and non-ASCII tool
+	// outputs), and Postgres TEXT will reject a row containing an
+	// invalid UTF-8 sequence with `invalid byte sequence for encoding
+	// "UTF8"`, which would drop the entire SaveSpec write.
 	const bootstrapLogMaxBytes = 32 * 1024
 	logTail := res.Log
 	if len(logTail) > bootstrapLogMaxBytes {
-		logTail = "...(truncated)...\n" + logTail[len(logTail)-bootstrapLogMaxBytes:]
+		start := len(logTail) - bootstrapLogMaxBytes
+		for start < len(logTail) && !utf8.RuneStart(logTail[start]) {
+			start++
+		}
+		logTail = "...(truncated)...\n" + logTail[start:]
 	}
 	res.Spec.BootstrapLog = logTail
 	if err := b.bootstrap.SaveSpec(ctx, res.Spec); err != nil {

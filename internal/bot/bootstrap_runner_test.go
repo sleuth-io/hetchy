@@ -84,6 +84,25 @@ func TestBootstrapLineRouter_NDJSONNeverLeaksToSetupBlock(t *testing.T) {
 	}
 }
 
+// TestBootstrapLineRouter_LateLineAfterDone simulates shLines' finalFlush
+// delivering one more line after the bot has already called Done() on
+// the router. The previous implementation cleared r.parser without
+// resetting the phase, so the next Line() in phaseInAgent would
+// nil-deref r.parser.Finish(). The fix: Done/Fail also reset the
+// phase, AND Line guards the parser deref.
+func TestBootstrapLineRouter_LateLineAfterDone(t *testing.T) {
+	emit := newCaptureEmitter()
+	r := &bootstrapLineRouter{emit: emit}
+
+	r.Line(bootstrapEnterClaudeMarker)
+	r.Line(`{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}`)
+	// Bot calls Done while we're still in the agent phase.
+	r.Done("complete")
+	// shLines flushes a trailing buffered line a moment later. Before
+	// the fix this panicked on r.parser.Finish() / r.parser.Line().
+	r.Line(`{"type":"system","subtype":"flush"}`)
+}
+
 // TestBootstrapLineRouter_NoClaudePhase covers the bail-early path: the
 // script may exit before reaching the invoke marker (e.g. the prompt
 // file is missing). In that case we expect a single pre-claude setup
