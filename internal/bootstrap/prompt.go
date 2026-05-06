@@ -113,6 +113,20 @@ Process:
      watchers). Look for AUTH_BYPASS / CI / TEST flags that elide
      external dependencies; for bootstrap purposes, prefer those paths.
 
+     CRITICAL — landing-page reachability: a SECOND agent will later use
+     Playwright against the running app to screenshot UI changes. That
+     agent has no credentials and will get stuck on any login wall,
+     onboarding form, or "create your first workspace" first-run
+     screen. Find EVERY env var or config flag that lets the app skip
+     these screens (not just auth bypass — also org-bypass, default-
+     workspace, skip-onboarding, demo-mode, seeded-user flags) and
+     bake the FULL set into start.sh's environment so the running app
+     lands an unauthenticated browser on a usable page directly.
+     Common patterns to grep for: AUTH_BYPASS, BYPASS_*, SKIP_*_ONBOARD,
+     DEFAULT_ORG, DEMO_*, SEED_*, NODE_ENV=test, CI=1. A single bypass
+     flag is often insufficient — apps frequently chain auth → org
+     selection → onboarding, so each stage may need its own opt-out.
+
   1. Find the source of truth for required env vars. The README's list
      is a superset for the dev experience; the actual binary often
      requires fewer. Grep the codebase for os.Getenv, process.env,

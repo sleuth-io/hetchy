@@ -91,6 +91,14 @@ echo "[hetchy] initializing claude config"
 mkdir -p "$HOME/.claude"
 printf '{"hasCompletedOnboarding":true}\n' > "$HOME/.claude.json"
 
+# The Playwright MCP server enforces an "allowed roots" check on every
+# file write (screenshots, traces). Its allow-list is the working dir
+# plus $WORKDIR/.playwright-mcp, which it does NOT auto-create — the
+# first browser_take_screenshot fails with a confusing "File access
+# denied" before the agent recovers by mkdir-ing the path itself. Pre-
+# creating it removes that detour.
+mkdir -p "${SF_WORKDIR}/.playwright-mcp"
+
 if [[ -n "${SX_KEY:-}" ]]; then
   echo "[hetchy] installing sx"
   curl -fsSL https://raw.githubusercontent.com/sleuth-io/sx/main/install.sh | bash

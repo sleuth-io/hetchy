@@ -44,6 +44,11 @@ git fetch origin
 git checkout "${SF_BRANCH}"
 git pull --rebase origin "${SF_BRANCH}"
 
+# Same pre-create as agent.sh — the Playwright MCP server requires
+# this directory to exist before the first screenshot, and follow-ups
+# typically include another round of UI validation.
+mkdir -p "${SF_WORKDIR}/.playwright-mcp"
+
 # Re-apply the saved bootstrap spec, if attached. The follow-up lands
 # in an unarchived sandbox where the original `start.sh &` background
 # process is gone, so the validation prompt's "the app is running"

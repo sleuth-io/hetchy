@@ -141,9 +141,17 @@ RUN npm install -g \
         @openai/codex \
         @google/gemini-cli \
         playwright \
- && npx --yes playwright install --with-deps \
+ && npx --yes playwright install --with-deps chromium chrome \
  && NODE_BIN=$(dirname "$(readlink -f "$(command -v node)")") \
  && for f in "$NODE_BIN"/*; do ln -sf "$f" "/usr/local/bin/$(basename "$f")"; done
+
+# Note: `playwright install` defaults to chromium only; the Playwright
+# MCP server we ship in the agent expects Google Chrome at
+# /opt/google/chrome/chrome and errors out on chromium-only sandboxes.
+# Installing both keeps `playwright.devices['Desktop Chrome']`
+# (chromium-channel) and the MCP's chrome-channel both working out of
+# the box, so the in-sandbox agent never has to run `playwright install
+# chrome` itself — the ~1 minute that costs on every fresh task.
 
 # ---------------------------------------------------------------------------
 # Add daytona to the docker group so the user can talk to dockerd via the

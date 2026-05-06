@@ -45,6 +45,13 @@ func TestBuildPromptContent(t *testing.T) {
 		"Goal: the app responds well enough",
 		// Step 0 — "interpret, don't execute literally"
 		"INTERPRET, don't execute literally",
+		// Step 0 — landing-page reachability for the validation agent.
+		// This is load-bearing: without it, repos that chain auth → org
+		// selection → onboarding (like hetchy itself) silently produce a
+		// spec where start.sh boots the app but the validation agent
+		// gets stuck on a login wall.
+		"landing-page reachability",
+		"BYPASS_*",
 		// Step 1 — name the grep pattern
 		"os.Getenv",
 		// Step 6 — the explicit "do not fabricate" line
