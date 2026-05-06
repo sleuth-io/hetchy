@@ -272,34 +272,9 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 			"GitHubAppEnabled":            b.app != nil,
 			"DefaultRepoSlug":             defaultRepoSlug,
 		}
-		if tab == "integrations" {
-			installs, repos, err := b.loadIntegrationsView(r.Context(), p.OrgID)
-			if err != nil {
-				http.Error(w, "load integrations: "+err.Error(), http.StatusInternalServerError)
-				return
-			}
-			// Stamp OrgID so loadBootstrapStatus can scope the repo lookup.
-			for i := range repos {
-				repos[i].OrgID = p.OrgID
-			}
-			bootstrapStatus, _ := b.loadBootstrapStatus(r.Context(), repos)
-			data["GitHubInstallations"] = installs
-			data["GitHubRepos"] = repos
-			data["BootstrapStatus"] = bootstrapStatus
-		}
-		if tab == "members" {
-			members, err := b.auth.ListMembers(r.Context(), p.OrgID)
-			if err != nil {
-				http.Error(w, "load members: "+err.Error(), http.StatusInternalServerError)
-				return
-			}
-			invites, err := b.auth.ListInvitations(r.Context(), p.OrgID)
-			if err != nil {
-				http.Error(w, "load invitations: "+err.Error(), http.StatusInternalServerError)
-				return
-			}
-			data["Members"] = members
-			data["Invitations"] = invites
+		if err := b.populateSettingsTabData(r.Context(), p.OrgID, tab, data); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
 		}
 		b.renderTemplate(w, settingsHTMLTpl, data)
 		return
@@ -466,6 +441,56 @@ func (b *Bot) loadBootstrapStatus(ctx context.Context, repos []integrationRepo) 
 		}
 	}
 	return out, nil
+}
+
+// populateSettingsTabData fetches the per-tab data the template needs
+// and writes it into data. Pulled out of settingsHandler so the GET
+// path stays under the gocyclo threshold as more tabs land — each new
+// tab just adds another switch case here. Errors are wrapped with the
+// fallback message that used to be inlined.
+func (b *Bot) populateSettingsTabData(ctx context.Context, orgID, tab string, data map[string]any) error {
+	switch tab {
+	case "integrations":
+		installs, repos, err := b.loadIntegrationsView(ctx, orgID)
+		if err != nil {
+			return fmt.Errorf("load integrations: %w", err)
+		}
+		data["GitHubInstallations"] = installs
+		data["GitHubRepos"] = repos
+
+	case "repositories":
+		// Repositories tab is the home for per-repo bootstrap state +
+		// admin actions (delete-bootstrap today; secrets management
+		// in the future). Reuses the cached repo list the integrations
+		// tab uses, but also computes the bootstrap-status map once
+		// up front rather than per-card inline.
+		_, repos, err := b.loadIntegrationsView(ctx, orgID)
+		if err != nil {
+			return fmt.Errorf("load integrations: %w", err)
+		}
+		for i := range repos {
+			repos[i].OrgID = orgID
+		}
+		// Bootstrap status is best-effort — if a repo's spec lookup
+		// fails we render it as "not bootstrapped" rather than 500
+		// the whole page. Errors are already logged inside.
+		bootstrapStatus, _ := b.loadBootstrapStatus(ctx, repos)
+		data["GitHubRepos"] = repos
+		data["BootstrapStatus"] = bootstrapStatus
+
+	case "members":
+		members, err := b.auth.ListMembers(ctx, orgID)
+		if err != nil {
+			return fmt.Errorf("load members: %w", err)
+		}
+		invites, err := b.auth.ListInvitations(ctx, orgID)
+		if err != nil {
+			return fmt.Errorf("load invitations: %w", err)
+		}
+		data["Members"] = members
+		data["Invitations"] = invites
+	}
+	return nil
 }
 
 // loadIntegrationsView pulls the org's GitHub App installations and the

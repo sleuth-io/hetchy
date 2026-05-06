@@ -99,6 +99,13 @@ printf '{"hasCompletedOnboarding":true}\n' > "$HOME/.claude.json"
 # creating it removes that detour.
 mkdir -p "${SF_WORKDIR}/.playwright-mcp"
 
+# Post-success reflection drop-zone: claude writes /tmp/hetchy-spec/
+# improved/{setup,start,health}.sh here when it identifies bootstrap-
+# spec improvements during validation, and the bot reads them after
+# the run to patch the saved spec. Pre-create so the agent's first
+# write doesn't have to mkdir the path itself.
+mkdir -p /tmp/hetchy-spec/improved
+
 if [[ -n "${SX_KEY:-}" ]]; then
   echo "[hetchy] installing sx"
   curl -fsSL https://raw.githubusercontent.com/sleuth-io/sx/main/install.sh | bash

@@ -49,6 +49,10 @@ git pull --rebase origin "${SF_BRANCH}"
 # typically include another round of UI validation.
 mkdir -p "${SF_WORKDIR}/.playwright-mcp"
 
+# And the spec-improvements drop-zone so post-success reflection can
+# patch the saved spec without an extra mkdir round-trip.
+mkdir -p /tmp/hetchy-spec/improved
+
 # Re-apply the saved bootstrap spec, if attached. The follow-up lands
 # in an unarchived sandbox where the original `start.sh &` background
 # process is gone, so the validation prompt's "the app is running"

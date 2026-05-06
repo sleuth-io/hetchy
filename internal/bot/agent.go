@@ -194,7 +194,17 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, o
 	if oc.SXKey != "" {
 		env["SX_KEY"] = oc.SXKey
 	}
-	return b.runScript(ctx, sb, "agent-"+requestID, "agent", agentScript, env, emit)
+	sessionID := "agent-" + requestID
+	prURL, err := b.runScript(ctx, sb, sessionID, "agent", agentScript, env, emit)
+	if err == nil && spec != nil {
+		// Post-success reflection: read /tmp/hetchy-spec/improved/ to
+		// see if the agent flagged any setup/start/health changes that
+		// would help future tasks. Best-effort — failures here never
+		// affect the PR. Runs in a fresh session because runScript
+		// deleted the agent's session in its defer.
+		b.applySpecImprovements(ctx, sb, sessionID, spec, repo, emit)
+	}
+	return prURL, err
 }
 
 // ensureBootstrapSpec returns the saved spec for repo, running the

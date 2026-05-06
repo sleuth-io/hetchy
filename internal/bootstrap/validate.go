@@ -151,6 +151,42 @@ Don't block on screenshots for changes that don't have a UI surface.
 DO NOT skip this step silently. The summary.md file MUST exist before
 you finalize the PR — it's the host's signal that you reached this
 stage at all.
+
+--- BOOTSTRAP SPEC IMPROVEMENT (reflection, optional) ---
+
+Before you finalize the PR, take stock of any non-trivial work you had
+to do during validation that should rightfully have been part of the
+saved bootstrap spec — and that the next task on this repo would
+benefit from skipping. Think only about the *bootstrapping* friction,
+NOT the user's feature work. Examples:
+
+  - Installing a missing tool the snapshot didn't have
+  - Creating a directory that the spec assumed already existed
+  - Setting an env var to bypass auth, onboarding, or first-run flows
+  - Rebuilding and restarting the running app to pick up your changes
+  - Anything else that took more than one step to recover from before
+    you could even start exercising the change
+
+If you encountered any of that, write the IMPROVED versions of the
+affected scripts to /tmp/hetchy-spec/improved/. Only include the files
+you'd actually change — leave the rest absent. Allowed paths:
+
+  /tmp/hetchy-spec/improved/setup.sh
+  /tmp/hetchy-spec/improved/start.sh
+  /tmp/hetchy-spec/improved/health.sh
+  /tmp/hetchy-spec/improved/reason.md   (one paragraph: what changed
+                                         and why — for the audit log)
+
+If everything ran smoothly and no spec changes are warranted, write a
+single marker file to acknowledge you considered it:
+
+  /tmp/hetchy-spec/improved/none.txt   (one short line summarising why)
+
+The bot will pick up whichever files exist, persist them as a new spec
+version (preserving secrets and capabilities), and the next task on
+this repo will benefit. Do NOT rewrite scripts speculatively — only
+capture changes that addressed concrete friction you hit during THIS
+task. Producing a "none" marker is a perfectly valid outcome.
 `)
 
 	return b.String()

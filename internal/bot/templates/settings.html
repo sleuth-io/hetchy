@@ -82,6 +82,66 @@
                   border-radius: .4rem; margin-bottom: 1rem; font-size: .85rem; }
   .meta { color: #999; font-size: .72rem; margin-top: 1.5rem; }
 
+  /* Repositories tab — per-repo bootstrap cards */
+  .repo-card-grid { display: grid; grid-template-columns: 1fr; gap: 1rem; }
+  @media (min-width: 1100px) {
+    .repo-card-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+  .repo-card { background: #fff; border: 1px solid #e6e6e6; border-radius: .5rem;
+               padding: 1rem 1.25rem; display: flex; flex-direction: column;
+               gap: .75rem; }
+  .repo-card-head { display: flex; align-items: center; gap: .5rem;
+                    flex-wrap: wrap; }
+  .repo-card-title { margin: 0; font-size: 1rem; color: #222;
+                     font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .repo-card-kind { font-size: .7rem; color: #666; padding: .1rem .45rem;
+                    border-radius: .8rem; background: #f0f2f5; }
+  .repo-card-body { margin: 0; display: grid; grid-template-columns: max-content 1fr;
+                    gap: .35rem 1rem; align-items: start; }
+  .repo-card-body dt { color: #888; font-size: .75rem; text-transform: uppercase;
+                       letter-spacing: .03em; padding-top: .15rem; }
+  .repo-card-body dd { margin: 0; font-size: .85rem; color: #333;
+                       line-height: 1.4; }
+  .repo-card-body dd .hint { margin: .25rem 0 0; }
+  .repo-pill-list { list-style: none; padding: 0; margin: 0;
+                    display: flex; flex-wrap: wrap; gap: .35rem; }
+  .repo-pill-list code { background: #fff5e6; color: #8a4b00;
+                         padding: .1rem .4rem; border-radius: .3rem;
+                         font-size: .75rem; }
+  .repo-deferred-list { list-style: disc; padding-left: 1.1rem; margin: 0;
+                        color: #555; }
+  .repo-deferred-list li { margin: .15rem 0; font-size: .82rem; }
+  .repo-card-empty { margin: 0; color: #777; font-size: .85rem;
+                     line-height: 1.5; }
+  .repo-card-allset { margin: 0; color: #1a7a3c; font-size: .85rem; }
+  .repo-card-foot { display: flex; justify-content: flex-end;
+                    border-top: 1px solid #f0f0f0; padding-top: .75rem;
+                    min-height: 1rem; }
+  .danger-btn { background: transparent; color: #b03030;
+                border: 1px solid #e6c4c4; padding: .35rem .75rem;
+                border-radius: .35rem; font-size: .82rem; cursor: pointer; }
+  .danger-btn:hover { background: #fff5f5; border-color: #d9a0a0; }
+  .danger-btn:disabled { opacity: .55; cursor: default; }
+
+  /* Status tags shared across all bootstrap UI */
+  .tag { display: inline-block; font-size: .72rem; padding: .15rem .55rem;
+         border-radius: .8rem; font-weight: 500; text-transform: lowercase;
+         letter-spacing: .02em; }
+  .tag-validated { background: #d8f0e2; color: #1a7a3c; }
+  .tag-partial   { background: #fff1cc; color: #8a5a00; }
+  .tag-stale     { background: #e6e6e6; color: #555; }
+  .tag-failing   { background: #f7d6d6; color: #a02020; }
+  .tag-pending   { background: #f0f2f5; color: #666; font-style: italic; }
+
+  /* Toast for in-place actions (delete bootstrap, etc.) */
+  .repo-toast { position: fixed; bottom: 1.5rem; left: 50%;
+                transform: translateX(-50%); background: #2a2a2e;
+                color: #fff; padding: .65rem 1.25rem;
+                border-radius: .5rem; font-size: .85rem;
+                box-shadow: 0 4px 16px rgba(0,0,0,.18);
+                max-width: 32rem; z-index: 100; }
+  .repo-toast-err { background: #a02020; }
+
   /* Integration cards */
   .integration-list { display: flex; flex-direction: column; gap: .75rem; }
   .integration { background: #fff; border: 1px solid #e6e6e6; border-radius: .5rem;
@@ -267,6 +327,29 @@
   html.is-dark .saved-banner { background: #173b1e; color: #5cd06b; }
   html.is-dark .meta { color: #6e6e72; }
 
+  html.is-dark .repo-card { background: #232327; border-color: #2e2e33; }
+  html.is-dark .repo-card-title { color: #f5f5f7; }
+  html.is-dark .repo-card-kind { background: #2e2e33; color: #b8b8bc; }
+  html.is-dark .repo-card-body dt { color: #8a8a90; }
+  html.is-dark .repo-card-body dd { color: #d4d4d8; }
+  html.is-dark .repo-pill-list code { background: #3a2c1c; color: #f0b674; }
+  html.is-dark .repo-deferred-list { color: #c4c4c8; }
+  html.is-dark .repo-card-empty { color: #9a9aa0; }
+  html.is-dark .repo-card-allset { color: #6cd084; }
+  html.is-dark .repo-card-foot { border-top-color: #2e2e33; }
+  html.is-dark .danger-btn { color: #f0a0a0; border-color: #5a3232; }
+  html.is-dark .danger-btn:hover { background: #2c1f1f; border-color: #7a3838; }
+
+  html.is-dark .tag-validated { background: #1a3a26; color: #6cd084; }
+  html.is-dark .tag-partial   { background: #3a2e0c; color: #f0b674; }
+  html.is-dark .tag-stale     { background: #2e2e33; color: #9a9aa0; }
+  html.is-dark .tag-failing   { background: #3a1c1c; color: #f0a0a0; }
+  html.is-dark .tag-pending   { background: #2e2e33; color: #9a9aa0; }
+
+  html.is-dark .repo-toast { background: #f5f5f7; color: #1a1a1a;
+                             box-shadow: 0 4px 16px rgba(0,0,0,.5); }
+  html.is-dark .repo-toast-err { background: #f0a0a0; color: #2c0000; }
+
   /* Integration cards */
   html.is-dark .integration { background: #232327; border-color: #2e2e33;
                               border-left-color: #2e2e33; }
@@ -328,6 +411,14 @@
         </svg>
         Integrations
       </a>
+      <a href="/settings/org?tab=repositories"{{if eq .Tab "repositories"}} class="active"{{end}}>
+        <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M2 3.5A1.5 1.5 0 0 1 3.5 2h6L13 5.5v7A1.5 1.5 0 0 1 11.5 14h-8A1.5 1.5 0 0 1 2 12.5v-9z"/>
+          <path d="M9 2v3h4"/>
+          <path d="M5 8h5M5 10h5"/>
+        </svg>
+        Repositories
+      </a>
       {{if .IsAdmin}}
       <a href="/settings/org?tab=members"{{if eq .Tab "members"}} class="active"{{end}}>
         <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -349,6 +440,8 @@
       {{template "members" .}}
     {{else if eq .Tab "integrations"}}
       {{template "integrations" .}}
+    {{else if eq .Tab "repositories"}}
+      {{template "repositories" .}}
     {{else}}
       {{template "general" .}}
     {{end}}
@@ -475,66 +568,8 @@
 
       {{if .GitHubRepos}}
         <div class="body-section">
-          <legend>Repo bootstrap</legend>
-          <p class="hint">When Hetchy first works on a repo, it spends a few minutes figuring out how to run it end-to-end. The cached spec is reused on every subsequent task.</p>
-          <table class="grid">
-            <thead><tr><th>Repository</th><th>Status</th><th>Notes</th><th></th></tr></thead>
-            <tbody>
-              {{range .GitHubRepos}}
-                {{$slug := printf "%s/%s" .Owner .Name}}
-                {{$bs := index $.BootstrapStatus $slug}}
-                <tr>
-                  <td>{{$slug}}</td>
-                  {{if $bs.Slug}}
-                    <td><span class="tag tag-{{$bs.Status}}">{{$bs.Status}}</span> {{if $bs.Kind}}<small>· {{$bs.Kind}}</small>{{end}}</td>
-                    <td>
-                      {{if $bs.UnfilledSecrets}}<div class="hint">Needs values for: {{range $i, $s := $bs.UnfilledSecrets}}{{if $i}}, {{end}}<code>{{$s}}</code>{{end}}</div>{{end}}
-                      {{if $bs.DeferredCapabilities}}<div class="hint">Deferred: {{range $i, $d := $bs.DeferredCapabilities}}{{if $i}}; {{end}}{{$d}}{{end}}</div>{{end}}
-                      {{if and (not $bs.UnfilledSecrets) (not $bs.DeferredCapabilities)}}<span class="hint">All set.</span>{{end}}
-                    </td>
-                    <td><button type="button" class="reset-bootstrap-btn" data-owner="{{.Owner}}" data-name="{{.Name}}" title="Discard the saved spec so the next task re-bootstraps from scratch (keeps any per-repo secrets you've entered).">Re-bootstrap</button></td>
-                  {{else}}
-                    <td><span class="hint">not bootstrapped yet</span></td>
-                    <td><span class="hint">First task on this repo will trigger bootstrap.</span></td>
-                    <td></td>
-                  {{end}}
-                </tr>
-              {{end}}
-            </tbody>
-          </table>
-          <script>
-            // Re-bootstrap deletes the saved spec for one repo. The
-            // server-side handler is idempotent so repeated clicks are
-            // harmless; the page reloads on success so the new
-            // "not bootstrapped yet" state shows immediately.
-            document.querySelectorAll('.reset-bootstrap-btn').forEach(function (btn) {
-              btn.addEventListener('click', async function () {
-                var owner = btn.getAttribute('data-owner');
-                var name  = btn.getAttribute('data-name');
-                if (!confirm('Discard the saved bootstrap spec for ' + owner + '/' + name + '? The next task on this repo will spend several minutes re-bootstrapping from scratch.')) {
-                  return;
-                }
-                btn.disabled = true;
-                btn.textContent = 'Resetting…';
-                try {
-                  var qs  = '?owner=' + encodeURIComponent(owner) + '&name=' + encodeURIComponent(name);
-                  var res = await fetch('/api/repo-bootstrap' + qs, { method: 'DELETE' });
-                  if (!res.ok) {
-                    var msg = await res.text();
-                    alert('Failed to reset bootstrap: ' + res.status + ' ' + msg);
-                    btn.disabled = false;
-                    btn.textContent = 'Re-bootstrap';
-                    return;
-                  }
-                  window.location.reload();
-                } catch (e) {
-                  alert('Failed to reset bootstrap: ' + e);
-                  btn.disabled = false;
-                  btn.textContent = 'Re-bootstrap';
-                }
-              });
-            });
-          </script>
+          <legend>Per-repo settings</legend>
+          <p class="hint">Bootstrap status, deferred capabilities, and per-repo administration moved to the <a href="/settings/org?tab=repositories">Repositories</a> tab.</p>
         </div>
       {{end}}
     </div>
@@ -816,6 +851,154 @@
     </table>
   {{else}}
     <p class="empty">No pending invitations.</p>
+  {{end}}
+{{end}}
+
+{{define "repositories"}}
+  <h1>Repositories</h1>
+  <p class="desc">Per-repo bootstrap state, deferred capabilities, and admin actions. The first task Hetchy runs on a repo spends a few minutes characterizing it; that work is cached as a "bootstrap spec" and reused on every subsequent task.</p>
+
+  {{if not .GitHubRepos}}
+    <div class="body-section">
+      <p class="hint">No repositories cached yet. Connect the GitHub App on the <a href="/settings/org?tab=integrations">Integrations</a> tab and choose which repos to grant access to — they'll show up here.</p>
+    </div>
+  {{else}}
+    <div class="repo-card-grid">
+      {{range .GitHubRepos}}
+        {{$slug := printf "%s/%s" .Owner .Name}}
+        {{$bs := index $.BootstrapStatus $slug}}
+        <article class="repo-card">
+          <header class="repo-card-head">
+            <h3 class="repo-card-title">{{$slug}}</h3>
+            {{if $bs.Slug}}
+              <span class="tag tag-{{$bs.Status}}" title="Validation status from the most recent bootstrap or task.">{{$bs.Status}}</span>
+              {{if $bs.Kind}}<span class="repo-card-kind" title="App archetype detected during bootstrap.">{{$bs.Kind}}</span>{{end}}
+            {{else}}
+              <span class="tag tag-pending">not bootstrapped</span>
+            {{end}}
+          </header>
+
+          {{if $bs.Slug}}
+            <dl class="repo-card-body">
+              {{if $bs.UnfilledSecrets}}
+                <dt>Secrets needed</dt>
+                <dd>
+                  <ul class="repo-pill-list">
+                    {{range $bs.UnfilledSecrets}}<li><code>{{.}}</code></li>{{end}}
+                  </ul>
+                  <p class="hint">Set values in the per-repo secrets UI before tasks that need them can run end-to-end.</p>
+                </dd>
+              {{end}}
+              {{if $bs.DeferredCapabilities}}
+                <dt>Deferred capabilities</dt>
+                <dd>
+                  <ul class="repo-deferred-list">
+                    {{range $bs.DeferredCapabilities}}<li>{{.}}</li>{{end}}
+                  </ul>
+                  <p class="hint">Tasks that touch any of these can't be fully validated without filling in the matching secret or removing the bypass.</p>
+                </dd>
+              {{end}}
+              {{if and (not $bs.UnfilledSecrets) (not $bs.DeferredCapabilities)}}
+                <dt>Status</dt>
+                <dd><p class="repo-card-allset">Fully bootstrapped — every task on this repo gets end-to-end validation.</p></dd>
+              {{end}}
+            </dl>
+          {{else}}
+            <p class="repo-card-empty">The first task you start against this repo will trigger an automatic bootstrap. Expect a few extra minutes on that first run; subsequent tasks reuse the cached spec.</p>
+          {{end}}
+
+          <footer class="repo-card-foot">
+            {{if $bs.Slug}}
+              <button type="button" class="danger-btn delete-bootstrap-btn"
+                      data-owner="{{.Owner}}" data-name="{{.Name}}" data-slug="{{$slug}}"
+                      title="Discard the saved bootstrap spec. The next task on this repo will re-run bootstrap from scratch and pick up any prompt or detection improvements.">
+                Delete bootstrap
+              </button>
+            {{end}}
+          </footer>
+        </article>
+      {{end}}
+    </div>
+    <div id="repo-toast" class="repo-toast" role="status" aria-live="polite" hidden></div>
+    <script>
+      // Delete-bootstrap flow:
+      //   1. Confirm dialog explains the side-effect (a future re-run, not
+      //      an immediate one) so users know the cost is paid lazily.
+      //   2. DELETE /api/repo-bootstrap drops the saved spec; the server
+      //      handler is idempotent and never deletes per-repo secrets.
+      //   3. On success, swap the card's right-hand side to the
+      //      "not bootstrapped" empty state in-place and show a toast —
+      //      no full reload, the rest of the page stays put.
+      (function () {
+        var toast = document.getElementById('repo-toast');
+        var toastTimer = null;
+        function showToast(msg, level) {
+          toast.textContent = msg;
+          toast.classList.remove('repo-toast-err');
+          if (level === 'error') toast.classList.add('repo-toast-err');
+          toast.hidden = false;
+          if (toastTimer) clearTimeout(toastTimer);
+          toastTimer = setTimeout(function () { toast.hidden = true; }, 6000);
+        }
+
+        document.querySelectorAll('.delete-bootstrap-btn').forEach(function (btn) {
+          btn.addEventListener('click', async function () {
+            var owner = btn.getAttribute('data-owner');
+            var name  = btn.getAttribute('data-name');
+            var slug  = btn.getAttribute('data-slug');
+            var confirmMsg = 'Delete bootstrap spec for ' + slug + '?\n\n' +
+              'This does NOT run anything right now. The next task you start ' +
+              'on this repo will re-run the bootstrap loop from scratch ' +
+              '(adding several minutes to that one task) so it picks up the ' +
+              'latest detection logic and prompt updates.\n\n' +
+              'Per-repo secrets are preserved.';
+            if (!confirm(confirmMsg)) return;
+
+            btn.disabled = true;
+            var orig = btn.textContent;
+            btn.textContent = 'Deleting…';
+            try {
+              var qs  = '?owner=' + encodeURIComponent(owner) + '&name=' + encodeURIComponent(name);
+              var res = await fetch('/api/repo-bootstrap' + qs, { method: 'DELETE' });
+              if (!res.ok) {
+                var body = await res.text();
+                showToast('Could not delete: ' + res.status + ' ' + (body || res.statusText), 'error');
+                btn.disabled = false;
+                btn.textContent = orig;
+                return;
+              }
+              showToast('Bootstrap deleted for ' + slug + '. The next task on this repo will re-bootstrap from scratch.');
+              // In-place swap: turn this card into the "not bootstrapped" form.
+              var card = btn.closest('.repo-card');
+              if (card) {
+                var head = card.querySelector('.repo-card-head');
+                if (head) {
+                  head.querySelectorAll('.tag, .repo-card-kind').forEach(function (el) { el.remove(); });
+                  var pending = document.createElement('span');
+                  pending.className = 'tag tag-pending';
+                  pending.textContent = 'not bootstrapped';
+                  head.appendChild(pending);
+                }
+                var body = card.querySelector('.repo-card-body');
+                if (body) body.remove();
+                if (!card.querySelector('.repo-card-empty')) {
+                  var empty = document.createElement('p');
+                  empty.className = 'repo-card-empty';
+                  empty.textContent = 'The first task you start against this repo will trigger an automatic bootstrap. Expect a few extra minutes on that first run; subsequent tasks reuse the cached spec.';
+                  card.insertBefore(empty, card.querySelector('.repo-card-foot'));
+                }
+                var foot = card.querySelector('.repo-card-foot');
+                if (foot) foot.innerHTML = '';
+              }
+            } catch (e) {
+              showToast('Could not delete: ' + e, 'error');
+              btn.disabled = false;
+              btn.textContent = orig;
+            }
+          });
+        });
+      })();
+    </script>
   {{end}}
 {{end}}
 

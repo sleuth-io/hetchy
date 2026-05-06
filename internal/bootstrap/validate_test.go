@@ -34,6 +34,13 @@ func TestBuildValidationPromptCoversThreeFlows(t *testing.T) {
 		"feature/sf-abc123",
 		"/tmp/hetchy-validate/",
 		"summary.md",
+		// Post-success reflection: ask the agent to write back any
+		// improved setup/start/health scripts. Drift on these phrases
+		// silently turns the self-learning loop off, so they're load-
+		// bearing.
+		"BOOTSTRAP SPEC IMPROVEMENT",
+		"/tmp/hetchy-spec/improved/",
+		"none.txt",
 	}
 	for _, want := range mustContain {
 		if !strings.Contains(prompt, want) {
