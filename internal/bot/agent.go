@@ -6,7 +6,9 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -271,11 +273,13 @@ func (b *Bot) runInlineScript(ctx context.Context, sb *daytona.Sandbox, sessionI
 		return fmt.Errorf("write %s: %w", label, err)
 	}
 
+	// Sort env keys so log-diffing identical commands across runs lines
+	// up; Go map iteration is randomised.
 	var prefix strings.Builder
-	for k, v := range env {
+	for _, k := range slices.Sorted(maps.Keys(env)) {
 		prefix.WriteString(k)
 		prefix.WriteByte('=')
-		prefix.WriteString(shellQuote(v))
+		prefix.WriteString(shellQuote(env[k]))
 		prefix.WriteByte(' ')
 	}
 	runCmd := prefix.String() + "bash " + scriptPath
@@ -359,11 +363,14 @@ func (b *Bot) runScript(ctx context.Context, sb *daytona.Sandbox, sessionID, lab
 		return "", err
 	}
 
+	// Sort env keys so the resulting command line is deterministic; Go
+	// map iteration is randomised, which makes log-diffing two runs of
+	// the same script unnecessarily noisy.
 	var prefix strings.Builder
-	for k, v := range env {
+	for _, k := range slices.Sorted(maps.Keys(env)) {
 		prefix.WriteString(k)
 		prefix.WriteByte('=')
-		prefix.WriteString(shellQuote(v))
+		prefix.WriteString(shellQuote(env[k]))
 		prefix.WriteByte(' ')
 	}
 	runCmd := prefix.String() + "bash " + scriptPath

@@ -80,6 +80,18 @@ func (s *Store) SaveSpec(ctx context.Context, spec *Spec) error {
 	if spec.BootstrapLog != "" {
 		bootLog = &spec.BootstrapLog
 	}
+	// Only stamp last_validated_at when the spec actually validated
+	// end-to-end. A failing or stale spec with NOW() in this column
+	// would mislead drift detection (which compares last_validated_at
+	// to updated_at) into treating a never-working spec as recently
+	// proven good.
+	var lastValidated pgtype.Timestamptz
+	switch spec.ValidationStatus {
+	case StatusValidated, StatusPartial:
+		lastValidated = pgtype.Timestamptz{Time: time.Now(), Valid: true}
+	case StatusFailing, StatusStale:
+		// leave NULL — this is the explicit branch for the lint check
+	}
 	_, err = s.db.Queries.UpsertRepoSetupSpec(ctx, sqlc.UpsertRepoSetupSpecParams{
 		InstallationID:       spec.InstallationID,
 		RepoID:               spec.RepoID,
@@ -96,7 +108,7 @@ func (s *Store) SaveSpec(ctx context.Context, spec *Spec) error {
 		SuggestedRepoChanges: suggestions,
 		SourceFingerprint:    spec.SourceFingerprint,
 		ValidationStatus:     string(spec.ValidationStatus),
-		LastValidatedAt:      pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		LastValidatedAt:      lastValidated,
 		SuccessCount:         spec.SuccessCount,
 		FailureCount:         spec.FailureCount,
 		BootstrapLog:         bootLog,
@@ -165,6 +177,54 @@ func (s *Store) GetSecrets(ctx context.Context, installationID, repoID int64, pa
 		out[row.Name] = plain
 	}
 	return out, nil
+}
+
+// SecretSummary is the UI-facing view of one repo-scoped secret: the
+// key name and whether it currently holds a value. The encrypted
+// bytes never leave the Store.
+type SecretSummary struct {
+	Name   string
+	Filled bool
+}
+
+// ListSecrets returns the per-secret summary rows for (installation,
+// repo, path). The settings UI uses this to display which keys the
+// bootstrap manifest declared and which ones the user has filled in.
+// Unlike GetSecrets, this does NOT decrypt — there's no plaintext
+// available outside the apply path.
+func (s *Store) ListSecrets(ctx context.Context, installationID, repoID int64, path string) ([]SecretSummary, error) {
+	rows, err := s.db.Queries.ListRepoSecretValues(ctx, sqlc.ListRepoSecretValuesParams{
+		InstallationID: installationID,
+		RepoID:         repoID,
+		Path:           path,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("bootstrap: list secret summaries: %w", err)
+	}
+	out := make([]SecretSummary, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, SecretSummary{
+			Name:   row.Name,
+			Filled: len(row.ValueEncrypted) > 0,
+		})
+	}
+	return out, nil
+}
+
+// DeleteSecret removes one repo-scoped secret entry. Symmetric to
+// SetSecret — the handler in repo_secrets.go routes through this so
+// any future Store-layer side effects (audit log, cache invalidation)
+// stay consistent with the set/list paths.
+func (s *Store) DeleteSecret(ctx context.Context, installationID, repoID int64, path, name string) error {
+	if err := s.db.Queries.DeleteRepoSecretValue(ctx, sqlc.DeleteRepoSecretValueParams{
+		InstallationID: installationID,
+		RepoID:         repoID,
+		Path:           path,
+		Name:           name,
+	}); err != nil {
+		return fmt.Errorf("bootstrap: delete secret: %w", err)
+	}
+	return nil
 }
 
 // SetSecret writes one repo-scoped secret. value="" creates or clears

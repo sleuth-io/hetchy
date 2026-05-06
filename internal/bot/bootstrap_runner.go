@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -57,11 +58,14 @@ func (r *botRunner) Run(ctx context.Context, label, scriptBody string, env map[s
 	merged := make(map[string]string, len(r.baseEnv)+len(env))
 	maps.Copy(merged, r.baseEnv)
 	maps.Copy(merged, env)
+	// Sort keys so log-diffing two bootstrap runs lines up — Go map
+	// iteration is randomised and would otherwise emit the same env
+	// in a different order on every run.
 	var prefix strings.Builder
-	for k, v := range merged {
+	for _, k := range slices.Sorted(maps.Keys(merged)) {
 		prefix.WriteString(k)
 		prefix.WriteByte('=')
-		prefix.WriteString(shellQuote(v))
+		prefix.WriteString(shellQuote(merged[k]))
 		prefix.WriteByte(' ')
 	}
 	runCmd := prefix.String() + "bash " + scriptPath

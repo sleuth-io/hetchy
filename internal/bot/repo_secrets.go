@@ -80,11 +80,7 @@ func (b *Bot) repoSecretsList(w http.ResponseWriter, r *http.Request, p auth.Pri
 		return
 	}
 
-	rows, err := b.store.Queries.ListRepoSecretValues(r.Context(), sqlc.ListRepoSecretValuesParams{
-		InstallationID: repo.InstallationID,
-		RepoID:         repo.RepoID,
-		Path:           path,
-	})
+	summaries, err := b.bootstrap.ListSecrets(r.Context(), repo.InstallationID, repo.RepoID, path)
 	if err != nil {
 		http.Error(w, "list secrets: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -92,12 +88,12 @@ func (b *Bot) repoSecretsList(w http.ResponseWriter, r *http.Request, p auth.Pri
 
 	resp := repoSecretsListResponse{
 		Owner: owner, Repo: name, Path: path,
-		Secrets: make([]repoSecretEntry, 0, len(rows)),
+		Secrets: make([]repoSecretEntry, 0, len(summaries)),
 	}
-	for _, row := range rows {
+	for _, sum := range summaries {
 		resp.Secrets = append(resp.Secrets, repoSecretEntry{
-			Name:   row.Name,
-			Filled: len(row.ValueEncrypted) > 0,
+			Name:   sum.Name,
+			Filled: sum.Filled,
 		})
 	}
 	writeJSON(w, resp)
@@ -151,12 +147,7 @@ func (b *Bot) repoSecretsDelete(w http.ResponseWriter, r *http.Request, p auth.P
 		writeRepoErr(w, err)
 		return
 	}
-	if err := b.store.Queries.DeleteRepoSecretValue(r.Context(), sqlc.DeleteRepoSecretValueParams{
-		InstallationID: repo.InstallationID,
-		RepoID:         repo.RepoID,
-		Path:           path,
-		Name:           secretName,
-	}); err != nil {
+	if err := b.bootstrap.DeleteSecret(r.Context(), repo.InstallationID, repo.RepoID, path, secretName); err != nil {
 		http.Error(w, "delete: "+err.Error(), http.StatusInternalServerError)
 		return
 	}

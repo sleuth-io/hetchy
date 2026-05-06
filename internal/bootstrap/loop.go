@@ -66,6 +66,12 @@ type LoopResult struct {
 // the spec doc's "When bootstrap can't fully succeed" section.
 var ErrLoopFailed = errors.New("bootstrap: loop failed")
 
+// bootstrapOutDir is where BootstrapScript writes the four artifacts
+// (setup.sh, start.sh, health.sh, manifest.json). The same path is
+// passed to the script via HETCHY_BOOTSTRAP_OUT_DIR — keeping it as a
+// const here keeps the host- and sandbox-side reads from drifting.
+const bootstrapOutDir = "/tmp/hetchy-spec"
+
 // Run drives the bootstrap loop end to end:
 //
 //  1. Render the bootstrap prompt from hints + args.
@@ -103,7 +109,7 @@ func Run(ctx context.Context, runner Runner, in LoopInput) (*LoopResult, error) 
 
 	env := map[string]string{
 		"HETCHY_BOOTSTRAP_PROMPT_FILE": "/tmp/hetchy-bootstrap-prompt.txt",
-		"HETCHY_BOOTSTRAP_OUT_DIR":     "/tmp/hetchy-spec",
+		"HETCHY_BOOTSTRAP_OUT_DIR":     bootstrapOutDir,
 		"HETCHY_BOOTSTRAP_REPO_DIR":    in.RepoDir,
 	}
 	maps.Copy(env, in.SuppliedSecrets)
@@ -113,12 +119,12 @@ func Run(ctx context.Context, runner Runner, in LoopInput) (*LoopResult, error) 
 		// We still try to read whatever artifacts the agent produced,
 		// since a non-zero exit can mean "verification failed but the
 		// agent wrote something." Useful for auto-heal seeding.
-		partial := readArtifactsBestEffort(ctx, runner)
+		partial := readArtifactsBestEffort(ctx, runner, bootstrapOutDir)
 		return &LoopResult{Spec: nil, Manifest: partial, Log: log},
 			fmt.Errorf("%w: %w", ErrLoopFailed, err)
 	}
 
-	manifestBytes, err := runner.ReadFile(ctx, "/tmp/hetchy-spec/manifest.json")
+	manifestBytes, err := runner.ReadFile(ctx, bootstrapOutDir+"/manifest.json")
 	if err != nil {
 		return nil, fmt.Errorf("bootstrap: read manifest: %w", err)
 	}
@@ -127,15 +133,15 @@ func Run(ctx context.Context, runner Runner, in LoopInput) (*LoopResult, error) 
 		return nil, fmt.Errorf("bootstrap: parse manifest: %w", err)
 	}
 
-	setup, err := runner.ReadFile(ctx, "/tmp/hetchy-spec/setup.sh")
+	setup, err := runner.ReadFile(ctx, bootstrapOutDir+"/setup.sh")
 	if err != nil {
 		return nil, fmt.Errorf("bootstrap: read setup.sh: %w", err)
 	}
-	start, err := runner.ReadFile(ctx, "/tmp/hetchy-spec/start.sh")
+	start, err := runner.ReadFile(ctx, bootstrapOutDir+"/start.sh")
 	if err != nil {
 		return nil, fmt.Errorf("bootstrap: read start.sh: %w", err)
 	}
-	health, err := runner.ReadFile(ctx, "/tmp/hetchy-spec/health.sh")
+	health, err := runner.ReadFile(ctx, bootstrapOutDir+"/health.sh")
 	if err != nil {
 		return nil, fmt.Errorf("bootstrap: read health.sh: %w", err)
 	}
@@ -165,9 +171,11 @@ func Run(ctx context.Context, runner Runner, in LoopInput) (*LoopResult, error) 
 // readArtifactsBestEffort tries to grab a manifest even when the
 // bootstrap script failed. Used to seed auto-heal — knowing what the
 // agent declared (even if verification didn't pass) is better than
-// starting from scratch.
-func readArtifactsBestEffort(ctx context.Context, runner Runner) *Manifest {
-	data, err := runner.ReadFile(ctx, "/tmp/hetchy-spec/manifest.json")
+// starting from scratch. outDir comes from the same const Run uses
+// to build the env for the script, so the host- and sandbox-side
+// reads can't drift.
+func readArtifactsBestEffort(ctx context.Context, runner Runner, outDir string) *Manifest {
+	data, err := runner.ReadFile(ctx, outDir+"/manifest.json")
 	if err != nil {
 		return nil
 	}
@@ -302,6 +310,13 @@ trap 'kill ${START_PID} 2>/dev/null || true' EXIT
 
 echo "[hetchy-bootstrap] polling health.sh (90s budget)" >&2
 for i in {1..90}; do
+  # Bail fast if start.sh died — without this, a process that exits in
+  # the first second (missing dependency, port conflict, bad env var)
+  # still burns the full 90s polling against a never-ready endpoint.
+  if ! kill -0 "${START_PID}" 2>/dev/null; then
+    echo "[hetchy-bootstrap] start.sh exited early (pid ${START_PID})" >&2
+    exit 71
+  fi
   if "${HETCHY_BOOTSTRAP_OUT_DIR}/health.sh" >/dev/null 2>&1; then
     echo "[hetchy-bootstrap] healthy after ${i}s" >&2
     exit 0
