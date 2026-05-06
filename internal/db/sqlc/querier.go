@@ -76,6 +76,15 @@ type Querier interface {
 	// are written by UpsertConversation at end-of-turn, and overwriting
 	// them here mid-run would race the dispatcher into the wrong state
 	// machine branch on a concurrent reload.
+	//
+	// Pure UPDATE. We rely on the dispatcher's entry-Upsert (in
+	// HandleRequest, before runFreshAgent) to create the row with the
+	// NOT NULL columns populated; if a tick fires before that landing
+	// the UPDATE simply matches zero rows and silently no-ops, which is
+	// the correct behaviour. An INSERT here would either need to know
+	// sandbox_id (it doesn't) or break NOT NULL by default-empty —
+	// neither is desirable, and the persister has no business creating
+	// rows on its own.
 	SaveConversationProgress(ctx context.Context, arg SaveConversationProgressParams) error
 	// Lightweight status update used by the runtime apply path: bumps
 	// success/failure counters and the validation_status without

@@ -89,10 +89,24 @@ func (r *botRunner) Run(ctx context.Context, label, scriptBody string, env map[s
 // artifacts (<256 KB — our spec scripts and manifest are well under)
 // this is fine; for binary or larger payloads we'd switch to the
 // Daytona SDK's FileSystem.DownloadFile, but it isn't needed yet.
+//
+// The 5-minute timeout is generous on purpose. The cat itself
+// finishes in milliseconds, but Daytona's session log stream has
+// been observed to queue for several minutes after a long-running
+// claude invocation in the same session — bootstrap-read landing
+// right after a 5-minute claude phase would time out at 30s with
+// the file's bytes still in flight, and the manifest would parse
+// as truncated JSON. The host then emits "bootstrap failed; parse
+// manifest: unexpected end of JSON input" and the spec is silently
+// dropped from the admin UI, which is exactly the symptom we hit
+// on session ee62da7b. 5 minutes is a long ceiling, but bootstrap
+// only runs once per repo and the cat is bounded by the file size
+// we just wrote — there's no scenario where 5 min worth of bytes
+// is "the right answer" but more would have been correct.
 func (r *botRunner) ReadFile(ctx context.Context, path string) ([]byte, error) {
 	out, err := r.b.shLines(ctx, r.sb, r.sessionID, "bootstrap-read",
 		"cat "+shellQuote(path),
-		30*time.Second,
+		5*time.Minute,
 		func(string) {},
 	)
 	if err != nil {

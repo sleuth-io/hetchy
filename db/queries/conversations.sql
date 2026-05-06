@@ -46,19 +46,24 @@ RETURNING org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, up
 -- are written by UpsertConversation at end-of-turn, and overwriting
 -- them here mid-run would race the dispatcher into the wrong state
 -- machine branch on a concurrent reload.
-INSERT INTO conversations (
-    org_id, thread_id, history, response_blocks, creator_id
-) VALUES (
-    $1, $2, $3, $4, $5
-)
-ON CONFLICT (org_id, thread_id) DO UPDATE SET
-    history         = EXCLUDED.history,
-    response_blocks = EXCLUDED.response_blocks,
-    creator_id      = CASE
-                          WHEN conversations.creator_id = '' THEN EXCLUDED.creator_id
-                          ELSE conversations.creator_id
-                      END,
-    updated_at      = NOW();
+--
+-- Pure UPDATE. We rely on the dispatcher's entry-Upsert (in
+-- HandleRequest, before runFreshAgent) to create the row with the
+-- NOT NULL columns populated; if a tick fires before that landing
+-- the UPDATE simply matches zero rows and silently no-ops, which is
+-- the correct behaviour. An INSERT here would either need to know
+-- sandbox_id (it doesn't) or break NOT NULL by default-empty —
+-- neither is desirable, and the persister has no business creating
+-- rows on its own.
+UPDATE conversations
+   SET history         = $3,
+       response_blocks = $4,
+       creator_id      = CASE
+                             WHEN creator_id = '' THEN $5
+                             ELSE creator_id
+                         END,
+       updated_at      = NOW()
+WHERE org_id = $1 AND thread_id = $2;
 
 -- name: DeleteConversation :exec
 DELETE FROM conversations WHERE org_id = $1 AND thread_id = $2;
