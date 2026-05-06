@@ -14,6 +14,14 @@ type ValidationArgs struct {
 	Branch    string
 	Diff      string
 	PRBody    string
+
+	// ScreenshotSlotCount is the number of pre-signed S3 PUT/GET URL
+	// pairs the bot has minted for this run, available to the agent
+	// in $HETCHY_SCREENSHOT_SLOTS as a JSON array. Zero means no
+	// upload pipeline is wired up — the prompt then tells the agent
+	// to skip embedded screenshots entirely (rather than write
+	// broken-link references that won't render in GitHub markdown).
+	ScreenshotSlotCount int
 }
 
 // BuildValidationPrompt produces the post-task validation prompt — the
@@ -82,14 +90,58 @@ Your job: produce evidence the change works.
 
 Save evidence under /tmp/hetchy-validate/:
 
-  /tmp/hetchy-validate/screenshot-001.png, screenshot-002.png, ...
   /tmp/hetchy-validate/trace-001.txt, trace-002.txt, ...
   /tmp/hetchy-validate/summary.md   (1-3 paragraphs: what you did,
                                      what you verified, any gaps)
+`, truncate(args.Diff, 8000), truncate(args.PRBody, 1500))
 
+	if args.ScreenshotSlotCount > 0 {
+		fmt.Fprintf(&b, `
+SCREENSHOT UPLOAD — read this carefully.
+
+The host has minted %d pre-signed S3 URL pairs for you. They live in
+the env var $HETCHY_SCREENSHOT_SLOTS as a JSON array:
+
+  [{"put_url":"https://s3...","get_url":"https://s3..."}, ...]
+
+For each screenshot you want in the PR body:
+
+  1. Take the screenshot via Playwright MCP and save it locally,
+     e.g. /tmp/shot-light.png.
+  2. Pick the next unused slot index N (start at 0, never reuse).
+  3. Upload with curl, taking exactly the put_url for that slot:
+
+       PUT_URL=$(echo "$HETCHY_SCREENSHOT_SLOTS" | jq -r ".[$N].put_url")
+       curl -fSs -X PUT --data-binary @/tmp/shot-light.png \
+            -H "Content-Type: image/png" "$PUT_URL"
+
+  4. Embed the matching get_url in the PR markdown body:
+
+       GET_URL=$(echo "$HETCHY_SCREENSHOT_SLOTS" | jq -r ".[$N].get_url")
+       # in your PR body: ![Light mode]($GET_URL)
+
+The PUT URLs accept exactly one upload each and expire 30 minutes
+from the start of this task. Don't try to re-upload a slot. The GET
+URLs render in the PR body for 7 days; that's enough to cover review
+turnaround.
+
+DO NOT reference local filenames like screenshot-001.png in the PR
+markdown — there is no host-side rewriter and those links will be
+broken. Embed the get_url directly, or skip the image entirely if
+you can't upload.
+`, args.ScreenshotSlotCount)
+	} else {
+		b.WriteString(`
+The host has not configured screenshot upload for this run, so DO NOT
+embed screenshots in the PR markdown — broken-image references make
+the PR look unfinished. Describe what you saw in summary.md instead;
+the reviewer will rely on your written description plus the diff.
+`)
+	}
+
+	b.WriteString(`
 After producing artifacts, append a "## Validation" section to the PR
-body before opening the PR. Reference the artifacts as filenames; the
-host harness will upload them and rewrite the references with real URLs.
+body before opening the PR.
 
 If you cannot validate (trivial diff with no observable surface,
 deferred capability blocks the only relevant path, etc.), write
@@ -99,7 +151,7 @@ Don't block on screenshots for changes that don't have a UI surface.
 DO NOT skip this step silently. The summary.md file MUST exist before
 you finalize the PR — it's the host's signal that you reached this
 stage at all.
-`, truncate(args.Diff, 8000), truncate(args.PRBody, 1500))
+`)
 
 	return b.String()
 }

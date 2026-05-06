@@ -27,6 +27,7 @@ import (
 	"github.com/hetchyhq/hetchy/internal/db/sqlc"
 	"github.com/hetchyhq/hetchy/internal/githubapp"
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
+	"github.com/hetchyhq/hetchy/internal/screenshots"
 	"github.com/hetchyhq/hetchy/internal/secrets"
 )
 
@@ -58,6 +59,13 @@ type Bot struct {
 	auth      *auth.Service
 	slack     *slackManager
 	bootstrap *bootstrap.Store
+	// screenshots is the S3 presigner used to mint per-request upload
+	// slots for the validation prompt. Nil when HETCHY_S3_BUCKET /
+	// HETCHY_S3_REGION aren't configured — runAgent falls back to
+	// the legacy /tmp/hetchy-validate filename references in that
+	// case. We construct one Signer at startup; the underlying
+	// S3 client is safe for concurrent use.
+	screenshots *screenshots.Signer
 	// app is the GitHub App handle (per-environment dev/staging/prod).
 	// Nil when GITHUB_APP_* env vars aren't configured — the install
 	// button is hidden and inbound webhooks refused in that case, so
@@ -136,6 +144,23 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 		return nil, fmt.Errorf("auth: %w", err)
 	}
 
+	// Screenshot upload signer. ErrNotConfigured is the "feature
+	// disabled" sentinel — log + continue. Other errors mean AWS
+	// config loading itself failed (corrupt ~/.aws/config, etc.); we
+	// also continue without the feature rather than refusing to
+	// start, since hetchy is useful without screenshot upload.
+	screenshotSigner, err := screenshots.New(context.Background(), cfg.S3Bucket, cfg.S3Region)
+	switch {
+	case errors.Is(err, screenshots.ErrNotConfigured):
+		log.Info("screenshot upload disabled: HETCHY_S3_BUCKET / HETCHY_S3_REGION not set")
+		screenshotSigner = nil
+	case err != nil:
+		log.Warn("screenshot signer disabled", "error", err)
+		screenshotSigner = nil
+	default:
+		log.Info("screenshot upload configured", "bucket", cfg.S3Bucket, "region", cfg.S3Region)
+	}
+
 	b := &Bot{
 		cfg:              cfg,
 		log:              log,
@@ -144,6 +169,7 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 		orgs:             orgcfg.New(store, cipher),
 		convs:            convstore.New(store),
 		bootstrap:        bootstrap.New(store, cipher),
+		screenshots:      screenshotSigner,
 		auth:             authSvc,
 		cipher:           cipher,
 		retryBackoff:     initialBackoff,

@@ -52,6 +52,62 @@ func TestValidationPromptCLIPath(t *testing.T) {
 	}
 }
 
+func TestBuildValidationPrompt_ScreenshotSlotsEnabled(t *testing.T) {
+	// When the bot has minted upload slots, the prompt must teach the
+	// agent the correct PUT/GET pattern AND must NOT instruct it to
+	// reference local filenames in markdown (which would render as
+	// broken images in GitHub).
+	spec := &Spec{
+		Services: []Service{{Name: "web", Port: 8080, URL: "http://localhost:8080", Kind: "ui"}},
+	}
+	args := ValidationArgs{
+		OwnerRepo:           "x/y",
+		Branch:              "feature/sf-1",
+		ScreenshotSlotCount: 3,
+	}
+	prompt := BuildValidationPrompt(spec, args)
+
+	for _, want := range []string{
+		"HETCHY_SCREENSHOT_SLOTS",
+		"put_url",
+		"get_url",
+		"curl -fSs -X PUT",
+		"jq",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("screenshots-on prompt missing %q\n%s", want, prompt)
+		}
+	}
+	// The legacy ![alt](filename.png) markdown pattern must not be
+	// presented as a how-to. It's fine to mention "screenshot-001.png"
+	// as a counter-example ("DO NOT reference local filenames…"), but
+	// the markdown reference shape leads to broken images and
+	// shouldn't appear in the prompt at all.
+	if strings.Contains(prompt, "(screenshot-001.png)") {
+		t.Errorf("screenshots-on prompt still presents the legacy markdown pattern\n%s", prompt)
+	}
+}
+
+func TestBuildValidationPrompt_ScreenshotSlotsDisabled(t *testing.T) {
+	// When the bot has no S3 wiring (slots=0) the prompt must
+	// explicitly tell the agent NOT to embed screenshots — otherwise
+	// it'll write broken-link markdown by reflex.
+	spec := &Spec{
+		Services: []Service{{Name: "web", Port: 8080, URL: "http://localhost:8080", Kind: "ui"}},
+	}
+	prompt := BuildValidationPrompt(spec, ValidationArgs{
+		OwnerRepo:           "x/y",
+		Branch:              "feature/sf-1",
+		ScreenshotSlotCount: 0,
+	})
+	if strings.Contains(prompt, "HETCHY_SCREENSHOT_SLOTS") {
+		t.Errorf("screenshots-off prompt should not mention the env var\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "DO NOT") {
+		t.Errorf("screenshots-off prompt should explicitly forbid screenshot embedding\n%s", prompt)
+	}
+}
+
 func TestMergeIntoAgentPromptKeepsOriginal(t *testing.T) {
 	original := "DO THE THING. Open a PR.\n"
 	merged := MergeIntoAgentPrompt(original, &Spec{}, ValidationArgs{OwnerRepo: "x/y", Branch: "z"})

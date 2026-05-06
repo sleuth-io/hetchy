@@ -72,6 +72,15 @@ type Config struct {
 	AuthBypassOrg   string
 	AuthBypassRole  string
 	AuthBypassEmail string
+
+	// S3Bucket and S3Region pin the screenshot-attachment bucket the bot
+	// presigns into. Both empty disables the screenshot upload path —
+	// callers fall back to the legacy /tmp/hetchy-validate filename
+	// references that the agent puts in PR markdown. AWS credentials
+	// come from the standard SDK chain (env vars, ~/.aws/credentials,
+	// IAM role) — we don't read them here.
+	S3Bucket string
+	S3Region string
 }
 
 // LoadConfig reads required and optional env vars. Set AUTH_BYPASS=1 to
@@ -144,6 +153,8 @@ func LoadConfig() (Config, error) {
 		AuthBypassOrg:          os.Getenv("AUTH_BYPASS_ORG"),
 		AuthBypassRole:         getenvDefault("AUTH_BYPASS_ROLE", "admin"),
 		AuthBypassEmail:        getenvDefault("AUTH_BYPASS_EMAIL", "bypass@hetchy.local"),
+		S3Bucket:               strings.TrimSpace(os.Getenv("HETCHY_S3_BUCKET")),
+		S3Region:               strings.TrimSpace(os.Getenv("HETCHY_S3_REGION")),
 	}, nil
 }
 

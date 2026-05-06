@@ -4,6 +4,7 @@ import (
 	"context"
 	_ "embed"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -19,7 +20,14 @@ import (
 	"github.com/hetchyhq/hetchy/internal/bootstrap"
 	"github.com/hetchyhq/hetchy/internal/convstore"
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
+	"github.com/hetchyhq/hetchy/internal/screenshots"
 )
+
+// screenshotSlotsPerRequest caps how many upload slots the bot mints
+// per task. Three is plenty — most validations need 1-2 screenshots
+// (one light + one dark, or one before + one after) and the cap
+// prevents a runaway prompt from issuing dozens of presigns.
+const screenshotSlotsPerRequest = 3
 
 //go:embed scripts/agent.sh
 var agentScriptBody string
@@ -118,6 +126,23 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, o
 		}
 	}
 
+	// Mint screenshot upload slots before constructing the prompt, so
+	// the validation prompt can include the slot count + matching
+	// instructions only when we actually have a place for the agent
+	// to PUT. Errors here downgrade to "no screenshot pipeline" — the
+	// run still produces a PR, just without embedded screenshots.
+	var slotsManifest []screenshots.Slot
+	if validate && spec != nil && b.screenshots != nil {
+		prefix := fmt.Sprintf("%s/%d/%s", oc.OrgID, repo.RepoID, requestID)
+		s, err := b.screenshots.MintSlots(ctx, prefix, screenshotSlotsPerRequest)
+		if err != nil {
+			b.log.Warn("screenshot slot minting failed",
+				"request_id", requestID, "error", err)
+		} else {
+			slotsManifest = s
+		}
+	}
+
 	originalPrompt := fmt.Sprintf(agentPromptTemplate,
 		repo.Slug, workdir, repo.BaseBranch,
 		userRequest, requestID, repo.BaseBranch,
@@ -125,8 +150,9 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, o
 	finalPrompt := originalPrompt
 	if spec != nil {
 		finalPrompt = bootstrap.MergeIntoAgentPrompt(originalPrompt, spec, bootstrap.ValidationArgs{
-			OwnerRepo: repo.Slug,
-			Branch:    "feature/sf-" + requestID,
+			OwnerRepo:           repo.Slug,
+			Branch:              "feature/sf-" + requestID,
+			ScreenshotSlotCount: len(slotsManifest),
 		})
 	}
 
@@ -136,6 +162,20 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, o
 		"SF_BASE_BRANCH": repo.BaseBranch,
 		"SF_PROMPT_B64":  base64.StdEncoding.EncodeToString([]byte(finalPrompt)),
 		"GITHUB_TOKEN":   repo.GitHubToken,
+	}
+	if len(slotsManifest) > 0 {
+		// JSON-encode the slot manifest as a single env var. The
+		// agent parses it with `jq` (already in the sandbox) per the
+		// instructions in the validation prompt.
+		raw, err := json.Marshal(slotsManifest)
+		if err != nil {
+			// Marshalling a fixed-shape struct can't realistically
+			// fail; log and proceed without slots rather than
+			// aborting the whole task on this corner.
+			b.log.Warn("screenshot slot marshal failed", "request_id", requestID, "error", err)
+		} else {
+			env["HETCHY_SCREENSHOT_SLOTS"] = string(raw)
+		}
 	}
 	authKey, authVal := claudeAuthEnv(oc)
 	env[authKey] = authVal
