@@ -16,6 +16,12 @@
 #
 # Optional env:
 #   SX_KEY  if set, install sx and run `sx install` after clone, before claude
+#   SF_SPEC_SETUP_B64    base64-encoded setup.sh from the saved bootstrap spec
+#   SF_SPEC_START_B64    base64-encoded start.sh from the saved bootstrap spec
+#   SF_SPEC_HEALTH_B64   base64-encoded health.sh from the saved bootstrap spec
+# When all three are set, agent.sh runs setup → starts the app in the
+# background → polls health.sh BEFORE invoking claude, so the validation
+# prompt's claim that "the app is running" is actually true.
 
 set -euo pipefail
 
@@ -66,12 +72,17 @@ echo "[hetchy] env scan: $(env | { grep -E '^(ANTHROPIC_|CLAUDE_)' || true; } | 
 echo "[hetchy] setting up git auth"
 git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
 
-echo "[hetchy] cloning ${SF_REPO}"
-git clone "https://github.com/${SF_REPO}.git" "${SF_WORKDIR}"
-cd "${SF_WORKDIR}"
-git checkout "${SF_BASE_BRANCH}"
-git config user.email 'hetchy-bot@users.noreply.github.com'
-git config user.name 'hetchy-bot'
+if [[ -d "${SF_WORKDIR}/.git" ]]; then
+  echo "[hetchy] reusing existing checkout at ${SF_WORKDIR}"
+  cd "${SF_WORKDIR}"
+else
+  echo "[hetchy] cloning ${SF_REPO}"
+  git clone "https://github.com/${SF_REPO}.git" "${SF_WORKDIR}"
+  cd "${SF_WORKDIR}"
+  git checkout "${SF_BASE_BRANCH}"
+  git config user.email 'hetchy-bot@users.noreply.github.com'
+  git config user.name 'hetchy-bot'
+fi
 
 echo "[hetchy] verifying claude"
 which claude
@@ -79,6 +90,21 @@ which claude
 echo "[hetchy] initializing claude config"
 mkdir -p "$HOME/.claude"
 printf '{"hasCompletedOnboarding":true}\n' > "$HOME/.claude.json"
+
+# The Playwright MCP server enforces an "allowed roots" check on every
+# file write (screenshots, traces). Its allow-list is the working dir
+# plus $WORKDIR/.playwright-mcp, which it does NOT auto-create — the
+# first browser_take_screenshot fails with a confusing "File access
+# denied" before the agent recovers by mkdir-ing the path itself. Pre-
+# creating it removes that detour.
+mkdir -p "${SF_WORKDIR}/.playwright-mcp"
+
+# Post-success reflection drop-zone: claude writes /tmp/hetchy-spec/
+# improved/{setup,start,health}.sh here when it identifies bootstrap-
+# spec improvements during validation, and the bot reads them after
+# the run to patch the saved spec. Pre-create so the agent's first
+# write doesn't have to mkdir the path itself.
+mkdir -p /tmp/hetchy-spec/improved
 
 if [[ -n "${SX_KEY:-}" ]]; then
   echo "[hetchy] installing sx"
@@ -99,11 +125,84 @@ SXCFG
   sx install
 fi
 
+# Apply the saved bootstrap spec, if one was attached. We deploy the
+# four scripts to /tmp/hetchy-spec/, run setup.sh (idempotent), launch
+# start.sh in the background, and poll health.sh until it passes — the
+# validation prompt assumes this work has already been done.
+if [[ -n "${SF_SPEC_SETUP_B64:-}" && -n "${SF_SPEC_START_B64:-}" && -n "${SF_SPEC_HEALTH_B64:-}" ]]; then
+  echo "[hetchy] applying saved repo setup spec"
+  mkdir -p /tmp/hetchy-spec
+  # Clear any sentinel left over from a prior attempt in the same
+  # sandbox; the spec-apply block below will re-create UNHEALTHY only
+  # if THIS run's health poll fails.
+  rm -f /tmp/hetchy-spec/UNHEALTHY
+  echo "${SF_SPEC_SETUP_B64}"  | base64 -d > /tmp/hetchy-spec/setup.sh
+  echo "${SF_SPEC_START_B64}"  | base64 -d > /tmp/hetchy-spec/start.sh
+  echo "${SF_SPEC_HEALTH_B64}" | base64 -d > /tmp/hetchy-spec/health.sh
+  chmod +x /tmp/hetchy-spec/setup.sh /tmp/hetchy-spec/start.sh /tmp/hetchy-spec/health.sh
+
+  # Soft-fail setup.sh: a non-zero exit from the saved spec must not
+  # abort the agent run. Under `set -euo pipefail` an unguarded call
+  # would propagate the failure and tear the script down before claude
+  # gets to run, leaving the user with no agent output and a sandbox
+  # they can't iterate on. We log the exit code and continue — the
+  # health poll below is the authoritative signal of "is the app
+  # actually up", and the agent still has a working repo to work in
+  # even when bootstrap is broken.
+  echo "[hetchy] running setup.sh"
+  if /tmp/hetchy-spec/setup.sh; then
+    echo "[hetchy] setup.sh succeeded"
+  else
+    echo "[hetchy] WARNING: setup.sh exited non-zero ($?); continuing anyway"
+  fi
+
+  echo "[hetchy] starting app via start.sh (background)"
+  # Redirect to a captured log instead of inheriting agent.sh's
+  # stdout/stderr — otherwise framework banners, request logs, and
+  # migration noise from the user's app interleave with claude's
+  # stream-json events in the chat block stream. The validation
+  # prompt tells the agent to read /tmp/hetchy-spec/start.log when
+  # it needs to triage why the app isn't responding.
+  /tmp/hetchy-spec/start.sh > /tmp/hetchy-spec/start.log 2>&1 &
+  SF_SPEC_START_PID=$!
+
+  echo "[hetchy] polling health.sh (90s budget)"
+  spec_healthy=0
+  for i in {1..90}; do
+    # Bail fast if start.sh died — keeps us from polling for 90s
+    # against a dead process when the user's spec broke.
+    if ! kill -0 "${SF_SPEC_START_PID}" 2>/dev/null; then
+      echo "[hetchy] start.sh exited early (pid ${SF_SPEC_START_PID})"
+      break
+    fi
+    if /tmp/hetchy-spec/health.sh >/dev/null 2>&1; then
+      echo "[hetchy] healthy after ${i}s"
+      spec_healthy=1
+      break
+    fi
+    sleep 1
+  done
+  if [[ ${spec_healthy} -ne 1 ]]; then
+    echo "[hetchy] WARNING: spec health check never passed; agent will see a non-running app"
+    # Sentinel for the validation prompt: when this file exists the
+    # agent knows the spec couldn't bring the app up and should write
+    # "Validation: incomplete — <reason>" rather than burn time poking
+    # a dead port. The prompt always reads "the app is running"
+    # because it's templated server-side before agent.sh runs; this
+    # in-sandbox marker is the truth-source the agent checks at the
+    # start of validation. Cleared at the top of the spec-apply block
+    # to make sure a stale marker from a prior run can't poison this
+    # one.
+    : > /tmp/hetchy-spec/UNHEALTHY
+  fi
+fi
+
 echo "[hetchy] running claude"
 echo "${SF_PROMPT_B64}" | base64 -d > /tmp/sf-prompt.txt
 # stream-json + verbose emits one NDJSON event per assistant chunk and
 # tool call so the bot can render typed Block updates in real time.
 # The PR URL is parsed out of the final assistant text by the bot.
-claude --print --dangerously-skip-permissions \
-       --output-format stream-json --verbose \
-       < /tmp/sf-prompt.txt
+# run_claude_with_watchdog wraps claude to reap orphaned background-task
+# children that would otherwise pin the process alive after the agent's
+# turn ends — see scripts/claude-watchdog.sh for the full rationale.
+run_claude_with_watchdog /tmp/sf-prompt.txt

@@ -132,6 +132,37 @@ func (s *Store) ListByUser(ctx context.Context, orgID, creatorID string) ([]Reco
 	return out, nil
 }
 
+// SaveProgress writes only the fields that change progressively as a
+// chat turn streams: history, response_blocks, and (the first time)
+// creator_id. It deliberately leaves sandbox_id, branch, pr_url, and
+// the GitHub fields untouched — their authoritative values come from
+// the terminal Upsert at end-of-turn, and overwriting them mid-run
+// would race the dispatcher into the wrong state machine branch on a
+// concurrent reload (e.g. an empty sandbox_id is interpreted as
+// "agent failed before creating a sandbox" and triggers a retry).
+//
+// Used by chatPersister to surface in-flight progress without
+// disturbing the canonical record. No-op when the store is nil.
+func (s *Store) SaveProgress(ctx context.Context, r Record) error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+	encoded, err := encodeBlocks(r.ResponseBlocks)
+	if err != nil {
+		return fmt.Errorf("encode response_blocks: %w", err)
+	}
+	if err := s.db.Queries.SaveConversationProgress(ctx, sqlc.SaveConversationProgressParams{
+		OrgID:          r.OrgID,
+		ThreadID:       r.ThreadID,
+		History:        r.History,
+		ResponseBlocks: encoded,
+		CreatorID:      r.CreatorID,
+	}); err != nil {
+		return fmt.Errorf("save progress: %w", err)
+	}
+	return nil
+}
+
 // Upsert writes the supplied record. No-op when the store is nil.
 func (s *Store) Upsert(ctx context.Context, r Record) error {
 	if s == nil || s.db == nil {

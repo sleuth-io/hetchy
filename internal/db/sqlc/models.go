@@ -74,3 +74,39 @@ type OrgConfig struct {
 	DefaultGithubRepo             string             `json:"default_github_repo"`
 	ClaudeCodeOauthTokenEncrypted []byte             `json:"claude_code_oauth_token_encrypted"`
 }
+
+type RepoSecretValue struct {
+	ID             pgtype.UUID        `json:"id"`
+	InstallationID int64              `json:"installation_id"`
+	RepoID         int64              `json:"repo_id"`
+	Path           string             `json:"path"`
+	Name           string             `json:"name"`
+	ValueEncrypted []byte             `json:"value_encrypted"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
+type RepoSetupSpec struct {
+	ID                   pgtype.UUID        `json:"id"`
+	InstallationID       int64              `json:"installation_id"`
+	RepoID               int64              `json:"repo_id"`
+	Path                 string             `json:"path"`
+	SpecVersion          int32              `json:"spec_version"`
+	Kind                 string             `json:"kind"`
+	SetupScript          string             `json:"setup_script"`
+	StartScript          string             `json:"start_script"`
+	HealthCheck          string             `json:"health_check"`
+	StopScript           *string            `json:"stop_script"`
+	Services             []byte             `json:"services"`
+	RequiredSecrets      []byte             `json:"required_secrets"`
+	DeferredCapabilities []byte             `json:"deferred_capabilities"`
+	SuggestedRepoChanges []byte             `json:"suggested_repo_changes"`
+	SourceFingerprint    string             `json:"source_fingerprint"`
+	ValidationStatus     string             `json:"validation_status"`
+	LastValidatedAt      pgtype.Timestamptz `json:"last_validated_at"`
+	SuccessCount         int32              `json:"success_count"`
+	FailureCount         int32              `json:"failure_count"`
+	BootstrapLog         *string            `json:"bootstrap_log"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+}

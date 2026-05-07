@@ -17,6 +17,8 @@ type Querier interface {
 	DeleteGithubReposByInstallationExcept(ctx context.Context, arg DeleteGithubReposByInstallationExceptParams) error
 	DeleteGithubTeamMembersForTeam(ctx context.Context, arg DeleteGithubTeamMembersForTeamParams) error
 	DeleteGithubTeamsByInstallationExcept(ctx context.Context, arg DeleteGithubTeamsByInstallationExceptParams) error
+	DeleteRepoSecretValue(ctx context.Context, arg DeleteRepoSecretValueParams) error
+	DeleteRepoSetupSpec(ctx context.Context, arg DeleteRepoSetupSpecParams) error
 	GetConversation(ctx context.Context, arg GetConversationParams) (GetConversationRow, error)
 	GetGithubInstallation(ctx context.Context, installationID int64) (GithubAppInstallation, error)
 	// Resolves an (owner, name) the user typed in chat to a concrete
@@ -28,6 +30,16 @@ type Querier interface {
 	GetGithubRepoForOrg(ctx context.Context, arg GetGithubRepoForOrgParams) (GithubRepo, error)
 	GetOrgConfig(ctx context.Context, orgID string) (OrgConfig, error)
 	GetOrgConfigBySlackTeamID(ctx context.Context, slackTeamID *string) (OrgConfig, error)
+	GetRepoSecretValue(ctx context.Context, arg GetRepoSecretValueParams) (RepoSecretValue, error)
+	GetRepoSetupSpec(ctx context.Context, arg GetRepoSetupSpecParams) (RepoSetupSpec, error)
+	// Used by DeclareRequiredSecret to register a placeholder row for a
+	// secret the bootstrap manifest asked for. ON CONFLICT DO NOTHING is
+	// the key distinction from UpsertRepoSecretValue: re-declaring a
+	// secret on a re-bootstrap must NOT clobber a value the user already
+	// filled in via the settings UI. Replaces a SELECT-then-INSERT pattern
+	// whose race window allowed the user's value to be overwritten with
+	// NULL when the user filled it in between the two statements.
+	InsertRepoSecretValueIfAbsent(ctx context.Context, arg InsertRepoSecretValueIfAbsentParams) error
 	ListConversationsByOrg(ctx context.Context, orgID string) ([]ListConversationsByOrgRow, error)
 	ListConversationsByOrgAndUser(ctx context.Context, arg ListConversationsByOrgAndUserParams) ([]ListConversationsByOrgAndUserRow, error)
 	ListGithubInstallationsByOrg(ctx context.Context, orgID string) ([]GithubAppInstallation, error)
@@ -48,8 +60,46 @@ type Querier interface {
 	// of Slack connection," write a different query — don't rename this
 	// one.
 	ListOrgConfigsWithSlack(ctx context.Context) ([]OrgConfig, error)
+	// Used by the bootstrap apply step to build the env block, and by the
+	// settings UI to show which keys are filled in vs. blank.
+	ListRepoSecretValues(ctx context.Context, arg ListRepoSecretValuesParams) ([]RepoSecretValue, error)
+	// All paths for a given (installation, repo). Powers the monorepo UI
+	// where the user can see every target Hetchy has bootstrapped under
+	// one repository.
+	ListRepoSetupSpecs(ctx context.Context, arg ListRepoSetupSpecsParams) ([]RepoSetupSpec, error)
 	RenameConversation(ctx context.Context, arg RenameConversationParams) (int64, error)
+	// Periodic mid-run snapshot used by chatPersister. Only writes the
+	// handful of fields that change progressively as the agent emits
+	// blocks (history + response_blocks + creator_id). The fields that
+	// track terminal state (sandbox_id, branch, pr_url, github_owner,
+	// github_repo) are deliberately left alone — their canonical values
+	// are written by UpsertConversation at end-of-turn, and overwriting
+	// them here mid-run would race the dispatcher into the wrong state
+	// machine branch on a concurrent reload.
+	//
+	// Pure UPDATE. We rely on the dispatcher's entry-Upsert (in
+	// HandleRequest, before runFreshAgent) to create the row with the
+	// NOT NULL columns populated; if a tick fires before that landing
+	// the UPDATE simply matches zero rows and silently no-ops, which is
+	// the correct behaviour. An INSERT here would either need to know
+	// sandbox_id (it doesn't) or break NOT NULL by default-empty —
+	// neither is desirable, and the persister has no business creating
+	// rows on its own.
+	SaveConversationProgress(ctx context.Context, arg SaveConversationProgressParams) error
+	// Lightweight status update used by the runtime apply path: bumps
+	// success/failure counters and the validation_status without
+	// rewriting the whole spec. Avoids re-encoding all the JSONB blobs on
+	// every successful task.
+	UpdateRepoSetupSpecStatus(ctx context.Context, arg UpdateRepoSetupSpecStatusParams) error
 	UpsertConversation(ctx context.Context, arg UpsertConversationParams) (UpsertConversationRow, error)
+	// Failing-bootstrap upsert. Diverges from UpsertRepoSetupSpec in two
+	// ways: success_count is left untouched (we only ever write a failing
+	// row, never reset successes), and failure_count is incremented on
+	// conflict instead of replaced. This way "stop retrying after N
+	// consecutive failures" guards built on failure_count actually trip,
+	// and AutoHealPromptPreamble's "this is attempt N" framing stays
+	// accurate across retries.
+	UpsertFailingRepoSetupSpec(ctx context.Context, arg UpsertFailingRepoSetupSpecParams) (RepoSetupSpec, error)
 	// Queries for the GitHub App installation cache: installations, the
 	// repos they grant access to, and (for Organization installs) team
 	// + membership snapshots.
@@ -65,6 +115,14 @@ type Querier interface {
 	UpsertGithubTeam(ctx context.Context, arg UpsertGithubTeamParams) error
 	UpsertGithubTeamMember(ctx context.Context, arg UpsertGithubTeamMemberParams) error
 	UpsertOrgConfig(ctx context.Context, arg UpsertOrgConfigParams) (OrgConfig, error)
+	// Repo-scoped secrets ---------------------------------------------------
+	// Inserts a placeholder row (value_encrypted=NULL) when bootstrap
+	// declares a required secret, and updates the encrypted value when the
+	// user fills it in via the settings UI. Two-phase so the UI knows what
+	// to ask for even before the user types anything.
+	UpsertRepoSecretValue(ctx context.Context, arg UpsertRepoSecretValueParams) error
+	// Queries for repo bootstrap specs and per-repo secret values.
+	UpsertRepoSetupSpec(ctx context.Context, arg UpsertRepoSetupSpecParams) (RepoSetupSpec, error)
 }
 
 var _ Querier = (*Queries)(nil)

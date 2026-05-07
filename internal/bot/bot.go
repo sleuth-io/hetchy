@@ -6,6 +6,8 @@ package bot
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -19,11 +21,13 @@ import (
 
 	"github.com/hetchyhq/hetchy/internal/auth"
 	"github.com/hetchyhq/hetchy/internal/blocks"
+	"github.com/hetchyhq/hetchy/internal/bootstrap"
 	"github.com/hetchyhq/hetchy/internal/convstore"
 	"github.com/hetchyhq/hetchy/internal/db"
 	"github.com/hetchyhq/hetchy/internal/db/sqlc"
 	"github.com/hetchyhq/hetchy/internal/githubapp"
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
+	"github.com/hetchyhq/hetchy/internal/screenshots"
 	"github.com/hetchyhq/hetchy/internal/secrets"
 )
 
@@ -46,14 +50,26 @@ const workdir = "/home/daytona/work"
 // together. It owns no per-request mutable state; conversation state lives
 // in the database.
 type Bot struct {
-	cfg     Config
-	log     *slog.Logger
-	daytona *daytona.Client
-	store   *db.Store
-	orgs    *orgcfg.Store
-	convs   *convstore.Store
-	auth    *auth.Service
-	slack   *slackManager
+	cfg       Config
+	log       *slog.Logger
+	daytona   *daytona.Client
+	store     *db.Store
+	orgs      *orgcfg.Store
+	convs     *convstore.Store
+	auth      *auth.Service
+	slack     *slackManager
+	bootstrap *bootstrap.Store
+	// screenshots is the S3 presigner used to mint per-request upload
+	// slots for the validation prompt. Nil when HETCHY_S3_BUCKET /
+	// HETCHY_S3_REGION aren't configured — runAgent falls back to
+	// the legacy /tmp/hetchy-validate filename references in that
+	// case. We construct one Signer at startup; the underlying
+	// S3 client is safe for concurrent use.
+	screenshots *screenshots.Signer
+	// live tracks in-flight chat turns so the /chat/stream
+	// reattach endpoint can find them and replay buffered
+	// SSE events to a reloading tab. Goroutine-safe.
+	live *liveRegistry
 	// app is the GitHub App handle (per-environment dev/staging/prod).
 	// Nil when GITHUB_APP_* env vars aren't configured — the install
 	// button is hidden and inbound webhooks refused in that case, so
@@ -132,6 +148,23 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 		return nil, fmt.Errorf("auth: %w", err)
 	}
 
+	// Screenshot upload signer. ErrNotConfigured is the "feature
+	// disabled" sentinel — log + continue. Other errors mean AWS
+	// config loading itself failed (corrupt ~/.aws/config, etc.); we
+	// also continue without the feature rather than refusing to
+	// start, since hetchy is useful without screenshot upload.
+	screenshotSigner, err := screenshots.New(context.Background(), cfg.S3Bucket, cfg.S3Region)
+	switch {
+	case errors.Is(err, screenshots.ErrNotConfigured):
+		log.Info("screenshot upload disabled: HETCHY_S3_BUCKET / HETCHY_S3_REGION not set")
+		screenshotSigner = nil
+	case err != nil:
+		log.Warn("screenshot signer disabled", "error", err)
+		screenshotSigner = nil
+	default:
+		log.Info("screenshot upload configured", "bucket", cfg.S3Bucket, "region", cfg.S3Region)
+	}
+
 	b := &Bot{
 		cfg:              cfg,
 		log:              log,
@@ -139,6 +172,9 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 		store:            store,
 		orgs:             orgcfg.New(store, cipher),
 		convs:            convstore.New(store),
+		bootstrap:        bootstrap.New(store, cipher),
+		screenshots:      screenshotSigner,
+		live:             newLiveRegistry(),
 		auth:             authSvc,
 		cipher:           cipher,
 		retryBackoff:     initialBackoff,
@@ -258,7 +294,21 @@ func (b *Bot) Run(ctx context.Context) error {
 // user to reply with `owner/name`. The next message into a conversation
 // in that "awaiting repo" state is interpreted as the repo selection,
 // not as a new task.
-func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, requestID, threadID, userID string, out blocks.Emitter) {
+// HandleRequest dispatches a single user turn. validate gates the
+// repo-bootstrap pipeline + post-change validation prompt: when true
+// (the default for new chats from the web UI and for every Slack
+// request) the agent does first-time bootstrap, applies the saved
+// spec, and is told to produce screenshot/test evidence before
+// opening the PR. When false (web user explicitly unchecks the
+// "Validate changes with end-to-end testing" box) we skip both and
+// fall back to the legacy "make the change, open the PR" flow —
+// useful for trivial edits where the bootstrap's overhead outweighs
+// the validation benefit.
+//
+// Slack and follow-ups always pass true; the flag is only meaningful
+// on the first turn of a fresh chat (subsequent turns reuse the
+// already-cloned sandbox and don't re-bootstrap).
+func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, requestID, threadID, userID string, validate bool, out blocks.Emitter) {
 	b.log.Info("request received",
 		"org", oc.OrgID,
 		"request_id", requestID,
@@ -288,7 +338,7 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 	case err == nil && rec.SandboxID != "":
 		// Sandbox was created but the agent failed before producing a
 		// PR. Retry: archive the orphan sandbox + spawn a fresh one.
-		b.handleRetryAfterFailure(ctx, oc, rec, text, requestID, recorder, emit)
+		b.handleRetryAfterFailure(ctx, oc, rec, text, requestID, validate, recorder, emit)
 		return
 	case err == nil:
 		// No sandbox was ever created. Two sub-states distinguished by
@@ -299,10 +349,10 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		//      The repo isn't the problem; treat the new message as
 		//      the new request and re-run on the same repo.
 		if rec.GitHubOwner != "" && rec.GitHubRepo != "" {
-			b.handleRetryAfterFailure(ctx, oc, rec, text, requestID, recorder, emit)
+			b.handleRetryAfterFailure(ctx, oc, rec, text, requestID, validate, recorder, emit)
 			return
 		}
-		b.handleAwaitingRepoReply(ctx, oc, rec, text, requestID, recorder, emit)
+		b.handleAwaitingRepoReply(ctx, oc, rec, text, requestID, validate, recorder, emit)
 		return
 	case errors.Is(err, convstore.ErrNotFound):
 		// fall through — new conversation
@@ -337,7 +387,15 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		GitHubRepo:  oc.DefaultGitHubRepo,
 		CreatorID:   userID,
 	}
-	b.runFreshAgent(ctx, oc, rec, text, requestID, recorder, emit)
+	// Persist the row immediately — before we spend 10–30s creating the
+	// sandbox — so the LHN sidebar and /api/conversations both see this
+	// chat as soon as the user clicks Send. Without this, a reload during
+	// sandbox creation finds nothing and the chat disappears from the
+	// list until the first persister tick fires inside runFreshAgent.
+	if err := b.convs.Upsert(ctx, rec); err != nil {
+		b.log.Error("convstore upsert (new chat)", "error", err, "org", oc.OrgID, "thread", threadID)
+	}
+	b.runFreshAgent(ctx, oc, rec, text, requestID, validate, recorder, emit)
 }
 
 // handleAwaitingRepoReply parses the user's reply as `owner/name`. On
@@ -349,7 +407,7 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 // rec on entry may have GitHubOwner already set (from a previous
 // resolve-failed attempt); we'll overwrite both with whatever this
 // message resolves to.
-func (b *Bot) handleAwaitingRepoReply(ctx context.Context, oc orgcfg.Config, rec convstore.Record, text, requestID string, recorder *blocks.Recorder, emit blocks.Emitter) {
+func (b *Bot) handleAwaitingRepoReply(ctx context.Context, oc orgcfg.Config, rec convstore.Record, text, requestID string, validate bool, recorder *blocks.Recorder, emit blocks.Emitter) {
 	owner, name, ok := parseOwnerRepo(text)
 	if !ok {
 		emit.Notify("Try again", "I couldn't parse that as `owner/name`. For example `acme/website`.")
@@ -371,7 +429,7 @@ func (b *Bot) handleAwaitingRepoReply(ctx context.Context, oc orgcfg.Config, rec
 	rec.GitHubOwner = owner
 	rec.GitHubRepo = name
 	originalRequest := rec.History[0]
-	b.runFreshAgent(ctx, oc, rec, originalRequest, requestID, recorder, emit)
+	b.runFreshAgent(ctx, oc, rec, originalRequest, requestID, validate, recorder, emit)
 }
 
 // clearRepoOnFailure rewrites a partial conversation back to the
@@ -391,8 +449,9 @@ func clearRepoOnFailure(rec *convstore.Record) {
 // prior turn, so we keep it and re-run with the new user message as
 // the request — the repo isn't the problem and forcing the user to
 // retype `owner/name` would be noise. The new message replaces
-// History[0] (this is still the first real turn — the row exists only
-// because we persisted the failure blocks for refresh visibility) so a
+// History[0] (this is still the first real turn — the row exists from
+// the entry-Upsert HandleRequest does before the agent even starts,
+// plus any failure blocks the persister recorded mid-run) so a
 // follow-up only sees the request that actually shipped.
 //
 // If the failed attempt left an orphan sandbox (rec.SandboxID set,
@@ -400,7 +459,7 @@ func clearRepoOnFailure(rec *convstore.Record) {
 // one. The user retrying is the signal that they're done debugging
 // the previous failure; without this we'd leak a Daytona sandbox per
 // retry.
-func (b *Bot) handleRetryAfterFailure(ctx context.Context, oc orgcfg.Config, rec convstore.Record, text, requestID string, recorder *blocks.Recorder, emit blocks.Emitter) {
+func (b *Bot) handleRetryAfterFailure(ctx context.Context, oc orgcfg.Config, rec convstore.Record, text, requestID string, validate bool, recorder *blocks.Recorder, emit blocks.Emitter) {
 	if rec.SandboxID != "" {
 		if sb, err := b.daytona.Get(ctx, rec.SandboxID); err == nil {
 			if err := sb.Stop(ctx); err != nil {
@@ -415,7 +474,7 @@ func (b *Bot) handleRetryAfterFailure(ctx context.Context, oc orgcfg.Config, rec
 	}
 	rec.History = []string{text}
 	rec.ResponseBlocks = nil
-	b.runFreshAgent(ctx, oc, rec, text, requestID, recorder, emit)
+	b.runFreshAgent(ctx, oc, rec, text, requestID, validate, recorder, emit)
 }
 
 // runFreshAgent creates a new sandbox, mints an installation token
@@ -423,7 +482,7 @@ func (b *Bot) handleRetryAfterFailure(ctx context.Context, oc orgcfg.Config, rec
 // the resulting conversation. Shared by the new-conversation, awaiting-
 // repo-reply, and "had repo but no sandbox" paths so they all stamp
 // the row identically.
-func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore.Record, userRequest, requestID string, recorder *blocks.Recorder, emit blocks.Emitter) {
+func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore.Record, userRequest, requestID string, validate bool, recorder *blocks.Recorder, emit blocks.Emitter) {
 	repo, err := b.resolveRepo(ctx, oc.OrgID, rec.GitHubOwner, rec.GitHubRepo)
 	if err != nil {
 		b.log.Warn("resolve repo failed", "org", oc.OrgID, "owner", rec.GitHubOwner, "name", rec.GitHubRepo, "error", err)
@@ -473,8 +532,25 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 	b.log.Info("sandbox created", "id", sb.ID, "request_id", requestID)
 	emit.Notify("Sandbox ready", fmt.Sprintf("`%s` is up — cloning repo and starting Claude Code.", sb.ID))
 
+	// Persist progress every 2 s for the rest of the run so a
+	// reload (or bot crash) doesn't lose blocks. The persister
+	// writes only history + response_blocks + creator_id via
+	// SaveProgress; the terminal Upsert below remains the
+	// canonical write for sandbox_id / branch / pr_url.
+	// appendToFirstTurn matches appendBlocksToFirstTurn used by
+	// every terminal Upsert in this function — a mismatch would
+	// let a late tick overwrite the terminal save with a different
+	// shape and drop turns from the UI.
+	persister := newChatPersister(b.log, b.convs, recorder, rec, appendToFirstTurn, 2*time.Second)
+	persisterCtx, cancelPersister := context.WithCancel(ctx)
+	go persister.Run(persisterCtx)
+	defer func() {
+		cancelPersister()
+		persister.Stop()
+	}()
+
 	branch := "feature/sf-" + requestID
-	prURL, runErr := b.runAgent(ctx, sb, repo, oc, userRequest, requestID, emit)
+	prURL, runErr := b.runAgent(ctx, sb, repo, oc, userRequest, requestID, validate, emit)
 	if runErr != nil {
 		b.log.Error("agent run failed", "sandbox", sb.ID, "request_id", requestID, "error", runErr)
 		emit.Error("Agent failed", fmt.Sprintf("Something went wrong while running the agent. Sandbox `%s` is left running for debugging — reply here to retry (the orphan sandbox will be archived automatically) or check the server logs for details.", sb.ID))
@@ -551,6 +627,21 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 		}
 		return
 	}
+
+	// Persister sees a forward-looking rec where the new user turn's
+	// text is already in history — otherwise a mid-run reload would
+	// render the user's message back in the previous turn instead of
+	// the in-flight one. appendAsNewTurn matches appendBlocksAsNewTurn
+	// used by the terminal Upsert in this function.
+	recForPersist := rec
+	recForPersist.History = append(append([]string(nil), rec.History...), text)
+	persister := newChatPersister(b.log, b.convs, recorder, recForPersist, appendAsNewTurn, 2*time.Second)
+	persisterCtx, cancelPersister := context.WithCancel(ctx)
+	go persister.Run(persisterCtx)
+	defer func() {
+		cancelPersister()
+		persister.Stop()
+	}()
 
 	prURL, err := b.runFollowUp(ctx, sb, repo, oc, rec, text, requestID, emit)
 	if err != nil {
@@ -721,6 +812,27 @@ func isTransientError(err error) bool {
 
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// heredocWriteCmd builds a shell command that writes body to path via
+// a single-quoted heredoc with a content-derived terminator. If
+// chmodExec is true, the command also `chmod +x` the resulting file.
+//
+// The terminator is "SFEOF_" plus the first 8 hex chars of sha256(body),
+// which makes a collision with a body line cryptographically negligible.
+// The previous hardcoded "SFEOF" terminator silently truncated any file
+// whose body happened to contain a bare line of that text — a real
+// hazard for the bootstrap prompt, which embeds README/Makefile/compose
+// excerpts from arbitrary user repos.
+func heredocWriteCmd(path, body string, chmodExec bool) string {
+	sum := sha256.Sum256([]byte(body))
+	term := "SFEOF_" + hex.EncodeToString(sum[:])[:8]
+	quoted := shellQuote(path)
+	cmd := "cat > " + quoted + " << '" + term + "'\n" + body + "\n" + term
+	if chmodExec {
+		cmd += "\nchmod +x " + quoted
+	}
+	return cmd
 }
 
 // truncate caps s to at most n runes, appending "..." when it cuts.

@@ -4,22 +4,53 @@ import (
 	"context"
 	_ "embed"
 	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"maps"
+	"os"
+	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
 
 	"github.com/hetchyhq/hetchy/internal/blocks"
+	"github.com/hetchyhq/hetchy/internal/bootstrap"
 	"github.com/hetchyhq/hetchy/internal/convstore"
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
+	"github.com/hetchyhq/hetchy/internal/screenshots"
 )
 
+// screenshotSlotsPerRequest caps how many upload slots the bot mints
+// per task. Three is plenty — most validations need 1-2 screenshots
+// (one light + one dark, or one before + one after) and the cap
+// prevents a runaway prompt from issuing dozens of presigns.
+const screenshotSlotsPerRequest = 3
+
 //go:embed scripts/agent.sh
-var agentScript string
+var agentScriptBody string
 
 //go:embed scripts/followup.sh
-var followupScript string
+var followupScriptBody string
+
+//go:embed scripts/setup-clone.sh
+var setupCloneScript string
+
+//go:embed scripts/claude-watchdog.sh
+var claudeWatchdogScript string
+
+// agentScript and followupScript are the on-the-wire script bodies the
+// bot writes to the sandbox. They are claude-watchdog.sh prepended to
+// the user-visible scripts/agent.sh and scripts/followup.sh — the
+// prepend wires the run_claude_with_watchdog function into the same
+// shell scope. We do the join here (vs. having each script `source` a
+// separately-deployed file) so runScript only has to push one file per
+// invocation and there's no chance of a half-deployed pair.
+var agentScript = claudeWatchdogScript + "\n" + agentScriptBody
+
+var followupScript = claudeWatchdogScript + "\n" + followupScriptBody
 
 const agentPromptTemplate = `You are working inside a fresh sandbox. The repo %s has been cloned
 to %s and %s is checked out. Your task is the user request below.
@@ -70,24 +101,331 @@ type repoCtx struct {
 	TokenExpires time.Time
 }
 
-func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, userRequest, requestID string, emit blocks.Emitter) (string, error) {
-	prompt := fmt.Sprintf(agentPromptTemplate,
+func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, userRequest, requestID string, validate bool, emit blocks.Emitter) (string, error) {
+	var spec *bootstrap.Spec
+	// validate=false is the user's explicit "skip end-to-end testing"
+	// opt-out from the new-chat UI. We honour it by not running
+	// bootstrap (which can take minutes on a fresh repo) and not
+	// merging the validation prompt — the agent then behaves the
+	// way it did before this pipeline existed: make the change,
+	// open the PR, done. Slack and follow-ups always pass true.
+	if validate && b.bootstrap != nil && repo.InstallID != 0 && repo.RepoID != 0 {
+		s, err := b.ensureBootstrapSpec(ctx, sb, repo, oc, requestID, emit)
+		if err != nil {
+			// Bootstrap is best-effort: a failure here logs + continues
+			// with the unmodified prompt. Future tasks against this repo
+			// will retry. Hard-failing would block users on every repo
+			// we don't yet have a spec for, even when the change in
+			// flight has nothing to do with running the app.
+			b.log.Warn("bootstrap failed; proceeding without spec",
+				"request_id", requestID, "repo", repo.Slug, "error", err)
+			emit.Notify("Bootstrap skipped",
+				"Couldn't auto-bootstrap this repo for end-to-end validation — running the agent without a validation spec. Check server logs for details.")
+		} else {
+			spec = s
+		}
+	}
+
+	// Mint screenshot upload slots before constructing the prompt, so
+	// the validation prompt can include the slot count + matching
+	// instructions only when we actually have a place for the agent
+	// to PUT. Errors here downgrade to "no screenshot pipeline" — the
+	// run still produces a PR, just without embedded screenshots.
+	var slotsManifest []screenshots.Slot
+	if validate && spec != nil && b.screenshots != nil {
+		prefix := fmt.Sprintf("%s/%d/%s", oc.OrgID, repo.RepoID, requestID)
+		s, err := b.screenshots.MintSlots(ctx, prefix, screenshotSlotsPerRequest)
+		if err != nil {
+			b.log.Warn("screenshot slot minting failed",
+				"request_id", requestID, "error", err)
+		} else {
+			slotsManifest = s
+		}
+	}
+
+	originalPrompt := fmt.Sprintf(agentPromptTemplate,
 		repo.Slug, workdir, repo.BaseBranch,
 		userRequest, requestID, repo.BaseBranch,
 	)
+	finalPrompt := originalPrompt
+	if spec != nil {
+		finalPrompt = bootstrap.MergeIntoAgentPrompt(originalPrompt, spec, bootstrap.ValidationArgs{
+			OwnerRepo:           repo.Slug,
+			Branch:              "feature/sf-" + requestID,
+			ScreenshotSlotCount: len(slotsManifest),
+		})
+	}
+
 	env := map[string]string{
 		"SF_REPO":        repo.Slug,
 		"SF_WORKDIR":     workdir,
 		"SF_BASE_BRANCH": repo.BaseBranch,
-		"SF_PROMPT_B64":  base64.StdEncoding.EncodeToString([]byte(prompt)),
+		"SF_PROMPT_B64":  base64.StdEncoding.EncodeToString([]byte(finalPrompt)),
 		"GITHUB_TOKEN":   repo.GitHubToken,
+	}
+	// When we have a saved spec, ship its setup/start/health scripts
+	// to agent.sh as base64 env vars. agent.sh decodes them before
+	// invoking claude and runs setup → start (bg) → poll health, so
+	// the validation prompt's "the app is running" assertion holds.
+	// Without this step the cached spec is loaded into the prompt
+	// but the agent finds a dead port and falls back to figuring out
+	// how to start the app from scratch — wasting the bootstrap.
+	if spec != nil && spec.SetupScript != "" && spec.StartScript != "" && spec.HealthCheck != "" {
+		env["SF_SPEC_SETUP_B64"] = base64.StdEncoding.EncodeToString([]byte(spec.SetupScript))
+		env["SF_SPEC_START_B64"] = base64.StdEncoding.EncodeToString([]byte(spec.StartScript))
+		env["SF_SPEC_HEALTH_B64"] = base64.StdEncoding.EncodeToString([]byte(spec.HealthCheck))
+	}
+	if len(slotsManifest) > 0 {
+		// JSON-encode the slot manifest as a single env var. The
+		// agent parses it with `jq` (already in the sandbox) per the
+		// instructions in the validation prompt.
+		raw, err := json.Marshal(slotsManifest)
+		if err != nil {
+			// Marshalling a fixed-shape struct can't realistically
+			// fail; log and proceed without slots rather than
+			// aborting the whole task on this corner.
+			b.log.Warn("screenshot slot marshal failed", "request_id", requestID, "error", err)
+		} else {
+			env["HETCHY_SCREENSHOT_SLOTS"] = string(raw)
+		}
 	}
 	authKey, authVal := claudeAuthEnv(oc)
 	env[authKey] = authVal
 	if oc.SXKey != "" {
 		env["SX_KEY"] = oc.SXKey
 	}
-	return b.runScript(ctx, sb, "agent-"+requestID, "agent", agentScript, env, emit)
+	sessionID := "agent-" + requestID
+	prURL, err := b.runScript(ctx, sb, sessionID, "agent", agentScript, env, emit)
+	if err == nil && spec != nil {
+		// Post-success reflection: read /tmp/hetchy-spec/improved/ to
+		// see if the agent flagged any setup/start/health changes that
+		// would help future tasks. Best-effort — failures here never
+		// affect the PR. Runs in a fresh session because runScript
+		// deleted the agent's session in its defer.
+		b.applySpecImprovements(ctx, sb, sessionID, spec, repo, emit)
+
+		// Promote the spec back to Validated on a clean run. Two
+		// reasons this matters: (1) applySpecImprovements demotes
+		// the row to Stale before saving improved scripts, so a
+		// next-task verification needs a way to flip it back when
+		// the new scripts work end-to-end; (2) success_count is the
+		// signal AutoHeal's preamble uses to frame "this is attempt
+		// N" — without an increment per success, a once-failing /
+		// once-succeeded spec keeps looking like it has never run.
+		// Best-effort: errors here are logged but don't fail the
+		// PR.
+		if mErr := b.bootstrap.MarkApplied(ctx, repo.InstallID, repo.RepoID, spec.Path,
+			bootstrap.StatusValidated, spec.SuccessCount+1, spec.FailureCount); mErr != nil {
+			b.log.Warn("mark spec applied", "error", mErr, "repo", repo.Slug)
+		}
+	}
+	return prURL, err
+}
+
+// ensureBootstrapSpec returns the saved spec for repo, running the
+// bootstrap loop on first encounter. Bootstrap clones into the same
+// workdir agent.sh will use; agent.sh detects the existing checkout and
+// skips its own clone, so the work happens once.
+//
+// Caller is expected to gate on whether bootstrap is appropriate (a
+// GitHub App-resolved repo with a stable install + repo id); this method
+// assumes those preconditions hold.
+func (b *Bot) ensureBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, requestID string, emit blocks.Emitter) (*bootstrap.Spec, error) {
+	spec, err := b.bootstrap.GetSpec(ctx, repo.InstallID, repo.RepoID, "")
+	switch {
+	case err == nil:
+		// Spec exists; treat it as fresh and return it. The drift-
+		// detection logic itself is fully implemented in
+		// bootstrap.CheckSpec / IsStale (see drift.go) — the gap is
+		// the wiring call from this branch. We deliberately don't
+		// wire it yet because the only detect path we have today
+		// re-clones the repo, which is multi-minute and runs on
+		// every task. Wire here when a cheaper "has anything
+		// material changed since last bootstrap?" signal lands
+		// (e.g. a repo-tree hash from the GitHub App webhook).
+		return spec, nil
+	case errors.Is(err, bootstrap.ErrNotFound):
+		// Fall through and bootstrap.
+	default:
+		return nil, fmt.Errorf("get spec: %w", err)
+	}
+
+	emit.Notify("First-time bootstrap",
+		fmt.Sprintf("`%s` is new to Hetchy — figuring out how to run it end-to-end. This adds a few minutes to the first task; subsequent tasks reuse the result.", repo.Slug))
+
+	sessionID := "bootstrap-" + requestID
+	if err := sb.Process.CreateSession(ctx, sessionID); err != nil {
+		return nil, fmt.Errorf("create bootstrap session: %w", err)
+	}
+	defer func() {
+		_ = sb.Process.DeleteSession(ctx, sessionID)
+	}()
+
+	cloneEnv := map[string]string{
+		"SF_REPO":        repo.Slug,
+		"SF_WORKDIR":     workdir,
+		"SF_BASE_BRANCH": repo.BaseBranch,
+		"GITHUB_TOKEN":   repo.GitHubToken,
+	}
+	if err := b.runInlineScript(ctx, sb, sessionID, "setup-clone", setupCloneScript, cloneEnv, emit); err != nil {
+		return nil, fmt.Errorf("setup-clone: %w", err)
+	}
+
+	hints, tempRoot, err := b.detectViaSandbox(ctx, sb, sessionID, workdir)
+	if err != nil {
+		return nil, fmt.Errorf("detect: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(tempRoot) }()
+
+	suppliedSecrets, err := b.bootstrap.GetSecrets(ctx, repo.InstallID, repo.RepoID, "")
+	if err != nil {
+		return nil, fmt.Errorf("get secrets: %w", err)
+	}
+
+	authKey, authVal := claudeAuthEnv(oc)
+	runner := &botRunner{
+		b:         b,
+		sb:        sb,
+		sessionID: sessionID,
+		emit:      emit,
+		baseEnv: map[string]string{
+			authKey:        authVal,
+			"GITHUB_TOKEN": repo.GitHubToken,
+		},
+	}
+	res, err := bootstrap.Run(ctx, runner, bootstrap.LoopInput{
+		OwnerRepo:       repo.Slug,
+		Hints:           hints,
+		SuppliedSecrets: suppliedSecrets,
+		RepoDir:         workdir,
+	})
+	// On ErrLoopFailed, bootstrap.Run still returns a partial result
+	// (any artifacts the agent produced + the captured transcript).
+	// Persisting that as a StatusFailing row keeps the trace available
+	// for AutoHeal on the next run — without this, the first failure
+	// for a repo leaves nothing in the DB and the repo can never
+	// auto-heal because AutoHealInput requires a non-nil PriorSpec.
+	if err != nil && errors.Is(err, bootstrap.ErrLoopFailed) && res != nil {
+		b.persistFailingBootstrap(ctx, res, repo, hints)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("bootstrap.Run: %w", err)
+	}
+	if res == nil || res.Spec == nil {
+		return nil, errors.New("bootstrap produced no spec")
+	}
+
+	res.Spec.InstallationID = repo.InstallID
+	res.Spec.RepoID = repo.RepoID
+	res.Spec.BootstrapLog = truncateLogTail(res.Log)
+	if err := b.bootstrap.SaveSpec(ctx, res.Spec); err != nil {
+		return nil, fmt.Errorf("save spec: %w", err)
+	}
+
+	for _, sec := range res.Spec.RequiredSecrets {
+		if err := b.bootstrap.DeclareRequiredSecret(ctx, repo.InstallID, repo.RepoID, "", sec.Name); err != nil {
+			b.log.Warn("declare required secret",
+				"repo", repo.Slug, "name", sec.Name, "error", err)
+		}
+	}
+
+	emit.Notify("Bootstrap complete",
+		fmt.Sprintf("Saved a `%s` setup for `%s` (status: %s). The agent will now run with end-to-end validation.",
+			res.Spec.Kind, repo.Slug, res.Spec.ValidationStatus))
+	return res.Spec, nil
+}
+
+// persistFailingBootstrap saves a StatusFailing spec row from a
+// partial bootstrap result so AutoHeal has prior context to bias on
+// the next attempt. Best-effort: any error here just gets logged —
+// we don't propagate, because the caller is already returning the
+// original ErrLoopFailed.
+//
+// Two non-obvious behaviours:
+//   - Partial scripts (whatever the agent wrote to setup.sh /
+//     start.sh / health.sh before the loop tripped) are pulled out of
+//     LoopResult.PartialScripts and persisted on the row, so
+//     AutoHealPromptPreamble surfaces them as "Prior X.sh:" sections
+//     instead of empty placeholders.
+//   - failure_count is incremented at the SQL layer (not replaced),
+//     so retry counters accumulate across attempts. Today the bot
+//     only writes a failing row on first encounter, but a future
+//     retry-on-failure path needs the column to be monotonic.
+func (b *Bot) persistFailingBootstrap(ctx context.Context, res *bootstrap.LoopResult, repo repoCtx, hints *bootstrap.Hints) {
+	kind := ""
+	var requiredSecrets []bootstrap.Secret
+	var deferred []string
+	if res.Manifest != nil {
+		kind = res.Manifest.Kind
+		requiredSecrets = res.Manifest.RequiredSecrets
+		deferred = res.Manifest.DeferredCapabilities
+	}
+	failingSpec := &bootstrap.Spec{
+		InstallationID:       repo.InstallID,
+		RepoID:               repo.RepoID,
+		SpecVersion:          1,
+		Kind:                 kind,
+		SetupScript:          res.PartialScripts.Setup,
+		StartScript:          res.PartialScripts.Start,
+		HealthCheck:          res.PartialScripts.Health,
+		RequiredSecrets:      requiredSecrets,
+		DeferredCapabilities: deferred,
+		SourceFingerprint:    bootstrap.Fingerprint(hints),
+		ValidationStatus:     bootstrap.StatusFailing,
+		BootstrapLog:         truncateLogTail(res.Log),
+	}
+	if err := b.bootstrap.SaveFailingSpec(ctx, failingSpec); err != nil {
+		b.log.Warn("save failing spec", "repo", repo.Slug, "error", err)
+	}
+}
+
+// truncateLogTail returns the trailing 32 KB of s, walking forward to
+// the next valid UTF-8 lead byte so the column write doesn't reject
+// on an invalid byte sequence (Postgres TEXT requires valid UTF-8).
+// Shared by ensureBootstrapSpec and persistFailingBootstrap.
+func truncateLogTail(s string) string {
+	const max = 32 * 1024
+	if len(s) <= max {
+		return s
+	}
+	start := len(s) - max
+	for start < len(s) && !utf8.RuneStart(s[start]) {
+		start++
+	}
+	return "...(truncated)...\n" + s[start:]
+}
+
+// runInlineScript writes scriptBody to the sandbox via heredoc and runs
+// it with env vars prefixed, reusing an existing session. It mirrors
+// runScript's prologue but stays in-process — bootstrap shares one
+// session across multiple steps so the working directory and shell
+// state persist across invocations.
+func (b *Bot) runInlineScript(ctx context.Context, sb *daytona.Sandbox, sessionID, label, scriptBody string, env map[string]string, emit blocks.Emitter) error {
+	scriptPath := "/tmp/sf-" + label + ".sh"
+	body := strings.TrimRight(scriptBody, "\n")
+	writeCmd := heredocWriteCmd(scriptPath, body, true)
+	if _, err := b.shLines(ctx, sb, sessionID, label+"-write", writeCmd, 30*time.Second, func(string) {}); err != nil {
+		return fmt.Errorf("write %s: %w", label, err)
+	}
+
+	// Sort env keys so log-diffing identical commands across runs lines
+	// up; Go map iteration is randomised.
+	var prefix strings.Builder
+	for _, k := range slices.Sorted(maps.Keys(env)) {
+		prefix.WriteString(k)
+		prefix.WriteByte('=')
+		prefix.WriteString(shellQuote(env[k]))
+		prefix.WriteByte(' ')
+	}
+	runCmd := prefix.String() + "bash " + scriptPath
+
+	router := newBootstrapLineRouter(emit)
+	if _, err := b.shLines(ctx, sb, sessionID, label+"-run", runCmd, 5*time.Minute, router.Line); err != nil {
+		router.Fail(label + " failed")
+		return fmt.Errorf("run %s: %w", label, err)
+	}
+	router.Done(label + " complete")
+	return nil
 }
 
 // claudeAuthEnv picks the env-var name + value to inject into the
@@ -123,6 +461,22 @@ func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx
 	}
 	authKey, authVal := claudeAuthEnv(oc)
 	env[authKey] = authVal
+	// A follow-up lands in an unarchived sandbox where any background
+	// processes from the original run are gone — including the
+	// `start.sh &` invocation that brought the app up. Without this
+	// step the agent's validation prompt assumes "the app is running"
+	// against a dead port. Ship the saved spec so followup.sh can
+	// re-run setup → start → poll health, mirroring agent.sh. Errors
+	// here are best-effort: a missing spec just means the follow-up
+	// runs without a live app, same as before.
+	if b.bootstrap != nil && repo.InstallID != 0 && repo.RepoID != 0 {
+		spec, err := b.bootstrap.GetSpec(ctx, repo.InstallID, repo.RepoID, "")
+		if err == nil && spec.SetupScript != "" && spec.StartScript != "" && spec.HealthCheck != "" {
+			env["SF_SPEC_SETUP_B64"] = base64.StdEncoding.EncodeToString([]byte(spec.SetupScript))
+			env["SF_SPEC_START_B64"] = base64.StdEncoding.EncodeToString([]byte(spec.StartScript))
+			env["SF_SPEC_HEALTH_B64"] = base64.StdEncoding.EncodeToString([]byte(spec.HealthCheck))
+		}
+	}
 	return b.runScript(ctx, sb, "followup-"+requestID, "followup", followupScript, env, emit)
 }
 
@@ -147,22 +501,27 @@ func (b *Bot) runScript(ctx context.Context, sb *daytona.Sandbox, sessionID, lab
 	//
 	// Heredoc terminator MUST sit on its own line. The embedded scripts
 	// end with "\n" today, but an edit that drops the trailing newline
-	// would put `SFEOF` on the same line as the last script line and
-	// the heredoc would hang waiting for a bare terminator. Trim any
-	// trailing newlines and emit our own so the construction is
-	// invariant to the script body's exact whitespace.
+	// would put the terminator on the same line as the last script line
+	// and the heredoc would hang waiting for a bare terminator. Trim any
+	// trailing newlines so the construction is invariant to the script
+	// body's exact whitespace. heredocWriteCmd derives the terminator
+	// from the body's sha256 so a body line containing the terminator
+	// can't silently truncate the file.
 	scriptPath := "/tmp/sf-" + label + ".sh"
 	body := strings.TrimRight(scriptBody, "\n")
-	writeCmd := fmt.Sprintf("cat > %s << 'SFEOF'\n%s\nSFEOF\nchmod +x %s", scriptPath, body, scriptPath)
+	writeCmd := heredocWriteCmd(scriptPath, body, true)
 	if _, err := b.shLines(ctx, sb, sessionID, "write-script", writeCmd, 15*time.Second, func(string) {}); err != nil {
 		return "", err
 	}
 
+	// Sort env keys so the resulting command line is deterministic; Go
+	// map iteration is randomised, which makes log-diffing two runs of
+	// the same script unnecessarily noisy.
 	var prefix strings.Builder
-	for k, v := range env {
+	for _, k := range slices.Sorted(maps.Keys(env)) {
 		prefix.WriteString(k)
 		prefix.WriteByte('=')
-		prefix.WriteString(shellQuote(v))
+		prefix.WriteString(shellQuote(env[k]))
 		prefix.WriteByte(' ')
 	}
 	runCmd := prefix.String() + "bash " + scriptPath

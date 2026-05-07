@@ -56,7 +56,15 @@ RUN install -d /usr/share/postgresql-common/pgdg \
 
 # ---------------------------------------------------------------------------
 # Docker engine + CLI + compose plugin (Docker-in-Docker).
-# Daemon is started by the entrypoint script — sandbox needs --privileged.
+#
+# The Daytona sandbox doesn't grant the kernel-level capabilities Docker's
+# default overlayfs storage driver needs: an overlay mount with `index=off`
+# from inside the sandbox returns -EINVAL. We work around it by installing
+# fuse-overlayfs (userspace overlay implementation) so dockerd can run
+# unprivileged. The entrypoint configures /etc/docker/daemon.json to
+# select fuse-overlayfs and disables Docker 29's containerd-snapshotter
+# mode, which still requires kernel overlay support even when a different
+# storage driver is selected.
 # ---------------------------------------------------------------------------
 RUN install -m 0755 -d /etc/apt/keyrings \
  && curl -fsSL https://download.docker.com/linux/debian/gpg \
@@ -67,7 +75,16 @@ RUN install -m 0755 -d /etc/apt/keyrings \
  && apt-get update && apt-get install -y --no-install-recommends \
         docker-ce docker-ce-cli containerd.io \
         docker-buildx-plugin docker-compose-plugin \
+        docker-ce-rootless-extras \
+        fuse-overlayfs slirp4netns uidmap iproute2 dbus-user-session \
  && rm -rf /var/lib/apt/lists/*
+
+# Rootless-docker support packages (docker-ce-rootless-extras,
+# slirp4netns, uidmap, iproute2, dbus-user-session) are installed
+# eagerly so a future fallback path can launch dockerd-rootless.sh
+# without an extra apt-get. They cost ~50MB and don't run unless
+# something explicitly invokes them — the entrypoint today only
+# starts the rootful daemon.
 
 # ---------------------------------------------------------------------------
 # GitHub CLI — used by the agent to push branches and open PRs.
@@ -132,9 +149,17 @@ RUN npm install -g \
         @openai/codex \
         @google/gemini-cli \
         playwright \
- && npx --yes playwright install --with-deps \
+ && npx --yes playwright install --with-deps chromium chrome \
  && NODE_BIN=$(dirname "$(readlink -f "$(command -v node)")") \
  && for f in "$NODE_BIN"/*; do ln -sf "$f" "/usr/local/bin/$(basename "$f")"; done
+
+# Note: `playwright install` defaults to chromium only; the Playwright
+# MCP server we ship in the agent expects Google Chrome at
+# /opt/google/chrome/chrome and errors out on chromium-only sandboxes.
+# Installing both keeps `playwright.devices['Desktop Chrome']`
+# (chromium-channel) and the MCP's chrome-channel both working out of
+# the box, so the in-sandbox agent never has to run `playwright install
+# chrome` itself — the ~1 minute that costs on every fresh task.
 
 # ---------------------------------------------------------------------------
 # Add daytona to the docker group so the user can talk to dockerd via the
@@ -144,8 +169,14 @@ RUN usermod -aG docker daytona
 
 # ---------------------------------------------------------------------------
 # Entrypoint that auto-starts dockerd in the background and then sleeps
-# forever — preserves Daytona's long-running-pid-1 requirement while making
-# Docker available out of the box (sandbox must run with --privileged).
+# forever — preserves Daytona's long-running-pid-1 requirement while
+# making Docker available out of the box. Daytona's sandbox runtime
+# does NOT require --privileged: the entrypoint probes for fuse-overlayfs
+# (when /dev/fuse is exposed) and falls back to vfs storage so dockerd
+# starts cleanly under Daytona's default cap set. Container-exec inside
+# the inner daemon is constrained by Daytona's own kernel/AppArmor
+# policy (a separate axis we can't influence from the image side); the
+# bootstrap loop captures any docker-unusability as a deferred capability.
 # ---------------------------------------------------------------------------
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
