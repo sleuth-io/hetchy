@@ -61,6 +61,13 @@ services:
         condition: service_healthy
       migration:
         condition: service_completed_successfully
+      # Block hetchy until the bundled daytona api answers its
+      # healthcheck — without this the bot can come up first and start
+      # logging connection-refused errors against http://api:3000/api
+      # before daytona finishes booting (especially under okteto where
+      # everything spins up in parallel).
+      api:
+        condition: service_healthy
     environment:
       # Runtime mode — gates dev-only UI affordances (manual Slack
       # token paste, etc.). Defaults to prod so a missing var is the
@@ -142,15 +149,17 @@ services:
   # `daytona-network` (okteto warns on top-level `networks:`; the compose
   # default network reaches everything by service name anyway).
   #
-  # NOTE on okteto staging: `privileged: true` (api, runner) is recognized but
+  # NOTE on okteto staging: `privileged: true` (runner only) is recognized but
   # unsupported by okteto and may need a cluster-side override to actually run.
+  # The api in the upstream daytona compose is also `privileged`, but it's a
+  # NestJS process that doesn't touch the docker socket — dropped here so we
+  # don't ask okteto to honor a privilege we don't actually need.
   # Locally with `docker compose` this Just Works.
   # ---------------------------------------------------------------------------
 
   api:
     image: daytonaio/daytona-api
     restart: always
-    privileged: true
     ports:
       # Exposed on the host so `make bot` (hetchy on host) can hit
       # http://localhost:3000/api.
@@ -172,14 +181,18 @@ services:
       - REDIS_PORT=6379
       - OIDC_CLIENT_ID=daytona
       - OIDC_ISSUER_BASE_URL=http://dex:5556/dex
-      - PUBLIC_OIDC_DOMAIN=http://localhost:5556/dex
+      # User-facing URLs that the api bakes into responses (OIDC redirects,
+      # dashboard links, sandbox preview URLs, ssh helper text). Locally
+      # the localhost defaults work; in okteto/staging override each via
+      # doppler so generated links resolve against the public hostname.
+      - PUBLIC_OIDC_DOMAIN=${DAYTONA_PUBLIC_OIDC_DOMAIN:-http://localhost:5556/dex}
       - OIDC_AUDIENCE=daytona
       - OIDC_MANAGEMENT_API_ENABLED=
       - OIDC_MANAGEMENT_API_CLIENT_ID=
       - OIDC_MANAGEMENT_API_CLIENT_SECRET=
       - OIDC_MANAGEMENT_API_AUDIENCE=
-      - DASHBOARD_URL=http://localhost:3000/dashboard
-      - DASHBOARD_BASE_API_URL=http://localhost:3000
+      - DASHBOARD_URL=${DAYTONA_DASHBOARD_URL:-http://localhost:3000/dashboard}
+      - DASHBOARD_BASE_API_URL=${DAYTONA_DASHBOARD_BASE_API_URL:-http://localhost:3000}
       - POSTHOG_API_KEY=phc_bYtEsdMDrNLydXPD4tufkBrHKgfO2zbycM30LOowYNv
       - POSTHOG_HOST=https://d18ag4dodbta3l.cloudfront.net
       - POSTHOG_ENVIRONMENT=local
@@ -208,10 +221,13 @@ services:
       - ENVIRONMENT=docker-compose
       - MAX_AUTO_ARCHIVE_INTERVAL=43200
       - MAINTENANCE_MODE=false
-      - PROXY_DOMAIN=proxy.localhost:4000
-      - PROXY_PROTOCOL=http
+      - PROXY_DOMAIN=${DAYTONA_PROXY_DOMAIN:-proxy.localhost:4000}
+      - PROXY_PROTOCOL=${DAYTONA_PROXY_PROTOCOL:-http}
       - PROXY_API_KEY=super_secret_key
-      - PROXY_TEMPLATE_URL=http://{{PORT}}-{{sandboxId}}.proxy.localhost:4000
+      # PROXY_TEMPLATE_URL contains mustache placeholders ({{PORT}}, {{sandboxId}})
+      # that the api expands at request time — compose interpolation only
+      # eats `${...}`, so the inner braces pass through untouched.
+      - PROXY_TEMPLATE_URL=${DAYTONA_PROXY_TEMPLATE_URL:-http://{{PORT}}-{{sandboxId}}.proxy.localhost:4000}
       - DEFAULT_RUNNER_DOMAIN=runner:3003
       - DEFAULT_RUNNER_API_URL=http://runner:3003
       - DEFAULT_RUNNER_PROXY_URL=http://runner:3003
@@ -233,9 +249,10 @@ services:
       - DEFAULT_ORG_QUOTA_MAX_SNAPSHOT_SIZE=1000
       - DEFAULT_ORG_QUOTA_VOLUME_QUOTA=10000
       - SSH_GATEWAY_API_KEY=ssh_secret_api_token
-      - SSH_GATEWAY_COMMAND=ssh -p 2222 {{TOKEN}}@localhost
+      # {{TOKEN}} is a mustache placeholder the api substitutes per-sandbox.
+      - SSH_GATEWAY_COMMAND=${DAYTONA_SSH_GATEWAY_COMMAND:-ssh -p 2222 {{TOKEN}}@localhost}
       - SSH_GATEWAY_PUBLIC_KEY=c3NoLXJzYSBBQUFBQjNOemFDMXljMkVBQUFBREFRQUJBQUFCZ1FEZUtocFdOYVhVNkpSMnJXekc1NlZJeksrcmsrdForcCtVUmwyeWF5cWRnZGg2bnVOL1NtVnJsYmV4MGlrRVZZemdRWUIwWno5M2dqOVhxSkd4WjJiMHVoSDFzNkp2bnhKZVdIK05rbjBNMzRiRjZkeVloZ3o4M0JaTitWcElJdnVDT1pxYWE4VnlRWjhPdjVLMU00enlmQnFCMld3ejcwZEVWUnFaMnVZckd5U0RqUUIrU3hRQ3phY0djb2JRQTFUd2QxdEJvSk5BaVpPWXFSU3d6TmNoTk5hZHlxSHRGdkZRQ0hhNjZWaVBmQ0FVUGt2cEN6ZGh3TmJGdVhGVWkxbnZOWkx4M056RU41M05LWUhZcWU3Y3dXZkI4QjBoRDhDd3hmSDd6T0o1b1RCMnBMVVlsUWpZRDNsN3k4SkFTbDZpYkpuR1A1SWczVXpZWlRIdUdkNzVXWktnNTRJTVROQlFPMWpJdE9HL0orUm1XbzB0YTdpRkF6ZExyL1BmbDdXTVMwbEZhSm9scTdUVmJLUG1JODFTOU04VEgrbXhLbGZ5b2NqZzhwSUdlQUllcEo3dXl1Vk1xT2wxeVVuSFNycDRlVEVlR0k3NlpCOFRoUzhkYnBLUTIvb2RYMHkwc3FSZDI0Y2lGdnM0dnZVaW80NFdYNlNWRG54dXpWRHc1Rzg9IGRheXRvbmFAMDQwNjZiZDIwY2Vi
-      - SSH_GATEWAY_URL=localhost:2222
+      - SSH_GATEWAY_URL=${DAYTONA_SSH_GATEWAY_URL:-localhost:2222}
       - RUNNER_DECLARATIVE_BUILD_SCORE_THRESHOLD=10
       - RUNNER_AVAILABILITY_SCORE_THRESHOLD=10
       - RUNNER_START_SCORE_THRESHOLD=3
@@ -274,7 +291,9 @@ services:
       - OIDC_CLIENT_ID=daytona
       - OIDC_CLIENT_SECRET=
       - OIDC_DOMAIN=http://dex:5556/dex
-      - OIDC_PUBLIC_DOMAIN=http://localhost:5556/dex
+      # Same override target as the api's PUBLIC_OIDC_DOMAIN so a
+      # single doppler value points both services at the public dex URL.
+      - OIDC_PUBLIC_DOMAIN=${DAYTONA_PUBLIC_OIDC_DOMAIN:-http://localhost:5556/dex}
       - OIDC_AUDIENCE=daytona
       - REDIS_HOST=redis
       - REDIS_PORT=6379
