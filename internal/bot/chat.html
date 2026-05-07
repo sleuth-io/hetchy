@@ -28,6 +28,19 @@
   mq.addEventListener('change', apply);
   window.addEventListener('storage', function(e){ if (e.key === 'theme') apply(); });
 })();
+// Metadata-sidebar visibility bootstrap — same FOUC rationale as the
+// theme bootstrap above. Without this, body paints with the 280px
+// sidebar visible, then the inline IIFE further down runs and snaps
+// it away on reloads where the user previously hid it. Setting the
+// class on <html> before any styles apply paints the right layout
+// on the first frame.
+(function(){
+  try {
+    if (localStorage.getItem('hetchy.metaHidden') === '1') {
+      document.documentElement.classList.add('meta-hidden');
+    }
+  } catch (e) {}
+})();
 </script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -124,6 +137,20 @@
   /* Main column */
   #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 
+  /* Top bar across the chat column. Holds the toggle for the right-hand
+     metadata panel; nothing else lives here yet so it stays slim. */
+  #main-top { display: flex; align-items: center; justify-content: flex-end;
+              padding: .5rem .75rem; border-bottom: 1px solid #ececec;
+              background: #fafafa; min-height: 2.5rem; }
+  #meta-toggle { display: inline-flex; align-items: center; justify-content: center;
+                 padding: .35rem; background: none; border: 1px solid transparent;
+                 border-radius: .35rem; color: #555; cursor: pointer;
+                 line-height: 0; }
+  #meta-toggle:hover { background: #efefef; border-color: #e0e0e0; }
+  #meta-toggle[aria-pressed="true"] { background: #e8f1fc; border-color: #cfe2f8;
+                                       color: #0b5ec0; }
+  #meta-toggle svg { width: 1rem; height: 1rem; }
+
   #log  { flex: 1; overflow-y: auto; padding: 1.5rem; display: flex;
           flex-direction: column; gap: .75rem; }
   .msg  { max-width: 70%; padding: .6rem 1rem; border-radius: 1rem; line-height: 1.4; }
@@ -156,6 +183,30 @@
   #session-bar a { color: #0b93f6; text-decoration: none; font-family: system-ui, sans-serif; }
   #session-bar a:hover { text-decoration: underline; }
   #session-bar .links { display: flex; gap: 1rem; }
+
+  /* Right-side metadata sidebar — surfaces what we know about the chat
+     (repo, branch, PR, sandbox, creator). Hidden when the user toggles
+     it off via #meta-toggle (state persisted in localStorage). */
+  #meta-sidebar { width: 280px; flex-shrink: 0; background: #fafafa;
+                  border-left: 1px solid #e5e5e5; display: flex;
+                  flex-direction: column; min-height: 0; overflow-y: auto; }
+  html.meta-hidden #meta-sidebar { display: none; }
+  .meta-section { padding: .85rem 1rem; border-bottom: 1px solid #f0f0f0; }
+  .meta-section:last-child { border-bottom: 0; }
+  .meta-title { font-size: .7rem; font-weight: 600; text-transform: uppercase;
+                letter-spacing: .05em; color: #888; margin-bottom: .55rem; }
+  .meta-row { display: flex; gap: .5rem; align-items: baseline;
+              padding: .25rem 0; font-size: .82rem; }
+  .meta-row .meta-label { width: 5.5rem; flex-shrink: 0; color: #777; }
+  .meta-row .meta-value { flex: 1; min-width: 0; color: #1a1a1a;
+                          overflow-wrap: anywhere; }
+  .meta-row .meta-value a { color: #0b5ec0; text-decoration: none; }
+  .meta-row .meta-value a:hover { text-decoration: underline; }
+  .meta-row.is-empty .meta-value { color: #b8b8b8; }
+  .meta-empty { padding: 1rem; font-size: .82rem; color: #888;
+                text-align: center; }
+  .meta-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+               font-size: .78rem; }
 
   /* User menu — sidebar footer with click-to-open popup */
   .user-menu { position: relative; border-top: 1px solid #f0f0f0;
@@ -364,6 +415,18 @@
   html.is-dark #bar { background: #1c1c1f; border-top-color: #2a2a2d; }
   html.is-dark #inp { background: #232327; color: #e7e7e9; border-color: #2e2e33; }
   html.is-dark #session-bar { background: #1c1c1f; border-top-color: #2a2a2d; color: #6e6e72; }
+  html.is-dark #main-top { background: #1c1c1f; border-bottom-color: #2a2a2d; }
+  html.is-dark #meta-toggle { color: #c4c4c8; }
+  html.is-dark #meta-toggle:hover { background: #2a2a2e; border-color: #3a3a40; }
+  html.is-dark #meta-toggle[aria-pressed="true"] { background: #1f3a5c; border-color: #2a4a72; color: #7dc4ff; }
+  html.is-dark #meta-sidebar { background: #1c1c1f; border-left-color: #2a2a2d; }
+  html.is-dark .meta-section { border-bottom-color: #2a2a2d; }
+  html.is-dark .meta-title { color: #8a8a90; }
+  html.is-dark .meta-row .meta-label { color: #9a9aa0; }
+  html.is-dark .meta-row .meta-value { color: #e7e7e9; }
+  html.is-dark .meta-row .meta-value a { color: #7dc4ff; }
+  html.is-dark .meta-row.is-empty .meta-value { color: #555a60; }
+  html.is-dark .meta-empty { color: #8a8a90; }
   html.is-dark .user-menu { border-top-color: #2a2a2d; }
   html.is-dark .user-menu-trigger { color: #e7e7e9; }
   html.is-dark .user-menu-trigger:hover,
@@ -465,6 +528,21 @@
 </dialog>
 
 <div id="main">
+<div id="main-top">
+  <!-- aria-pressed is intentionally omitted here — the head-bootstrap
+       toggles `html.meta-hidden` before paint, then applyMetaHidden()
+       on init sets the right aria-pressed value to match. Hard-coding
+       "true" in markup would mismatch on reloads where the panel is
+       hidden until the script catches up. -->
+  <button id="meta-toggle" type="button"
+          aria-label="Toggle chat details panel" title="Toggle chat details">
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor"
+         stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <rect x="2" y="3" width="12" height="10" rx="1.5"/>
+      <line x1="10.5" y1="3" x2="10.5" y2="13"/>
+    </svg>
+  </button>
+</div>
 <div id="log"></div>
 <div id="bar">
   <input id="inp" placeholder="Describe a feature…" autofocus>
@@ -474,6 +552,12 @@
   <span>session: <span id="session-label"></span></span>
 </div>
 </div>
+
+<aside id="meta-sidebar" aria-label="Chat details">
+  <div id="meta-content">
+    <div class="meta-empty">No chat details yet.</div>
+  </div>
+</aside>
 
 <script>
 const log = document.getElementById('log');
@@ -1011,11 +1095,164 @@ async function loadSidebar() {
   }
 }
 
+// Member display-name cache. Populated by loadMembers() so renderMetadata()
+// can show a creator's "First Last" instead of an opaque WorkOS user id.
+const memberById = new Map();
+
+// Tiny HTML escape — values that flow into innerHTML below come from
+// server JSON (branch names, repo, etc.) so we can't trust them
+// against angle brackets even though they're constrained at write
+// time.
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  })[c]);
+}
+
+// extractPRNumber pulls the trailing /pull/<n> segment out of a
+// github.com PR URL. Returns null on anything that doesn't match so
+// the caller can fall back to showing the full URL.
+function extractPRNumber(url) {
+  if (!url) return null;
+  const m = url.match(/\/pull\/(\d+)(?:[/?#]|$)/);
+  return m ? m[1] : null;
+}
+
+function fmtDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+// safeHttpURL returns the URL only if it parses and uses http(s).
+// Defense-in-depth — `pr_url` is written by trusted server-side code
+// today, but the field could one day be sourced from an external
+// integration, and `esc()` only HTML-encodes characters; it would
+// happily round-trip `javascript:alert(1)` into a clickable href.
+function safeHttpURL(u) {
+  if (!u) return '';
+  try {
+    const p = new URL(u);
+    return (p.protocol === 'https:' || p.protocol === 'http:') ? u : '';
+  } catch (e) {
+    return '';
+  }
+}
+
+// encodeBranchPath segment-encodes a git ref so a slashed branch name
+// (e.g. `feat/login`) lands on the correct GitHub `/tree/<branch>`
+// route. `encodeURIComponent(branch)` would turn the `/` into `%2F`
+// and GitHub would resolve it to a "branch not found" page.
+function encodeBranchPath(b) {
+  return b.split('/').map(encodeURIComponent).join('/');
+}
+
+// renderMetadata paints the right-hand sidebar from a conversationDetail
+// JSON shape (the same payload loadHistory consumes). Re-entrant —
+// safe to call any time the source data changes (e.g. when a live SSE
+// run finishes and the PR URL has just been persisted).
+function renderMetadata(detail) {
+  const host = document.getElementById('meta-content');
+  if (!detail) {
+    host.innerHTML = '<div class="meta-empty">No chat details yet.</div>';
+    return;
+  }
+  const owner = detail.github_owner || '';
+  const repo = detail.github_repo || '';
+  const branch = detail.branch || '';
+  const prURL = detail.pr_url || '';
+  const sandbox = detail.sandbox_id || '';
+  const created = fmtDate(detail.created_at || detail.updated_at);
+
+  const repoSlug = (owner && repo) ? owner + '/' + repo : '';
+  const repoLink = repoSlug
+    ? '<a href="https://github.com/' + esc(repoSlug) + '" target="_blank" rel="noopener">'
+        + esc(repoSlug) + '</a>'
+    : '<span>—</span>';
+
+  const branchLink = (repoSlug && branch)
+    ? '<a href="https://github.com/' + esc(repoSlug) + '/tree/' + encodeBranchPath(branch)
+        + '" target="_blank" rel="noopener" class="meta-mono">' + esc(branch) + '</a>'
+    : (branch ? '<span class="meta-mono">' + esc(branch) + '</span>' : '<span>—</span>');
+
+  // The PR cell intentionally renders no state badge — the server only
+  // tracks the URL, not whether the PR is open/merged/closed, so a
+  // hard-coded "Open" pill quickly turns into a lie once the human
+  // takes the PR over. Add a real `pr_state` field through
+  // conversationDetail before bringing the badge back.
+  const prHref = safeHttpURL(prURL);
+  let prCell = '<span>—</span>';
+  if (prHref) {
+    const num = extractPRNumber(prHref);
+    const label = num ? '#' + num : prHref;
+    prCell = '<a href="' + esc(prHref) + '" target="_blank" rel="noopener">'
+      + esc(label) + '</a>';
+  }
+
+  const creatorLabel = detail.creator_id
+    ? (memberById.get(detail.creator_id) || detail.creator_id)
+    : '';
+
+  // Build rows. Each row is wrapped in is-empty class when the value
+  // is missing so the dashes look intentionally placeholdered rather
+  // than like a layout bug.
+  const rows = [
+    { label: 'Repo',    html: repoLink,                 empty: !repoSlug },
+    { label: 'Branch',  html: branchLink,               empty: !branch },
+    { label: 'PR',      html: prCell,                   empty: !prURL },
+    { label: 'Sandbox', html: sandbox
+        ? '<span class="meta-mono">' + esc(sandbox) + '</span>'
+        : '<span>—</span>', empty: !sandbox },
+    { label: 'Created by', html: creatorLabel
+        ? '<span>' + esc(creatorLabel) + '</span>'
+        : '<span>—</span>', empty: !creatorLabel },
+    { label: 'Created',  html: created
+        ? '<span>' + esc(created) + '</span>'
+        : '<span>—</span>', empty: !created },
+  ];
+
+  const rowHTML = rows.map(r =>
+    '<div class="meta-row' + (r.empty ? ' is-empty' : '') + '">'
+    +   '<span class="meta-label">' + esc(r.label) + '</span>'
+    +   '<span class="meta-value">' + r.html + '</span>'
+    + '</div>'
+  ).join('');
+
+  host.innerHTML =
+    '<div class="meta-section">'
+    +   '<div class="meta-title">Details</div>'
+    +   rowHTML
+    + '</div>';
+}
+
+// Most recent conversationDetail we've seen for this session, kept so
+// the post-stream refresh can re-render against the freshest payload
+// without forcing a second fetch when nothing has changed.
+let lastDetail = null;
+
+async function refreshMetadata() {
+  if (isFreshChat) {
+    renderMetadata(null);
+    return;
+  }
+  try {
+    const res = await fetch('/api/conversations/' + encodeURIComponent(sessionId),
+                            { headers: { 'Accept': 'application/json' } });
+    if (!res.ok) return;
+    const detail = await res.json();
+    lastDetail = detail;
+    renderMetadata(detail);
+  } catch (e) {
+    // Leave the previous render in place on transient errors.
+  }
+}
+
 async function loadHistory(opts) {
   opts = opts || {};
   const skipLastBotResponse = !!opts.skipLastBotResponse;
   // Fresh chat: don't probe the API, just show the welcome state.
-  if (isFreshChat) { showEmptyState(); return; }
+  if (isFreshChat) { showEmptyState(); renderMetadata(null); return; }
   try {
     const res = await fetch('/api/conversations/' + encodeURIComponent(sessionId),
                             { headers: { 'Accept': 'application/json' } });
@@ -1024,10 +1261,13 @@ async function loadHistory(opts) {
       // (e.g. the user opened a fresh URL with ?session= or the agent for a
       // brand-new chat hasn't completed its first turn). Treat as new chat.
       showEmptyState();
+      renderMetadata(null);
       return;
     }
     if (!res.ok) return;
     const detail = await res.json();
+    lastDetail = detail;
+    renderMetadata(detail);
     log.innerHTML = '';
     const history = detail.history || [];
     const turns = detail.response_blocks || [];
@@ -1246,12 +1486,15 @@ async function send() {
   // reaches us the row is committed, so triggering a sidebar refresh on
   // first event surfaces the new chat immediately rather than waiting
   // for the agent to finish (which can take minutes).
-  await consumeSSEResponse(res, isFirstTurn ? loadSidebar : null);
+  await consumeSSEResponse(res, isFirstTurn ? () => { loadSidebar(); refreshMetadata(); } : null);
   btn.disabled = false;
   inp.focus();
   // Refresh the sidebar after every turn so the row's title (server-side)
   // and ordering (newest activity first) reflect the just-completed turn.
   loadSidebar();
+  // Metadata may have changed too — branch + PR URL only land at the
+  // end of the first turn, and the agent can re-base subsequent turns.
+  refreshMetadata();
 }
 
 // Sidebar user filter — populate the <select> with org members and wire up
@@ -1277,6 +1520,9 @@ async function loadMembers() {
     addOption(sel, '', 'All');
     for (const m of members) {
       const label = m.display_name || m.email;
+      // Cache the display name so the metadata sidebar can render
+      // "Created by First Last" instead of the WorkOS user id.
+      memberById.set(m.user_id, label || m.user_id);
       let text;
       if (m.user_id === currentUserID) {
         text = label ? 'Me (' + label + ')' : 'Me';
@@ -1285,6 +1531,9 @@ async function loadMembers() {
       }
       addOption(sel, m.user_id, text);
     }
+    // Members loaded after the metadata may have rendered with raw
+    // creator ids — re-paint with the freshly resolved names.
+    if (lastDetail) renderMetadata(lastDetail);
   } catch (e) {
     // Network or server error: render a minimal dropdown so the label
     // matches the actual filter state. Without "Me" here, the dropdown
@@ -1314,6 +1563,25 @@ document.getElementById('user-filter').addEventListener('change', function () {
   userFilter = this.value;
   try { localStorage.setItem(userFilterStorageKey, userFilter); } catch (e) {}
   loadSidebar();
+});
+
+// Metadata sidebar visibility — persisted across reloads so the user's
+// preference sticks. The class is set on <html> by the head-bootstrap
+// (no FOUC); this block keeps the button's aria-pressed in sync and
+// wires the click handler. Default = visible.
+const metaHiddenStorageKey = 'hetchy.metaHidden';
+function applyMetaHidden(hidden) {
+  document.documentElement.classList.toggle('meta-hidden', hidden);
+  const btn = document.getElementById('meta-toggle');
+  btn.setAttribute('aria-pressed', String(!hidden));
+}
+// The bootstrap script in <head> already added the class if needed —
+// re-read the same source here so aria-pressed matches.
+applyMetaHidden(document.documentElement.classList.contains('meta-hidden'));
+document.getElementById('meta-toggle').addEventListener('click', () => {
+  const nowHidden = !document.documentElement.classList.contains('meta-hidden');
+  applyMetaHidden(nowHidden);
+  try { localStorage.setItem(metaHiddenStorageKey, nowHidden ? '1' : '0'); } catch (e) {}
 });
 
 // Avatar dropdown — toggle on click, close on outside-click or Escape.
@@ -1376,6 +1644,9 @@ async function init() {
     // Refresh the sidebar so the just-completed turn's metadata
     // (title, ordering) lines up with what the server saved.
     loadSidebar();
+    // Branch + PR URL only land at end-of-turn — re-fetch the detail
+    // so the right-hand metadata panel picks them up.
+    refreshMetadata();
   }
 }
 

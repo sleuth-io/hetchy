@@ -1230,10 +1230,22 @@ type conversationSummary struct {
 // History and ResponseBlocks are paired by index: history[i] is the
 // user turn and response_blocks[i] is the typed-block transcript the
 // user saw streamed back for it.
+//
+// Branch / GitHubOwner / GitHubRepo / SandboxID / CreatorID power the
+// chat-detail metadata sidebar. They're populated lazily during the
+// run (the sandbox is created before Claude has a branch name; the
+// PR URL only lands when Claude finishes the first turn) so any of
+// them may be empty mid-conversation.
 type conversationDetail struct {
 	ThreadID       string           `json:"thread_id"`
 	Title          string           `json:"title"`
 	PRURL          string           `json:"pr_url,omitempty"`
+	Branch         string           `json:"branch,omitempty"`
+	GitHubOwner    string           `json:"github_owner,omitempty"`
+	GitHubRepo     string           `json:"github_repo,omitempty"`
+	SandboxID      string           `json:"sandbox_id,omitempty"`
+	CreatorID      string           `json:"creator_id,omitempty"`
+	CreatedAt      string           `json:"created_at,omitempty"`
 	History        []string         `json:"history"`
 	ResponseBlocks [][]blocks.Block `json:"response_blocks"`
 	UpdatedAt      string           `json:"updated_at"`
@@ -1341,10 +1353,20 @@ func (b *Bot) conversationDetailHandler(w http.ResponseWriter, r *http.Request) 
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
+		var createdAt string
+		if !rec.CreatedAt.IsZero() {
+			createdAt = rec.CreatedAt.UTC().Format(time.RFC3339)
+		}
 		writeJSON(w, conversationDetail{
 			ThreadID:       rec.ThreadID,
 			Title:          conversationTitle(rec),
 			PRURL:          rec.PRURL,
+			Branch:         rec.Branch,
+			GitHubOwner:    rec.GitHubOwner,
+			GitHubRepo:     rec.GitHubRepo,
+			SandboxID:      rec.SandboxID,
+			CreatorID:      rec.CreatorID,
+			CreatedAt:      createdAt,
 			History:        rec.History,
 			ResponseBlocks: rec.ResponseBlocks,
 			UpdatedAt:      rec.UpdatedAt.UTC().Format(time.RFC3339),
