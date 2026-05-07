@@ -1257,10 +1257,14 @@ type conversationDetail struct {
 // pages by bumping ?offset, and conversationsListOffsetMax stops
 // that walk before Postgres is asked to scan-and-skip a pathological
 // number of rows (each ?offset=N is an O(N) scan ahead of LIMIT).
+// conversationsListQueryMax bounds the substring search input so an
+// attacker can't post a multi-megabyte ?q to make the ILIKE pattern
+// matching expensive (sequential scan over conversations, twice).
 const (
 	conversationsListLimitDefault = 20
 	conversationsListLimitMax     = 100
 	conversationsListOffsetMax    = 100_000
+	conversationsListQueryMax     = 256
 )
 
 func (b *Bot) conversationsHandler(w http.ResponseWriter, r *http.Request) {
@@ -1273,10 +1277,19 @@ func (b *Bot) conversationsHandler(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	limit := parseClampedInt(q.Get("limit"), conversationsListLimitDefault, 1, conversationsListLimitMax)
 	offset := parseClampedInt(q.Get("offset"), 0, 0, conversationsListOffsetMax)
+	// Truncate by rune so we never split a multi-byte UTF-8 codepoint
+	// down the middle and feed mojibake to ILIKE. The cap is a
+	// substring-search ceiling, not a meaningful query length —
+	// nobody types 256 characters into a chat-title search box, but
+	// a script could.
+	queryStr := strings.TrimSpace(q.Get("q"))
+	if runes := []rune(queryStr); len(runes) > conversationsListQueryMax {
+		queryStr = string(runes[:conversationsListQueryMax])
+	}
 
 	recs, err := b.convs.Search(r.Context(), p.OrgID, convstore.SearchOptions{
 		CreatorID: q.Get("user"),
-		Query:     strings.TrimSpace(q.Get("q")),
+		Query:     queryStr,
 		Limit:     limit,
 		Offset:    offset,
 	})

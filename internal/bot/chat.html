@@ -934,6 +934,11 @@ function showEmptyState() {
 // has moved past it. This replaces a naive in-flight boolean that
 // would silently drop the user's keystrokes during slow networks.
 const SIDEBAR_PAGE_SIZE = 20;
+// LOAD_MORE_LABEL is the canonical Load-more button text. Captured
+// as a constant so renderSidebar() can reset the button to a known
+// state (label + enabled) when a stale loadMoreSidebar() is
+// superseded by a fresh loadSidebar() before its own cleanup ran.
+const LOAD_MORE_LABEL = 'Load more';
 let sidebarItems = [];
 let sidebarHasMore = false;
 let sidebarReqSeq = 0;
@@ -964,6 +969,15 @@ let userFilter = (function () {
 function renderSidebar() {
   const list = document.getElementById('chat-list');
   const more = document.getElementById('chat-list-more');
+  // Always reset the Load-more button's transient state (label +
+  // disabled) before painting. Without this reset, a Load-more click
+  // that gets superseded by a search keystroke leaves the button
+  // stuck on "Loading…" / disabled when the search response paints
+  // through here, because the superseded loadMoreSidebar() bails
+  // before its own cleanup runs.
+  const moreBtn = document.getElementById('chat-list-more-btn');
+  moreBtn.disabled = false;
+  moreBtn.textContent = LOAD_MORE_LABEL;
   const display = sidebarItems.slice();
   list.innerHTML = '';
   if (display.length === 0) {
@@ -1181,12 +1195,6 @@ async function loadSidebar() {
     document.getElementById('chat-list-more').hidden = true;
   }
 }
-
-// LOAD_MORE_LABEL is the canonical button text. Captured as a
-// constant rather than reading `btn.textContent` at click time so a
-// previous failure (which mutates the label to "Could not load —
-// retry") can't poison the label of a successful retry.
-const LOAD_MORE_LABEL = 'Load more';
 
 // loadMoreSidebar appends the next page worth of rows. Bound to the
 // "Load more" button click. Uses the same sidebarReqSeq counter as

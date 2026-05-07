@@ -101,8 +101,10 @@ type SearchOptions struct {
 // ilikeEscaper backslash-escapes the three characters Postgres
 // LIKE/ILIKE treats specially: '\' itself (the escape character),
 // '%' (zero-or-more wildcard) and '_' (single-character wildcard).
-// Order matters — '\' must be escaped first or the second pass would
-// double-escape the backslashes inserted by the third.
+// strings.NewReplacer is single-pass — it scans the input once and
+// emits the longest matching replacement at each position, so the
+// '\\' it produces for an input '\' isn't re-scanned and won't
+// chain into the '%' or '_' rules. Pair lookups stay independent.
 var ilikeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 
 func escapeILIKEWildcards(s string) string {
