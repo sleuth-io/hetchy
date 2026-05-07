@@ -1,0 +1,370 @@
+package bootstrap
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"maps"
+	"os"
+	"path/filepath"
+	"sort"
+)
+
+// Runner abstracts the sandbox-side script execution so the loop can
+// be unit-tested without spinning up a real Daytona sandbox. The
+// production implementation lives in internal/bot and bridges to the
+// existing runScript helper.
+//
+// Run executes scriptBody in the sandbox with env exposed and returns
+// when the script exits. The returned string is the script's combined
+// stdout+stderr — bootstrap persists it in the bootstrap_log column so
+// auto-heal runs have the failure trace. ReadFile fetches a path from
+// the sandbox (used to extract the agent's artifacts after bootstrap
+// completes). WriteFile is symmetric (used to drop the prompt body in).
+type Runner interface {
+	Run(ctx context.Context, label, scriptBody string, env map[string]string) (string, error)
+	ReadFile(ctx context.Context, path string) ([]byte, error)
+	WriteFile(ctx context.Context, path string, data []byte) error
+}
+
+// LoopInput carries everything the bootstrap loop needs.
+type LoopInput struct {
+	OwnerRepo       string
+	Path            string
+	Hints           *Hints
+	SuppliedSecrets map[string]string // injected into the sandbox env
+
+	// RepoDir is the absolute path inside the sandbox where the repo is
+	// cloned. Required so the bootstrap shell script can cd into it
+	// before invoking claude — the script runs in its own subshell, so
+	// it can't rely on a cwd set by a prior setup step. Empty value
+	// fails the loop early.
+	RepoDir string
+
+	// Preamble, when non-empty, is prepended to the rendered bootstrap
+	// prompt. AutoHeal sets this to AutoHealPromptPreamble(...) so a
+	// heal run reaches the agent with prior-spec context and the
+	// "bias toward minimal update" framing. First-encounter runs leave
+	// it empty.
+	Preamble string
+}
+
+// LoopResult is what the loop produces: a Spec ready to be persisted,
+// plus the raw transcript captured from the sandbox (for the
+// bootstrap_log column).
+//
+// On the failure path Spec is nil but Manifest and PartialScripts may
+// be populated from a best-effort read of /tmp/hetchy-spec — what the
+// agent wrote before the loop tripped. AutoHeal-via-StatusFailing
+// uses these so the next attempt sees the prior scripts in the heal
+// preamble rather than empty placeholders.
+type LoopResult struct {
+	Spec           *Spec
+	Manifest       *Manifest
+	PartialScripts PartialScripts
+	Log            string
+}
+
+// PartialScripts holds whichever of setup.sh/start.sh/health.sh the
+// agent managed to write before the bootstrap loop failed. All three
+// are independently optional — a script that didn't get written is an
+// empty string.
+type PartialScripts struct {
+	Setup  string
+	Start  string
+	Health string
+}
+
+// ErrLoopFailed signals that bootstrap exhausted its iteration budget
+// or the agent produced unusable artifacts. Callers turn this into the
+// "I couldn't get the repo running" user-facing message described in
+// the spec doc's "When bootstrap can't fully succeed" section.
+var ErrLoopFailed = errors.New("bootstrap: loop failed")
+
+// bootstrapOutDir is where BootstrapScript writes the four artifacts
+// (setup.sh, start.sh, health.sh, manifest.json). The same path is
+// passed to the script via HETCHY_BOOTSTRAP_OUT_DIR — keeping it as a
+// const here keeps the host- and sandbox-side reads from drifting.
+const bootstrapOutDir = "/tmp/hetchy-spec"
+
+// Run drives the bootstrap loop end to end:
+//
+//  1. Render the bootstrap prompt from hints + args.
+//  2. Drop the prompt + bootstrap.sh into the sandbox.
+//  3. Invoke bootstrap.sh, which calls Claude Code, runs the agent's
+//     setup/start/health, and emits the four artifacts at known paths.
+//  4. Read back the artifacts, parse the manifest, decide validation
+//     status (validated vs. partial vs. failing).
+//  5. Compute the source fingerprint from the host-side hints.
+//
+// The loop does NOT persist on its own — callers Save() the returned
+// LoopResult.Spec via the Store. This separation lets the auto-heal
+// path replay a loop without having to reconcile DB writes itself.
+func Run(ctx context.Context, runner Runner, in LoopInput) (*LoopResult, error) {
+	if runner == nil {
+		return nil, errors.New("bootstrap: runner is required")
+	}
+	if in.Hints == nil {
+		return nil, errors.New("bootstrap: hints are required")
+	}
+	if in.RepoDir == "" {
+		return nil, errors.New("bootstrap: RepoDir is required")
+	}
+
+	prompt := BuildPrompt(in.Hints, PromptArgs{
+		OwnerRepo:       in.OwnerRepo,
+		Path:            in.Path,
+		SuppliedSecrets: sortedNames(in.SuppliedSecrets),
+		Preamble:        in.Preamble,
+	})
+
+	if err := runner.WriteFile(ctx, "/tmp/hetchy-bootstrap-prompt.txt", []byte(prompt)); err != nil {
+		return nil, fmt.Errorf("bootstrap: write prompt: %w", err)
+	}
+
+	env := map[string]string{
+		"HETCHY_BOOTSTRAP_PROMPT_FILE": "/tmp/hetchy-bootstrap-prompt.txt",
+		"HETCHY_BOOTSTRAP_OUT_DIR":     bootstrapOutDir,
+		"HETCHY_BOOTSTRAP_REPO_DIR":    in.RepoDir,
+	}
+	maps.Copy(env, in.SuppliedSecrets)
+
+	log, err := runner.Run(ctx, "bootstrap", BootstrapScript, env)
+	if err != nil {
+		// We still try to read whatever artifacts the agent produced,
+		// since a non-zero exit can mean "verification failed but the
+		// agent wrote something." Useful for auto-heal seeding.
+		partial, scripts := readArtifactsBestEffort(ctx, runner, bootstrapOutDir)
+		return &LoopResult{Spec: nil, Manifest: partial, PartialScripts: scripts, Log: log},
+			fmt.Errorf("%w: %w", ErrLoopFailed, err)
+	}
+
+	manifestBytes, err := runner.ReadFile(ctx, bootstrapOutDir+"/manifest.json")
+	if err != nil {
+		return nil, fmt.Errorf("bootstrap: read manifest: %w", err)
+	}
+	manifest, err := ParseManifest(manifestBytes)
+	if err != nil {
+		return nil, fmt.Errorf("bootstrap: parse manifest: %w", err)
+	}
+
+	setup, err := runner.ReadFile(ctx, bootstrapOutDir+"/setup.sh")
+	if err != nil {
+		return nil, fmt.Errorf("bootstrap: read setup.sh: %w", err)
+	}
+	start, err := runner.ReadFile(ctx, bootstrapOutDir+"/start.sh")
+	if err != nil {
+		return nil, fmt.Errorf("bootstrap: read start.sh: %w", err)
+	}
+	health, err := runner.ReadFile(ctx, bootstrapOutDir+"/health.sh")
+	if err != nil {
+		return nil, fmt.Errorf("bootstrap: read health.sh: %w", err)
+	}
+
+	status := StatusValidated
+	if manifest.HasDeferred() {
+		status = StatusPartial
+	}
+
+	spec := &Spec{
+		Path:                 in.Path,
+		SpecVersion:          1,
+		Kind:                 manifest.Kind,
+		SetupScript:          string(setup),
+		StartScript:          string(start),
+		HealthCheck:          string(health),
+		Services:             manifest.Services,
+		RequiredSecrets:      manifest.RequiredSecrets,
+		DeferredCapabilities: manifest.DeferredCapabilities,
+		SuggestedRepoChanges: manifest.SuggestedRepoChanges,
+		SourceFingerprint:    Fingerprint(in.Hints),
+		ValidationStatus:     status,
+	}
+	return &LoopResult{Spec: spec, Manifest: manifest, Log: log}, nil
+}
+
+// readArtifactsBestEffort tries to grab whichever of the four
+// artifacts the agent managed to write before the bootstrap script
+// failed. Used to seed auto-heal — knowing what the agent declared
+// (even if verification didn't pass) is better than starting from
+// scratch. outDir comes from the same const Run uses to build the
+// env for the script, so the host- and sandbox-side reads can't
+// drift.
+//
+// Each read is independently best-effort: a missing or unreadable
+// file returns the zero value for that slot, never an error. The
+// caller treats anything non-empty as "the agent got this far"
+// context for the heal preamble.
+func readArtifactsBestEffort(ctx context.Context, runner Runner, outDir string) (*Manifest, PartialScripts) {
+	var manifest *Manifest
+	if data, err := runner.ReadFile(ctx, outDir+"/manifest.json"); err == nil {
+		if m, err := ParseManifest(data); err == nil {
+			manifest = m
+		}
+	}
+	read := func(name string) string {
+		data, err := runner.ReadFile(ctx, outDir+"/"+name)
+		if err != nil {
+			return ""
+		}
+		return string(data)
+	}
+	return manifest, PartialScripts{
+		Setup:  read("setup.sh"),
+		Start:  read("start.sh"),
+		Health: read("health.sh"),
+	}
+}
+
+// Fingerprint hashes the detection-relevant subset of the repo. If
+// this hash changes between runs, the saved spec is stale and must be
+// re-validated (or, more likely, re-bootstrapped).
+//
+// We hash the *content* of every file the detect cascade examined. A
+// rename or content change to any of them flips the hash. We don't
+// hash the readme excerpt's ENTIRE content — just the first 200 lines
+// the cascade actually examined — so a benign README addendum below
+// line 200 doesn't cause spurious re-validation.
+func Fingerprint(h *Hints) string {
+	if h == nil {
+		return ""
+	}
+	hasher := sha256.New()
+	addPath := func(rel string) {
+		full := filepath.Join(h.Path, rel)
+		data, err := os.ReadFile(full)
+		if err != nil {
+			return
+		}
+		fmt.Fprintf(hasher, "%s\n%x\n", rel, sha256.Sum256(data))
+	}
+	if h.DevContainer != nil {
+		addPath(h.DevContainer.Path)
+	}
+	for _, candidate := range []string{
+		"AGENTS.md", "agents.md",
+		"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml",
+		"Dockerfile", "Makefile", "package.json", "go.mod",
+		".env.example", ".env.sample", ".env.template",
+	} {
+		addPath(candidate)
+	}
+	// README excerpt — only the part the cascade actually feeds the
+	// LLM. Hashing the full file would over-trigger drift.
+	if h.ReadmeExcerpt != "" {
+		fmt.Fprintf(hasher, "readme:%x\n", sha256.Sum256([]byte(h.ReadmeExcerpt)))
+	}
+	return hex.EncodeToString(hasher.Sum(nil))
+}
+
+func sortedNames(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// BootstrapScript is the embedded shell script that runs inside the
+// sandbox. It hands the bootstrap prompt off to claude (the same way
+// agent.sh does for the main agent flow), then enforces the four
+// success checks before declaring the run complete.
+//
+// It is deliberately defensive: every artifact path must exist with
+// non-empty content; setup.sh must be idempotent (runs twice in a
+// row); start.sh is backgrounded and we wait for health.sh to pass
+// before returning success.
+//
+// The script writes its own log to stderr so a non-zero exit's tail
+// is what the bot persists into bootstrap_log for auto-heal context.
+const BootstrapScript = `#!/bin/bash
+set -euo pipefail
+
+: "${HETCHY_BOOTSTRAP_PROMPT_FILE:?required}"
+: "${HETCHY_BOOTSTRAP_OUT_DIR:?required}"
+: "${HETCHY_BOOTSTRAP_REPO_DIR:?required}"
+
+mkdir -p "${HETCHY_BOOTSTRAP_OUT_DIR}"
+
+# Each shLines call runs in its own subshell, so the cwd from the
+# preceding setup-clone step doesn't survive. cd here so the agent's
+# tools (Read/Edit/Bash) operate on the cloned repo by default.
+cd "${HETCHY_BOOTSTRAP_REPO_DIR}"
+
+# Same pre-create as agent.sh / followup.sh — the Playwright MCP
+# server's allowed-roots check rejects screenshot writes if the dir
+# doesn't exist yet, and step 7 of the bootstrap prompt tells the
+# agent to take a screenshot of every UI service. Without this line
+# the bootstrap LLM hits "File access denied" on its first
+# browser_take_screenshot and recovers by mkdir-ing the dir itself,
+# wasting a round-trip.
+mkdir -p .playwright-mcp
+
+# Strip out the alternate credential — claude's auth precedence puts
+# ANTHROPIC_API_KEY ahead of CLAUDE_CODE_OAUTH_TOKEN, so a stray value
+# inherited from a snapshot or sibling shell would silently win over the
+# token the bot injected. Mirrors agent.sh's auth hygiene.
+if [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
+  unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN
+elif [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
+  unset CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_AUTH_TOKEN
+fi
+
+# Claude Code expects its config to acknowledge onboarding before it
+# will run non-interactively in a fresh sandbox.
+mkdir -p "$HOME/.claude"
+printf '{"hasCompletedOnboarding":true}\n' > "$HOME/.claude.json"
+
+echo "[hetchy-bootstrap] invoking claude" >&2
+# stream-json + verbose mirrors agent.sh — gives the bot typed Block
+# updates in real time. The agent is told (in the prompt) to write
+# its four artifacts to ${HETCHY_BOOTSTRAP_OUT_DIR}; we just verify
+# they show up. run_claude_with_watchdog is provided by the watchdog
+# prelude that the bot prepends to this script before writing it to
+# the sandbox; see internal/bot/scripts/claude-watchdog.sh.
+run_claude_with_watchdog "${HETCHY_BOOTSTRAP_PROMPT_FILE}"
+
+echo "[hetchy-bootstrap] verifying artifacts" >&2
+for f in setup.sh start.sh health.sh manifest.json; do
+  path="${HETCHY_BOOTSTRAP_OUT_DIR}/${f}"
+  if [[ ! -s "$path" ]]; then
+    echo "[hetchy-bootstrap] missing or empty: $path" >&2
+    exit 70
+  fi
+done
+
+chmod +x "${HETCHY_BOOTSTRAP_OUT_DIR}/setup.sh" \
+         "${HETCHY_BOOTSTRAP_OUT_DIR}/start.sh" \
+         "${HETCHY_BOOTSTRAP_OUT_DIR}/health.sh"
+
+echo "[hetchy-bootstrap] running setup.sh (idempotency check: run twice)" >&2
+"${HETCHY_BOOTSTRAP_OUT_DIR}/setup.sh"
+"${HETCHY_BOOTSTRAP_OUT_DIR}/setup.sh"
+
+echo "[hetchy-bootstrap] starting app in background" >&2
+"${HETCHY_BOOTSTRAP_OUT_DIR}/start.sh" &
+START_PID=$!
+trap 'kill ${START_PID} 2>/dev/null || true' EXIT
+
+echo "[hetchy-bootstrap] polling health.sh (90s budget)" >&2
+for i in {1..90}; do
+  # Bail fast if start.sh died — without this, a process that exits in
+  # the first second (missing dependency, port conflict, bad env var)
+  # still burns the full 90s polling against a never-ready endpoint.
+  if ! kill -0 "${START_PID}" 2>/dev/null; then
+    echo "[hetchy-bootstrap] start.sh exited early (pid ${START_PID})" >&2
+    exit 71
+  fi
+  if "${HETCHY_BOOTSTRAP_OUT_DIR}/health.sh" >/dev/null 2>&1; then
+    echo "[hetchy-bootstrap] healthy after ${i}s" >&2
+    exit 0
+  fi
+  sleep 1
+done
+
+echo "[hetchy-bootstrap] health check never passed" >&2
+exit 71
+`

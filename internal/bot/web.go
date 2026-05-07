@@ -84,6 +84,9 @@ func (b *Bot) runWeb(ctx context.Context) error {
 	mux.Handle("/chat", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b.chatHandler(ctx, w, r)
 	}))))
+	mux.Handle("/chat/stream", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.chatStreamHandler))))
+	mux.Handle("/api/repo-secrets", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.repoSecretsHandler))))
+	mux.Handle("/api/repo-bootstrap", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.repoBootstrapResetHandler))))
 	mux.Handle("/api/conversations", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.conversationsHandler))))
 	mux.Handle("/api/conversations/", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.conversationDetailHandler))))
 	mux.Handle("/api/members", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.membersHandler))))
@@ -269,28 +272,9 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 			"GitHubAppEnabled":            b.app != nil,
 			"DefaultRepoSlug":             defaultRepoSlug,
 		}
-		if tab == "integrations" {
-			installs, repos, err := b.loadIntegrationsView(r.Context(), p.OrgID)
-			if err != nil {
-				http.Error(w, "load integrations: "+err.Error(), http.StatusInternalServerError)
-				return
-			}
-			data["GitHubInstallations"] = installs
-			data["GitHubRepos"] = repos
-		}
-		if tab == "members" {
-			members, err := b.auth.ListMembers(r.Context(), p.OrgID)
-			if err != nil {
-				http.Error(w, "load members: "+err.Error(), http.StatusInternalServerError)
-				return
-			}
-			invites, err := b.auth.ListInvitations(r.Context(), p.OrgID)
-			if err != nil {
-				http.Error(w, "load invitations: "+err.Error(), http.StatusInternalServerError)
-				return
-			}
-			data["Members"] = members
-			data["Invitations"] = invites
+		if err := b.populateSettingsTabData(r.Context(), p.OrgID, tab, data); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
 		}
 		b.renderTemplate(w, settingsHTMLTpl, data)
 		return
@@ -394,6 +378,137 @@ type integrationRepo struct {
 	Name          string
 	DefaultBranch string
 	Private       bool
+	// OrgID is set on each repo before passing the slice into
+	// loadBootstrapStatus — we need it to scope the GitHub repo
+	// lookup back to this org's installations.
+	OrgID string
+}
+
+// repoBootstrapStatusView is the per-repo bootstrap status shown in
+// the Repositories tab. Slug is "owner/name"; the rest is a compact
+// summary the template renders without further joining.
+type repoBootstrapStatusView struct {
+	Slug   string
+	Status string
+	Kind   string
+	// Secrets is every declared secret on the spec (set + unset).
+	// AllFilled is the precomputed "every entry is filled" bool — the
+	// template uses it to decide whether to show the management UI or
+	// the "Fully bootstrapped" celebration. Computing it server-side
+	// keeps the template branch shape simple and avoids range-and-
+	// reduce gymnastics in html/template.
+	Secrets              []repoSecretView
+	AllFilled            bool
+	DeferredCapabilities []string
+}
+
+// repoSecretView is one declared secret row rendered on the
+// Repositories tab. Filled drives the visual treatment (set vs not
+// set) and which inline action the template offers (clear vs set).
+type repoSecretView struct {
+	Name   string
+	Filled bool
+}
+
+// loadBootstrapStatus returns a map keyed by "owner/name" so the
+// integrations template can decorate each cached repo card with its
+// bootstrap state in O(1). Repos without a spec produce no entry —
+// the template falls back to "Not bootstrapped yet" in that case.
+func (b *Bot) loadBootstrapStatus(ctx context.Context, repos []integrationRepo) (map[string]repoBootstrapStatusView, error) {
+	out := make(map[string]repoBootstrapStatusView, len(repos))
+	if len(repos) == 0 {
+		return out, nil
+	}
+	for _, repo := range repos {
+		// We only have (owner, name) here — look up the (installation,
+		// repo_id) once via the org repo lookup, then read the spec.
+		row, err := b.store.Queries.GetGithubRepoForOrg(ctx, sqlc.GetGithubRepoForOrgParams{
+			OrgID: repo.OrgID, Owner: repo.Owner, Name: repo.Name,
+		})
+		if err != nil {
+			continue
+		}
+		spec, err := b.bootstrap.GetSpec(ctx, row.InstallationID, row.RepoID, "")
+		if err != nil {
+			continue
+		}
+		// Route through bootstrap.ListSecrets so the Filled vs unfilled
+		// flag computation lives in one place — repo_secrets.go uses the
+		// same helper for the Manage tab. Asymmetry between the two
+		// surfaces was how earlier iterations drifted on what counts as
+		// "filled" (e.g. empty-string vs nil-bytes).
+		summaries, err := b.bootstrap.ListSecrets(ctx, row.InstallationID, row.RepoID, "")
+		if err != nil {
+			continue
+		}
+		secretsView := make([]repoSecretView, 0, len(summaries))
+		allFilled := true
+		for _, s := range summaries {
+			secretsView = append(secretsView, repoSecretView{Name: s.Name, Filled: s.Filled})
+			if !s.Filled {
+				allFilled = false
+			}
+		}
+		out[repo.Owner+"/"+repo.Name] = repoBootstrapStatusView{
+			Slug:                 repo.Owner + "/" + repo.Name,
+			Status:               string(spec.ValidationStatus),
+			Kind:                 spec.Kind,
+			Secrets:              secretsView,
+			AllFilled:            allFilled,
+			DeferredCapabilities: spec.DeferredCapabilities,
+		}
+	}
+	return out, nil
+}
+
+// populateSettingsTabData fetches the per-tab data the template needs
+// and writes it into data. Pulled out of settingsHandler so the GET
+// path stays under the gocyclo threshold as more tabs land — each new
+// tab just adds another switch case here. Errors are wrapped with the
+// fallback message that used to be inlined.
+func (b *Bot) populateSettingsTabData(ctx context.Context, orgID, tab string, data map[string]any) error {
+	switch tab {
+	case "integrations":
+		installs, repos, err := b.loadIntegrationsView(ctx, orgID)
+		if err != nil {
+			return fmt.Errorf("load integrations: %w", err)
+		}
+		data["GitHubInstallations"] = installs
+		data["GitHubRepos"] = repos
+
+	case "repositories":
+		// Repositories tab is the home for per-repo bootstrap state +
+		// admin actions (delete-bootstrap today; secrets management
+		// in the future). Reuses the cached repo list the integrations
+		// tab uses, but also computes the bootstrap-status map once
+		// up front rather than per-card inline.
+		_, repos, err := b.loadIntegrationsView(ctx, orgID)
+		if err != nil {
+			return fmt.Errorf("load integrations: %w", err)
+		}
+		for i := range repos {
+			repos[i].OrgID = orgID
+		}
+		// Bootstrap status is best-effort — if a repo's spec lookup
+		// fails we render it as "not bootstrapped" rather than 500
+		// the whole page. Errors are already logged inside.
+		bootstrapStatus, _ := b.loadBootstrapStatus(ctx, repos)
+		data["GitHubRepos"] = repos
+		data["BootstrapStatus"] = bootstrapStatus
+
+	case "members":
+		members, err := b.auth.ListMembers(ctx, orgID)
+		if err != nil {
+			return fmt.Errorf("load members: %w", err)
+		}
+		invites, err := b.auth.ListInvitations(ctx, orgID)
+		if err != nil {
+			return fmt.Errorf("load invitations: %w", err)
+		}
+		data["Members"] = members
+		data["Invitations"] = invites
+	}
+	return nil
 }
 
 // loadIntegrationsView pulls the org's GitHub App installations and the
@@ -906,6 +1021,25 @@ var templateFuncs = template.FuncMap{
 		return m, nil
 	},
 	"minus": func(a, b int) int { return a - b },
+	// statusExplain renders a human-friendly tooltip for one of the
+	// bootstrap ValidationStatus values. The Status column is shown as
+	// a small pill in the Repositories tab; users were asking what
+	// "partial" actually meant in practice — sub-words from the spec
+	// constants don't carry the same meaning when stripped of context.
+	"statusExplain": func(s string) string {
+		switch s {
+		case "validated":
+			return "Bootstrap fully succeeded — every task on this repo gets end-to-end validation."
+		case "partial":
+			return "Bootstrap finished but some capabilities are deferred (auth bypassed, downstream services skipped or mocked, etc.). Tasks that don't touch a deferred capability can still be validated end-to-end; tasks that do are validated as far as they can go."
+		case "stale":
+			return "The repo has changed since this spec was last validated. The next task on this repo will re-bootstrap before applying."
+		case "failing":
+			return "The most recent bootstrap attempt couldn't reach even partial success. The next task will retry with the prior failure trace seeded as auto-heal context."
+		default:
+			return s
+		}
+	},
 }
 
 func (b *Bot) renderTemplate(w http.ResponseWriter, body string, data any) {
@@ -938,6 +1072,12 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 	var body struct {
 		Text      string `json:"text"`
 		SessionID string `json:"session_id"`
+		// Validate is the "Validate changes with end-to-end testing"
+		// checkbox state from the new-chat UI. Pointer so missing
+		// field (e.g. follow-up turns, Slack callers, older clients)
+		// is distinguishable from explicit false. Missing = treat as
+		// true so opting out is always an explicit user action.
+		Validate *bool `json:"validate,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
@@ -949,17 +1089,13 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 		return
 	}
 	sessionID := strings.TrimSpace(body.SessionID)
+	validate := body.Validate == nil || *body.Validate
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}
-
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("X-Accel-Buffering", "no")
 
 	// Nanosecond precision (base 36 to keep the resulting branch
 	// suffix short) so two concurrent requests don't generate the
@@ -970,41 +1106,111 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 		sessionID = requestID
 	}
 
-	we := newWebEmitter()
+	// Atomically claim the in-flight slot. RegisterIfAbsent collapses
+	// the prior Get-then-Register TOCTOU where two concurrent POSTs
+	// could each observe an empty slot, both call Register, and the
+	// second Close()s the first run mid-stream. On a losing call we
+	// reject with 409 — the reload-to-reattach UX path uses
+	// /chat/stream, not a fresh POST.
+	run, registered := b.live.RegisterIfAbsent(p.OrgID, sessionID)
+	if !registered {
+		http.Error(w, "this chat already has a turn in flight; reload to reattach", http.StatusConflict)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	emitter := newLiveEmitter(run)
 
 	go func() {
-		defer we.Close()
-		b.HandleRequest(parentCtx, oc, text, requestID, sessionID, p.UserID, we)
+		defer b.live.Done(p.OrgID, sessionID, run)
+		b.HandleRequest(parentCtx, oc, text, requestID, sessionID, p.UserID, validate, emitter)
 	}()
 
-	// Keepalive ticker: proxies (nginx, etc.) drop idle SSE connections
-	// after ~60 s. Claude can run silently for minutes, so we send a
-	// comment frame periodically to keep the connection alive.
-	keepalive := time.NewTicker(keepaliveInterval)
-	defer keepalive.Stop()
+	sub := run.Subscribe()
+	defer run.Unsubscribe(sub)
+	b.streamLiveSubscription(w, flusher, r.Context(), sub)
+}
 
+// chatStreamHandler is the reattach endpoint. Hit by chat.html on
+// page load: if a live run is in flight for this (org, session) the
+// browser receives the full event history (replayed) followed by
+// the live event stream until the run ends. If no run is active,
+// returns 404 — the client falls back to /api/conversations to
+// render the persisted snapshot.
+func (b *Bot) chatStreamHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	p, _ := auth.FromContext(r.Context())
+	sessionID := strings.TrimSpace(r.URL.Query().Get("session"))
+	if sessionID == "" {
+		http.Error(w, "session required", http.StatusBadRequest)
+		return
+	}
+	run := b.live.Get(p.OrgID, sessionID)
+	if run == nil {
+		http.Error(w, "no live run", http.StatusNotFound)
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	sub := run.Subscribe()
+	defer run.Unsubscribe(sub)
+	b.streamLiveSubscription(w, flusher, r.Context(), sub)
+}
+
+// streamLiveSubscription drains a liveSubscription to the SSE
+// response. Sends the catch-up history first, then live events
+// until the request context is cancelled or the run closes. Heart-
+// beats every keepaliveLiveInterval to beat proxy idle timeouts.
+func (b *Bot) streamLiveSubscription(w http.ResponseWriter, flusher http.Flusher, ctx context.Context, sub *liveSubscription) {
+	write := func(ev liveEvent) error {
+		if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", ev.Event, ev.Data); err != nil {
+			return err
+		}
+		flusher.Flush()
+		return nil
+	}
+
+	// Replay history. The subscription was created under the run's
+	// mutex, so the history slice is a stable snapshot — no race
+	// with concurrent Emits.
+	for _, ev := range sub.history {
+		if err := write(ev); err != nil {
+			return
+		}
+	}
+
+	keepalive := time.NewTicker(keepaliveLiveInterval)
+	defer keepalive.Stop()
 	for {
 		select {
-		case ev, ok := <-we.Events():
+		case ev, ok := <-sub.ch:
 			if !ok {
 				return
 			}
-			if err := writeSSE(w, ev); err != nil {
+			if err := write(ev); err != nil {
 				return
 			}
-			flusher.Flush()
 		case <-keepalive.C:
 			if _, err := fmt.Fprintf(w, ": keepalive\n\n"); err != nil {
 				return
 			}
 			flusher.Flush()
-		case <-r.Context().Done():
-			// Drain in background so the HandleRequest goroutine can
-			// finish without blocking on a full channel.
-			go func() {
-				for range we.Events() {
-				}
-			}()
+		case <-ctx.Done():
 			return
 		}
 	}
@@ -1147,6 +1353,20 @@ func (b *Bot) conversationDetailHandler(w http.ResponseWriter, r *http.Request) 
 	case http.MethodDelete:
 		if err := requireSameOrigin(r); err != nil {
 			http.Error(w, err.Error(), http.StatusForbidden)
+			return
+		}
+		// Refuse the delete if a run is currently in flight on
+		// this (org, thread). Otherwise the terminal Upsert that
+		// fires when the agent finishes — bot.go runFreshAgent /
+		// handleFollowUp at end-of-run — would silently re-INSERT
+		// the row we just dropped (UpsertConversation is a generic
+		// UPSERT). Same shape as the Delete-bootstrap race we
+		// already closed in applySpecImprovements via GetSpec
+		// re-check; here we close it from the other side because
+		// teaching every terminal Upsert site to re-fetch is more
+		// invasive than a single 409 here.
+		if run := b.live.Get(p.OrgID, threadID); run != nil {
+			http.Error(w, "this chat has a turn in flight; wait for it to finish before deleting", http.StatusConflict)
 			return
 		}
 		if err := b.convs.Delete(r.Context(), p.OrgID, threadID); err != nil {

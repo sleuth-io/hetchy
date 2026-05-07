@@ -1,0 +1,321 @@
+package bootstrap
+
+import (
+	"fmt"
+	"sort"
+	"strings"
+)
+
+// PromptArgs holds the minimum context the bootstrap prompt needs
+// beyond the static hints: which repo we're bootstrapping and which
+// secrets the user has already supplied (names only, never values).
+//
+// Preamble, when non-empty, is prepended verbatim to the rendered
+// prompt. AutoHeal uses it to inject the "this is an AUTO-HEAL run"
+// context (prior scripts + last failure trace) so the agent biases
+// toward a minimal update of the existing spec rather than starting
+// over from scratch.
+type PromptArgs struct {
+	OwnerRepo       string
+	Path            string
+	SuppliedSecrets []string
+	Preamble        string
+}
+
+// BuildPrompt renders the bootstrap prompt the agent will work against.
+// The structure is fixed by docs/research/repo-bootstrap-and-validation.md
+// — process steps 0-8, four success criteria, the manifest schema. Hints
+// are inserted as labeled, easy-to-skim sections; everything is text so
+// the agent's tokenization stays predictable.
+//
+// The prompt is opinionated about a few things that cost real-world
+// frustration when omitted:
+//
+//   - Step 0 explicitly tells the agent to interpret docs, not run them
+//     literally. Hetchy itself (with its Doppler + WorkOS scaffolding)
+//     is a good example of why.
+//   - Step 1 names the grep pattern for finding the source-of-truth env
+//     consumer (os.Getenv, process.env, os.environ). Without this, the
+//     agent treats README's required-vars list as authoritative and gets
+//     blocked on user secrets it doesn't actually need.
+//   - Step 6 is explicit about NOT fabricating fake third-party API keys.
+//     This is the most common failure mode for naive "make it run"
+//     prompts — the app appears to start, then dies later.
+func BuildPrompt(hints *Hints, args PromptArgs) string {
+	var b strings.Builder
+
+	// AutoHeal injects "this used to work, here's what changed" context
+	// at the top of the prompt. Prepend before the main body so the
+	// agent's first impression is the heal framing rather than a
+	// fresh-bootstrap framing.
+	if args.Preamble != "" {
+		b.WriteString(args.Preamble)
+		if !strings.HasSuffix(args.Preamble, "\n") {
+			b.WriteByte('\n')
+		}
+	}
+
+	pathSuffix := ""
+	if args.Path != "" {
+		pathSuffix = " at path " + args.Path
+	}
+	fmt.Fprintf(&b, `You are bootstrapping repo %s%s so that Hetchy can run it
+end-to-end and validate future PRs against it.
+
+Goal: the app responds well enough that we can take a screenshot of a UI
+feature or exercise an API endpoint. Full production functionality is NOT
+required. Where you can't get there without real third-party credentials,
+do partial bootstrap (auth bypassed, external services skipped or mocked)
+and declare what's missing in manifest.json.
+
+You must produce four artifacts at fixed paths:
+
+  /tmp/hetchy-spec/setup.sh      — idempotent. Installs deps, runs
+                                   migrations, seeds dev data. Safe to
+                                   re-run on every task.
+  /tmp/hetchy-spec/start.sh      — starts the app and any supporting
+                                   services in the background. Returns
+                                   when the app is reachable, NOT when
+                                   it has terminated.
+  /tmp/hetchy-spec/health.sh     — exits 0 iff the app is healthy.
+                                   Typically: curl -fsS <url>
+  /tmp/hetchy-spec/manifest.json — JSON manifest, schema below.
+
+Manifest schema:
+
+  {
+    "kind": "<short label, e.g. node-web, rails+pg, compose, cli>",
+    "services": [
+      { "name": "web",
+        "port": 3000,
+        "url": "http://localhost:3000",
+        "kind": "ui" | "api" | "admin" | "worker" }
+    ],
+    "required_secrets": [
+      { "name": "STRIPE_SECRET_KEY",
+        "user_supplied": true,
+        "hint": "Stripe test key — required for the checkout flow but
+                 not for the app to start" }
+    ],
+    "deferred_capabilities": [
+      "Real authentication (currently AUTH_BYPASS=1)"
+    ],
+    "suggested_repo_changes": [
+      "Add an AGENTS.md with a 'make bootstrap' target"
+    ]
+  }
+
+Process:
+
+  0. Read the README and any docs/ contributor guides. They are written
+     for humans on dev workstations — INTERPRET, don't execute literally.
+     Skip developer-only tooling (Doppler, dev hostnames, live-reload
+     watchers). Look for AUTH_BYPASS / CI / TEST flags that elide
+     external dependencies; for bootstrap purposes, prefer those paths.
+
+     CRITICAL — landing-page reachability: a SECOND agent will later use
+     Playwright against the running app to screenshot UI changes. That
+     agent has no credentials and will get stuck on any login wall,
+     onboarding form, or "create your first workspace" first-run
+     screen. Find EVERY env var or config flag that lets the app skip
+     these screens (not just auth bypass — also org-bypass, default-
+     workspace, skip-onboarding, demo-mode, seeded-user flags) and
+     bake the FULL set into start.sh's environment so the running app
+     lands an unauthenticated browser on a usable page directly.
+     Common patterns to grep for: AUTH_BYPASS, BYPASS_*, SKIP_*_ONBOARD,
+     DEFAULT_ORG, DEMO_*, SEED_*, NODE_ENV=test, CI=1. A single bypass
+     flag is often insufficient — apps frequently chain auth → org
+     selection → onboarding, so each stage may need its own opt-out.
+
+  1. Find the source of truth for required env vars. The README's list
+     is a superset for the dev experience; the actual binary often
+     requires fewer. Grep the codebase for os.Getenv, process.env,
+     os.environ, ENV[, etc., and find the function that decides
+     "fail to start" — that is the authoritative list.
+
+  2. Inspect the repo structure beyond the hints below. The hints are
+     starting points, not a complete inventory.
+
+  3. Write setup.sh and run it from a clean checkout. It must be
+     idempotent — every future task re-runs it.
+
+  4. Write start.sh and run it. Record the URL the app is on.
+
+  5. Write health.sh and run it. Iterate until it passes.
+
+  6. Real third-party credentials handling:
+     - If a credential has a documented test-mode bypass
+       (AUTH_BYPASS=1, NODE_ENV=test, etc.) that lets the app boot, USE it.
+       Bootstrap succeeds with reduced functionality.
+     - If no bypass exists, declare the secret in manifest.json with
+       user_supplied=true. Bootstrap continues with whatever functionality
+       you can get; the user fills in the real value through the secrets
+       UI before features that need it are exercised.
+     - NEVER fabricate plausible-looking fake values for real third-party
+       services (e.g. fake Stripe sk_test_… keys). The app will appear
+       to start and then fail later in confusing ways.
+
+  7. For every UI service, navigate to its root URL with Playwright and
+     take a screenshot. The screenshot must show real content — not an
+     error page or blank screen.
+
+  8. Populate suggested_repo_changes if you hit friction that a small
+     repo change would have eliminated. Examples: add a 'make bootstrap'
+     target; expose required env vars via a --print-required-env flag;
+     add a docker-compose profile that starts with bypass flags. ~3 max.
+
+Be concise in your shell scripts. No comments unless they explain a
+non-obvious choice. The scripts run on every future task — keep them
+fast and idempotent.
+
+`,
+		args.OwnerRepo, pathSuffix,
+	)
+
+	if len(args.SuppliedSecrets) > 0 {
+		fmt.Fprintf(&b, "Secrets already injected into the sandbox env (names only): %s\n\n",
+			strings.Join(args.SuppliedSecrets, ", "))
+	}
+
+	b.WriteString("--- DETECTION HINTS (NOT AUTHORITATIVE — verify and adapt) ---\n\n")
+	renderHints(&b, hints)
+
+	return b.String()
+}
+
+func renderHints(b *strings.Builder, h *Hints) {
+	if h == nil {
+		fmt.Fprintln(b, "(no hints — detection produced nothing)")
+		return
+	}
+
+	if h.DevContainer != nil {
+		fmt.Fprintf(b, "## .devcontainer (%s)\n\n", h.DevContainer.Path)
+		if h.DevContainer.Raw == nil {
+			fmt.Fprintln(b, "(parse failed — see notes below)")
+		} else {
+			renderDevContainer(b, h.DevContainer.Raw)
+		}
+		b.WriteString("\n")
+	}
+
+	if h.AgentsMD != "" {
+		fmt.Fprintln(b, "## AGENTS.md")
+		b.WriteString("\n")
+		b.WriteString(h.AgentsMD)
+		b.WriteString("\n\n")
+	}
+
+	if h.DockerCompose != nil {
+		fmt.Fprintf(b, "## docker-compose (%s)\n\n", h.DockerCompose.Path)
+		fmt.Fprintf(b, "Services declared: %s\n\n", strings.Join(h.DockerCompose.Services, ", "))
+		fmt.Fprintln(b, "Excerpt:")
+		fmt.Fprintln(b, "```yaml")
+		b.WriteString(h.DockerCompose.Excerpt)
+		b.WriteString("\n```\n\n")
+	}
+
+	if h.Dockerfile != nil {
+		fmt.Fprintln(b, "## Dockerfile")
+		if len(h.Dockerfile.Exposes) > 0 {
+			fmt.Fprintf(b, "EXPOSE: %s\n", strings.Join(h.Dockerfile.Exposes, ", "))
+		}
+		if h.Dockerfile.Cmd != "" {
+			fmt.Fprintf(b, "CMD: %s\n", h.Dockerfile.Cmd)
+		}
+		b.WriteString("\n")
+	}
+
+	if h.Makefile != nil {
+		fmt.Fprintln(b, "## Makefile (run-ish targets)")
+		names := sortedKeys(h.Makefile.RunTargets)
+		for _, n := range names {
+			doc := h.Makefile.RunTargets[n]
+			if doc == "" {
+				fmt.Fprintf(b, "- %s\n", n)
+			} else {
+				fmt.Fprintf(b, "- %s — %s\n", n, doc)
+			}
+		}
+		if h.Makefile.HelpExcerpt != "" {
+			fmt.Fprintln(b, "\nFirst 60 lines of Makefile:")
+			fmt.Fprintln(b, "```makefile")
+			b.WriteString(h.Makefile.HelpExcerpt)
+			b.WriteString("\n```\n")
+		}
+		b.WriteString("\n")
+	}
+
+	if h.PackageJSON != nil && len(h.PackageJSON.Scripts) > 0 {
+		fmt.Fprintln(b, "## package.json scripts")
+		for _, k := range sortedKeys(h.PackageJSON.Scripts) {
+			fmt.Fprintf(b, "- %s: %s\n", k, h.PackageJSON.Scripts[k])
+		}
+		b.WriteString("\n")
+	}
+
+	if h.GoMod != nil {
+		fmt.Fprintln(b, "## go.mod")
+		fmt.Fprintf(b, "module %s, go %s\n\n", h.GoMod.Module, h.GoMod.GoVer)
+	}
+
+	if h.EnvExample != nil {
+		fmt.Fprintf(b, "## %s\n\n", h.EnvExample.Path)
+		fmt.Fprintln(b, "Annotated entries (the *comment* above each entry usually tells")
+		fmt.Fprintln(b, "you whether the value is mintable, where to source it, or what")
+		fmt.Fprintln(b, "format it should be in — read these carefully):")
+		b.WriteString("\n")
+		for _, e := range h.EnvExample.Entries {
+			if e.Comment != "" {
+				fmt.Fprintf(b, "  # %s\n", e.Comment)
+			}
+			fmt.Fprintf(b, "  %s=%s\n", e.Key, e.Value)
+		}
+		b.WriteString("\n")
+	}
+
+	if h.ReadmeExcerpt != "" {
+		fmt.Fprintln(b, "## README.md (first 200 lines)")
+		fmt.Fprintln(b, "```markdown")
+		b.WriteString(h.ReadmeExcerpt)
+		b.WriteString("\n```\n\n")
+	}
+
+	if len(h.LanguageStats) > 0 {
+		fmt.Fprintln(b, "## Language signals")
+		for _, ext := range sortedKeys(h.LanguageStats) {
+			fmt.Fprintf(b, "- %s: %d files\n", ext, h.LanguageStats[ext])
+		}
+		b.WriteString("\n")
+	}
+
+	if len(h.Notes) > 0 {
+		fmt.Fprintln(b, "## Detection notes")
+		for _, n := range h.Notes {
+			fmt.Fprintf(b, "- %s\n", n)
+		}
+		b.WriteString("\n")
+	}
+}
+
+// renderDevContainer pulls the high-value devcontainer.json fields into
+// labeled lines instead of dumping the whole JSON. Keeps the prompt
+// terse while preserving the actionable bits.
+func renderDevContainer(b *strings.Builder, raw map[string]any) {
+	for _, key := range []string{"image", "build", "postCreateCommand", "postStartCommand", "forwardPorts", "containerEnv"} {
+		v, ok := raw[key]
+		if !ok {
+			continue
+		}
+		fmt.Fprintf(b, "%s: %v\n", key, v)
+	}
+}
+
+func sortedKeys[V any](m map[string]V) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}

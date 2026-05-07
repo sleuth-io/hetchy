@@ -82,6 +82,146 @@
                   border-radius: .4rem; margin-bottom: 1rem; font-size: .85rem; }
   .meta { color: #999; font-size: .72rem; margin-top: 1.5rem; }
 
+  /* Repositories tab — per-repo bootstrap cards */
+  /* Single column at any width: each card fills the available content
+     area so the inner two-column body (secrets / deferred caps) gets
+     room to breathe. A 2-col card grid sounds nice on paper but with
+     a typical 1-3 repos it leaves the right half empty, and with the
+     repo bootstrap copy it crammed both side panels into too little
+     horizontal space. Better to scroll vertically through wider
+     cards than to truncate every column. */
+  .repo-card-grid { display: flex; flex-direction: column; gap: 1rem; }
+  .repo-card { background: #fff; border: 1px solid #e6e6e6; border-radius: .5rem;
+               padding: 1rem 1.25rem; display: flex; flex-direction: column;
+               gap: .75rem; }
+  .repo-card-head { display: flex; align-items: center; gap: .5rem;
+                    flex-wrap: wrap; }
+  .repo-card-title { margin: 0; font-size: 1rem; color: #222;
+                     font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .repo-card-kind { font-size: .7rem; color: #666; padding: .1rem .45rem;
+                    border-radius: .8rem; background: #f0f2f5; }
+  /* Two-column body — secrets on the left, capabilities on the right.
+     Each column scrolls independently when content overruns the
+     bounded height, so a repo with 30 deferred capabilities doesn't
+     turn the card into a wall of text. */
+  .repo-card-cols { display: grid; grid-template-columns: 1fr;
+                    gap: 1rem; }
+  @media (min-width: 720px) {
+    .repo-card-cols { grid-template-columns: 1fr 1fr; }
+  }
+  .repo-card-col { min-width: 0; }
+  .repo-card-col-title { margin: 0 0 .25rem; color: #888;
+                         font-size: .75rem; text-transform: uppercase;
+                         letter-spacing: .03em; font-weight: 600; }
+  .repo-card-col .hint { margin: 0 0 .5rem; }
+  .repo-card-col ul { max-height: 14rem; overflow-y: auto;
+                      padding-right: .25rem; }
+  .repo-deferred-list { list-style: disc; padding-left: 1.1rem; margin: 0;
+                        color: #555; }
+  .repo-deferred-list li { margin: .15rem 0; font-size: .82rem;
+                           line-height: 1.4; }
+  .repo-card-empty { margin: 0; color: #777; font-size: .85rem;
+                     line-height: 1.5; }
+  .repo-card-allset { margin: 0; color: #1a7a3c; font-size: .85rem; }
+  .repo-card-foot { display: flex; justify-content: flex-end;
+                    border-top: 1px solid #f0f0f0; padding-top: .75rem;
+                    min-height: 1rem; }
+
+  /* Inline secret-edit list — each unfilled secret is a <details>
+     that expands into a small password form. Click-to-edit keeps the
+     card compact while remaining a single click away from setting
+     the value. */
+  .repo-secret-edit-list { list-style: none; padding: 0; margin: 0;
+                           display: flex; flex-direction: column;
+                           gap: .3rem; }
+  .repo-secret-edit { background: #fff8eb; border: 1px solid #f4dba0;
+                      border-radius: .35rem; }
+  /* Filled rows get a calmer green palette to make the "set" status
+     scannable at a glance — "this one's done" reads visually before
+     you read the label. Unfilled stays warm-yellow as a soft prompt. */
+  .repo-secret-edit.is-filled { background: #ecf7ee; border-color: #b9e0c2; }
+  .repo-secret-edit summary { display: flex; align-items: center;
+                              justify-content: space-between;
+                              padding: .25rem .55rem; cursor: pointer;
+                              list-style: none; font-size: .78rem; gap: .5rem; }
+  .repo-secret-edit summary::-webkit-details-marker { display: none; }
+  .repo-secret-edit summary code { background: transparent; padding: 0;
+                                   color: #8a4b00; font-size: .78rem;
+                                   overflow: hidden; text-overflow: ellipsis;
+                                   white-space: nowrap; min-width: 0; flex: 1; }
+  .repo-secret-edit.is-filled summary code { color: #1a5a30; }
+  .repo-secret-state { font-size: .68rem; text-transform: uppercase;
+                       letter-spacing: .04em; padding: .1rem .4rem;
+                       border-radius: .8rem; flex-shrink: 0; }
+  .repo-secret-state.is-set { background: #c9e9d2; color: #1a5a30; }
+  .repo-secret-state.is-unset { background: #f4dba0; color: #8a4b00; }
+  .repo-secret-edit[open] { background: #fff; }
+  .repo-secret-edit[open] summary { border-bottom: 1px solid #f4dba0; }
+  .repo-secret-edit.is-filled[open] summary { border-bottom-color: #b9e0c2; }
+  .repo-secret-form { padding: .5rem .55rem; display: flex;
+                      flex-direction: column; gap: .35rem; }
+  .repo-secret-form input { font-size: .82rem; padding: .35rem .5rem; }
+  .repo-secret-form-actions { display: flex; justify-content: flex-end;
+                              gap: .5rem; align-items: center; }
+  .repo-secret-form-actions .primary { margin-top: 0; padding: .35rem .9rem;
+                                       font-size: .82rem; }
+  .repo-secret-spacer { flex: 1; }
+  .danger-link { color: #b03030; }
+  .danger-link:hover { color: #8a2020; }
+  .repo-secret-form .repo-secret-status { margin: 0; font-size: .75rem; }
+  .repo-secret-form .repo-secret-status.is-error { color: #a02020; }
+  .repo-secret-saved { color: #1a7a3c; font-size: .78rem; padding: .25rem .55rem; }
+  .danger-btn { background: transparent; color: #b03030;
+                border: 1px solid #e6c4c4; padding: .35rem .75rem;
+                border-radius: .35rem; font-size: .82rem; cursor: pointer; }
+  .danger-btn:hover { background: #fff5f5; border-color: #d9a0a0; }
+  .danger-btn:disabled { opacity: .55; cursor: default; }
+
+  /* Status tags shared across all bootstrap UI */
+  .tag { display: inline-block; font-size: .72rem; padding: .15rem .55rem;
+         border-radius: .8rem; font-weight: 500; text-transform: lowercase;
+         letter-spacing: .02em; }
+  .tag-validated { background: #d8f0e2; color: #1a7a3c; }
+  .tag-partial   { background: #fff1cc; color: #8a5a00; }
+  .tag-stale     { background: #e6e6e6; color: #555; }
+  .tag-failing   { background: #f7d6d6; color: #a02020; }
+  .tag-pending   { background: #f0f2f5; color: #666; font-style: italic; }
+
+  /* App dialogs — same pattern as chat.html's rename/delete modals.
+     Drop-in: <dialog class="app-dialog"> with .dlg-body / .dlg-actions
+     / .dlg-cancel / .dlg-save | .dlg-delete buttons. */
+  dialog.app-dialog { border: none; border-radius: .55rem; padding: 0;
+                       margin: auto; box-shadow: 0 16px 48px rgba(0,0,0,.22);
+                       max-width: 28rem; width: 90vw; background: #fff;
+                       color: #1a1a1a; }
+  dialog.app-dialog::backdrop { background: rgba(0,0,0,.35); }
+  dialog.app-dialog .dlg-body { padding: 1.25rem 1.25rem 1rem; }
+  dialog.app-dialog h3 { margin: 0 0 .75rem; font-size: 1rem; font-weight: 600; }
+  dialog.app-dialog p { margin: 0 0 .75rem; font-size: .875rem; color: #555;
+                         line-height: 1.45; }
+  dialog.app-dialog code { background: #f0f2f5; padding: .05rem .35rem;
+                            border-radius: .25rem; font-size: .8rem; }
+  dialog.app-dialog .dlg-actions { display: flex; justify-content: flex-end;
+                                    gap: .5rem; padding: .85rem 1.25rem; }
+  dialog.app-dialog .dlg-cancel { padding: .5rem 1rem; background: #f3f3f3;
+    color: #333; border: 1px solid #d8d8d8; border-radius: .4rem; cursor: pointer;
+    font-size: .875rem; font-family: inherit; }
+  dialog.app-dialog .dlg-cancel:hover { background: #ebebeb; }
+  dialog.app-dialog .dlg-delete { padding: .5rem 1rem; background: #c0392b;
+    color: #fff; border: 0; border-radius: .4rem; cursor: pointer;
+    font-size: .875rem; font-family: inherit; }
+  dialog.app-dialog .dlg-delete:hover { background: #a93226; }
+  dialog.app-dialog .dlg-delete[disabled] { opacity: .6; cursor: default; }
+
+  /* Toast for in-place actions (delete bootstrap, etc.) */
+  .repo-toast { position: fixed; bottom: 1.5rem; left: 50%;
+                transform: translateX(-50%); background: #2a2a2e;
+                color: #fff; padding: .65rem 1.25rem;
+                border-radius: .5rem; font-size: .85rem;
+                box-shadow: 0 4px 16px rgba(0,0,0,.18);
+                max-width: 32rem; z-index: 100; }
+  .repo-toast-err { background: #a02020; }
+
   /* Integration cards */
   .integration-list { display: flex; flex-direction: column; gap: .75rem; }
   .integration { background: #fff; border: 1px solid #e6e6e6; border-radius: .5rem;
@@ -267,6 +407,49 @@
   html.is-dark .saved-banner { background: #173b1e; color: #5cd06b; }
   html.is-dark .meta { color: #6e6e72; }
 
+  html.is-dark .repo-card { background: #232327; border-color: #2e2e33; }
+  html.is-dark .repo-card-title { color: #f5f5f7; }
+  html.is-dark .repo-card-kind { background: #2e2e33; color: #b8b8bc; }
+  html.is-dark .repo-card-col-title { color: #8a8a90; }
+  html.is-dark .repo-deferred-list { color: #c4c4c8; }
+  html.is-dark .repo-card-empty { color: #9a9aa0; }
+  html.is-dark .repo-card-allset { color: #6cd084; }
+  html.is-dark .repo-card-foot { border-top-color: #2e2e33; }
+  html.is-dark .repo-secret-edit { background: #3a2e1c; border-color: #5a4a2a; }
+  html.is-dark .repo-secret-edit.is-filled { background: #1f3a2a; border-color: #2e5a3e; }
+  html.is-dark .repo-secret-edit[open] { background: #2a2a2e; }
+  html.is-dark .repo-secret-edit[open] summary { border-bottom-color: #5a4a2a; }
+  html.is-dark .repo-secret-edit.is-filled[open] summary { border-bottom-color: #2e5a3e; }
+  html.is-dark .repo-secret-edit summary code { color: #f0b674; }
+  html.is-dark .repo-secret-edit.is-filled summary code { color: #6cd084; }
+  html.is-dark .repo-secret-state.is-set { background: #2e5a3e; color: #6cd084; }
+  html.is-dark .repo-secret-state.is-unset { background: #5a4a2a; color: #f0b674; }
+  html.is-dark .repo-secret-form input { background: #1c1c1f; color: #f5f5f7;
+                                         border-color: #3a3a3f; }
+  html.is-dark .repo-secret-saved { color: #6cd084; }
+  html.is-dark .danger-link { color: #f0a0a0; }
+  html.is-dark .danger-link:hover { color: #ffb8b8; }
+  html.is-dark .danger-btn { color: #f0a0a0; border-color: #5a3232; }
+  html.is-dark .danger-btn:hover { background: #2c1f1f; border-color: #7a3838; }
+
+  html.is-dark .tag-validated { background: #1a3a26; color: #6cd084; }
+  html.is-dark .tag-partial   { background: #3a2e0c; color: #f0b674; }
+  html.is-dark .tag-stale     { background: #2e2e33; color: #9a9aa0; }
+  html.is-dark .tag-failing   { background: #3a1c1c; color: #f0a0a0; }
+  html.is-dark .tag-pending   { background: #2e2e33; color: #9a9aa0; }
+
+  html.is-dark .repo-toast { background: #f5f5f7; color: #1a1a1a;
+                             box-shadow: 0 4px 16px rgba(0,0,0,.5); }
+  html.is-dark .repo-toast-err { background: #f0a0a0; color: #2c0000; }
+
+  html.is-dark dialog.app-dialog { background: #1c1c1f; color: #e7e7e9; }
+  html.is-dark dialog.app-dialog::backdrop { background: rgba(0,0,0,.6); }
+  html.is-dark dialog.app-dialog p { color: #9a9aa0; }
+  html.is-dark dialog.app-dialog code { background: #2e2e33; color: #d4d4d8; }
+  html.is-dark dialog.app-dialog .dlg-cancel { background: #232327; color: #c4c4c8;
+    border-color: #2e2e33; }
+  html.is-dark dialog.app-dialog .dlg-cancel:hover { background: #2a2a2e; }
+
   /* Integration cards */
   html.is-dark .integration { background: #232327; border-color: #2e2e33;
                               border-left-color: #2e2e33; }
@@ -328,6 +511,14 @@
         </svg>
         Integrations
       </a>
+      <a href="/settings/org?tab=repositories"{{if eq .Tab "repositories"}} class="active"{{end}}>
+        <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M2 3.5A1.5 1.5 0 0 1 3.5 2h6L13 5.5v7A1.5 1.5 0 0 1 11.5 14h-8A1.5 1.5 0 0 1 2 12.5v-9z"/>
+          <path d="M9 2v3h4"/>
+          <path d="M5 8h5M5 10h5"/>
+        </svg>
+        Repositories
+      </a>
       {{if .IsAdmin}}
       <a href="/settings/org?tab=members"{{if eq .Tab "members"}} class="active"{{end}}>
         <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -349,6 +540,8 @@
       {{template "members" .}}
     {{else if eq .Tab "integrations"}}
       {{template "integrations" .}}
+    {{else if eq .Tab "repositories"}}
+      {{template "repositories" .}}
     {{else}}
       {{template "general" .}}
     {{end}}
@@ -472,6 +665,7 @@
           <p class="hint">Click <strong>Enable</strong> above to install the Hetchy GitHub App. You'll be redirected to GitHub to choose which repos to grant access to, then sent back here.</p>
         </div>
       {{end}}
+
     </div>
     {{end}}
   </article>
@@ -751,6 +945,433 @@
     </table>
   {{else}}
     <p class="empty">No pending invitations.</p>
+  {{end}}
+{{end}}
+
+{{define "repositories"}}
+  <h1>Repositories</h1>
+  <p class="desc">Per-repo bootstrap state, deferred capabilities, and admin actions. The first task Hetchy runs on a repo spends a few minutes characterizing it; that work is cached as a "bootstrap spec" and reused on every subsequent task.</p>
+
+  {{if not .GitHubRepos}}
+    <div class="body-section">
+      <p class="hint">No repositories cached yet. Connect the GitHub App on the <a href="/settings/org?tab=integrations">Integrations</a> tab and choose which repos to grant access to — they'll show up here.</p>
+    </div>
+  {{else}}
+    <div class="repo-card-grid">
+      {{range .GitHubRepos}}
+        {{$slug := printf "%s/%s" .Owner .Name}}
+        {{$bs := index $.BootstrapStatus $slug}}
+        <article class="repo-card">
+          <header class="repo-card-head">
+            <h3 class="repo-card-title">{{$slug}}</h3>
+            {{if $bs.Slug}}
+              <span class="tag tag-{{$bs.Status}}" title="{{statusExplain $bs.Status}}">{{$bs.Status}}</span>
+              {{if $bs.Kind}}<span class="repo-card-kind" title="App archetype detected during bootstrap.">{{$bs.Kind}}</span>{{end}}
+            {{else}}
+              <span class="tag tag-pending" title="No bootstrap spec saved for this repo yet — the first task on it will run the bootstrap loop.">not bootstrapped</span>
+            {{end}}
+          </header>
+
+          {{if $bs.Slug}}
+            {{/* "Fully bootstrapped" celebration shows when there's
+                 nothing left for the user to act on: no deferred
+                 capabilities AND either no declared secrets at all or
+                 every declared secret has a value. AllFilled is
+                 precomputed in loadBootstrapStatus so the template
+                 stays out of the range-and-reduce business. */}}
+            {{if and (not $bs.DeferredCapabilities) (or (not $bs.Secrets) $bs.AllFilled)}}
+              <p class="repo-card-allset">Fully bootstrapped — every task on this repo gets end-to-end validation.</p>
+              {{if $bs.Secrets}}
+                <details class="repo-card-secrets-collapsed">
+                  <summary>Manage saved secret values ({{len $bs.Secrets}})</summary>
+                  <ul class="repo-secret-edit-list">
+                    {{$repo := .}}
+                    {{range $bs.Secrets}}
+                      <li>
+                        <details class="repo-secret-edit is-filled">
+                          <summary>
+                            <code>{{.Name}}</code>
+                            <span class="repo-secret-state is-set">set</span>
+                          </summary>
+                          <form class="repo-secret-form" data-owner="{{$repo.Owner}}" data-name="{{$repo.Name}}" data-secret="{{.Name}}" data-filled="1">
+                            <input type="password" name="value" placeholder="Paste a new value to replace…" autocomplete="off" required>
+                            <div class="repo-secret-form-actions">
+                              <button type="button" class="link-btn repo-secret-clear danger-link">Clear value</button>
+                              <span class="repo-secret-spacer"></span>
+                              <button type="button" class="link-btn repo-secret-cancel">Cancel</button>
+                              <button type="submit" class="primary repo-secret-save">Replace</button>
+                            </div>
+                            <p class="repo-secret-status hint" hidden></p>
+                          </form>
+                        </details>
+                      </li>
+                    {{end}}
+                  </ul>
+                </details>
+              {{end}}
+            {{else}}
+              <div class="repo-card-cols">
+                {{if $bs.Secrets}}
+                  <section class="repo-card-col">
+                    <h4 class="repo-card-col-title">Secrets</h4>
+                    <p class="hint">Click a name to set, replace, or clear its value. Tasks that need an unset secret can't run end-to-end until you set it.</p>
+                    <ul class="repo-secret-edit-list">
+                      {{$repo := .}}
+                      {{range $bs.Secrets}}
+                        <li>
+                          <details class="repo-secret-edit{{if .Filled}} is-filled{{end}}">
+                            <summary>
+                              <code>{{.Name}}</code>
+                              <span class="repo-secret-state {{if .Filled}}is-set{{else}}is-unset{{end}}">{{if .Filled}}set{{else}}not set{{end}}</span>
+                            </summary>
+                            <form class="repo-secret-form" data-owner="{{$repo.Owner}}" data-name="{{$repo.Name}}" data-secret="{{.Name}}" data-filled="{{if .Filled}}1{{else}}0{{end}}">
+                              <input type="password" name="value" placeholder="{{if .Filled}}Paste a new value to replace…{{else}}Paste value…{{end}}" autocomplete="off" required>
+                              <div class="repo-secret-form-actions">
+                                {{/* Always rendered, hidden initially when the row is unset.
+                                     flipSecretRow() toggles `hidden` based on the new state,
+                                     so a row filled in-session can be cleared without a reload. */}}
+                                <button type="button" class="link-btn repo-secret-clear danger-link"{{if not .Filled}} hidden{{end}}>Clear value</button>
+                                <span class="repo-secret-spacer"></span>
+                                <button type="button" class="link-btn repo-secret-cancel">Cancel</button>
+                                <button type="submit" class="primary repo-secret-save">{{if .Filled}}Replace{{else}}Save{{end}}</button>
+                              </div>
+                              <p class="repo-secret-status hint" hidden></p>
+                            </form>
+                          </details>
+                        </li>
+                      {{end}}
+                    </ul>
+                  </section>
+                {{end}}
+                {{if $bs.DeferredCapabilities}}
+                  <section class="repo-card-col">
+                    <h4 class="repo-card-col-title">Deferred capabilities</h4>
+                    <p class="hint">Bootstrap couldn't fully wire these up — tasks that touch them can't be end-to-end validated until the matching secret is filled in or the bypass is removed.</p>
+                    <ul class="repo-deferred-list">
+                      {{range $bs.DeferredCapabilities}}<li>{{.}}</li>{{end}}
+                    </ul>
+                  </section>
+                {{end}}
+              </div>
+            {{end}}
+          {{else}}
+            <p class="repo-card-empty">The first task you start against this repo will trigger an automatic bootstrap. Expect a few extra minutes on that first run; subsequent tasks reuse the cached spec.</p>
+          {{end}}
+
+          <footer class="repo-card-foot">
+            {{if $bs.Slug}}
+              <button type="button" class="danger-btn delete-bootstrap-btn"
+                      data-owner="{{.Owner}}" data-name="{{.Name}}" data-slug="{{$slug}}"
+                      title="Discard the saved bootstrap spec. The next task on this repo will re-run bootstrap from scratch and pick up any prompt or detection improvements.">
+                Delete bootstrap
+              </button>
+            {{end}}
+          </footer>
+        </article>
+      {{end}}
+    </div>
+    <div id="repo-toast" class="repo-toast" role="status" aria-live="polite" hidden></div>
+
+    <!-- Shared confirm dialog for the Delete bootstrap action. The
+         click handler stamps data-owner / data-name on the dialog
+         right before showModal() so we keep one dialog instance for
+         the whole tab regardless of repo count. -->
+    <dialog class="app-dialog" id="delete-bootstrap-dialog" aria-labelledby="delete-bootstrap-title">
+      <div class="dlg-body">
+        <h3 id="delete-bootstrap-title">Delete bootstrap spec?</h3>
+        <p>Discard the saved bootstrap spec for <code id="delete-bootstrap-slug">repo</code>?</p>
+        <p>This does <strong>not</strong> run anything right now. The next task you start on this repo will re-run the bootstrap loop from scratch (adding several minutes to that one task) so it picks up the latest detection logic and prompt updates.</p>
+        <p>Per-repo secrets are preserved.</p>
+      </div>
+      <div class="dlg-actions">
+        <button type="button" class="dlg-cancel" id="delete-bootstrap-cancel">Cancel</button>
+        <button type="button" class="dlg-delete" id="delete-bootstrap-confirm">Delete bootstrap</button>
+      </div>
+    </dialog>
+
+    <!-- Confirm dialog for clearing a previously-set secret value.
+         Shared across all secret rows; the click handler stamps owner
+         / name / secret + a back-pointer to the originating <li> on
+         the dialog dataset before showModal(). -->
+    <dialog class="app-dialog" id="clear-secret-dialog" aria-labelledby="clear-secret-title">
+      <div class="dlg-body">
+        <h3 id="clear-secret-title">Clear secret value?</h3>
+        <p>Clear the saved value for <code id="clear-secret-name">SECRET</code> on <code id="clear-secret-slug">repo</code>?</p>
+        <p>The secret is still <strong>declared</strong> by the bootstrap spec — it'll come back as "not set" so you can paste a fresh value. Tasks that need this secret can't run end-to-end until you do.</p>
+      </div>
+      <div class="dlg-actions">
+        <button type="button" class="dlg-cancel" id="clear-secret-cancel">Cancel</button>
+        <button type="button" class="dlg-delete" id="clear-secret-confirm">Clear value</button>
+      </div>
+    </dialog>
+    <script>
+      // Delete-bootstrap flow:
+      //   1. Confirm dialog explains the side-effect (a future re-run, not
+      //      an immediate one) so users know the cost is paid lazily.
+      //   2. DELETE /api/repo-bootstrap drops the saved spec; the server
+      //      handler is idempotent and never deletes per-repo secrets.
+      //   3. On success, swap the card's right-hand side to the
+      //      "not bootstrapped" empty state in-place and show a toast —
+      //      no full reload, the rest of the page stays put.
+      (function () {
+        var toast = document.getElementById('repo-toast');
+        var toastTimer = null;
+        function showToast(msg, level) {
+          toast.textContent = msg;
+          toast.classList.remove('repo-toast-err');
+          if (level === 'error') toast.classList.add('repo-toast-err');
+          toast.hidden = false;
+          if (toastTimer) clearTimeout(toastTimer);
+          toastTimer = setTimeout(function () { toast.hidden = true; }, 6000);
+        }
+
+        // Set / replace secret value — PUT /api/repo-secrets carries
+        // the owner/name/secret + value. Same endpoint serves both
+        // first-time set and replace; the "filled" state visible in
+        // the row only changes the wording. On success we flip the
+        // row in place to filled (or re-render its save state) so the
+        // user gets immediate feedback without a full reload.
+        function flipSecretRow(details, filled) {
+          if (!details) return;
+          details.open = false;
+          details.classList.toggle('is-filled', !!filled);
+          var stateEl = details.querySelector('.repo-secret-state');
+          if (stateEl) {
+            stateEl.classList.toggle('is-set', !!filled);
+            stateEl.classList.toggle('is-unset', !filled);
+            stateEl.textContent = filled ? 'set' : 'not set';
+          }
+          var form = details.querySelector('.repo-secret-form');
+          if (form) {
+            form.dataset.filled = filled ? '1' : '0';
+            form.reset();
+            var input = form.querySelector('input[name=value]');
+            if (input) input.placeholder = filled
+              ? 'Paste a new value to replace…'
+              : 'Paste value…';
+            var save = form.querySelector('.repo-secret-save');
+            if (save) { save.disabled = false; save.textContent = filled ? 'Replace' : 'Save'; }
+            // Clear-value link is only meaningful for filled rows;
+            // toggle visibility so a row that was just cleared can't
+            // be re-cleared until it has been re-set.
+            var clear = form.querySelector('.repo-secret-clear');
+            if (clear) clear.hidden = !filled;
+            var status = form.querySelector('.repo-secret-status');
+            if (status) { status.hidden = true; status.classList.remove('is-error'); status.textContent = ''; }
+          }
+        }
+
+        // Clear-value dialog — same single-shared-instance pattern as
+        // the delete-bootstrap one. The form's Clear button stamps
+        // owner / name / secret + a back-pointer onto the dialog,
+        // calls showModal(); confirm runs DELETE /api/repo-secrets.
+        var clearDlg     = document.getElementById('clear-secret-dialog');
+        var clearDlgName = document.getElementById('clear-secret-name');
+        var clearDlgSlug = document.getElementById('clear-secret-slug');
+        var clearConfirm = document.getElementById('clear-secret-confirm');
+        var clearCancel  = document.getElementById('clear-secret-cancel');
+        var pendingClear = null;
+
+        if (clearCancel) clearCancel.addEventListener('click', function () { clearDlg.close(); pendingClear = null; });
+        if (clearDlg) clearDlg.addEventListener('close', function () { pendingClear = null; });
+        if (clearConfirm) clearConfirm.addEventListener('click', async function () {
+          if (!pendingClear) { clearDlg.close(); return; }
+          var owner   = pendingClear.owner;
+          var name    = pendingClear.name;
+          var secret  = pendingClear.secret;
+          var details = pendingClear.details;
+          clearConfirm.disabled = true;
+          clearConfirm.textContent = 'Clearing…';
+          try {
+            var qs  = '?owner=' + encodeURIComponent(owner)
+                    + '&name=' + encodeURIComponent(name)
+                    + '&secret_name=' + encodeURIComponent(secret);
+            var res = await fetch('/api/repo-secrets' + qs, { method: 'DELETE' });
+            if (!res.ok) {
+              var body = await res.text();
+              showToast('Could not clear ' + secret + ': ' + res.status + ' ' + (body || res.statusText), 'error');
+            } else {
+              showToast('Cleared ' + secret + ' on ' + owner + '/' + name + '.');
+              flipSecretRow(details, false);
+            }
+          } catch (e) {
+            showToast('Could not clear ' + secret + ': ' + e, 'error');
+          } finally {
+            clearConfirm.disabled = false;
+            clearConfirm.textContent = 'Clear value';
+            clearDlg.close();
+            pendingClear = null;
+          }
+        });
+
+        document.querySelectorAll('.repo-secret-form').forEach(function (form) {
+          var details = form.closest('details');
+          var statusEl = form.querySelector('.repo-secret-status');
+          var cancel   = form.querySelector('.repo-secret-cancel');
+          var clear    = form.querySelector('.repo-secret-clear');
+          if (cancel) {
+            cancel.addEventListener('click', function () {
+              if (details) details.open = false;
+              form.reset();
+              if (statusEl) { statusEl.hidden = true; statusEl.classList.remove('is-error'); }
+            });
+          }
+          if (clear) {
+            clear.addEventListener('click', function () {
+              pendingClear = {
+                owner:   form.getAttribute('data-owner'),
+                name:    form.getAttribute('data-name'),
+                secret:  form.getAttribute('data-secret'),
+                details: details,
+              };
+              if (clearDlgName) clearDlgName.textContent = pendingClear.secret;
+              if (clearDlgSlug) clearDlgSlug.textContent = pendingClear.owner + '/' + pendingClear.name;
+              if (typeof clearDlg.showModal === 'function') {
+                clearDlg.showModal();
+              } else if (window.confirm('Clear ' + pendingClear.secret + '?')) {
+                clearConfirm.click();
+              }
+            });
+          }
+          form.addEventListener('submit', async function (e) {
+            e.preventDefault();
+            var owner  = form.getAttribute('data-owner');
+            var name   = form.getAttribute('data-name');
+            var secret = form.getAttribute('data-secret');
+            var input  = form.querySelector('input[name=value]');
+            var value  = input ? input.value : '';
+            var save   = form.querySelector('.repo-secret-save');
+            var wasFilled = form.getAttribute('data-filled') === '1';
+            if (!value) return;
+            if (save) { save.disabled = true; save.textContent = 'Saving…'; }
+            if (statusEl) { statusEl.hidden = true; statusEl.classList.remove('is-error'); }
+            try {
+              var res = await fetch('/api/repo-secrets', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ owner: owner, name: name, secret_name: secret, value: value }),
+              });
+              if (!res.ok) {
+                var body = await res.text();
+                if (statusEl) {
+                  statusEl.textContent = 'Save failed: ' + res.status + ' ' + (body || res.statusText);
+                  statusEl.classList.add('is-error');
+                  statusEl.hidden = false;
+                }
+                if (save) { save.disabled = false; save.textContent = wasFilled ? 'Replace' : 'Save'; }
+                return;
+              }
+              showToast((wasFilled ? 'Replaced ' : 'Saved ') + secret + ' on ' + owner + '/' + name + '.');
+              flipSecretRow(details, true);
+            } catch (err) {
+              if (statusEl) {
+                statusEl.textContent = 'Save failed: ' + err;
+                statusEl.classList.add('is-error');
+                statusEl.hidden = false;
+              }
+              if (save) { save.disabled = false; save.textContent = wasFilled ? 'Replace' : 'Save'; }
+            }
+          });
+        });
+
+        // Delete bootstrap flow: clicking the per-card button stamps
+        // the owner/name + a back-pointer to the originating button on
+        // the shared <dialog>, then calls showModal(). The dialog's
+        // own confirm handler reads those off and runs the DELETE +
+        // in-place card swap. One dialog instance serves every card.
+        var dlg          = document.getElementById('delete-bootstrap-dialog');
+        var dlgSlugEl    = document.getElementById('delete-bootstrap-slug');
+        var dlgConfirm   = document.getElementById('delete-bootstrap-confirm');
+        var dlgCancel    = document.getElementById('delete-bootstrap-cancel');
+        var pendingBtn   = null;
+
+        function openDeleteDialog(btn) {
+          pendingBtn = btn;
+          var owner = btn.getAttribute('data-owner');
+          var name  = btn.getAttribute('data-name');
+          var slug  = btn.getAttribute('data-slug');
+          dlg.dataset.owner = owner;
+          dlg.dataset.name  = name;
+          dlg.dataset.slug  = slug;
+          if (dlgSlugEl) dlgSlugEl.textContent = slug;
+          dlgConfirm.disabled = false;
+          dlgConfirm.textContent = 'Delete bootstrap';
+          if (typeof dlg.showModal === 'function') {
+            dlg.showModal();
+          } else {
+            // Defensive fallback for very old browsers without
+            // <dialog> support — fall through to the original
+            // confirm() rather than break the flow entirely.
+            if (window.confirm('Delete bootstrap spec for ' + slug + '? Next task will re-bootstrap from scratch.')) {
+              runDelete();
+            }
+          }
+        }
+
+        if (dlgCancel) dlgCancel.addEventListener('click', function () { dlg.close(); pendingBtn = null; });
+        // Pressing Esc / clicking the backdrop also closes the dialog
+        // — clear pendingBtn so a stale reference can't fire later.
+        if (dlg) dlg.addEventListener('close', function () { pendingBtn = null; });
+
+        async function runDelete() {
+          var owner = dlg.dataset.owner;
+          var name  = dlg.dataset.name;
+          var slug  = dlg.dataset.slug;
+          var btn   = pendingBtn;
+          dlgConfirm.disabled = true;
+          dlgConfirm.textContent = 'Deleting…';
+          if (btn) {
+            btn.disabled = true;
+            btn.textContent = 'Deleting…';
+          }
+          try {
+            var qs  = '?owner=' + encodeURIComponent(owner) + '&name=' + encodeURIComponent(name);
+            var res = await fetch('/api/repo-bootstrap' + qs, { method: 'DELETE' });
+            if (!res.ok) {
+              var body = await res.text();
+              showToast('Could not delete: ' + res.status + ' ' + (body || res.statusText), 'error');
+              dlg.close();
+              if (btn) { btn.disabled = false; btn.textContent = 'Delete bootstrap'; }
+              return;
+            }
+            showToast('Bootstrap deleted for ' + slug + '. The next task on this repo will re-bootstrap from scratch.');
+            dlg.close();
+            // In-place swap: turn this card into the "not bootstrapped" form.
+            var card = btn ? btn.closest('.repo-card') : null;
+            if (card) {
+              var head = card.querySelector('.repo-card-head');
+              if (head) {
+                head.querySelectorAll('.tag, .repo-card-kind').forEach(function (el) { el.remove(); });
+                var pending = document.createElement('span');
+                pending.className = 'tag tag-pending';
+                pending.textContent = 'not bootstrapped';
+                head.appendChild(pending);
+              }
+              card.querySelectorAll('.repo-card-cols, .repo-card-allset').forEach(function (el) { el.remove(); });
+              if (!card.querySelector('.repo-card-empty')) {
+                var empty = document.createElement('p');
+                empty.className = 'repo-card-empty';
+                empty.textContent = 'The first task you start against this repo will trigger an automatic bootstrap. Expect a few extra minutes on that first run; subsequent tasks reuse the cached spec.';
+                card.insertBefore(empty, card.querySelector('.repo-card-foot'));
+              }
+              var foot = card.querySelector('.repo-card-foot');
+              if (foot) foot.innerHTML = '';
+            }
+          } catch (e) {
+            showToast('Could not delete: ' + e, 'error');
+            dlg.close();
+            if (btn) { btn.disabled = false; btn.textContent = 'Delete bootstrap'; }
+          } finally {
+            pendingBtn = null;
+          }
+        }
+        if (dlgConfirm) dlgConfirm.addEventListener('click', runDelete);
+
+        document.querySelectorAll('.delete-bootstrap-btn').forEach(function (btn) {
+          btn.addEventListener('click', function () { openDeleteDialog(btn); });
+        });
+      })();
+    </script>
   {{end}}
 {{end}}
 
