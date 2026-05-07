@@ -4,19 +4,26 @@ SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updat
 FROM conversations
 WHERE org_id = $1 AND thread_id = $2;
 
--- name: ListConversationsByOrg :many
+-- name: SearchConversations :many
+-- Backs the sidebar list. Filters by optional creator_id and an
+-- optional substring match against the conversation's title source —
+-- custom_title when set, else the first user message (history[1] in
+-- 1-indexed Postgres array land). Pass empty strings to skip a
+-- filter; LIMIT/OFFSET drive the "Load more" pager.
 SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, response_blocks,
        github_owner, github_repo, custom_title, creator_id
 FROM conversations
 WHERE org_id = $1
-ORDER BY updated_at DESC;
-
--- name: ListConversationsByOrgAndUser :many
-SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, response_blocks,
-       github_owner, github_repo, custom_title, creator_id
-FROM conversations
-WHERE org_id = $1 AND creator_id = $2
-ORDER BY updated_at DESC;
+  AND (sqlc.arg(creator_id)::text = '' OR creator_id = sqlc.arg(creator_id))
+  AND (
+    sqlc.arg(query)::text = ''
+    OR custom_title ILIKE '%' || sqlc.arg(query) || '%'
+    OR (CASE WHEN array_length(history, 1) >= 1 THEN history[1] ELSE '' END)
+       ILIKE '%' || sqlc.arg(query) || '%'
+  )
+ORDER BY updated_at DESC
+LIMIT sqlc.arg(lim)
+OFFSET sqlc.arg(off);
 
 -- name: UpsertConversation :one
 INSERT INTO conversations (

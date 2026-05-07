@@ -1251,6 +1251,15 @@ type conversationDetail struct {
 	UpdatedAt      string           `json:"updated_at"`
 }
 
+// conversationsListLimitDefault caps a single sidebar page to 20.
+// conversationsListLimitMax keeps a malicious caller from asking for
+// the entire table at once. The frontend's "Load more" walks the
+// pages by bumping ?offset.
+const (
+	conversationsListLimitDefault = 20
+	conversationsListLimitMax     = 100
+)
+
 func (b *Bot) conversationsHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -1258,18 +1267,18 @@ func (b *Bot) conversationsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	p, _ := auth.FromContext(r.Context())
 
-	userFilter := r.URL.Query().Get("user")
-	var (
-		recs []convstore.Record
-		err  error
-	)
-	if userFilter != "" {
-		recs, err = b.convs.ListByUser(r.Context(), p.OrgID, userFilter)
-	} else {
-		recs, err = b.convs.List(r.Context(), p.OrgID)
-	}
+	q := r.URL.Query()
+	limit := parseClampedInt(q.Get("limit"), conversationsListLimitDefault, 1, conversationsListLimitMax)
+	offset := parseClampedInt(q.Get("offset"), 0, 0, 0)
+
+	recs, err := b.convs.Search(r.Context(), p.OrgID, convstore.SearchOptions{
+		CreatorID: q.Get("user"),
+		Query:     strings.TrimSpace(q.Get("q")),
+		Limit:     limit,
+		Offset:    offset,
+	})
 	if err != nil {
-		b.log.Error("list conversations", "error", err, "org", p.OrgID)
+		b.log.Error("search conversations", "error", err, "org", p.OrgID)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -1283,6 +1292,28 @@ func (b *Bot) conversationsHandler(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, out)
+}
+
+// parseClampedInt parses s as an integer and clamps the result to
+// [min, max]. Returns def for empty / unparseable input. Used by
+// pagination handlers to avoid hand-rolling the same five-line dance.
+// max=0 disables the upper bound (lets pagination offsets grow
+// without ceiling).
+func parseClampedInt(s string, def, min, max int) int {
+	if s == "" {
+		return def
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return def
+	}
+	if n < min {
+		return min
+	}
+	if max > 0 && n > max {
+		return max
+	}
+	return n
 }
 
 // memberSummary is the shape returned by GET /api/members.

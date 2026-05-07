@@ -74,127 +74,6 @@ func (q *Queries) GetConversation(ctx context.Context, arg GetConversationParams
 	return i, err
 }
 
-const listConversationsByOrg = `-- name: ListConversationsByOrg :many
-SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, response_blocks,
-       github_owner, github_repo, custom_title, creator_id
-FROM conversations
-WHERE org_id = $1
-ORDER BY updated_at DESC
-`
-
-type ListConversationsByOrgRow struct {
-	OrgID          string             `json:"org_id"`
-	ThreadID       string             `json:"thread_id"`
-	SandboxID      string             `json:"sandbox_id"`
-	Branch         string             `json:"branch"`
-	PrUrl          string             `json:"pr_url"`
-	History        []string           `json:"history"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
-	ResponseBlocks [][]byte           `json:"response_blocks"`
-	GithubOwner    string             `json:"github_owner"`
-	GithubRepo     string             `json:"github_repo"`
-	CustomTitle    string             `json:"custom_title"`
-	CreatorID      string             `json:"creator_id"`
-}
-
-func (q *Queries) ListConversationsByOrg(ctx context.Context, orgID string) ([]ListConversationsByOrgRow, error) {
-	rows, err := q.db.Query(ctx, listConversationsByOrg, orgID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ListConversationsByOrgRow
-	for rows.Next() {
-		var i ListConversationsByOrgRow
-		if err := rows.Scan(
-			&i.OrgID,
-			&i.ThreadID,
-			&i.SandboxID,
-			&i.Branch,
-			&i.PrUrl,
-			&i.History,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.ResponseBlocks,
-			&i.GithubOwner,
-			&i.GithubRepo,
-			&i.CustomTitle,
-			&i.CreatorID,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listConversationsByOrgAndUser = `-- name: ListConversationsByOrgAndUser :many
-SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, response_blocks,
-       github_owner, github_repo, custom_title, creator_id
-FROM conversations
-WHERE org_id = $1 AND creator_id = $2
-ORDER BY updated_at DESC
-`
-
-type ListConversationsByOrgAndUserParams struct {
-	OrgID     string `json:"org_id"`
-	CreatorID string `json:"creator_id"`
-}
-
-type ListConversationsByOrgAndUserRow struct {
-	OrgID          string             `json:"org_id"`
-	ThreadID       string             `json:"thread_id"`
-	SandboxID      string             `json:"sandbox_id"`
-	Branch         string             `json:"branch"`
-	PrUrl          string             `json:"pr_url"`
-	History        []string           `json:"history"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
-	ResponseBlocks [][]byte           `json:"response_blocks"`
-	GithubOwner    string             `json:"github_owner"`
-	GithubRepo     string             `json:"github_repo"`
-	CustomTitle    string             `json:"custom_title"`
-	CreatorID      string             `json:"creator_id"`
-}
-
-func (q *Queries) ListConversationsByOrgAndUser(ctx context.Context, arg ListConversationsByOrgAndUserParams) ([]ListConversationsByOrgAndUserRow, error) {
-	rows, err := q.db.Query(ctx, listConversationsByOrgAndUser, arg.OrgID, arg.CreatorID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ListConversationsByOrgAndUserRow
-	for rows.Next() {
-		var i ListConversationsByOrgAndUserRow
-		if err := rows.Scan(
-			&i.OrgID,
-			&i.ThreadID,
-			&i.SandboxID,
-			&i.Branch,
-			&i.PrUrl,
-			&i.History,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.ResponseBlocks,
-			&i.GithubOwner,
-			&i.GithubRepo,
-			&i.CustomTitle,
-			&i.CreatorID,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const renameConversation = `-- name: RenameConversation :execrows
 UPDATE conversations SET custom_title = $3
 WHERE org_id = $1 AND thread_id = $2
@@ -260,6 +139,92 @@ func (q *Queries) SaveConversationProgress(ctx context.Context, arg SaveConversa
 		arg.CreatorID,
 	)
 	return err
+}
+
+const searchConversations = `-- name: SearchConversations :many
+SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, response_blocks,
+       github_owner, github_repo, custom_title, creator_id
+FROM conversations
+WHERE org_id = $1
+  AND ($2::text = '' OR creator_id = $2)
+  AND (
+    $3::text = ''
+    OR custom_title ILIKE '%' || $3 || '%'
+    OR (CASE WHEN array_length(history, 1) >= 1 THEN history[1] ELSE '' END)
+       ILIKE '%' || $3 || '%'
+  )
+ORDER BY updated_at DESC
+LIMIT $5
+OFFSET $4
+`
+
+type SearchConversationsParams struct {
+	OrgID     string `json:"org_id"`
+	CreatorID string `json:"creator_id"`
+	Query     string `json:"query"`
+	Off       int32  `json:"off"`
+	Lim       int32  `json:"lim"`
+}
+
+type SearchConversationsRow struct {
+	OrgID          string             `json:"org_id"`
+	ThreadID       string             `json:"thread_id"`
+	SandboxID      string             `json:"sandbox_id"`
+	Branch         string             `json:"branch"`
+	PrUrl          string             `json:"pr_url"`
+	History        []string           `json:"history"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	ResponseBlocks [][]byte           `json:"response_blocks"`
+	GithubOwner    string             `json:"github_owner"`
+	GithubRepo     string             `json:"github_repo"`
+	CustomTitle    string             `json:"custom_title"`
+	CreatorID      string             `json:"creator_id"`
+}
+
+// Backs the sidebar list. Filters by optional creator_id and an
+// optional substring match against the conversation's title source —
+// custom_title when set, else the first user message (history[1] in
+// 1-indexed Postgres array land). Pass empty strings to skip a
+// filter; LIMIT/OFFSET drive the "Load more" pager.
+func (q *Queries) SearchConversations(ctx context.Context, arg SearchConversationsParams) ([]SearchConversationsRow, error) {
+	rows, err := q.db.Query(ctx, searchConversations,
+		arg.OrgID,
+		arg.CreatorID,
+		arg.Query,
+		arg.Off,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SearchConversationsRow
+	for rows.Next() {
+		var i SearchConversationsRow
+		if err := rows.Scan(
+			&i.OrgID,
+			&i.ThreadID,
+			&i.SandboxID,
+			&i.Branch,
+			&i.PrUrl,
+			&i.History,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ResponseBlocks,
+			&i.GithubOwner,
+			&i.GithubRepo,
+			&i.CustomTitle,
+			&i.CreatorID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const upsertConversation = `-- name: UpsertConversation :one

@@ -59,11 +59,29 @@
                   text-align: left; }
   .new-chat-btn:hover { background: #f4f4f4; border-color: #d0d0d0; }
   .new-chat-btn .plus { font-size: 1.05rem; line-height: 1; color: #888; }
-  #sidebar-filter { padding: .5rem .75rem .25rem; }
+  #sidebar-filter { padding: .5rem .75rem .25rem; display: flex;
+                    flex-direction: column; gap: .35rem; }
   #user-filter { width: 100%; padding: .3rem .5rem; border: 1px solid #e5e5e5;
                  border-radius: .375rem; font-size: .8rem; font-family: inherit;
                  background: #fff; color: #333; cursor: pointer; outline: none; }
   #user-filter:focus { border-color: #0b93f6; }
+  #chat-search { width: 100%; padding: .3rem .5rem; border: 1px solid #e5e5e5;
+                 border-radius: .375rem; font-size: .8rem; font-family: inherit;
+                 background: #fff; color: #333; outline: none; }
+  #chat-search:focus { border-color: #0b93f6; }
+  /* Search inputs in some browsers (WebKit) inject a built-in clear
+     "x" affordance that overlaps our padding; the rule below keeps
+     it but lets it sit cleanly. */
+  #chat-search::-webkit-search-cancel-button { cursor: pointer; }
+  #chat-list-more { padding: .35rem .75rem .85rem; }
+  #chat-list-more[hidden] { display: none; }
+  #chat-list-more-btn { width: 100%; padding: .45rem .6rem; background: #fff;
+                        border: 1px solid #e5e5e5; border-radius: .35rem;
+                        font-size: .8rem; font-family: inherit; color: #555;
+                        cursor: pointer; }
+  #chat-list-more-btn:hover { background: #f0f0f0; border-color: #d0d0d0; }
+  #chat-list-more-btn:disabled { opacity: .55; cursor: default;
+                                  background: #fafafa; }
   #sidebar-section { padding: .35rem .75rem .25rem;
                      font-size: .7rem; font-weight: 600; text-transform: uppercase;
                      letter-spacing: .05em; color: #999; }
@@ -366,6 +384,13 @@
   html.is-dark .new-chat-btn .plus { color: #9a9aa0; }
   html.is-dark #user-filter { background: #232327; border-color: #2e2e33; color: #c4c4c8; }
   html.is-dark #user-filter:focus { border-color: #7dc4ff; }
+  html.is-dark #chat-search { background: #232327; border-color: #2e2e33; color: #c4c4c8; }
+  html.is-dark #chat-search:focus { border-color: #7dc4ff; }
+  html.is-dark #chat-search::placeholder { color: #6e6e72; }
+  html.is-dark #chat-list-more-btn { background: #232327; border-color: #2e2e33;
+                                      color: #c4c4c8; }
+  html.is-dark #chat-list-more-btn:hover { background: #2a2a2e; border-color: #3a3a40; }
+  html.is-dark #chat-list-more-btn:disabled { background: #1c1c1f; }
   html.is-dark #sidebar-section { color: #6e6e72; }
   html.is-dark #chat-list .empty { color: #6e6e72; }
   html.is-dark .chat-item-wrap:hover { background: #2a2a2e; }
@@ -457,11 +482,16 @@
     <select id="user-filter" aria-label="Filter chats by user">
       <option value="">All</option>
     </select>
+    <input id="chat-search" type="search" placeholder="Search chats…"
+           aria-label="Search chats" autocomplete="off">
   </div>
   <div id="sidebar-section">Recents</div>
   <nav id="chat-list">
     <div class="empty">Loading…</div>
   </nav>
+  <div id="chat-list-more" hidden>
+    <button type="button" id="chat-list-more-btn">Load more</button>
+  </div>
   <div class="user-menu">
     <button class="user-menu-trigger" id="user-menu-btn"
             aria-haspopup="menu" aria-expanded="false" aria-label="Open user menu">
@@ -883,12 +913,26 @@ function showEmptyState() {
   log.appendChild(d);
 }
 
-// Sidebar state. `sidebarItems` is the last list returned by the API
-// — the server persists each new conversation row at HandleRequest
-// entry (before sandbox creation), so calling loadSidebar() after a
-// new turn starts reliably picks up the in-flight chat without any
-// optimistic placeholder.
+// Sidebar state. `sidebarItems` is the cumulative list of rows the
+// API has returned for the current (userFilter, searchQuery) view —
+// loadSidebar() resets it on a fresh load and loadMoreSidebar()
+// appends a page on each "Load more" click.
+//
+// `sidebarHasMore` flips true whenever a page comes back full
+// (length === SIDEBAR_PAGE_SIZE), which is the server's way of
+// saying "there might be another page" without sending a separate
+// total-count query.
+//
+// `sidebarLoading` guards against double-fires from a slow click
+// or a search keystroke landing while a previous fetch is in flight.
+const SIDEBAR_PAGE_SIZE = 20;
 let sidebarItems = [];
+let sidebarHasMore = false;
+let sidebarLoading = false;
+// Search query. Populated from #chat-search; debounced so we don't
+// fire a request per keystroke. Empty string means "no search".
+let searchQuery = '';
+let searchDebounce = null;
 // `userFilter` is the currently-selected creator_id for the sidebar filter.
 // Empty string means "All". Persisted in localStorage so navigating to a
 // chat (which reloads the page) doesn't snap the filter back to "Me".
@@ -911,12 +955,20 @@ let userFilter = (function () {
 
 function renderSidebar() {
   const list = document.getElementById('chat-list');
+  const more = document.getElementById('chat-list-more');
   const display = sidebarItems.slice();
   list.innerHTML = '';
   if (display.length === 0) {
-    list.innerHTML = '<div class="empty">No past chats yet.</div>';
+    // The empty-state copy depends on whether the user is searching:
+    // "no past chats" reads wrong when the user typed "asdf" and got
+    // zero matches; tell them their search came up empty instead.
+    list.innerHTML = searchQuery
+      ? '<div class="empty">No chats match your search.</div>'
+      : '<div class="empty">No past chats yet.</div>';
+    more.hidden = true;
     return;
   }
+  more.hidden = !sidebarHasMore;
   for (const c of display) {
     const wrap = document.createElement('div');
     const isActive = c.thread_id === sessionId;
@@ -1077,21 +1129,76 @@ async function confirmDelete() {
   }
 }
 
+// fetchSidebarPage hits /api/conversations with the current filter +
+// search + offset. Returns the JSON array on success, null on
+// transport failure (the caller renders a generic error in that case).
+async function fetchSidebarPage(offset) {
+  const params = new URLSearchParams();
+  if (userFilter)  params.set('user', userFilter);
+  if (searchQuery) params.set('q', searchQuery);
+  params.set('limit', String(SIDEBAR_PAGE_SIZE));
+  params.set('offset', String(offset));
+  const res = await fetch('/api/conversations?' + params.toString(),
+                          { headers: { 'Accept': 'application/json' } });
+  if (!res.ok) return null;
+  return (await res.json()) || [];
+}
+
+// loadSidebar refreshes the sidebar from page 0 — used on init, on
+// filter/search changes, and after every send() so a just-finished
+// turn floats to the top. Resets sidebarItems before re-rendering so
+// stale rows from a wider previous query don't linger underneath the
+// new (potentially shorter) result set.
 async function loadSidebar() {
+  if (sidebarLoading) return;
+  sidebarLoading = true;
   const list = document.getElementById('chat-list');
   try {
-    const url = userFilter
-      ? '/api/conversations?user=' + encodeURIComponent(userFilter)
-      : '/api/conversations';
-    const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
-    if (!res.ok) {
+    const page = await fetchSidebarPage(0);
+    if (page === null) {
       list.innerHTML = '<div class="empty">Could not load chats.</div>';
+      document.getElementById('chat-list-more').hidden = true;
       return;
     }
-    sidebarItems = (await res.json()) || [];
+    sidebarItems = page;
+    sidebarHasMore = page.length === SIDEBAR_PAGE_SIZE;
     renderSidebar();
   } catch (e) {
     list.innerHTML = '<div class="empty">Could not load chats.</div>';
+    document.getElementById('chat-list-more').hidden = true;
+  } finally {
+    sidebarLoading = false;
+  }
+}
+
+// loadMoreSidebar appends the next page worth of rows. Bound to the
+// "Load more" button click. Idempotent — guarded by sidebarLoading
+// so a double-click doesn't fire two requests.
+async function loadMoreSidebar() {
+  if (sidebarLoading || !sidebarHasMore) return;
+  sidebarLoading = true;
+  const btn = document.getElementById('chat-list-more-btn');
+  btn.disabled = true;
+  const original = btn.textContent;
+  btn.textContent = 'Loading…';
+  try {
+    const page = await fetchSidebarPage(sidebarItems.length);
+    if (page === null) {
+      btn.textContent = 'Could not load — retry';
+      return;
+    }
+    // The server can return fewer than PAGE_SIZE rows (last page),
+    // exactly PAGE_SIZE (more available — keep the button), or zero
+    // (race with a delete). We re-derive hasMore from the page size.
+    sidebarItems = sidebarItems.concat(page);
+    sidebarHasMore = page.length === SIDEBAR_PAGE_SIZE;
+    renderSidebar();
+    btn.textContent = original;
+  } catch (e) {
+    btn.textContent = 'Could not load — retry';
+  } finally {
+    sidebarLoading = false;
+    btn.disabled = false;
   }
 }
 
@@ -1565,6 +1672,31 @@ document.getElementById('user-filter').addEventListener('change', function () {
   loadSidebar();
 });
 
+// Search box — debounce keystrokes so a fast typist doesn't issue a
+// fetch per character. 200ms feels instant but coalesces a normal
+// burst of typing into one request. The 'search' event also fires
+// when the browser's built-in clear-X is clicked, which lands as an
+// empty value — handled by the same path.
+const chatSearchInput = document.getElementById('chat-search');
+function applySearchValue() {
+  const next = chatSearchInput.value.trim();
+  if (next === searchQuery) return;
+  searchQuery = next;
+  loadSidebar();
+}
+chatSearchInput.addEventListener('input', () => {
+  if (searchDebounce) clearTimeout(searchDebounce);
+  searchDebounce = setTimeout(applySearchValue, 200);
+});
+// Native search-clear button + Enter both fire 'search'; flush
+// immediately rather than waiting for the debounce.
+chatSearchInput.addEventListener('search', () => {
+  if (searchDebounce) { clearTimeout(searchDebounce); searchDebounce = null; }
+  applySearchValue();
+});
+
+document.getElementById('chat-list-more-btn').addEventListener('click', loadMoreSidebar);
+
 // Metadata sidebar visibility — persisted across reloads so the user's
 // preference sticks. The class is set on <html> by the head-bootstrap
 // (no FOUC); this block keeps the button's aria-pressed in sync and
@@ -1583,7 +1715,6 @@ document.getElementById('meta-toggle').addEventListener('click', () => {
   applyMetaHidden(nowHidden);
   try { localStorage.setItem(metaHiddenStorageKey, nowHidden ? '1' : '0'); } catch (e) {}
 });
-
 // Avatar dropdown — toggle on click, close on outside-click or Escape.
 const userMenuBtn = document.getElementById('user-menu-btn');
 const userMenuDrop = document.getElementById('user-menu-dropdown');

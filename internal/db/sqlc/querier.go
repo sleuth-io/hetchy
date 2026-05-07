@@ -40,8 +40,6 @@ type Querier interface {
 	// whose race window allowed the user's value to be overwritten with
 	// NULL when the user filled it in between the two statements.
 	InsertRepoSecretValueIfAbsent(ctx context.Context, arg InsertRepoSecretValueIfAbsentParams) error
-	ListConversationsByOrg(ctx context.Context, orgID string) ([]ListConversationsByOrgRow, error)
-	ListConversationsByOrgAndUser(ctx context.Context, arg ListConversationsByOrgAndUserParams) ([]ListConversationsByOrgAndUserRow, error)
 	ListGithubInstallationsByOrg(ctx context.Context, orgID string) ([]GithubAppInstallation, error)
 	ListGithubReposByInstallation(ctx context.Context, installationID int64) ([]GithubRepo, error)
 	// Every repo accessible to the given Hetchy org, across all of its
@@ -86,6 +84,12 @@ type Querier interface {
 	// neither is desirable, and the persister has no business creating
 	// rows on its own.
 	SaveConversationProgress(ctx context.Context, arg SaveConversationProgressParams) error
+	// Backs the sidebar list. Filters by optional creator_id and an
+	// optional substring match against the conversation's title source —
+	// custom_title when set, else the first user message (history[1] in
+	// 1-indexed Postgres array land). Pass empty strings to skip a
+	// filter; LIMIT/OFFSET drive the "Load more" pager.
+	SearchConversations(ctx context.Context, arg SearchConversationsParams) ([]SearchConversationsRow, error)
 	// Lightweight status update used by the runtime apply path: bumps
 	// success/failure counters and the validation_status without
 	// rewriting the whole spec. Avoids re-encoding all the JSONB blobs on
