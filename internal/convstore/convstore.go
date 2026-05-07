@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -87,43 +88,57 @@ func (s *Store) Get(ctx context.Context, orgID, threadID string) (Record, error)
 	return rec, nil
 }
 
-// List returns every conversation for an org, newest first. Returns an
-// empty slice (not an error) when the store is nil or no rows exist.
-func (s *Store) List(ctx context.Context, orgID string) ([]Record, error) {
-	if s == nil || s.db == nil {
-		return nil, nil
-	}
-	rows, err := s.db.Queries.ListConversationsByOrg(ctx, orgID)
-	if err != nil {
-		return nil, fmt.Errorf("list conversations: %w", err)
-	}
-	out := make([]Record, 0, len(rows))
-	for _, r := range rows {
-		rec, err := recordFromListRow(r)
-		if err != nil {
-			return nil, fmt.Errorf("decode response_blocks for %s/%s: %w", r.OrgID, r.ThreadID, err)
-		}
-		out = append(out, rec)
-	}
-	return out, nil
+// SearchOptions filters and pages a sidebar list query. Empty CreatorID
+// and Query mean "no filter"; Limit/Offset drive the "Load more" pager.
+// Limit must be > 0; the handler clamps before calling.
+type SearchOptions struct {
+	CreatorID string
+	Query     string
+	Limit     int
+	Offset    int
 }
 
-// ListByUser returns conversations for the given org filtered to those created
-// by creatorID, newest first. Returns an empty slice when the store is nil.
-func (s *Store) ListByUser(ctx context.Context, orgID, creatorID string) ([]Record, error) {
+// ilikeEscaper backslash-escapes the three characters Postgres
+// LIKE/ILIKE treats specially: '\' itself (the escape character),
+// '%' (zero-or-more wildcard) and '_' (single-character wildcard).
+// strings.NewReplacer is single-pass — it scans the input once and
+// emits the longest matching replacement at each position, so the
+// '\\' it produces for an input '\' isn't re-scanned and won't
+// chain into the '%' or '_' rules. Pair lookups stay independent.
+var ilikeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+
+func escapeILIKEWildcards(s string) string {
+	if s == "" {
+		return s
+	}
+	return ilikeEscaper.Replace(s)
+}
+
+// Search returns conversations for the org matching opts, newest first.
+// Returns an empty slice (not an error) when the store is nil or the
+// page is empty.
+//
+// Query is treated as a literal substring — `%`, `_`, and `\` are
+// backslash-escaped before being concatenated into the ILIKE pattern,
+// so a user typing "50%" matches the literal text "50%" rather than
+// "50<anything>". The matching SQL clause uses ESCAPE '\'.
+func (s *Store) Search(ctx context.Context, orgID string, opts SearchOptions) ([]Record, error) {
 	if s == nil || s.db == nil {
 		return nil, nil
 	}
-	rows, err := s.db.Queries.ListConversationsByOrgAndUser(ctx, sqlc.ListConversationsByOrgAndUserParams{
+	rows, err := s.db.Queries.SearchConversations(ctx, sqlc.SearchConversationsParams{
 		OrgID:     orgID,
-		CreatorID: creatorID,
+		CreatorID: opts.CreatorID,
+		Query:     escapeILIKEWildcards(opts.Query),
+		Lim:       int32(opts.Limit),
+		Off:       int32(opts.Offset),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("list conversations by user: %w", err)
+		return nil, fmt.Errorf("search conversations: %w", err)
 	}
 	out := make([]Record, 0, len(rows))
 	for _, r := range rows {
-		rec, err := recordFromListByUserRow(r)
+		rec, err := recordFromSearchRow(r)
 		if err != nil {
 			return nil, fmt.Errorf("decode response_blocks for %s/%s: %w", r.OrgID, r.ThreadID, err)
 		}
@@ -313,18 +328,7 @@ func recordFromGetRow(row sqlc.GetConversationRow) (Record, error) {
 	})
 }
 
-func recordFromListRow(row sqlc.ListConversationsByOrgRow) (Record, error) {
-	return recordFromFields(rowFields{
-		OrgID: row.OrgID, ThreadID: row.ThreadID, SandboxID: row.SandboxID,
-		Branch: row.Branch, PrUrl: row.PrUrl, History: row.History,
-		ResponseBlocks: row.ResponseBlocks,
-		GithubOwner:    row.GithubOwner, GithubRepo: row.GithubRepo,
-		CustomTitle: row.CustomTitle, CreatorID: row.CreatorID,
-		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
-	})
-}
-
-func recordFromListByUserRow(row sqlc.ListConversationsByOrgAndUserRow) (Record, error) {
+func recordFromSearchRow(row sqlc.SearchConversationsRow) (Record, error) {
 	return recordFromFields(rowFields{
 		OrgID: row.OrgID, ThreadID: row.ThreadID, SandboxID: row.SandboxID,
 		Branch: row.Branch, PrUrl: row.PrUrl, History: row.History,

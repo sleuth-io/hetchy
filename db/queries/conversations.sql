@@ -4,19 +4,39 @@ SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updat
 FROM conversations
 WHERE org_id = $1 AND thread_id = $2;
 
--- name: ListConversationsByOrg :many
+-- name: SearchConversations :many
+-- Backs the sidebar list. Filters by optional creator_id and an
+-- optional case-insensitive substring match against either the
+-- custom_title or the first user message (history[1] — Postgres
+-- arrays are 1-indexed; out-of-range yields NULL, and NULL ILIKE
+-- pattern is NULL, which evaluates as falsy in WHERE so an empty
+-- history harmlessly fails to match).
+--
+-- Pass empty strings to skip a filter; LIMIT/OFFSET drive the
+-- "Load more" pager. The ESCAPE '\' clause makes the literal '\'
+-- character the escape — caller is expected to backslash-escape
+-- '%', '_' and '\' in the user-typed query so they read as
+-- literals instead of pattern metacharacters.
+--
+-- Performance note: ILIKE '%foo%' is sequential scan territory
+-- because no B-tree index can cover a leading-wildcard pattern.
+-- Fine for the current per-org chat counts (tens to low hundreds);
+-- when an org grows past a few thousand chats, switch to pg_trgm
+-- + a GIN index on custom_title (and a generated column for
+-- history[1]).
 SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, response_blocks,
        github_owner, github_repo, custom_title, creator_id
 FROM conversations
 WHERE org_id = $1
-ORDER BY updated_at DESC;
-
--- name: ListConversationsByOrgAndUser :many
-SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, response_blocks,
-       github_owner, github_repo, custom_title, creator_id
-FROM conversations
-WHERE org_id = $1 AND creator_id = $2
-ORDER BY updated_at DESC;
+  AND (sqlc.arg(creator_id)::text = '' OR creator_id = sqlc.arg(creator_id))
+  AND (
+    sqlc.arg(query)::text = ''
+    OR custom_title ILIKE '%' || sqlc.arg(query) || '%' ESCAPE '\'
+    OR history[1]    ILIKE '%' || sqlc.arg(query) || '%' ESCAPE '\'
+  )
+ORDER BY updated_at DESC
+LIMIT sqlc.arg(lim)
+OFFSET sqlc.arg(off);
 
 -- name: UpsertConversation :one
 INSERT INTO conversations (

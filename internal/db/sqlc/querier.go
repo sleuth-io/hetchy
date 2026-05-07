@@ -40,8 +40,6 @@ type Querier interface {
 	// whose race window allowed the user's value to be overwritten with
 	// NULL when the user filled it in between the two statements.
 	InsertRepoSecretValueIfAbsent(ctx context.Context, arg InsertRepoSecretValueIfAbsentParams) error
-	ListConversationsByOrg(ctx context.Context, orgID string) ([]ListConversationsByOrgRow, error)
-	ListConversationsByOrgAndUser(ctx context.Context, arg ListConversationsByOrgAndUserParams) ([]ListConversationsByOrgAndUserRow, error)
 	ListGithubInstallationsByOrg(ctx context.Context, orgID string) ([]GithubAppInstallation, error)
 	ListGithubReposByInstallation(ctx context.Context, installationID int64) ([]GithubRepo, error)
 	// Every repo accessible to the given Hetchy org, across all of its
@@ -86,6 +84,26 @@ type Querier interface {
 	// neither is desirable, and the persister has no business creating
 	// rows on its own.
 	SaveConversationProgress(ctx context.Context, arg SaveConversationProgressParams) error
+	// Backs the sidebar list. Filters by optional creator_id and an
+	// optional case-insensitive substring match against either the
+	// custom_title or the first user message (history[1] — Postgres
+	// arrays are 1-indexed; out-of-range yields NULL, and NULL ILIKE
+	// pattern is NULL, which evaluates as falsy in WHERE so an empty
+	// history harmlessly fails to match).
+	//
+	// Pass empty strings to skip a filter; LIMIT/OFFSET drive the
+	// "Load more" pager. The ESCAPE '\' clause makes the literal '\'
+	// character the escape — caller is expected to backslash-escape
+	// '%', '_' and '\' in the user-typed query so they read as
+	// literals instead of pattern metacharacters.
+	//
+	// Performance note: ILIKE '%foo%' is sequential scan territory
+	// because no B-tree index can cover a leading-wildcard pattern.
+	// Fine for the current per-org chat counts (tens to low hundreds);
+	// when an org grows past a few thousand chats, switch to pg_trgm
+	// + a GIN index on custom_title (and a generated column for
+	// history[1]).
+	SearchConversations(ctx context.Context, arg SearchConversationsParams) ([]SearchConversationsRow, error)
 	// Lightweight status update used by the runtime apply path: bumps
 	// success/failure counters and the validation_status without
 	// rewriting the whole spec. Avoids re-encoding all the JSONB blobs on
