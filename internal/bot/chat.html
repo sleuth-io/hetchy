@@ -196,12 +196,6 @@
   button { padding: .6rem 1.2rem; background: #0b93f6; color: #fff; border: none;
            border-radius: 2rem; font-size: 1rem; cursor: pointer; }
   button:disabled { opacity: .5; cursor: default; }
-  #session-bar { padding: .3rem 1rem; background: #f0f0f0; border-top: 1px solid #ddd;
-                 font-size: .75rem; color: #888; font-family: monospace;
-                 display: flex; justify-content: space-between; align-items: center; }
-  #session-bar a { color: #0b93f6; text-decoration: none; font-family: system-ui, sans-serif; }
-  #session-bar a:hover { text-decoration: underline; }
-  #session-bar .links { display: flex; gap: 1rem; }
 
   /* Right-side metadata sidebar — surfaces what we know about the chat
      (repo, branch, PR, sandbox, creator). Hidden when the user toggles
@@ -440,7 +434,6 @@
   html.is-dark #empty-state .options { color: #b8b8bd; }
   html.is-dark #bar { background: #1c1c1f; border-top-color: #2a2a2d; }
   html.is-dark #inp { background: #232327; color: #e7e7e9; border-color: #2e2e33; }
-  html.is-dark #session-bar { background: #1c1c1f; border-top-color: #2a2a2d; color: #6e6e72; }
   html.is-dark #main-top { background: #1c1c1f; border-bottom-color: #2a2a2d; }
   html.is-dark #meta-toggle { color: #c4c4c8; }
   html.is-dark #meta-toggle:hover { background: #2a2a2e; border-color: #3a3a40; }
@@ -582,9 +575,6 @@
   <input id="inp" placeholder="Describe a feature…" autofocus>
   <button id="btn" onclick="send()">Send</button>
 </div>
-<div id="session-bar">
-  <span>session: <span id="session-label"></span></span>
-</div>
 </div>
 
 <aside id="meta-sidebar" aria-label="Chat details">
@@ -626,7 +616,6 @@ if (isFreshChat) {
   url.searchParams.set('session', sessionId);
   history.replaceState(null, '', url);
 }
-document.getElementById('session-label').textContent = sessionId;
 
 inp.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
 
