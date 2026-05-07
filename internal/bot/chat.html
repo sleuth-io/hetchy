@@ -28,6 +28,19 @@
   mq.addEventListener('change', apply);
   window.addEventListener('storage', function(e){ if (e.key === 'theme') apply(); });
 })();
+// Metadata-sidebar visibility bootstrap — same FOUC rationale as the
+// theme bootstrap above. Without this, body paints with the 280px
+// sidebar visible, then the inline IIFE further down runs and snaps
+// it away on reloads where the user previously hid it. Setting the
+// class on <html> before any styles apply paints the right layout
+// on the first frame.
+(function(){
+  try {
+    if (localStorage.getItem('hetchy.metaHidden') === '1') {
+      document.documentElement.classList.add('meta-hidden');
+    }
+  } catch (e) {}
+})();
 </script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -177,7 +190,7 @@
   #meta-sidebar { width: 280px; flex-shrink: 0; background: #fafafa;
                   border-left: 1px solid #e5e5e5; display: flex;
                   flex-direction: column; min-height: 0; overflow-y: auto; }
-  body.meta-hidden #meta-sidebar { display: none; }
+  html.meta-hidden #meta-sidebar { display: none; }
   .meta-section { padding: .85rem 1rem; border-bottom: 1px solid #f0f0f0; }
   .meta-section:last-child { border-bottom: 0; }
   .meta-title { font-size: .7rem; font-weight: 600; text-transform: uppercase;
@@ -192,10 +205,6 @@
   .meta-row.is-empty .meta-value { color: #b8b8b8; }
   .meta-empty { padding: 1rem; font-size: .82rem; color: #888;
                 text-align: center; }
-  .meta-badge { display: inline-block; padding: 0 .4rem; border-radius: .65rem;
-                font-size: .7rem; font-weight: 500; line-height: 1.4;
-                background: #e6f4ea; color: #1e7a3c; vertical-align: middle;
-                margin-left: .35rem; }
   .meta-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
                font-size: .78rem; }
 
@@ -418,7 +427,6 @@
   html.is-dark .meta-row .meta-value a { color: #7dc4ff; }
   html.is-dark .meta-row.is-empty .meta-value { color: #555a60; }
   html.is-dark .meta-empty { color: #8a8a90; }
-  html.is-dark .meta-badge { background: #1f4030; color: #66d49a; }
   html.is-dark .user-menu { border-top-color: #2a2a2d; }
   html.is-dark .user-menu-trigger { color: #e7e7e9; }
   html.is-dark .user-menu-trigger:hover,
@@ -521,7 +529,12 @@
 
 <div id="main">
 <div id="main-top">
-  <button id="meta-toggle" type="button" aria-pressed="true"
+  <!-- aria-pressed is intentionally omitted here — the head-bootstrap
+       toggles `html.meta-hidden` before paint, then applyMetaHidden()
+       on init sets the right aria-pressed value to match. Hard-coding
+       "true" in markup would mismatch on reloads where the panel is
+       hidden until the script catches up. -->
+  <button id="meta-toggle" type="button"
           aria-label="Toggle chat details panel" title="Toggle chat details">
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor"
          stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -1112,6 +1125,29 @@ function fmtDate(iso) {
   return d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 }
 
+// safeHttpURL returns the URL only if it parses and uses http(s).
+// Defense-in-depth — `pr_url` is written by trusted server-side code
+// today, but the field could one day be sourced from an external
+// integration, and `esc()` only HTML-encodes characters; it would
+// happily round-trip `javascript:alert(1)` into a clickable href.
+function safeHttpURL(u) {
+  if (!u) return '';
+  try {
+    const p = new URL(u);
+    return (p.protocol === 'https:' || p.protocol === 'http:') ? u : '';
+  } catch (e) {
+    return '';
+  }
+}
+
+// encodeBranchPath segment-encodes a git ref so a slashed branch name
+// (e.g. `feat/login`) lands on the correct GitHub `/tree/<branch>`
+// route. `encodeURIComponent(branch)` would turn the `/` into `%2F`
+// and GitHub would resolve it to a "branch not found" page.
+function encodeBranchPath(b) {
+  return b.split('/').map(encodeURIComponent).join('/');
+}
+
 // renderMetadata paints the right-hand sidebar from a conversationDetail
 // JSON shape (the same payload loadHistory consumes). Re-entrant —
 // safe to call any time the source data changes (e.g. when a live SSE
@@ -1136,16 +1172,22 @@ function renderMetadata(detail) {
     : '<span>—</span>';
 
   const branchLink = (repoSlug && branch)
-    ? '<a href="https://github.com/' + esc(repoSlug) + '/tree/' + encodeURIComponent(branch)
+    ? '<a href="https://github.com/' + esc(repoSlug) + '/tree/' + encodeBranchPath(branch)
         + '" target="_blank" rel="noopener" class="meta-mono">' + esc(branch) + '</a>'
     : (branch ? '<span class="meta-mono">' + esc(branch) + '</span>' : '<span>—</span>');
 
+  // The PR cell intentionally renders no state badge — the server only
+  // tracks the URL, not whether the PR is open/merged/closed, so a
+  // hard-coded "Open" pill quickly turns into a lie once the human
+  // takes the PR over. Add a real `pr_state` field through
+  // conversationDetail before bringing the badge back.
+  const prHref = safeHttpURL(prURL);
   let prCell = '<span>—</span>';
-  if (prURL) {
-    const num = extractPRNumber(prURL);
-    const label = num ? '#' + num : prURL;
-    prCell = '<a href="' + esc(prURL) + '" target="_blank" rel="noopener">'
-      + esc(label) + '</a><span class="meta-badge">Open</span>';
+  if (prHref) {
+    const num = extractPRNumber(prHref);
+    const label = num ? '#' + num : prHref;
+    prCell = '<a href="' + esc(prHref) + '" target="_blank" rel="noopener">'
+      + esc(label) + '</a>';
   }
 
   const creatorLabel = detail.creator_id
@@ -1524,21 +1566,20 @@ document.getElementById('user-filter').addEventListener('change', function () {
 });
 
 // Metadata sidebar visibility — persisted across reloads so the user's
-// preference sticks. Default = visible (matches the screenshot UX
-// where the panel is the natural home for branch/PR context).
+// preference sticks. The class is set on <html> by the head-bootstrap
+// (no FOUC); this block keeps the button's aria-pressed in sync and
+// wires the click handler. Default = visible.
 const metaHiddenStorageKey = 'hetchy.metaHidden';
 function applyMetaHidden(hidden) {
-  document.body.classList.toggle('meta-hidden', hidden);
+  document.documentElement.classList.toggle('meta-hidden', hidden);
   const btn = document.getElementById('meta-toggle');
   btn.setAttribute('aria-pressed', String(!hidden));
 }
-(function () {
-  let hidden = false;
-  try { hidden = localStorage.getItem(metaHiddenStorageKey) === '1'; } catch (e) {}
-  applyMetaHidden(hidden);
-})();
+// The bootstrap script in <head> already added the class if needed —
+// re-read the same source here so aria-pressed matches.
+applyMetaHidden(document.documentElement.classList.contains('meta-hidden'));
 document.getElementById('meta-toggle').addEventListener('click', () => {
-  const nowHidden = !document.body.classList.contains('meta-hidden');
+  const nowHidden = !document.documentElement.classList.contains('meta-hidden');
   applyMetaHidden(nowHidden);
   try { localStorage.setItem(metaHiddenStorageKey, nowHidden ? '1' : '0'); } catch (e) {}
 });
