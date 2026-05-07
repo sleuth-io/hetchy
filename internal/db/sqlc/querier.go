@@ -85,10 +85,24 @@ type Querier interface {
 	// rows on its own.
 	SaveConversationProgress(ctx context.Context, arg SaveConversationProgressParams) error
 	// Backs the sidebar list. Filters by optional creator_id and an
-	// optional substring match against the conversation's title source —
-	// custom_title when set, else the first user message (history[1] in
-	// 1-indexed Postgres array land). Pass empty strings to skip a
-	// filter; LIMIT/OFFSET drive the "Load more" pager.
+	// optional case-insensitive substring match against either the
+	// custom_title or the first user message (history[1] — Postgres
+	// arrays are 1-indexed; out-of-range yields NULL, and NULL ILIKE
+	// pattern is NULL, which evaluates as falsy in WHERE so an empty
+	// history harmlessly fails to match).
+	//
+	// Pass empty strings to skip a filter; LIMIT/OFFSET drive the
+	// "Load more" pager. The ESCAPE '\' clause makes the literal '\'
+	// character the escape — caller is expected to backslash-escape
+	// '%', '_' and '\' in the user-typed query so they read as
+	// literals instead of pattern metacharacters.
+	//
+	// Performance note: ILIKE '%foo%' is sequential scan territory
+	// because no B-tree index can cover a leading-wildcard pattern.
+	// Fine for the current per-org chat counts (tens to low hundreds);
+	// when an org grows past a few thousand chats, switch to pg_trgm
+	// + a GIN index on custom_title (and a generated column for
+	// history[1]).
 	SearchConversations(ctx context.Context, arg SearchConversationsParams) ([]SearchConversationsRow, error)
 	// Lightweight status update used by the runtime apply path: bumps
 	// success/failure counters and the validation_status without

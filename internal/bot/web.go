@@ -1254,10 +1254,13 @@ type conversationDetail struct {
 // conversationsListLimitDefault caps a single sidebar page to 20.
 // conversationsListLimitMax keeps a malicious caller from asking for
 // the entire table at once. The frontend's "Load more" walks the
-// pages by bumping ?offset.
+// pages by bumping ?offset, and conversationsListOffsetMax stops
+// that walk before Postgres is asked to scan-and-skip a pathological
+// number of rows (each ?offset=N is an O(N) scan ahead of LIMIT).
 const (
 	conversationsListLimitDefault = 20
 	conversationsListLimitMax     = 100
+	conversationsListOffsetMax    = 100_000
 )
 
 func (b *Bot) conversationsHandler(w http.ResponseWriter, r *http.Request) {
@@ -1269,7 +1272,7 @@ func (b *Bot) conversationsHandler(w http.ResponseWriter, r *http.Request) {
 
 	q := r.URL.Query()
 	limit := parseClampedInt(q.Get("limit"), conversationsListLimitDefault, 1, conversationsListLimitMax)
-	offset := parseClampedInt(q.Get("offset"), 0, 0, 0)
+	offset := parseClampedInt(q.Get("offset"), 0, 0, conversationsListOffsetMax)
 
 	recs, err := b.convs.Search(r.Context(), p.OrgID, convstore.SearchOptions{
 		CreatorID: q.Get("user"),
@@ -1297,8 +1300,7 @@ func (b *Bot) conversationsHandler(w http.ResponseWriter, r *http.Request) {
 // parseClampedInt parses s as an integer and clamps the result to
 // [min, max]. Returns def for empty / unparseable input. Used by
 // pagination handlers to avoid hand-rolling the same five-line dance.
-// max=0 disables the upper bound (lets pagination offsets grow
-// without ceiling).
+// Pass math.MaxInt for max when the caller wants no upper bound.
 func parseClampedInt(s string, def, min, max int) int {
 	if s == "" {
 		return def
@@ -1310,7 +1312,7 @@ func parseClampedInt(s string, def, min, max int) int {
 	if n < min {
 		return min
 	}
-	if max > 0 && n > max {
+	if n > max {
 		return max
 	}
 	return n

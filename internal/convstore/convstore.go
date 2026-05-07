@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -97,9 +98,28 @@ type SearchOptions struct {
 	Offset    int
 }
 
+// ilikeEscaper backslash-escapes the three characters Postgres
+// LIKE/ILIKE treats specially: '\' itself (the escape character),
+// '%' (zero-or-more wildcard) and '_' (single-character wildcard).
+// Order matters — '\' must be escaped first or the second pass would
+// double-escape the backslashes inserted by the third.
+var ilikeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+
+func escapeILIKEWildcards(s string) string {
+	if s == "" {
+		return s
+	}
+	return ilikeEscaper.Replace(s)
+}
+
 // Search returns conversations for the org matching opts, newest first.
 // Returns an empty slice (not an error) when the store is nil or the
 // page is empty.
+//
+// Query is treated as a literal substring — `%`, `_`, and `\` are
+// backslash-escaped before being concatenated into the ILIKE pattern,
+// so a user typing "50%" matches the literal text "50%" rather than
+// "50<anything>". The matching SQL clause uses ESCAPE '\'.
 func (s *Store) Search(ctx context.Context, orgID string, opts SearchOptions) ([]Record, error) {
 	if s == nil || s.db == nil {
 		return nil, nil
@@ -107,7 +127,7 @@ func (s *Store) Search(ctx context.Context, orgID string, opts SearchOptions) ([
 	rows, err := s.db.Queries.SearchConversations(ctx, sqlc.SearchConversationsParams{
 		OrgID:     orgID,
 		CreatorID: opts.CreatorID,
-		Query:     opts.Query,
+		Query:     escapeILIKEWildcards(opts.Query),
 		Lim:       int32(opts.Limit),
 		Off:       int32(opts.Offset),
 	})

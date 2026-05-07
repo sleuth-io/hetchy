@@ -69,9 +69,10 @@
                  border-radius: .375rem; font-size: .8rem; font-family: inherit;
                  background: #fff; color: #333; outline: none; }
   #chat-search:focus { border-color: #0b93f6; }
-  /* Search inputs in some browsers (WebKit) inject a built-in clear
-     "x" affordance that overlaps our padding; the rule below keeps
-     it but lets it sit cleanly. */
+  /* WebKit renders a built-in clear "x" inside type=search fields.
+     Default cursor is the I-beam (because the field accepts text);
+     this rule swaps it for a pointer so the affordance reads as a
+     button. No layout change. */
   #chat-search::-webkit-search-cancel-button { cursor: pointer; }
   #chat-list-more { padding: .35rem .75rem .85rem; }
   #chat-list-more[hidden] { display: none; }
@@ -490,6 +491,9 @@
     <div class="empty">Loading…</div>
   </nav>
   <div id="chat-list-more" hidden>
+    <!-- Button label is also stored as LOAD_MORE_LABEL in the script
+         so a transient failure can be cleared back to it. Keep the two
+         in sync if you change the wording here. -->
     <button type="button" id="chat-list-more-btn">Load more</button>
   </div>
   <div class="user-menu">
@@ -923,12 +927,16 @@ function showEmptyState() {
 // saying "there might be another page" without sending a separate
 // total-count query.
 //
-// `sidebarLoading` guards against double-fires from a slow click
-// or a search keystroke landing while a previous fetch is in flight.
+// `sidebarReqSeq` tags every in-flight request so a slow earlier
+// fetch (e.g. for "f") can't clobber a faster later one (for "fo").
+// Each call increments the counter and remembers its own id; the
+// completion handler discards the response when the global counter
+// has moved past it. This replaces a naive in-flight boolean that
+// would silently drop the user's keystrokes during slow networks.
 const SIDEBAR_PAGE_SIZE = 20;
 let sidebarItems = [];
 let sidebarHasMore = false;
-let sidebarLoading = false;
+let sidebarReqSeq = 0;
 // Search query. Populated from #chat-search; debounced so we don't
 // fire a request per keystroke. Empty string means "no search".
 let searchQuery = '';
@@ -1149,12 +1157,16 @@ async function fetchSidebarPage(offset) {
 // turn floats to the top. Resets sidebarItems before re-rendering so
 // stale rows from a wider previous query don't linger underneath the
 // new (potentially shorter) result set.
+//
+// Stale-response handling: a fast typist can fire several searches
+// in quick succession; we never block them, but we discard responses
+// that were superseded by a newer request before they finished.
 async function loadSidebar() {
-  if (sidebarLoading) return;
-  sidebarLoading = true;
+  const myReq = ++sidebarReqSeq;
   const list = document.getElementById('chat-list');
   try {
     const page = await fetchSidebarPage(0);
+    if (myReq !== sidebarReqSeq) return; // superseded
     if (page === null) {
       list.innerHTML = '<div class="empty">Could not load chats.</div>';
       document.getElementById('chat-list-more').hidden = true;
@@ -1164,25 +1176,31 @@ async function loadSidebar() {
     sidebarHasMore = page.length === SIDEBAR_PAGE_SIZE;
     renderSidebar();
   } catch (e) {
+    if (myReq !== sidebarReqSeq) return;
     list.innerHTML = '<div class="empty">Could not load chats.</div>';
     document.getElementById('chat-list-more').hidden = true;
-  } finally {
-    sidebarLoading = false;
   }
 }
 
+// LOAD_MORE_LABEL is the canonical button text. Captured as a
+// constant rather than reading `btn.textContent` at click time so a
+// previous failure (which mutates the label to "Could not load —
+// retry") can't poison the label of a successful retry.
+const LOAD_MORE_LABEL = 'Load more';
+
 // loadMoreSidebar appends the next page worth of rows. Bound to the
-// "Load more" button click. Idempotent — guarded by sidebarLoading
-// so a double-click doesn't fire two requests.
+// "Load more" button click. Uses the same sidebarReqSeq counter as
+// loadSidebar so a fresh search firing mid-pagination cleanly
+// discards any in-flight "next page" response.
 async function loadMoreSidebar() {
-  if (sidebarLoading || !sidebarHasMore) return;
-  sidebarLoading = true;
+  if (!sidebarHasMore) return;
+  const myReq = ++sidebarReqSeq;
   const btn = document.getElementById('chat-list-more-btn');
   btn.disabled = true;
-  const original = btn.textContent;
   btn.textContent = 'Loading…';
   try {
     const page = await fetchSidebarPage(sidebarItems.length);
+    if (myReq !== sidebarReqSeq) return; // superseded by a fresh load
     if (page === null) {
       btn.textContent = 'Could not load — retry';
       return;
@@ -1193,12 +1211,12 @@ async function loadMoreSidebar() {
     sidebarItems = sidebarItems.concat(page);
     sidebarHasMore = page.length === SIDEBAR_PAGE_SIZE;
     renderSidebar();
-    btn.textContent = original;
+    btn.textContent = LOAD_MORE_LABEL;
   } catch (e) {
+    if (myReq !== sidebarReqSeq) return;
     btn.textContent = 'Could not load — retry';
   } finally {
-    sidebarLoading = false;
-    btn.disabled = false;
+    if (myReq === sidebarReqSeq) btn.disabled = false;
   }
 }
 
