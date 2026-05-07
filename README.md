@@ -217,8 +217,8 @@ across rotations, so there's no traffic dip.
 #### Option A: Local Daytona OSS Stack
 
 ```bash
-# Start local Daytona stack
-make daytona-up
+# Start Postgres + the bundled local Daytona stack
+make services-up
 
 # Visit http://localhost:3000
 # Login: dev@daytona.io / password

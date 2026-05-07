@@ -1,4 +1,4 @@
-.PHONY: help build install test ci lint format clean tidy deps verify update-deps init prepush postpull bot logs dev services-up services-down services-logs daytona-up daytona-down daytona-logs snapshot push-snapshot db-up db-down db-status db-new check-migrations sqlc-generate pg-up pg-down pg-logs pg-psql pg-reset slack-app
+.PHONY: help build install test ci lint format clean tidy deps verify update-deps init prepush postpull bot logs dev services-up services-down services-logs snapshot push-snapshot db-up db-down db-status db-new check-migrations sqlc-generate pg-up pg-down pg-logs pg-psql pg-reset slack-app
 
 # Default target
 help: ## Show this help message
@@ -119,7 +119,7 @@ logs: ## Tail the log file written by `make bot` (LOG_FILE=$(LOG_FILE))
 	@touch $(LOG_FILE)
 	@tail -F $(LOG_FILE)
 
-dev: services-up bot ## Bring up Postgres + Daytona, then run the bot in foreground
+dev: bot ## Bring up Postgres + Daytona (via bot's services-up dep), then run the bot
 
 # Supporting services (Postgres + bundled Daytona OSS stack) ----------------
 # These targets run a curated set of services from the project's own

@@ -114,8 +114,9 @@ The bot opens a pool at startup if `DATABASE_URL` is set; otherwise it runs with
 | `make web` | Run web UI only |
 | `make logs` | Tail mirrored logs |
 | `make dev` | Start Daytona + run bot |
-| `make daytona-up` | Start local Daytona stack |
-| `make daytona-down` | Stop local Daytona stack |
+| `make services-up` | Start Postgres + bundled Daytona OSS stack |
+| `make services-down` | Stop the supporting services (data persists) |
+| `make services-logs` | Tail supporting service logs |
 | `make snapshot` | Build custom sandbox image |
 | `make push-snapshot` | Build and push snapshot |
 | `make pg-up` | Start local Postgres container |

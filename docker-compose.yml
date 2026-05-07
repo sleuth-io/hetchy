@@ -244,11 +244,22 @@ services:
       - OTEL_COLLECTOR_API_KEY=otel_collector_api_key
       - HEALTH_CHECK_API_KEY=supersecretkey
     depends_on:
-      - db
-      - runner
-      - redis
-      - dex
-      - registry
+      # Long form so we can gate on healthy status: api boots fast and
+      # then crashes in a retry loop if it talks to a postgres that
+      # hasn't accepted connections yet (or to a dex that hasn't loaded
+      # its keys). `runner` has no healthcheck baked into its image —
+      # leaving it on the default `service_started` is fine because
+      # api/runner registration retries naturally on either side.
+      db:
+        condition: service_healthy
+      dex:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      registry:
+        condition: service_healthy
+      runner:
+        condition: service_started
 
   proxy:
     image: daytonaio/daytona-proxy
@@ -269,6 +280,14 @@ services:
       - REDIS_PORT=6379
       - TOOLBOX_ONLY_MODE=false
       - PREVIEW_WARNING_ENABLED=false
+    depends_on:
+      # proxy validates JWTs against dex and uses redis for session
+      # state — both block its startup if not ready, so wait for them
+      # to be healthy before scheduling proxy.
+      dex:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
   runner:
     image: daytonaio/daytona-runner
@@ -314,10 +333,22 @@ services:
       - POSTGRES_DB=daytona
     volumes:
       - daytona_db_data:/var/lib/postgresql/18/docker
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d daytona"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
 
   redis:
     image: redis:latest
     restart: always
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
 
   registry:
     image: registry:2.8.2
@@ -337,6 +368,17 @@ services:
       # localhost:6000/...`. The runner sees the same registry internally
       # at `registry:6000` (the address baked into the snapshot record).
       - "${DAYTONA_REGISTRY_HOST_PORT:-6000}:6000"
+    healthcheck:
+      # REGISTRY_HTTP_ADDR is set to `registry:6000`, which binds to
+      # the container's network-side IP — nothing listens on
+      # 127.0.0.1:6000, so the healthcheck has to use the docker
+      # service hostname. /v2/ returns 200 when the registry is ready
+      # to serve manifests/blobs.
+      test: ["CMD", "wget", "--spider", "--quiet", "http://registry:6000/v2/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
 
   minio:
     image: minio/minio:latest
@@ -344,7 +386,7 @@ services:
     environment:
       - MINIO_ROOT_USER=minioadmin
       - MINIO_ROOT_PASSWORD=minioadmin
-      - MINIO_IDENTITY_STS_EXPIRY="24h"
+      - MINIO_IDENTITY_STS_EXPIRY=24h
     volumes:
       - daytona_minio_data:/data
     command: server /data --console-address ":9001"
