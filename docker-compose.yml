@@ -88,7 +88,10 @@ services:
       GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY}
       GITHUB_APP_WEBHOOK_SECRET: ${GITHUB_APP_WEBHOOK_SECRET}
 
-      # Daytona configuration
+      # Daytona configuration. When the bundled stack below is in use,
+      # set DAYTONA_API_URL=http://api:3000/api in this env (e.g. from
+      # doppler). Locally where hetchy runs on the host, the same env
+      # uses http://localhost:3000/api.
       DAYTONA_API_URL: ${DAYTONA_API_URL:-}
       DAYTONA_API_KEY: ${DAYTONA_API_KEY}
       DAYTONA_SNAPSHOT: ${DAYTONA_SNAPSHOT:-universal-coding:1}
@@ -115,13 +118,246 @@ services:
       # production, leave empty so session cookies require TLS.
       COOKIE_INSECURE: ${COOKIE_INSECURE:-}
     healthcheck:
-      http:
-        path: "/"
-        port: 8080
+      # Use the standard test form so plain `docker compose` validates the
+      # file (the okteto-specific `http:` shortcut is rejected upstream).
+      # Okteto accepts the standard form too — it converts the exec probe
+      # into a Kubernetes livenessProbe just like the http: form did.
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/ >/dev/null 2>&1 || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
 
+  # ---------------------------------------------------------------------------
+  # Daytona OSS stack — bundled so the same compose file works locally and in
+  # staging (replaces the Daytona Cloud dependency we used to point at).
+  #
+  # Service names are intentionally NOT prefixed with "daytona-" so we don't
+  # have to rewrite the inter-service URLs baked into the upstream config
+  # (api → db, redis, dex, runner, registry, minio, otel-collector). The hetchy
+  # services (postgres, migration, hetchy) sit alongside on the default network.
+  #
+  # Adapted from daytonaio/daytona's docker/docker-compose.yaml. Skipped the
+  # dev-only frills (pgadmin, jaeger, registry-ui, maildev) and the explicit
+  # `daytona-network` (okteto warns on top-level `networks:`; the compose
+  # default network reaches everything by service name anyway).
+  #
+  # NOTE on okteto staging: `privileged: true` (api, runner) is recognized but
+  # unsupported by okteto and may need a cluster-side override to actually run.
+  # Locally with `docker compose` this Just Works.
+  # ---------------------------------------------------------------------------
+
+  api:
+    image: daytonaio/daytona-api
+    restart: always
+    privileged: true
+    ports:
+      # Exposed on the host so `make bot` (hetchy on host) can hit
+      # http://localhost:3000/api.
+      - "${DAYTONA_API_HOST_PORT:-3000}:3000"
+    environment:
+      - OTEL_ENABLED=true
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
+      - DEFAULT_SNAPSHOT=daytonaio/sandbox:0.5.0-slim
+      - ENCRYPTION_KEY=supersecretkey
+      - ENCRYPTION_SALT=supersecretsalt
+      - NODE_ENV=production
+      - PORT=3000
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_USERNAME=user
+      - DB_PASSWORD=pass
+      - DB_DATABASE=daytona
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - OIDC_CLIENT_ID=daytona
+      - OIDC_ISSUER_BASE_URL=http://dex:5556/dex
+      - PUBLIC_OIDC_DOMAIN=http://localhost:5556/dex
+      - OIDC_AUDIENCE=daytona
+      - OIDC_MANAGEMENT_API_ENABLED=
+      - OIDC_MANAGEMENT_API_CLIENT_ID=
+      - OIDC_MANAGEMENT_API_CLIENT_SECRET=
+      - OIDC_MANAGEMENT_API_AUDIENCE=
+      - DASHBOARD_URL=http://localhost:3000/dashboard
+      - DASHBOARD_BASE_API_URL=http://localhost:3000
+      - POSTHOG_API_KEY=phc_bYtEsdMDrNLydXPD4tufkBrHKgfO2zbycM30LOowYNv
+      - POSTHOG_HOST=https://d18ag4dodbta3l.cloudfront.net
+      - POSTHOG_ENVIRONMENT=local
+      - TRANSIENT_REGISTRY_URL=http://registry:6000
+      - TRANSIENT_REGISTRY_ADMIN=admin
+      - TRANSIENT_REGISTRY_PASSWORD=password
+      - TRANSIENT_REGISTRY_PROJECT_ID=daytona
+      - INTERNAL_REGISTRY_URL=http://registry:6000
+      - INTERNAL_REGISTRY_ADMIN=admin
+      - INTERNAL_REGISTRY_PASSWORD=password
+      - INTERNAL_REGISTRY_PROJECT_ID=daytona
+      - SMTP_HOST=
+      - SMTP_PORT=
+      - SMTP_USER=
+      - SMTP_PASSWORD=
+      - SMTP_SECURE=
+      - SMTP_EMAIL_FROM=Daytona Team <no-reply@daytona.io>
+      - S3_ENDPOINT=http://minio:9000
+      - S3_STS_ENDPOINT=http://minio:9000/minio/v1/assume-role
+      - S3_REGION=us-east-1
+      - S3_ACCESS_KEY=minioadmin
+      - S3_SECRET_KEY=minioadmin
+      - S3_DEFAULT_BUCKET=daytona
+      - S3_ACCOUNT_ID=/
+      - S3_ROLE_NAME=/
+      - ENVIRONMENT=docker-compose
+      - MAX_AUTO_ARCHIVE_INTERVAL=43200
+      - MAINTENANCE_MODE=false
+      - PROXY_DOMAIN=proxy.localhost:4000
+      - PROXY_PROTOCOL=http
+      - PROXY_API_KEY=super_secret_key
+      - PROXY_TEMPLATE_URL=http://{{PORT}}-{{sandboxId}}.proxy.localhost:4000
+      - DEFAULT_RUNNER_DOMAIN=runner:3003
+      - DEFAULT_RUNNER_API_URL=http://runner:3003
+      - DEFAULT_RUNNER_PROXY_URL=http://runner:3003
+      - DEFAULT_RUNNER_API_KEY=secret_api_token
+      - DEFAULT_RUNNER_CPU=4
+      - DEFAULT_RUNNER_MEMORY=8
+      - DEFAULT_RUNNER_DISK=50
+      - DEFAULT_RUNNER_NAME=default
+      - DEFAULT_REGION_ID=us
+      - DEFAULT_REGION_NAME=us
+      - DEFAULT_REGION_ENFORCE_QUOTAS=false
+      - DEFAULT_ORG_QUOTA_TOTAL_CPU_QUOTA=10000
+      - DEFAULT_ORG_QUOTA_TOTAL_MEMORY_QUOTA=10000
+      - DEFAULT_ORG_QUOTA_TOTAL_DISK_QUOTA=100000
+      - DEFAULT_ORG_QUOTA_MAX_CPU_PER_SANDBOX=100
+      - DEFAULT_ORG_QUOTA_MAX_MEMORY_PER_SANDBOX=100
+      - DEFAULT_ORG_QUOTA_MAX_DISK_PER_SANDBOX=1000
+      - DEFAULT_ORG_QUOTA_SNAPSHOT_QUOTA=1000
+      - DEFAULT_ORG_QUOTA_MAX_SNAPSHOT_SIZE=1000
+      - DEFAULT_ORG_QUOTA_VOLUME_QUOTA=10000
+      - SSH_GATEWAY_API_KEY=ssh_secret_api_token
+      - SSH_GATEWAY_COMMAND=ssh -p 2222 {{TOKEN}}@localhost
+      - SSH_GATEWAY_PUBLIC_KEY=c3NoLXJzYSBBQUFBQjNOemFDMXljMkVBQUFBREFRQUJBQUFCZ1FEZUtocFdOYVhVNkpSMnJXekc1NlZJeksrcmsrdForcCtVUmwyeWF5cWRnZGg2bnVOL1NtVnJsYmV4MGlrRVZZemdRWUIwWno5M2dqOVhxSkd4WjJiMHVoSDFzNkp2bnhKZVdIK05rbjBNMzRiRjZkeVloZ3o4M0JaTitWcElJdnVDT1pxYWE4VnlRWjhPdjVLMU00enlmQnFCMld3ejcwZEVWUnFaMnVZckd5U0RqUUIrU3hRQ3phY0djb2JRQTFUd2QxdEJvSk5BaVpPWXFSU3d6TmNoTk5hZHlxSHRGdkZRQ0hhNjZWaVBmQ0FVUGt2cEN6ZGh3TmJGdVhGVWkxbnZOWkx4M056RU41M05LWUhZcWU3Y3dXZkI4QjBoRDhDd3hmSDd6T0o1b1RCMnBMVVlsUWpZRDNsN3k4SkFTbDZpYkpuR1A1SWczVXpZWlRIdUdkNzVXWktnNTRJTVROQlFPMWpJdE9HL0orUm1XbzB0YTdpRkF6ZExyL1BmbDdXTVMwbEZhSm9scTdUVmJLUG1JODFTOU04VEgrbXhLbGZ5b2NqZzhwSUdlQUllcEo3dXl1Vk1xT2wxeVVuSFNycDRlVEVlR0k3NlpCOFRoUzhkYnBLUTIvb2RYMHkwc3FSZDI0Y2lGdnM0dnZVaW80NFdYNlNWRG54dXpWRHc1Rzg9IGRheXRvbmFAMDQwNjZiZDIwY2Vi
+      - SSH_GATEWAY_URL=localhost:2222
+      - RUNNER_DECLARATIVE_BUILD_SCORE_THRESHOLD=10
+      - RUNNER_AVAILABILITY_SCORE_THRESHOLD=10
+      - RUNNER_START_SCORE_THRESHOLD=3
+      - SKIP_USER_EMAIL_VERIFICATION=true
+      - RUN_MIGRATIONS=true
+      - OTEL_COLLECTOR_API_KEY=otel_collector_api_key
+      - HEALTH_CHECK_API_KEY=supersecretkey
+    depends_on:
+      - db
+      - runner
+      - redis
+      - dex
+      - registry
+
+  proxy:
+    image: daytonaio/daytona-proxy
+    restart: always
+    ports:
+      - "${DAYTONA_PROXY_HOST_PORT:-4000}:4000"
+    environment:
+      - DAYTONA_API_URL=http://api:3000/api
+      - PROXY_PORT=4000
+      - PROXY_API_KEY=super_secret_key
+      - PROXY_PROTOCOL=http
+      - OIDC_CLIENT_ID=daytona
+      - OIDC_CLIENT_SECRET=
+      - OIDC_DOMAIN=http://dex:5556/dex
+      - OIDC_PUBLIC_DOMAIN=http://localhost:5556/dex
+      - OIDC_AUDIENCE=daytona
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - TOOLBOX_ONLY_MODE=false
+      - PREVIEW_WARNING_ENABLED=false
+
+  runner:
+    image: daytonaio/daytona-runner
+    restart: always
+    privileged: true
+    environment:
+      - ENVIRONMENT=development
+      - API_PORT=3003
+      - DAYTONA_RUNNER_TOKEN=secret_api_token
+      - LOG_FILE_PATH=/home/daytona/runner/runner.log
+      - RESOURCE_LIMITS_DISABLED=true
+      - AWS_ENDPOINT_URL=http://minio:9000
+      - AWS_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=minioadmin
+      - AWS_DEFAULT_BUCKET=daytona
+      - DAYTONA_API_URL=http://api:3000/api
+      - RUNNER_DOMAIN=runner
+      - SSH_GATEWAY_ENABLE=false
+      - INTER_SANDBOX_NETWORK_ENABLED=false
+
+  dex:
+    image: dexidp/dex:v2.42.0
+    restart: always
+    volumes:
+      - ./docker/dex/config.yaml:/etc/dex/config.yaml
+      - dex_db:/var/dex
+    entrypoint: ['sh', '-c', 'touch /var/dex/dex.db && exec dex serve /etc/dex/config.yaml']
+    ports:
+      - "${DAYTONA_DEX_HOST_PORT:-5556}:5556"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "--quiet", "http://localhost:5556/dex/.well-known/openid-configuration"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  db:
+    image: postgres:18
+    restart: always
+    environment:
+      - POSTGRES_PASSWORD=pass
+      - POSTGRES_USER=user
+      - POSTGRES_DB=daytona
+    volumes:
+      - daytona_db_data:/var/lib/postgresql/18/docker
+
+  redis:
+    image: redis:latest
+    restart: always
+
+  registry:
+    image: registry:2.8.2
+    restart: always
+    environment:
+      REGISTRY_HTTP_HEADERS_Access-Control-Allow-Origin: '[http://registry-ui.example.com]'
+      REGISTRY_HTTP_HEADERS_Access-Control-Allow-Methods: '[HEAD,GET,OPTIONS,DELETE]'
+      REGISTRY_HTTP_HEADERS_Access-Control-Allow-Credentials: '[true]'
+      REGISTRY_HTTP_HEADERS_Access-Control-Allow-Headers: '[Authorization,Accept,Cache-Control]'
+      REGISTRY_HTTP_HEADERS_Access-Control-Expose-Headers: '[Docker-Content-Digest]'
+      REGISTRY_STORAGE_DELETE_ENABLED: 'true'
+      REGISTRY_HTTP_ADDR: registry:6000
+    volumes:
+      - daytona_registry:/var/lib/registry
+    ports:
+      # Exposed on the host so `make push-snapshot` can `docker push
+      # localhost:6000/...`. The runner sees the same registry internally
+      # at `registry:6000` (the address baked into the snapshot record).
+      - "${DAYTONA_REGISTRY_HOST_PORT:-6000}:6000"
+
+  minio:
+    image: minio/minio:latest
+    restart: always
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+      - MINIO_IDENTITY_STS_EXPIRY="24h"
+    volumes:
+      - daytona_minio_data:/data
+    command: server /data --console-address ":9001"
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.138.0
+    restart: always
+    volumes:
+      - ./docker/otel/otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml
+
 volumes:
   hetchy-postgres-data:
+  daytona_db_data:
+  daytona_registry:
+  daytona_minio_data:
+  dex_db:

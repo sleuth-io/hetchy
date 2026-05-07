@@ -17,8 +17,8 @@ type Config struct {
 	// Env is "dev", "staging", or "prod" (HETCHY_ENV). Defaults to
 	// "prod" so a missing var is the safe choice — the dev-only
 	// affordances (e.g. the manual Slack-token paste form) only render
-	// when this is explicitly "dev". `make bot` and `make bot-with-logs`
-	// set it to "dev" automatically.
+	// when this is explicitly "dev". `make bot` sets it to "dev"
+	// automatically.
 	Env string
 
 	DaytonaAPIURL string

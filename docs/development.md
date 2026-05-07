@@ -26,10 +26,10 @@ make prepush       # Format, lint, test, build
 ## Debugging
 
 ```bash
-# Run with live-reload AND log tailing (logs to /tmp/hetchy.log)
-make bot-with-logs
+# Run with live-reload (always mirrors output to /tmp/hetchy.log)
+make bot
 
-# In another terminal, tail logs
+# In another terminal, tail the same log file
 make logs
 ```
 
@@ -110,9 +110,8 @@ The bot opens a pool at startup if `DATABASE_URL` is set; otherwise it runs with
 | `make test` | Run tests |
 | `make lint` | Run linters |
 | `make format` | Format code |
-| `make bot` | Build and run with doppler |
+| `make bot` | Run with live-reload + log mirroring (logs to `/tmp/hetchy.log`) |
 | `make web` | Run web UI only |
-| `make bot-with-logs` | Run with live-reload + log mirroring |
 | `make logs` | Tail mirrored logs |
 | `make dev` | Start Daytona + run bot |
 | `make daytona-up` | Start local Daytona stack |
