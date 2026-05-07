@@ -3,6 +3,8 @@ package bootstrap
 import (
 	"fmt"
 	"strings"
+
+	"github.com/hetchyhq/hetchy/internal/screenshots"
 )
 
 // ValidationArgs is everything BuildValidationPrompt needs beyond the
@@ -106,40 +108,7 @@ Save evidence under /tmp/hetchy-validate/:
 `, truncate(args.Diff, 8000), truncate(args.PRBody, 1500))
 
 	if args.ScreenshotSlotCount > 0 {
-		fmt.Fprintf(&b, `
-SCREENSHOT UPLOAD — read this carefully.
-
-The host has minted %d pre-signed S3 URL pairs for you. They live in
-the env var $HETCHY_SCREENSHOT_SLOTS as a JSON array:
-
-  [{"put_url":"https://s3...","get_url":"https://s3..."}, ...]
-
-For each screenshot you want in the PR body:
-
-  1. Take the screenshot via Playwright MCP and save it locally,
-     e.g. /tmp/shot-light.png.
-  2. Pick the next unused slot index N (start at 0, never reuse).
-  3. Upload with curl, taking exactly the put_url for that slot:
-
-       PUT_URL=$(echo "$HETCHY_SCREENSHOT_SLOTS" | jq -r ".[$N].put_url")
-       curl -fSs -X PUT --data-binary @/tmp/shot-light.png \
-            -H "Content-Type: image/png" "$PUT_URL"
-
-  4. Embed the matching get_url in the PR markdown body:
-
-       GET_URL=$(echo "$HETCHY_SCREENSHOT_SLOTS" | jq -r ".[$N].get_url")
-       # in your PR body: ![Light mode]($GET_URL)
-
-The PUT URLs accept exactly one upload each and expire 30 minutes
-from the start of this task. Don't try to re-upload a slot. The GET
-URLs render in the PR body for 7 days; that's enough to cover review
-turnaround.
-
-DO NOT reference local filenames like screenshot-001.png in the PR
-markdown — there is no host-side rewriter and those links will be
-broken. Embed the get_url directly, or skip the image entirely if
-you can't upload.
-`, args.ScreenshotSlotCount)
+		b.WriteString(screenshots.UploadInstructions(args.ScreenshotSlotCount))
 	} else {
 		b.WriteString(`
 The host has not configured screenshot upload for this run, so DO NOT

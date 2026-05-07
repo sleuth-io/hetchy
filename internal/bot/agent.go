@@ -453,11 +453,41 @@ func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx
 		workdir, rec.Branch, rec.PRURL,
 		history, userRequest,
 	)
+
+	// Mint a fresh batch of screenshot slots for the follow-up. The
+	// initial run's slots have a 30-minute PUT expiry and the keys
+	// (screenshot-NNN.png) would collide anyway, so we always issue a
+	// new batch under a `/followup-<requestID>` suffix. Without this
+	// step a follow-up that needs to attach a screenshot has no upload
+	// path, and the agent falls back to embedding broken local-file
+	// markdown that GitHub renders as a non-rendering hyperlink.
+	var slotsManifest []screenshots.Slot
+	if b.screenshots != nil {
+		prefix := fmt.Sprintf("%s/%d/%s/followup-%s", oc.OrgID, repo.RepoID, rec.ThreadID, requestID)
+		s, err := b.screenshots.MintSlots(ctx, prefix, screenshotSlotsPerRequest)
+		if err != nil {
+			b.log.Warn("screenshot slot minting failed (followup)",
+				"request_id", requestID, "error", err)
+		} else {
+			slotsManifest = s
+			prompt += "\n" + screenshots.UploadInstructions(len(slotsManifest))
+		}
+	}
+
 	env := map[string]string{
 		"SF_WORKDIR":    workdir,
 		"SF_BRANCH":     rec.Branch,
 		"SF_PROMPT_B64": base64.StdEncoding.EncodeToString([]byte(prompt)),
 		"GITHUB_TOKEN":  repo.GitHubToken,
+	}
+	if len(slotsManifest) > 0 {
+		raw, err := json.Marshal(slotsManifest)
+		if err != nil {
+			b.log.Warn("screenshot slot marshal failed (followup)",
+				"request_id", requestID, "error", err)
+		} else {
+			env["HETCHY_SCREENSHOT_SLOTS"] = string(raw)
+		}
 	}
 	authKey, authVal := claudeAuthEnv(oc)
 	env[authKey] = authVal
