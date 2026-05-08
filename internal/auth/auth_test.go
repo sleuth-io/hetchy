@@ -6,6 +6,8 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+
+	workos "github.com/workos/workos-go/v7"
 )
 
 func newTestService(t *testing.T) *Service {
@@ -53,6 +55,28 @@ func TestCallbackHandler_InvitationTokenStartsOAuth(t *testing.T) {
 	}
 	if got := u.Query().Get("client_id"); got != "client_test_x" {
 		t.Errorf("client_id = %q", got)
+	}
+}
+
+// When both `code` and `invitation_token` are present we want to exchange
+// the code for a session, not bounce back to AuthKit with the invitation
+// token. The conditional structure today gives `code` priority — pinning
+// that with a test so a future refactor can't silently flip it.
+func TestCallbackHandler_CodeTakesPriorityOverInvitationToken(t *testing.T) {
+	s := newTestService(t)
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"message":"stub"}`))
+	}))
+	t.Cleanup(stub.Close)
+	s.client = workos.NewClient("sk_test_x", workos.WithClientID("client_test_x"), workos.WithBaseURL(stub.URL))
+
+	req := httptest.NewRequest(http.MethodGet, "/callback?code=abc&invitation_token=xyz", nil)
+	rr := httptest.NewRecorder()
+	s.CallbackHandler(rr, req)
+
+	if rr.Code == http.StatusFound {
+		t.Fatalf("expected code-exchange path, got 302 to %q (invitation_token branch ran)", rr.Header().Get("Location"))
 	}
 }
 

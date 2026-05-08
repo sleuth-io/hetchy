@@ -139,11 +139,10 @@ func (s *Service) CallbackHandler(w http.ResponseWriter, r *http.Request) {
 	if code == "" {
 		if invitationToken := q.Get("invitation_token"); invitationToken != "" {
 			provider := workos.UserManagementAuthenticationProviderAuthkit
-			tok := invitationToken
 			url := s.client.UserManagement().GetAuthorizationURL(&workos.UserManagementGetAuthorizationURLParams{
 				RedirectURI:     s.cfg.RedirectURI,
 				Provider:        &provider,
-				InvitationToken: &tok,
+				InvitationToken: &invitationToken,
 			})
 			http.Redirect(w, r, url, http.StatusFound)
 			return
