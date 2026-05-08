@@ -127,7 +127,7 @@ dev: bot ## Bring up Postgres + Daytona (via bot's services-up dep), then run th
 # can run natively via air against the in-docker dependencies.
 services-up: ## Start Postgres + bundled Daytona OSS stack (docker compose)
 	@echo ">> starting supporting services: $(SERVICES)"
-	@$(COMPOSE) up -d --wait $(SERVICES) || $(COMPOSE) up -d $(SERVICES)
+	@$(COMPOSE) up -d --wait $(SERVICES)
 	@echo ""
 	@echo "Daytona dashboard: http://localhost:3000  (login dev@daytona.io / password on first boot)"
 	@echo "If this is the first run: log in, mint an API key, set DAYTONA_API_KEY in Doppler,"

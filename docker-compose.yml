@@ -160,6 +160,18 @@ services:
   api:
     image: daytonaio/daytona-api
     restart: always
+    healthcheck:
+      # Mirror the HEALTHCHECK baked into the image so the compose
+      # file is self-documenting — services that gate on
+      # `api: service_healthy` (hetchy, proxy implicitly) keep working
+      # even if a future image push drops or changes the image-level
+      # directive. start_period is generous because the api runs DB
+      # migrations on first boot before /api/config begins serving.
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/config"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
     ports:
       # Exposed on the host so `make bot` (hetchy on host) can hit
       # http://localhost:3000/api.
@@ -360,7 +372,9 @@ services:
       start_period: 10s
 
   redis:
-    image: redis:latest
+    # Pinned to the 7.x alpine stream rather than `:latest` so a future
+    # major bump (e.g. 8.x licensing changes) doesn't surprise this stack.
+    image: redis:7-alpine
     restart: always
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -400,7 +414,12 @@ services:
       start_period: 5s
 
   minio:
-    image: minio/minio:latest
+    # Pinned by digest rather than `:latest` so the stack is reproducible.
+    # Minio publishes RELEASE.YYYY-MM-DDTHH-MM-SSZ tags; this digest
+    # corresponds to the build pulled while developing this PR (mid-2025).
+    # To update: `docker pull minio/minio:latest && docker inspect
+    # minio/minio:latest --format '{{.RepoDigests}}'` and copy the new sha.
+    image: minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
     restart: always
     environment:
       - MINIO_ROOT_USER=minioadmin
