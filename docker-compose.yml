@@ -158,20 +158,27 @@ services:
   # ---------------------------------------------------------------------------
 
   api:
-    image: daytonaio/daytona-api
+    # Pinned by digest rather than `:latest` so the staging stack is
+    # reproducible. Daytona OSS doesn't publish stable version tags;
+    # to refresh: `docker pull daytonaio/daytona-api && docker inspect
+    # daytonaio/daytona-api --format '{{index .RepoDigests 0}}'` and
+    # paste the new sha here.
+    image: daytonaio/daytona-api@sha256:933acf3d073d7e6c146e674d183a47c202197d3c094a41d4588600cfa05ad187
     restart: always
     healthcheck:
       # Mirror the HEALTHCHECK baked into the image so the compose
       # file is self-documenting — services that gate on
       # `api: service_healthy` (hetchy, proxy implicitly) keep working
       # even if a future image push drops or changes the image-level
-      # directive. start_period is generous because the api runs DB
-      # migrations on first boot before /api/config begins serving.
+      # directive. start_period is wide because the api runs DB
+      # migrations on first boot before /api/config begins serving;
+      # under load (cold okteto deploy) the migration phase has
+      # historically taken longer than 60s, so 120s is the safer floor.
       test: ["CMD", "curl", "-f", "http://localhost:3000/api/config"]
       interval: 10s
       timeout: 5s
       retries: 10
-      start_period: 60s
+      start_period: 120s
     ports:
       # Exposed on the host so `make bot` (hetchy on host) can hit
       # http://localhost:3000/api.
@@ -291,7 +298,8 @@ services:
         condition: service_started
 
   proxy:
-    image: daytonaio/daytona-proxy
+    # Pinned by digest — see api above for the refresh recipe.
+    image: daytonaio/daytona-proxy@sha256:20ff5e9041c8fb12a15c8861acb2e995a4587219e9224d15068d5878a4b0ee29
     restart: always
     ports:
       - "${DAYTONA_PROXY_HOST_PORT:-4000}:4000"
@@ -321,7 +329,8 @@ services:
         condition: service_healthy
 
   runner:
-    image: daytonaio/daytona-runner
+    # Pinned by digest — see api above for the refresh recipe.
+    image: daytonaio/daytona-runner@sha256:caab79fe61de3d5b58cbfae8385e90322f05f9d41151c9a7d46fe12782c573e9
     restart: always
     privileged: true
     environment:
