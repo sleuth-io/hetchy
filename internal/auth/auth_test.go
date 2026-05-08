@@ -78,6 +78,9 @@ func TestCallbackHandler_CodeTakesPriorityOverInvitationToken(t *testing.T) {
 	if rr.Code == http.StatusFound {
 		t.Fatalf("expected code-exchange path, got 302 to %q (invitation_token branch ran)", rr.Header().Get("Location"))
 	}
+	if !strings.Contains(rr.Body.String(), "authenticate:") {
+		t.Errorf("expected AuthenticateWithCode to run; body = %q", rr.Body.String())
+	}
 }
 
 func TestCallbackHandler_MissingCodeAndInvitationToken(t *testing.T) {
