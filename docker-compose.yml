@@ -272,9 +272,15 @@ services:
       - SSH_GATEWAY_COMMAND=${DAYTONA_SSH_GATEWAY_COMMAND:-ssh -p 2222 {{TOKEN}}@localhost}
       - SSH_GATEWAY_PUBLIC_KEY=c3NoLXJzYSBBQUFBQjNOemFDMXljMkVBQUFBREFRQUJBQUFCZ1FEZUtocFdOYVhVNkpSMnJXekc1NlZJeksrcmsrdForcCtVUmwyeWF5cWRnZGg2bnVOL1NtVnJsYmV4MGlrRVZZemdRWUIwWno5M2dqOVhxSkd4WjJiMHVoSDFzNkp2bnhKZVdIK05rbjBNMzRiRjZkeVloZ3o4M0JaTitWcElJdnVDT1pxYWE4VnlRWjhPdjVLMU00enlmQnFCMld3ejcwZEVWUnFaMnVZckd5U0RqUUIrU3hRQ3phY0djb2JRQTFUd2QxdEJvSk5BaVpPWXFSU3d6TmNoTk5hZHlxSHRGdkZRQ0hhNjZWaVBmQ0FVUGt2cEN6ZGh3TmJGdVhGVWkxbnZOWkx4M056RU41M05LWUhZcWU3Y3dXZkI4QjBoRDhDd3hmSDd6T0o1b1RCMnBMVVlsUWpZRDNsN3k4SkFTbDZpYkpuR1A1SWczVXpZWlRIdUdkNzVXWktnNTRJTVROQlFPMWpJdE9HL0orUm1XbzB0YTdpRkF6ZExyL1BmbDdXTVMwbEZhSm9scTdUVmJLUG1JODFTOU04VEgrbXhLbGZ5b2NqZzhwSUdlQUllcEo3dXl1Vk1xT2wxeVVuSFNycDRlVEVlR0k3NlpCOFRoUzhkYnBLUTIvb2RYMHkwc3FSZDI0Y2lGdnM0dnZVaW80NFdYNlNWRG54dXpWRHc1Rzg9IGRheXRvbmFAMDQwNjZiZDIwY2Vi
       - SSH_GATEWAY_URL=${DAYTONA_SSH_GATEWAY_URL:-localhost:2222}
-      - RUNNER_DECLARATIVE_BUILD_SCORE_THRESHOLD=10
-      - RUNNER_AVAILABILITY_SCORE_THRESHOLD=10
-      - RUNNER_START_SCORE_THRESHOLD=3
+      # Daytona's TOPSIS scoring (0-100) is tuned for cloud deployments
+      # with many runners; for our single-runner local/staging stack a
+      # healthy runner can land at score=9 (well below the upstream-default
+      # threshold of 10) and the api returns "No available runners". Lower
+      # all three thresholds to 1 so any healthy, schedulable runner is
+      # always picked.
+      - RUNNER_DECLARATIVE_BUILD_SCORE_THRESHOLD=1
+      - RUNNER_AVAILABILITY_SCORE_THRESHOLD=1
+      - RUNNER_START_SCORE_THRESHOLD=1
       - SKIP_USER_EMAIL_VERIFICATION=true
       - RUN_MIGRATIONS=true
       - OTEL_COLLECTOR_API_KEY=otel_collector_api_key
@@ -402,7 +408,13 @@ services:
       REGISTRY_HTTP_HEADERS_Access-Control-Allow-Headers: '[Authorization,Accept,Cache-Control]'
       REGISTRY_HTTP_HEADERS_Access-Control-Expose-Headers: '[Docker-Content-Digest]'
       REGISTRY_STORAGE_DELETE_ENABLED: 'true'
-      REGISTRY_HTTP_ADDR: registry:6000
+      # Bind on every interface so the same compose works under both
+      # docker (the docker-DNS hostname `registry` resolves to the
+      # container's own IP) and kubernetes/okteto (the Service hostname
+      # resolves to a ClusterIP the pod can't bind to — only its pod IP
+      # and 127.0.0.1). The runner still reaches the registry by service
+      # name (http://registry:6000), via Docker DNS or kube DNS.
+      REGISTRY_HTTP_ADDR: :6000
     volumes:
       - daytona_registry:/var/lib/registry
     ports:
@@ -411,12 +423,11 @@ services:
       # at `registry:6000` (the address baked into the snapshot record).
       - "${DAYTONA_REGISTRY_HOST_PORT:-6000}:6000"
     healthcheck:
-      # REGISTRY_HTTP_ADDR is set to `registry:6000`, which binds to
-      # the container's network-side IP — nothing listens on
-      # 127.0.0.1:6000, so the healthcheck has to use the docker
-      # service hostname. /v2/ returns 200 when the registry is ready
-      # to serve manifests/blobs.
-      test: ["CMD", "wget", "--spider", "--quiet", "http://registry:6000/v2/"]
+      # /v2/ returns 200 when the registry is ready to serve
+      # manifests/blobs. With REGISTRY_HTTP_ADDR=:6000 the registry
+      # binds 0.0.0.0:6000 (which includes 127.0.0.1) so localhost
+      # works both in docker and in a kubernetes pod.
+      test: ["CMD", "wget", "--spider", "--quiet", "http://localhost:6000/v2/"]
       interval: 10s
       timeout: 5s
       retries: 5
