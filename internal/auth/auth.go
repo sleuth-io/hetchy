@@ -122,13 +122,31 @@ func (s *Service) redirectToAuthKit(w http.ResponseWriter, r *http.Request, hint
 // CallbackHandler exchanges the WorkOS auth code for a session and writes
 // the sealed-session cookie. After a successful exchange, users with no
 // active organization land on /onboarding; everyone else lands on /.
+//
+// AuthKit's invitation flow lands users here without a `code`: the email
+// link goes straight to AuthKit's hosted /invite page, which authenticates
+// the user and then redirects to our redirect URI with `invitation_token`
+// only. We turn that into a fresh OAuth round-trip that carries the
+// invitation token through, so AuthKit returns a real `code` we can
+// exchange for a session bound to the invited org.
 func (s *Service) CallbackHandler(w http.ResponseWriter, r *http.Request) {
 	if s.cfg.Bypass {
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
 	}
-	code := r.URL.Query().Get("code")
+	q := r.URL.Query()
+	code := q.Get("code")
 	if code == "" {
+		if invitationToken := q.Get("invitation_token"); invitationToken != "" {
+			provider := workos.UserManagementAuthenticationProviderAuthkit
+			url := s.client.UserManagement().GetAuthorizationURL(&workos.UserManagementGetAuthorizationURLParams{
+				RedirectURI:     s.cfg.RedirectURI,
+				Provider:        &provider,
+				InvitationToken: &invitationToken,
+			})
+			http.Redirect(w, r, url, http.StatusFound)
+			return
+		}
 		http.Error(w, "missing code", http.StatusBadRequest)
 		return
 	}
