@@ -1270,6 +1270,15 @@ function encodeBranchPath(b) {
   return b.split('/').map(encodeURIComponent).join('/');
 }
 
+// setDocTitle keeps the browser tab title in sync with the current
+// chat. With multiple chats open in tabs, "Hetchy" everywhere makes
+// the tab strip useless — surfacing the chat title disambiguates them
+// without forcing the user to hover for the URL preview.
+function setDocTitle(title) {
+  const t = (title || '').trim();
+  document.title = t ? t + ' — Hetchy' : 'Hetchy';
+}
+
 // renderMetadata paints the right-hand sidebar from a conversationDetail
 // JSON shape (the same payload loadHistory consumes). Re-entrant —
 // safe to call any time the source data changes (e.g. when a live SSE
@@ -1278,8 +1287,10 @@ function renderMetadata(detail) {
   const host = document.getElementById('meta-content');
   if (!detail) {
     host.innerHTML = '<div class="meta-empty">No chat details yet.</div>';
+    setDocTitle('');
     return;
   }
+  setDocTitle(detail.title);
   const owner = detail.github_owner || '';
   const repo = detail.github_repo || '';
   const branch = detail.branch || '';
