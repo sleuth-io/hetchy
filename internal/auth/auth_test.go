@@ -1,14 +1,32 @@
 package auth
 
 import (
+	"crypto/hkdf"
+	"crypto/sha256"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 )
 
+// newTestService builds a non-bypass Service with the OAuth-state machinery
+// wired up but no WorkOS client. Adequate for any test that drives the state
+// path directly without exercising AuthenticateWithCode.
+func newTestService(t *testing.T, password string) *Service {
+	t.Helper()
+	key, err := hkdf.Key(sha256.New, []byte(password), nil, oauthStateHKDFInfo, 32)
+	if err != nil {
+		t.Fatalf("derive state key: %v", err)
+	}
+	return &Service{
+		cfg:       Config{CookiePassword: password},
+		statePath: "/callback",
+		stateKey:  key,
+	}
+}
+
 func TestOAuthStateRoundTrip(t *testing.T) {
-	s := &Service{cfg: Config{CookiePassword: "test-cookie-password-keep-it-long"}}
+	s := newTestService(t, "test-cookie-password-keep-it-long")
 
 	state, err := generateOAuthState()
 	if err != nil {
@@ -33,7 +51,7 @@ func TestOAuthStateRoundTrip(t *testing.T) {
 	}
 
 	// Different cookie password (e.g. attacker without the secret) → reject.
-	other := &Service{cfg: Config{CookiePassword: "different-password"}}
+	other := newTestService(t, "different-password")
 	if other.verifyOAuthState(signed, state) {
 		t.Fatal("signed value must not verify under a different key")
 	}
@@ -49,8 +67,23 @@ func TestOAuthStateRoundTrip(t *testing.T) {
 	}
 }
 
+func TestOAuthStateKeyIsDomainSeparated(t *testing.T) {
+	// The OAuth-state key must be *different* from the raw CookiePassword
+	// (which is what the WorkOS SDK uses to seal the session). Otherwise
+	// the two security boundaries collapse into one.
+	password := "shared-password-used-everywhere"
+	s := newTestService(t, password)
+
+	if string(s.stateKey) == password {
+		t.Fatal("state key must not be the raw CookiePassword")
+	}
+	if len(s.stateKey) != 32 {
+		t.Fatalf("expected 32-byte HKDF output, got %d bytes", len(s.stateKey))
+	}
+}
+
 func TestCallbackRejectsMissingState(t *testing.T) {
-	s := &Service{cfg: Config{CookiePassword: "test-cookie-password-keep-it-long"}}
+	s := newTestService(t, "test-cookie-password-keep-it-long")
 
 	req := httptest.NewRequest(http.MethodGet, "/callback?code=abc&state=xyz", nil)
 	rec := httptest.NewRecorder()
@@ -65,7 +98,7 @@ func TestCallbackRejectsMissingState(t *testing.T) {
 }
 
 func TestCallbackRejectsMismatchedState(t *testing.T) {
-	s := &Service{cfg: Config{CookiePassword: "test-cookie-password-keep-it-long"}}
+	s := newTestService(t, "test-cookie-password-keep-it-long")
 
 	state, err := generateOAuthState()
 	if err != nil {
@@ -98,8 +131,36 @@ func TestCallbackRejectsMismatchedState(t *testing.T) {
 	}
 }
 
+// TestCallbackPassesStateGate proves the gate actually opens on a valid
+// signed cookie + matching query state. Without this test the validation
+// logic could regress to "always reject" and the rejection-path tests
+// would still pass. We omit the `code` query param so the handler 400s
+// at the very next check ("missing code"); reaching that branch is proof
+// that state validation succeeded.
+func TestCallbackPassesStateGate(t *testing.T) {
+	s := newTestService(t, "test-cookie-password-keep-it-long")
+
+	state, err := generateOAuthState()
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	signed := s.signOAuthState(state)
+
+	req := httptest.NewRequest(http.MethodGet, "/callback?state="+state, nil)
+	req.AddCookie(&http.Cookie{Name: oauthStateCookieName, Value: signed})
+	rec := httptest.NewRecorder()
+	s.CallbackHandler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 (missing code) past the state gate, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "missing code") {
+		t.Fatalf("expected to land on missing-code branch, got body %q", rec.Body.String())
+	}
+}
+
 func TestBypassCallbackSkipsStateCheck(t *testing.T) {
-	s := &Service{cfg: Config{Bypass: true}}
+	s := &Service{cfg: Config{Bypass: true}, statePath: "/"}
 
 	req := httptest.NewRequest(http.MethodGet, "/callback", nil)
 	rec := httptest.NewRecorder()
@@ -107,5 +168,23 @@ func TestBypassCallbackSkipsStateCheck(t *testing.T) {
 
 	if rec.Code != http.StatusFound {
 		t.Fatalf("expected redirect in bypass mode, got %d", rec.Code)
+	}
+}
+
+func TestRedirectPath(t *testing.T) {
+	cases := map[string]string{
+		"https://app.example.com/callback":            "/callback",
+		"https://app.example.com/auth/oauth/callback": "/auth/oauth/callback",
+		"https://app.example.com":                     "/",
+	}
+	for in, want := range cases {
+		got, err := redirectPath(in)
+		if err != nil {
+			t.Errorf("redirectPath(%q): unexpected error: %v", in, err)
+			continue
+		}
+		if got != want {
+			t.Errorf("redirectPath(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
