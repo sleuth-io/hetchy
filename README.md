@@ -1,3 +1,11 @@
+```
+ _   _ _____ _____ ____  _   _ __   __
+| | | | ____| ____|/ ___|| | | |\ \ / /
+| |_| |  _| |  _| | |    | |_| | \ V /
+|  _  | |___| |___| |___ |  _  |  | |
+|_| |_|_____|_____|\____||_| |_|  |_|
+```
+
 # Hetchy
 
 A Slack bot and web UI that converts natural language requests into pull requests by running [Claude Code](https://claude.com/claude-code) inside isolated [Daytona](https://daytona.io) sandboxes.
