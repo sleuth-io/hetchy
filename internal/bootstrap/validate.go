@@ -120,7 +120,10 @@ the reviewer will rely on your written description plus the diff.
 
 	b.WriteString(`
 After producing artifacts, append a "## Validation" section to the PR
-body before opening the PR.
+body before opening the PR. Write each paragraph or bullet as a single
+long line — do NOT hard-wrap. GitHub reflows long lines based on the
+reader's viewport, but hard-wrapped text renders as ragged short lines
+on wide monitors.
 
 If you cannot validate (trivial diff with no observable surface,
 deferred capability blocks the only relevant path, etc.), write
