@@ -12,12 +12,15 @@ package auth
 
 import (
 	"context"
+	"crypto/hkdf"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
+	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -37,6 +40,13 @@ const oauthStateCookieName = "hetchy_oauth_state"
 // has this long between hitting /login and finishing /callback before the
 // signed cookie expires and the flow has to be restarted.
 const oauthStateCookieTTL = 10 * time.Minute
+
+// oauthStateHKDFInfo is the HKDF "info" tag used to derive the HMAC key for
+// the OAuth state cookie from CookiePassword. Using a distinct info string
+// keeps the OAuth-state key cryptographically independent from the WorkOS
+// session-sealing key, even though both ultimately come from the same
+// configured password. Bump the suffix if the construction ever changes.
+const oauthStateHKDFInfo = "hetchy/oauth-state/v1"
 
 // Principal is the resolved identity attached to every authenticated
 // request. It is built from the WorkOS sealed-session cookie and is the
@@ -95,18 +105,47 @@ type Config struct {
 type Service struct {
 	cfg    Config
 	client *workos.Client
+	// statePath is the cookie Path attribute for the OAuth state cookie,
+	// derived from cfg.RedirectURI so the cookie is only sent to /callback
+	// (or whatever path the IdP redirects to), not every request on the app.
+	statePath string
+	// stateKey is the HKDF-derived HMAC key used to sign OAuth state. Cached
+	// at construction time to avoid re-deriving on every request.
+	stateKey []byte
 }
 
 // New constructs a Service. The returned value is safe for concurrent use.
 func New(cfg Config) (*Service, error) {
 	if cfg.Bypass {
-		return &Service{cfg: cfg}, nil
+		return &Service{cfg: cfg, statePath: "/"}, nil
 	}
 	if cfg.APIKey == "" || cfg.ClientID == "" || cfg.CookiePassword == "" || cfg.RedirectURI == "" {
 		return nil, errors.New("auth: APIKey, ClientID, CookiePassword, RedirectURI are required (set AUTH_BYPASS=1 for tests)")
 	}
+	statePath, err := redirectPath(cfg.RedirectURI)
+	if err != nil {
+		return nil, err
+	}
+	stateKey, err := hkdf.Key(sha256.New, []byte(cfg.CookiePassword), nil, oauthStateHKDFInfo, 32)
+	if err != nil {
+		return nil, err
+	}
 	c := workos.NewClient(cfg.APIKey, workos.WithClientID(cfg.ClientID))
-	return &Service{cfg: cfg, client: c}, nil
+	return &Service{cfg: cfg, client: c, statePath: statePath, stateKey: stateKey}, nil
+}
+
+// redirectPath extracts the path component of the configured redirect URI so
+// the OAuth state cookie can be scoped to it. Falls back to "/" if the URI
+// has no path.
+func redirectPath(redirectURI string) (string, error) {
+	u, err := url.Parse(redirectURI)
+	if err != nil {
+		return "", errors.New("auth: invalid RedirectURI: " + err.Error())
+	}
+	if u.Path == "" {
+		return "/", nil
+	}
+	return u.Path, nil
 }
 
 // LoginHandler redirects the browser to AuthKit's hosted sign-in screen.
@@ -157,22 +196,28 @@ func (s *Service) CallbackHandler(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
 	}
-	// Verify the OAuth state nonce before doing anything else. Always clear
-	// the state cookie so a single round-trip can't be replayed even if the
-	// rest of the flow short-circuits below.
+	// Verify the OAuth state nonce before doing anything else. We clear the
+	// state cookie *before* the nil-check on cookieErr — even on early-return
+	// paths — so a single signed value can't be replayed against a future
+	// callback. The cost is that callbacks from clients that never had the
+	// cookie also get a no-op Set-Cookie header; that's worth it for the
+	// replay guarantee.
 	stateCookie, cookieErr := r.Cookie(oauthStateCookieName)
 	s.clearOAuthStateCookie(w)
 	if cookieErr != nil || stateCookie.Value == "" {
+		s.logStateRejection(r, "missing cookie")
 		http.Error(w, "missing oauth state cookie", http.StatusBadRequest)
 		return
 	}
 	queryState := r.URL.Query().Get("state")
 	if queryState == "" || !s.verifyOAuthState(stateCookie.Value, queryState) {
+		s.logStateRejection(r, "state mismatch or invalid hmac")
 		http.Error(w, "invalid oauth state", http.StatusBadRequest)
 		return
 	}
 	code := r.URL.Query().Get("code")
 	if code == "" {
+		s.logStateRejection(r, "missing code")
 		http.Error(w, "missing code", http.StatusBadRequest)
 		return
 	}
@@ -408,23 +453,25 @@ func generateOAuthState() (string, error) {
 
 // signOAuthState returns "<state>.<hmac>" so the cookie value is tamper-
 // evident: a forged callback can't just plant a cookie with a chosen state
-// without also producing a valid HMAC under CookiePassword.
+// without also producing a valid HMAC. The HMAC key is HKDF-derived from
+// CookiePassword with a use-specific info tag, so it is independent from
+// the WorkOS sealed-session key even when the password is reused.
 func (s *Service) signOAuthState(state string) string {
-	mac := hmac.New(sha256.New, []byte(s.cfg.CookiePassword))
+	mac := hmac.New(sha256.New, s.stateKey)
 	mac.Write([]byte(state))
 	return state + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
 // verifyOAuthState returns true iff signed parses as "<state>.<hmac>", the
-// HMAC is valid under CookiePassword, and the embedded state matches the
-// echoed-back queryState. Comparisons use constant-time equality.
+// HMAC is valid under the OAuth-state subkey, and the embedded state matches
+// the echoed-back queryState. Comparisons use constant-time equality.
 func (s *Service) verifyOAuthState(signed, queryState string) bool {
 	parts := strings.SplitN(signed, ".", 2)
 	if len(parts) != 2 {
 		return false
 	}
 	state, sig := parts[0], parts[1]
-	mac := hmac.New(sha256.New, []byte(s.cfg.CookiePassword))
+	mac := hmac.New(sha256.New, s.stateKey)
 	mac.Write([]byte(state))
 	expected := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 	if !hmac.Equal([]byte(sig), []byte(expected)) {
@@ -433,11 +480,19 @@ func (s *Service) verifyOAuthState(signed, queryState string) bool {
 	return hmac.Equal([]byte(state), []byte(queryState))
 }
 
+// logStateRejection emits a warn-level log line describing why a /callback
+// request was rejected. CSRF attempts and misconfigured clients both end up
+// here, and ops needs to be able to see the rate. The reason string is fixed
+// per call site so we never leak the cookie value or query state into logs.
+func (s *Service) logStateRejection(r *http.Request, reason string) {
+	slog.Warn("oauth callback rejected", "reason", reason, "remote_addr", r.RemoteAddr)
+}
+
 func (s *Service) setOAuthStateCookie(w http.ResponseWriter, value string) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     oauthStateCookieName,
 		Value:    value,
-		Path:     "/",
+		Path:     s.statePath,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 		Secure:   s.cfg.CookieSecure,
@@ -446,10 +501,12 @@ func (s *Service) setOAuthStateCookie(w http.ResponseWriter, value string) {
 }
 
 func (s *Service) clearOAuthStateCookie(w http.ResponseWriter) {
+	// Path must match the set-cookie's Path or the browser won't apply the
+	// clear — that's why we use the same s.statePath here.
 	http.SetCookie(w, &http.Cookie{
 		Name:     oauthStateCookieName,
 		Value:    "",
-		Path:     "/",
+		Path:     s.statePath,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 		Secure:   s.cfg.CookieSecure,
