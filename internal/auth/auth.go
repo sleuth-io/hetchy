@@ -12,8 +12,13 @@ package auth
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	workos "github.com/workos/workos-go/v7"
@@ -21,6 +26,17 @@ import (
 
 // SessionCookieName is the cookie that holds the sealed WorkOS session.
 const SessionCookieName = "hetchy_session"
+
+// oauthStateCookieName holds the signed OAuth state nonce between /login and
+// /callback. It binds the browser that started the flow to the one that
+// completes it, so a forged callback URL from another origin can't ride on a
+// victim's session.
+const oauthStateCookieName = "hetchy_oauth_state"
+
+// oauthStateCookieTTL is the window the state cookie is valid for. The user
+// has this long between hitting /login and finishing /callback before the
+// signed cookie expires and the flow has to be restarted.
+const oauthStateCookieTTL = 10 * time.Minute
 
 // Principal is the resolved identity attached to every authenticated
 // request. It is built from the WorkOS sealed-session cookie and is the
@@ -109,12 +125,19 @@ func (s *Service) redirectToAuthKit(w http.ResponseWriter, r *http.Request, hint
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
 	}
+	state, err := generateOAuthState()
+	if err != nil {
+		http.Error(w, "generate oauth state: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.setOAuthStateCookie(w, s.signOAuthState(state))
 	provider := workos.UserManagementAuthenticationProviderAuthkit
 	hintCopy := hint
 	url := s.client.UserManagement().GetAuthorizationURL(&workos.UserManagementGetAuthorizationURLParams{
 		RedirectURI: s.cfg.RedirectURI,
 		Provider:    &provider,
 		ScreenHint:  &hintCopy,
+		State:       &state,
 	})
 	http.Redirect(w, r, url, http.StatusFound)
 }
@@ -125,6 +148,20 @@ func (s *Service) redirectToAuthKit(w http.ResponseWriter, r *http.Request, hint
 func (s *Service) CallbackHandler(w http.ResponseWriter, r *http.Request) {
 	if s.cfg.Bypass {
 		http.Redirect(w, r, "/", http.StatusFound)
+		return
+	}
+	// Verify the OAuth state nonce before doing anything else. Always clear
+	// the state cookie so a single round-trip can't be replayed even if the
+	// rest of the flow short-circuits below.
+	stateCookie, cookieErr := r.Cookie(oauthStateCookieName)
+	s.clearOAuthStateCookie(w)
+	if cookieErr != nil || stateCookie.Value == "" {
+		http.Error(w, "missing oauth state cookie", http.StatusBadRequest)
+		return
+	}
+	queryState := r.URL.Query().Get("state")
+	if queryState == "" || !s.verifyOAuthState(stateCookie.Value, queryState) {
+		http.Error(w, "invalid oauth state", http.StatusBadRequest)
 		return
 	}
 	code := r.URL.Query().Get("code")
@@ -348,6 +385,69 @@ func (s *Service) setSessionCookie(w http.ResponseWriter, value string) {
 		SameSite: http.SameSiteLaxMode,
 		Secure:   s.cfg.CookieSecure,
 		Expires:  time.Now().Add(7 * 24 * time.Hour),
+	})
+}
+
+// generateOAuthState returns 32 bytes of randomness encoded as a URL-safe
+// string. This is the opaque value sent to the IdP via the `state` query
+// parameter and echoed back to /callback.
+func generateOAuthState() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+// signOAuthState returns "<state>.<hmac>" so the cookie value is tamper-
+// evident: a forged callback can't just plant a cookie with a chosen state
+// without also producing a valid HMAC under CookiePassword.
+func (s *Service) signOAuthState(state string) string {
+	mac := hmac.New(sha256.New, []byte(s.cfg.CookiePassword))
+	mac.Write([]byte(state))
+	return state + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+// verifyOAuthState returns true iff signed parses as "<state>.<hmac>", the
+// HMAC is valid under CookiePassword, and the embedded state matches the
+// echoed-back queryState. Comparisons use constant-time equality.
+func (s *Service) verifyOAuthState(signed, queryState string) bool {
+	parts := strings.SplitN(signed, ".", 2)
+	if len(parts) != 2 {
+		return false
+	}
+	state, sig := parts[0], parts[1]
+	mac := hmac.New(sha256.New, []byte(s.cfg.CookiePassword))
+	mac.Write([]byte(state))
+	expected := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	if !hmac.Equal([]byte(sig), []byte(expected)) {
+		return false
+	}
+	return hmac.Equal([]byte(state), []byte(queryState))
+}
+
+func (s *Service) setOAuthStateCookie(w http.ResponseWriter, value string) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     oauthStateCookieName,
+		Value:    value,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   s.cfg.CookieSecure,
+		MaxAge:   int(oauthStateCookieTTL.Seconds()),
+	})
+}
+
+func (s *Service) clearOAuthStateCookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     oauthStateCookieName,
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   s.cfg.CookieSecure,
+		Expires:  time.Unix(0, 0),
+		MaxAge:   -1,
 	})
 }
 
