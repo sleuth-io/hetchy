@@ -24,4 +24,11 @@ jobs:
         with:
           namespace: hetchy-staging
           name: hetchy
+          # Default is 5m, which is too tight for our stack: the daytona
+          # api alone has start_period: 120s (DB migrations on first
+          # boot) and hetchy gates on api becoming healthy before its
+          # own start_period: 40s + healthcheck cycles. A cold deploy
+          # consistently lands above 5m wall clock; 15m gives slack for
+          # image pulls and PVC provisioning without masking real hangs.
+          timeout: 15m
 
