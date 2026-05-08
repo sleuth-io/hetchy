@@ -18,7 +18,7 @@
 #   SNAPSHOT_TAG              default: 1
 #   LOCAL_REGISTRY_HOST_PORT  default: localhost:6000
 #   LOCAL_REGISTRY_INTERNAL   default: registry:6000
-#   SNAPSHOT_CPU              default: 2 (vCPUs per sandbox)
+#   SNAPSHOT_CPU              default: 1 (vCPUs per sandbox)
 #   SNAPSHOT_MEMORY_GB        default: 3 (memory per sandbox, GB)
 #   SNAPSHOT_DISK_GB          default: 3 (disk per sandbox, GB)
 set -euo pipefail
@@ -33,9 +33,11 @@ API_URL="${DAYTONA_API_URL:-https://app.daytona.io/api}"
 # at registration time and every sandbox spawned from it inherits the
 # values — the SDK's SnapshotParams used at create time has no resource
 # fields, so this is the only programmatic place to set sizing without
-# clicking through the dashboard. Tuned for Claude Code: 2 vCPU + 3 GB
-# RAM avoids the OOMs we saw at the CLI default of 1 GB.
-SNAPSHOT_CPU="${SNAPSHOT_CPU:-2}"
+# clicking through the dashboard. Tuned for Claude Code: 1 vCPU + 3 GB
+# RAM. The 3 GB RAM avoids the OOMs we saw at the CLI default of 1 GB;
+# 1 vCPU is plenty (claude is mostly I/O-bound waiting on tool results)
+# and lets us pack more concurrent sandboxes onto the same runner.
+SNAPSHOT_CPU="${SNAPSHOT_CPU:-1}"
 SNAPSHOT_MEMORY_GB="${SNAPSHOT_MEMORY_GB:-3}"
 SNAPSHOT_DISK_GB="${SNAPSHOT_DISK_GB:-3}"
 
