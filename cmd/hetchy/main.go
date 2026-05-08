@@ -20,8 +20,9 @@ import (
 // parseLogLevel maps LOG_LEVEL to slog.Level. Unset or unrecognized
 // values fall back to Info — same as the original hardcoded default.
 // Setting LOG_LEVEL=debug locally surfaces the per-line sandbox stdout
-// /stderr logs that exec.go emits at Debug, so `make bot-with-logs`
-// shows what the agent is doing inside the container in real time.
+// /stderr logs that exec.go emits at Debug, so `make bot` (which now
+// always mirrors to LOG_FILE) shows what the agent is doing inside the
+// container in real time.
 func parseLogLevel(s string) slog.Level {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "debug":

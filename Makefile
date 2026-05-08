@@ -1,4 +1,4 @@
-.PHONY: help build install test ci lint format clean tidy deps verify update-deps init prepush postpull bot bot-with-logs logs dev daytona-up daytona-down daytona-logs snapshot push-snapshot db-up db-down db-status db-new check-migrations sqlc-generate pg-up pg-down pg-logs pg-psql pg-reset slack-app
+.PHONY: help build install test ci lint format clean tidy deps verify update-deps init prepush postpull bot logs dev services-up services-down services-logs snapshot push-snapshot db-up db-down db-status db-new check-migrations sqlc-generate pg-up pg-down pg-logs pg-psql pg-reset slack-app
 
 # Default target
 help: ## Show this help message
@@ -14,12 +14,15 @@ COMMIT?=$(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
 DATE?=$(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 LDFLAGS=-ldflags "-X github.com/hetchyhq/hetchy/internal/buildinfo.Version=$(VERSION) -X github.com/hetchyhq/hetchy/internal/buildinfo.Commit=$(COMMIT) -X github.com/hetchyhq/hetchy/internal/buildinfo.Date=$(DATE)"
 
-# Daytona dev stack
-DAYTONA_DIR   ?= $(HOME)/src/daytona
-SNAPSHOT_NAME ?= universal-coding
-SNAPSHOT_TAG  ?= 1
-COMPOSE       = docker compose -f "$(DAYTONA_DIR)/docker/docker-compose.yaml"
-LOG_FILE      ?= /tmp/hetchy.log
+# Daytona dev stack — bundled into our docker-compose.yml. The list below is
+# the subset of services `make bot` (and friends) bring up so the host-side
+# bot has Postgres + the Daytona OSS stack to talk to. The hetchy + migration
+# services are intentionally excluded; locally hetchy runs natively via air.
+SNAPSHOT_NAME    ?= universal-coding
+SNAPSHOT_TAG     ?= 1
+COMPOSE          = docker compose
+SERVICES         = postgres api proxy runner dex db redis registry minio otel-collector
+LOG_FILE         ?= /tmp/hetchy.log
 
 build: ## Build the binary
 	@echo "Building $(BINARY_NAME)..."
@@ -100,11 +103,7 @@ postpull: init ## Run after pulling (download dependencies)
 AIR_VERSION ?= v1.52.3
 AIR          = go run github.com/air-verse/air@$(AIR_VERSION)
 
-bot: ## Run the bot with live-reload (rebuilds on file changes)
-	@which doppler > /dev/null || (echo "doppler CLI not found. Install: https://docs.doppler.com/docs/install-cli" && exit 1)
-	@HETCHY_ENV=dev COOKIE_INSECURE=1 doppler run -- $(AIR)
-
-bot-with-logs: ## Run the bot with live-reload AND mirror logs to $(LOG_FILE) so another shell can `make logs`
+bot: services-up ## Run the bot with live-reload, mirroring logs to $(LOG_FILE) so another shell can `make logs`
 	@which doppler > /dev/null || (echo "doppler CLI not found. Install: https://docs.doppler.com/docs/install-cli" && exit 1)
 	@echo "Logging to $(LOG_FILE) (tail with 'make logs')"
 	@# `exec` + process substitution instead of a `| tee` pipeline so Ctrl-C
@@ -116,33 +115,29 @@ bot-with-logs: ## Run the bot with live-reload AND mirror logs to $(LOG_FILE) so
 	@# propagates to air -> bot, and `tee` exits on EOF when stdout closes.
 	@HETCHY_ENV=dev COOKIE_INSECURE=1 bash -c 'exec doppler run -- $(AIR) > >(tee $(LOG_FILE)) 2>&1'
 
-logs: ## Tail the log file written by `make bot-with-logs` (LOG_FILE=$(LOG_FILE))
+logs: ## Tail the log file written by `make bot` (LOG_FILE=$(LOG_FILE))
 	@touch $(LOG_FILE)
 	@tail -F $(LOG_FILE)
 
-dev: daytona-up bot ## Bring up Daytona, then run the bot in foreground
+dev: bot ## Bring up Postgres + Daytona (via bot's services-up dep), then run the bot
 
-# Daytona OSS dev stack
-daytona-up: ## Start the local Daytona OSS stack (docker compose)
-	@if [ ! -d "$(DAYTONA_DIR)" ]; then \
-	  echo ">> cloning daytonaio/daytona into $(DAYTONA_DIR)"; \
-	  git clone https://github.com/daytonaio/daytona.git "$(DAYTONA_DIR)"; \
-	fi
-	@echo ">> starting Daytona OSS stack (this pulls a lot on first run)"
-	$(COMPOSE) up -d
+# Supporting services (Postgres + bundled Daytona OSS stack) ----------------
+# These targets run a curated set of services from the project's own
+# docker-compose.yml. Hetchy + migration are deliberately excluded so the bot
+# can run natively via air against the in-docker dependencies.
+services-up: ## Start Postgres + bundled Daytona OSS stack (docker compose)
+	@echo ">> starting supporting services: $(SERVICES)"
+	@$(COMPOSE) up -d --wait $(SERVICES)
 	@echo ""
-	@echo "Once healthy:"
-	@echo "  Dashboard:      http://localhost:3000"
-	@echo "  Default login:  dev@daytona.io / password"
-	@echo ""
-	@echo "Next: log in, mint an API key, set DAYTONA_API_KEY in Doppler,"
-	@echo "      then 'make push-snapshot' and 'make bot'."
+	@echo "Daytona dashboard: http://localhost:3000  (login dev@daytona.io / password on first boot)"
+	@echo "If this is the first run: log in, mint an API key, set DAYTONA_API_KEY in Doppler,"
+	@echo "then 'make push-snapshot' before 'make bot'."
 
-daytona-down: ## Stop the local Daytona OSS stack
-	$(COMPOSE) down
+services-down: ## Stop supporting services (data persists)
+	@$(COMPOSE) stop $(SERVICES)
 
-daytona-logs: ## Tail Daytona stack logs
-	$(COMPOSE) logs -f --tail=100
+services-logs: ## Tail supporting service logs
+	@$(COMPOSE) logs -f --tail=100 $(SERVICES)
 
 # Local Postgres (for dev) ---------------------------------------------------
 pg-up: ## Start the local Postgres container in the background
