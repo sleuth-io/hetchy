@@ -51,6 +51,10 @@ func (b *Bot) githubInstallHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	if !isAdmin(p) {
+		http.Error(w, "admin role required", http.StatusForbidden)
+		return
+	}
 
 	csrf := randomNonce()
 	http.SetCookie(w, &http.Cookie{

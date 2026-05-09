@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -382,10 +383,7 @@ func TestSettingsTemplate_NonAdminReadOnly(t *testing.T) {
 	}
 
 	t.Run("general tab shows readonly input and hint", func(t *testing.T) {
-		data := make(map[string]any, len(nonAdminBase)+1)
-		for k, v := range nonAdminBase {
-			data[k] = v
-		}
+		data := maps.Clone(nonAdminBase)
 		data["Tab"] = "general"
 		rec := httptest.NewRecorder()
 		b.renderTemplate(rec, settingsHTMLTpl, data)
@@ -403,10 +401,7 @@ func TestSettingsTemplate_NonAdminReadOnly(t *testing.T) {
 	})
 
 	t.Run("integrations tab shows hint and no Enable buttons", func(t *testing.T) {
-		data := make(map[string]any, len(nonAdminBase)+1)
-		for k, v := range nonAdminBase {
-			data[k] = v
-		}
+		data := maps.Clone(nonAdminBase)
 		data["Tab"] = "integrations"
 		rec := httptest.NewRecorder()
 		b.renderTemplate(rec, settingsHTMLTpl, data)
@@ -446,15 +441,17 @@ func TestSettingsHandler_NonAdminPostReturns403(t *testing.T) {
 	}
 	b := &Bot{log: discardLogger(), cfg: Config{WebPort: "0"}, auth: a}
 
-	req := httptest.NewRequest(http.MethodPost, "/settings/org?tab=general",
-		strings.NewReader("org_name=Hacked"))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	rec := httptest.NewRecorder()
+	for _, tab := range []string{"general", "integrations"} {
+		req := httptest.NewRequest(http.MethodPost, "/settings/org?tab="+tab,
+			strings.NewReader("org_name=Hacked"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
 
-	a.Middleware(http.HandlerFunc(b.settingsHandler)).ServeHTTP(rec, req)
+		a.Middleware(http.HandlerFunc(b.settingsHandler)).ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("expected 403 for non-admin POST, got %d (body: %q)", rec.Code, rec.Body.String())
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("tab=%s: expected 403 for non-admin POST, got %d (body: %q)", tab, rec.Code, rec.Body.String())
+		}
 	}
 }
 
