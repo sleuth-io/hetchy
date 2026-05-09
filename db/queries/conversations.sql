@@ -18,6 +18,12 @@ WHERE org_id = $1 AND thread_id = $2;
 -- '%', '_' and '\' in the user-typed query so they read as
 -- literals instead of pattern metacharacters.
 --
+-- Ordering is by created_at ascending (oldest first) so a chat's
+-- position in the sidebar stays stable as new turns land — replying
+-- to an old chat never reshuffles the list. thread_id breaks ties
+-- so two rows created in the same microsecond keep a deterministic
+-- order across pages.
+--
 -- Performance note: ILIKE '%foo%' is sequential scan territory
 -- because no B-tree index can cover a leading-wildcard pattern.
 -- Fine for the current per-org chat counts (tens to low hundreds);
@@ -34,7 +40,7 @@ WHERE org_id = $1
     OR custom_title ILIKE '%' || sqlc.arg(query) || '%' ESCAPE '\'
     OR history[1]    ILIKE '%' || sqlc.arg(query) || '%' ESCAPE '\'
   )
-ORDER BY updated_at DESC
+ORDER BY created_at ASC, thread_id ASC
 LIMIT sqlc.arg(lim)
 OFFSET sqlc.arg(off);
 
