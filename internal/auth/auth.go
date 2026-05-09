@@ -41,7 +41,7 @@ const oauthStateCookieName = "hetchy_oauth_state"
 // signed cookie expires and the flow has to be restarted. 1 hour covers
 // slow password-reset flows: email delivery lag + time on the reset form
 // can easily exceed 10 minutes.
-const oauthStateCookieTTL = 1 * time.Hour
+const oauthStateCookieTTL = time.Hour
 
 // oauthStateHKDFInfo is the HKDF "info" tag used to derive the HMAC key for
 // the OAuth state cookie from CookiePassword. Using a distinct info string
@@ -490,9 +490,18 @@ func (s *Service) verifyOAuthState(signed, queryState string) bool {
 // Two optional fields are added when available:
 //   - user_id: WorkOS user ID extracted from an existing sealed session cookie
 //     (present when a logged-in user re-authenticates or the tab is reused).
-//   - flow_id: first 8 characters of the state query parameter, used to
-//     correlate retries of the same flow. Safe to log — it is a prefix of a
-//     43-char base64url random nonce, not the signed cookie value.
+//     Note: logStateRejection is called on an unauthenticated endpoint, so
+//     any caller can attach an arbitrary hetchy_session cookie to force a
+//     local AES-GCM unseal attempt. WorkOS' unseal fails fast on malformed
+//     input and carries no network cost, so this is not a meaningful DoS
+//     lever in practice, but it is intentional and documented here.
+//   - flow_id: first 8 characters of the state query parameter. On a
+//     legitimate double-click this is a prefix of the 43-char base64url
+//     nonce we issued, useful for correlating duplicate /callback fetches
+//     of the same URL. On rejection paths the value is client-supplied and
+//     may be arbitrary — slog escapes it, but treat it as untrusted in
+//     dashboards. A fresh /login mints a new state, so flow_id does NOT
+//     correlate a user retrying the whole login flow.
 func (s *Service) logStateRejection(r *http.Request, reason string) {
 	attrs := []any{"reason", reason, "remote_addr", r.RemoteAddr}
 	if cookie, err := r.Cookie(SessionCookieName); err == nil && cookie.Value != "" {
