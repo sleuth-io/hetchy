@@ -83,6 +83,11 @@ func (b *Bot) shLines(ctx context.Context, sandboxID string, proc sandboxProcess
 		b.log.Error("sandbox step exec error", "sandbox", sandboxID, "step", step, "error", err)
 		return "", fmt.Errorf("step %q exec error: %w", step, err)
 	}
+	// Reset the idle clock now that the process is actually running.
+	// ExecuteSessionCommand involves a network round-trip that can take
+	// several seconds; time spent there should not count against the idle
+	// window.
+	lastActivity.Store(time.Now().UnixNano())
 	cmdID, _ := res["id"].(string)
 
 	stdout := make(chan string, 64)
