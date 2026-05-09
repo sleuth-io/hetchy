@@ -77,6 +77,23 @@ func botWithGithubApp(t *testing.T, withOrg bool) *Bot {
 	}
 }
 
+func TestGithubInstallHandler_NonAdminReturns403(t *testing.T) {
+	a, err := auth.New(auth.Config{
+		Bypass: true, BypassUser: "user_member", BypassEmail: "m@hetchy.local",
+		BypassOrg: "org_test", BypassRole: "member",
+	})
+	if err != nil {
+		t.Fatalf("auth: %v", err)
+	}
+	b := &Bot{log: discardLogger(), cfg: Config{WebPort: "0"}, auth: a, app: freshGithubAppForTest(t, "wh-secret")}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/integrations/github/install", nil)
+	a.Middleware(a.RequireOrg(http.HandlerFunc(b.githubInstallHandler))).ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want 403", rec.Code)
+	}
+}
+
 func TestGithubInstallHandler_RequiresGithubApp(t *testing.T) {
 	b := botWithGithubApp(t, true)
 	b.app = nil

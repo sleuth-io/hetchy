@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -86,6 +87,7 @@ func TestSettingsTemplate_GeneralTab(t *testing.T) {
 	rec := httptest.NewRecorder()
 	b.renderTemplate(rec, settingsHTMLTpl, map[string]any{
 		"OrgID": "org_x", "OrgName": "Acme Inc.", "Email": "u@x", "Tab": "general",
+		"IsAdmin": true,
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
@@ -127,6 +129,7 @@ func TestSettingsTemplate_IntegrationsTab(t *testing.T) {
 			name: "all disabled — every Enable button + every modal pre-rendered",
 			data: map[string]any{
 				"OrgID": "org_x", "OrgName": "Acme", "Email": "u@x", "Tab": "integrations",
+				"IsAdmin":                     true,
 				"GitHubAppEnabled":            true,
 				"GitHubInstallations":         nil,
 				"GitHubRepos":                 nil,
@@ -167,7 +170,7 @@ func TestSettingsTemplate_IntegrationsTab(t *testing.T) {
 			name: "github enabled — connections list + default-repo dropdown shown",
 			data: map[string]any{
 				"OrgID": "org_y", "OrgName": "Acme", "Email": "u@y", "Tab": "integrations",
-				"GitHubAppEnabled": true,
+				"IsAdmin": true, "GitHubAppEnabled": true,
 				"GitHubInstallations": []integrationInstallation{
 					{
 						InstallationID: 999, AccountLogin: "acme",
@@ -355,6 +358,131 @@ func TestSettingsTemplate_HidesMembersTabForNonAdmin(t *testing.T) {
 	})
 	if strings.Contains(rec.Body.String(), `href="/settings/org?tab=members"`) {
 		t.Errorf("non-admin should not see Members tab in sidebar")
+	}
+}
+
+// TestSettingsTemplate_NonAdminReadOnly asserts that a non-admin member sees
+// read-only fields and hint text instead of mutating forms and Enable buttons.
+func TestSettingsTemplate_NonAdminReadOnly(t *testing.T) {
+	b := newBypassBot(t)
+	nonAdminBase := map[string]any{
+		"OrgID": "o", "OrgName": "Acme", "Email": "u@x", "PrincipalUserID": "u",
+		"IsAdmin":                     false,
+		"GitHubAppEnabled":            true,
+		"GitHubInstallations":         nil,
+		"GitHubRepos":                 nil,
+		"DefaultRepoSlug":             "",
+		"SlackOAuthEnabled":           true,
+		"SlackTeamID":                 "", // explicit "" so ne .SlackTeamID "" == false
+		"SlackBotTokenPreview":        "",
+		"SlackSocketTokenPreview":     "",
+		"SXKeyPreview":                "",
+		"AnthropicAPIKeyPreview":      "",
+		"ClaudeCodeOAuthTokenPreview": "",
+	}
+
+	t.Run("general tab shows readonly input and hint", func(t *testing.T) {
+		data := maps.Clone(nonAdminBase)
+		data["Tab"] = "general"
+		rec := httptest.NewRecorder()
+		b.renderTemplate(rec, settingsHTMLTpl, data)
+		body := rec.Body.String()
+
+		if !strings.Contains(body, `readonly`) {
+			t.Error("non-admin general tab: expected readonly org_name input")
+		}
+		if !strings.Contains(body, "Only administrators can change organization settings") {
+			t.Error("non-admin general tab: expected admin-only hint text")
+		}
+		if strings.Contains(body, `action="/settings/org?tab=general"`) {
+			t.Error("non-admin general tab: must not render the save form")
+		}
+	})
+
+	t.Run("integrations tab shows hint and no Enable buttons", func(t *testing.T) {
+		data := maps.Clone(nonAdminBase)
+		data["Tab"] = "integrations"
+		rec := httptest.NewRecorder()
+		b.renderTemplate(rec, settingsHTMLTpl, data)
+		body := rec.Body.String()
+
+		if !strings.Contains(body, "Only administrators can change integration settings") {
+			t.Error("non-admin integrations tab: expected admin-only hint text")
+		}
+		for _, btn := range []string{
+			`href="/integrations/github/install"`,
+			`href="/slack/install"`,
+			`data-open-modal="modal-sx"`,
+			// Use a specific attribute sequence to avoid matching the JS selector
+			// string querySelectorAll('[data-toggle-card]') which is always present.
+			`class="btn-enable" type="button" data-toggle-card`,
+		} {
+			if strings.Contains(body, btn) {
+				t.Errorf("non-admin integrations tab: must not render Enable button %q", btn)
+			}
+		}
+	})
+
+	t.Run("integrations tab hides Reinstall when Slack already connected", func(t *testing.T) {
+		data := maps.Clone(nonAdminBase)
+		data["Tab"] = "integrations"
+		data["SlackTeamID"] = "T12345" // connected workspace
+		rec := httptest.NewRecorder()
+		b.renderTemplate(rec, settingsHTMLTpl, data)
+		if strings.Contains(rec.Body.String(), `href="/slack/install"`) {
+			t.Error("non-admin should not see Reinstall link when Slack is connected")
+		}
+	})
+}
+
+// TestSettingsHandler_NonAdminPostReturns403 drives the full HTTP handler
+// (through auth middleware) and confirms that a member-role principal cannot
+// mutate org settings — the 403 must fire before any CSRF or DB logic.
+func TestSettingsHandler_NonAdminPostReturns403(t *testing.T) {
+	a, err := auth.New(auth.Config{
+		Bypass:      true,
+		BypassUser:  "user_member",
+		BypassEmail: "member@hetchy.local",
+		BypassOrg:   "org_x",
+		BypassRole:  "member",
+	})
+	if err != nil {
+		t.Fatalf("auth: %v", err)
+	}
+	b := &Bot{log: discardLogger(), cfg: Config{WebPort: "0"}, auth: a}
+
+	for _, tab := range []string{"general", "integrations"} {
+		req := httptest.NewRequest(http.MethodPost, "/settings/org?tab="+tab,
+			strings.NewReader("org_name=Hacked"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+
+		a.Middleware(http.HandlerFunc(b.settingsHandler)).ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("tab=%s: expected 403 for non-admin POST, got %d (body: %q)", tab, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestSlackInstallHandler_NonAdminReturns403(t *testing.T) {
+	a, err := auth.New(auth.Config{
+		Bypass: true, BypassUser: "user_member", BypassEmail: "m@hetchy.local",
+		BypassOrg: "org_test", BypassRole: "member",
+	})
+	if err != nil {
+		t.Fatalf("auth: %v", err)
+	}
+	b := &Bot{
+		log:  discardLogger(),
+		cfg:  Config{WebPort: "0", SlackClientID: "cid", SlackClientSecret: "csec", SlackOAuthRedirectURI: "https://example.com/slack/callback"},
+		auth: a,
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/slack/install", nil)
+	a.Middleware(a.RequireOrg(http.HandlerFunc(b.slackInstallHandler))).ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want 403", rec.Code)
 	}
 }
 
