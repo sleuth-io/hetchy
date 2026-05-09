@@ -742,7 +742,7 @@
       {{if $oauthEnabled}}
       <div class="body-section">
         <p class="hint">Connected workspace: <code>{{.SlackTeamID}}</code></p>
-        {{if .SlackOAuthEnabled}}
+        {{if and .SlackOAuthEnabled .IsAdmin}}
           <p><a class="btn-enable" href="/slack/install">Reinstall</a></p>
         {{end}}
       </div>

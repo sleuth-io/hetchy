@@ -170,8 +170,7 @@ func TestSettingsTemplate_IntegrationsTab(t *testing.T) {
 			name: "github enabled — connections list + default-repo dropdown shown",
 			data: map[string]any{
 				"OrgID": "org_y", "OrgName": "Acme", "Email": "u@y", "Tab": "integrations",
-				"IsAdmin":          true,
-				"GitHubAppEnabled": true,
+				"IsAdmin": true, "GitHubAppEnabled": true,
 				"GitHubInstallations": []integrationInstallation{
 					{
 						InstallationID: 999, AccountLogin: "acme",
@@ -423,6 +422,17 @@ func TestSettingsTemplate_NonAdminReadOnly(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("integrations tab hides Reinstall when Slack already connected", func(t *testing.T) {
+		data := maps.Clone(nonAdminBase)
+		data["Tab"] = "integrations"
+		data["SlackTeamID"] = "T12345" // connected workspace
+		rec := httptest.NewRecorder()
+		b.renderTemplate(rec, settingsHTMLTpl, data)
+		if strings.Contains(rec.Body.String(), `href="/slack/install"`) {
+			t.Error("non-admin should not see Reinstall link when Slack is connected")
+		}
+	})
 }
 
 // TestSettingsHandler_NonAdminPostReturns403 drives the full HTTP handler
@@ -452,6 +462,27 @@ func TestSettingsHandler_NonAdminPostReturns403(t *testing.T) {
 		if rec.Code != http.StatusForbidden {
 			t.Errorf("tab=%s: expected 403 for non-admin POST, got %d (body: %q)", tab, rec.Code, rec.Body.String())
 		}
+	}
+}
+
+func TestSlackInstallHandler_NonAdminReturns403(t *testing.T) {
+	a, err := auth.New(auth.Config{
+		Bypass: true, BypassUser: "user_member", BypassEmail: "m@hetchy.local",
+		BypassOrg: "org_test", BypassRole: "member",
+	})
+	if err != nil {
+		t.Fatalf("auth: %v", err)
+	}
+	b := &Bot{
+		log:  discardLogger(),
+		cfg:  Config{WebPort: "0", SlackClientID: "cid", SlackClientSecret: "csec", SlackOAuthRedirectURI: "https://example.com/slack/callback"},
+		auth: a,
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/slack/install", nil)
+	a.Middleware(a.RequireOrg(http.HandlerFunc(b.slackInstallHandler))).ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want 403", rec.Code)
 	}
 }
 
