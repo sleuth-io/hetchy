@@ -55,7 +55,7 @@ hetchy/
 │       └── build-sandbox.yml  # CI: build and push the sandbox image on changes
 ├── Makefile                # All build, test, dev, and deployment targets
 ├── Dockerfile              # Application container image
-├── docker-compose.yml      # Local dev stack (app + local Daytona OSS)
+├── docker-compose.yml      # Local app/Postgres stack
 └── doppler.yaml            # Doppler project and config binding
 ```
 

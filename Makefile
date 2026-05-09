@@ -14,14 +14,12 @@ COMMIT?=$(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
 DATE?=$(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 LDFLAGS=-ldflags "-X github.com/hetchyhq/hetchy/internal/buildinfo.Version=$(VERSION) -X github.com/hetchyhq/hetchy/internal/buildinfo.Commit=$(COMMIT) -X github.com/hetchyhq/hetchy/internal/buildinfo.Date=$(DATE)"
 
-# Daytona dev stack — bundled into our docker-compose.yml. The list below is
-# the subset of services `make bot` (and friends) bring up so the host-side
-# bot has Postgres + the Daytona OSS stack to talk to. The hetchy + migration
-# services are intentionally excluded; locally hetchy runs natively via air.
+# Local support services. Daytona runs in Daytona Cloud for dev/staging/prod;
+# the host-side bot only needs the local Postgres container from compose.
 SNAPSHOT_NAME    ?= universal-coding
 SNAPSHOT_TAG     ?= 1
 COMPOSE          = docker compose
-SERVICES         = postgres api proxy runner dex db redis registry minio otel-collector
+SERVICES         = postgres
 LOG_FILE         ?= /tmp/hetchy.log
 
 build: ## Build the binary
@@ -119,19 +117,15 @@ logs: ## Tail the log file written by `make bot` (LOG_FILE=$(LOG_FILE))
 	@touch $(LOG_FILE)
 	@tail -F $(LOG_FILE)
 
-dev: bot ## Bring up Postgres + Daytona (via bot's services-up dep), then run the bot
+dev: bot ## Bring up Postgres, then run the bot
 
-# Supporting services (Postgres + bundled Daytona OSS stack) ----------------
+# Supporting services (local Postgres) ---------------------------------------
 # These targets run a curated set of services from the project's own
 # docker-compose.yml. Hetchy + migration are deliberately excluded so the bot
 # can run natively via air against the in-docker dependencies.
-services-up: ## Start Postgres + bundled Daytona OSS stack (docker compose)
+services-up: ## Start local Postgres (docker compose)
 	@echo ">> starting supporting services: $(SERVICES)"
-	@$(COMPOSE) up -d --wait $(SERVICES)
-	@echo ""
-	@echo "Daytona dashboard: http://localhost:3000  (login dev@daytona.io / password on first boot)"
-	@echo "If this is the first run: log in, mint an API key, set DAYTONA_API_KEY in Doppler,"
-	@echo "then 'make push-snapshot' before 'make bot'."
+	@$(COMPOSE) up -d --wait --remove-orphans $(SERVICES)
 
 services-down: ## Stop supporting services (data persists)
 	@$(COMPOSE) stop $(SERVICES)
@@ -198,12 +192,11 @@ db-new: ## Create a new timestamped migration pair (usage: make db-new name=add_
 snapshot: ## Build the custom sandbox image
 	docker build --platform=linux/amd64 -t $(SNAPSHOT_NAME):$(SNAPSHOT_TAG) sandbox
 
-# Local Daytona OSS registry exposes its registry on host port 6000.
-# The runner sees it internally as `registry:6000`.
+# Only used when pointing at a self-hosted/local Daytona registry.
 LOCAL_REGISTRY_HOST_PORT ?= localhost:6000
 LOCAL_REGISTRY_INTERNAL ?= registry:6000
 
-push-snapshot: snapshot ## Build the sandbox image and register it as a Daytona snapshot (auto-routes local/cloud via doppler)
+push-snapshot: snapshot ## Build the sandbox image and register it as a Daytona Cloud snapshot
 	@which doppler > /dev/null 2>&1 || (echo "doppler CLI not found. Install: https://docs.doppler.com/docs/install-cli" && exit 1)
 	@which daytona > /dev/null 2>&1 || ( \
 	  echo "daytona CLI not found. Install it:"; \

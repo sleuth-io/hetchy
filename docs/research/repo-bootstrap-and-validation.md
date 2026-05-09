@@ -616,7 +616,7 @@ We built a prototype detector (`cmd/hetchy-detect/main.go`) and ran it against t
 
 **1. The README dramatically overstates required dependencies.**
 
-The README's setup walk-through documents Doppler, WorkOS, GitHub App provisioning, Daytona OSS stack, and personal Slack apps as the things you need before `make bot` works. A literal-minded agent would either ask the user for ~12 secrets up front or give up.
+The README's setup walk-through documents Doppler, WorkOS, GitHub App provisioning, Daytona Cloud, and personal Slack apps as the things you need before `make bot` works. A literal-minded agent would either ask the user for ~12 secrets up front or give up.
 
 The actual requirements per `internal/bot/config.go`:
 - Always required: `DATABASE_URL`, `SECRETS_ENCRYPTION_KEY`, `DAYTONA_SNAPSHOT` (just a string identifier; Hetchy doesn't validate it points anywhere).

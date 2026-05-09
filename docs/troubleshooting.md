@@ -7,9 +7,10 @@ This guide covers common issues and their solutions.
 **Symptoms:** Bot fails to create or resume a Daytona sandbox
 
 **Solutions:**
-- Verify Daytona is running: `docker compose ps` (for local stack)
-- Check API key is valid
-- Review Daytona logs: `make daytona-logs`
+- Confirm `DAYTONA_API_URL` points at Daytona Cloud: `https://app.daytona.io/api`
+- Check `DAYTONA_API_KEY` is valid for the Daytona org that should own sandboxes
+- Verify `DAYTONA_SNAPSHOT` exists in that org
+- Check the bot startup log for `daytona configured` and the request log for the created sandbox ID
 
 ## No PR Created
 

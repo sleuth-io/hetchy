@@ -112,11 +112,8 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 	if err != nil {
 		return nil, fmt.Errorf("daytona client: %w", err)
 	}
-	if cfg.DaytonaAPIURL != "" {
-		log.Info("daytona configured", "mode", "local", "url", cfg.DaytonaAPIURL)
-	} else {
-		log.Info("daytona configured", "mode", "cloud", "url", "app.daytona.io")
-	}
+	mode, url := daytonaLogTarget(cfg.DaytonaAPIURL)
+	log.Info("daytona configured", "mode", mode, "url", url)
 
 	store, err := db.Open(context.Background(), cfg.DatabaseURL)
 	if err != nil {
@@ -221,6 +218,20 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 		)
 	}
 	return b, nil
+}
+
+func daytonaLogTarget(apiURL string) (mode, url string) {
+	apiURL = strings.TrimSpace(apiURL)
+	if apiURL == "" {
+		return "cloud", "app.daytona.io"
+	}
+	if strings.Contains(apiURL, "app.daytona.io") {
+		return "cloud", apiURL
+	}
+	if strings.Contains(apiURL, "localhost") || strings.Contains(apiURL, "127.0.0.1") || strings.Contains(apiURL, "api:3000") {
+		return "local", apiURL
+	}
+	return "custom", apiURL
 }
 
 // warnIfSlackOAuthMisconfigured surfaces a startup-time warning when

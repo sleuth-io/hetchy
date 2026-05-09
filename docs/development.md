@@ -113,8 +113,8 @@ The bot opens a pool at startup if `DATABASE_URL` is set; otherwise it runs with
 | `make bot` | Run with live-reload + log mirroring (logs to `/tmp/hetchy.log`) |
 | `make web` | Run web UI only |
 | `make logs` | Tail mirrored logs |
-| `make dev` | Start Daytona + run bot |
-| `make services-up` | Start Postgres + bundled Daytona OSS stack |
+| `make dev` | Start local Postgres + run bot |
+| `make services-up` | Start local Postgres |
 | `make services-down` | Stop the supporting services (data persists) |
 | `make services-logs` | Tail supporting service logs |
 | `make snapshot` | Build custom sandbox image |
