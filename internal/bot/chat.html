@@ -310,11 +310,14 @@
                                   font-variant-numeric: tabular-nums; }
   .blk > summary .blk-time:empty,
   .blk > summary .blk-duration:empty { display: none; }
-  /* Notify / result / error are one-shot status blocks (no processing),
-     so the elapsed-time chip would just show "0ms" — hide it. */
-  .blk-kind-notify > summary .blk-duration,
-  .blk-kind-result > summary .blk-duration,
-  .blk-kind-error  > summary .blk-duration { display: none; }
+  /* One-shot status blocks (notify/result/error kinds emitted via
+     liveEmitter.oneShot) wrap no processing, so the elapsed chip is
+     always ~0ms — hide it. Keyed off blk-oneshot rather than the
+     per-kind class so a tool_use / setup / phase that finishes in
+     error status (which adds blk-kind-error to *any* block) still
+     keeps its duration — that's exactly when "took 30s before
+     failing" is most useful. */
+  .blk-oneshot > summary .blk-duration { display: none; }
   .blk-body { padding: .5rem .85rem .8rem; font-size: .88rem;
               line-height: 1.5; color: #1a1a1a; }
   .blk-body p { margin: .35rem 0; }
@@ -742,11 +745,15 @@ function startBotTurn() {
 // silently drop on the floor.
 function renderBlock(turn, block, opts) {
   const isToolUse = block.kind === 'tool_use';
+  const isOneShot = block.kind === 'notify'
+                    || block.kind === 'result'
+                    || block.kind === 'error';
   const open = !!(opts && opts.open) && !isToolUse;
   const el = document.createElement('details');
   el.className = 'blk blk-kind-' + block.kind
                  + (block.status === 'streaming' ? ' blk-streaming' : '')
-                 + (block.status === 'error' ? ' blk-kind-error' : '');
+                 + (block.status === 'error' ? ' blk-kind-error' : '')
+                 + (isOneShot ? ' blk-oneshot' : '');
   if (open) el.open = true;
   el.dataset.blockId = block.id;
   el.dataset.startedAt = block.started_at || '';
