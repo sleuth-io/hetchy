@@ -38,8 +38,10 @@ const oauthStateCookieName = "hetchy_oauth_state"
 
 // oauthStateCookieTTL is the window the state cookie is valid for. The user
 // has this long between hitting /login and finishing /callback before the
-// signed cookie expires and the flow has to be restarted.
-const oauthStateCookieTTL = 10 * time.Minute
+// signed cookie expires and the flow has to be restarted. 1 hour covers
+// slow password-reset flows: email delivery lag + time on the reset form
+// can easily exceed 10 minutes.
+const oauthStateCookieTTL = time.Hour
 
 // oauthStateHKDFInfo is the HKDF "info" tag used to derive the HMAC key for
 // the OAuth state cookie from CookiePassword. Using a distinct info string
@@ -206,13 +208,13 @@ func (s *Service) CallbackHandler(w http.ResponseWriter, r *http.Request) {
 	s.clearOAuthStateCookie(w)
 	if cookieErr != nil || stateCookie.Value == "" {
 		s.logStateRejection(r, "missing cookie")
-		http.Error(w, "missing oauth state cookie", http.StatusBadRequest)
+		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
 	queryState := r.URL.Query().Get("state")
 	if queryState == "" || !s.verifyOAuthState(stateCookie.Value, queryState) {
 		s.logStateRejection(r, "state mismatch or invalid hmac")
-		http.Error(w, "invalid oauth state", http.StatusBadRequest)
+		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
 	code := r.URL.Query().Get("code")
@@ -484,8 +486,33 @@ func (s *Service) verifyOAuthState(signed, queryState string) bool {
 // request was rejected. CSRF attempts and misconfigured clients both end up
 // here, and ops needs to be able to see the rate. The reason string is fixed
 // per call site so we never leak the cookie value or query state into logs.
+//
+// Two optional fields are added when available:
+//   - user_id: WorkOS user ID extracted from an existing sealed session cookie
+//     (present when a logged-in user re-authenticates or the tab is reused).
+//     Note: logStateRejection is called on an unauthenticated endpoint, so
+//     any caller can attach an arbitrary hetchy_session cookie to force a
+//     local AES-GCM unseal attempt. WorkOS' unseal fails fast on malformed
+//     input and carries no network cost, so this is not a meaningful DoS
+//     lever in practice, but it is intentional and documented here.
+//   - flow_id: first 8 characters of the state query parameter. On a
+//     legitimate double-click this is a prefix of the 43-char base64url
+//     nonce we issued, useful for correlating duplicate /callback fetches
+//     of the same URL. On rejection paths the value is client-supplied and
+//     may be arbitrary — slog escapes it, but treat it as untrusted in
+//     dashboards. A fresh /login mints a new state, so flow_id does NOT
+//     correlate a user retrying the whole login flow.
 func (s *Service) logStateRejection(r *http.Request, reason string) {
-	slog.Warn("oauth callback rejected", "reason", reason, "remote_addr", r.RemoteAddr)
+	attrs := []any{"reason", reason, "remote_addr", r.RemoteAddr}
+	if cookie, err := r.Cookie(SessionCookieName); err == nil && cookie.Value != "" {
+		if res, err := workos.AuthenticateSession(cookie.Value, s.cfg.CookiePassword); err == nil && res.User != nil {
+			attrs = append(attrs, "user_id", res.User.ID)
+		}
+	}
+	if state := r.URL.Query().Get("state"); len(state) >= 8 {
+		attrs = append(attrs, "flow_id", state[:8])
+	}
+	slog.Warn("oauth callback rejected", attrs...)
 }
 
 func (s *Service) setOAuthStateCookie(w http.ResponseWriter, value string) {
