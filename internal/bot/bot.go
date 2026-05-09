@@ -95,8 +95,14 @@ type Bot struct {
 	cipher *secrets.Cipher
 
 	// createFn is called by createSandboxWithRetry; overridable in tests.
-	createFn     func(context.Context, any) (*daytona.Sandbox, error)
+	createFn func(context.Context, any) (*daytona.Sandbox, error)
+	// startFn is called by resumeSandbox; overridable in tests.
+	startFn      func(context.Context, *daytona.Sandbox, time.Duration) error
 	retryBackoff time.Duration
+	// heartbeatInterval controls how often resumeSandbox emits elapsed-time
+	// progress lines. Zero is treated as 15 s (the production default);
+	// tests set it to 1 ms so the ticker fires without sleeping.
+	heartbeatInterval time.Duration
 }
 
 // New constructs a Bot from config and a logger. It opens the database
@@ -179,6 +185,9 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 	}
 	b.createFn = func(ctx context.Context, params any) (*daytona.Sandbox, error) {
 		return dc.Create(ctx, params)
+	}
+	b.startFn = func(ctx context.Context, sb *daytona.Sandbox, timeout time.Duration) error {
+		return sb.StartWithTimeout(ctx, timeout)
 	}
 	b.slackUsers = newSlackUserResolver(log, authSvc)
 	b.slack = newSlackManager(log, b.orgs, b.handleSlackEvent)
@@ -620,21 +629,19 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 		}
 		return
 	}
-	if err := sb.Start(ctx); err != nil {
-		b.log.Error("sandbox start failed", "sandbox", sb.ID, "request_id", requestID, "error", err)
-		emit.Error("Sandbox start failed", fmt.Sprintf("Failed to resume sandbox `%s`. Check the server logs for details.", sb.ID))
-		appendBlocksAsNewTurn(&rec, text, recorder.Snapshot())
-		if err := b.convs.Upsert(ctx, rec); err != nil {
-			b.log.Error("convstore upsert (follow-up sandbox start)", "error", err)
+	if err := b.resumeSandbox(ctx, sb, emit); err != nil {
+		b.log.Error("sandbox resume failed", "sandbox", sb.ID, "request_id", requestID, "error", err)
+		var timeoutErr *sdkerrors.DaytonaTimeoutError
+		title := "Sandbox resume failed"
+		msg := fmt.Sprintf("Could not start sandbox `%s`. Try again, or open a fresh chat.", sb.ID)
+		if errors.As(err, &timeoutErr) {
+			title = "Sandbox slow to start"
+			msg = fmt.Sprintf("Sandbox `%s` is taking unusually long to start. Wait a moment and reload, or open a fresh chat if it persists.", sb.ID)
 		}
-		return
-	}
-	if err := sb.WaitForStart(ctx, 2*time.Minute); err != nil {
-		b.log.Error("sandbox wait-for-start failed", "sandbox", sb.ID, "request_id", requestID, "error", err)
-		emit.Error("Sandbox slow to start", fmt.Sprintf("Sandbox `%s` did not start in time. Try again, or open a fresh chat.", sb.ID))
+		emit.Error(title, msg)
 		appendBlocksAsNewTurn(&rec, text, recorder.Snapshot())
 		if err := b.convs.Upsert(ctx, rec); err != nil {
-			b.log.Error("convstore upsert (follow-up sandbox wait)", "error", err)
+			b.log.Error("convstore upsert (follow-up sandbox resume)", "error", err)
 		}
 		return
 	}
@@ -807,7 +814,16 @@ func appendBlocksAsNewTurn(rec *convstore.Record, text string, next []blocks.Blo
 // isTransientError reports whether err is a retryable Daytona API error:
 // rate-limit (429), server-side 5xx responses, and network-level failures
 // (StatusCode == 0) are all considered transient.
+//
+// DaytonaTimeoutError is explicitly excluded: it embeds *DaytonaError with
+// StatusCode==0, which would otherwise look like a network failure. A sandbox
+// that timed out is genuinely slow — retrying would just add another full
+// timeout on top of the one already spent.
 func isTransientError(err error) bool {
+	var timeoutErr *sdkerrors.DaytonaTimeoutError
+	if errors.As(err, &timeoutErr) {
+		return false
+	}
 	var rateLimitErr *sdkerrors.DaytonaRateLimitError
 	if errors.As(err, &rateLimitErr) {
 		return true
@@ -909,4 +925,60 @@ func (b *Bot) createSandboxWithRetry(ctx context.Context, params types.SnapshotP
 		return err
 	})
 	return sb, err
+}
+
+// resumeSandbox starts a sandbox that has been stopped or archived,
+// showing a live progress block while waiting. It uses a 5-minute
+// timeout — much longer than the SDK default of 60 seconds, which is
+// too short for a sandbox warming up from archive.
+//
+// Transient HTTP/network errors are retried with backoff. DaytonaTimeoutError
+// is not retried: the sandbox is alive but slow, so another full 5-minute
+// attempt would double the wait without helping.
+func (b *Bot) resumeSandbox(ctx context.Context, sb *daytona.Sandbox, emit blocks.Emitter) error {
+	const startTimeout = 5 * time.Minute
+
+	setupID := emit.Start(blocks.KindSetup, "Resuming sandbox", nil)
+	emit.Append(setupID, "[hetchy] starting sandbox "+sb.ID+"\n")
+
+	// Heartbeat goroutine: append elapsed time periodically so the user
+	// sees a live indicator rather than a frozen spinner.
+	// heartbeatDone is closed when the goroutine exits; we wait on it before
+	// any emit.Done/Fail call to avoid a concurrent-write race on the emitter.
+	interval := b.heartbeatInterval
+	if interval == 0 {
+		interval = 15 * time.Second
+	}
+	heartbeatCtx, cancelHeartbeat := context.WithCancel(ctx)
+	defer cancelHeartbeat() // belt-and-suspenders: ensures cancel on any future early return
+	heartbeatDone := make(chan struct{})
+	go func() {
+		defer close(heartbeatDone)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		start := time.Now()
+		for {
+			select {
+			case <-heartbeatCtx.Done():
+				return
+			case <-ticker.C:
+				emit.Append(setupID, fmt.Sprintf("[hetchy] still waiting… (%v elapsed)\n",
+					time.Since(start).Round(time.Second)))
+			}
+		}
+	}()
+
+	startErr := b.retryWithBackoff(ctx, "sandbox start", func() error {
+		return b.startFn(ctx, sb, startTimeout)
+	})
+	cancelHeartbeat()
+	<-heartbeatDone
+
+	if startErr != nil {
+		emit.Fail(setupID, "Failed to start")
+		return startErr
+	}
+	b.log.Info("sandbox resumed", "sandbox", sb.ID)
+	emit.Done(setupID, "Sandbox ready")
+	return nil
 }
