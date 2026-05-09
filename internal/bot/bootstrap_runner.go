@@ -72,7 +72,8 @@ func (r *botRunner) Run(ctx context.Context, label, scriptBody string, env map[s
 
 	// Heartbeat: emit a block every 5 minutes so the user can see
 	// bootstrap is still in progress during long first-time runs.
-	defer startHeartbeat(ctx, r.emit, "Still bootstrapping", "First-time repo setup has been running for %v — still in progress.")()
+	stop := startHeartbeat(ctx, r.emit, "Still bootstrapping", "First-time repo setup has been running for %v — still in progress.")
+	defer stop()
 
 	// Bootstrap runs are bounded by the loop's own iteration cap (15
 	// min by design); wall extended to 30m (from 20m) so the 15m idle

@@ -559,7 +559,8 @@ func (b *Bot) runScript(ctx context.Context, sb *daytona.Sandbox, sessionID, lab
 
 	// Heartbeat: emit a "still working" block every 5 minutes so the
 	// user knows the agent is alive during long runs.
-	defer startHeartbeat(ctx, emit, "Still working", "Agent has been running for %v — still in progress.")()
+	stop := startHeartbeat(ctx, emit, "Still working", "Agent has been running for %v — still in progress.")
+	defer stop()
 
 	router := newAgentLineRouter(emit)
 	if _, err := b.shLines(ctx, sb.ID, sb.Process, sessionID, "run-script", runCmd, 45*time.Minute, 15*time.Minute, router.Line); err != nil {
@@ -578,28 +579,4 @@ func (b *Bot) runScript(ctx context.Context, sb *daytona.Sandbox, sessionID, lab
 		return "", fmt.Errorf("claude finished the %s run without posting a PR URL — check the agent transcript blocks", label)
 	}
 	return prURL, nil
-}
-
-// startHeartbeat emits a Notify block on emit every 5 minutes until the
-// returned stop function is called. title is the notification heading;
-// bodyFmt is a fmt.Sprintf format string that receives one argument: the
-// elapsed time rounded to the nearest minute.
-//
-//	defer startHeartbeat(ctx, emit, "Still working", "Running for %v.")()
-func startHeartbeat(ctx context.Context, emit blocks.Emitter, title, bodyFmt string) (stop func()) {
-	hbCtx, cancel := context.WithCancel(ctx)
-	go func() {
-		t := time.NewTicker(5 * time.Minute)
-		defer t.Stop()
-		start := time.Now()
-		for {
-			select {
-			case <-hbCtx.Done():
-				return
-			case <-t.C:
-				emit.Notify(title, fmt.Sprintf(bodyFmt, time.Since(start).Round(time.Minute)))
-			}
-		}
-	}()
-	return cancel
 }

@@ -82,6 +82,14 @@ func TestShLines(t *testing.T) {
 			idleTimeout: 0, // disabled so only wall fires
 			wantErr:     ErrStepWallTimeout,
 		},
+		{
+			name:        "incoming output resets idle clock",
+			proc:        &fakeProcess{chunks: []string{"line1\n", "line2\n"}, chunkGap: 50 * time.Millisecond},
+			timeout:     5 * time.Second,
+			idleTimeout: 200 * time.Millisecond,
+			wantOut:     "line1\nline2\n",
+			wantErr:     nil,
+		},
 	}
 
 	for _, tc := range cases {
