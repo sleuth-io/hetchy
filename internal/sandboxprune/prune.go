@@ -28,9 +28,12 @@ import (
 )
 
 // Result summarises a single prune run.
+// The fields satisfy: Active + Skipped + Pruned + Errors == Sandboxes (live mode)
+// and: Active + Skipped + WouldPrune == Sandboxes (dry-run mode).
 type Result struct {
 	Sandboxes  int // total sandboxes listed from Daytona
 	Active     int // sandboxes with a live, heartbeating run — skipped
+	Skipped    int // sandboxes already at rest (archived/destroyed) — skipped
 	WouldPrune int // prunable sandboxes identified in dry-run mode (no changes made)
 	Pruned     int // sandboxes archived successfully in live mode
 	Errors     int // archive attempts that failed
@@ -43,7 +46,9 @@ type Result struct {
 // env is matched against the "hetchy-env" label set on each sandbox at creation
 // time; only sandboxes with that label are considered, so a dev/staging prune
 // cannot accidentally archive prod sandboxes even when Daytona credentials are
-// shared across deployments.
+// shared across deployments. Note: sandboxes created before this label was
+// introduced will not be returned by the Daytona list and must be cleaned up
+// manually on first deploy.
 //
 // staleThreshold controls how old agent_heartbeat_at must be before a 'running'
 // conversation is considered crashed. 10 minutes is a safe default; the heartbeat
@@ -51,24 +56,32 @@ type Result struct {
 //
 // When dryRun is true the function logs what it would do but makes no changes to
 // Daytona (the Daytona API is still queried to build the candidate list).
+//
+// Query ordering: Daytona is listed first, then the DB active-set is queried.
+// This ordering closes the TOCTOU race where a bot path running
+// createSandboxWithRetry → BeginAgentRun could fall entirely between two
+// reversed queries: if the sandbox exists in Daytona, the DB write is guaranteed
+// observable by the subsequent (later) DB query; if the sandbox was created after
+// the Daytona list, it never enters the candidate set at all.
 func Run(ctx context.Context, log *slog.Logger, dc *daytona.Client, store *db.Store, env string, staleThreshold time.Duration, dryRun bool) (Result, error) {
-	active, err := loadActiveIDs(ctx, store, staleThreshold)
-	if err != nil {
-		return Result{}, fmt.Errorf("load active sandbox IDs: %w", err)
-	}
-	log.Info("active sandbox IDs loaded from database", "count", len(active))
-
 	sandboxes, err := listAll(ctx, dc, env)
 	if err != nil {
 		return Result{}, fmt.Errorf("list daytona sandboxes: %w", err)
 	}
 	log.Info("daytona sandboxes listed", "count", len(sandboxes), "env", env)
 
+	active, err := loadActiveIDs(ctx, store, staleThreshold)
+	if err != nil {
+		return Result{}, fmt.Errorf("load active sandbox IDs: %w", err)
+	}
+	log.Info("active sandbox IDs loaded from database", "count", len(active))
+
 	res := Result{Sandboxes: len(sandboxes)}
 
 	for _, sb := range sandboxes {
-		// Sandboxes already at rest consume no compute; skip them silently.
+		// Sandboxes already at rest consume no compute; skip them.
 		if sb.State == apiclient.SANDBOXSTATE_ARCHIVED || sb.State == apiclient.SANDBOXSTATE_DESTROYED {
+			res.Skipped++
 			log.Debug("sandbox already at rest, skipping", "id", sb.ID, "state", sb.State)
 			continue
 		}

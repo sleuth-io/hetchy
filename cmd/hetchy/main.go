@@ -180,12 +180,14 @@ func runPruneSandboxes(log *slog.Logger, dryRun bool, staleThreshold time.Durati
 		log.Info("prune dry-run complete",
 			"total_sandboxes", result.Sandboxes,
 			"active", result.Active,
+			"skipped", result.Skipped,
 			"would_prune", result.WouldPrune,
 		)
 	} else {
 		log.Info("prune complete",
 			"total_sandboxes", result.Sandboxes,
 			"active", result.Active,
+			"skipped", result.Skipped,
 			"pruned", result.Pruned,
 			"errors", result.Errors,
 		)
