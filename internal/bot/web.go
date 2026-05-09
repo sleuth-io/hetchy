@@ -49,6 +49,11 @@ var landingHTML []byte
 func (b *Bot) runWeb(ctx context.Context) error {
 	mux := http.NewServeMux()
 
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	})
+
 	mux.HandleFunc("/login", b.auth.LoginHandler)
 	mux.HandleFunc("/signup", b.auth.SignupHandler)
 	mux.HandleFunc("/callback", b.auth.CallbackHandler)
