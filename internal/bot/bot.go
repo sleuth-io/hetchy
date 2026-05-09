@@ -632,11 +632,13 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 	if err := b.resumeSandbox(ctx, sb, emit); err != nil {
 		b.log.Error("sandbox resume failed", "sandbox", sb.ID, "request_id", requestID, "error", err)
 		var timeoutErr *sdkerrors.DaytonaTimeoutError
+		title := "Sandbox resume failed"
 		msg := fmt.Sprintf("Could not start sandbox `%s`. Try again, or open a fresh chat.", sb.ID)
 		if errors.As(err, &timeoutErr) {
+			title = "Sandbox slow to start"
 			msg = fmt.Sprintf("Sandbox `%s` is taking unusually long to start. Wait a moment and reload, or open a fresh chat if it persists.", sb.ID)
 		}
-		emit.Error("Sandbox resume failed", msg)
+		emit.Error(title, msg)
 		appendBlocksAsNewTurn(&rec, text, recorder.Snapshot())
 		if err := b.convs.Upsert(ctx, rec); err != nil {
 			b.log.Error("convstore upsert (follow-up sandbox resume)", "error", err)
