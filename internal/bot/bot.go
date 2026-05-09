@@ -620,21 +620,12 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 		}
 		return
 	}
-	if err := sb.Start(ctx); err != nil {
-		b.log.Error("sandbox start failed", "sandbox", sb.ID, "request_id", requestID, "error", err)
-		emit.Error("Sandbox start failed", fmt.Sprintf("Failed to resume sandbox `%s`. Check the server logs for details.", sb.ID))
+	if err := b.resumeSandbox(ctx, sb, emit); err != nil {
+		b.log.Error("sandbox resume failed", "sandbox", sb.ID, "request_id", requestID, "error", err)
+		emit.Error("Sandbox resume failed", fmt.Sprintf("Could not start sandbox `%s`. Try again, or open a fresh chat.", sb.ID))
 		appendBlocksAsNewTurn(&rec, text, recorder.Snapshot())
 		if err := b.convs.Upsert(ctx, rec); err != nil {
-			b.log.Error("convstore upsert (follow-up sandbox start)", "error", err)
-		}
-		return
-	}
-	if err := sb.WaitForStart(ctx, 2*time.Minute); err != nil {
-		b.log.Error("sandbox wait-for-start failed", "sandbox", sb.ID, "request_id", requestID, "error", err)
-		emit.Error("Sandbox slow to start", fmt.Sprintf("Sandbox `%s` did not start in time. Try again, or open a fresh chat.", sb.ID))
-		appendBlocksAsNewTurn(&rec, text, recorder.Snapshot())
-		if err := b.convs.Upsert(ctx, rec); err != nil {
-			b.log.Error("convstore upsert (follow-up sandbox wait)", "error", err)
+			b.log.Error("convstore upsert (follow-up sandbox resume)", "error", err)
 		}
 		return
 	}
@@ -909,4 +900,84 @@ func (b *Bot) createSandboxWithRetry(ctx context.Context, params types.SnapshotP
 		return err
 	})
 	return sb, err
+}
+
+// resumeSandbox starts a sandbox that has been stopped or archived,
+// showing a live progress block while waiting. It uses a 5-minute
+// timeout — much longer than the SDK default of 60 seconds, which is
+// too short for a sandbox warming up from archive.
+//
+// Transient HTTP/network errors are retried with backoff. DaytonaTimeoutError
+// is not retried: the sandbox is alive but slow, so another full 5-minute
+// attempt would double the wait without helping.
+func (b *Bot) resumeSandbox(ctx context.Context, sb *daytona.Sandbox, emit blocks.Emitter) error {
+	const startTimeout = 5 * time.Minute
+
+	setupID := emit.Start(blocks.KindSetup, "Resuming sandbox", nil)
+	emit.Append(setupID, "[hetchy] starting sandbox "+sb.ID+"\n")
+
+	// Heartbeat goroutine: append elapsed time every 15 s so the user
+	// sees a live indicator rather than a frozen spinner.
+	heartbeatCtx, cancelHeartbeat := context.WithCancel(ctx)
+	defer cancelHeartbeat()
+	go func() {
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		start := time.Now()
+		for {
+			select {
+			case <-heartbeatCtx.Done():
+				return
+			case <-ticker.C:
+				emit.Append(setupID, fmt.Sprintf("[hetchy] still waiting… (%v elapsed)\n",
+					time.Since(start).Round(time.Second)))
+			}
+		}
+	}()
+
+	startErr := b.startWithRetry(ctx, sb, startTimeout)
+	cancelHeartbeat()
+
+	if startErr != nil {
+		b.log.Error("sandbox resume failed", "sandbox", sb.ID, "error", startErr)
+		emit.Fail(setupID, "Failed to start")
+		return startErr
+	}
+	b.log.Info("sandbox resumed", "sandbox", sb.ID)
+	emit.Done(setupID, "Sandbox ready")
+	return nil
+}
+
+// startWithRetry calls StartWithTimeout with retry for transient HTTP/network
+// errors. DaytonaTimeoutError is excluded from retry: a sandbox that doesn't
+// start within the timeout is genuinely slow — a fresh attempt would just
+// add another full timeout on top of the one we already spent.
+func (b *Bot) startWithRetry(ctx context.Context, sb *daytona.Sandbox, timeout time.Duration) error {
+	var lastErr error
+	backoff := b.retryBackoff
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		lastErr = sb.StartWithTimeout(ctx, timeout)
+		if lastErr == nil {
+			if attempt > 1 {
+				b.log.Info("sandbox start succeeded after retry", "sandbox", sb.ID, "attempt", attempt)
+			}
+			return nil
+		}
+
+		var timeoutErr *sdkerrors.DaytonaTimeoutError
+		if errors.As(lastErr, &timeoutErr) || !isTransientError(lastErr) || attempt == maxRetries {
+			return lastErr
+		}
+
+		b.log.Warn("sandbox start transient error, retrying",
+			"sandbox", sb.ID, "attempt", attempt, "error", lastErr)
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(backoff):
+			backoff *= backoffMultiplier
+		}
+	}
+	return lastErr
 }
