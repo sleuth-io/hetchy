@@ -25,6 +25,14 @@ import (
 // start a new sandbox.
 var ErrNotFound = errors.New("convstore: not found")
 
+// Agent state constants for Record.AgentState.
+const (
+	AgentStateIdle      = ""          // no agent run yet, or pre-migration row
+	AgentStateRunning   = "running"   // agent goroutine is active right now
+	AgentStateCompleted = "completed" // run finished, sandbox archived
+	AgentStateError     = "error"     // run failed, sandbox left running for debug
+)
+
 // Record is the app-friendly view of a conversation row.
 //
 // History and ResponseBlocks are paired by index: History[i] is the
@@ -55,8 +63,12 @@ type Record struct {
 	// conversation. Empty for conversations initiated via Slack or before
 	// this field was introduced.
 	CreatorID string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	// AgentState tracks whether an agent is actively running in the
+	// sandbox. Use the AgentState* constants. Empty string means no agent
+	// has run yet (pre-migration rows also have this value).
+	AgentState string
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 }
 
 // Store wraps the sqlc queries with the loose Record shape used elsewhere.
@@ -199,9 +211,28 @@ func (s *Store) Upsert(ctx context.Context, r Record) error {
 		GithubOwner:    r.GitHubOwner,
 		GithubRepo:     r.GitHubRepo,
 		CreatorID:      r.CreatorID,
+		AgentState:     r.AgentState,
 	})
 	if err != nil {
 		return fmt.Errorf("upsert conversation: %w", err)
+	}
+	return nil
+}
+
+// BeginAgentRun marks the conversation as actively running and seeds
+// agent_heartbeat_at. Must be called after the sandbox is ready and just
+// before the agent goroutine starts. The chatPersister will keep the
+// heartbeat fresh until the run ends; the terminal Upsert then sets the
+// final agent_state ('completed' or 'error') and clears the heartbeat.
+func (s *Store) BeginAgentRun(ctx context.Context, orgID, threadID string) error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+	if err := s.db.Queries.BeginAgentRun(ctx, sqlc.BeginAgentRunParams{
+		OrgID:    orgID,
+		ThreadID: threadID,
+	}); err != nil {
+		return fmt.Errorf("begin agent run: %w", err)
 	}
 	return nil
 }
@@ -293,6 +324,7 @@ type rowFields struct {
 	ResponseBlocks                            [][]byte
 	GithubOwner, GithubRepo, CustomTitle      string
 	CreatorID                                 string
+	AgentState                                string
 	CreatedAt, UpdatedAt                      pgtype.Timestamptz
 }
 
@@ -313,6 +345,7 @@ func recordFromFields(f rowFields) (Record, error) {
 		GitHubRepo:     f.GithubRepo,
 		CustomTitle:    f.CustomTitle,
 		CreatorID:      f.CreatorID,
+		AgentState:     f.AgentState,
 		CreatedAt:      f.CreatedAt.Time,
 		UpdatedAt:      f.UpdatedAt.Time,
 	}, nil
@@ -325,7 +358,8 @@ func recordFromGetRow(row sqlc.GetConversationRow) (Record, error) {
 		ResponseBlocks: row.ResponseBlocks,
 		GithubOwner:    row.GithubOwner, GithubRepo: row.GithubRepo,
 		CustomTitle: row.CustomTitle, CreatorID: row.CreatorID,
-		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+		AgentState: row.AgentState,
+		CreatedAt:  row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	})
 }
 
@@ -336,6 +370,7 @@ func recordFromSearchRow(row sqlc.SearchConversationsRow) (Record, error) {
 		ResponseBlocks: row.ResponseBlocks,
 		GithubOwner:    row.GithubOwner, GithubRepo: row.GithubRepo,
 		CustomTitle: row.CustomTitle, CreatorID: row.CreatorID,
-		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+		AgentState: row.AgentState,
+		CreatedAt:  row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	})
 }

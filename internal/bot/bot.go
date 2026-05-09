@@ -543,6 +543,10 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 	b.log.Info("sandbox created", "id", sb.ID, "request_id", requestID)
 	emit.Notify("Sandbox ready", fmt.Sprintf("`%s` is up — cloning repo and starting Claude Code.", sb.ID))
 
+	if err := b.convs.BeginAgentRun(ctx, rec.OrgID, rec.ThreadID); err != nil {
+		b.log.Warn("begin agent run record failed", "request_id", requestID, "error", err)
+	}
+
 	// Persist progress every 2 s for the rest of the run so a
 	// reload (or bot crash) doesn't lose blocks. The persister
 	// writes only history + response_blocks + creator_id via
@@ -571,6 +575,7 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 		// the dispatcher tells "agent failed mid-run, clean up first"
 		// apart from a real follow-up.
 		rec.SandboxID = sb.ID
+		rec.AgentState = convstore.AgentStateError
 		appendBlocksToFirstTurn(&rec, recorder.Snapshot())
 		if err := b.convs.Upsert(ctx, rec); err != nil {
 			b.log.Error("convstore upsert (agent fail)", "error", err)
@@ -589,6 +594,7 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 	rec.SandboxID = sb.ID
 	rec.Branch = branch
 	rec.PRURL = prURL
+	rec.AgentState = convstore.AgentStateCompleted
 	appendBlocksToFirstTurn(&rec, recorder.Snapshot())
 	if err := b.convs.Upsert(ctx, rec); err != nil {
 		b.log.Error("convstore upsert", "error", err)
@@ -639,6 +645,10 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 		return
 	}
 
+	if err := b.convs.BeginAgentRun(ctx, rec.OrgID, rec.ThreadID); err != nil {
+		b.log.Warn("begin agent run record failed", "request_id", requestID, "error", err)
+	}
+
 	// Persister sees a forward-looking rec where the new user turn's
 	// text is already in history — otherwise a mid-run reload would
 	// render the user's message back in the previous turn instead of
@@ -658,6 +668,7 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 	if err != nil {
 		b.log.Error("follow-up failed", "sandbox", sb.ID, "request_id", requestID, "error", err)
 		emit.Error("Agent failed", fmt.Sprintf("Something went wrong while running the agent. Sandbox `%s` is left running for debugging — check the server logs for details.", sb.ID))
+		rec.AgentState = convstore.AgentStateError
 		appendBlocksAsNewTurn(&rec, text, recorder.Snapshot())
 		if err := b.convs.Upsert(ctx, rec); err != nil {
 			b.log.Error("convstore upsert (follow-up agent fail)", "error", err)
@@ -676,6 +687,7 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 	emit.Result("Done!", prURL)
 
 	rec.PRURL = prURL
+	rec.AgentState = convstore.AgentStateCompleted
 	appendBlocksAsNewTurn(&rec, text, recorder.Snapshot())
 	if err := b.convs.Upsert(ctx, rec); err != nil {
 		b.log.Error("convstore upsert", "error", err)

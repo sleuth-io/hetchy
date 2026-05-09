@@ -11,12 +11,16 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
+	"github.com/daytonaio/daytona/libs/sdk-go/pkg/types"
 	"github.com/jackc/pgx/v5"
 	"github.com/joho/godotenv"
 
 	"github.com/hetchyhq/hetchy/db/migrations"
 	"github.com/hetchyhq/hetchy/internal/bot"
 	"github.com/hetchyhq/hetchy/internal/buildinfo"
+	"github.com/hetchyhq/hetchy/internal/db"
+	"github.com/hetchyhq/hetchy/internal/sandboxprune"
 )
 
 // parseLogLevel maps LOG_LEVEL to slog.Level. Unset or unrecognized
@@ -42,6 +46,9 @@ func main() {
 	migrateFlag := flag.Bool("migrate", false, "Apply all pending database migrations and exit")
 	migrateDown := flag.Int("migrate-down", -1, "Roll back N migrations and exit (0 means roll back everything)")
 	migrateStatus := flag.Bool("migrate-status", false, "Print the current schema version and exit")
+	pruneSandboxes := flag.Bool("prune-sandboxes", false, "Detect and archive orphaned Daytona sandboxes, then exit")
+	dryRun := flag.Bool("dry-run", false, "Used with --prune-sandboxes: report orphans without archiving them")
+	heartbeatStaleAfter := flag.Duration("heartbeat-stale-after", 10*time.Minute, "Used with --prune-sandboxes: treat a 'running' sandbox as crashed if its heartbeat is older than this")
 	flag.Parse()
 
 	_ = godotenv.Load()
@@ -58,6 +65,11 @@ func main() {
 
 	if *migrateFlag || *migrateDown >= 0 || *migrateStatus {
 		runMigrate(log, *migrateFlag, *migrateDown, *migrateStatus)
+		return
+	}
+
+	if *pruneSandboxes {
+		runPruneSandboxes(log, *dryRun, *heartbeatStaleAfter)
 		return
 	}
 
@@ -111,6 +123,64 @@ func waitForDB(ctx context.Context, log *slog.Logger, databaseURL string) error 
 		case <-time.After(delay):
 		}
 		delay = min(delay*2, maxDelay)
+	}
+}
+
+// runPruneSandboxes connects to Daytona and the database, then calls
+// sandboxprune.Run to detect and (unless dryRun) archive every sandbox that
+// has no corresponding conversation row.
+func runPruneSandboxes(log *slog.Logger, dryRun bool, staleThreshold time.Duration) {
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		log.Error("DATABASE_URL is required for --prune-sandboxes")
+		os.Exit(1)
+	}
+
+	ctx := context.Background()
+
+	store, err := db.Open(ctx, databaseURL)
+	if err != nil {
+		log.Error("database open failed", "error", err)
+		os.Exit(1)
+	}
+	defer store.Close()
+
+	daytonaCfg := &types.DaytonaConfig{}
+	if u := os.Getenv("DAYTONA_API_URL"); u != "" {
+		daytonaCfg.APIUrl = u
+	}
+	dc, err := daytona.NewClientWithConfig(daytonaCfg)
+	if err != nil {
+		log.Error("daytona client init failed", "error", err)
+		os.Exit(1)
+	}
+
+	if dryRun {
+		log.Info("dry-run mode: no sandboxes will be modified")
+	}
+
+	result, err := sandboxprune.Run(ctx, log, dc, store, staleThreshold, dryRun)
+	if err != nil {
+		log.Error("prune failed", "error", err)
+		os.Exit(1)
+	}
+
+	if dryRun {
+		log.Info("prune dry-run complete",
+			"total_sandboxes", result.Sandboxes,
+			"active", result.Active,
+			"would_prune", result.WouldPrune,
+		)
+	} else {
+		log.Info("prune complete",
+			"total_sandboxes", result.Sandboxes,
+			"active", result.Active,
+			"pruned", result.Pruned,
+			"errors", result.Errors,
+		)
+	}
+	if result.Errors > 0 {
+		os.Exit(1)
 	}
 }
 

@@ -1,6 +1,6 @@
 -- name: GetConversation :one
 SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, response_blocks,
-       github_owner, github_repo, custom_title, creator_id
+       github_owner, github_repo, custom_title, creator_id, agent_state
 FROM conversations
 WHERE org_id = $1 AND thread_id = $2;
 
@@ -41,7 +41,7 @@ WHERE org_id = $1 AND thread_id = $2;
 -- + a GIN index on custom_title (and a generated column for
 -- history[1]).
 SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, response_blocks,
-       github_owner, github_repo, custom_title, creator_id
+       github_owner, github_repo, custom_title, creator_id, agent_state
 FROM conversations
 WHERE org_id = $1
   AND (sqlc.arg(creator_id)::text = '' OR creator_id = sqlc.arg(creator_id))
@@ -57,21 +57,32 @@ OFFSET sqlc.arg(off);
 -- name: UpsertConversation :one
 INSERT INTO conversations (
     org_id, thread_id, sandbox_id, branch, pr_url, history, response_blocks,
-    github_owner, github_repo, creator_id
+    github_owner, github_repo, creator_id, agent_state
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
 )
 ON CONFLICT (org_id, thread_id) DO UPDATE SET
-    sandbox_id      = EXCLUDED.sandbox_id,
-    branch          = EXCLUDED.branch,
-    pr_url          = EXCLUDED.pr_url,
-    history         = EXCLUDED.history,
-    response_blocks = EXCLUDED.response_blocks,
-    github_owner    = EXCLUDED.github_owner,
-    github_repo     = EXCLUDED.github_repo,
-    updated_at      = NOW()
+    sandbox_id         = EXCLUDED.sandbox_id,
+    branch             = EXCLUDED.branch,
+    pr_url             = EXCLUDED.pr_url,
+    history            = EXCLUDED.history,
+    response_blocks    = EXCLUDED.response_blocks,
+    github_owner       = EXCLUDED.github_owner,
+    github_repo        = EXCLUDED.github_repo,
+    agent_state        = EXCLUDED.agent_state,
+    agent_heartbeat_at = NULL,
+    updated_at         = NOW()
 RETURNING org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, response_blocks,
-          github_owner, github_repo, custom_title, creator_id;
+          github_owner, github_repo, custom_title, creator_id, agent_state;
+
+-- name: BeginAgentRun :exec
+-- Marks the conversation as actively running and seeds the heartbeat
+-- timestamp. Called once just before the agent goroutine starts.
+UPDATE conversations
+   SET agent_state        = 'running',
+       agent_heartbeat_at = NOW(),
+       updated_at         = NOW()
+WHERE org_id = $1 AND thread_id = $2;
 
 -- name: SaveConversationProgress :exec
 -- Periodic mid-run snapshot used by chatPersister. Only writes the
@@ -83,6 +94,9 @@ RETURNING org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, up
 -- them here mid-run would race the dispatcher into the wrong state
 -- machine branch on a concurrent reload.
 --
+-- Also bumps agent_heartbeat_at when the run is active so the orphan
+-- pruner can distinguish a live run from a crashed one.
+--
 -- Pure UPDATE. We rely on the dispatcher's entry-Upsert (in
 -- HandleRequest, before runFreshAgent) to create the row with the
 -- NOT NULL columns populated; if a tick fires before that landing
@@ -92,13 +106,17 @@ RETURNING org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, up
 -- neither is desirable, and the persister has no business creating
 -- rows on its own.
 UPDATE conversations
-   SET history         = $3,
-       response_blocks = $4,
-       creator_id      = CASE
-                             WHEN creator_id = '' THEN $5
-                             ELSE creator_id
-                         END,
-       updated_at      = NOW()
+   SET history            = $3,
+       response_blocks    = $4,
+       creator_id         = CASE
+                                WHEN creator_id = '' THEN $5
+                                ELSE creator_id
+                            END,
+       agent_heartbeat_at = CASE
+                                WHEN agent_state = 'running' THEN NOW()
+                                ELSE agent_heartbeat_at
+                            END,
+       updated_at         = NOW()
 WHERE org_id = $1 AND thread_id = $2;
 
 -- name: DeleteConversation :exec
@@ -107,3 +125,17 @@ DELETE FROM conversations WHERE org_id = $1 AND thread_id = $2;
 -- name: RenameConversation :execrows
 UPDATE conversations SET custom_title = $3
 WHERE org_id = $1 AND thread_id = $2;
+
+-- name: ListActiveSandboxIDs :many
+-- Returns sandbox IDs that belong to a run actively in progress right
+-- now: agent_state = 'running' and the heartbeat is fresh enough that
+-- the process hasn't crashed. The pruner uses this as its "do not
+-- touch" set — everything else in Daytona is fair game to archive.
+--
+-- stale_threshold is an interval (e.g. '10 minutes'). Any sandbox
+-- whose heartbeat hasn't been updated within that window is treated as
+-- crashed and excluded from the protected set.
+SELECT sandbox_id FROM conversations
+WHERE sandbox_id != ''
+  AND agent_state = 'running'
+  AND agent_heartbeat_at > NOW() - sqlc.arg(stale_threshold)::interval;
