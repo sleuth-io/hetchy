@@ -3,6 +3,7 @@ package bot
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -61,12 +62,13 @@ func TestShLines(t *testing.T) {
 	b := &Bot{log: discardLogger(), retryBackoff: 0}
 
 	cases := []struct {
-		name        string
-		proc        *fakeProcess
-		timeout     time.Duration
-		idleTimeout time.Duration
-		wantOut     string
-		wantErr     error
+		name             string
+		proc             *fakeProcess
+		timeout          time.Duration
+		idleTimeout      time.Duration
+		wantOut          string
+		wantErr          error
+		wantErrSubstring string // narrows which error branch fired, not just which sentinel
 	}{
 		{
 			name:        "success",
@@ -84,21 +86,23 @@ func TestShLines(t *testing.T) {
 			wantErr:     ErrStepIdleTimeout,
 		},
 		{
-			name:        "wall timeout fires when process takes too long",
-			proc:        &fakeProcess{chunks: []string{"alive\n"}, hangAfter: true},
-			timeout:     100 * time.Millisecond,
-			idleTimeout: 0, // disabled so only wall fires
-			wantErr:     ErrStepWallTimeout,
+			name:             "wall timeout fires when process takes too long",
+			proc:             &fakeProcess{chunks: []string{"alive\n"}, hangAfter: true},
+			timeout:          100 * time.Millisecond,
+			idleTimeout:      0, // disabled so only wall fires
+			wantErr:          ErrStepWallTimeout,
+			wantErrSubstring: "stream timed out",
 		},
 		{
 			// Exercises the exec-phase wall-timeout branch: ExecuteSessionCommand
 			// itself hangs past the deadline so the error is classified as
 			// ErrStepWallTimeout rather than a generic exec error.
-			name:        "wall timeout fires during ExecuteSessionCommand",
-			proc:        &fakeProcess{hangBeforeExec: 5 * time.Second},
-			timeout:     50 * time.Millisecond,
-			idleTimeout: 0,
-			wantErr:     ErrStepWallTimeout,
+			name:             "wall timeout fires during ExecuteSessionCommand",
+			proc:             &fakeProcess{hangBeforeExec: 5 * time.Second},
+			timeout:          50 * time.Millisecond,
+			idleTimeout:      0,
+			wantErr:          ErrStepWallTimeout,
+			wantErrSubstring: "exec timed out",
 		},
 		{
 			// Total runtime ~400 ms (4 chunks × 100 ms gap) exceeds the
@@ -123,6 +127,9 @@ func TestShLines(t *testing.T) {
 			if tc.wantErr != nil {
 				if !errors.Is(err, tc.wantErr) {
 					t.Errorf("shLines error = %v, want errors.Is(%v)", err, tc.wantErr)
+				}
+				if tc.wantErrSubstring != "" && !strings.Contains(err.Error(), tc.wantErrSubstring) {
+					t.Errorf("shLines error = %v, want substring %q", err, tc.wantErrSubstring)
 				}
 				return
 			}
