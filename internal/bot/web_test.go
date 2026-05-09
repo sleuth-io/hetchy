@@ -361,6 +361,103 @@ func TestSettingsTemplate_HidesMembersTabForNonAdmin(t *testing.T) {
 	}
 }
 
+// TestSettingsTemplate_NonAdminReadOnly asserts that a non-admin member sees
+// read-only fields and hint text instead of mutating forms and Enable buttons.
+func TestSettingsTemplate_NonAdminReadOnly(t *testing.T) {
+	b := newBypassBot(t)
+	nonAdminBase := map[string]any{
+		"OrgID": "o", "OrgName": "Acme", "Email": "u@x", "PrincipalUserID": "u",
+		"IsAdmin":                     false,
+		"GitHubAppEnabled":            true,
+		"GitHubInstallations":         nil,
+		"GitHubRepos":                 nil,
+		"DefaultRepoSlug":             "",
+		"SlackOAuthEnabled":           true,
+		"SlackTeamID":                 "", // explicit "" so ne .SlackTeamID "" == false
+		"SlackBotTokenPreview":        "",
+		"SlackSocketTokenPreview":     "",
+		"SXKeyPreview":                "",
+		"AnthropicAPIKeyPreview":      "",
+		"ClaudeCodeOAuthTokenPreview": "",
+	}
+
+	t.Run("general tab shows readonly input and hint", func(t *testing.T) {
+		data := make(map[string]any, len(nonAdminBase)+1)
+		for k, v := range nonAdminBase {
+			data[k] = v
+		}
+		data["Tab"] = "general"
+		rec := httptest.NewRecorder()
+		b.renderTemplate(rec, settingsHTMLTpl, data)
+		body := rec.Body.String()
+
+		if !strings.Contains(body, `readonly`) {
+			t.Error("non-admin general tab: expected readonly org_name input")
+		}
+		if !strings.Contains(body, "Only administrators can change organization settings") {
+			t.Error("non-admin general tab: expected admin-only hint text")
+		}
+		if strings.Contains(body, `action="/settings/org?tab=general"`) {
+			t.Error("non-admin general tab: must not render the save form")
+		}
+	})
+
+	t.Run("integrations tab shows hint and no Enable buttons", func(t *testing.T) {
+		data := make(map[string]any, len(nonAdminBase)+1)
+		for k, v := range nonAdminBase {
+			data[k] = v
+		}
+		data["Tab"] = "integrations"
+		rec := httptest.NewRecorder()
+		b.renderTemplate(rec, settingsHTMLTpl, data)
+		body := rec.Body.String()
+
+		if !strings.Contains(body, "Only administrators can change integration settings") {
+			t.Error("non-admin integrations tab: expected admin-only hint text")
+		}
+		for _, btn := range []string{
+			`href="/integrations/github/install"`,
+			`href="/slack/install"`,
+			`data-open-modal="modal-sx"`,
+			// Use a specific attribute sequence to avoid matching the JS selector
+			// string querySelectorAll('[data-toggle-card]') which is always present.
+			`class="btn-enable" type="button" data-toggle-card`,
+		} {
+			if strings.Contains(body, btn) {
+				t.Errorf("non-admin integrations tab: must not render Enable button %q", btn)
+			}
+		}
+	})
+}
+
+// TestSettingsHandler_NonAdminPostReturns403 drives the full HTTP handler
+// (through auth middleware) and confirms that a member-role principal cannot
+// mutate org settings — the 403 must fire before any CSRF or DB logic.
+func TestSettingsHandler_NonAdminPostReturns403(t *testing.T) {
+	a, err := auth.New(auth.Config{
+		Bypass:      true,
+		BypassUser:  "user_member",
+		BypassEmail: "member@hetchy.local",
+		BypassOrg:   "org_x",
+		BypassRole:  "member",
+	})
+	if err != nil {
+		t.Fatalf("auth: %v", err)
+	}
+	b := &Bot{log: discardLogger(), cfg: Config{WebPort: "0"}, auth: a}
+
+	req := httptest.NewRequest(http.MethodPost, "/settings/org?tab=general",
+		strings.NewReader("org_name=Hacked"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+
+	a.Middleware(http.HandlerFunc(b.settingsHandler)).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("expected 403 for non-admin POST, got %d (body: %q)", rec.Code, rec.Body.String())
+	}
+}
+
 func TestProfileTemplate_Renders(t *testing.T) {
 	b := newBypassBot(t)
 	rec := httptest.NewRecorder()
