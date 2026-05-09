@@ -1,0 +1,49 @@
+stateDiagram-v2
+    [*] --> New : User sends first message
+
+    state New {
+        [*] --> CheckDefaultRepo
+        CheckDefaultRepo --> HasDefaultRepo : org has default_github_repo
+        CheckDefaultRepo --> NoDefaultRepo : no default repo
+    }
+
+    NoDefaultRepo --> AwaitingRepo : Bot asks "which repo?\nReply with owner/name"
+    HasDefaultRepo --> AgentRunning : runFreshAgent()
+
+    AwaitingRepo --> AgentRunning : User replies "owner/name"\nparsed successfully
+    AwaitingRepo --> AwaitingRepo : Parse failed\nBot nudges user to retry
+
+    AgentRunning --> SandboxFailed : Daytona create fails\nor agent crashes
+    AgentRunning --> PRCreated : Claude posts PR URL\nsandbox archived
+
+    SandboxFailed --> AgentRunning : User sends any message\norphan sandbox archived\nnew sandbox spun up
+
+    PRCreated --> FollowUpRunning : User sends follow-up\nmessage in thread
+    FollowUpRunning --> PRCreated : Follow-up complete\nnew commit pushed\nsandbox archived
+
+    FollowUpRunning --> FollowUpFailed : Agent crashes
+    FollowUpFailed --> FollowUpRunning : User retries
+
+    PRCreated --> [*] : Conversation abandoned
+    SandboxFailed --> [*] : Conversation abandoned
+
+    note right of AwaitingRepo
+        Stored state:
+        History[0] = original request
+        GitHubOwner = ""
+        SandboxID = ""
+    end note
+
+    note right of SandboxFailed
+        Stored state:
+        SandboxID set (if agent started)
+        PRURL = "" (distinguishes from PRCreated)
+        Next message triggers archive + retry
+    end note
+
+    note right of PRCreated
+        Stored state:
+        SandboxID, Branch, PRURL all set
+        Sandbox is ARCHIVED (cost-efficient)
+        Follow-up resumes from archive
+    end note

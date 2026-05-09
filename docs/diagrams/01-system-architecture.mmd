@@ -1,0 +1,65 @@
+graph TB
+    subgraph Users["👤 Users"]
+        Browser["Browser\n(Web UI)"]
+        SlackUser["Slack\n(Workspace)"]
+    end
+
+    subgraph HetchyServer["Hetchy Server (single binary)"]
+        direction TB
+        WebUI["HTTP / Web Handler\n/chat, /api/*\nSSE streaming"]
+        SlackMgr["Slack Manager\nSocket Mode\nper-org connections"]
+        BotCore["Bot Core\nHandleRequest\norchestrates everything"]
+        Auth["Auth Service\nWorkOS AuthKit\ncookie sessions"]
+        OrgCfg["OrgCfg Store\nper-org settings\n(encrypted at rest)"]
+        ConvStore["Conversation Store\nthread state\nblock history"]
+        Bootstrap["Bootstrap Store\nrepo specs\nsetup/start/health scripts"]
+        LiveReg["Live Registry\nin-flight SSE\nstream re-attach"]
+    end
+
+    subgraph ExternalServices["External Services"]
+        WorkOS["WorkOS\nAuthentication\nOrg management"]
+        Daytona["Daytona Cloud\nSandbox orchestration\nIsolated VMs"]
+        Anthropic["Anthropic API\nClaude Code\nAI agent"]
+        GitHub["GitHub\nGitHub App\nInstallation tokens\nPull Requests"]
+        Slack["Slack API\nEvent delivery\nThread replies"]
+        S3["AWS S3\nScreenshot upload\n(optional)"]
+    end
+
+    subgraph Database["PostgreSQL"]
+        Conversations["conversations\nthread_id → sandbox+branch+PR\nblock history"]
+        OrgConfigs["org_configs\nSlack/Anthropic tokens\ndefault repo"]
+        GithubApp["github_app_installations\ninstall_id → repos\naccess grants"]
+        RepoBootstrap["repo_bootstrap\nsetup/start/health scripts\nper-repo spec"]
+    end
+
+    Browser -->|"HTTPS POST /chat"| WebUI
+    Browser -->|"GET /chat/stream SSE"| WebUI
+    SlackUser -->|"Socket Mode events"| SlackMgr
+
+    WebUI --> Auth
+    WebUI --> BotCore
+    SlackMgr --> BotCore
+
+    BotCore --> OrgCfg
+    BotCore --> ConvStore
+    BotCore --> Bootstrap
+    BotCore --> LiveReg
+
+    Auth -->|"OAuth / session"| WorkOS
+    OrgCfg --> Database
+    ConvStore --> Database
+    Bootstrap --> Database
+
+    BotCore -->|"create/resume/archive"| Daytona
+    Daytona -->|"stdout/stderr stream"| BotCore
+    BotCore -->|"ANTHROPIC_API_KEY or\nCLAUDE_CODE_OAUTH_TOKEN"| Anthropic
+
+    BotCore -->|"mint installation token"| GitHub
+    BotCore -->|"thread reply / message"| Slack
+
+    BotCore -->|"presign PUT URL"| S3
+
+    style Users fill:#e8f4fd,stroke:#2196F3
+    style HetchyServer fill:#f3e5f5,stroke:#9C27B0
+    style ExternalServices fill:#e8f5e9,stroke:#4CAF50
+    style Database fill:#fff3e0,stroke:#FF9800

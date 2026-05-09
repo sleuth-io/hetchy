@@ -1,0 +1,110 @@
+graph LR
+    subgraph cmd["cmd/"]
+        Main["hetchy/main.go\nWires config → Bot.Run\nOS signal handling"]
+    end
+
+    subgraph bot["internal/bot/"]
+        BotStruct["bot.go\nBot struct\nHandleRequest\nSandbox lifecycle"]
+        AgentGo["agent.go\nrunAgent / runFollowUp\nPrompt construction\nScript execution"]
+        ExecGo["exec.go\nshLines\nDaytona session bridge\nIdle/wall timeout"]
+        WebGo["web.go\nHTTP routes\nSSE /chat/stream\nREST /api/*"]
+        SlackGo["slack.go\nSlackManager\nSocket Mode\nEvent dispatch"]
+        SlackEmit["slack_emitter.go\nBlocks → Slack messages\nThread replies"]
+        LiveGo["live.go + live_emitter.go\nIn-flight SSE registry\nStream re-attach"]
+        PersistGo["persister.go\nAsync block flush\n2-second tick"]
+        BootDetect["bootstrap_detect.go\nbootstrap_runner.go\nBridges bot→bootstrap"]
+        ConfigGo["config.go\nEnvironment vars\nDoppler secrets"]
+        ClaudeStream["claude_stream.go\nNDJSON parser\nBlock routing"]
+    end
+
+    subgraph auth["internal/auth/"]
+        AuthSvc["auth.go\nWorkOS AuthKit\nSession cookies\nLogin/Signup/Callback"]
+        Members["members.go\nOrg membership\nInvitation management"]
+    end
+
+    subgraph blocks["internal/blocks/"]
+        BlocksDef["blocks.go\nBlock / Kind / Status types\nEmitter interface"]
+        Recorder["recorder.go\nCaptures blocks for DB"]
+        Tee["tee.go\nFan-out: wire + persist"]
+    end
+
+    subgraph bootstrap["internal/bootstrap/"]
+        Loop["loop.go\nBootstrap loop\nMax-iterations budget"]
+        Detect["detect.go\nRepo fingerprint\nTech stack hints"]
+        Spec["spec.go\nSpec type\nSave/Get/SaveFailing"]
+        Prompt["prompt.go\nBootstrap prompt\nAutoHeal preamble"]
+        Validate["validate.go\nMerge spec→agent prompt\nValidation instructions"]
+        Drift["drift.go\nIsStale detection"]
+    end
+
+    subgraph convstore["internal/convstore/"]
+        ConvStore["convstore.go\nRecord CRUD\nJSON block encoding"]
+    end
+
+    subgraph orgcfg["internal/orgcfg/"]
+        OrgCfg["orgcfg.go\nPer-org config\nDecrypt on read"]
+    end
+
+    subgraph githubapp["internal/githubapp/"]
+        App["app.go\nJWT signing\nInstallation token cache"]
+        Webhook["webhook.go\nHMAC verification\nInstall/repo events"]
+        Sync["sync.go\nSync repos from GitHub"]
+        Tokens["tokens.go\nToken minting + expiry"]
+    end
+
+    subgraph dbpkg["internal/db/"]
+        DBConn["db.go\npgxpool connection"]
+        SQLC["sqlc/\nGenerated type-safe queries"]
+    end
+
+    subgraph secrets["internal/secrets/"]
+        Cipher["secrets.go\nAES-GCM encryption\nPer-org token storage"]
+    end
+
+    subgraph screenshots["internal/screenshots/"]
+        Signer["screenshots.go\nS3 presigned PUT URLs\nValidation evidence"]
+    end
+
+    Main --> BotStruct
+    BotStruct --> AgentGo
+    BotStruct --> WebGo
+    BotStruct --> SlackGo
+    BotStruct --> auth
+    BotStruct --> orgcfg
+    BotStruct --> convstore
+    BotStruct --> bootstrap
+    BotStruct --> githubapp
+    BotStruct --> screenshots
+
+    AgentGo --> ExecGo
+    AgentGo --> ClaudeStream
+    AgentGo --> BootDetect
+    AgentGo --> Validate
+
+    WebGo --> LiveGo
+    WebGo --> BlocksDef
+    SlackGo --> SlackEmit
+    BlocksDef --> Recorder
+    BlocksDef --> Tee
+
+    BotStruct --> PersistGo
+    PersistGo --> ConvStore
+
+    orgcfg --> dbpkg
+    orgcfg --> Cipher
+    convstore --> dbpkg
+    bootstrap --> dbpkg
+    githubapp --> dbpkg
+    auth --> WorkOS["WorkOS SDK"]
+
+    style cmd fill:#e3f2fd,stroke:#1976D2
+    style bot fill:#f3e5f5,stroke:#7B1FA2
+    style auth fill:#e8f5e9,stroke:#388E3C
+    style blocks fill:#fff8e1,stroke:#F57F17
+    style bootstrap fill:#fce4ec,stroke:#C62828
+    style convstore fill:#e0f2f1,stroke:#00695C
+    style orgcfg fill:#ede7f6,stroke:#4527A0
+    style githubapp fill:#e8eaf6,stroke:#283593
+    style dbpkg fill:#fff3e0,stroke:#E65100
+    style secrets fill:#fafafa,stroke:#424242
+    style screenshots fill:#f1f8e9,stroke:#558B2F

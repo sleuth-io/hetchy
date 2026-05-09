@@ -1,0 +1,50 @@
+sequenceDiagram
+    actor User as User (Web / Slack)
+    participant Bot as Bot Core
+    participant DB as PostgreSQL
+    participant Daytona as Daytona Sandbox
+    participant Claude as Claude Code (in sandbox)
+    participant GH as GitHub
+
+    User->>Bot: "Add a health check endpoint"
+    Bot->>DB: Look up conversation (org, thread_id)
+    DB-->>Bot: ErrNotFound → new conversation
+
+    Bot->>DB: Look up org config (default repo, Anthropic key)
+    DB-->>Bot: org config
+
+    alt No default repo set
+        Bot-->>User: "Which repo? Reply with owner/name"
+        Bot->>DB: Save partial conversation (awaiting repo)
+        User->>Bot: "acme/website"
+    end
+
+    Bot->>GH: Get installation token (scoped to repo)
+    GH-->>Bot: Short-lived installation token
+
+    Bot->>DB: Upsert conversation row (repo set, no sandbox yet)
+    Bot-->>User: "Spinning up sandbox for acme/website…"
+
+    Bot->>Daytona: Create sandbox (from snapshot)
+    Daytona-->>Bot: Sandbox ID
+
+    Bot-->>User: "Sandbox ready — cloning repo"
+
+    Bot->>Daytona: Write agent.sh to sandbox
+    Bot->>Daytona: Run agent.sh (with ANTHROPIC_API_KEY, GITHUB_TOKEN, prompt)
+
+    loop Claude Code stream (NDJSON)
+        Daytona-->>Bot: stdout line (setup echo / Claude JSON event)
+        Bot-->>User: SSE block update (setup / tool_use / claude_text)
+    end
+
+    Claude->>GH: git push + gh pr create
+    GH-->>Claude: PR URL
+
+    Claude-->>Daytona: Last line = PR URL
+    Daytona-->>Bot: PR URL extracted
+
+    Bot->>Daytona: Stop + archive sandbox
+
+    Bot-->>User: "Done! https://github.com/acme/website/pull/42"
+    Bot->>DB: Upsert conversation (sandbox_id, branch, pr_url, blocks)

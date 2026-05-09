@@ -1,0 +1,53 @@
+graph LR
+    subgraph Sandbox["Daytona Sandbox"]
+        Script["agent.sh\nbash script"]
+        Claude["Claude Code\nstream-json output"]
+        Script -->|starts| Claude
+        Out["stdout stream\nNDJSON lines"]
+        Script --> Out
+        Claude --> Out
+    end
+
+    subgraph Bot["Bot Process"]
+        ShLines["shLines\nLine-buffered reader"]
+        Router["AgentLineRouter\nline dispatcher"]
+        B1["KindSetup\nbash echoes"]
+        B2["KindClaudeText\nassistant prose"]
+        B3["KindToolUse\ntool calls"]
+        B4["KindResult\nPR URL"]
+
+        ShLines -->|whole lines| Router
+        Router --> B1
+        Router --> B2
+        Router --> B3
+        Router --> B4
+    end
+
+    subgraph Emitters["Block Emitters - Tee fan-out"]
+        Recorder["Recorder\nCaptures for DB"]
+        SSEEmit["SSE Emitter\nJSON to browser"]
+        SlackEmit["Slack Emitter\nThread replies"]
+    end
+
+    Out -->|Daytona SDK| ShLines
+    B1 --> Recorder
+    B2 --> Recorder
+    B3 --> Recorder
+    B4 --> Recorder
+    B1 --> SSEEmit
+    B2 --> SSEEmit
+    B3 --> SSEEmit
+    B4 --> SSEEmit
+    B1 --> SlackEmit
+    B2 --> SlackEmit
+    B3 --> SlackEmit
+    B4 --> SlackEmit
+
+    SSEEmit --> Browser["Browser\ncollapsible blocks\nstreaming text\nPR link"]
+    SlackEmit --> Thread["Slack Thread\nbullet summary"]
+    Recorder --> Persister["chatPersister\n2-second tick"]
+    Persister --> DB["PostgreSQL\nresponse_blocks JSONB"]
+
+    style Sandbox fill:#e8f5e9,stroke:#4CAF50
+    style Bot fill:#f3e5f5,stroke:#9C27B0
+    style Emitters fill:#e3f2fd,stroke:#2196F3

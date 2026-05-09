@@ -1,0 +1,49 @@
+stateDiagram-v2
+    [*] --> Creating : Bot calls Daytona.Create(snapshot)
+
+    Creating --> Running : Sandbox ready\n(agent.sh / followup.sh starts)
+    Creating --> CreateFailed : Daytona error\n(retried up to 3x with backoff)
+
+    CreateFailed --> [*] : Bot emits error to user\nConveration row saved for retry
+
+    state Running {
+        [*] --> SetupClone
+        SetupClone --> ClaudeRunning : git clone success\nClaude Code invoked
+        SetupClone --> SetupFailed : clone / auth error
+        ClaudeRunning --> PRCreated : Last line = PR URL
+        ClaudeRunning --> AgentFailed : Wall/idle timeout\nor non-zero exit
+    }
+
+    Running --> Stopping : Bot calls sb.Stop()
+    Stopping --> Archived : Bot calls sb.Archive()
+    Archived --> Resuming : Follow-up request arrives\nBot calls sb.StartWithTimeout()
+
+    Resuming --> Running : Sandbox warm again\n(≈ seconds from archive)
+    Resuming --> ResumeFailed : DaytonaTimeoutError\nor 5xx
+
+    ResumeFailed --> [*] : Bot emits "Sandbox slow to start"\nUser told to retry or open new chat
+
+    Archived --> Archived : No follow-up\n(cost-efficient idle state)
+
+    note right of Archived
+        Archived sandboxes persist all files
+        (repo checkout, git history).
+        Follow-ups resume in seconds
+        without re-cloning.
+    end note
+
+    note right of Creating
+        Snapshot image pre-baked with:
+        - Claude Code CLI
+        - gh CLI (authenticated)
+        - Go toolchain
+        - Node.js / Python / etc.
+        Env vars: SX_KEY (if set)
+    end note
+
+    note right of ClaudeRunning
+        Timeout limits:
+        - Wall clock: 45 min
+        - Idle (no output): 15 min
+        Heartbeat every 5 min to user
+    end note

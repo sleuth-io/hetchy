@@ -1,0 +1,46 @@
+flowchart TD
+    Start([Task arrives\nfor new repo]) --> CheckSpec{Spec exists\nin DB?}
+
+    CheckSpec -->|Yes\nStatusValidated| UseSpec[Use cached spec\nSkip bootstrap]
+    CheckSpec -->|ErrNotFound| RunBootstrap[Run bootstrap pipeline]
+    CheckSpec -->|StatusFailing| AutoHeal[AutoHeal mode\nPreamble with prior scripts]
+    AutoHeal --> RunBootstrap
+
+    RunBootstrap --> Clone[setup-clone.sh\ngit clone repo into sandbox]
+    Clone --> Detect[detect.go\nRead files to fingerprint repo:\nDockerfile, package.json,\ngo.mod, Makefile…]
+    Detect --> Hints[Hints struct:\nLanguage, Framework,\nHasDocker, HasMakefile…]
+    Hints --> PromptBuild[Build bootstrap prompt:\nHints + AutoHeal preamble\nif prior spec exists]
+
+    PromptBuild --> ClaudeLoop{Bootstrap loop\nmax N iterations}
+
+    ClaudeLoop --> RunClaude[Run Claude Code\nwith bootstrap prompt]
+    RunClaude --> AgentWrites[Agent writes to /tmp/hetchy-spec/:\nmanifest.json\nsetup.sh\nstart.sh\nhealth.sh]
+
+    AgentWrites --> RunSetup[Run setup.sh\ninstall deps, build…]
+    RunSetup --> RunStart[Run start.sh &\nlaunch app in background]
+    RunStart --> PollHealth{Poll health.sh\ntimeout 60s}
+
+    PollHealth -->|health check passes| Bootstrap_OK[Bootstrap SUCCESS]
+    PollHealth -->|timeout / error| IterBudget{Iterations\nexhausted?}
+
+    IterBudget -->|No| DiagnosePrompt[Diagnose prompt:\nfailure output + prior scripts\nask Claude to fix]
+    DiagnosePrompt --> ClaudeLoop
+
+    IterBudget -->|Yes| Bootstrap_Fail[Bootstrap FAILED\nErrLoopFailed]
+
+    Bootstrap_Fail --> PersistFailing[Persist StatusFailing spec\nwith partial scripts\nfor future AutoHeal]
+
+    Bootstrap_OK --> SaveSpec[Save Spec to DB\nStatusValidated\nInstallID + RepoID keyed]
+    SaveSpec --> MergePrompt[MergeIntoAgentPrompt\nAppend validation instructions\nto main agent prompt]
+
+    UseSpec --> MergePrompt
+    MergePrompt --> SendToAgent[Send to agent.sh\nWith SF_SPEC_SETUP_B64\nSF_SPEC_START_B64\nSF_SPEC_HEALTH_B64]
+
+    SendToAgent --> AgentRuns[Agent runs:\n1. Decode + run setup.sh\n2. Start app\n3. Poll health\n4. Make changes\n5. Validate via screenshots\n6. Open PR]
+
+    AgentRuns --> PostSuccess[Post-success:\nRead /tmp/hetchy-spec/improved/\nApply any script improvements\nMarkApplied → StatusValidated]
+
+    style Bootstrap_OK fill:#c8e6c9,stroke:#2E7D32
+    style Bootstrap_Fail fill:#ffcdd2,stroke:#B71C1C
+    style UseSpec fill:#c8e6c9,stroke:#2E7D32
+    style AutoHeal fill:#fff9c4,stroke:#F57F17
