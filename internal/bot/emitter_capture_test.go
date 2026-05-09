@@ -66,6 +66,7 @@ func (e *captureEmitter) Done(id, summary string) {
 	if idx, ok := e.open[id]; ok {
 		e.Blocks[idx].Status = blocks.StatusDone
 		e.Blocks[idx].Summary = summary
+		e.recordOneShotLocked(idx)
 		delete(e.open, id)
 	}
 }
@@ -76,8 +77,21 @@ func (e *captureEmitter) Fail(id, summary string) {
 	if idx, ok := e.open[id]; ok {
 		e.Blocks[idx].Status = blocks.StatusError
 		e.Blocks[idx].Summary = summary
+		e.recordOneShotLocked(idx)
 		delete(e.open, id)
 	}
+}
+
+// recordOneShotLocked surfaces a finished notify/result/error block in
+// the Calls list so tests that grep on Calls keep working when the
+// tee dispatches via Start+Append+Done rather than the wrapped
+// emitter's own Notify/Result/Error helper. Caller holds e.mu.
+func (e *captureEmitter) recordOneShotLocked(idx int) {
+	b := &e.Blocks[idx]
+	if b.Kind != blocks.KindNotify && b.Kind != blocks.KindResult && b.Kind != blocks.KindError {
+		return
+	}
+	e.Calls = append(e.Calls, string(b.Kind)+":"+b.Title+"|"+b.Body.String())
 }
 
 func (e *captureEmitter) record(kind, title, body string) {

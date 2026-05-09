@@ -104,19 +104,53 @@ func (t *teeEmitter) Fail(id, summary string) {
 }
 
 func (t *teeEmitter) Notify(title, body string) {
-	for _, e := range t.emitters {
-		e.Notify(title, body)
-	}
+	t.oneShotAt(KindNotify, title, body, StatusDone)
 }
 
 func (t *teeEmitter) Result(title, body string) {
-	for _, e := range t.emitters {
-		e.Result(title, body)
-	}
+	t.oneShotAt(KindResult, title, body, StatusDone)
 }
 
 func (t *teeEmitter) Error(title, body string) {
-	for _, e := range t.emitters {
-		e.Error(title, body)
+	t.oneShotAt(KindError, title, body, StatusError)
+}
+
+// oneShotAt mirrors the Start/Done/Fail unification: sample a single
+// `now` and pass it to every wrapped emitter, so all of them stamp
+// the same StartedAt/EndedAt for a one-shot block. Without this, each
+// wrapped emitter's own Notify/Result/Error helper would internally
+// call Start (one time.Now sample) and Done/Fail (another), and a
+// pair of wrapped emitters could end up with four independent reads
+// — producing different HH:MM chips between the live SSE stream and
+// the post-reload replay at minute boundaries.
+func (t *teeEmitter) oneShotAt(kind Kind, title, body string, status Status) {
+	now := time.Now().UTC()
+	ids := make([]string, len(t.emitters))
+	for i, e := range t.emitters {
+		if sa, ok := e.(withStartAt); ok {
+			ids[i] = sa.StartAt(kind, title, nil, now)
+		} else {
+			ids[i] = e.Start(kind, title, nil)
+		}
+	}
+	if body != "" {
+		for i, e := range t.emitters {
+			e.Append(ids[i], body)
+		}
+	}
+	for i, e := range t.emitters {
+		if status == StatusError {
+			if fa, ok := e.(withFailAt); ok {
+				fa.FailAt(ids[i], "", now)
+			} else {
+				e.Fail(ids[i], "")
+			}
+		} else {
+			if da, ok := e.(withDoneAt); ok {
+				da.DoneAt(ids[i], "", now)
+			} else {
+				e.Done(ids[i], "")
+			}
+		}
 	}
 }

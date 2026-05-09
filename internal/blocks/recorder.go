@@ -14,6 +14,13 @@ import (
 //
 // IDs are assigned monotonically per Recorder instance. Snapshot returns
 // a deep copy safe to JSON-encode without further synchronisation.
+//
+// External callers should reach for the un-suffixed methods
+// (Start/Done/Fail). The StartAt/DoneAt/FailAt variants exist
+// primarily so a coordinating wrapper — currently the teeEmitter —
+// can sample time.Now() once and propagate the same instant to every
+// wrapped emitter, keeping the persisted Block.StartedAt aligned with
+// the timestamp the live SSE emitter sends to the browser.
 type Recorder struct {
 	mu      sync.Mutex
 	idGen   atomic.Uint64

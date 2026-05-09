@@ -100,9 +100,23 @@ func (s *stampingRecorder) Done(id, summary string)         { s.DoneAt(id, summa
 func (s *stampingRecorder) Fail(id, summary string)         { s.FailAt(id, summary, time.Now().UTC()) }
 func (s *stampingRecorder) DoneAt(_, _ string, t time.Time) { s.endedAt = append(s.endedAt, t) }
 func (s *stampingRecorder) FailAt(_, _ string, t time.Time) { s.endedAt = append(s.endedAt, t) }
-func (s *stampingRecorder) Notify(string, string)           {}
-func (s *stampingRecorder) Result(string, string)           {}
-func (s *stampingRecorder) Error(string, string)            {}
+
+// The Notify/Result/Error fall-throughs aren't exercised by the tee
+// any more — it dispatches via StartAt+DoneAt/FailAt directly. They
+// stay here so stampingRecorder still satisfies the Emitter
+// interface for the few tests that drive a single recorder.
+func (s *stampingRecorder) Notify(t, b string) {
+	s.StartAt(KindNotify, t, nil, time.Now().UTC())
+	s.DoneAt("id", b, time.Now().UTC())
+}
+func (s *stampingRecorder) Result(t, b string) {
+	s.StartAt(KindResult, t, nil, time.Now().UTC())
+	s.DoneAt("id", b, time.Now().UTC())
+}
+func (s *stampingRecorder) Error(t, b string) {
+	s.StartAt(KindError, t, nil, time.Now().UTC())
+	s.FailAt("id", b, time.Now().UTC())
+}
 
 // TestTee_SharesStartedAtAndEndedAt is the regression test for the
 // minute-boundary disagreement between the persisted Block.StartedAt
@@ -135,6 +149,49 @@ func TestTee_SharesStartedAtAndEndedAt(t *testing.T) {
 		if !a.endedAt[i].Equal(b.endedAt[i]) {
 			t.Errorf("DoneAt/FailAt #%d disagrees across emitters: a=%v b=%v",
 				i, a.endedAt[i], b.endedAt[i])
+		}
+	}
+}
+
+// TestTee_OneShotsShareTimestamp guards the same minute-boundary
+// invariant for Notify/Result/Error: each one-shot must stamp a
+// single time.Now() and hand it to every wrapped emitter, so the
+// live SSE chip and the post-reload replay chip can't disagree on
+// the HH:MM rendered for setup/notify/result/error blocks.
+func TestTee_OneShotsShareTimestamp(t *testing.T) {
+	a := &stampingRecorder{}
+	b := &stampingRecorder{}
+	emit := Tee(a, b)
+
+	emit.Notify("hi", "")
+	emit.Result("done", "")
+	emit.Error("oops", "")
+
+	if len(a.startedAt) != 3 || len(b.startedAt) != 3 {
+		t.Fatalf("want 3 starts each, got a=%d b=%d", len(a.startedAt), len(b.startedAt))
+	}
+	for i := range a.startedAt {
+		if !a.startedAt[i].Equal(b.startedAt[i]) {
+			t.Errorf("StartAt #%d disagrees across emitters: a=%v b=%v",
+				i, a.startedAt[i], b.startedAt[i])
+		}
+	}
+	if len(a.endedAt) != 3 || len(b.endedAt) != 3 {
+		t.Fatalf("want 3 ends each, got a=%d b=%d", len(a.endedAt), len(b.endedAt))
+	}
+	for i := range a.endedAt {
+		if !a.endedAt[i].Equal(b.endedAt[i]) {
+			t.Errorf("DoneAt/FailAt #%d disagrees across emitters: a=%v b=%v",
+				i, a.endedAt[i], b.endedAt[i])
+		}
+	}
+	// The same call must also share Start with End — the helper
+	// samples once and uses it for both endpoints of an instantaneous
+	// one-shot.
+	for i := range a.startedAt {
+		if !a.startedAt[i].Equal(a.endedAt[i]) {
+			t.Errorf("one-shot #%d StartedAt != EndedAt within an emitter: start=%v end=%v",
+				i, a.startedAt[i], a.endedAt[i])
 		}
 	}
 }

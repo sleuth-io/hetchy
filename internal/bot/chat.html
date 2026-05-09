@@ -810,14 +810,26 @@ function openPhase(turn, headerTitle, startedAt) {
   return phase;
 }
 
+// SERVER_CLOCK_NOTE: every duration chip is computed from a pair of
+// server-stamped (started_at, ended_at) values that came over the
+// SSE wire or out of the persisted blocks. We deliberately do NOT
+// fall back to the browser clock for the missing endpoint — a laptop
+// that just resumed from sleep, or a VM with bad NTP, would otherwise
+// paint a duration tens of minutes off (or get clamped to '' by
+// formatBlockDuration when the delta goes negative). Better to hide
+// the chip than show a wrong number.
+
 // closePhase collapses the phase and updates its right-hand summary
 // with the step count so the user sees "5 steps" once it's done.
 // Idempotent — safe to call on a phase that's already closed.
 //
-// endedAt (optional) drives the total-execution-time chip. When the
-// caller has a wire-level timestamp (replay path, or a future live
-// "phase_done" frame) they pass it; otherwise we fall back to the
-// browser clock so a live phase still shows a reasonable duration.
+// endedAt (optional) drives the total-execution-time chip. Callers
+// should pass a server-stamped value: replay uses the trailing tool's
+// ended_at, live uses the started_at of whatever event is closing
+// the phase (next block_start). When neither is available — e.g. the
+// SSE stream dropped before a terminal frame — the chip is left empty
+// rather than synthesising one from the browser clock (see
+// SERVER_CLOCK_NOTE above).
 function closePhase(phase, endedAt) {
   if (!phase || phase._closed) return;
   phase._closed = true;
@@ -828,9 +840,8 @@ function closePhase(phase, endedAt) {
       ? '1 step'
       : phase.toolCount + ' steps';
   }
-  if (phase.durationEl && phase.startedAt) {
-    const end = endedAt || new Date().toISOString();
-    phase.durationEl.textContent = formatBlockDuration(phase.startedAt, end);
+  if (phase.durationEl && phase.startedAt && endedAt) {
+    phase.durationEl.textContent = formatBlockDuration(phase.startedAt, endedAt);
   }
 }
 
@@ -948,8 +959,9 @@ function finishBlock(el, status, summary, endedAt) {
   }
   const durationEl = el.querySelector('.blk-duration');
   const startedAt = el.dataset.startedAt;
-  if (durationEl && startedAt) {
-    durationEl.textContent = formatBlockDuration(startedAt, endedAt || new Date().toISOString());
+  if (durationEl && startedAt && endedAt) {
+    // Server-stamped only — see SERVER_CLOCK_NOTE near closePhase.
+    durationEl.textContent = formatBlockDuration(startedAt, endedAt);
   }
   // Force a final render so any pending deltas land before the block
   // is collapsed by the next block_start (a collapsed block skips its
@@ -1568,6 +1580,14 @@ async function consumeSSEResponse(res, onFirstEvent) {
   // standalone block (setup/notify/result/error) starts and closes
   // it.
   let currentPhase = null;
+  // phaseLastEndedAt mirrors the replay-path field: the server-
+  // stamped ended_at of the trailing tool/prose block in the
+  // currently-open phase, used as the phase's closing instant so the
+  // collapsed phase shows a duration even though the wire has no
+  // explicit "phase_done" frame. Reset whenever currentPhase resets.
+  // Server-stamped only — never use the browser clock here (see
+  // SERVER_CLOCK_NOTE in this file).
+  let phaseLastEndedAt = '';
   // lastStandaloneEl is the most recently rendered standalone block
   // (setup, notify, result, error). When the *next* block of any
   // kind starts, we collapse this one so the user always sees the
@@ -1617,25 +1637,35 @@ async function consumeSSEResponse(res, onFirstEvent) {
         if (payload.kind === 'claude_text') {
           // A new prose chunk starts a fresh phase: collapse the prior
           // phase (if any) and open a new box with this paragraph as
-          // the header.
-          if (currentPhase) closePhase(currentPhase);
+          // the header. The new block's started_at is a server-stamped
+          // upper bound for when the prior phase ended, so we pass it
+          // through (preferring the trailing tool's ended_at when we
+          // saw one).
+          if (currentPhase) closePhase(currentPhase, phaseLastEndedAt || payload.started_at);
           currentPhase = openPhase(turn, payload.title, payload.started_at);
+          phaseLastEndedAt = '';
           blockRefs.set(payload.id, { kind: 'phase-prose', phase: currentPhase });
         } else if (payload.kind === 'tool_use') {
           // Tool calls go inside the current phase; if no phase is
           // open (Claude jumped straight to tools without prose),
           // open one with a generic title so the visual treatment
           // stays consistent.
-          if (!currentPhase) currentPhase = openPhase(turn, '', payload.started_at);
+          if (!currentPhase) {
+            currentPhase = openPhase(turn, '', payload.started_at);
+            phaseLastEndedAt = '';
+          }
           const el = addToolToPhase(currentPhase, payload);
           blockRefs.set(payload.id, { kind: 'tool', el, phase: currentPhase });
         } else {
           // Standalone block (setup, notify, result, error) — these
           // aren't part of a phase. Close any open phase first so the
-          // step count stamps correctly, then render normally.
+          // step count stamps correctly, then render normally. The
+          // standalone's started_at bounds the phase end on the
+          // server clock when we don't have a tool's ended_at yet.
           if (currentPhase) {
-            closePhase(currentPhase);
+            closePhase(currentPhase, phaseLastEndedAt || payload.started_at);
             currentPhase = null;
+            phaseLastEndedAt = '';
           }
           const el = renderBlock(turn, {
             id: payload.id, kind: payload.kind, title: payload.title,
@@ -1659,8 +1689,16 @@ async function consumeSSEResponse(res, onFirstEvent) {
         if (!ref) continue;
         if (ref.kind === 'phase-prose') {
           finishPhaseProse(ref.phase);
+          // The phase prose's own ended_at is also a valid lower
+          // bound for the phase-close instant when no tools follow.
+          if (payload.ended_at && ref.phase === currentPhase) {
+            phaseLastEndedAt = payload.ended_at;
+          }
         } else if (ref.kind === 'tool') {
           finishBlock(ref.el, payload.status, payload.summary, payload.ended_at);
+          if (payload.ended_at && ref.phase === currentPhase) {
+            phaseLastEndedAt = payload.ended_at;
+          }
         } else if (ref.kind === 'standalone') {
           finishBlock(ref.el, payload.status, payload.summary, payload.ended_at);
         }
@@ -1670,7 +1708,10 @@ async function consumeSSEResponse(res, onFirstEvent) {
   // The SSE stream closed. Idempotent close for any phase that
   // didn't receive a terminal block to push it closed (defensive —
   // a dropped connection should still produce a clean final state).
-  if (currentPhase) closePhase(currentPhase);
+  // We pass phaseLastEndedAt (server-stamped, possibly empty) so the
+  // duration chip stays empty rather than synthesising one from the
+  // browser clock (see SERVER_CLOCK_NOTE).
+  if (currentPhase) closePhase(currentPhase, phaseLastEndedAt);
 }
 
 async function send() {
