@@ -86,6 +86,7 @@ func TestSettingsTemplate_GeneralTab(t *testing.T) {
 	rec := httptest.NewRecorder()
 	b.renderTemplate(rec, settingsHTMLTpl, map[string]any{
 		"OrgID": "org_x", "OrgName": "Acme Inc.", "Email": "u@x", "Tab": "general",
+		"IsAdmin": true,
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
@@ -127,6 +128,7 @@ func TestSettingsTemplate_IntegrationsTab(t *testing.T) {
 			name: "all disabled — every Enable button + every modal pre-rendered",
 			data: map[string]any{
 				"OrgID": "org_x", "OrgName": "Acme", "Email": "u@x", "Tab": "integrations",
+				"IsAdmin":                     true,
 				"GitHubAppEnabled":            true,
 				"GitHubInstallations":         nil,
 				"GitHubRepos":                 nil,
@@ -167,6 +169,7 @@ func TestSettingsTemplate_IntegrationsTab(t *testing.T) {
 			name: "github enabled — connections list + default-repo dropdown shown",
 			data: map[string]any{
 				"OrgID": "org_y", "OrgName": "Acme", "Email": "u@y", "Tab": "integrations",
+				"IsAdmin":          true,
 				"GitHubAppEnabled": true,
 				"GitHubInstallations": []integrationInstallation{
 					{

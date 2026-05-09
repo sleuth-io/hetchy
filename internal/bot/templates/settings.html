@@ -556,6 +556,7 @@
 
   {{if .SavedMessage}}<div class="saved-banner">{{.SavedMessage}}</div>{{end}}
 
+  {{if .IsAdmin}}
   <form method="POST" action="/settings/org?tab=general">
     <fieldset>
       <legend>Organization</legend>
@@ -565,6 +566,14 @@
     </fieldset>
     <button class="primary" type="submit">Save</button>
   </form>
+  {{else}}
+  <fieldset>
+    <legend>Organization</legend>
+    <label for="org_name">Name</label>
+    <input id="org_name" type="text" value="{{.OrgName}}" readonly>
+    <p class="hint">Only administrators can change organization settings.</p>
+  </fieldset>
+  {{end}}
 {{end}}
 
 {{define "integrations"}}
@@ -572,6 +581,7 @@
   <p class="desc">Connect Hetchy to GitHub for repo access, Slack for chat, Claude for the agent, and SX for skills.</p>
 
   {{if .SavedMessage}}<div class="saved-banner">{{.SavedMessage}}</div>{{end}}
+  {{if not .IsAdmin}}<p class="hint">Only administrators can change integration settings.</p>{{end}}
 
   <div class="integration-list">
     {{/* Anthropic first because it's required for any chat to work;
@@ -606,7 +616,7 @@
           <span class="btn-not-configured">Not configured for this env</span>
         {{else if $enabled}}
           <span class="btn-enabled">✓ Enabled</span>
-        {{else}}
+        {{else if .IsAdmin}}
           <a class="btn-enable" href="/integrations/github/install">Enable</a>
         {{end}}
         <button class="caret" type="button" aria-label="Toggle details">
@@ -632,18 +642,21 @@
               </div>
               <div class="actions">
                 <a href="{{.ManageURL}}" target="_blank" rel="noopener">Manage on GitHub ↗</a>
+                {{if $.IsAdmin}}
                 <form method="POST" action="/integrations/github/sync">
                   <input type="hidden" name="installation_id" value="{{.InstallationID}}">
                   <button type="submit" class="link-btn" style="color:#0b93f6">Sync</button>
                 </form>
+                {{end}}
               </div>
             </div>
           {{end}}
-          <a class="add-link" href="/integrations/github/install">+ Install on another account</a>
+          {{if .IsAdmin}}<a class="add-link" href="/integrations/github/install">+ Install on another account</a>{{end}}
         </div>
 
         <div class="body-section">
           <legend>Default repository</legend>
+          {{if .IsAdmin}}
           <form method="POST" action="/settings/org?tab=integrations">
             {{if .GitHubRepos}}
               <select name="default_repo">
@@ -659,6 +672,9 @@
             <p class="hint">Used when a chat message (especially in Slack) doesn't say which repo to work in. Leave empty to require an explicit selection every time.</p>
             <button class="primary" type="submit">Save default</button>
           </form>
+          {{else}}
+          <p class="hint">{{if .DefaultRepoSlug}}{{.DefaultRepoSlug}}{{else}}(none — ask me each time){{end}}</p>
+          {{end}}
         </div>
       {{else}}
         <div class="body-section">
@@ -705,12 +721,14 @@
           <span class="btn-not-configured">Not configured for this env</span>
         {{else if $enabled}}
           <span class="btn-enabled">✓ Enabled</span>
-        {{else if .SlackOAuthEnabled}}
-          <a class="btn-enable" href="/slack/install">Enable</a>
-        {{else}}
-          {{/* Dev-only: clicking Enable expands the card and focuses
-               the first paste field; the body below carries the form. */}}
-          <button class="btn-enable" type="button" data-toggle-card="slack" data-focus-field="slack_bot_token">Enable</button>
+        {{else if .IsAdmin}}
+          {{if .SlackOAuthEnabled}}
+            <a class="btn-enable" href="/slack/install">Enable</a>
+          {{else}}
+            {{/* Dev-only: clicking Enable expands the card and focuses
+                 the first paste field; the body below carries the form. */}}
+            <button class="btn-enable" type="button" data-toggle-card="slack" data-focus-field="slack_bot_token">Enable</button>
+          {{end}}
         {{end}}
         <button class="caret" type="button" aria-label="Toggle details">
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><polyline points="4,6 8,10 12,6"/></svg>
@@ -729,7 +747,7 @@
         {{end}}
       </div>
       {{end}}
-      {{if .IsDev}}
+      {{if and .IsDev .IsAdmin}}
       <div class="body-section">
         <legend>Dev: paste tokens manually</legend>
         <form method="POST" action="/settings/org?tab=integrations">
@@ -771,7 +789,7 @@
       <div class="integration-status">
         {{if $enabled}}
           <span class="btn-enabled">✓ Enabled</span>
-        {{else}}
+        {{else if .IsAdmin}}
           <button class="btn-enable" type="button" data-toggle-card data-focus-field="anthropic_api_key">Enable</button>
         {{end}}
         <button class="caret" type="button" aria-label="Toggle details">
@@ -782,6 +800,7 @@
     <div class="integration-body">
       <div class="body-section">
         <legend>Credentials</legend>
+        {{if .IsAdmin}}
         <form method="POST" action="/settings/org?tab=integrations">
           <div class="cred-tabs" role="tablist">
             <button type="button" class="cred-tab{{if eq $activeTab "api-key"}} active{{end}}" data-cred-tab="api-key" role="tab" aria-selected="{{if eq $activeTab "api-key"}}true{{else}}false{{end}}">API key</button>
@@ -797,6 +816,9 @@
           </div>
           <button class="primary" type="submit">Save</button>
         </form>
+        {{else if $enabled}}
+          <p class="hint">{{if $hasKey}}API key{{else}}Subscription key{{end}} configured.</p>
+        {{end}}
       </div>
     </div>
   </article>
@@ -822,7 +844,7 @@
       <div class="integration-status">
         {{if $enabled}}
           <span class="btn-enabled">✓ Enabled</span>
-        {{else}}
+        {{else if .IsAdmin}}
           <button class="btn-enable" type="button" data-open-modal="modal-sx">Enable</button>
         {{end}}
         <button class="caret" type="button" aria-label="Toggle details">
@@ -834,10 +856,14 @@
     <div class="integration-body">
       <div class="body-section">
         <legend>SX bot key</legend>
+        {{if .IsAdmin}}
         <form method="POST" action="/settings/org?tab=integrations">
           {{template "secret" dict "Field" "sx_key" "Label" "Bot key" "Preview" .SXKeyPreview "Placeholder" "sx-…" "Required" false}}
           <button class="primary" type="submit">Save</button>
         </form>
+        {{else}}
+          <p class="hint">Bot key configured.</p>
+        {{end}}
       </div>
     </div>
     {{end}}
@@ -846,6 +872,7 @@
 
 
 {{define "modal_sx"}}
+{{if .IsAdmin}}
 <dialog class="api-modal" id="modal-sx">
   <form method="POST" action="/settings/org?tab=integrations">
     <div class="body">
@@ -860,6 +887,7 @@
     </div>
   </form>
 </dialog>
+{{end}}
 {{end}}
 
 {{define "members"}}
