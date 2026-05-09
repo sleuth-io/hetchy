@@ -973,7 +973,6 @@ func (b *Bot) resumeSandbox(ctx context.Context, sb *daytona.Sandbox, emit block
 	<-heartbeatDone
 
 	if startErr != nil {
-		b.log.Error("sandbox resume failed", "sandbox", sb.ID, "error", startErr)
 		emit.Fail(setupID, "Failed to start")
 		return startErr
 	}
