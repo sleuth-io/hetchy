@@ -89,11 +89,14 @@ func TestCallbackRejectsMissingState(t *testing.T) {
 	rec := httptest.NewRecorder()
 	s.CallbackHandler(rec, req)
 
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 with no state cookie, got %d", rec.Code)
+	// Missing state cookie redirects to /login so the user can restart the
+	// flow (e.g. after an expired cookie from a long password-reset) rather
+	// than hitting a hard 400.
+	if rec.Code != http.StatusFound {
+		t.Fatalf("expected 302 redirect with no state cookie, got %d", rec.Code)
 	}
-	if !strings.Contains(rec.Body.String(), "missing oauth state cookie") {
-		t.Fatalf("expected missing-cookie error, got body %q", rec.Body.String())
+	if loc := rec.Header().Get("Location"); loc != "/login" {
+		t.Fatalf("expected redirect to /login, got %q", loc)
 	}
 }
 
@@ -111,14 +114,14 @@ func TestCallbackRejectsMismatchedState(t *testing.T) {
 	rec := httptest.NewRecorder()
 	s.CallbackHandler(rec, req)
 
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 on state mismatch, got %d", rec.Code)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("expected 302 redirect on state mismatch, got %d", rec.Code)
 	}
-	if !strings.Contains(rec.Body.String(), "invalid oauth state") {
-		t.Fatalf("expected invalid-state error, got body %q", rec.Body.String())
+	if loc := rec.Header().Get("Location"); loc != "/login" {
+		t.Fatalf("expected redirect to /login, got %q", loc)
 	}
 
-	// And the cookie must be cleared on the way out so a single signed
+	// The cookie must be cleared on the way out so a single signed
 	// value can't be replayed against a future callback.
 	var cleared bool
 	for _, c := range rec.Result().Cookies() {

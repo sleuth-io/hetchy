@@ -38,8 +38,10 @@ const oauthStateCookieName = "hetchy_oauth_state"
 
 // oauthStateCookieTTL is the window the state cookie is valid for. The user
 // has this long between hitting /login and finishing /callback before the
-// signed cookie expires and the flow has to be restarted.
-const oauthStateCookieTTL = 10 * time.Minute
+// signed cookie expires and the flow has to be restarted. 1 hour covers
+// slow password-reset flows: email delivery lag + time on the reset form
+// can easily exceed 10 minutes.
+const oauthStateCookieTTL = 1 * time.Hour
 
 // oauthStateHKDFInfo is the HKDF "info" tag used to derive the HMAC key for
 // the OAuth state cookie from CookiePassword. Using a distinct info string
@@ -206,13 +208,13 @@ func (s *Service) CallbackHandler(w http.ResponseWriter, r *http.Request) {
 	s.clearOAuthStateCookie(w)
 	if cookieErr != nil || stateCookie.Value == "" {
 		s.logStateRejection(r, "missing cookie")
-		http.Error(w, "missing oauth state cookie", http.StatusBadRequest)
+		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
 	queryState := r.URL.Query().Get("state")
 	if queryState == "" || !s.verifyOAuthState(stateCookie.Value, queryState) {
 		s.logStateRejection(r, "state mismatch or invalid hmac")
-		http.Error(w, "invalid oauth state", http.StatusBadRequest)
+		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
 	code := r.URL.Query().Get("code")
