@@ -1559,6 +1559,55 @@ async function loadHistory(opts) {
   }
 }
 
+// Favicon swap — keeps a "ready" badge on the tab while the user is
+// elsewhere. The H mark lives only in the static <link> in <head>; we
+// read its href as the idle variant and splice a green dot into the
+// URL-encoded data URL (right before the encoded "</svg>") to build
+// the badged variant. One copy of the markup, no drift risk.
+// Case-insensitive match on the closing tag because the URL spec
+// doesn't pin percent-encoding casing — a future browser or tooling
+// pass that lowercases hex digits would otherwise silently no-op the
+// replace and leave FAVICON_DONE === FAVICON_IDLE. The post-replace
+// warn surfaces any other breakage (e.g. the source SVG losing its
+// closing tag) instead of letting the badge just stop appearing.
+// Defined above consumeSSEResponse so the call site's dependency on
+// FAVICON_DONE is lexical, not just hoisted-and-lucky.
+const FAVICON_IDLE = (document.getElementById('favicon') || {}).href || '';
+const FAVICON_DONE = FAVICON_IDLE.replace(
+  /%3C%2Fsvg%3E/i,
+  // encodeURIComponent leaves single quotes untouched (they're "mark"
+  // characters per RFC 2396), but the static <link> href has its
+  // quotes URL-encoded as %27 — post-process so the spliced fragment
+  // matches the surrounding encoding instead of producing a hybrid.
+  (m) => encodeURIComponent("<circle cx='24' cy='8' r='7' fill='#22c55e' stroke='#0d1117' stroke-width='2'/>").replace(/'/g, '%27') + m
+);
+if (FAVICON_IDLE && FAVICON_DONE === FAVICON_IDLE) {
+  console.warn('Favicon badge build failed: closing </svg> not found in favicon href');
+}
+// Tracks whether the favicon currently shows the "done" badge, so we
+// only rewrite link.href on visibilitychange when something actually
+// needs to change — avoids a re-decode on every tab focus.
+let faviconBadged = false;
+function setFaviconHref(href) {
+  const link = document.getElementById('favicon');
+  if (link) link.href = href;
+}
+function signalTurnDone() {
+  if (document.hidden) {
+    setFaviconHref(FAVICON_DONE);
+    faviconBadged = true;
+  }
+}
+// Clear the badge as soon as the user looks at the tab again. Using
+// visibilitychange (not focus) so switching browser windows without
+// changing tabs doesn't keep the badge stuck on.
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && faviconBadged) {
+    setFaviconHref(FAVICON_IDLE);
+    faviconBadged = false;
+  }
+});
+
 // consumeSSEResponse reads a server-sent-event stream from `res` and
 // renders blocks into a fresh bot turn. Used by both the original
 // POST-/chat send() flow and the GET-/chat/stream reload reattach
@@ -1736,49 +1785,6 @@ async function consumeSSEResponse(res, onFirstEvent) {
   // produce a misleading "ready" indicator on a still-running turn.
   if (sawTurnEnd) signalTurnDone();
 }
-
-// Favicon swap — keeps a "ready" badge on the tab while the user is
-// elsewhere. The H mark lives only in the static <link> in <head>; we
-// read its href as the idle variant and splice a green dot into the
-// URL-encoded data URL (right before the encoded "</svg>") to build
-// the badged variant. One copy of the markup, no drift risk.
-// Case-insensitive match on the closing tag because the URL spec
-// doesn't pin percent-encoding casing — a future browser or tooling
-// pass that lowercases hex digits would otherwise silently no-op the
-// replace and leave FAVICON_DONE === FAVICON_IDLE. The post-replace
-// warn surfaces any other breakage (e.g. the source SVG losing its
-// closing tag) instead of letting the badge just stop appearing.
-const FAVICON_IDLE = (document.getElementById('favicon') || {}).href || '';
-const FAVICON_DONE = FAVICON_IDLE.replace(
-  /%3C%2Fsvg%3E/i,
-  (m) => encodeURIComponent("<circle cx='24' cy='8' r='7' fill='#22c55e' stroke='#0d1117' stroke-width='2'/>") + m
-);
-if (FAVICON_IDLE && FAVICON_DONE === FAVICON_IDLE) {
-  console.warn('Favicon badge build failed: closing </svg> not found in favicon href');
-}
-// Tracks whether the favicon currently shows the "done" badge, so we
-// only rewrite link.href on visibilitychange when something actually
-// needs to change — avoids a re-decode on every tab focus.
-let faviconBadged = false;
-function setFaviconHref(href) {
-  const link = document.getElementById('favicon');
-  if (link) link.href = href;
-}
-function signalTurnDone() {
-  if (document.hidden) {
-    setFaviconHref(FAVICON_DONE);
-    faviconBadged = true;
-  }
-}
-// Clear the badge as soon as the user looks at the tab again. Using
-// visibilitychange (not focus) so switching browser windows without
-// changing tabs doesn't keep the badge stuck on.
-document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && faviconBadged) {
-    setFaviconHref(FAVICON_IDLE);
-    faviconBadged = false;
-  }
-});
 
 async function send() {
   const text = inp.value.trim();
