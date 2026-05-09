@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"time"
 
+	apiclient "github.com/daytonaio/daytona/libs/api-client-go"
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
 	"github.com/jackc/pgx/v5/pgtype"
 
@@ -35,32 +36,43 @@ type Result struct {
 	Errors     int // archive attempts that failed
 }
 
-// Run lists every sandbox in Daytona, cross-references with the set of
-// actively-running sandbox IDs in the hetchy database, and archives
-// every sandbox that has no live run driving it.
+// Run lists every sandbox in Daytona for the given env label, cross-references
+// with the set of actively-running sandbox IDs in the hetchy database, and
+// archives every sandbox that has no live run driving it.
 //
-// staleThreshold controls how old agent_heartbeat_at must be before a
-// 'running' conversation is considered crashed. 10 minutes is a safe
-// default; the heartbeat is updated every 2 seconds.
+// env is matched against the "hetchy-env" label set on each sandbox at creation
+// time; only sandboxes with that label are considered, so a dev/staging prune
+// cannot accidentally archive prod sandboxes even when Daytona credentials are
+// shared across deployments.
 //
-// When dryRun is true the function logs what it would do but makes no
-// changes to Daytona.
-func Run(ctx context.Context, log *slog.Logger, dc *daytona.Client, store *db.Store, staleThreshold time.Duration, dryRun bool) (Result, error) {
+// staleThreshold controls how old agent_heartbeat_at must be before a 'running'
+// conversation is considered crashed. 10 minutes is a safe default; the heartbeat
+// is updated every 2 seconds.
+//
+// When dryRun is true the function logs what it would do but makes no changes to
+// Daytona (the Daytona API is still queried to build the candidate list).
+func Run(ctx context.Context, log *slog.Logger, dc *daytona.Client, store *db.Store, env string, staleThreshold time.Duration, dryRun bool) (Result, error) {
 	active, err := loadActiveIDs(ctx, store, staleThreshold)
 	if err != nil {
 		return Result{}, fmt.Errorf("load active sandbox IDs: %w", err)
 	}
 	log.Info("active sandbox IDs loaded from database", "count", len(active))
 
-	sandboxes, err := listAll(ctx, dc)
+	sandboxes, err := listAll(ctx, dc, env)
 	if err != nil {
 		return Result{}, fmt.Errorf("list daytona sandboxes: %w", err)
 	}
-	log.Info("daytona sandboxes listed", "count", len(sandboxes))
+	log.Info("daytona sandboxes listed", "count", len(sandboxes), "env", env)
 
 	res := Result{Sandboxes: len(sandboxes)}
 
 	for _, sb := range sandboxes {
+		// Sandboxes already at rest consume no compute; skip them silently.
+		if sb.State == apiclient.SANDBOXSTATE_ARCHIVED || sb.State == apiclient.SANDBOXSTATE_DESTROYED {
+			log.Debug("sandbox already at rest, skipping", "id", sb.ID, "state", sb.State)
+			continue
+		}
+
 		if active[sb.ID] {
 			res.Active++
 			log.Debug("sandbox active, skipping", "id", sb.ID, "state", sb.State)
@@ -106,15 +118,16 @@ func loadActiveIDs(ctx context.Context, store *db.Store, staleThreshold time.Dur
 	return set, nil
 }
 
-// listAll pages through the Daytona sandbox list until all sandboxes have
-// been fetched, returning them as a flat slice.
-func listAll(ctx context.Context, dc *daytona.Client) ([]*daytona.Sandbox, error) {
+// listAll pages through the Daytona sandbox list for the given env label until
+// all matching sandboxes have been fetched, returning them as a flat slice.
+func listAll(ctx context.Context, dc *daytona.Client, env string) ([]*daytona.Sandbox, error) {
 	const pageSize = 100
+	labels := map[string]string{"hetchy-env": env}
 	var all []*daytona.Sandbox
 	page := 1
 	limit := pageSize
 	for {
-		result, err := dc.List(ctx, nil, &page, &limit)
+		result, err := dc.List(ctx, labels, &page, &limit)
 		if err != nil {
 			return nil, fmt.Errorf("page %d: %w", page, err)
 		}
@@ -127,14 +140,18 @@ func listAll(ctx context.Context, dc *daytona.Client) ([]*daytona.Sandbox, error
 	return all, nil
 }
 
-// archiveSandbox stops then archives the sandbox. Archiving (not hard
-// deleting) is the conservative choice: it releases compute resources
-// while keeping the filesystem snapshot recoverable for the Daytona
-// retention window. Stop errors are non-fatal — we proceed to Archive
+// archiveSandbox stops (if started) then archives the sandbox. Archiving (not
+// hard deleting) is the conservative choice: it releases compute resources while
+// keeping the filesystem snapshot recoverable for the Daytona retention window.
+// Stop is skipped for sandboxes that are already stopped — calling Stop on a
+// stopped sandbox returns an error that would pollute the logs needlessly.
+// Stop errors on a started sandbox are non-fatal — we proceed to Archive
 // regardless, since an already-stopped sandbox archives cleanly.
 func archiveSandbox(ctx context.Context, log *slog.Logger, sb *daytona.Sandbox) error {
-	if err := sb.Stop(ctx); err != nil {
-		log.Warn("sandbox stop failed, proceeding to archive", "id", sb.ID, "error", err)
+	if sb.State == apiclient.SANDBOXSTATE_STARTED {
+		if err := sb.Stop(ctx); err != nil {
+			log.Warn("sandbox stop failed, proceeding to archive", "id", sb.ID, "error", err)
+		}
 	}
 	if err := sb.Archive(ctx); err != nil {
 		return fmt.Errorf("archive: %w", err)

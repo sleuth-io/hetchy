@@ -13,21 +13,28 @@ import (
 
 const beginAgentRun = `-- name: BeginAgentRun :exec
 UPDATE conversations
-   SET agent_state        = 'running',
+   SET sandbox_id         = $3,
+       agent_state        = 'running',
        agent_heartbeat_at = NOW(),
        updated_at         = NOW()
 WHERE org_id = $1 AND thread_id = $2
 `
 
 type BeginAgentRunParams struct {
-	OrgID    string `json:"org_id"`
-	ThreadID string `json:"thread_id"`
+	OrgID     string `json:"org_id"`
+	ThreadID  string `json:"thread_id"`
+	SandboxID string `json:"sandbox_id"`
 }
 
-// Marks the conversation as actively running and seeds the heartbeat
-// timestamp. Called once just before the agent goroutine starts.
+// Marks the conversation as actively running, records the sandbox that
+// is now driving it, and seeds the heartbeat timestamp. Called once
+// immediately after createSandboxWithRetry succeeds and before the
+// agent goroutine starts. Writing sandbox_id here (not just in the
+// terminal Upsert) is critical: the orphan pruner must see the ID in
+// the DB before the next prune cycle could classify the live sandbox
+// as an unknown orphan.
 func (q *Queries) BeginAgentRun(ctx context.Context, arg BeginAgentRunParams) error {
-	_, err := q.db.Exec(ctx, beginAgentRun, arg.OrgID, arg.ThreadID)
+	_, err := q.db.Exec(ctx, beginAgentRun, arg.OrgID, arg.ThreadID, arg.SandboxID)
 	return err
 }
 

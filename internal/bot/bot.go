@@ -516,8 +516,11 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 		envVars["SX_KEY"] = oc.SXKey
 	}
 	sb, err := b.createSandboxWithRetry(ctx, types.SnapshotParams{
-		SandboxBaseParams: types.SandboxBaseParams{EnvVars: envVars},
-		Snapshot:          b.cfg.Snapshot,
+		SandboxBaseParams: types.SandboxBaseParams{
+			EnvVars: envVars,
+			Labels:  map[string]string{"hetchy-env": b.cfg.Env},
+		},
+		Snapshot: b.cfg.Snapshot,
 	})
 	if err != nil {
 		if ctx.Err() != nil {
@@ -543,7 +546,7 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 	b.log.Info("sandbox created", "id", sb.ID, "request_id", requestID)
 	emit.Notify("Sandbox ready", fmt.Sprintf("`%s` is up — cloning repo and starting Claude Code.", sb.ID))
 
-	if err := b.convs.BeginAgentRun(ctx, rec.OrgID, rec.ThreadID); err != nil {
+	if err := b.convs.BeginAgentRun(ctx, rec.OrgID, rec.ThreadID, sb.ID); err != nil {
 		b.log.Warn("begin agent run record failed", "request_id", requestID, "error", err)
 	}
 
@@ -645,7 +648,7 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 		return
 	}
 
-	if err := b.convs.BeginAgentRun(ctx, rec.OrgID, rec.ThreadID); err != nil {
+	if err := b.convs.BeginAgentRun(ctx, rec.OrgID, rec.ThreadID, rec.SandboxID); err != nil {
 		b.log.Warn("begin agent run record failed", "request_id", requestID, "error", err)
 	}
 

@@ -47,7 +47,7 @@ func main() {
 	migrateDown := flag.Int("migrate-down", -1, "Roll back N migrations and exit (0 means roll back everything)")
 	migrateStatus := flag.Bool("migrate-status", false, "Print the current schema version and exit")
 	pruneSandboxes := flag.Bool("prune-sandboxes", false, "Detect and archive orphaned Daytona sandboxes, then exit")
-	dryRun := flag.Bool("dry-run", false, "Used with --prune-sandboxes: report orphans without archiving them")
+	dryRun := flag.Bool("dry-run", false, "Used with --prune-sandboxes: report orphans without modifying any sandboxes (Daytona is still queried)")
 	heartbeatStaleAfter := flag.Duration("heartbeat-stale-after", 10*time.Minute, "Used with --prune-sandboxes: treat a 'running' sandbox as crashed if its heartbeat is older than this")
 	flag.Parse()
 
@@ -126,6 +126,14 @@ func waitForDB(ctx context.Context, log *slog.Logger, databaseURL string) error 
 	}
 }
 
+// getenvDefault returns the value of the env var named key, or fallback if unset.
+func getenvDefault(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
 // runPruneSandboxes connects to Daytona and the database, then calls
 // sandboxprune.Run to detect and (unless dryRun) archive every sandbox that
 // has no corresponding conversation row.
@@ -136,7 +144,8 @@ func runPruneSandboxes(log *slog.Logger, dryRun bool, staleThreshold time.Durati
 		os.Exit(1)
 	}
 
-	ctx := context.Background()
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
 
 	store, err := db.Open(ctx, databaseURL)
 	if err != nil {
@@ -155,11 +164,13 @@ func runPruneSandboxes(log *slog.Logger, dryRun bool, staleThreshold time.Durati
 		os.Exit(1)
 	}
 
+	env := getenvDefault("HETCHY_ENV", "prod")
+
 	if dryRun {
 		log.Info("dry-run mode: no sandboxes will be modified")
 	}
 
-	result, err := sandboxprune.Run(ctx, log, dc, store, staleThreshold, dryRun)
+	result, err := sandboxprune.Run(ctx, log, dc, store, env, staleThreshold, dryRun)
 	if err != nil {
 		log.Error("prune failed", "error", err)
 		os.Exit(1)

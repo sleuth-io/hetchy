@@ -76,10 +76,16 @@ RETURNING org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, up
           github_owner, github_repo, custom_title, creator_id, agent_state;
 
 -- name: BeginAgentRun :exec
--- Marks the conversation as actively running and seeds the heartbeat
--- timestamp. Called once just before the agent goroutine starts.
+-- Marks the conversation as actively running, records the sandbox that
+-- is now driving it, and seeds the heartbeat timestamp. Called once
+-- immediately after createSandboxWithRetry succeeds and before the
+-- agent goroutine starts. Writing sandbox_id here (not just in the
+-- terminal Upsert) is critical: the orphan pruner must see the ID in
+-- the DB before the next prune cycle could classify the live sandbox
+-- as an unknown orphan.
 UPDATE conversations
-   SET agent_state        = 'running',
+   SET sandbox_id         = $3,
+       agent_state        = 'running',
        agent_heartbeat_at = NOW(),
        updated_at         = NOW()
 WHERE org_id = $1 AND thread_id = $2;

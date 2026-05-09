@@ -224,13 +224,14 @@ func (s *Store) Upsert(ctx context.Context, r Record) error {
 // before the agent goroutine starts. The chatPersister will keep the
 // heartbeat fresh until the run ends; the terminal Upsert then sets the
 // final agent_state ('completed' or 'error') and clears the heartbeat.
-func (s *Store) BeginAgentRun(ctx context.Context, orgID, threadID string) error {
+func (s *Store) BeginAgentRun(ctx context.Context, orgID, threadID, sandboxID string) error {
 	if s == nil || s.db == nil {
 		return nil
 	}
 	if err := s.db.Queries.BeginAgentRun(ctx, sqlc.BeginAgentRunParams{
-		OrgID:    orgID,
-		ThreadID: threadID,
+		OrgID:     orgID,
+		ThreadID:  threadID,
+		SandboxID: sandboxID,
 	}); err != nil {
 		return fmt.Errorf("begin agent run: %w", err)
 	}

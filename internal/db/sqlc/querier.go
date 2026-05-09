@@ -11,8 +11,13 @@ import (
 )
 
 type Querier interface {
-	// Marks the conversation as actively running and seeds the heartbeat
-	// timestamp. Called once just before the agent goroutine starts.
+	// Marks the conversation as actively running, records the sandbox that
+	// is now driving it, and seeds the heartbeat timestamp. Called once
+	// immediately after createSandboxWithRetry succeeds and before the
+	// agent goroutine starts. Writing sandbox_id here (not just in the
+	// terminal Upsert) is critical: the orphan pruner must see the ID in
+	// the DB before the next prune cycle could classify the live sandbox
+	// as an unknown orphan.
 	BeginAgentRun(ctx context.Context, arg BeginAgentRunParams) error
 	DeleteConversation(ctx context.Context, arg DeleteConversationParams) error
 	DeleteGithubInstallation(ctx context.Context, installationID int64) error
