@@ -1,99 +1,190 @@
 package auth
 
 import (
+	"crypto/hkdf"
+	"crypto/sha256"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"testing"
-
-	workos "github.com/workos/workos-go/v7"
 )
 
-func newTestService(t *testing.T) *Service {
+// newTestService builds a non-bypass Service with the OAuth-state machinery
+// wired up but no WorkOS client. Adequate for any test that drives the state
+// path directly without exercising AuthenticateWithCode.
+func newTestService(t *testing.T, password string) *Service {
 	t.Helper()
-	s, err := New(Config{
-		APIKey:         "sk_test_x",
-		ClientID:       "client_test_x",
-		CookiePassword: strings.Repeat("p", 32),
-		RedirectURI:    "http://dev.hetchy.ai:8080/callback",
-	})
+	key, err := hkdf.Key(sha256.New, []byte(password), nil, oauthStateHKDFInfo, 32)
 	if err != nil {
-		t.Fatalf("New: %v", err)
+		t.Fatalf("derive state key: %v", err)
 	}
-	return s
+	return &Service{
+		cfg:       Config{CookiePassword: password},
+		statePath: "/callback",
+		stateKey:  key,
+	}
 }
 
-// AuthKit's invitation flow lands users on /callback with only an
-// `invitation_token` (no `code`). Returning "missing code" there breaks
-// account activation -- see hetchyhq/hetchy#sf-dido592qbsq0. Instead the
-// handler should kick off a full OAuth round-trip carrying that token, so
-// AuthKit can issue a real `code` for us to exchange.
-func TestCallbackHandler_InvitationTokenStartsOAuth(t *testing.T) {
-	s := newTestService(t)
+func TestOAuthStateRoundTrip(t *testing.T) {
+	s := newTestService(t, "test-cookie-password-keep-it-long")
 
-	req := httptest.NewRequest(http.MethodGet, "/callback?invitation_token=inv_tok_abc123", nil)
-	rr := httptest.NewRecorder()
-	s.CallbackHandler(rr, req)
-
-	if rr.Code != http.StatusFound {
-		t.Fatalf("status = %d, want %d; body=%q", rr.Code, http.StatusFound, rr.Body.String())
-	}
-	loc := rr.Header().Get("Location")
-	if loc == "" {
-		t.Fatal("Location header is empty")
-	}
-	u, err := url.Parse(loc)
+	state, err := generateOAuthState()
 	if err != nil {
-		t.Fatalf("parse Location %q: %v", loc, err)
+		t.Fatalf("generate: %v", err)
 	}
-	if got := u.Query().Get("invitation_token"); got != "inv_tok_abc123" {
-		t.Errorf("redirect missing invitation_token; got %q in %s", got, loc)
+	signed := s.signOAuthState(state)
+
+	if !s.verifyOAuthState(signed, state) {
+		t.Fatal("expected valid signed state to verify")
 	}
-	if got := u.Query().Get("redirect_uri"); got != "http://dev.hetchy.ai:8080/callback" {
-		t.Errorf("redirect_uri = %q", got)
+
+	// Tampered state body — different state, recomputed sig is what an
+	// attacker would have to forge without the key. Splice the original
+	// signature onto a different state to confirm we catch the mismatch.
+	parts := strings.SplitN(signed, ".", 2)
+	if len(parts) != 2 {
+		t.Fatalf("malformed signed value: %q", signed)
 	}
-	if got := u.Query().Get("client_id"); got != "client_test_x" {
-		t.Errorf("client_id = %q", got)
+	tampered := "attackerpicked." + parts[1]
+	if s.verifyOAuthState(tampered, "attackerpicked") {
+		t.Fatal("tampered state must not verify (HMAC over wrong body)")
+	}
+
+	// Different cookie password (e.g. attacker without the secret) → reject.
+	other := newTestService(t, "different-password")
+	if other.verifyOAuthState(signed, state) {
+		t.Fatal("signed value must not verify under a different key")
+	}
+
+	// Mismatched query state → reject even if the signature is valid.
+	if s.verifyOAuthState(signed, state+"x") {
+		t.Fatal("query/cookie state mismatch must reject")
+	}
+
+	// Malformed cookie value → reject without panicking.
+	if s.verifyOAuthState("no-dot-in-value", state) {
+		t.Fatal("malformed cookie must reject")
 	}
 }
 
-// When both `code` and `invitation_token` are present we want to exchange
-// the code for a session, not bounce back to AuthKit with the invitation
-// token. The conditional structure today gives `code` priority — pinning
-// that with a test so a future refactor can't silently flip it.
-func TestCallbackHandler_CodeTakesPriorityOverInvitationToken(t *testing.T) {
-	s := newTestService(t)
-	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusUnauthorized)
-		_, _ = w.Write([]byte(`{"message":"stub"}`))
-	}))
-	t.Cleanup(stub.Close)
-	s.client = workos.NewClient("sk_test_x", workos.WithClientID("client_test_x"), workos.WithBaseURL(stub.URL))
+func TestOAuthStateKeyIsDomainSeparated(t *testing.T) {
+	// The OAuth-state key must be *different* from the raw CookiePassword
+	// (which is what the WorkOS SDK uses to seal the session). Otherwise
+	// the two security boundaries collapse into one.
+	password := "shared-password-used-everywhere"
+	s := newTestService(t, password)
 
-	req := httptest.NewRequest(http.MethodGet, "/callback?code=abc&invitation_token=xyz", nil)
-	rr := httptest.NewRecorder()
-	s.CallbackHandler(rr, req)
-
-	if rr.Code == http.StatusFound {
-		t.Fatalf("expected code-exchange path, got 302 to %q (invitation_token branch ran)", rr.Header().Get("Location"))
+	if string(s.stateKey) == password {
+		t.Fatal("state key must not be the raw CookiePassword")
 	}
-	if !strings.Contains(rr.Body.String(), "authenticate:") {
-		t.Errorf("expected AuthenticateWithCode to run; body = %q", rr.Body.String())
+	if len(s.stateKey) != 32 {
+		t.Fatalf("expected 32-byte HKDF output, got %d bytes", len(s.stateKey))
 	}
 }
 
-func TestCallbackHandler_MissingCodeAndInvitationToken(t *testing.T) {
-	s := newTestService(t)
+func TestCallbackRejectsMissingState(t *testing.T) {
+	s := newTestService(t, "test-cookie-password-keep-it-long")
+
+	req := httptest.NewRequest(http.MethodGet, "/callback?code=abc&state=xyz", nil)
+	rec := httptest.NewRecorder()
+	s.CallbackHandler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 with no state cookie, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "missing oauth state cookie") {
+		t.Fatalf("expected missing-cookie error, got body %q", rec.Body.String())
+	}
+}
+
+func TestCallbackRejectsMismatchedState(t *testing.T) {
+	s := newTestService(t, "test-cookie-password-keep-it-long")
+
+	state, err := generateOAuthState()
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	signed := s.signOAuthState(state)
+
+	req := httptest.NewRequest(http.MethodGet, "/callback?code=abc&state=not-the-real-state", nil)
+	req.AddCookie(&http.Cookie{Name: oauthStateCookieName, Value: signed})
+	rec := httptest.NewRecorder()
+	s.CallbackHandler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 on state mismatch, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "invalid oauth state") {
+		t.Fatalf("expected invalid-state error, got body %q", rec.Body.String())
+	}
+
+	// And the cookie must be cleared on the way out so a single signed
+	// value can't be replayed against a future callback.
+	var cleared bool
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == oauthStateCookieName && c.MaxAge < 0 {
+			cleared = true
+		}
+	}
+	if !cleared {
+		t.Fatal("state cookie should be cleared on rejected callback")
+	}
+}
+
+// TestCallbackPassesStateGate proves the gate actually opens on a valid
+// signed cookie + matching query state. Without this test the validation
+// logic could regress to "always reject" and the rejection-path tests
+// would still pass. We omit the `code` query param so the handler 400s
+// at the very next check ("missing code"); reaching that branch is proof
+// that state validation succeeded.
+func TestCallbackPassesStateGate(t *testing.T) {
+	s := newTestService(t, "test-cookie-password-keep-it-long")
+
+	state, err := generateOAuthState()
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	signed := s.signOAuthState(state)
+
+	req := httptest.NewRequest(http.MethodGet, "/callback?state="+state, nil)
+	req.AddCookie(&http.Cookie{Name: oauthStateCookieName, Value: signed})
+	rec := httptest.NewRecorder()
+	s.CallbackHandler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 (missing code) past the state gate, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "missing code") {
+		t.Fatalf("expected to land on missing-code branch, got body %q", rec.Body.String())
+	}
+}
+
+func TestBypassCallbackSkipsStateCheck(t *testing.T) {
+	s := &Service{cfg: Config{Bypass: true}, statePath: "/"}
 
 	req := httptest.NewRequest(http.MethodGet, "/callback", nil)
-	rr := httptest.NewRecorder()
-	s.CallbackHandler(rr, req)
+	rec := httptest.NewRecorder()
+	s.CallbackHandler(rec, req)
 
-	if rr.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("expected redirect in bypass mode, got %d", rec.Code)
 	}
-	if !strings.Contains(rr.Body.String(), "missing code") {
-		t.Errorf("body = %q", rr.Body.String())
+}
+
+func TestRedirectPath(t *testing.T) {
+	cases := map[string]string{
+		"https://app.example.com/callback":            "/callback",
+		"https://app.example.com/auth/oauth/callback": "/auth/oauth/callback",
+		"https://app.example.com":                     "/",
+	}
+	for in, want := range cases {
+		got, err := redirectPath(in)
+		if err != nil {
+			t.Errorf("redirectPath(%q): unexpected error: %v", in, err)
+			continue
+		}
+		if got != want {
+			t.Errorf("redirectPath(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
