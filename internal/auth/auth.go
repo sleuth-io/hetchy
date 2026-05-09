@@ -486,8 +486,24 @@ func (s *Service) verifyOAuthState(signed, queryState string) bool {
 // request was rejected. CSRF attempts and misconfigured clients both end up
 // here, and ops needs to be able to see the rate. The reason string is fixed
 // per call site so we never leak the cookie value or query state into logs.
+//
+// Two optional fields are added when available:
+//   - user_id: WorkOS user ID extracted from an existing sealed session cookie
+//     (present when a logged-in user re-authenticates or the tab is reused).
+//   - flow_id: first 8 characters of the state query parameter, used to
+//     correlate retries of the same flow. Safe to log — it is a prefix of a
+//     43-char base64url random nonce, not the signed cookie value.
 func (s *Service) logStateRejection(r *http.Request, reason string) {
-	slog.Warn("oauth callback rejected", "reason", reason, "remote_addr", r.RemoteAddr)
+	attrs := []any{"reason", reason, "remote_addr", r.RemoteAddr}
+	if cookie, err := r.Cookie(SessionCookieName); err == nil && cookie.Value != "" {
+		if res, err := workos.AuthenticateSession(cookie.Value, s.cfg.CookiePassword); err == nil && res.User != nil {
+			attrs = append(attrs, "user_id", res.User.ID)
+		}
+	}
+	if state := r.URL.Query().Get("state"); len(state) >= 8 {
+		attrs = append(attrs, "flow_id", state[:8])
+	}
+	slog.Warn("oauth callback rejected", attrs...)
 }
 
 func (s *Service) setOAuthStateCookie(w http.ResponseWriter, value string) {
