@@ -10,13 +10,21 @@ import (
 // fakeProcess implements sandboxProcess for unit tests. It sends chunks
 // to stdout then optionally blocks until the context is done.
 type fakeProcess struct {
-	chunks    []string      // sent to stdout in order
-	chunkGap  time.Duration // pause between chunks (0 = no pause)
-	hangAfter bool          // block after sending all chunks until ctx done
-	exitCode  float64       // command exit code (0 = success)
+	chunks         []string      // sent to stdout in order
+	chunkGap       time.Duration // pause between chunks (0 = no pause)
+	hangBeforeExec time.Duration // simulate slow ExecuteSessionCommand (0 = immediate)
+	hangAfter      bool          // block after sending all chunks until ctx done
+	exitCode       float64       // command exit code (0 = success)
 }
 
-func (f *fakeProcess) ExecuteSessionCommand(_ context.Context, _, _ string, _, _ bool) (map[string]any, error) {
+func (f *fakeProcess) ExecuteSessionCommand(ctx context.Context, _, _ string, _, _ bool) (map[string]any, error) {
+	if f.hangBeforeExec > 0 {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(f.hangBeforeExec):
+		}
+	}
 	return map[string]any{"id": "cmd-1"}, nil
 }
 
@@ -80,6 +88,16 @@ func TestShLines(t *testing.T) {
 			proc:        &fakeProcess{chunks: []string{"alive\n"}, hangAfter: true},
 			timeout:     100 * time.Millisecond,
 			idleTimeout: 0, // disabled so only wall fires
+			wantErr:     ErrStepWallTimeout,
+		},
+		{
+			// Exercises the exec-phase wall-timeout branch: ExecuteSessionCommand
+			// itself hangs past the deadline so the error is classified as
+			// ErrStepWallTimeout rather than a generic exec error.
+			name:        "wall timeout fires during ExecuteSessionCommand",
+			proc:        &fakeProcess{hangBeforeExec: 5 * time.Second},
+			timeout:     50 * time.Millisecond,
+			idleTimeout: 0,
 			wantErr:     ErrStepWallTimeout,
 		},
 		{

@@ -65,6 +65,9 @@ func (b *Bot) shLines(ctx context.Context, sandboxID string, proc sandboxProcess
 	// Start the idle clock only after ExecuteSessionCommand returns so
 	// the SDK round-trip (which can take several seconds) doesn't
 	// consume the idle budget before streaming even begins.
+	// Do NOT move the idle goroutine above this point: context.Canceled
+	// from a racing idle fire before streaming starts would surface as a
+	// generic exec error rather than ErrStepIdleTimeout.
 	lastActivity.Store(time.Now().UnixNano())
 
 	if idleTimeout > 0 {
