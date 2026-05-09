@@ -310,6 +310,11 @@
                                   font-variant-numeric: tabular-nums; }
   .blk > summary .blk-time:empty,
   .blk > summary .blk-duration:empty { display: none; }
+  /* Notify / result / error are one-shot status blocks (no processing),
+     so the elapsed-time chip would just show "0ms" — hide it. */
+  .blk-kind-notify > summary .blk-duration,
+  .blk-kind-result > summary .blk-duration,
+  .blk-kind-error  > summary .blk-duration { display: none; }
   .blk-body { padding: .5rem .85rem .8rem; font-size: .88rem;
               line-height: 1.5; color: #1a1a1a; }
   .blk-body p { margin: .35rem 0; }
