@@ -51,7 +51,7 @@ func (r *botRunner) Run(ctx context.Context, label, scriptBody string, env map[s
 	scriptPath := "/tmp/sf-" + label + ".sh"
 	body := claudeWatchdogScript + "\n" + strings.TrimRight(scriptBody, "\n")
 	writeCmd := heredocWriteCmd(scriptPath, body, true)
-	if _, err := r.b.shLines(ctx, r.sb, r.sessionID, "bootstrap-write-"+label, writeCmd, 30*time.Second, func(string) {}); err != nil {
+	if _, err := r.b.shLines(ctx, r.sb, r.sessionID, "bootstrap-write-"+label, writeCmd, 30*time.Second, 0, func(string) {}); err != nil {
 		return "", fmt.Errorf("bootstrap: write script: %w", err)
 	}
 
@@ -70,11 +70,30 @@ func (r *botRunner) Run(ctx context.Context, label, scriptBody string, env map[s
 	}
 	runCmd := prefix.String() + "bash " + scriptPath
 
+	// Heartbeat: emit a block every 5 minutes so the user can see
+	// bootstrap is still in progress during long first-time runs.
+	heartbeatCtx, cancelHeartbeat := context.WithCancel(ctx)
+	defer cancelHeartbeat()
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		start := time.Now()
+		for {
+			select {
+			case <-heartbeatCtx.Done():
+				return
+			case <-ticker.C:
+				elapsed := time.Since(start).Round(time.Minute)
+				r.emit.Notify("Still bootstrapping", fmt.Sprintf("First-time repo setup has been running for %v — still in progress.", elapsed))
+			}
+		}
+	}()
+
 	// Bootstrap runs are bounded by the loop's own iteration cap (15
 	// min by design); add a 5-min cushion at the runScript level for
 	// the verification phase that follows the agent's claude call.
 	router := newBootstrapLineRouter(r.emit)
-	out, err := r.b.shLines(ctx, r.sb, r.sessionID, "bootstrap-run-"+label, runCmd, 20*time.Minute, router.Line)
+	out, err := r.b.shLines(ctx, r.sb, r.sessionID, "bootstrap-run-"+label, runCmd, 20*time.Minute, 15*time.Minute, router.Line)
 	if err != nil {
 		router.Fail("Bootstrap step failed: " + label)
 		// Return the partial output even on failure — auto-heal needs
@@ -106,7 +125,7 @@ func (r *botRunner) Run(ctx context.Context, label, scriptBody string, env map[s
 func (r *botRunner) ReadFile(ctx context.Context, path string) ([]byte, error) {
 	out, err := r.b.shLines(ctx, r.sb, r.sessionID, "bootstrap-read",
 		"cat "+shellQuote(path),
-		5*time.Minute,
+		5*time.Minute, 0,
 		func(string) {},
 	)
 	if err != nil {
@@ -122,7 +141,7 @@ func (r *botRunner) ReadFile(ctx context.Context, path string) ([]byte, error) {
 func (r *botRunner) WriteFile(ctx context.Context, path string, data []byte) error {
 	body := strings.TrimRight(string(data), "\n")
 	cmd := heredocWriteCmd(path, body, false)
-	if _, err := r.b.shLines(ctx, r.sb, r.sessionID, "bootstrap-write", cmd, 30*time.Second, func(string) {}); err != nil {
+	if _, err := r.b.shLines(ctx, r.sb, r.sessionID, "bootstrap-write", cmd, 30*time.Second, 0, func(string) {}); err != nil {
 		return fmt.Errorf("bootstrap: write %s: %w", path, err)
 	}
 	return nil

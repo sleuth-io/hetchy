@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
@@ -22,11 +23,43 @@ import (
 // wrap them mid-token in the UI), and the Claude --output-format
 // stream-json output is NDJSON — one event per line — which the parser
 // must see whole-line to decode.
-func (b *Bot) shLines(ctx context.Context, sb *daytona.Sandbox, sessionID, step, cmd string, timeout time.Duration, onLine func(string)) (string, error) {
-	b.log.Info("sandbox step start", "sandbox", sb.ID, "step", step, "timeout", timeout)
+//
+// idleTimeout cancels the step if no output bytes arrive for that
+// duration; pass 0 to disable. Distinct from timeout (wall-clock max):
+// a healthy long run keeps producing output and resets the idle clock,
+// while a stuck process goes silent and trips the idle limit early.
+func (b *Bot) shLines(ctx context.Context, sb *daytona.Sandbox, sessionID, step, cmd string, timeout, idleTimeout time.Duration, onLine func(string)) (string, error) {
+	b.log.Info("sandbox step start", "sandbox", sb.ID, "step", step, "timeout", timeout, "idle_timeout", idleTimeout)
 
 	stepCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+
+	// Track the last time a byte arrived. Updated atomically by the
+	// flush closures below; read by the idle-check goroutine.
+	var lastActivity atomic.Int64
+	lastActivity.Store(time.Now().UnixNano())
+	var idledOut atomic.Bool
+
+	if idleTimeout > 0 {
+		go func() {
+			// Poll every 10 s — coarse enough to be cheap, fine enough
+			// that a 5-minute idle limit fires within 10 s of expiry.
+			ticker := time.NewTicker(10 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-stepCtx.Done():
+					return
+				case <-ticker.C:
+					if time.Duration(time.Now().UnixNano()-lastActivity.Load()) >= idleTimeout {
+						idledOut.Store(true)
+						cancel()
+						return
+					}
+				}
+			}
+		}()
+	}
 
 	res, err := sb.Process.ExecuteSessionCommand(stepCtx, sessionID, cmd, true, false)
 	if err != nil {
@@ -50,6 +83,7 @@ func (b *Bot) shLines(ctx context.Context, sb *daytona.Sandbox, sessionID, step,
 	// streams doesn't get glued together out of order.
 	var outTail, errTail strings.Builder
 	flush := func(tail *strings.Builder, chunk, stream string) {
+		lastActivity.Store(time.Now().UnixNano())
 		buf.WriteString(chunk)
 		tail.WriteString(chunk)
 		s := tail.String()
@@ -111,8 +145,12 @@ func (b *Bot) shLines(ctx context.Context, sb *daytona.Sandbox, sessionID, step,
 	if streamErr := <-streamDone; streamErr != nil {
 		b.log.Warn("sandbox log stream error", "sandbox", sb.ID, "step", step, "error", streamErr)
 		if errors.Is(streamErr, context.DeadlineExceeded) {
-			return buf.String(), fmt.Errorf("step %q stream timed out (output may be truncated, %d bytes captured): %w",
-				step, buf.Len(), streamErr)
+			return buf.String(), fmt.Errorf("step %q stream timed out after %v (output may be truncated, %d bytes captured): %w",
+				step, timeout, buf.Len(), streamErr)
+		}
+		if errors.Is(streamErr, context.Canceled) && idledOut.Load() {
+			return buf.String(), fmt.Errorf("step %q idle timeout: no output for %v (%d bytes captured): %w",
+				step, idleTimeout, buf.Len(), streamErr)
 		}
 	}
 

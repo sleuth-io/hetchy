@@ -564,7 +564,11 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 	prURL, runErr := b.runAgent(ctx, sb, repo, oc, userRequest, requestID, validate, emit)
 	if runErr != nil {
 		b.log.Error("agent run failed", "sandbox", sb.ID, "request_id", requestID, "error", runErr)
-		emit.Error("Agent failed", fmt.Sprintf("Something went wrong while running the agent. Sandbox `%s` is left running for debugging — reply here to retry (the orphan sandbox will be archived automatically) or check the server logs for details.", sb.ID))
+		if isAgentTimeout(runErr) {
+			emit.Error("Agent timed out", fmt.Sprintf("The agent exceeded its time limit on sandbox `%s`. Reply here to retry (the orphan sandbox will be archived automatically) or check the server logs for details.", sb.ID))
+		} else {
+			emit.Error("Agent failed", fmt.Sprintf("Something went wrong while running the agent. Sandbox `%s` is left running for debugging — reply here to retry (the orphan sandbox will be archived automatically) or check the server logs for details.", sb.ID))
+		}
 		// Persist sb.ID so handleRetryAfterFailure can archive the
 		// stale sandbox on the next user message — without this we'd
 		// leak a sandbox per retry. PRURL stays empty, which is how
@@ -802,6 +806,17 @@ func appendBlocksAsNewTurn(rec *convstore.Record, text string, next []blocks.Blo
 		next = []blocks.Block{}
 	}
 	rec.ResponseBlocks = append(rec.ResponseBlocks, next)
+}
+
+// isAgentTimeout reports whether err came from a wall-clock or idle
+// timeout in shLines — used to surface a more actionable error message
+// to the user than the generic "something went wrong" fallback.
+func isAgentTimeout(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "timed out") || strings.Contains(msg, "idle timeout")
 }
 
 // isTransientError reports whether err is a retryable Daytona API error:
