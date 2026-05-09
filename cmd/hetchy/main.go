@@ -46,6 +46,7 @@ func main() {
 
 	level := parseLogLevel(os.Getenv("LOG_LEVEL"))
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
+	slog.SetDefault(log)
 	log.Info("hetchy starting",
 		"version", buildinfo.Version,
 		"commit", buildinfo.Commit,
