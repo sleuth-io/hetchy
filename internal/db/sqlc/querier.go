@@ -19,6 +19,7 @@ type Querier interface {
 	DeleteGithubTeamsByInstallationExcept(ctx context.Context, arg DeleteGithubTeamsByInstallationExceptParams) error
 	DeleteRepoSecretValue(ctx context.Context, arg DeleteRepoSecretValueParams) error
 	DeleteRepoSetupSpec(ctx context.Context, arg DeleteRepoSetupSpecParams) error
+	GetAgentProfileBySlug(ctx context.Context, arg GetAgentProfileBySlugParams) (AgentProfile, error)
 	GetConversation(ctx context.Context, arg GetConversationParams) (GetConversationRow, error)
 	GetGithubInstallation(ctx context.Context, installationID int64) (GithubAppInstallation, error)
 	// Resolves an (owner, name) the user typed in chat to a concrete
@@ -40,6 +41,7 @@ type Querier interface {
 	// whose race window allowed the user's value to be overwritten with
 	// NULL when the user filled it in between the two statements.
 	InsertRepoSecretValueIfAbsent(ctx context.Context, arg InsertRepoSecretValueIfAbsentParams) error
+	ListAgentProfilesByOrg(ctx context.Context, orgID string) ([]AgentProfile, error)
 	ListGithubInstallationsByOrg(ctx context.Context, orgID string) ([]GithubAppInstallation, error)
 	ListGithubReposByInstallation(ctx context.Context, installationID int64) ([]GithubRepo, error)
 	// Every repo accessible to the given Hetchy org, across all of its
@@ -109,6 +111,7 @@ type Querier interface {
 	// rewriting the whole spec. Avoids re-encoding all the JSONB blobs on
 	// every successful task.
 	UpdateRepoSetupSpecStatus(ctx context.Context, arg UpdateRepoSetupSpecStatusParams) error
+	UpsertAgentProfile(ctx context.Context, arg UpsertAgentProfileParams) (AgentProfile, error)
 	UpsertConversation(ctx context.Context, arg UpsertConversationParams) (UpsertConversationRow, error)
 	// Failing-bootstrap upsert. Diverges from UpsertRepoSetupSpec in two
 	// ways: success_count is left untouched (we only ever write a failing

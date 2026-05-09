@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hetchyhq/hetchy/internal/agents"
 	"github.com/hetchyhq/hetchy/internal/auth"
 	"github.com/hetchyhq/hetchy/internal/blocks"
 	"github.com/hetchyhq/hetchy/internal/convstore"
@@ -89,6 +90,7 @@ func (b *Bot) runWeb(ctx context.Context) error {
 	mux.Handle("/api/repo-bootstrap", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.repoBootstrapResetHandler))))
 	mux.Handle("/api/conversations", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.conversationsHandler))))
 	mux.Handle("/api/conversations/", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.conversationDetailHandler))))
+	mux.Handle("/api/agents", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.agentsHandler))))
 	mux.Handle("/api/members", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.membersHandler))))
 
 	addr := ":" + b.cfg.WebPort
@@ -1072,6 +1074,7 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 	var body struct {
 		Text      string `json:"text"`
 		SessionID string `json:"session_id"`
+		AgentSlug string `json:"agent_slug,omitempty"`
 		// Validate is the "Validate changes with end-to-end testing"
 		// checkbox state from the new-chat UI. Pointer so missing
 		// field (e.g. follow-up turns, Slack callers, older clients)
@@ -1127,7 +1130,7 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 
 	go func() {
 		defer b.live.Done(p.OrgID, sessionID, run)
-		b.HandleRequest(parentCtx, oc, text, requestID, sessionID, p.UserID, validate, emitter)
+		b.HandleRequest(parentCtx, oc, text, requestID, sessionID, p.UserID, validate, body.AgentSlug, emitter)
 	}()
 
 	sub := run.Subscribe()
@@ -1245,10 +1248,112 @@ type conversationDetail struct {
 	GitHubRepo     string           `json:"github_repo,omitempty"`
 	SandboxID      string           `json:"sandbox_id,omitempty"`
 	CreatorID      string           `json:"creator_id,omitempty"`
+	AgentSlug      string           `json:"agent_slug,omitempty"`
+	AgentName      string           `json:"agent_name,omitempty"`
 	CreatedAt      string           `json:"created_at,omitempty"`
 	History        []string         `json:"history"`
 	ResponseBlocks [][]blocks.Block `json:"response_blocks"`
 	UpdatedAt      string           `json:"updated_at"`
+}
+
+type agentSummary struct {
+	Slug         string   `json:"slug"`
+	DisplayName  string   `json:"display_name"`
+	Description  string   `json:"description"`
+	SXBot        string   `json:"sx_bot,omitempty"`
+	PersonaAsset string   `json:"persona_asset,omitempty"`
+	SlackAliases []string `json:"slack_aliases,omitempty"`
+	BuiltIn      bool     `json:"built_in"`
+	Default      bool     `json:"default"`
+}
+
+func (b *Bot) agentsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	p, _ := auth.FromContext(r.Context())
+	store := b.agents
+	if store == nil {
+		store = agents.NewStore(nil)
+	}
+	if r.Method == http.MethodPost {
+		if !isAdmin(p) {
+			http.Error(w, "admin required", http.StatusForbidden)
+			return
+		}
+		if err := requireSameOrigin(r); err != nil {
+			http.Error(w, err.Error(), http.StatusForbidden)
+			return
+		}
+		var body struct {
+			Slug          string   `json:"slug"`
+			DisplayName   string   `json:"display_name"`
+			Description   string   `json:"description"`
+			SXBot         string   `json:"sx_bot"`
+			PersonaAsset  string   `json:"persona_asset"`
+			PersonaPrompt string   `json:"persona_prompt"`
+			SlackAliases  []string `json:"slack_aliases"`
+			Enabled       *bool    `json:"enabled"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		enabled := true
+		if body.Enabled != nil {
+			enabled = *body.Enabled
+		}
+		profile, err := store.Upsert(r.Context(), p.OrgID, agents.Profile{
+			Slug:          body.Slug,
+			DisplayName:   body.DisplayName,
+			Description:   body.Description,
+			SXBot:         body.SXBot,
+			PersonaAsset:  body.PersonaAsset,
+			PersonaPrompt: body.PersonaPrompt,
+			SlackAliases:  body.SlackAliases,
+			Enabled:       enabled,
+		})
+		if err != nil {
+			b.log.Warn("upsert agent", "error", err, "org", p.OrgID)
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, agentSummary{
+			Slug:         profile.Slug,
+			DisplayName:  profile.DisplayName,
+			Description:  profile.Description,
+			SXBot:        profile.SXBot,
+			PersonaAsset: profile.PersonaAsset,
+			SlackAliases: profile.SlackAliases,
+			BuiltIn:      profile.BuiltIn,
+			Default:      profile.Slug == agents.DefaultSlug,
+		})
+		return
+	}
+	profiles, err := store.List(r.Context(), p.OrgID)
+	if err != nil {
+		b.log.Error("list agents", "error", err, "org", p.OrgID)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+	out := make([]agentSummary, 0, len(profiles))
+	for _, a := range profiles {
+		if !a.Enabled {
+			continue
+		}
+		out = append(out, agentSummary{
+			Slug:         a.Slug,
+			DisplayName:  a.DisplayName,
+			Description:  a.Description,
+			SXBot:        a.SXBot,
+			PersonaAsset: a.PersonaAsset,
+			SlackAliases: a.SlackAliases,
+			BuiltIn:      a.BuiltIn,
+			Default:      a.Slug == agents.DefaultSlug,
+		})
+	}
+	writeJSON(w, out)
 }
 
 // conversationsListLimitDefault caps a single sidebar page to 20.
@@ -1403,6 +1508,18 @@ func (b *Bot) conversationDetailHandler(w http.ResponseWriter, r *http.Request) 
 		if !rec.CreatedAt.IsZero() {
 			createdAt = rec.CreatedAt.UTC().Format(time.RFC3339)
 		}
+		agentSlug := rec.AgentSlug
+		agentName := ""
+		store := b.agents
+		if store == nil {
+			store = agents.NewStore(nil)
+		}
+		if agentSlug != "" {
+			if agent, err := store.Resolve(r.Context(), p.OrgID, agentSlug); err == nil {
+				agentSlug = agent.Slug
+				agentName = agent.DisplayName
+			}
+		}
 		writeJSON(w, conversationDetail{
 			ThreadID:       rec.ThreadID,
 			Title:          conversationTitle(rec),
@@ -1412,6 +1529,8 @@ func (b *Bot) conversationDetailHandler(w http.ResponseWriter, r *http.Request) 
 			GitHubRepo:     rec.GitHubRepo,
 			SandboxID:      rec.SandboxID,
 			CreatorID:      rec.CreatorID,
+			AgentSlug:      agentSlug,
+			AgentName:      agentName,
 			CreatedAt:      createdAt,
 			History:        rec.History,
 			ResponseBlocks: rec.ResponseBlocks,

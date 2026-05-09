@@ -16,6 +16,7 @@ import (
 
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
 
+	"github.com/hetchyhq/hetchy/internal/agents"
 	"github.com/hetchyhq/hetchy/internal/blocks"
 	"github.com/hetchyhq/hetchy/internal/bootstrap"
 	"github.com/hetchyhq/hetchy/internal/convstore"
@@ -101,7 +102,7 @@ type repoCtx struct {
 	TokenExpires time.Time
 }
 
-func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, userRequest, requestID string, validate bool, emit blocks.Emitter) (string, error) {
+func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, agent agents.Profile, userRequest, requestID string, validate bool, emit blocks.Emitter) (string, error) {
 	var spec *bootstrap.Spec
 	// validate=false is the user's explicit "skip end-to-end testing"
 	// opt-out from the new-chat UI. We honour it by not running
@@ -163,6 +164,7 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, o
 		"SF_PROMPT_B64":  base64.StdEncoding.EncodeToString([]byte(finalPrompt)),
 		"GITHUB_TOKEN":   repo.GitHubToken,
 	}
+	addAgentEnv(env, b.cfg, agent)
 	// When we have a saved spec, ship its setup/start/health scripts
 	// to agent.sh as base64 env vars. agent.sh decodes them before
 	// invoking claude and runs setup → start (bg) → poll health, so
@@ -443,11 +445,22 @@ func claudeAuthEnv(oc orgcfg.Config) (name, value string) {
 	return "ANTHROPIC_API_KEY", oc.AnthropicAPIKey
 }
 
+func addAgentEnv(env map[string]string, cfg Config, agent agents.Profile) {
+	env["HETCHY_AGENT_SLUG"] = agent.Slug
+	env["HETCHY_AGENT_NAME"] = agent.DisplayName
+	env["HETCHY_AGENT_SX_BOT"] = agent.SXBot
+	env["HETCHY_AGENT_PERSONA_ASSET"] = agent.PersonaAsset
+	env["HETCHY_AGENT_PROMPT_B64"] = base64.StdEncoding.EncodeToString([]byte(agent.PersonaPrompt))
+	if cfg.SXPublicVaultURL != "" {
+		env["HETCHY_SX_PUBLIC_VAULT_URL"] = cfg.SXPublicVaultURL
+	}
+}
+
 // runFollowUp resumes work in an existing sandbox. The installation
 // token is freshly minted and passed per-run (not just at sandbox-create
 // time) so a token rotation or a re-installed App takes effect on the
 // very next follow-up rather than only on a freshly-created sandbox.
-func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, rec convstore.Record, userRequest, requestID string, emit blocks.Emitter) (string, error) {
+func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, userRequest, requestID string, emit blocks.Emitter) (string, error) {
 	history := strings.Join(rec.History, "\n---\n")
 	prompt := fmt.Sprintf(agentFollowUpPromptTemplate,
 		workdir, rec.Branch, rec.PRURL,
@@ -480,6 +493,7 @@ func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx
 		"SF_PROMPT_B64": base64.StdEncoding.EncodeToString([]byte(prompt)),
 		"GITHUB_TOKEN":  repo.GitHubToken,
 	}
+	addAgentEnv(env, b.cfg, agent)
 	if len(slotsManifest) > 0 {
 		raw, err := json.Marshal(slotsManifest)
 		if err != nil {
@@ -491,6 +505,9 @@ func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx
 	}
 	authKey, authVal := claudeAuthEnv(oc)
 	env[authKey] = authVal
+	if oc.SXKey != "" {
+		env["SX_KEY"] = oc.SXKey
+	}
 	// A follow-up lands in an unarchived sandbox where any background
 	// processes from the original run are gone — including the
 	// `start.sh &` invocation that brought the app up. Without this

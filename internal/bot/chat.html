@@ -189,13 +189,36 @@
   #empty-state .options input[type="checkbox"] { width: 1rem; height: 1rem;
                                                  cursor: pointer; }
   #bar  { display: flex; gap: .5rem; padding: 1rem; background: #fff;
-          border-top: 1px solid #ddd; }
+          border-top: 1px solid #ddd; position: relative; }
   #inp  { flex: 1; padding: .6rem 1rem; border: 1px solid #ccc; border-radius: 2rem;
           font-size: 1rem; outline: none; }
   #inp:focus { border-color: #0b93f6; }
   button { padding: .6rem 1.2rem; background: #0b93f6; color: #fff; border: none;
            border-radius: 2rem; font-size: 1rem; cursor: pointer; }
   button:disabled { opacity: .5; cursor: default; }
+  #agent-picker { position: relative; flex-shrink: 0; }
+  #agent-btn { width: 2.45rem; height: 2.45rem; padding: 0; display: inline-flex;
+               align-items: center; justify-content: center; border-radius: 50%;
+               border: 1px solid #d7d7dc; background: #fff; color: #555; }
+  #agent-btn:hover, #agent-btn[aria-expanded="true"] { background: #f2f2f4;
+                                                       border-color: #c8c8ce; }
+  #agent-btn.has-agent { border-color: #b7d7f7; color: #0b5ec0; background: #f3f8ff; }
+  #agent-btn svg { width: 1.05rem; height: 1.05rem; }
+  #agent-popover { position: absolute; right: 0; bottom: calc(100% + .5rem);
+                   width: min(21rem, calc(100vw - 2rem)); padding: .35rem;
+                   background: #fff; border: 1px solid #ddd; border-radius: .6rem;
+                   box-shadow: 0 10px 28px rgba(0,0,0,.14); z-index: 70; }
+  #agent-popover[hidden] { display: none; }
+  .agent-popover-title { padding: .45rem .55rem .35rem; font-size: .72rem;
+                         font-weight: 600; text-transform: uppercase;
+                         letter-spacing: .05em; color: #777; }
+  .agent-choice { width: 100%; padding: .55rem .65rem; border: 0;
+                  border-radius: .45rem; background: transparent; color: #222;
+                  text-align: left; display: flex; flex-direction: column; gap: .18rem;
+                  font: inherit; }
+  .agent-choice:hover, .agent-choice.is-selected { background: #f2f6fb; }
+  .agent-choice-name { font-size: .88rem; font-weight: 500; }
+  .agent-choice-desc { font-size: .76rem; color: #777; line-height: 1.3; }
 
   /* Right-side metadata sidebar — surfaces what we know about the chat
      (repo, branch, PR, sandbox, creator). Hidden when the user toggles
@@ -434,6 +457,17 @@
   html.is-dark #empty-state .options { color: #b8b8bd; }
   html.is-dark #bar { background: #1c1c1f; border-top-color: #2a2a2d; }
   html.is-dark #inp { background: #232327; color: #e7e7e9; border-color: #2e2e33; }
+  html.is-dark #agent-btn { background: #232327; border-color: #2e2e33; color: #c4c4c8; }
+  html.is-dark #agent-btn:hover,
+  html.is-dark #agent-btn[aria-expanded="true"] { background: #2a2a2e; border-color: #3a3a40; }
+  html.is-dark #agent-btn.has-agent { background: #1f3a5c; border-color: #2a4a72; color: #7dc4ff; }
+  html.is-dark #agent-popover { background: #232327; border-color: #2e2e33;
+                                box-shadow: 0 10px 28px rgba(0,0,0,.45); }
+  html.is-dark .agent-popover-title { color: #9a9aa0; }
+  html.is-dark .agent-choice { color: #e7e7e9; }
+  html.is-dark .agent-choice:hover,
+  html.is-dark .agent-choice.is-selected { background: #1f3a5c; }
+  html.is-dark .agent-choice-desc { color: #9a9aa0; }
   html.is-dark #main-top { background: #1c1c1f; border-bottom-color: #2a2a2d; }
   html.is-dark #meta-toggle { color: #c4c4c8; }
   html.is-dark #meta-toggle:hover { background: #2a2a2e; border-color: #3a3a40; }
@@ -573,6 +607,22 @@
 <div id="log"></div>
 <div id="bar">
   <input id="inp" placeholder="Describe a feature…" autofocus>
+  <div id="agent-picker">
+    <button id="agent-btn" type="button" aria-label="Choose agent" aria-expanded="false" title="Agent: none">
+      <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 8V4"/>
+        <rect x="6" y="8" width="12" height="10" rx="3"/>
+        <path d="M9 13h.01"/>
+        <path d="M15 13h.01"/>
+        <path d="M8 18l-2 2"/>
+        <path d="M16 18l2 2"/>
+      </svg>
+    </button>
+    <div id="agent-popover" hidden>
+      <div class="agent-popover-title">Agent</div>
+      <div id="agent-options"></div>
+    </div>
+  </div>
   <button id="btn" onclick="send()">Send</button>
 </div>
 </div>
@@ -587,10 +637,15 @@
 const log = document.getElementById('log');
 const inp = document.getElementById('inp');
 const btn = document.getElementById('btn');
+const agentBtn = document.getElementById('agent-btn');
+const agentPopover = document.getElementById('agent-popover');
+const agentOptionsEl = document.getElementById('agent-options');
 
 // Current user's WorkOS ID, injected by the server. Used to default the
 // sidebar filter to "my chats".
 const currentUserID = '{{.UserID}}';
+let agentOptions = [];
+let selectedAgentSlug = '';
 
 // Read session ID from URL (?session=...) so the page can be reloaded or
 // shared to reconnect to an existing sandbox. Generate a new one if absent.
@@ -631,6 +686,93 @@ function addUserMsg(text) {
   log.scrollTop = log.scrollHeight;
   return d;
 }
+
+async function loadAgents() {
+  try {
+    const res = await fetch('/api/agents', { headers: { 'Accept': 'application/json' } });
+    if (!res.ok) return;
+    agentOptions = await res.json();
+  } catch (e) {
+    agentOptions = [];
+  }
+  populateAgentPicker();
+}
+
+function selectedAgentName() {
+  if (!selectedAgentSlug) return 'none';
+  const found = agentOptions.find(agent => agent.slug === selectedAgentSlug);
+  return found ? (found.display_name || found.slug) : selectedAgentSlug;
+}
+
+function updateAgentButton() {
+  const label = selectedAgentName();
+  agentBtn.title = 'Agent: ' + label;
+  agentBtn.setAttribute('aria-label', 'Agent: ' + label);
+  agentBtn.classList.toggle('has-agent', !!selectedAgentSlug);
+}
+
+function chooseAgent(slug) {
+  selectedAgentSlug = slug || '';
+  populateAgentPicker();
+  updateAgentButton();
+  closeAgentPopover();
+  inp.focus();
+}
+
+function populateAgentPicker() {
+  if (!agentOptionsEl) return;
+  agentOptionsEl.innerHTML = '';
+  const choices = [{
+    slug: '',
+    display_name: 'No agent',
+    description: 'Use Hetchy without a specialized persona.'
+  }, ...agentOptions];
+  for (const agent of choices) {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'agent-choice' + (agent.slug === selectedAgentSlug ? ' is-selected' : '');
+    item.dataset.agentSlug = agent.slug;
+
+    const name = document.createElement('span');
+    name.className = 'agent-choice-name';
+    name.textContent = agent.display_name || agent.slug;
+    item.appendChild(name);
+
+    if (agent.description) {
+      const desc = document.createElement('span');
+      desc.className = 'agent-choice-desc';
+      desc.textContent = agent.description;
+      item.appendChild(desc);
+    }
+
+    item.addEventListener('click', () => chooseAgent(agent.slug));
+    agentOptionsEl.appendChild(item);
+  }
+  updateAgentButton();
+}
+
+function openAgentPopover() {
+  agentPopover.hidden = false;
+  agentBtn.setAttribute('aria-expanded', 'true');
+}
+
+function closeAgentPopover() {
+  agentPopover.hidden = true;
+  agentBtn.setAttribute('aria-expanded', 'false');
+}
+
+agentBtn.addEventListener('click', e => {
+  e.stopPropagation();
+  if (agentPopover.hidden) openAgentPopover();
+  else closeAgentPopover();
+});
+agentPopover.addEventListener('click', e => e.stopPropagation());
+document.addEventListener('click', () => closeAgentPopover());
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    closeAgentPopover();
+  }
+});
 
 // Per-kind icon glyphs shown in the collapsed summary. Spinner takes
 // over when a block is streaming, so this is just the resting icon.
@@ -1285,6 +1427,7 @@ function renderMetadata(detail) {
   const branch = detail.branch || '';
   const prURL = detail.pr_url || '';
   const sandbox = detail.sandbox_id || '';
+  const agent = detail.agent_name || detail.agent_slug || '';
   const created = fmtDate(detail.created_at || detail.updated_at);
 
   const repoSlug = (owner && repo) ? owner + '/' + repo : '';
@@ -1320,6 +1463,9 @@ function renderMetadata(detail) {
   // is missing so the dashes look intentionally placeholdered rather
   // than like a layout bug.
   const rows = [
+    { label: 'Agent',   html: agent
+        ? '<span>' + esc(agent) + '</span>'
+        : '<span>—</span>', empty: !agent },
     { label: 'Repo',    html: repoLink,                 empty: !repoSlug },
     { label: 'Branch',  html: branchLink,               empty: !branch },
     { label: 'PR',      html: prCell,                   empty: !prURL },
@@ -1598,6 +1744,9 @@ async function send() {
   if (validateChoice !== null) {
     payload.validate = validateChoice;
   }
+  if (isFirstTurn && selectedAgentSlug) {
+    payload.agent_slug = selectedAgentSlug;
+  }
   const res = await fetch('/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1758,6 +1907,7 @@ document.addEventListener('keydown', e => {
 // turn updating in real time. If no turn is in flight, it falls
 // back to rendering the persisted snapshot.
 async function init() {
+  await loadAgents();
   loadMembers();
   loadSidebar();
 

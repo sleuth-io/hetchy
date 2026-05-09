@@ -55,6 +55,10 @@ type Record struct {
 	// conversation. Empty for conversations initiated via Slack or before
 	// this field was introduced.
 	CreatorID string
+	// AgentSlug pins the Hetchy agent selected on the first turn. Empty
+	// means the conversation runs as plain Hetchy without a specialized
+	// persona.
+	AgentSlug string
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
@@ -198,6 +202,7 @@ func (s *Store) Upsert(ctx context.Context, r Record) error {
 		GithubOwner:    r.GitHubOwner,
 		GithubRepo:     r.GitHubRepo,
 		CreatorID:      r.CreatorID,
+		AgentSlug:      r.AgentSlug,
 	})
 	if err != nil {
 		return fmt.Errorf("upsert conversation: %w", err)
@@ -292,6 +297,7 @@ type rowFields struct {
 	ResponseBlocks                            [][]byte
 	GithubOwner, GithubRepo, CustomTitle      string
 	CreatorID                                 string
+	AgentSlug                                 string
 	CreatedAt, UpdatedAt                      pgtype.Timestamptz
 }
 
@@ -312,6 +318,7 @@ func recordFromFields(f rowFields) (Record, error) {
 		GitHubRepo:     f.GithubRepo,
 		CustomTitle:    f.CustomTitle,
 		CreatorID:      f.CreatorID,
+		AgentSlug:      f.AgentSlug,
 		CreatedAt:      f.CreatedAt.Time,
 		UpdatedAt:      f.UpdatedAt.Time,
 	}, nil
@@ -323,7 +330,7 @@ func recordFromGetRow(row sqlc.GetConversationRow) (Record, error) {
 		Branch: row.Branch, PrUrl: row.PrUrl, History: row.History,
 		ResponseBlocks: row.ResponseBlocks,
 		GithubOwner:    row.GithubOwner, GithubRepo: row.GithubRepo,
-		CustomTitle: row.CustomTitle, CreatorID: row.CreatorID,
+		CustomTitle: row.CustomTitle, CreatorID: row.CreatorID, AgentSlug: row.AgentSlug,
 		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	})
 }
@@ -334,7 +341,7 @@ func recordFromSearchRow(row sqlc.SearchConversationsRow) (Record, error) {
 		Branch: row.Branch, PrUrl: row.PrUrl, History: row.History,
 		ResponseBlocks: row.ResponseBlocks,
 		GithubOwner:    row.GithubOwner, GithubRepo: row.GithubRepo,
-		CustomTitle: row.CustomTitle, CreatorID: row.CreatorID,
+		CustomTitle: row.CustomTitle, CreatorID: row.CreatorID, AgentSlug: row.AgentSlug,
 		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	})
 }

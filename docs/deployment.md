@@ -36,6 +36,7 @@ The compose file reads environment variables from your shell (injected by Dopple
 | `DAYTONA_API_URL` | Daytona API endpoint |
 | `DAYTONA_API_KEY` | Daytona API key |
 | `DAYTONA_SNAPSHOT` | Custom snapshot image (optional) |
+| `HETCHY_SX_PUBLIC_VAULT_URL` | Public git sx vault containing built-in agent personas and scoped role skills; defaults to `https://github.com/hetchyhq/hetchy-sx-vault.git` |
 | `WEB_PORT` | Web UI port (default: 8080) |
 | `DISABLE_SLACK` | Set to 1 to run web UI only |
 | `DATABASE_URL` | PostgreSQL connection string (optional, enables conversation persistence) |

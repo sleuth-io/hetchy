@@ -81,7 +81,15 @@ type Config struct {
 	// IAM role) — we don't read them here.
 	S3Bucket string
 	S3Region string
+
+	// SXPublicVaultURL is the git sx vault containing Hetchy's built-in
+	// agent personas and role skills. Each sandbox installs it with
+	// SX_BOT=<selected agent> before running Claude. The org's skills.new
+	// vault, when configured, is installed separately.
+	SXPublicVaultURL string
 }
+
+const DefaultSXPublicVaultURL = "https://github.com/hetchyhq/hetchy-sx-vault.git"
 
 // LoadConfig reads required and optional env vars. Set AUTH_BYPASS=1 to
 // skip the WorkOS round-trip for tests/CI.
@@ -155,11 +163,19 @@ func LoadConfig() (Config, error) {
 		AuthBypassEmail:        getenvDefault("AUTH_BYPASS_EMAIL", "bypass@hetchy.local"),
 		S3Bucket:               strings.TrimSpace(os.Getenv("HETCHY_S3_BUCKET")),
 		S3Region:               strings.TrimSpace(os.Getenv("HETCHY_S3_REGION")),
+		SXPublicVaultURL:       getenvDefaultTrim("HETCHY_SX_PUBLIC_VAULT_URL", DefaultSXPublicVaultURL),
 	}, nil
 }
 
 func getenvDefault(key, def string) string {
 	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
+
+func getenvDefaultTrim(key, def string) string {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
 		return v
 	}
 	return def
