@@ -522,8 +522,11 @@ func (b *Bot) runScript(ctx context.Context, sb *daytona.Sandbox, sessionID, lab
 		return "", fmt.Errorf("create session: %w", err)
 	}
 	defer func() {
-		_ = b.retryWithBackoff(ctx, "delete session", func() error {
-			return sb.Process.DeleteSession(ctx, sessionID)
+		// Use context.Background() so a cancelled run context (user-initiated
+		// stop) doesn't prevent session cleanup.
+		bgCtx := context.Background()
+		_ = b.retryWithBackoff(bgCtx, "delete session", func() error {
+			return sb.Process.DeleteSession(bgCtx, sessionID)
 		})
 	}()
 

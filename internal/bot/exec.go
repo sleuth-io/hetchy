@@ -90,6 +90,11 @@ func (b *Bot) shLines(ctx context.Context, sb *daytona.Sandbox, sessionID, step,
 				continue
 			}
 			flush(&errTail, chunk, "stderr")
+		case <-stepCtx.Done():
+			// Context cancelled (user-initiated stop) or timed out — exit
+			// the draining loop immediately rather than waiting for the
+			// Daytona SDK to close the channels on its own.
+			return buf.String(), stepCtx.Err()
 		}
 	}
 	finalFlush(&outTail, "stdout")

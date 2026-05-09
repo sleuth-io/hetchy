@@ -1109,14 +1109,20 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 		sessionID = requestID
 	}
 
+	// Derive a per-run cancellable context so the Stop endpoint can abort
+	// the agent without tearing down the whole web server. The cancel is
+	// stored in the liveRun and called by liveRegistry.Cancel.
+	runCtx, runCancel := context.WithCancel(parentCtx)
+
 	// Atomically claim the in-flight slot. RegisterIfAbsent collapses
 	// the prior Get-then-Register TOCTOU where two concurrent POSTs
 	// could each observe an empty slot, both call Register, and the
 	// second Close()s the first run mid-stream. On a losing call we
 	// reject with 409 — the reload-to-reattach UX path uses
 	// /chat/stream, not a fresh POST.
-	run, registered := b.live.RegisterIfAbsent(p.OrgID, sessionID)
+	run, registered := b.live.RegisterIfAbsent(p.OrgID, sessionID, runCancel)
 	if !registered {
+		runCancel()
 		http.Error(w, "this chat already has a turn in flight; reload to reattach", http.StatusConflict)
 		return
 	}
@@ -1130,7 +1136,7 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 
 	go func() {
 		defer b.live.Done(p.OrgID, sessionID, run)
-		b.HandleRequest(parentCtx, oc, text, requestID, sessionID, p.UserID, validate, emitter)
+		b.HandleRequest(runCtx, oc, text, requestID, sessionID, p.UserID, validate, emitter)
 	}()
 
 	sub := run.Subscribe()
@@ -1379,7 +1385,36 @@ func (b *Bot) membersHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (b *Bot) conversationDetailHandler(w http.ResponseWriter, r *http.Request) {
-	threadID := strings.TrimPrefix(r.URL.Path, "/api/conversations/")
+	path := strings.TrimPrefix(r.URL.Path, "/api/conversations/")
+
+	// Handle /api/conversations/{id}/stop — must come before the slash
+	// check below, which would otherwise return 404 for paths with a slash.
+	if slashIdx := strings.LastIndex(path, "/"); slashIdx >= 0 {
+		id, action := path[:slashIdx], path[slashIdx+1:]
+		if action == "stop" {
+			if !isSafeThreadID(id) {
+				http.NotFound(w, r)
+				return
+			}
+			if r.Method != http.MethodPost {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			if err := requireSameOrigin(r); err != nil {
+				http.Error(w, err.Error(), http.StatusForbidden)
+				return
+			}
+			p, _ := auth.FromContext(r.Context())
+			if b.live.Cancel(p.OrgID, id) {
+				w.WriteHeader(http.StatusNoContent)
+			} else {
+				http.Error(w, "no active run", http.StatusNotFound)
+			}
+			return
+		}
+	}
+
+	threadID := path
 	if threadID == "" || strings.Contains(threadID, "/") {
 		http.NotFound(w, r)
 		return

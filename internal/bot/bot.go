@@ -552,16 +552,26 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 	branch := "feature/sf-" + requestID
 	prURL, runErr := b.runAgent(ctx, sb, repo, oc, userRequest, requestID, validate, emit)
 	if runErr != nil {
-		b.log.Error("agent run failed", "sandbox", sb.ID, "request_id", requestID, "error", runErr)
-		emit.Error("Agent failed", fmt.Sprintf("Something went wrong while running the agent. Sandbox `%s` is left running for debugging — reply here to retry (the orphan sandbox will be archived automatically) or check the server logs for details.", sb.ID))
+		if errors.Is(runErr, context.Canceled) {
+			b.log.Info("agent run stopped by user", "sandbox", sb.ID, "request_id", requestID)
+			emit.Notify("Stopped", "The agent was stopped.")
+			// Stop and archive the sandbox immediately so Daytona resources
+			// are freed and the claude process can't continue pushing commits.
+			// Use a background context since runCtx is already cancelled.
+			go b.stopAndArchiveSandbox(sb)
+		} else {
+			b.log.Error("agent run failed", "sandbox", sb.ID, "request_id", requestID, "error", runErr)
+			emit.Error("Agent failed", fmt.Sprintf("Something went wrong while running the agent. Sandbox `%s` is left running for debugging — reply here to retry (the orphan sandbox will be archived automatically) or check the server logs for details.", sb.ID))
+		}
 		// Persist sb.ID so handleRetryAfterFailure can archive the
 		// stale sandbox on the next user message — without this we'd
 		// leak a sandbox per retry. PRURL stays empty, which is how
 		// the dispatcher tells "agent failed mid-run, clean up first"
-		// apart from a real follow-up.
+		// apart from a real follow-up. Use WithoutCancel so a user-
+		// initiated stop (cancelled ctx) doesn't prevent the save.
 		rec.SandboxID = sb.ID
 		appendBlocksToFirstTurn(&rec, recorder.Snapshot())
-		if err := b.convs.Upsert(ctx, rec); err != nil {
+		if err := b.convs.Upsert(context.WithoutCancel(ctx), rec); err != nil {
 			b.log.Error("convstore upsert (agent fail)", "error", err)
 		}
 		return
@@ -645,10 +655,16 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 
 	prURL, err := b.runFollowUp(ctx, sb, repo, oc, rec, text, requestID, emit)
 	if err != nil {
-		b.log.Error("follow-up failed", "sandbox", sb.ID, "request_id", requestID, "error", err)
-		emit.Error("Agent failed", fmt.Sprintf("Something went wrong while running the agent. Sandbox `%s` is left running for debugging — check the server logs for details.", sb.ID))
+		if errors.Is(err, context.Canceled) {
+			b.log.Info("follow-up stopped by user", "sandbox", sb.ID, "request_id", requestID)
+			emit.Notify("Stopped", "The agent was stopped.")
+			go b.stopAndArchiveSandbox(sb)
+		} else {
+			b.log.Error("follow-up failed", "sandbox", sb.ID, "request_id", requestID, "error", err)
+			emit.Error("Agent failed", fmt.Sprintf("Something went wrong while running the agent. Sandbox `%s` is left running for debugging — check the server logs for details.", sb.ID))
+		}
 		appendBlocksAsNewTurn(&rec, text, recorder.Snapshot())
-		if err := b.convs.Upsert(ctx, rec); err != nil {
+		if err := b.convs.Upsert(context.WithoutCancel(ctx), rec); err != nil {
 			b.log.Error("convstore upsert (follow-up agent fail)", "error", err)
 		}
 		return
@@ -886,6 +902,21 @@ func (b *Bot) retryWithBackoff(ctx context.Context, operation string, fn func() 
 	}
 
 	return lastErr
+}
+
+// stopAndArchiveSandbox stops then archives sb using a background context.
+// Called in a goroutine when a user-initiated stop cancels the run context,
+// ensuring Daytona resources are freed and the claude process can no longer
+// push commits even though the caller's ctx is already cancelled.
+func (b *Bot) stopAndArchiveSandbox(sb *daytona.Sandbox) {
+	ctx := context.Background()
+	if err := sb.Stop(ctx); err != nil {
+		b.log.Warn("sandbox stop after user-stop failed", "sandbox", sb.ID, "error", err)
+		return
+	}
+	if err := sb.Archive(ctx); err != nil {
+		b.log.Warn("sandbox archive after user-stop failed", "sandbox", sb.ID, "error", err)
+	}
 }
 
 // createSandboxWithRetry attempts to create a Daytona sandbox with retry logic

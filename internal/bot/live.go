@@ -25,6 +25,7 @@ type liveRun struct {
 	subs    map[*liveSubscription]struct{}
 	closed  bool
 	doneCh  chan struct{}
+	cancel  func() // cancels the run's context; called by Cancel()
 }
 
 // liveSubscription is one consumer of a liveRun's stream. The
@@ -36,10 +37,19 @@ type liveSubscription struct {
 	ch      chan liveEvent
 }
 
-func newLiveRun() *liveRun {
+func newLiveRun(cancel func()) *liveRun {
 	return &liveRun{
 		subs:   map[*liveSubscription]struct{}{},
 		doneCh: make(chan struct{}),
+		cancel: cancel,
+	}
+}
+
+// Cancel invokes the run's context cancel function, which propagates
+// cancellation into the agent goroutine and causes it to stop early.
+func (r *liveRun) Cancel() {
+	if r.cancel != nil {
+		r.cancel()
 	}
 }
 
@@ -143,17 +153,31 @@ func liveKey(orgID, threadID string) string { return orgID + "\x00" + threadID }
 // when another goroutine already holds it. chatHandler uses this to
 // reject concurrent POSTs on the same session — the second caller
 // gets a 409 and the UI's reload-to-reattach path takes over via
-// /chat/stream.
-func (r *liveRegistry) RegisterIfAbsent(orgID, threadID string) (*liveRun, bool) {
+// /chat/stream. cancel is stored on the run so Cancel() can abort it.
+func (r *liveRegistry) RegisterIfAbsent(orgID, threadID string, cancel func()) (*liveRun, bool) {
 	key := liveKey(orgID, threadID)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if existing := r.runs[key]; existing != nil {
 		return existing, false
 	}
-	run := newLiveRun()
+	run := newLiveRun(cancel)
 	r.runs[key] = run
 	return run, true
+}
+
+// Cancel aborts the in-flight run for (orgID, threadID) by calling its
+// context cancel function. Returns true if a run was found, false if
+// none is active.
+func (r *liveRegistry) Cancel(orgID, threadID string) bool {
+	r.mu.Lock()
+	run := r.runs[liveKey(orgID, threadID)]
+	r.mu.Unlock()
+	if run == nil {
+		return false
+	}
+	run.Cancel()
+	return true
 }
 
 // Get returns the active run for this (orgID, threadID), or nil if

@@ -196,6 +196,8 @@
   button { padding: .6rem 1.2rem; background: #0b93f6; color: #fff; border: none;
            border-radius: 2rem; font-size: 1rem; cursor: pointer; }
   button:disabled { opacity: .5; cursor: default; }
+  #stop-btn { background: #c0392b; }
+  #stop-btn:hover:not(:disabled) { background: #a93226; }
 
   /* Right-side metadata sidebar — surfaces what we know about the chat
      (repo, branch, PR, sandbox, creator). Hidden when the user toggles
@@ -434,6 +436,8 @@
   html.is-dark #empty-state .options { color: #b8b8bd; }
   html.is-dark #bar { background: #1c1c1f; border-top-color: #2a2a2d; }
   html.is-dark #inp { background: #232327; color: #e7e7e9; border-color: #2e2e33; }
+  html.is-dark #stop-btn { background: #9b2335; }
+  html.is-dark #stop-btn:hover:not(:disabled) { background: #852030; }
   html.is-dark #main-top { background: #1c1c1f; border-bottom-color: #2a2a2d; }
   html.is-dark #meta-toggle { color: #c4c4c8; }
   html.is-dark #meta-toggle:hover { background: #2a2a2e; border-color: #3a3a40; }
@@ -574,6 +578,7 @@
 <div id="bar">
   <input id="inp" placeholder="Describe a feature…" autofocus>
   <button id="btn" onclick="send()">Send</button>
+  <button id="stop-btn" hidden onclick="stopAgent()">Stop</button>
 </div>
 </div>
 
@@ -587,6 +592,7 @@
 const log = document.getElementById('log');
 const inp = document.getElementById('inp');
 const btn = document.getElementById('btn');
+const stopBtn = document.getElementById('stop-btn');
 
 // Current user's WorkOS ID, injected by the server. Used to default the
 // sidebar filter to "my chats".
@@ -1612,6 +1618,8 @@ async function send() {
   if (validateChoice !== null) {
     payload.validate = validateChoice;
   }
+  stopBtn.disabled = false;
+  stopBtn.hidden = false;
   const res = await fetch('/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1624,6 +1632,7 @@ async function send() {
   // for the agent to finish (which can take minutes).
   await consumeSSEResponse(res, isFirstTurn ? () => { loadSidebar(); refreshMetadata(); } : null);
   btn.disabled = false;
+  stopBtn.hidden = true;
   inp.focus();
   // Refresh the sidebar after every turn so the row's title (derived
   // server-side from the first user message) reflects the just-completed
@@ -1633,6 +1642,24 @@ async function send() {
   // Metadata may have changed too — branch + PR URL only land at the
   // end of the first turn, and the agent can re-base subsequent turns.
   refreshMetadata();
+}
+
+async function stopAgent() {
+  stopBtn.disabled = true;
+  try {
+    const res = await fetch('/api/conversations/' + encodeURIComponent(sessionId) + '/stop', {
+      method: 'POST',
+    });
+    if (!res.ok) {
+      // Run may have already ended — re-enable so the user can try again
+      // if the stop button is still showing (defensive).
+      stopBtn.disabled = false;
+    }
+    // On success the SSE stream closes naturally, which re-enables Send
+    // and hides the Stop button via the send() / init() await paths.
+  } catch (e) {
+    stopBtn.disabled = false;
+  }
 }
 
 // Sidebar user filter — populate the <select> with org members and wire up
@@ -1800,8 +1827,11 @@ async function init() {
   await loadHistory({ skipLastBotResponse: !!liveRes });
   if (liveRes) {
     btn.disabled = true;
+    stopBtn.disabled = false;
+    stopBtn.hidden = false;
     await consumeSSEResponse(liveRes);
     btn.disabled = false;
+    stopBtn.hidden = true;
     inp.focus();
     // Refresh the sidebar so the just-completed turn's metadata
     // (title, ordering) lines up with what the server saved.
