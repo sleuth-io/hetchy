@@ -50,8 +50,19 @@ func (b *Bot) shLines(ctx context.Context, sandboxID string, proc sandboxProcess
 	// Track the last time a byte arrived. Updated atomically by the
 	// flush closures below; read by the idle-check goroutine.
 	var lastActivity atomic.Int64
-	lastActivity.Store(time.Now().UnixNano())
 	var idledOut atomic.Bool
+
+	res, err := proc.ExecuteSessionCommand(stepCtx, sessionID, cmd, true, false)
+	if err != nil {
+		b.log.Error("sandbox step exec error", "sandbox", sandboxID, "step", step, "error", err)
+		return "", fmt.Errorf("step %q exec error: %w", step, err)
+	}
+	cmdID, _ := res["id"].(string)
+
+	// Start the idle clock only after ExecuteSessionCommand returns so
+	// the SDK round-trip (which can take several seconds) doesn't
+	// consume the idle budget before streaming even begins.
+	lastActivity.Store(time.Now().UnixNano())
 
 	if idleTimeout > 0 {
 		// Poll interval: production uses 10 s (cheap, fires within 10 s
@@ -77,18 +88,6 @@ func (b *Bot) shLines(ctx context.Context, sandboxID string, proc sandboxProcess
 			}
 		}()
 	}
-
-	res, err := proc.ExecuteSessionCommand(stepCtx, sessionID, cmd, true, false)
-	if err != nil {
-		b.log.Error("sandbox step exec error", "sandbox", sandboxID, "step", step, "error", err)
-		return "", fmt.Errorf("step %q exec error: %w", step, err)
-	}
-	// Reset the idle clock now that the process is actually running.
-	// ExecuteSessionCommand involves a network round-trip that can take
-	// several seconds; time spent there should not count against the idle
-	// window.
-	lastActivity.Store(time.Now().UnixNano())
-	cmdID, _ := res["id"].(string)
 
 	stdout := make(chan string, 64)
 	stderr := make(chan string, 64)
