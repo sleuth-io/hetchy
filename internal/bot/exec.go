@@ -55,6 +55,9 @@ func (b *Bot) shLines(ctx context.Context, sandboxID string, proc sandboxProcess
 	res, err := proc.ExecuteSessionCommand(stepCtx, sessionID, cmd, true, false)
 	if err != nil {
 		b.log.Error("sandbox step exec error", "sandbox", sandboxID, "step", step, "error", err)
+		if errors.Is(err, context.DeadlineExceeded) {
+			return "", fmt.Errorf("step %q exec timed out after %v: %w", step, timeout, ErrStepWallTimeout)
+		}
 		return "", fmt.Errorf("step %q exec error: %w", step, err)
 	}
 	cmdID, _ := res["id"].(string)
