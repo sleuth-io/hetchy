@@ -83,11 +83,16 @@ func TestShLines(t *testing.T) {
 			wantErr:     ErrStepWallTimeout,
 		},
 		{
+			// Total runtime ~300 ms (3 chunks × 100 ms gap) exceeds the
+			// 150 ms idle window, but each individual gap is under it.
+			// Without lastActivity.Store in flush, idle fires at ~150 ms
+			// and the test fails with ErrStepIdleTimeout; with the reset
+			// it succeeds — proving the idle clock actually resets.
 			name:        "incoming output resets idle clock",
-			proc:        &fakeProcess{chunks: []string{"line1\n", "line2\n"}, chunkGap: 50 * time.Millisecond},
+			proc:        &fakeProcess{chunks: []string{"line1\n", "line2\n", "line3\n"}, chunkGap: 100 * time.Millisecond},
 			timeout:     5 * time.Second,
-			idleTimeout: 200 * time.Millisecond,
-			wantOut:     "line1\nline2\n",
+			idleTimeout: 150 * time.Millisecond,
+			wantOut:     "line1\nline2\nline3\n",
 			wantErr:     nil,
 		},
 	}

@@ -57,7 +57,9 @@ func (b *Bot) shLines(ctx context.Context, sandboxID string, proc sandboxProcess
 		// Poll interval: production uses 10 s (cheap, fires within 10 s
 		// of expiry for a 15-min limit); for small idleTimeout values
 		// (unit tests) we scale down so tests aren't slow.
-		idlePoll := min(10*time.Second, max(time.Millisecond, idleTimeout/10))
+		// Floor of 10 ms prevents a hot-loop ticker if a caller passes a
+		// very small idleTimeout; callers should keep idleTimeout >= ~100 ms.
+		idlePoll := min(10*time.Second, max(10*time.Millisecond, idleTimeout/10))
 		go func() {
 			ticker := time.NewTicker(idlePoll)
 			defer ticker.Stop()
