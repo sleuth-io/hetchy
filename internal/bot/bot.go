@@ -97,7 +97,7 @@ type Bot struct {
 	// createFn is called by createSandboxWithRetry; overridable in tests.
 	createFn func(context.Context, any) (*daytona.Sandbox, error)
 	// startFn is called by startWithRetry; overridable in tests.
-	startFn      func(ctx context.Context, sb *daytona.Sandbox, timeout time.Duration) error
+	startFn      func(context.Context, *daytona.Sandbox, time.Duration) error
 	retryBackoff time.Duration
 }
 
@@ -627,7 +627,12 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 	}
 	if err := b.resumeSandbox(ctx, sb, emit); err != nil {
 		b.log.Error("sandbox resume failed", "sandbox", sb.ID, "request_id", requestID, "error", err)
-		emit.Error("Sandbox resume failed", fmt.Sprintf("Could not start sandbox `%s`. Try again, or open a fresh chat.", sb.ID))
+		var timeoutErr *sdkerrors.DaytonaTimeoutError
+		msg := fmt.Sprintf("Could not start sandbox `%s`. Try again, or open a fresh chat.", sb.ID)
+		if errors.As(err, &timeoutErr) {
+			msg = fmt.Sprintf("Sandbox `%s` is taking unusually long to start — it may be under load. Try again in a moment.", sb.ID)
+		}
+		emit.Error("Sandbox resume failed", msg)
 		appendBlocksAsNewTurn(&rec, text, recorder.Snapshot())
 		if err := b.convs.Upsert(ctx, rec); err != nil {
 			b.log.Error("convstore upsert (follow-up sandbox resume)", "error", err)
@@ -803,7 +808,16 @@ func appendBlocksAsNewTurn(rec *convstore.Record, text string, next []blocks.Blo
 // isTransientError reports whether err is a retryable Daytona API error:
 // rate-limit (429), server-side 5xx responses, and network-level failures
 // (StatusCode == 0) are all considered transient.
+//
+// DaytonaTimeoutError is explicitly excluded: it embeds *DaytonaError with
+// StatusCode==0, which would otherwise look like a network failure. A sandbox
+// that timed out is genuinely slow — retrying would just add another full
+// timeout on top of the one already spent.
 func isTransientError(err error) bool {
+	var timeoutErr *sdkerrors.DaytonaTimeoutError
+	if errors.As(err, &timeoutErr) {
+		return false
+	}
 	var rateLimitErr *sdkerrors.DaytonaRateLimitError
 	if errors.As(err, &rateLimitErr) {
 		return true
@@ -923,9 +937,12 @@ func (b *Bot) resumeSandbox(ctx context.Context, sb *daytona.Sandbox, emit block
 
 	// Heartbeat goroutine: append elapsed time every 15 s so the user
 	// sees a live indicator rather than a frozen spinner.
+	// heartbeatDone is closed when the goroutine exits; we wait on it before
+	// any emit.Done/Fail call to avoid a concurrent-write race on the emitter.
 	heartbeatCtx, cancelHeartbeat := context.WithCancel(ctx)
-	defer cancelHeartbeat()
+	heartbeatDone := make(chan struct{})
 	go func() {
+		defer close(heartbeatDone)
 		ticker := time.NewTicker(15 * time.Second)
 		defer ticker.Stop()
 		start := time.Now()
@@ -940,8 +957,11 @@ func (b *Bot) resumeSandbox(ctx context.Context, sb *daytona.Sandbox, emit block
 		}
 	}()
 
-	startErr := b.startWithRetry(ctx, sb, startTimeout)
+	startErr := b.retryWithBackoff(ctx, "sandbox start", func() error {
+		return b.startFn(ctx, sb, startTimeout)
+	})
 	cancelHeartbeat()
+	<-heartbeatDone
 
 	if startErr != nil {
 		b.log.Error("sandbox resume failed", "sandbox", sb.ID, "error", startErr)
@@ -951,38 +971,4 @@ func (b *Bot) resumeSandbox(ctx context.Context, sb *daytona.Sandbox, emit block
 	b.log.Info("sandbox resumed", "sandbox", sb.ID)
 	emit.Done(setupID, "Sandbox ready")
 	return nil
-}
-
-// startWithRetry calls StartWithTimeout with retry for transient HTTP/network
-// errors. DaytonaTimeoutError is excluded from retry: a sandbox that doesn't
-// start within the timeout is genuinely slow — a fresh attempt would just
-// add another full timeout on top of the one we already spent.
-func (b *Bot) startWithRetry(ctx context.Context, sb *daytona.Sandbox, timeout time.Duration) error {
-	var lastErr error
-	backoff := b.retryBackoff
-	for attempt := 1; attempt <= maxRetries; attempt++ {
-		lastErr = b.startFn(ctx, sb, timeout)
-		if lastErr == nil {
-			if attempt > 1 {
-				b.log.Info("sandbox start succeeded after retry", "sandbox", sb.ID, "attempt", attempt)
-			}
-			return nil
-		}
-
-		var timeoutErr *sdkerrors.DaytonaTimeoutError
-		if errors.As(lastErr, &timeoutErr) || !isTransientError(lastErr) || attempt == maxRetries {
-			return lastErr
-		}
-
-		b.log.Warn("sandbox start transient error, retrying",
-			"sandbox", sb.ID, "attempt", attempt, "error", lastErr)
-
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(backoff):
-			backoff *= backoffMultiplier
-		}
-	}
-	return lastErr
 }
