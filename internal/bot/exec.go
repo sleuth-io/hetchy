@@ -7,9 +7,22 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
-
-	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
 )
+
+// ErrStepWallTimeout is returned by shLines when the wall-clock limit fires.
+var ErrStepWallTimeout = errors.New("step wall-clock timeout")
+
+// ErrStepIdleTimeout is returned by shLines when no output arrives for
+// the idle-timeout window.
+var ErrStepIdleTimeout = errors.New("step idle timeout")
+
+// sandboxProcess is the subset of *daytona.ProcessService that shLines
+// needs — narrow enough to be implemented by a fake in tests.
+type sandboxProcess interface {
+	ExecuteSessionCommand(ctx context.Context, sessionID, command string, runAsync, suppressInputEcho bool) (map[string]any, error)
+	GetSessionCommand(ctx context.Context, sessionID, commandID string) (map[string]any, error)
+	GetSessionCommandLogsStream(ctx context.Context, sessionID, commandID string, stdout, stderr chan<- string) error
+}
 
 // shLines runs cmd inside an existing sandbox session, splits its
 // stdout+stderr into whole lines, forwards each line to onLine, and
@@ -28,8 +41,8 @@ import (
 // duration; pass 0 to disable. Distinct from timeout (wall-clock max):
 // a healthy long run keeps producing output and resets the idle clock,
 // while a stuck process goes silent and trips the idle limit early.
-func (b *Bot) shLines(ctx context.Context, sb *daytona.Sandbox, sessionID, step, cmd string, timeout, idleTimeout time.Duration, onLine func(string)) (string, error) {
-	b.log.Info("sandbox step start", "sandbox", sb.ID, "step", step, "timeout", timeout, "idle_timeout", idleTimeout)
+func (b *Bot) shLines(ctx context.Context, sandboxID string, proc sandboxProcess, sessionID, step, cmd string, timeout, idleTimeout time.Duration, onLine func(string)) (string, error) {
+	b.log.Info("sandbox step start", "sandbox", sandboxID, "step", step, "timeout", timeout, "idle_timeout", idleTimeout)
 
 	stepCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -41,10 +54,12 @@ func (b *Bot) shLines(ctx context.Context, sb *daytona.Sandbox, sessionID, step,
 	var idledOut atomic.Bool
 
 	if idleTimeout > 0 {
+		// Poll interval: production uses 10 s (cheap, fires within 10 s
+		// of expiry for a 15-min limit); for small idleTimeout values
+		// (unit tests) we scale down so tests aren't slow.
+		idlePoll := min(10*time.Second, max(time.Millisecond, idleTimeout/10))
 		go func() {
-			// Poll every 10 s — coarse enough to be cheap, fine enough
-			// that a 5-minute idle limit fires within 10 s of expiry.
-			ticker := time.NewTicker(10 * time.Second)
+			ticker := time.NewTicker(idlePoll)
 			defer ticker.Stop()
 			for {
 				select {
@@ -61,9 +76,9 @@ func (b *Bot) shLines(ctx context.Context, sb *daytona.Sandbox, sessionID, step,
 		}()
 	}
 
-	res, err := sb.Process.ExecuteSessionCommand(stepCtx, sessionID, cmd, true, false)
+	res, err := proc.ExecuteSessionCommand(stepCtx, sessionID, cmd, true, false)
 	if err != nil {
-		b.log.Error("sandbox step exec error", "sandbox", sb.ID, "step", step, "error", err)
+		b.log.Error("sandbox step exec error", "sandbox", sandboxID, "step", step, "error", err)
 		return "", fmt.Errorf("step %q exec error: %w", step, err)
 	}
 	cmdID, _ := res["id"].(string)
@@ -74,7 +89,7 @@ func (b *Bot) shLines(ctx context.Context, sb *daytona.Sandbox, sessionID, step,
 
 	streamDone := make(chan error, 1)
 	go func() {
-		streamDone <- sb.Process.GetSessionCommandLogsStream(stepCtx, sessionID, cmdID, stdout, stderr)
+		streamDone <- proc.GetSessionCommandLogsStream(stepCtx, sessionID, cmdID, stdout, stderr)
 	}()
 
 	// Per-stream line buffers: each chunk may be a partial line, so
@@ -94,7 +109,7 @@ func (b *Bot) shLines(ctx context.Context, sb *daytona.Sandbox, sessionID, step,
 			}
 			line := s[:i]
 			s = s[i+1:]
-			b.log.Debug("sandbox line", "sandbox", sb.ID, "step", step, "stream", stream, "line", lazySandboxLine{raw: line})
+			b.log.Debug("sandbox line", "sandbox", sandboxID, "step", step, "stream", stream, "line", lazySandboxLine{raw: line})
 			onLine(line)
 		}
 		tail.Reset()
@@ -105,7 +120,7 @@ func (b *Bot) shLines(ctx context.Context, sb *daytona.Sandbox, sessionID, step,
 			return
 		}
 		line := tail.String()
-		b.log.Debug("sandbox line", "sandbox", sb.ID, "step", step, "stream", stream, "line", lazySandboxLine{raw: line})
+		b.log.Debug("sandbox line", "sandbox", sandboxID, "step", step, "stream", stream, "line", lazySandboxLine{raw: line})
 		onLine(line)
 		tail.Reset()
 	}
@@ -143,21 +158,21 @@ func (b *Bot) shLines(ctx context.Context, sb *daytona.Sandbox, sessionID, step,
 	// "stream closed normally after EOF" races we don't want to
 	// upgrade to fatals.
 	if streamErr := <-streamDone; streamErr != nil {
-		b.log.Warn("sandbox log stream error", "sandbox", sb.ID, "step", step, "error", streamErr)
+		b.log.Warn("sandbox log stream error", "sandbox", sandboxID, "step", step, "error", streamErr)
 		if errors.Is(streamErr, context.DeadlineExceeded) {
 			return buf.String(), fmt.Errorf("step %q stream timed out after %v (output may be truncated, %d bytes captured): %w",
-				step, timeout, buf.Len(), streamErr)
+				step, timeout, buf.Len(), ErrStepWallTimeout)
 		}
 		if errors.Is(streamErr, context.Canceled) && idledOut.Load() {
 			return buf.String(), fmt.Errorf("step %q idle timeout: no output for %v (%d bytes captured): %w",
-				step, idleTimeout, buf.Len(), streamErr)
+				step, idleTimeout, buf.Len(), ErrStepIdleTimeout)
 		}
 	}
 
 	var status map[string]any
 	err = b.retryWithBackoff(ctx, "get command status", func() error {
 		var err error
-		status, err = sb.Process.GetSessionCommand(ctx, sessionID, cmdID)
+		status, err = proc.GetSessionCommand(ctx, sessionID, cmdID)
 		return err
 	})
 	if err != nil {
@@ -192,7 +207,7 @@ func (b *Bot) shLines(ctx context.Context, sb *daytona.Sandbox, sessionID, step,
 			if len(out) > 2000 {
 				out = "...(truncated)...\n" + out[len(out)-2000:]
 			}
-			b.log.Error("sandbox step failed", "sandbox", sb.ID, "step", step, "exit", code)
+			b.log.Error("sandbox step failed", "sandbox", sandboxID, "step", step, "exit", code)
 			// Return the full captured output (not the trimmed error
 			// blurb) so callers like botRunner can persist a useful
 			// failure trace into bootstrap_log. The error message
@@ -201,6 +216,6 @@ func (b *Bot) shLines(ctx context.Context, sb *daytona.Sandbox, sessionID, step,
 		}
 	}
 
-	b.log.Info("sandbox step ok", "sandbox", sb.ID, "step", step, "output_bytes", buf.Len())
+	b.log.Info("sandbox step ok", "sandbox", sandboxID, "step", step, "output_bytes", buf.Len())
 	return buf.String(), nil
 }

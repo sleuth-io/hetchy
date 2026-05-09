@@ -812,11 +812,7 @@ func appendBlocksAsNewTurn(rec *convstore.Record, text string, next []blocks.Blo
 // timeout in shLines — used to surface a more actionable error message
 // to the user than the generic "something went wrong" fallback.
 func isAgentTimeout(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := err.Error()
-	return strings.Contains(msg, "timed out") || strings.Contains(msg, "idle timeout")
+	return errors.Is(err, ErrStepWallTimeout) || errors.Is(err, ErrStepIdleTimeout)
 }
 
 // isTransientError reports whether err is a retryable Daytona API error:

@@ -1,0 +1,105 @@
+package bot
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+)
+
+// fakeProcess implements sandboxProcess for unit tests. It sends chunks
+// to stdout then optionally blocks until the context is done.
+type fakeProcess struct {
+	chunks    []string      // sent to stdout in order
+	chunkGap  time.Duration // pause between chunks (0 = no pause)
+	hangAfter bool          // block after sending all chunks until ctx done
+	exitCode  float64       // command exit code (0 = success)
+}
+
+func (f *fakeProcess) ExecuteSessionCommand(_ context.Context, _, _ string, _, _ bool) (map[string]any, error) {
+	return map[string]any{"id": "cmd-1"}, nil
+}
+
+func (f *fakeProcess) GetSessionCommand(_ context.Context, _, _ string) (map[string]any, error) {
+	return map[string]any{"exitCode": f.exitCode}, nil
+}
+
+func (f *fakeProcess) GetSessionCommandLogsStream(ctx context.Context, _, _ string, stdout, stderr chan<- string) error {
+	defer close(stdout)
+	defer close(stderr)
+	for _, chunk := range f.chunks {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case stdout <- chunk:
+		}
+		if f.chunkGap > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(f.chunkGap):
+			}
+		}
+	}
+	if f.hangAfter {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	return nil
+}
+
+func TestShLines(t *testing.T) {
+	t.Parallel()
+	b := &Bot{log: discardLogger(), retryBackoff: 0}
+
+	cases := []struct {
+		name        string
+		proc        *fakeProcess
+		timeout     time.Duration
+		idleTimeout time.Duration
+		wantOut     string
+		wantErr     error
+	}{
+		{
+			name:        "success",
+			proc:        &fakeProcess{chunks: []string{"hello\n", "world\n"}},
+			timeout:     5 * time.Second,
+			idleTimeout: 0,
+			wantOut:     "hello\nworld\n",
+			wantErr:     nil,
+		},
+		{
+			name:        "idle timeout fires when process goes silent",
+			proc:        &fakeProcess{hangAfter: true},
+			timeout:     5 * time.Second,
+			idleTimeout: 100 * time.Millisecond,
+			wantErr:     ErrStepIdleTimeout,
+		},
+		{
+			name:        "wall timeout fires when process takes too long",
+			proc:        &fakeProcess{chunks: []string{"alive\n"}, hangAfter: true},
+			timeout:     100 * time.Millisecond,
+			idleTimeout: 0, // disabled so only wall fires
+			wantErr:     ErrStepWallTimeout,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			out, err := b.shLines(context.Background(), "test-sandbox", tc.proc, "sess-1", "test-step", "echo hi", tc.timeout, tc.idleTimeout, func(string) {})
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Errorf("shLines error = %v, want errors.Is(%v)", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("shLines returned unexpected error: %v", err)
+			}
+			if out != tc.wantOut {
+				t.Errorf("shLines output = %q, want %q", out, tc.wantOut)
+			}
+		})
+	}
+}
