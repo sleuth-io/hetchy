@@ -4,10 +4,10 @@
 <meta charset="utf-8">
 <title>Hetchy</title>
 <!-- Favicon — chunky block "H" echoing the ASCII banner shown in the
-     empty state. The href is swapped at runtime to a variant with a
-     small green badge when a turn finishes while the tab is hidden,
-     mirroring the GitHub PR/CI tab indicator pattern. See FAVICON_*
-     constants below. -->
+     empty state. This is the single source of truth for the mark; JS
+     reads link.href at load to derive the badged "done" variant by
+     splicing a green dot before the closing </svg>, so the H markup
+     never has to be kept in sync between HTML and JS. -->
 <link rel="icon" type="image/svg+xml" id="favicon" href="data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2032%2032%27%3E%3Crect%20width%3D%2732%27%20height%3D%2732%27%20rx%3D%276%27%20fill%3D%27%230d1117%27%2F%3E%3Cg%20fill%3D%27%237dc4ff%27%3E%3Crect%20x%3D%276%27%20y%3D%276%27%20width%3D%276%27%20height%3D%2720%27%2F%3E%3Crect%20x%3D%2720%27%20y%3D%276%27%20width%3D%276%27%20height%3D%2720%27%2F%3E%3Crect%20x%3D%276%27%20y%3D%2714%27%20width%3D%2720%27%20height%3D%274%27%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E">
 <!-- Markdown rendering for bot blocks. DOMPurify sanitizes the HTML
      marked produces — we render server-supplied content (Claude's
@@ -1600,6 +1600,12 @@ async function consumeSSEResponse(res, onFirstEvent) {
   // freshest activity expanded — e.g. the long Sandbox setup body
   // tucks itself away when Claude starts streaming its first phase.
   let lastStandaloneEl = null;
+  // Set to true once a terminal standalone block (result/error) is
+  // observed on the wire. Used to gate signalTurnDone() so a network
+  // blip or premature stream close doesn't leave a misleading "ready"
+  // badge on a hidden tab when the turn is actually still running or
+  // disconnected.
+  let sawTurnEnd = false;
 
   const reader = res.body.getReader();
   const dec = new TextDecoder();
@@ -1679,6 +1685,9 @@ async function consumeSSEResponse(res, onFirstEvent) {
           }, { open: true });
           blockRefs.set(payload.id, { kind: 'standalone', el });
           lastStandaloneEl = el;
+          if (payload.kind === 'result' || payload.kind === 'error') {
+            sawTurnEnd = true;
+          }
         }
         log.scrollTop = log.scrollHeight;
       } else if (event === 'block_append') {
@@ -1723,41 +1732,43 @@ async function consumeSSEResponse(res, onFirstEvent) {
   // is visible in their tab bar. We only paint the badge when the
   // tab is hidden — if they're actively watching the page they
   // already see the result land, and a flash-then-clear would just
-  // be noise.
-  signalTurnDone();
+  // be noise. Gated on sawTurnEnd so a dropped/aborted stream doesn't
+  // produce a misleading "ready" indicator on a still-running turn.
+  if (sawTurnEnd) signalTurnDone();
 }
 
 // Favicon swap — keeps a "ready" badge on the tab while the user is
-// elsewhere. The base SVG is identical to the static <link> in <head>;
-// the "done" variant adds a green dot in the top-right corner.
-const HETCHY_FAVICON_BASE =
-  "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'>" +
-  "<rect width='32' height='32' rx='6' fill='#0d1117'/>" +
-  "<g fill='#7dc4ff'>" +
-  "<rect x='6' y='6' width='6' height='20'/>" +
-  "<rect x='20' y='6' width='6' height='20'/>" +
-  "<rect x='6' y='14' width='20' height='4'/>" +
-  "</g>";
-const FAVICON_IDLE = 'data:image/svg+xml;utf8,' +
-  encodeURIComponent(HETCHY_FAVICON_BASE + '</svg>');
-const FAVICON_DONE = 'data:image/svg+xml;utf8,' +
-  encodeURIComponent(
-    HETCHY_FAVICON_BASE +
-    "<circle cx='24' cy='8' r='7' fill='#22c55e' stroke='#0d1117' stroke-width='2'/>" +
-    '</svg>'
-  );
+// elsewhere. The H mark lives only in the static <link> in <head>; we
+// read its href as the idle variant and splice a green dot into the
+// URL-encoded data URL (right before the encoded "</svg>") to build
+// the badged variant. One copy of the markup, no drift risk.
+const FAVICON_IDLE = (document.getElementById('favicon') || {}).href || '';
+const FAVICON_DONE = FAVICON_IDLE.replace(
+  '%3C%2Fsvg%3E',
+  encodeURIComponent("<circle cx='24' cy='8' r='7' fill='#22c55e' stroke='#0d1117' stroke-width='2'/>") + '%3C%2Fsvg%3E'
+);
+// Tracks whether the favicon currently shows the "done" badge, so we
+// only rewrite link.href on visibilitychange when something actually
+// needs to change — avoids a re-decode on every tab focus.
+let faviconBadged = false;
 function setFaviconHref(href) {
   const link = document.getElementById('favicon');
   if (link) link.href = href;
 }
 function signalTurnDone() {
-  if (document.hidden) setFaviconHref(FAVICON_DONE);
+  if (document.hidden) {
+    setFaviconHref(FAVICON_DONE);
+    faviconBadged = true;
+  }
 }
 // Clear the badge as soon as the user looks at the tab again. Using
 // visibilitychange (not focus) so switching browser windows without
 // changing tabs doesn't keep the badge stuck on.
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) setFaviconHref(FAVICON_IDLE);
+  if (!document.hidden && faviconBadged) {
+    setFaviconHref(FAVICON_IDLE);
+    faviconBadged = false;
+  }
 });
 
 async function send() {
