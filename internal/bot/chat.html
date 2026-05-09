@@ -174,6 +174,16 @@
           flex-direction: column; gap: .75rem; }
   .msg  { max-width: 70%; padding: .6rem 1rem; border-radius: 1rem; line-height: 1.4; }
   .user { align-self: flex-end; background: #0b93f6; color: #fff; border-bottom-right-radius: .25rem; }
+  .msg.user.send-failed { background: #c0392b; opacity: .85; }
+  .send-failed-note { align-self: flex-end; max-width: 70%; margin-top: -.4rem;
+                      display: flex; align-items: center; gap: .5rem;
+                      font-size: .8rem; color: #c0392b; }
+  .send-failed-note .send-failed-reason { flex: 1; min-width: 0;
+                                          overflow-wrap: anywhere; }
+  .send-retry-btn { padding: .25rem .7rem; background: #fff; color: #c0392b;
+                    border: 1px solid #c0392b; border-radius: 1rem;
+                    font-size: .8rem; cursor: pointer; }
+  .send-retry-btn:hover { background: #c0392b; color: #fff; }
   .bot  { align-self: flex-start; background: #fff; border: 1px solid #ddd;
           border-bottom-left-radius: .25rem; white-space: pre-wrap; }
   #empty-state { margin: auto; text-align: center; color: #888; font-size: .95rem; }
@@ -412,6 +422,11 @@
     border-color: #2e2e33; }
   html.is-dark dialog.chat-dialog .dlg-cancel:hover { background: #2a2a2e; }
   html.is-dark .msg.bot { background: #232327; border-color: #2e2e33; color: #e7e7e9; }
+  html.is-dark .msg.user.send-failed { background: #6b2a23; opacity: .9; }
+  html.is-dark .send-failed-note { color: #f87171; }
+  html.is-dark .send-retry-btn { background: #232327; color: #f87171;
+    border-color: #6b2a23; }
+  html.is-dark .send-retry-btn:hover { background: #6b2a23; color: #fff; }
   html.is-dark .blk { background: #232327; border-color: #2e2e33; }
   html.is-dark .blk[open] { border-color: #3a3a40; }
   html.is-dark .blk > summary { color: #c4c4c8; }
@@ -1590,10 +1605,16 @@ async function consumeSSEResponse(res, onFirstEvent) {
   if (currentPhase) closePhase(currentPhase);
 }
 
-async function send() {
-  const text = inp.value.trim();
+// send posts the current input (or `retryText`, when a failed bubble's
+// Retry button calls back in) to /chat and consumes the SSE stream.
+// Failures from the POST or stream are caught so the Send button always
+// re-enables and the user can retry the message in place — see
+// markSendFailed for the failed-bubble UI.
+async function send(retryText) {
+  const isRetry = typeof retryText === 'string';
+  const text = isRetry ? retryText : inp.value.trim();
   if (!text) return;
-  inp.value = '';
+  if (!isRetry) inp.value = '';
   btn.disabled = true;
 
   // Capture the validate checkbox state BEFORE addUserMsg runs —
@@ -1606,33 +1627,75 @@ async function send() {
   const validateChoice = validateBox ? validateBox.checked : null;
 
   const isFirstTurn = log.querySelectorAll('.msg').length === 0;
-  addUserMsg(text);
+  const userMsgEl = addUserMsg(text);
 
   const payload = { text, session_id: sessionId };
   if (validateChoice !== null) {
     payload.validate = validateChoice;
   }
-  const res = await fetch('/chat', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  });
-  // The server persists the conversation row at HandleRequest entry —
-  // before sandbox creation begins. By the time the first SSE event
-  // reaches us the row is committed, so triggering a sidebar refresh on
-  // first event surfaces the new chat immediately rather than waiting
-  // for the agent to finish (which can take minutes).
-  await consumeSSEResponse(res, isFirstTurn ? () => { loadSidebar(); refreshMetadata(); } : null);
-  btn.disabled = false;
-  inp.focus();
+  let sendFailed = false;
+  try {
+    const res = await fetch('/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) {
+      throw new Error('server returned HTTP ' + res.status);
+    }
+    // The server persists the conversation row at HandleRequest entry —
+    // before sandbox creation begins. By the time the first SSE event
+    // reaches us the row is committed, so triggering a sidebar refresh on
+    // first event surfaces the new chat immediately rather than waiting
+    // for the agent to finish (which can take minutes).
+    await consumeSSEResponse(res, isFirstTurn ? () => { loadSidebar(); refreshMetadata(); } : null);
+  } catch (e) {
+    sendFailed = true;
+    markSendFailed(userMsgEl, text, e);
+  } finally {
+    btn.disabled = false;
+    inp.focus();
+  }
   // Refresh the sidebar after every turn so the row's title (derived
   // server-side from the first user message) reflects the just-completed
   // turn. Ordering is by created_at DESC, so existing rows keep their slot
   // and a brand-new chat appears at the top of page 0 on the first reload.
-  loadSidebar();
-  // Metadata may have changed too — branch + PR URL only land at the
-  // end of the first turn, and the agent can re-base subsequent turns.
-  refreshMetadata();
+  // Skip on send failure — nothing was persisted, so a refresh would only
+  // shuffle the same rows and could swap an in-flight retry's metadata.
+  if (!sendFailed) {
+    loadSidebar();
+    // Metadata may have changed too — branch + PR URL only land at the
+    // end of the first turn, and the agent can re-base subsequent turns.
+    refreshMetadata();
+  }
+}
+
+// markSendFailed marks a user message bubble as failed-to-send and
+// appends a sibling note with a Retry button. Clicking Retry removes
+// the failed bubble + note and re-runs send() with the same text, so
+// transient network or server errors don't force the user to re-type
+// their message or reload the page.
+function markSendFailed(msgEl, text, err) {
+  msgEl.classList.add('send-failed');
+  const note = document.createElement('div');
+  note.className = 'send-failed-note';
+  const reason = document.createElement('span');
+  reason.className = 'send-failed-reason';
+  const detail = err && err.message ? ': ' + err.message : '';
+  reason.textContent = 'Send failed' + detail;
+  const retryBtn = document.createElement('button');
+  retryBtn.type = 'button';
+  retryBtn.className = 'send-retry-btn';
+  retryBtn.textContent = 'Retry';
+  retryBtn.addEventListener('click', () => {
+    note.remove();
+    msgEl.remove();
+    send(text);
+  });
+  note.appendChild(reason);
+  note.appendChild(retryBtn);
+  msgEl.insertAdjacentElement('afterend', note);
+  log.scrollTop = log.scrollHeight;
 }
 
 // Sidebar user filter — populate the <select> with org members and wire up
