@@ -14,13 +14,14 @@ import (
 // `data:` frame. The SSE event name (event:) is set on the wire from
 // the matching method on liveEmitter.
 type sseEvent struct {
-	ID      string         `json:"id"`
-	Kind    blocks.Kind    `json:"kind,omitempty"`
-	Title   string         `json:"title,omitempty"`
-	Delta   string         `json:"delta,omitempty"`
-	Status  blocks.Status  `json:"status,omitempty"`
-	Summary string         `json:"summary,omitempty"`
-	Meta    map[string]any `json:"meta,omitempty"`
+	ID        string         `json:"id"`
+	Kind      blocks.Kind    `json:"kind,omitempty"`
+	Title     string         `json:"title,omitempty"`
+	Delta     string         `json:"delta,omitempty"`
+	Status    blocks.Status  `json:"status,omitempty"`
+	Summary   string         `json:"summary,omitempty"`
+	Meta      map[string]any `json:"meta,omitempty"`
+	StartedAt time.Time      `json:"started_at,omitzero"`
 }
 
 // liveEmitter is the blocks.Emitter that writes into a liveRun. Each
@@ -53,10 +54,11 @@ func (e *liveEmitter) Start(kind blocks.Kind, title string, meta map[string]any)
 	e.kinds[id] = kind
 	e.mu.Unlock()
 	e.emit("block_start", sseEvent{
-		ID:    id,
-		Kind:  kind,
-		Title: title,
-		Meta:  meta,
+		ID:        id,
+		Kind:      kind,
+		Title:     title,
+		Meta:      meta,
+		StartedAt: time.Now().UTC(),
 	})
 	return id
 }

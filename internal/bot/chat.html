@@ -294,6 +294,12 @@
                               text-overflow: ellipsis; }
   .blk > summary .blk-summary { color: #888; font-weight: 400;
                                 font-size: .75rem; flex-shrink: 0; }
+  /* Block start time. Sits right of the summary, kept dim and
+     monospace-ish so the column reads as metadata rather than content. */
+  .blk > summary .blk-time { color: #999; font-weight: 400;
+                              font-size: .72rem; flex-shrink: 0;
+                              font-variant-numeric: tabular-nums; }
+  .blk > summary .blk-time:empty { display: none; }
   .blk-body { padding: .5rem .85rem .8rem; font-size: .88rem;
               line-height: 1.5; color: #1a1a1a; }
   .blk-body p { margin: .35rem 0; }
@@ -416,7 +422,8 @@
   html.is-dark .blk[open] { border-color: #3a3a40; }
   html.is-dark .blk > summary { color: #c4c4c8; }
   html.is-dark .blk > summary .caret,
-  html.is-dark .blk > summary .blk-summary { color: #8a8a90; }
+  html.is-dark .blk > summary .blk-summary,
+  html.is-dark .blk > summary .blk-time { color: #8a8a90; }
   html.is-dark .blk-body { color: #e7e7e9; }
   html.is-dark .blk-body pre { background: #1c1c1f; border-color: #2e2e33; }
   html.is-dark .blk-body code { background: #2a2a2e; }
@@ -632,6 +639,19 @@ function addUserMsg(text) {
   return d;
 }
 
+// formatBlockTime renders a block's started_at into a short HH:MM
+// (24-hour, local) string for the summary chip. Returns '' for a
+// missing/invalid input so callers can blindly assign the result —
+// the .blk-time:empty CSS rule hides the element entirely when no
+// time is known (e.g. an older persisted block predating the field).
+function formatBlockTime(value) {
+  if (!value) return '';
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return '';
+  const pad = n => String(n).padStart(2, '0');
+  return pad(d.getHours()) + ':' + pad(d.getMinutes());
+}
+
 // Per-kind icon glyphs shown in the collapsed summary. Spinner takes
 // over when a block is streaming, so this is just the resting icon.
 const BLK_ICON = {
@@ -696,9 +716,11 @@ function renderBlock(turn, block, opts) {
     + '<span class="blk-icon"><span>' + (BLK_ICON[block.kind] || '•') + '</span></span>'
     + '<span class="blk-title"></span>'
     + '<span class="blk-summary"></span>'
+    + '<span class="blk-time"></span>'
     + '</summary><div class="blk-body"></div>';
   el.querySelector('.blk-title').textContent = block.title || '';
   el.querySelector('.blk-summary').textContent = block.summary || '';
+  el.querySelector('.blk-time').textContent = formatBlockTime(block.started_at);
   if (!isToolUse) {
     el.querySelector('.blk-body').innerHTML = renderMarkdown(block.body || '');
   }
@@ -721,7 +743,7 @@ function renderBlock(turn, block, opts) {
 // without a leading prose chunk). The body holds two regions: a
 // .phase-prose block that streams the rest of the paragraph, and a
 // .phase-tools wrapper that subsequent tool_uses are appended into.
-function openPhase(turn, headerTitle) {
+function openPhase(turn, headerTitle, startedAt) {
   const el = document.createElement('details');
   el.className = 'blk blk-kind-phase blk-streaming';
   el.open = true;
@@ -730,6 +752,7 @@ function openPhase(turn, headerTitle) {
     + '<span class="blk-icon"><span>' + BLK_ICON.phase + '</span></span>'
     + '<span class="blk-title"></span>'
     + '<span class="blk-summary"></span>'
+    + '<span class="blk-time"></span>'
     + '</summary>'
     + '<div class="blk-body">'
     +   '<div class="phase-prose"></div>'
@@ -747,6 +770,7 @@ function openPhase(turn, headerTitle) {
     proseRenderQueued: false,
   };
   phase.titleEl.textContent = headerTitle || 'Working';
+  el.querySelector('.blk-time').textContent = formatBlockTime(startedAt);
   if (headerTitle) phase.titleLocked = true;
   turn.appendChild(el);
   return phase;
@@ -828,9 +852,11 @@ function addToolToPhase(phase, payload) {
     + '<span class="blk-icon"><span>' + BLK_ICON.tool_use + '</span></span>'
     + '<span class="blk-title"></span>'
     + '<span class="blk-summary"></span>'
+    + '<span class="blk-time"></span>'
     + '</summary><div class="blk-body"></div>';
   el.querySelector('.blk-title').textContent = payload.title || '';
   el.querySelector('.blk-summary').textContent = payload.summary || '';
+  el.querySelector('.blk-time').textContent = formatBlockTime(payload.started_at);
   el.querySelector('summary').addEventListener('click', e => e.preventDefault());
   phase.toolsEl.appendChild(el);
   phase.toolCount++;
@@ -1427,14 +1453,14 @@ async function loadHistory(opts) {
       for (const b of blocks) {
         if (b.kind === 'claude_text') {
           if (phase) closePhase(phase);
-          phase = openPhase(turn, b.title);
+          phase = openPhase(turn, b.title, b.started_at);
           phase.proseRaw = b.body || '';
           phase.proseEl.innerHTML = renderMarkdown(phase.proseRaw);
         } else if (b.kind === 'tool_use') {
-          if (!phase) phase = openPhase(turn, '');
+          if (!phase) phase = openPhase(turn, '', b.started_at);
           addToolToPhase(phase, {
             id: b.id, title: b.title, summary: b.summary,
-            status: b.status,
+            status: b.status, started_at: b.started_at,
           });
         } else {
           if (phase) { closePhase(phase); phase = null; }
@@ -1536,14 +1562,14 @@ async function consumeSSEResponse(res, onFirstEvent) {
           // phase (if any) and open a new box with this paragraph as
           // the header.
           if (currentPhase) closePhase(currentPhase);
-          currentPhase = openPhase(turn, payload.title);
+          currentPhase = openPhase(turn, payload.title, payload.started_at);
           blockRefs.set(payload.id, { kind: 'phase-prose', phase: currentPhase });
         } else if (payload.kind === 'tool_use') {
           // Tool calls go inside the current phase; if no phase is
           // open (Claude jumped straight to tools without prose),
           // open one with a generic title so the visual treatment
           // stays consistent.
-          if (!currentPhase) currentPhase = openPhase(turn, '');
+          if (!currentPhase) currentPhase = openPhase(turn, '', payload.started_at);
           const el = addToolToPhase(currentPhase, payload);
           blockRefs.set(payload.id, { kind: 'tool', el, phase: currentPhase });
         } else {
@@ -1556,7 +1582,7 @@ async function consumeSSEResponse(res, onFirstEvent) {
           }
           const el = renderBlock(turn, {
             id: payload.id, kind: payload.kind, title: payload.title,
-            body: '', status: 'streaming',
+            body: '', status: 'streaming', started_at: payload.started_at,
           }, { open: true });
           blockRefs.set(payload.id, { kind: 'standalone', el });
           lastStandaloneEl = el;
