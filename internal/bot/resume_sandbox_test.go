@@ -14,8 +14,10 @@ import (
 
 // botWithStartFn returns a minimal Bot whose startFn is controlled by the
 // caller. retryBackoff is zeroed so retry loops don't sleep in tests.
+// heartbeatInterval is set to 1 ms so the ticker fires quickly in tests
+// that need to exercise the heartbeat path.
 func botWithStartFn(fn func(context.Context, *daytona.Sandbox, time.Duration) error) *Bot {
-	b := &Bot{log: discardLogger(), retryBackoff: 0}
+	b := &Bot{log: discardLogger(), retryBackoff: 0, heartbeatInterval: time.Millisecond}
 	b.startFn = fn
 	return b
 }
@@ -174,6 +176,35 @@ func TestResumeSandbox_RetriesTransientAndSucceeds(t *testing.T) {
 	}
 	if setup.Status != blocks.StatusDone {
 		t.Errorf("want StatusDone after retry success, got %v", setup.Status)
+	}
+}
+
+// resumeSandbox heartbeat goroutine must not race emit.Done. With
+// heartbeatInterval=1ms the ticker fires many times before startFn returns,
+// so the goroutine is actively calling emit.Append when cancelHeartbeat fires.
+// The <-heartbeatDone barrier must prevent any Append from racing Done.
+// Run with -race to catch violations.
+func TestResumeSandbox_HeartbeatDoesNotRaceEmitDone(t *testing.T) {
+	b := botWithStartFn(func(_ context.Context, _ *daytona.Sandbox, _ time.Duration) error {
+		time.Sleep(20 * time.Millisecond) // long enough for several 1ms ticks
+		return nil
+	})
+	emit := newCaptureEmitter()
+	if err := b.resumeSandbox(context.Background(), fakeSandbox(), emit); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var setup *captureBlock
+	for i := range emit.Blocks {
+		if emit.Blocks[i].Kind == blocks.KindSetup {
+			setup = &emit.Blocks[i]
+			break
+		}
+	}
+	if setup == nil {
+		t.Fatal("expected a KindSetup block, got none")
+	}
+	if setup.Status != blocks.StatusDone {
+		t.Errorf("want StatusDone, got %v", setup.Status)
 	}
 }
 

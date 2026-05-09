@@ -96,9 +96,13 @@ type Bot struct {
 
 	// createFn is called by createSandboxWithRetry; overridable in tests.
 	createFn func(context.Context, any) (*daytona.Sandbox, error)
-	// startFn is called by startWithRetry; overridable in tests.
+	// startFn is called by resumeSandbox; overridable in tests.
 	startFn      func(context.Context, *daytona.Sandbox, time.Duration) error
 	retryBackoff time.Duration
+	// heartbeatInterval controls how often resumeSandbox emits elapsed-time
+	// progress lines. Zero is treated as 15 s (the production default);
+	// tests set it to 1 ms so the ticker fires without sleeping.
+	heartbeatInterval time.Duration
 }
 
 // New constructs a Bot from config and a logger. It opens the database
@@ -630,7 +634,7 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 		var timeoutErr *sdkerrors.DaytonaTimeoutError
 		msg := fmt.Sprintf("Could not start sandbox `%s`. Try again, or open a fresh chat.", sb.ID)
 		if errors.As(err, &timeoutErr) {
-			msg = fmt.Sprintf("Sandbox `%s` is taking unusually long to start — it may be under load. Try again in a moment.", sb.ID)
+			msg = fmt.Sprintf("Sandbox `%s` is taking unusually long to start. Wait a moment and reload, or open a fresh chat if it persists.", sb.ID)
 		}
 		emit.Error("Sandbox resume failed", msg)
 		appendBlocksAsNewTurn(&rec, text, recorder.Snapshot())
@@ -935,15 +939,20 @@ func (b *Bot) resumeSandbox(ctx context.Context, sb *daytona.Sandbox, emit block
 	setupID := emit.Start(blocks.KindSetup, "Resuming sandbox", nil)
 	emit.Append(setupID, "[hetchy] starting sandbox "+sb.ID+"\n")
 
-	// Heartbeat goroutine: append elapsed time every 15 s so the user
+	// Heartbeat goroutine: append elapsed time periodically so the user
 	// sees a live indicator rather than a frozen spinner.
 	// heartbeatDone is closed when the goroutine exits; we wait on it before
 	// any emit.Done/Fail call to avoid a concurrent-write race on the emitter.
+	interval := b.heartbeatInterval
+	if interval == 0 {
+		interval = 15 * time.Second
+	}
 	heartbeatCtx, cancelHeartbeat := context.WithCancel(ctx)
+	defer cancelHeartbeat() // belt-and-suspenders: ensures cancel on any future early return
 	heartbeatDone := make(chan struct{})
 	go func() {
 		defer close(heartbeatDone)
-		ticker := time.NewTicker(15 * time.Second)
+		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		start := time.Now()
 		for {
