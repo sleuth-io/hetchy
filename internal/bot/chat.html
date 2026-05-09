@@ -3,6 +3,12 @@
 <head>
 <meta charset="utf-8">
 <title>Hetchy</title>
+<!-- Favicon — chunky block "H" echoing the ASCII banner shown in the
+     empty state. The href is swapped at runtime to a variant with a
+     small green badge when a turn finishes while the tab is hidden,
+     mirroring the GitHub PR/CI tab indicator pattern. See FAVICON_*
+     constants below. -->
+<link rel="icon" type="image/svg+xml" id="favicon" href="data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2032%2032%27%3E%3Crect%20width%3D%2732%27%20height%3D%2732%27%20rx%3D%276%27%20fill%3D%27%230d1117%27%2F%3E%3Cg%20fill%3D%27%237dc4ff%27%3E%3Crect%20x%3D%276%27%20y%3D%276%27%20width%3D%276%27%20height%3D%2720%27%2F%3E%3Crect%20x%3D%2720%27%20y%3D%276%27%20width%3D%276%27%20height%3D%2720%27%2F%3E%3Crect%20x%3D%276%27%20y%3D%2714%27%20width%3D%2720%27%20height%3D%274%27%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E">
 <!-- Markdown rendering for bot blocks. DOMPurify sanitizes the HTML
      marked produces — we render server-supplied content (Claude's
      stream-json text, tool inputs/results) and never want raw HTML
@@ -1712,7 +1718,47 @@ async function consumeSSEResponse(res, onFirstEvent) {
   // duration chip stays empty rather than synthesising one from the
   // browser clock (see SERVER_CLOCK_NOTE).
   if (currentPhase) closePhase(currentPhase, phaseLastEndedAt);
+  // GitHub-style tab indicator: if the user navigated away while
+  // Hetchy was working, badge the favicon so the just-finished turn
+  // is visible in their tab bar. We only paint the badge when the
+  // tab is hidden — if they're actively watching the page they
+  // already see the result land, and a flash-then-clear would just
+  // be noise.
+  signalTurnDone();
 }
+
+// Favicon swap — keeps a "ready" badge on the tab while the user is
+// elsewhere. The base SVG is identical to the static <link> in <head>;
+// the "done" variant adds a green dot in the top-right corner.
+const HETCHY_FAVICON_BASE =
+  "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'>" +
+  "<rect width='32' height='32' rx='6' fill='#0d1117'/>" +
+  "<g fill='#7dc4ff'>" +
+  "<rect x='6' y='6' width='6' height='20'/>" +
+  "<rect x='20' y='6' width='6' height='20'/>" +
+  "<rect x='6' y='14' width='20' height='4'/>" +
+  "</g>";
+const FAVICON_IDLE = 'data:image/svg+xml;utf8,' +
+  encodeURIComponent(HETCHY_FAVICON_BASE + '</svg>');
+const FAVICON_DONE = 'data:image/svg+xml;utf8,' +
+  encodeURIComponent(
+    HETCHY_FAVICON_BASE +
+    "<circle cx='24' cy='8' r='7' fill='#22c55e' stroke='#0d1117' stroke-width='2'/>" +
+    '</svg>'
+  );
+function setFaviconHref(href) {
+  const link = document.getElementById('favicon');
+  if (link) link.href = href;
+}
+function signalTurnDone() {
+  if (document.hidden) setFaviconHref(FAVICON_DONE);
+}
+// Clear the badge as soon as the user looks at the tab again. Using
+// visibilitychange (not focus) so switching browser windows without
+// changing tabs doesn't keep the badge stuck on.
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) setFaviconHref(FAVICON_IDLE);
+});
 
 async function send() {
   const text = inp.value.trim();
