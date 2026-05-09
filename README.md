@@ -21,12 +21,12 @@ Hetchy automates code changes by:
 - **Conversational Refinement**: Reply in the Slack thread or reload the web session to iterate on the same PR without losing context
 - **Session Sharing**: Web sessions are URL-addressable (UUID in query param) — share the URL to resume work from any browser
 - **Cost-aware Sandboxes**: Sandboxes are archived (not destroyed) between requests so follow-ups resume in seconds
-- **Flexible Deployment**: Run locally with Daytona OSS or use Daytona Cloud
+- **Daytona Cloud Sandboxes**: Dev, staging, and production use Daytona Cloud for isolated execution
 
 ## Prerequisites
 
 - Go 1.25.6 or later
-- Docker (for local Daytona stack)
+- Docker (for local Postgres and sandbox image builds)
 - [Doppler CLI](https://docs.doppler.com/docs/install-cli) for secrets management
 - A GitHub account that can install the Hetchy GitHub App on the orgs/repos you want the bot to act on (no PAT required — installation tokens are minted per-request)
 - Anthropic API key
@@ -212,27 +212,19 @@ the new PEM into Doppler, redeploy, then delete the old key on
 GitHub. Cached installation tokens stay valid for up to an hour
 across rotations, so there's no traffic dip.
 
-### 4. Set Up Daytona
-
-#### Option A: Local Daytona OSS Stack
-
-```bash
-# Start Postgres + the bundled local Daytona stack
-make services-up
-
-# Visit http://localhost:3000
-# Login: dev@daytona.io / password
-# Create an API key and save it to Doppler as DAYTONA_API_KEY
-
-# Build and push your sandbox snapshot
-make push-snapshot
-```
-
-#### Option B: Daytona Cloud
+### 4. Set Up Daytona Cloud
 
 Set in Doppler:
 - `DAYTONA_API_URL=https://app.daytona.io/api`
 - `DAYTONA_API_KEY=dtn_...`
+
+Then build and push the sandbox snapshot:
+
+```bash
+doppler run -- sh -c 'daytona login --api-key "$DAYTONA_API_KEY"'
+daytona org use <org-name-or-id>
+make push-snapshot
+```
 
 ### 5. Start the Database
 
