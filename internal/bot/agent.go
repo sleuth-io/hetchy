@@ -52,6 +52,9 @@ var agentScript = claudeWatchdogScript + "\n" + agentScriptBody
 
 var followupScript = claudeWatchdogScript + "\n" + followupScriptBody
 
+// The no-hard-wrap rule on bullet 5 also covers the Validation section
+// appended by bootstrap.MergeIntoAgentPrompt — see the matching note at
+// internal/bootstrap/validate.go:121.
 const agentPromptTemplate = `You are working inside a fresh sandbox. The repo %s has been cloned
 to %s and %s is checked out. Your task is the user request below.
 

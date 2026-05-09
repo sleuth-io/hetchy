@@ -22,6 +22,7 @@ func TestAgentPromptTemplate_IncludesAllInputs(t *testing.T) {
 		"feature/sf-req-12345",
 		"PR URL",
 		"gh pr create",
+		"do NOT insert hard line breaks",
 	}
 	for _, w := range wants {
 		if !strings.Contains(prompt, w) {
@@ -45,6 +46,7 @@ func TestAgentFollowUpPromptTemplate_IncludesAllInputs(t *testing.T) {
 		"second turn",
 		"please change the button color",
 		"DO NOT update the PR title",
+		"do NOT insert hard line breaks",
 	}
 	for _, w := range wants {
 		if !strings.Contains(prompt, w) {
