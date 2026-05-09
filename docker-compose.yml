@@ -34,7 +34,7 @@ services:
         COMMIT: ${COMMIT:-none}
         DATE: ${DATE:-unknown}
     container_name: migration
-    restart: no
+    restart: "no"
     command: "--migrate"
     depends_on:
       postgres:

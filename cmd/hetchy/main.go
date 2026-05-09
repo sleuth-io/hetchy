@@ -96,16 +96,18 @@ func waitForDB(ctx context.Context, log *slog.Logger, databaseURL string) error 
 	defer cancel()
 
 	delay := initialWait
+	var lastErr error
 	for attempt := 1; ; attempt++ {
 		conn, err := pgx.Connect(ctx, databaseURL)
 		if err == nil {
 			_ = conn.Close(ctx)
 			return nil
 		}
+		lastErr = err
 		log.Warn("database not ready, retrying", "attempt", attempt, "delay", delay, "error", err)
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("database did not become ready within %s", maxWait)
+			return fmt.Errorf("database did not become ready within %s: %w", maxWait, lastErr)
 		case <-time.After(delay):
 		}
 		delay = min(delay*2, maxDelay)
@@ -122,6 +124,8 @@ func runMigrate(log *slog.Logger, up bool, down int, status bool) {
 		os.Exit(1)
 	}
 
+	// --migrate-down is a manual recovery operation; skipping waitForDB lets
+	// the operator see the connection error immediately rather than waiting 60s.
 	if up || status {
 		if err := waitForDB(context.Background(), log, url); err != nil {
 			log.Error("database unavailable", "error", err)
