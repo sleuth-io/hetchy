@@ -895,11 +895,9 @@ function finishPhaseProse(phase) {
 }
 
 // addToolToPhase renders a tool_use one-liner inside the supplied
-// phase. Mirrors the standalone tool_use rendering in renderBlock so
-// the row looks identical whether or not it's inside a phase; this
-// is what keeps the visual treatment consistent across rows that
-// happen to be standalone (no preceding prose) and rows inside a
-// phase.
+// phase. The phase header carries the start-time chip for the whole
+// group, so individual step rows omit it — only the duration chip
+// remains, which is per-step useful (e.g. "287 lines / 1.2s").
 function addToolToPhase(phase, payload) {
   const el = document.createElement('details');
   el.className = 'blk blk-kind-tool_use'
@@ -913,12 +911,10 @@ function addToolToPhase(phase, payload) {
     + '<span class="blk-icon"><span>' + BLK_ICON.tool_use + '</span></span>'
     + '<span class="blk-title"></span>'
     + '<span class="blk-summary"></span>'
-    + '<span class="blk-time"></span>'
     + '<span class="blk-duration"></span>'
     + '</summary><div class="blk-body"></div>';
   el.querySelector('.blk-title').textContent = payload.title || '';
   el.querySelector('.blk-summary').textContent = payload.summary || '';
-  el.querySelector('.blk-time').textContent = formatBlockTime(payload.started_at);
   el.querySelector('.blk-duration').textContent = formatBlockDuration(payload.started_at, payload.ended_at);
   el.querySelector('summary').addEventListener('click', e => e.preventDefault());
   phase.toolsEl.appendChild(el);
