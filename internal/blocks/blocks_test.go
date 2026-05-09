@@ -3,6 +3,7 @@ package blocks
 import (
 	"encoding/json"
 	"testing"
+	"time"
 )
 
 func TestRecorder_StartAppendDone(t *testing.T) {
@@ -75,6 +76,66 @@ func TestTee_FansOut(t *testing.T) {
 	}
 	if a.Snapshot()[0].Body != "body" || b.Snapshot()[0].Body != "body" {
 		t.Errorf("body should fan out to both")
+	}
+}
+
+// stampingRecorder records every (StartAt|DoneAt|FailAt) call's
+// timestamp so the tee-coordination tests below can assert all
+// wrapped emitters saw the *same* time.Time, not two
+// independently-sampled ones.
+type stampingRecorder struct {
+	startedAt []time.Time
+	endedAt   []time.Time
+}
+
+func (s *stampingRecorder) Start(kind Kind, _ string, _ map[string]any) string {
+	return s.StartAt(kind, "", nil, time.Now().UTC())
+}
+func (s *stampingRecorder) StartAt(_ Kind, _ string, _ map[string]any, t time.Time) string {
+	s.startedAt = append(s.startedAt, t)
+	return "id"
+}
+func (s *stampingRecorder) Append(string, string)           {}
+func (s *stampingRecorder) Done(id, summary string)         { s.DoneAt(id, summary, time.Now().UTC()) }
+func (s *stampingRecorder) Fail(id, summary string)         { s.FailAt(id, summary, time.Now().UTC()) }
+func (s *stampingRecorder) DoneAt(_, _ string, t time.Time) { s.endedAt = append(s.endedAt, t) }
+func (s *stampingRecorder) FailAt(_, _ string, t time.Time) { s.endedAt = append(s.endedAt, t) }
+func (s *stampingRecorder) Notify(string, string)           {}
+func (s *stampingRecorder) Result(string, string)           {}
+func (s *stampingRecorder) Error(string, string)            {}
+
+// TestTee_SharesStartedAtAndEndedAt is the regression test for the
+// minute-boundary disagreement between the persisted Block.StartedAt
+// and the live SSE chip: the tee must sample time.Now() once and
+// hand the same value to every wrapped emitter, not let each child
+// sample independently.
+func TestTee_SharesStartedAtAndEndedAt(t *testing.T) {
+	a := &stampingRecorder{}
+	b := &stampingRecorder{}
+	emit := Tee(a, b)
+
+	id := emit.Start(KindToolUse, "t", nil)
+	emit.Done(id, "")
+	id2 := emit.Start(KindToolUse, "t2", nil)
+	emit.Fail(id2, "")
+
+	if len(a.startedAt) != 2 || len(b.startedAt) != 2 {
+		t.Fatalf("want 2 starts each, got a=%d b=%d", len(a.startedAt), len(b.startedAt))
+	}
+	for i := range a.startedAt {
+		if !a.startedAt[i].Equal(b.startedAt[i]) {
+			t.Errorf("StartAt #%d disagrees across emitters: a=%v b=%v",
+				i, a.startedAt[i], b.startedAt[i])
+		}
+	}
+	if len(a.endedAt) != 2 || len(b.endedAt) != 2 {
+		t.Fatalf("want 2 ends each, got a=%d b=%d", len(a.endedAt), len(b.endedAt))
+	}
+	for i := range a.endedAt {
+		if !a.endedAt[i].Equal(b.endedAt[i]) {
+			t.Errorf("DoneAt/FailAt #%d disagrees across emitters: a=%v b=%v",
+				i, a.endedAt[i], b.endedAt[i])
+		}
 	}
 }
 

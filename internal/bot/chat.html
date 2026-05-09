@@ -294,12 +294,16 @@
                               text-overflow: ellipsis; }
   .blk > summary .blk-summary { color: #888; font-weight: 400;
                                 font-size: .75rem; flex-shrink: 0; }
-  /* Block start time. Sits right of the summary, kept dim and
-     monospace-ish so the column reads as metadata rather than content. */
-  .blk > summary .blk-time { color: #999; font-weight: 400;
-                              font-size: .72rem; flex-shrink: 0;
-                              font-variant-numeric: tabular-nums; }
-  .blk > summary .blk-time:empty { display: none; }
+  /* Block start time + total execution duration. Both sit right of
+     the summary, kept dim and monospace-ish so the column reads as
+     metadata rather than content. The :empty rule on each lets older
+     persisted blocks predating the field render unchanged. */
+  .blk > summary .blk-time,
+  .blk > summary .blk-duration { color: #999; font-weight: 400;
+                                  font-size: .72rem; flex-shrink: 0;
+                                  font-variant-numeric: tabular-nums; }
+  .blk > summary .blk-time:empty,
+  .blk > summary .blk-duration:empty { display: none; }
   .blk-body { padding: .5rem .85rem .8rem; font-size: .88rem;
               line-height: 1.5; color: #1a1a1a; }
   .blk-body p { margin: .35rem 0; }
@@ -423,7 +427,8 @@
   html.is-dark .blk > summary { color: #c4c4c8; }
   html.is-dark .blk > summary .caret,
   html.is-dark .blk > summary .blk-summary,
-  html.is-dark .blk > summary .blk-time { color: #8a8a90; }
+  html.is-dark .blk > summary .blk-time,
+  html.is-dark .blk > summary .blk-duration { color: #8a8a90; }
   html.is-dark .blk-body { color: #e7e7e9; }
   html.is-dark .blk-body pre { background: #1c1c1f; border-color: #2e2e33; }
   html.is-dark .blk-body code { background: #2a2a2e; }
@@ -652,6 +657,29 @@ function formatBlockTime(value) {
   return pad(d.getHours()) + ':' + pad(d.getMinutes());
 }
 
+// formatBlockDuration turns a (started_at, ended_at) pair into a
+// compact total-execution-time string ("420ms", "3.2s", "1m 4s",
+// "12m 30s"). Returns '' on missing/invalid input or a non-positive
+// delta — the .blk-duration:empty CSS rule then hides the chip.
+function formatBlockDuration(startedAt, endedAt) {
+  if (!startedAt || !endedAt) return '';
+  const a = new Date(startedAt).getTime();
+  const b = new Date(endedAt).getTime();
+  if (isNaN(a) || isNaN(b)) return '';
+  const ms = b - a;
+  if (ms < 0) return '';
+  if (ms < 1000) return ms + 'ms';
+  const totalSec = Math.round(ms / 1000);
+  if (totalSec < 60) {
+    // sub-minute: show one decimal so 3.2s reads sharper than 3s.
+    const s = (ms / 1000).toFixed(1).replace(/\.0$/, '');
+    return s + 's';
+  }
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return s === 0 ? m + 'm' : m + 'm ' + s + 's';
+}
+
 // Per-kind icon glyphs shown in the collapsed summary. Spinner takes
 // over when a block is streaming, so this is just the resting icon.
 const BLK_ICON = {
@@ -710,6 +738,7 @@ function renderBlock(turn, block, opts) {
                  + (block.status === 'error' ? ' blk-kind-error' : '');
   if (open) el.open = true;
   el.dataset.blockId = block.id;
+  el.dataset.startedAt = block.started_at || '';
   el.id = 'block-' + block.id;
   el.innerHTML = '<summary>'
     + '<span class="caret">▶</span>'
@@ -717,10 +746,12 @@ function renderBlock(turn, block, opts) {
     + '<span class="blk-title"></span>'
     + '<span class="blk-summary"></span>'
     + '<span class="blk-time"></span>'
+    + '<span class="blk-duration"></span>'
     + '</summary><div class="blk-body"></div>';
   el.querySelector('.blk-title').textContent = block.title || '';
   el.querySelector('.blk-summary').textContent = block.summary || '';
   el.querySelector('.blk-time').textContent = formatBlockTime(block.started_at);
+  el.querySelector('.blk-duration').textContent = formatBlockDuration(block.started_at, block.ended_at);
   if (!isToolUse) {
     el.querySelector('.blk-body').innerHTML = renderMarkdown(block.body || '');
   }
@@ -753,6 +784,7 @@ function openPhase(turn, headerTitle, startedAt) {
     + '<span class="blk-title"></span>'
     + '<span class="blk-summary"></span>'
     + '<span class="blk-time"></span>'
+    + '<span class="blk-duration"></span>'
     + '</summary>'
     + '<div class="blk-body">'
     +   '<div class="phase-prose"></div>'
@@ -762,12 +794,14 @@ function openPhase(turn, headerTitle, startedAt) {
     el,
     titleEl: el.querySelector('.blk-title'),
     summaryEl: el.querySelector('.blk-summary'),
+    durationEl: el.querySelector('.blk-duration'),
     proseEl: el.querySelector('.phase-prose'),
     toolsEl: el.querySelector('.phase-tools'),
     proseRaw: '',
     toolCount: 0,
     titleLocked: false,
     proseRenderQueued: false,
+    startedAt: startedAt || '',
   };
   phase.titleEl.textContent = headerTitle || 'Working';
   el.querySelector('.blk-time').textContent = formatBlockTime(startedAt);
@@ -779,7 +813,12 @@ function openPhase(turn, headerTitle, startedAt) {
 // closePhase collapses the phase and updates its right-hand summary
 // with the step count so the user sees "5 steps" once it's done.
 // Idempotent — safe to call on a phase that's already closed.
-function closePhase(phase) {
+//
+// endedAt (optional) drives the total-execution-time chip. When the
+// caller has a wire-level timestamp (replay path, or a future live
+// "phase_done" frame) they pass it; otherwise we fall back to the
+// browser clock so a live phase still shows a reasonable duration.
+function closePhase(phase, endedAt) {
   if (!phase || phase._closed) return;
   phase._closed = true;
   phase.el.classList.remove('blk-streaming');
@@ -788,6 +827,10 @@ function closePhase(phase) {
     phase.summaryEl.textContent = phase.toolCount === 1
       ? '1 step'
       : phase.toolCount + ' steps';
+  }
+  if (phase.durationEl && phase.startedAt) {
+    const end = endedAt || new Date().toISOString();
+    phase.durationEl.textContent = formatBlockDuration(phase.startedAt, end);
   }
 }
 
@@ -846,6 +889,7 @@ function addToolToPhase(phase, payload) {
                  + (payload.status === 'streaming' ? ' blk-streaming' : '')
                  + (payload.status === 'error' ? ' blk-kind-error' : '');
   el.dataset.blockId = payload.id;
+  el.dataset.startedAt = payload.started_at || '';
   el.id = 'block-' + payload.id;
   el.innerHTML = '<summary>'
     + '<span class="caret">▶</span>'
@@ -853,10 +897,12 @@ function addToolToPhase(phase, payload) {
     + '<span class="blk-title"></span>'
     + '<span class="blk-summary"></span>'
     + '<span class="blk-time"></span>'
+    + '<span class="blk-duration"></span>'
     + '</summary><div class="blk-body"></div>';
   el.querySelector('.blk-title').textContent = payload.title || '';
   el.querySelector('.blk-summary').textContent = payload.summary || '';
   el.querySelector('.blk-time').textContent = formatBlockTime(payload.started_at);
+  el.querySelector('.blk-duration').textContent = formatBlockDuration(payload.started_at, payload.ended_at);
   el.querySelector('summary').addEventListener('click', e => e.preventDefault());
   phase.toolsEl.appendChild(el);
   phase.toolCount++;
@@ -892,13 +938,18 @@ function scheduleBlockRender(el) {
   });
 }
 
-function finishBlock(el, status, summary) {
+function finishBlock(el, status, summary, endedAt) {
   if (!el) return;
   el.classList.remove('blk-streaming');
   const summaryEl = el.querySelector('.blk-summary');
   if (summary && summaryEl) summaryEl.textContent = summary;
   if (status === 'error') {
     el.classList.add('blk-kind-error');
+  }
+  const durationEl = el.querySelector('.blk-duration');
+  const startedAt = el.dataset.startedAt;
+  if (durationEl && startedAt) {
+    durationEl.textContent = formatBlockDuration(startedAt, endedAt || new Date().toISOString());
   }
   // Force a final render so any pending deltas land before the block
   // is collapsed by the next block_start (a collapsed block skips its
@@ -1450,25 +1501,31 @@ async function loadHistory(opts) {
       // sequence. The streamed turn paints the same phase boxes as
       // it goes; replay does it in one shot from the recorded list.
       let phase = null;
+      // Track the trailing tool's ended_at within a phase so the
+      // collapsed phase shows a duration that spans prose start →
+      // last tool finish, matching the live view's elapsed-time feel.
+      let phaseLastEndedAt = '';
       for (const b of blocks) {
         if (b.kind === 'claude_text') {
-          if (phase) closePhase(phase);
+          if (phase) closePhase(phase, phaseLastEndedAt || b.ended_at);
           phase = openPhase(turn, b.title, b.started_at);
           phase.proseRaw = b.body || '';
           phase.proseEl.innerHTML = renderMarkdown(phase.proseRaw);
+          phaseLastEndedAt = b.ended_at || '';
         } else if (b.kind === 'tool_use') {
           if (!phase) phase = openPhase(turn, '', b.started_at);
           addToolToPhase(phase, {
             id: b.id, title: b.title, summary: b.summary,
-            status: b.status, started_at: b.started_at,
+            status: b.status, started_at: b.started_at, ended_at: b.ended_at,
           });
+          if (b.ended_at) phaseLastEndedAt = b.ended_at;
         } else {
-          if (phase) { closePhase(phase); phase = null; }
+          if (phase) { closePhase(phase, phaseLastEndedAt); phase = null; phaseLastEndedAt = ''; }
           const open = isLastTurn && (b.kind === 'result' || b.kind === 'error');
           renderBlock(turn, b, { open });
         }
       }
-      if (phase) closePhase(phase);
+      if (phase) closePhase(phase, phaseLastEndedAt);
     }
     // Honour #block-<id> deep links by expanding + scrolling to the
     // referenced block.
@@ -1603,9 +1660,9 @@ async function consumeSSEResponse(res, onFirstEvent) {
         if (ref.kind === 'phase-prose') {
           finishPhaseProse(ref.phase);
         } else if (ref.kind === 'tool') {
-          finishBlock(ref.el, payload.status, payload.summary);
+          finishBlock(ref.el, payload.status, payload.summary, payload.ended_at);
         } else if (ref.kind === 'standalone') {
-          finishBlock(ref.el, payload.status, payload.summary);
+          finishBlock(ref.el, payload.status, payload.summary, payload.ended_at);
         }
       }
     }
