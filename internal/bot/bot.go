@@ -95,7 +95,9 @@ type Bot struct {
 	cipher *secrets.Cipher
 
 	// createFn is called by createSandboxWithRetry; overridable in tests.
-	createFn     func(context.Context, any) (*daytona.Sandbox, error)
+	createFn func(context.Context, any) (*daytona.Sandbox, error)
+	// startFn is called by startWithRetry; overridable in tests.
+	startFn      func(ctx context.Context, sb *daytona.Sandbox, timeout time.Duration) error
 	retryBackoff time.Duration
 }
 
@@ -179,6 +181,9 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 	}
 	b.createFn = func(ctx context.Context, params any) (*daytona.Sandbox, error) {
 		return dc.Create(ctx, params)
+	}
+	b.startFn = func(ctx context.Context, sb *daytona.Sandbox, timeout time.Duration) error {
+		return sb.StartWithTimeout(ctx, timeout)
 	}
 	b.slackUsers = newSlackUserResolver(log, authSvc)
 	b.slack = newSlackManager(log, b.orgs, b.handleSlackEvent)
@@ -956,7 +961,7 @@ func (b *Bot) startWithRetry(ctx context.Context, sb *daytona.Sandbox, timeout t
 	var lastErr error
 	backoff := b.retryBackoff
 	for attempt := 1; attempt <= maxRetries; attempt++ {
-		lastErr = sb.StartWithTimeout(ctx, timeout)
+		lastErr = b.startFn(ctx, sb, timeout)
 		if lastErr == nil {
 			if attempt > 1 {
 				b.log.Info("sandbox start succeeded after retry", "sandbox", sb.ID, "attempt", attempt)
