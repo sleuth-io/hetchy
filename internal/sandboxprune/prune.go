@@ -58,11 +58,14 @@ type Result struct {
 // Daytona (the Daytona API is still queried to build the candidate list).
 //
 // Query ordering: Daytona is listed first, then the DB active-set is queried.
-// This ordering closes the TOCTOU race where a bot path running
-// createSandboxWithRetry → BeginAgentRun could fall entirely between two
-// reversed queries: if the sandbox exists in Daytona, the DB write is guaranteed
-// observable by the subsequent (later) DB query; if the sandbox was created after
-// the Daytona list, it never enters the candidate set at all.
+// This substantially narrows the TOCTOU race where a bot path running
+// createSandboxWithRetry → BeginAgentRun could fall between two queries: if the
+// sandbox was created after the Daytona list it never enters the candidate set at
+// all; if it appears in the Daytona list there is a residual millisecond-scale
+// window between createSandboxWithRetry returning and BeginAgentRun completing
+// during which the DB may not yet reflect the new sandbox_id. A sandbox
+// mis-classified in that window will simply be re-launched on the user's next
+// message, and a subsequent prune cycle will handle any true orphan.
 func Run(ctx context.Context, log *slog.Logger, dc *daytona.Client, store *db.Store, env string, staleThreshold time.Duration, dryRun bool) (Result, error) {
 	sandboxes, err := listAll(ctx, dc, env)
 	if err != nil {
