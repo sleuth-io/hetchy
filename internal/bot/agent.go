@@ -52,6 +52,9 @@ var agentScript = claudeWatchdogScript + "\n" + agentScriptBody
 
 var followupScript = claudeWatchdogScript + "\n" + followupScriptBody
 
+// The no-hard-wrap rule on bullet 5 also covers the Validation section
+// appended by bootstrap.MergeIntoAgentPrompt — see the matching note at
+// internal/bootstrap/validate.go:121.
 const agentPromptTemplate = `You are working inside a fresh sandbox. The repo %s has been cloned
 to %s and %s is checked out. Your task is the user request below.
 
@@ -63,10 +66,8 @@ When you are done implementing the change:
   2. Run ` + "`make format`" + ` to format the code.
   3. Stage and commit your changes with a clear message.
   4. Push the branch to origin (gh CLI is already authenticated).
-  5. Open a pull request against %s with ` + "`gh pr create`" + `, giving it a
-     clear title and a markdown body describing what changed and why.
-  6. The very last line of your output MUST be just the PR URL — no other
-     text on that line.`
+  5. Open a pull request against %s with ` + "`gh pr create`" + `, giving it a clear title and a markdown body describing what changed and why. Write each paragraph or bullet of the PR body as one long line — do NOT insert hard line breaks; let GitHub reflow the text for the reader's viewport.
+  6. The very last line of your output MUST be just the PR URL — no other text on that line.`
 
 const agentFollowUpPromptTemplate = `You are continuing work in %s on branch %s.
 The pull request is at %s.
@@ -83,8 +84,8 @@ When you are done implementing the change:
   3. Push the branch to origin — the PR will update automatically.
   4. DO NOT update the PR title — it should remain consistent with the original
      user request shown in "Conversation so far" above, not this latest change.
-  5. The very last line of your output MUST be just the PR URL — no other
-     text on that line.`
+  5. If you edit the PR body (e.g. to add a Validation section), write each paragraph or bullet as one long line — do NOT insert hard line breaks; let GitHub reflow the text for the reader's viewport.
+  6. The very last line of your output MUST be just the PR URL — no other text on that line.`
 
 // repoCtx carries the resolved per-request repository details into the
 // sandbox: the slug "owner/name", the default branch the agent should

@@ -118,6 +118,10 @@ the reviewer will rely on your written description plus the diff.
 `)
 	}
 
+	// The no-hard-wrap rule for the PR body is set once in the agent
+	// prompt template (internal/bot/agent.go); this validation block
+	// gets appended to that prompt by MergeIntoAgentPrompt, so the rule
+	// already covers the Validation section.
 	b.WriteString(`
 After producing artifacts, append a "## Validation" section to the PR
 body before opening the PR.
