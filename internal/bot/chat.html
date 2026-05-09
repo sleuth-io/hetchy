@@ -1158,11 +1158,11 @@ async function fetchSidebarPage(offset) {
 // loadSidebar refreshes the sidebar from page 0 — used on init, on
 // filter/search changes, and after every send() so a brand-new chat's
 // row (and any server-side title update) shows up without a manual
-// reload. Order is by creation time, oldest first, so existing rows
-// keep their slot when their conversation gets a new turn. Resets
-// sidebarItems before re-rendering so stale rows from a wider previous
-// query don't linger underneath the new (potentially shorter) result
-// set.
+// reload. Order is by creation time, newest first, so existing rows
+// keep their slot when their conversation gets a new turn and a
+// brand-new chat lands at the top of page 0. Resets sidebarItems
+// before re-rendering so stale rows from a wider previous query
+// don't linger underneath the new (potentially shorter) result set.
 //
 // Stale-response handling: a fast typist can fire several searches
 // in quick succession; we never block them, but we discard responses
@@ -1627,8 +1627,8 @@ async function send() {
   inp.focus();
   // Refresh the sidebar after every turn so the row's title (derived
   // server-side from the first user message) reflects the just-completed
-  // turn. Ordering is by created_at, so existing rows keep their slot;
-  // new chats appear in their creation-time position on subsequent reloads.
+  // turn. Ordering is by created_at DESC, so existing rows keep their slot
+  // and a brand-new chat appears at the top of page 0 on the first reload.
   loadSidebar();
   // Metadata may have changed too — branch + PR URL only land at the
   // end of the first turn, and the agent can re-base subsequent turns.

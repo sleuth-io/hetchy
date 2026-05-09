@@ -114,10 +114,10 @@ func escapeILIKEWildcards(s string) string {
 	return ilikeEscaper.Replace(s)
 }
 
-// Search returns conversations for the org matching opts, oldest first
+// Search returns conversations for the org matching opts, newest first
 // by created_at, so a chat's slot in the sidebar stays stable as new
-// turns land. Returns an empty slice (not an error) when the store is
-// nil or the page is empty.
+// turns land and a brand-new chat surfaces on page 0. Returns an empty
+// slice (not an error) when the store is nil or the page is empty.
 //
 // Query is treated as a literal substring — `%`, `_`, and `\` are
 // backslash-escaped before being concatenated into the ILIKE pattern,
