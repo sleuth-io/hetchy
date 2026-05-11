@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"context"
 	"sync"
 )
 
@@ -20,11 +21,15 @@ type liveEvent struct {
 // makes "open this chat 30 seconds in" work — a fresh subscriber
 // gets the full event list replayed before live updates resume.
 type liveRun struct {
-	mu      sync.Mutex
-	history []liveEvent
-	subs    map[*liveSubscription]struct{}
-	closed  bool
-	doneCh  chan struct{}
+	ctx       context.Context
+	cancel    context.CancelFunc
+	mu        sync.Mutex
+	history   []liveEvent
+	subs      map[*liveSubscription]struct{}
+	closed    bool
+	cancelled bool
+	sandboxID string
+	doneCh    chan struct{}
 }
 
 // liveSubscription is one consumer of a liveRun's stream. The
@@ -36,11 +41,47 @@ type liveSubscription struct {
 	ch      chan liveEvent
 }
 
-func newLiveRun() *liveRun {
+func newLiveRun(ctx context.Context, cancel context.CancelFunc) *liveRun {
 	return &liveRun{
+		ctx:    ctx,
+		cancel: cancel,
 		subs:   map[*liveSubscription]struct{}{},
 		doneCh: make(chan struct{}),
 	}
+}
+
+func (r *liveRun) Context() context.Context { return r.ctx }
+
+func (r *liveRun) Cancel() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed || r.cancelled {
+		return false
+	}
+	r.cancelled = true
+	r.cancel()
+	return true
+}
+
+func (r *liveRun) Cancelled() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.cancelled
+}
+
+func (r *liveRun) SetSandboxID(id string) {
+	if id == "" {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.sandboxID = id
+}
+
+func (r *liveRun) SandboxID() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.sandboxID
 }
 
 // Emit appends an event to the run's history and fans it out to every
@@ -112,6 +153,7 @@ func (r *liveRun) Close() {
 		return
 	}
 	r.closed = true
+	r.cancel()
 	close(r.doneCh)
 	for sub := range r.subs {
 		close(sub.ch)
@@ -132,6 +174,28 @@ type liveRegistry struct {
 	runs map[string]*liveRun
 }
 
+type liveRunContextKey struct{}
+
+func contextWithLiveRun(ctx context.Context, run *liveRun) context.Context {
+	return context.WithValue(ctx, liveRunContextKey{}, run)
+}
+
+func liveRunFromContext(ctx context.Context) *liveRun {
+	run, _ := ctx.Value(liveRunContextKey{}).(*liveRun)
+	return run
+}
+
+func liveRunCancelled(ctx context.Context) bool {
+	run := liveRunFromContext(ctx)
+	return run != nil && run.Cancelled()
+}
+
+func setLiveRunSandboxID(ctx context.Context, sandboxID string) {
+	if run := liveRunFromContext(ctx); run != nil {
+		run.SetSandboxID(sandboxID)
+	}
+}
+
 func newLiveRegistry() *liveRegistry {
 	return &liveRegistry{runs: map[string]*liveRun{}}
 }
@@ -144,14 +208,16 @@ func liveKey(orgID, threadID string) string { return orgID + "\x00" + threadID }
 // reject concurrent POSTs on the same session — the second caller
 // gets a 409 and the UI's reload-to-reattach path takes over via
 // /chat/stream.
-func (r *liveRegistry) RegisterIfAbsent(orgID, threadID string) (*liveRun, bool) {
+func (r *liveRegistry) RegisterIfAbsent(ctx context.Context, orgID, threadID string) (*liveRun, bool) {
+	runCtx, cancel := context.WithCancel(ctx)
 	key := liveKey(orgID, threadID)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if existing := r.runs[key]; existing != nil {
+		cancel()
 		return existing, false
 	}
-	run := newLiveRun()
+	run := newLiveRun(runCtx, cancel)
 	r.runs[key] = run
 	return run, true
 }

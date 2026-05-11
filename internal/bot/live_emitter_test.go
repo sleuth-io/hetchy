@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 	"time"
@@ -13,7 +14,7 @@ import (
 // renders the per-block timestamp chip from this field; without it,
 // the chip silently disappears.
 func TestLiveEmitter_StartIncludesStartedAt(t *testing.T) {
-	run := newLiveRun()
+	run := newLiveRun(context.Background(), func() {})
 	e := newLiveEmitter(run)
 
 	e.Start(blocks.KindToolUse, "Reading file.go", nil)
@@ -39,7 +40,7 @@ func TestLiveEmitter_StartIncludesStartedAt(t *testing.T) {
 // and relies on this so the live chip and the post-reload replay chip
 // can never disagree.
 func TestLiveEmitter_StartAtPropagates(t *testing.T) {
-	run := newLiveRun()
+	run := newLiveRun(context.Background(), func() {})
 	e := newLiveEmitter(run)
 
 	want := time.Date(2026, 5, 9, 12, 34, 56, 0, time.UTC)
@@ -58,7 +59,7 @@ func TestLiveEmitter_StartAtPropagates(t *testing.T) {
 // carry `ended_at` so the chat UI can compute the per-block total
 // execution time without consulting the browser clock.
 func TestLiveEmitter_DoneIncludesEndedAt(t *testing.T) {
-	run := newLiveRun()
+	run := newLiveRun(context.Background(), func() {})
 	e := newLiveEmitter(run)
 
 	id := e.Start(blocks.KindToolUse, "t", nil)
@@ -79,7 +80,7 @@ func TestLiveEmitter_DoneIncludesEndedAt(t *testing.T) {
 // TestLiveEmitter_FailIncludesEndedAt is the error-path twin of the
 // Done test above.
 func TestLiveEmitter_FailIncludesEndedAt(t *testing.T) {
-	run := newLiveRun()
+	run := newLiveRun(context.Background(), func() {})
 	e := newLiveEmitter(run)
 
 	id := e.Start(blocks.KindToolUse, "t", nil)
@@ -98,7 +99,7 @@ func TestLiveEmitter_FailIncludesEndedAt(t *testing.T) {
 }
 
 func TestLiveEmitter_HeartbeatUsesSeparateEvent(t *testing.T) {
-	run := newLiveRun()
+	run := newLiveRun(context.Background(), func() {})
 	e := newLiveEmitter(run)
 
 	e.Heartbeat("Still working", "Agent has been running for 1m — still in progress.", "1m")

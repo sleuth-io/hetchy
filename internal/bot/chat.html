@@ -292,6 +292,9 @@
          display: inline-flex; align-items: center; justify-content: center;
          line-height: 0; }
   #btn svg { width: 1rem; height: 1rem; stroke-width: 2.2; display: block; }
+  #btn .stop-icon { display: none; }
+  #btn.is-stop .send-icon { display: none; }
+  #btn.is-stop .stop-icon { display: block; }
 
   /* Right-side metadata sidebar — surfaces what we know about the chat
      (repo, branch, PR, sandbox, creator). Hidden when the user toggles
@@ -777,10 +780,13 @@
             <div id="model-options"></div>
           </div>
         </div>
-        <button id="btn" type="button" onclick="send()" aria-label="Send" title="Send">
-          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+        <button id="btn" type="button" onclick="handleComposerAction()" aria-label="Send" title="Send">
+          <svg class="send-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 19V5"/>
             <path d="m5 12 7-7 7 7"/>
+          </svg>
+          <svg class="stop-icon" viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
+            <rect x="7" y="7" width="10" height="10" rx="2"/>
           </svg>
         </button>
       </div>
@@ -831,6 +837,26 @@ let selectedModel = (function () {
   return 'opus';
 })();
 let modelLocked = false;
+let isRunning = false;
+let isStopping = false;
+
+function setRunState(running, stopping = false) {
+  isRunning = running;
+  isStopping = running && stopping;
+  btn.classList.toggle('is-stop', isRunning);
+  btn.disabled = isStopping;
+  btn.setAttribute('aria-label', isRunning ? (isStopping ? 'Stopping' : 'Stop') : 'Send');
+  btn.title = isRunning ? (isStopping ? 'Stopping…' : 'Stop') : 'Send';
+  inp.setAttribute('aria-disabled', isRunning ? 'true' : 'false');
+}
+
+function handleComposerAction() {
+  if (isRunning) {
+    stopRun();
+    return;
+  }
+  send();
+}
 
 // Read session ID from URL (?session=...) so the page can be reloaded or
 // shared to reconnect to an existing sandbox. Generate a new one if absent.
@@ -857,7 +883,12 @@ if (isFreshChat) {
   history.replaceState(null, '', url);
 }
 
-inp.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
+inp.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    if (!isRunning) send();
+  }
+});
 
 function addUserMsg(text) {
   // Replace the empty-state placeholder the first time we add a message
@@ -2249,10 +2280,11 @@ async function consumeSSEResponse(res, onFirstEvent) {
 }
 
 async function send() {
+  if (isRunning) return;
   const text = inp.value.trim();
   if (!text) return;
   inp.value = '';
-  btn.disabled = true;
+  setRunState(true);
 
   const validateChoice = validateBox ? validateBox.checked : null;
 
@@ -2267,27 +2299,47 @@ async function send() {
   if (isFirstTurn && selectedAgentSlug) {
     payload.agent_slug = selectedAgentSlug;
   }
-  const res = await fetch('/chat', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  });
-  // The server persists the conversation row at HandleRequest entry —
-  // before sandbox creation begins. By the time the first SSE event
-  // reaches us the row is committed, so triggering a sidebar refresh on
-  // first event surfaces the new chat immediately rather than waiting
-  // for the agent to finish (which can take minutes).
-  await consumeSSEResponse(res, isFirstTurn ? () => { loadSidebar(); refreshMetadata(); } : null);
-  btn.disabled = false;
-  inp.focus();
-  // Refresh the sidebar after every turn so the row's title (derived
-  // server-side from the first user message) reflects the just-completed
-  // turn. Ordering is by created_at DESC, so existing rows keep their slot
-  // and a brand-new chat appears at the top of page 0 on the first reload.
-  loadSidebar();
-  // Metadata may have changed too — branch + PR URL only land at the
-  // end of the first turn, and the agent can re-base subsequent turns.
-  refreshMetadata();
+  try {
+    const res = await fetch('/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    // The server persists the conversation row at HandleRequest entry —
+    // before sandbox creation begins. By the time the first SSE event
+    // reaches us the row is committed, so triggering a sidebar refresh on
+    // first event surfaces the new chat immediately rather than waiting
+    // for the agent to finish (which can take minutes).
+    await consumeSSEResponse(res, isFirstTurn ? () => { loadSidebar(); refreshMetadata(); } : null);
+  } finally {
+    setRunState(false);
+    inp.focus();
+    // Refresh the sidebar after every turn so the row's title (derived
+    // server-side from the first user message) reflects the just-completed
+    // turn. Ordering is by created_at DESC, so existing rows keep their slot
+    // and a brand-new chat appears at the top of page 0 on the first reload.
+    loadSidebar();
+    // Metadata may have changed too — branch + PR URL only land at the
+    // end of the first turn, and the agent can re-base subsequent turns.
+    refreshMetadata();
+  }
+}
+
+async function stopRun() {
+  if (!isRunning || isStopping) return;
+  setRunState(true, true);
+  try {
+    const res = await fetch('/chat/cancel', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: sessionId })
+    });
+    if (!res.ok) {
+      setRunState(res.status !== 404, false);
+    }
+  } catch (e) {
+    setRunState(true, false);
+  }
 }
 
 // Sidebar user filter — populate the <select> with org members and wire up
@@ -2482,16 +2534,19 @@ async function init() {
 
   await loadHistory({ skipLastBotResponse: !!liveRes });
   if (liveRes) {
-    btn.disabled = true;
-    await consumeSSEResponse(liveRes);
-    btn.disabled = false;
-    inp.focus();
-    // Refresh the sidebar so the just-completed turn's metadata
-    // (title, ordering) lines up with what the server saved.
-    loadSidebar();
-    // Branch + PR URL only land at end-of-turn — re-fetch the detail
-    // so the right-hand metadata panel picks them up.
-    refreshMetadata();
+    setRunState(true);
+    try {
+      await consumeSSEResponse(liveRes);
+    } finally {
+      setRunState(false);
+      inp.focus();
+      // Refresh the sidebar so the just-completed turn's metadata
+      // (title, ordering) lines up with what the server saved.
+      loadSidebar();
+      // Branch + PR URL only land at end-of-turn — re-fetch the detail
+      // so the right-hand metadata panel picks them up.
+      refreshMetadata();
+    }
   }
 }
 
