@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"html"
 	"io"
 	"log/slog"
 	"maps"
@@ -76,6 +77,106 @@ func TestIndexHandler_RedirectsAuthenticatedNoOrgToOnboarding(t *testing.T) {
 	}
 	if got := rec.Header().Get("Location"); got != "/onboarding" {
 		t.Errorf("Location = %q, want /onboarding", got)
+	}
+}
+
+func TestChatTemplate_ComposerControls(t *testing.T) {
+	b := newBypassBot(t)
+	rec := httptest.NewRecorder()
+	b.renderTemplate(rec, chatHTMLTpl, map[string]any{
+		"Email":       "u@x",
+		"DisplayName": "Test User",
+		"GravatarURL": "https://example.com/avatar.png",
+		"UserID":      "user_test",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, w := range []string{
+		`id="tools-btn"`,
+		`id="agent-selector-btn"`,
+		`id="agent-popover"`,
+		`class="tools-divider"`,
+		`class="tools-checkmark"`,
+		`is-checked`,
+		`id="validate-checkbox"`,
+		`id="model-btn"`,
+		`value: 'opus'`,
+		`value: 'sonnet'`,
+		`value: 'haiku'`,
+		`model: selectedModel`,
+		`applyConversationModel(detail)`,
+		`setModelPickerLocked(true)`,
+	} {
+		if !strings.Contains(body, w) {
+			t.Errorf("chat template missing %q", w)
+		}
+	}
+	if strings.Contains(body, `id="agent-btn"`) {
+		t.Errorf("chat template should not render the old standalone agent button")
+	}
+}
+
+func TestPageTemplates_RenderFavicon(t *testing.T) {
+	b := newBypassBot(t)
+	cases := []struct {
+		name string
+		body string
+		data any
+	}{
+		{
+			name: "chat",
+			body: chatHTMLTpl,
+			data: map[string]any{
+				"Email":       "u@x",
+				"DisplayName": "Test User",
+				"GravatarURL": "https://example.com/avatar.png",
+				"UserID":      "user_test",
+			},
+		},
+		{
+			name: "settings",
+			body: settingsHTMLTpl,
+			data: map[string]any{
+				"OrgID": "org_x", "OrgName": "Acme Inc.", "Email": "u@x", "Tab": "general",
+				"IsAdmin": true,
+			},
+		},
+		{
+			name: "profile",
+			body: profileHTMLTpl,
+			data: map[string]any{
+				"UserID": "user_x", "Email": "u@x", "FirstName": "Ada", "LastName": "Lovelace",
+			},
+		},
+		{
+			name: "onboarding",
+			body: onboardingHTMLTpl,
+			data: map[string]any{"Email": "u@x"},
+		},
+		{
+			name: "landing",
+			body: landingHTMLTpl,
+			data: nil,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			b.renderTemplate(rec, tc.body, tc.data)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+			}
+			body := html.UnescapeString(rec.Body.String())
+			if !strings.Contains(body, `rel="icon"`) {
+				t.Fatalf("template missing favicon link")
+			}
+			if !strings.Contains(body, hetchyFaviconHref) {
+				t.Fatalf("template missing shared favicon href")
+			}
+		})
 	}
 }
 
@@ -346,6 +447,45 @@ func TestSettingsTemplate_RendersMembersTab(t *testing.T) {
 	}
 }
 
+func TestSettingsTemplate_RendersAgentsTab(t *testing.T) {
+	b := newBypassBot(t)
+	rec := httptest.NewRecorder()
+	b.renderTemplate(rec, settingsHTMLTpl, map[string]any{
+		"OrgID": "org_y", "OrgName": "Acme", "Email": "u@y", "PrincipalUserID": "user_me",
+		"IsAdmin": true, "Tab": "agents", "SavedMessage": "",
+		"Agents": []agentSummary{
+			{
+				Slug:         "backend",
+				DisplayName:  "Backend",
+				Description:  "Handles server-side work.",
+				SXBot:        "bob",
+				PersonaAsset: "bob",
+				SlackAliases: []string{"backend", "api"},
+				Skills:       []string{"golang-pro", "database-migrations"},
+				BuiltIn:      true,
+			},
+		},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, w := range []string{
+		`href="/settings/org?tab=agents" class="active"`,
+		`action="/settings/org/agents/backend"`,
+		`action="/settings/org/agents/backend/delete"`,
+		`name="display_name" value="Backend"`,
+		`golang-pro`,
+		`database-migrations`,
+		`sx bot: <code>bob</code>`,
+		`aliases: @backend, @api`,
+	} {
+		if !strings.Contains(body, w) {
+			t.Errorf("agents tab missing %q", w)
+		}
+	}
+}
+
 func TestSettingsTemplate_HidesMembersTabForNonAdmin(t *testing.T) {
 	b := newBypassBot(t)
 	rec := httptest.NewRecorder()
@@ -433,6 +573,33 @@ func TestSettingsTemplate_NonAdminReadOnly(t *testing.T) {
 			t.Error("non-admin should not see Reinstall link when Slack is connected")
 		}
 	})
+
+	t.Run("agents tab is read-only", func(t *testing.T) {
+		data := maps.Clone(nonAdminBase)
+		data["Tab"] = "agents"
+		data["Agents"] = []agentSummary{{
+			Slug:        "backend",
+			DisplayName: "Backend",
+			Description: "Handles server-side work.",
+			Skills:      []string{"golang-pro"},
+		}}
+		rec := httptest.NewRecorder()
+		b.renderTemplate(rec, settingsHTMLTpl, data)
+		body := rec.Body.String()
+
+		if !strings.Contains(body, "Only administrators can change agents") {
+			t.Error("non-admin agents tab: expected admin-only hint text")
+		}
+		for _, n := range []string{
+			`action="/settings/org/agents/backend"`,
+			`action="/settings/org/agents/backend/delete"`,
+			`name="display_name"`,
+		} {
+			if strings.Contains(body, n) {
+				t.Errorf("non-admin agents tab: must not render mutating control %q", n)
+			}
+		}
+	})
 }
 
 // TestSettingsHandler_NonAdminPostReturns403 drives the full HTTP handler
@@ -451,7 +618,7 @@ func TestSettingsHandler_NonAdminPostReturns403(t *testing.T) {
 	}
 	b := &Bot{log: discardLogger(), cfg: Config{WebPort: "0"}, auth: a}
 
-	for _, tab := range []string{"general", "integrations"} {
+	for _, tab := range []string{"general", "integrations", "agents"} {
 		req := httptest.NewRequest(http.MethodPost, "/settings/org?tab="+tab,
 			strings.NewReader("org_name=Hacked"))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -461,6 +628,28 @@ func TestSettingsHandler_NonAdminPostReturns403(t *testing.T) {
 
 		if rec.Code != http.StatusForbidden {
 			t.Errorf("tab=%s: expected 403 for non-admin POST, got %d (body: %q)", tab, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestSplitAgentAction(t *testing.T) {
+	cases := []struct {
+		path, wantSlug, wantAction string
+		wantOK                     bool
+	}{
+		{"/settings/org/agents/backend", "backend", "", true},
+		{"/settings/org/agents/backend/delete", "backend", "delete", true},
+		{"/settings/org/agents/sally-backend", "sally-backend", "", true},
+		{"/settings/org/agents/Backend", "", "", false},
+		{"/settings/org/agents/backend/delete/extra", "", "", false},
+		{"/settings/org/agents/", "", "", false},
+		{"/other/backend", "", "", false},
+	}
+	for _, tc := range cases {
+		gotSlug, gotAction, gotOK := splitAgentAction(tc.path)
+		if gotSlug != tc.wantSlug || gotAction != tc.wantAction || gotOK != tc.wantOK {
+			t.Errorf("splitAgentAction(%q) = (%q, %q, %v), want (%q, %q, %v)",
+				tc.path, gotSlug, gotAction, gotOK, tc.wantSlug, tc.wantAction, tc.wantOK)
 		}
 	}
 }

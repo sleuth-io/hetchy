@@ -9,6 +9,14 @@
 # Plus exactly one Claude credential — the bot picks which to inject:
 #   ANTHROPIC_API_KEY        Anthropic Console API key, OR
 #   CLAUDE_CODE_OAUTH_TOKEN  long-lived token from `claude setup-token`
+#
+# Optional env:
+#   HETCHY_AGENT_SX_BOT          sx bot identity for the selected Hetchy agent
+#   HETCHY_AGENT_PERSONA_ASSET   Claude Code agent asset name to prepend, when installed
+#   HETCHY_AGENT_PROMPT_B64      fallback persona prompt when the sx asset is unavailable
+#   HETCHY_SX_PUBLIC_VAULT_URL   git sx vault for Hetchy-managed agent assets
+#   SX_KEY                       optional org skills.new bot key
+#   HETCHY_CLAUDE_MODEL          Claude Code model alias: opus, sonnet, or haiku
 
 set -euo pipefail
 
@@ -52,6 +60,81 @@ mkdir -p "${SF_WORKDIR}/.playwright-mcp"
 # And the spec-improvements drop-zone so post-success reflection can
 # patch the saved spec without an extra mkdir round-trip.
 mkdir -p /tmp/hetchy-spec/improved
+
+ensure_sx() {
+  export PATH="$HOME/.local/bin:$PATH"
+  if command -v sx >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "[hetchy] installing sx"
+  curl -fsSL https://raw.githubusercontent.com/sleuth-io/sx/main/install.sh | bash
+  export PATH="$HOME/.local/bin:$PATH"
+}
+
+write_sx_config() {
+  local config_dir="$1"
+  local profile="$2"
+  local type="$3"
+  local repository_url="$4"
+  local auth_token="${5:-}"
+
+  mkdir -p "$config_dir"
+  if [[ -n "$auth_token" ]]; then
+    jq -n \
+      --arg profile "$profile" \
+      --arg type "$type" \
+      --arg repositoryUrl "$repository_url" \
+      --arg authToken "$auth_token" \
+      '{defaultProfile:$profile, profiles:{($profile):{type:$type, repositoryUrl:$repositoryUrl, authToken:$authToken}}, forceEnabledClients:["claude-code"]}' \
+      > "$config_dir/config.json"
+  else
+    jq -n \
+      --arg profile "$profile" \
+      --arg type "$type" \
+      --arg repositoryUrl "$repository_url" \
+      '{defaultProfile:$profile, profiles:{($profile):{type:$type, repositoryUrl:$repositoryUrl}}, forceEnabledClients:["claude-code"]}' \
+      > "$config_dir/config.json"
+  fi
+}
+
+run_sx_install() {
+  local label="$1"
+  local config_dir="$2"
+  local cache_dir="$3"
+  local profile="$4"
+  local sx_bot="${5:-}"
+  local sx_bot_key="${6:-}"
+
+  echo "[hetchy] running sx install (${label})"
+  mkdir -p "$cache_dir" "$HOME/.claude"
+  SX_CONFIG_DIR="$config_dir" \
+  SX_CACHE_DIR="$cache_dir" \
+  SX_BOT="$sx_bot" \
+  SX_BOT_KEY="$sx_bot_key" \
+    sx install --profile "$profile" --client=claude-code --target "$SF_WORKDIR"
+}
+
+if [[ -n "${HETCHY_SX_PUBLIC_VAULT_URL:-}" || -n "${SX_KEY:-}" ]]; then
+  ensure_sx
+fi
+
+if [[ -n "${HETCHY_SX_PUBLIC_VAULT_URL:-}" ]]; then
+  public_profile="hetchy-public"
+  public_config="/tmp/hetchy-sx/public-${HETCHY_AGENT_SLUG:-default}/config"
+  public_cache="/tmp/hetchy-sx/public-${HETCHY_AGENT_SLUG:-default}/cache"
+  echo "[hetchy] writing public sx config"
+  write_sx_config "$public_config" "$public_profile" "git" "$HETCHY_SX_PUBLIC_VAULT_URL"
+  run_sx_install "hetchy-public" "$public_config" "$public_cache" "$public_profile" "${HETCHY_AGENT_SX_BOT:-}" ""
+fi
+
+if [[ -n "${SX_KEY:-}" ]]; then
+  org_profile="org-skills"
+  org_config="/tmp/hetchy-sx/org-${HETCHY_AGENT_SLUG:-default}/config"
+  org_cache="/tmp/hetchy-sx/org-${HETCHY_AGENT_SLUG:-default}/cache"
+  echo "[hetchy] writing org sx config"
+  write_sx_config "$org_config" "$org_profile" "sleuth" "https://app.skills.new" "$SX_KEY"
+  run_sx_install "org-skills" "$org_config" "$org_cache" "$org_profile" "${HETCHY_AGENT_SX_BOT:-}" "$SX_KEY"
+fi
 
 # Re-apply the saved bootstrap spec, if attached. The follow-up lands
 # in an unarchived sandbox where the original `start.sh &` background
@@ -103,7 +186,29 @@ if [[ -n "${SF_SPEC_SETUP_B64:-}" && -n "${SF_SPEC_START_B64:-}" && -n "${SF_SPE
 fi
 
 echo "[hetchy] running claude"
-echo "${SF_PROMPT_B64}" | base64 -d > /tmp/sf-prompt.txt
+echo "${SF_PROMPT_B64}" | base64 -d > /tmp/sf-prompt-base.txt
+agent_persona_file=""
+if [[ -n "${HETCHY_AGENT_PERSONA_ASSET:-}" && -f "$HOME/.claude/agents/${HETCHY_AGENT_PERSONA_ASSET}.md" ]]; then
+  agent_persona_file="$HOME/.claude/agents/${HETCHY_AGENT_PERSONA_ASSET}.md"
+elif [[ -n "${HETCHY_AGENT_PROMPT_B64:-}" ]]; then
+  echo "${HETCHY_AGENT_PROMPT_B64}" | base64 -d > /tmp/hetchy-agent-persona.md
+  if [[ -s /tmp/hetchy-agent-persona.md ]]; then
+    agent_persona_file="/tmp/hetchy-agent-persona.md"
+  fi
+fi
+if [[ -n "$agent_persona_file" ]]; then
+  {
+    echo "You are ${HETCHY_AGENT_NAME:-Hetchy}, a specialized Hetchy agent."
+    echo
+    echo "AGENT PERSONA:"
+    cat "$agent_persona_file"
+    echo
+    echo "HETCHY TASK:"
+    cat /tmp/sf-prompt-base.txt
+  } > /tmp/sf-prompt.txt
+else
+  cp /tmp/sf-prompt-base.txt /tmp/sf-prompt.txt
+fi
 # See agent.sh for the rationale behind stream-json.
 # Wrapped via run_claude_with_watchdog (see scripts/claude-watchdog.sh)
 # to reap orphaned background-task children that would otherwise pin

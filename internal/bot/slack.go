@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -14,11 +15,14 @@ import (
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
 
+	"github.com/hetchyhq/hetchy/internal/agents"
 	"github.com/hetchyhq/hetchy/internal/blocks"
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
 )
 
 var mentionPrefix = regexp.MustCompile(`^<@[A-Z0-9]+>\s*`)
+var leadingSlackMention = regexp.MustCompile(`^<@([A-Z0-9]+)>\s*`)
+var leadingAgentToken = regexp.MustCompile(`^@?([A-Za-z][A-Za-z0-9_-]*)(?::|,)?(?:\s+|$)`)
 
 // slackHandler is the per-org dispatch target. The Bot supplies one of
 // these to slackManager, capturing both the inbound event and the org's
@@ -288,6 +292,11 @@ func (b *Bot) handleSlackEvent(ctx context.Context, oc orgcfg.Config, ev incomin
 	if text == "" {
 		return
 	}
+	requestedAgent, cleanedText := b.extractSlackAgent(ctx, oc.OrgID, text, cli)
+	text = strings.TrimSpace(cleanedText)
+	if text == "" {
+		return
+	}
 
 	threadID := ev.ts
 	replyTo := ev.ts
@@ -324,7 +333,7 @@ func (b *Bot) handleSlackEvent(ctx context.Context, oc orgcfg.Config, ev incomin
 	// users routing through Slack typically aren't iterating on
 	// trivial changes). If we add a Slack-side toggle later, plumb
 	// it here.
-	b.HandleRequest(ctx, oc, text, requestID, threadID, creatorID, true, emit)
+	b.HandleRequest(ctx, oc, text, requestID, threadID, creatorID, true, requestedAgent, ClaudeModelOpus, emit)
 	// Reaction bookkeeping: only swap the eyes/recycle that signalled
 	// "working on it" for a final ✓/✗ when the run actually reached a
 	// terminal state. Bot-driven question turns ("Which repository?"
@@ -339,6 +348,70 @@ func (b *Bot) handleSlackEvent(ctx context.Context, oc orgcfg.Config, ev incomin
 			addReaction(b.log, cli, ev.channel, threadID, "white_check_mark")
 		}
 	}
+}
+
+func (b *Bot) extractSlackAgent(ctx context.Context, orgID, text string, cli *slack.Client) (agentSlug, cleaned string) {
+	store := b.agents
+	if store == nil {
+		store = agents.NewStore(nil)
+	}
+
+	if m := leadingSlackMention.FindStringSubmatch(text); len(m) == 2 {
+		rest := strings.TrimSpace(text[len(m[0]):])
+		for _, name := range slackMentionCandidateNames(b.log, cli, m[1]) {
+			if agent, err := store.Resolve(ctx, orgID, name); err == nil {
+				return agent.Slug, rest
+			}
+		}
+		// A leading Slack user mention often means "loop this teammate in",
+		// not "route to a Hetchy agent". If the mentioned user's Slack names
+		// do not resolve to an agent, leave the message as prose instead of
+		// surfacing an opaque U... id as an unknown agent.
+		return "", text
+	}
+
+	if m := leadingAgentToken.FindStringSubmatch(text); len(m) == 2 {
+		token := m[1]
+		rest := strings.TrimSpace(text[len(m[0]):])
+		// Only treat leading words as agent requests when the user made
+		// routing explicit with @ or ':' / ','; otherwise names like
+		// "Bob will..." stay prose.
+		prefix := m[0]
+		explicit := strings.HasPrefix(strings.TrimSpace(prefix), "@") ||
+			strings.Contains(prefix, ":") ||
+			strings.Contains(prefix, ",")
+		if explicit {
+			if agent, err := store.Resolve(ctx, orgID, token); err == nil {
+				return agent.Slug, rest
+			}
+			return token, rest
+		}
+	}
+	return "", text
+}
+
+func slackMentionCandidateNames(log *slog.Logger, cli *slack.Client, userID string) []string {
+	if cli == nil {
+		return nil
+	}
+	u, err := cli.GetUserInfo(userID)
+	if err != nil {
+		log.Warn("slack user lookup for agent mention failed", "user", userID, "error", err)
+		return nil
+	}
+	var out []string
+	for _, s := range []string{
+		u.Name,
+		u.RealName,
+		u.Profile.DisplayName,
+		u.Profile.RealName,
+	} {
+		s = strings.TrimSpace(s)
+		if s != "" && !slices.Contains(out, s) {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func replyInThread(log *slog.Logger, cli *slack.Client, channel, threadTS, msg string) {
