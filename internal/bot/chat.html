@@ -4,11 +4,11 @@
 <meta charset="utf-8">
 <title>Hetchy</title>
 <!-- Favicon — chunky block "H" echoing the ASCII banner shown in the
-     empty state. This is the single source of truth for the mark; JS
+     empty state. The data URI comes from web.go's faviconHref helper; JS
      reads link.href at load to derive the badged "done" variant by
      splicing a green dot before the closing </svg>, so the H markup
      never has to be kept in sync between HTML and JS. -->
-<link rel="icon" type="image/svg+xml" id="favicon" href="data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2032%2032%27%3E%3Crect%20width%3D%2732%27%20height%3D%2732%27%20rx%3D%276%27%20fill%3D%27%230d1117%27%2F%3E%3Cg%20fill%3D%27%237dc4ff%27%3E%3Crect%20x%3D%276%27%20y%3D%276%27%20width%3D%276%27%20height%3D%2720%27%2F%3E%3Crect%20x%3D%2720%27%20y%3D%276%27%20width%3D%276%27%20height%3D%2720%27%2F%3E%3Crect%20x%3D%276%27%20y%3D%2714%27%20width%3D%2720%27%20height%3D%274%27%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E">
+<link rel="icon" type="image/svg+xml" id="favicon" href="{{faviconHref}}">
 <!-- Markdown rendering for bot blocks. DOMPurify sanitizes the HTML
      marked produces — we render server-supplied content (Claude's
      stream-json text, tool inputs/results) and never want raw HTML
@@ -183,25 +183,105 @@
   .bot  { align-self: flex-start; background: #fff; border: 1px solid #ddd;
           border-bottom-left-radius: .25rem; white-space: pre-wrap; }
   #empty-state { margin: auto; text-align: center; color: #888; font-size: .95rem; }
-  #empty-state h2 { font-size: 1.5rem; font-weight: 500; margin-bottom: .5rem;
-                    color: #333; }
+  .empty-brand { display: inline-block; text-align: center; }
   .empty-ascii { font-family: monospace; font-size: .6rem; line-height: 1.2;
-                 color: #0b93f6; margin: 0 auto 1rem; display: inline-block;
+                 color: #0b93f6; margin: 0; display: block;
                  text-align: left; white-space: pre; }
-  #empty-state .options { margin-top: 1.25rem; display: inline-flex;
-                          align-items: center; gap: .5rem;
-                          font-size: .9rem; color: #555; cursor: pointer;
-                          user-select: none; }
-  #empty-state .options input[type="checkbox"] { width: 1rem; height: 1rem;
-                                                 cursor: pointer; }
-  #bar  { display: flex; gap: .5rem; padding: 1rem; background: #fff;
-          border-top: 1px solid #ddd; }
-  #inp  { flex: 1; padding: .6rem 1rem; border: 1px solid #ccc; border-radius: 2rem;
-          font-size: 1rem; outline: none; }
-  #inp:focus { border-color: #0b93f6; }
+  .empty-tagline { margin-top: .45rem; font-size: .78rem; color: #7aaedf; }
+  #bar  { padding: 1rem; background: #fff; border-top: 1px solid #ddd;
+          position: relative; }
+  #composer { width: min(100%, 54rem); margin: 0 auto; padding: .75rem;
+              display: flex; flex-direction: column; gap: .55rem;
+              background: #fff; border: 1px solid #d7d7dc;
+              border-radius: 1.15rem; box-shadow: 0 1px 2px rgba(0,0,0,.04);
+              min-width: 0; }
+  #composer:focus-within { border-color: #0b93f6; }
+  #inp  { width: 100%; padding: .15rem .2rem; border: 0; background: transparent;
+          color: #1a1a1a; font-size: 1rem; outline: none; }
+  #composer-controls { display: flex; align-items: center;
+                       justify-content: space-between; gap: .75rem; }
+  #composer-actions { display: flex; align-items: center; gap: .5rem; }
   button { padding: .6rem 1.2rem; background: #0b93f6; color: #fff; border: none;
            border-radius: 2rem; font-size: 1rem; cursor: pointer; }
   button:disabled { opacity: .5; cursor: default; }
+  #tools-picker, #model-picker { position: relative; flex-shrink: 0; }
+  #tools-btn { width: 2rem; height: 2rem; padding: 0; display: inline-flex;
+               align-items: center; justify-content: center; border-radius: 50%;
+               border: 1px solid transparent; background: transparent; color: #777;
+               line-height: 0; }
+  #tools-btn svg { width: 1rem; height: 1rem; stroke-width: 1.6; display: block; }
+  #tools-btn:hover, #tools-btn[aria-expanded="true"] { background: #f2f2f4;
+                                                       border-color: #d8d8dd; }
+  #tools-btn.has-agent { color: #0b5ec0; background: #f3f8ff; border-color: #cfe2f8; }
+  .composer-popover { position: absolute; bottom: calc(100% + .5rem);
+                      padding: .35rem; background: #fff; border: 1px solid #ddd;
+                      border-radius: .6rem; box-shadow: 0 10px 28px rgba(0,0,0,.14);
+                      z-index: 70; }
+  .composer-popover[hidden] { display: none; }
+  #tools-popover { left: 0; width: min(17rem, calc(100vw - 2rem)); }
+  #model-popover { right: 0; width: min(16rem, calc(100vw - 2rem)); }
+  .model-popover-title { padding: .45rem .55rem .35rem;
+                         font-size: .72rem; font-weight: 600;
+                         text-transform: uppercase; letter-spacing: .05em;
+                         color: #777; }
+  .tools-menu-item { width: 100%; min-height: 2.45rem; padding: .55rem .65rem;
+                     border: 0; border-radius: .45rem; background: transparent;
+                     color: #222; display: flex; align-items: center; gap: .6rem;
+                     text-align: left; font: inherit; }
+  .tools-menu-item:hover,
+  .tools-menu-item[aria-expanded="true"] { background: #f2f6fb; }
+  .tools-menu-icon { width: 1rem; height: 1rem; flex-shrink: 0; color: #777; }
+  .tools-menu-main { flex: 1; min-width: 0; display: flex; align-items: center;
+                     justify-content: space-between; gap: .75rem; }
+  .tools-menu-label { font-size: .88rem; font-weight: 500; color: #222; }
+  .tools-menu-value { font-size: .86rem; color: #777; line-height: 1.25;
+                      text-align: right;
+                      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tools-chevron { color: #888; font-size: 1rem; line-height: 1; }
+  .tools-divider { border-top: 1px solid #ececf0; margin: .35rem -.35rem; }
+  #agent-flyout-root { position: relative; }
+  #agent-popover { left: calc(100% + .45rem); top: auto; bottom: 0;
+                   width: min(21rem, calc(100vw - 2rem));
+                   max-height: min(22rem, calc(100vh - 2rem));
+                   overflow-y: auto; }
+  .tools-checkbox-row { position: relative; cursor: pointer; user-select: none; color: #222; }
+  .tools-checkbox-row.is-checked { color: #0b93f6; }
+  .tools-checkbox-row .tools-menu-label { flex: 1; }
+  .tools-checkbox-row input { position: absolute; opacity: 0; pointer-events: none; }
+  .tools-checkbox-row .tools-menu-icon,
+  .tools-checkbox-row .tools-menu-label { color: inherit; }
+  .tools-checkmark { width: 1rem; flex-shrink: 0; color: #0b93f6;
+                     font-size: .95rem; line-height: 1; text-align: center;
+                     opacity: 0; }
+  .tools-checkbox-row input:checked ~ .tools-checkmark { opacity: 1; }
+  .agent-choice { width: 100%; padding: .55rem .65rem; border: 0;
+                  border-radius: .45rem; background: transparent; color: #222;
+                  text-align: left; display: flex; flex-direction: column; gap: .18rem;
+                  font: inherit; }
+  .agent-choice:hover, .agent-choice.is-selected { background: #f2f6fb; }
+  .agent-choice-name { font-size: .88rem; font-weight: 500; }
+  .agent-choice-desc { font-size: .76rem; color: #777; line-height: 1.3; }
+  #model-btn { height: 2rem; min-width: 5.7rem; padding: 0 .65rem;
+               display: inline-flex; align-items: center; justify-content: center;
+               gap: .35rem; border: 1px solid #d7d7dc; border-radius: .6rem;
+               background: #f7f7f8; color: #222; font-size: .88rem; }
+  #model-btn:hover, #model-btn[aria-expanded="true"] { background: #f0f0f2;
+                                                       border-color: #c8c8ce; }
+  #model-btn .chevron { width: .85rem; height: .85rem; color: #777;
+                        stroke-width: 1.8; display: block; }
+  .model-choice { width: 100%; padding: .55rem .65rem; border: 0;
+                  border-radius: .45rem; background: transparent; color: #222;
+                  text-align: left; display: grid; grid-template-columns: 1fr auto;
+                  gap: .15rem .5rem; font: inherit; }
+  .model-choice:hover, .model-choice.is-selected { background: #f2f6fb; }
+  .model-choice-name { font-size: .88rem; font-weight: 500; }
+  .model-choice-desc { grid-column: 1 / 2; font-size: .76rem; color: #777; line-height: 1.3; }
+  .model-check { grid-column: 2; grid-row: 1 / span 2; align-self: center;
+                 color: #0b5ec0; font-size: .9rem; }
+  #btn { width: 2rem; height: 2rem; padding: 0; border-radius: .6rem;
+         display: inline-flex; align-items: center; justify-content: center;
+         line-height: 0; }
+  #btn svg { width: 1rem; height: 1rem; stroke-width: 2.2; display: block; }
 
   /* Right-side metadata sidebar — surfaces what we know about the chat
      (repo, branch, PR, sandbox, creator). Hidden when the user toggles
@@ -447,11 +527,45 @@
   html.is-dark .phase-prose code { background: #2a2a2e; }
   html.is-dark .phase-prose a { color: #7dc4ff; }
   html.is-dark #empty-state { color: #9a9aa0; }
-  html.is-dark #empty-state h2 { color: #e7e7e9; }
   html.is-dark .empty-ascii { color: #7dc4ff; }
-  html.is-dark #empty-state .options { color: #b8b8bd; }
+  html.is-dark .empty-tagline { color: #7dc4ff; }
   html.is-dark #bar { background: #1c1c1f; border-top-color: #2a2a2d; }
-  html.is-dark #inp { background: #232327; color: #e7e7e9; border-color: #2e2e33; }
+  html.is-dark #composer { background: #232327; border-color: #2e2e33;
+                           box-shadow: 0 1px 2px rgba(0,0,0,.18); }
+  html.is-dark #composer:focus-within { border-color: #7dc4ff; }
+  html.is-dark #inp { color: #e7e7e9; }
+  html.is-dark #tools-btn { color: #c4c4c8; }
+  html.is-dark #tools-btn:hover,
+  html.is-dark #tools-btn[aria-expanded="true"] { background: #2a2a2e; border-color: #3a3a40; }
+  html.is-dark #tools-btn.has-agent { background: #1f3a5c; border-color: #2a4a72; color: #7dc4ff; }
+  html.is-dark .composer-popover { background: #232327; border-color: #2e2e33;
+                                   box-shadow: 0 10px 28px rgba(0,0,0,.45); }
+  html.is-dark .model-popover-title { color: #9a9aa0; }
+  html.is-dark .tools-menu-item { color: #e7e7e9; }
+  html.is-dark .tools-menu-item:hover,
+  html.is-dark .tools-menu-item[aria-expanded="true"] { background: #1f3a5c; }
+  html.is-dark .tools-menu-label { color: #e7e7e9; }
+  html.is-dark .tools-menu-value { color: #9a9aa0; }
+  html.is-dark .tools-menu-icon { color: #9a9aa0; }
+  html.is-dark .tools-chevron { color: #9a9aa0; }
+  html.is-dark .tools-divider { border-top-color: #2e2e33; }
+  html.is-dark .tools-checkbox-row { color: #e7e7e9; }
+  html.is-dark .tools-checkbox-row.is-checked { color: #7dc4ff; }
+  html.is-dark .tools-checkbox-row.is-checked .tools-menu-icon { color: #7dc4ff; }
+  html.is-dark .tools-checkbox-row .tools-checkmark { color: #7dc4ff; }
+  html.is-dark .agent-choice { color: #e7e7e9; }
+  html.is-dark .agent-choice:hover,
+  html.is-dark .agent-choice.is-selected { background: #1f3a5c; }
+  html.is-dark .agent-choice-desc { color: #9a9aa0; }
+  html.is-dark #model-btn { background: #2a2a2e; border-color: #3a3a40; color: #e7e7e9; }
+  html.is-dark #model-btn:hover,
+  html.is-dark #model-btn[aria-expanded="true"] { background: #303036; border-color: #4a4a52; }
+  html.is-dark #model-btn .chevron { color: #9a9aa0; }
+  html.is-dark .model-choice { color: #e7e7e9; }
+  html.is-dark .model-choice:hover,
+  html.is-dark .model-choice.is-selected { background: #1f3a5c; }
+  html.is-dark .model-choice-desc { color: #9a9aa0; }
+  html.is-dark .model-check { color: #7dc4ff; }
   html.is-dark #main-top { background: #1c1c1f; border-bottom-color: #2a2a2d; }
   html.is-dark #meta-toggle { color: #c4c4c8; }
   html.is-dark #meta-toggle:hover { background: #2a2a2e; border-color: #3a3a40; }
@@ -590,8 +704,70 @@
 </div>
 <div id="log"></div>
 <div id="bar">
-  <input id="inp" placeholder="Describe a feature…" autofocus>
-  <button id="btn" onclick="send()">Send</button>
+  <div id="composer">
+    <input id="inp" placeholder="Describe a feature, fix or refactor and hetchy will open a pr…" autofocus>
+    <div id="composer-controls">
+      <div id="tools-picker">
+        <button id="tools-btn" type="button" aria-label="Open composer options" aria-expanded="false" title="Options">
+          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 5v14"/>
+            <path d="M5 12h14"/>
+          </svg>
+        </button>
+        <div id="tools-popover" class="composer-popover" hidden>
+          <div id="agent-flyout-root">
+            <button id="agent-selector-btn" class="tools-menu-item" type="button"
+                    aria-label="Choose agent" aria-haspopup="menu" aria-expanded="false">
+              <svg class="tools-menu-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 8V4"/>
+                <rect x="6" y="8" width="12" height="10" rx="3"/>
+                <path d="M9 13h.01"/>
+                <path d="M15 13h.01"/>
+              </svg>
+              <span class="tools-menu-main">
+                <span class="tools-menu-label">Agent</span>
+                <span id="agent-selector-value" class="tools-menu-value">No agent</span>
+              </span>
+              <span class="tools-chevron" aria-hidden="true">›</span>
+            </button>
+            <div id="agent-popover" class="composer-popover" hidden>
+              <div id="agent-options"></div>
+            </div>
+          </div>
+          <div class="tools-divider"></div>
+          <label class="tools-menu-item tools-checkbox-row">
+            <input type="checkbox" id="validate-checkbox" checked>
+            <svg class="tools-menu-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9 12l2 2 4-5"/>
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+            </svg>
+            <span class="tools-menu-label">Validate changes</span>
+            <span class="tools-checkmark" aria-hidden="true">✓</span>
+          </label>
+        </div>
+      </div>
+      <div id="composer-actions">
+        <div id="model-picker">
+          <button id="model-btn" type="button" aria-label="Choose model" aria-expanded="false" title="Model: Opus">
+            <span id="model-label">Opus</span>
+            <svg class="chevron" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m7 10 5 5 5-5"/>
+            </svg>
+          </button>
+          <div id="model-popover" class="composer-popover" hidden>
+            <div class="model-popover-title">Model</div>
+            <div id="model-options"></div>
+          </div>
+        </div>
+        <button id="btn" type="button" onclick="send()" aria-label="Send" title="Send">
+          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 19V5"/>
+            <path d="m5 12 7-7 7 7"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </div>
 </div>
 </div>
 
@@ -605,10 +781,38 @@
 const log = document.getElementById('log');
 const inp = document.getElementById('inp');
 const btn = document.getElementById('btn');
+const toolsBtn = document.getElementById('tools-btn');
+const toolsPopover = document.getElementById('tools-popover');
+const agentSelectorBtn = document.getElementById('agent-selector-btn');
+const agentSelectorValueEl = document.getElementById('agent-selector-value');
+const agentPopover = document.getElementById('agent-popover');
+const agentOptionsEl = document.getElementById('agent-options');
+const modelBtn = document.getElementById('model-btn');
+const modelLabelEl = document.getElementById('model-label');
+const modelPopover = document.getElementById('model-popover');
+const modelOptionsEl = document.getElementById('model-options');
+const validateBox = document.getElementById('validate-checkbox');
+const validateRow = document.querySelector('.tools-checkbox-row');
 
 // Current user's WorkOS ID, injected by the server. Used to default the
 // sidebar filter to "my chats".
 const currentUserID = '{{.UserID}}';
+let agentOptions = [];
+let selectedAgentSlug = '';
+const modelOptions = [
+  { value: 'opus', label: 'Opus', description: 'Most capable' },
+  { value: 'sonnet', label: 'Sonnet', description: 'Balanced everyday work' },
+  { value: 'haiku', label: 'Haiku', description: 'Fastest' },
+];
+const modelStorageKey = 'hetchy.model';
+let selectedModel = (function () {
+  try {
+    const saved = localStorage.getItem(modelStorageKey);
+    if (modelOptions.some(model => model.value === saved)) return saved;
+  } catch (e) {}
+  return 'opus';
+})();
+let modelLocked = false;
 
 // Read session ID from URL (?session=...) so the page can be reloaded or
 // shared to reconnect to an existing sandbox. Generate a new one if absent.
@@ -649,6 +853,223 @@ function addUserMsg(text) {
   log.scrollTop = log.scrollHeight;
   return d;
 }
+
+async function loadAgents() {
+  try {
+    const res = await fetch('/api/agents', { headers: { 'Accept': 'application/json' } });
+    if (!res.ok) return;
+    agentOptions = await res.json();
+  } catch (e) {
+    agentOptions = [];
+  }
+  populateAgentPicker();
+}
+
+function selectedAgentName() {
+  if (!selectedAgentSlug) return 'none';
+  const found = agentOptions.find(agent => agent.slug === selectedAgentSlug);
+  return found ? (found.display_name || found.slug) : selectedAgentSlug;
+}
+
+function updateToolsButton() {
+  const agentLabel = selectedAgentName();
+  const validates = validateBox ? validateBox.checked : true;
+  agentSelectorValueEl.textContent = agentLabel === 'none' ? 'No agent' : agentLabel;
+  toolsBtn.title = 'Agent: ' + agentLabel + '; validation ' + (validates ? 'on' : 'off');
+  toolsBtn.setAttribute('aria-label', 'Composer options. Agent: ' + agentLabel + '. Validation ' + (validates ? 'on' : 'off') + '.');
+  toolsBtn.classList.toggle('has-agent', !!selectedAgentSlug);
+  if (validateRow) {
+    validateRow.classList.toggle('is-checked', validates);
+    validateRow.setAttribute('aria-checked', String(validates));
+  }
+}
+
+function chooseAgent(slug) {
+  selectedAgentSlug = slug || '';
+  populateAgentPicker();
+  updateToolsButton();
+  closeAgentPopover();
+  closeToolsPopover();
+  inp.focus();
+}
+
+function populateAgentPicker() {
+  if (!agentOptionsEl) return;
+  agentOptionsEl.innerHTML = '';
+  const choices = [{
+    slug: '',
+    display_name: 'No agent',
+    description: 'Use Hetchy without a specialized persona.'
+  }, ...agentOptions];
+  for (const agent of choices) {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'agent-choice' + (agent.slug === selectedAgentSlug ? ' is-selected' : '');
+    item.dataset.agentSlug = agent.slug;
+
+    const name = document.createElement('span');
+    name.className = 'agent-choice-name';
+    name.textContent = agent.display_name || agent.slug;
+    item.appendChild(name);
+
+    if (agent.description) {
+      const desc = document.createElement('span');
+      desc.className = 'agent-choice-desc';
+      desc.textContent = agent.description;
+      item.appendChild(desc);
+    }
+
+    item.addEventListener('click', () => chooseAgent(agent.slug));
+    agentOptionsEl.appendChild(item);
+  }
+  updateToolsButton();
+}
+
+function modelLabelFor(value) {
+  const found = modelOptions.find(model => model.value === value);
+  return found ? found.label : 'Opus';
+}
+
+function selectedModelLabel() {
+  return modelLabelFor(selectedModel);
+}
+
+function updateModelButton() {
+  const label = selectedModelLabel();
+  modelLabelEl.textContent = label;
+  const suffix = modelLocked ? ' (set for this chat)' : '';
+  modelBtn.title = 'Model: ' + label + suffix;
+  modelBtn.setAttribute('aria-label', 'Model: ' + label + suffix);
+}
+
+function setModelPickerLocked(locked) {
+  modelLocked = !!locked;
+  modelBtn.disabled = modelLocked;
+  if (modelLocked) closeModelPopover();
+  updateModelButton();
+}
+
+function applyConversationModel(detail) {
+  const hasTurns = !!(detail && Array.isArray(detail.history) && detail.history.length);
+  if (detail && modelOptions.some(model => model.value === detail.model)) {
+    selectedModel = detail.model;
+    populateModelPicker();
+  }
+  setModelPickerLocked(hasTurns);
+}
+
+function chooseModel(value) {
+  if (modelLocked) return;
+  if (!modelOptions.some(model => model.value === value)) return;
+  selectedModel = value;
+  try { localStorage.setItem(modelStorageKey, selectedModel); } catch (e) {}
+  populateModelPicker();
+  updateModelButton();
+  closeModelPopover();
+  inp.focus();
+}
+
+function populateModelPicker() {
+  if (!modelOptionsEl) return;
+  modelOptionsEl.innerHTML = '';
+  for (const model of modelOptions) {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'model-choice' + (model.value === selectedModel ? ' is-selected' : '');
+
+    const name = document.createElement('span');
+    name.className = 'model-choice-name';
+    name.textContent = model.label;
+    item.appendChild(name);
+
+    const desc = document.createElement('span');
+    desc.className = 'model-choice-desc';
+    desc.textContent = model.description;
+    item.appendChild(desc);
+
+    if (model.value === selectedModel) {
+      const check = document.createElement('span');
+      check.className = 'model-check';
+      check.textContent = '✓';
+      item.appendChild(check);
+    }
+
+    item.addEventListener('click', () => chooseModel(model.value));
+    modelOptionsEl.appendChild(item);
+  }
+  updateModelButton();
+}
+
+function openToolsPopover() {
+  toolsPopover.hidden = false;
+  toolsBtn.setAttribute('aria-expanded', 'true');
+  closeModelPopover();
+}
+
+function closeToolsPopover() {
+  toolsPopover.hidden = true;
+  toolsBtn.setAttribute('aria-expanded', 'false');
+  closeAgentPopover();
+}
+
+function openAgentPopover() {
+  agentPopover.hidden = false;
+  agentSelectorBtn.setAttribute('aria-expanded', 'true');
+}
+
+function closeAgentPopover() {
+  agentPopover.hidden = true;
+  agentSelectorBtn.setAttribute('aria-expanded', 'false');
+}
+
+function openModelPopover() {
+  if (modelLocked) return;
+  modelPopover.hidden = false;
+  modelBtn.setAttribute('aria-expanded', 'true');
+  closeToolsPopover();
+}
+
+function closeModelPopover() {
+  modelPopover.hidden = true;
+  modelBtn.setAttribute('aria-expanded', 'false');
+}
+
+toolsBtn.addEventListener('click', e => {
+  e.stopPropagation();
+  if (toolsPopover.hidden) openToolsPopover();
+  else closeToolsPopover();
+});
+toolsPopover.addEventListener('click', e => e.stopPropagation());
+agentSelectorBtn.addEventListener('click', e => {
+  e.stopPropagation();
+  if (agentPopover.hidden) openAgentPopover();
+  else closeAgentPopover();
+});
+document.getElementById('agent-flyout-root').addEventListener('mouseenter', openAgentPopover);
+if (validateBox) {
+  validateBox.addEventListener('change', updateToolsButton);
+}
+if (validateRow) {
+  validateRow.addEventListener('mouseenter', closeAgentPopover);
+}
+modelBtn.addEventListener('click', e => {
+  e.stopPropagation();
+  if (modelPopover.hidden) openModelPopover();
+  else closeModelPopover();
+});
+modelPopover.addEventListener('click', e => e.stopPropagation());
+document.addEventListener('click', () => {
+  closeToolsPopover();
+  closeModelPopover();
+  closeAgentPopover();
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    closeToolsPopover();
+    closeModelPopover();
+    closeAgentPopover();
+  }
+});
 
 // formatBlockTime renders a block's started_at into a short HH:MM
 // (24-hour, local) string for the summary chip. Returns '' for a
@@ -976,24 +1397,15 @@ function showEmptyState() {
   log.innerHTML = '';
   const d = document.createElement('div');
   d.id = 'empty-state';
-  const ascii = `<pre class="empty-ascii">
+  const ascii = `<div class="empty-brand"><pre class="empty-ascii">
   ██╗  ██╗███████╗████████╗ ██████╗██╗  ██╗██╗   ██╗
   ██║  ██║██╔════╝╚══██╔══╝██╔════╝██║  ██║╚██╗ ██╔╝
   ███████║█████╗     ██║   ██║     ███████║ ╚████╔╝
   ██╔══██║██╔══╝     ██║   ██║     ██╔══██║  ╚██╔╝
   ██║  ██║███████╗   ██║   ╚██████╗██║  ██║   ██║
   ╚═╝  ╚═╝╚══════╝   ╚═╝    ╚═════╝╚═╝  ╚═╝   ╚═╝
-
-       &lt; your AI coding co-pilot /&gt;
-  </pre>`;
-  d.innerHTML =
-    ascii +
-    '<h2>Start a new chat</h2>' +
-    '<div>Describe a feature, fix, or refactor and Hetchy will open a PR.</div>' +
-    '<label class="options">' +
-    '  <input type="checkbox" id="validate-checkbox" checked>' +
-    '  Validate changes with end-to-end testing' +
-    '</label>';
+  </pre><div class="empty-tagline">&lt; your AI coding co-pilot /&gt;</div></div>`;
+  d.innerHTML = ascii;
   log.appendChild(d);
 }
 
@@ -1380,16 +1792,20 @@ function setDocTitle(title) {
 function renderMetadata(detail) {
   const host = document.getElementById('meta-content');
   if (!detail) {
+    applyConversationModel(null);
     host.innerHTML = '<div class="meta-empty">No chat details yet.</div>';
     setDocTitle('');
     return;
   }
+  applyConversationModel(detail);
   setDocTitle(detail.title);
   const owner = detail.github_owner || '';
   const repo = detail.github_repo || '';
   const branch = detail.branch || '';
   const prURL = detail.pr_url || '';
   const sandbox = detail.sandbox_id || '';
+  const agent = detail.agent_name || detail.agent_slug || '';
+  const model = detail.model || '';
   const created = fmtDate(detail.created_at || detail.updated_at);
 
   const repoSlug = (owner && repo) ? owner + '/' + repo : '';
@@ -1425,6 +1841,12 @@ function renderMetadata(detail) {
   // is missing so the dashes look intentionally placeholdered rather
   // than like a layout bug.
   const rows = [
+    { label: 'Agent',   html: agent
+        ? '<span>' + esc(agent) + '</span>'
+        : '<span>—</span>', empty: !agent },
+    { label: 'Model',   html: model
+        ? '<span>' + esc(modelLabelFor(model)) + '</span>'
+        : '<span>—</span>', empty: !model },
     { label: 'Repo',    html: repoLink,                 empty: !repoSlug },
     { label: 'Branch',  html: branchLink,               empty: !branch },
     { label: 'PR',      html: prCell,                   empty: !prURL },
@@ -1788,21 +2210,18 @@ async function send() {
   inp.value = '';
   btn.disabled = true;
 
-  // Capture the validate checkbox state BEFORE addUserMsg runs —
-  // addUserMsg removes #empty-state from the DOM (the welcome card
-  // disappears as the conversation begins), and the checkbox lives
-  // inside that container. Reading after addUserMsg would always
-  // return null and silently fall back to "validate=true on the
-  // server", regardless of the user's choice.
-  const validateBox = document.getElementById('validate-checkbox');
   const validateChoice = validateBox ? validateBox.checked : null;
 
   const isFirstTurn = log.querySelectorAll('.msg').length === 0;
   addUserMsg(text);
+  if (isFirstTurn) setModelPickerLocked(true);
 
-  const payload = { text, session_id: sessionId };
+  const payload = { text, session_id: sessionId, model: selectedModel };
   if (validateChoice !== null) {
     payload.validate = validateChoice;
+  }
+  if (isFirstTurn && selectedAgentSlug) {
+    payload.agent_slug = selectedAgentSlug;
   }
   const res = await fetch('/chat', {
     method: 'POST',
@@ -1966,6 +2385,8 @@ document.addEventListener('keydown', e => {
 // turn updating in real time. If no turn is in flight, it falls
 // back to rendering the persisted snapshot.
 async function init() {
+  populateModelPicker();
+  await loadAgents();
   loadMembers();
   loadSidebar();
 

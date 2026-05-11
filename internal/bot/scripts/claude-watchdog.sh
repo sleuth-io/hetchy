@@ -16,6 +16,18 @@
 run_claude_with_watchdog() {
   local prompt_file="$1"
   local tap_fifo pid_file
+  local -a claude_args=(
+    --print
+    --dangerously-skip-permissions
+    --output-format stream-json
+    --verbose
+  )
+  if [[ -n "${HETCHY_CLAUDE_MODEL:-}" ]]; then
+    claude_args+=(--model "$HETCHY_CLAUDE_MODEL")
+  fi
+  if [[ -n "${HETCHY_CLAUDE_EFFORT:-}" ]]; then
+    claude_args+=(--effort "$HETCHY_CLAUDE_EFFORT")
+  fi
   tap_fifo=$(mktemp -u /tmp/sf-claude-tap.XXXXXX)
   pid_file=$(mktemp -u /tmp/sf-claude-pid.XXXXXX)
   mkfifo "$tap_fifo"
@@ -78,10 +90,8 @@ run_claude_with_watchdog() {
   set +e
   setsid -w bash -c "
     echo \$\$ > '$pid_file'
-    exec claude --print --dangerously-skip-permissions \
-                --output-format stream-json --verbose \
-                < '$prompt_file'
-  " | tee "$tap_fifo"
+    exec claude \"\$@\" < '$prompt_file'
+  " bash "${claude_args[@]}" | tee "$tap_fifo"
   local rc=${PIPESTATUS[0]}
   set -e
 

@@ -112,6 +112,7 @@ database, not in Doppler. Doppler only holds the *process-level* config:
 | `DAYTONA_API_URL` | Daytona API endpoint |
 | `DAYTONA_API_KEY` | Daytona API key |
 | `DAYTONA_SNAPSHOT` | Sandbox snapshot image |
+| `HETCHY_SX_PUBLIC_VAULT_URL` | Public git sx vault containing Hetchy's seeded agent personas and scoped role skills; defaults to `https://github.com/hetchyhq/hetchy-sx-vault.git`; set to `disabled`, `off`, `none`, or `-` to skip the public vault install |
 | `WEB_PORT` | Web UI port (default: 8080) |
 | `GITHUB_APP_ID` | Numeric ID of this env's GitHub App |
 | `GITHUB_APP_SLUG` | App slug — used to build the install URL `github.com/apps/<slug>/installations/new` |
@@ -274,14 +275,39 @@ configured per-org at `/settings/org`.
 ### Via Web UI
 
 1. Navigate to `http://dev.hetchy.ai:8080` while logged in.
-2. Enter your request in natural language.
-3. Watch real-time progress updates via SSE streaming.
-4. Receive the PR URL when complete.
-5. Bookmark or share the URL to resume the session later — each session has a stable UUID in the query string.
+2. Optionally open the **+** menu to choose an agent or toggle validation.
+   The default is no specialized agent with validation enabled.
+3. Enter your request in natural language.
+4. Pick Opus, Sonnet, or Haiku from the model chooser when you want to steer the Claude Code run.
+5. Watch real-time progress updates via SSE streaming.
+6. Receive the PR URL when complete.
+7. Bookmark or share the URL to resume the session later — each session has a stable UUID in the query string.
 
 If you haven't set a default repo, the bot will reply asking which repo
 to work in — answer with `owner/name` and it picks up where you left
 off. Subsequent messages on the same thread reuse that repo.
+
+### Agents
+
+Hetchy seeds each organization with three optional agent profiles. The profiles
+live as org-scoped database rows, so admins can rename or delete their copy in
+**Organization settings → Agents**. Each profile maps to an sx bot identity so
+the public sx vault can load a persona plus role-specific skills before Claude
+runs in the Daytona sandbox.
+
+| Agent | Slack aliases | Bundled skills |
+|-------|---------------|----------------|
+| `Bob` | `@bob`, `@backend`, `@api`, `@server` | `golang-pro`, `golang-testing`, `neon-postgres`, `database-migrations` |
+| `Alice` | `@alice`, `@frontend`, `@front-end`, `@ui`, `@ux`, `@web` | `frontend-design`, `react-best-practices`, `webapp-testing`, `extract-design-system` |
+| `Archy` | `@archy`, `@architect`, `@architecture`, `@design` | `improve-codebase-architecture`, `architecture-blueprint-generator`, `documentation-and-adrs`, `software-architecture` |
+
+The seeded profile metadata lives in the database; the agent assets live in the public
+`https://github.com/hetchyhq/hetchy-sx-vault.git` sx vault. Hetchy uses that
+vault by default; set `HETCHY_SX_PUBLIC_VAULT_URL` to test a fork or alternate
+vault, or to `disabled`, `off`, `none`, or `-` to skip the public vault install.
+Per-org skills.new assets are installed separately afterward.
+The Agents settings tab shows the skills currently attached to each seeded
+profile; skill editing will land there later.
 
 ### Via Slack
 
@@ -290,6 +316,11 @@ off. Subsequent messages on the same thread reuse that repo.
 3. The bot replies with progress in the thread
 4. Get the PR URL in the final message
 5. Reply in the thread to make further changes to the same PR
+
+To route a new Slack thread to a built-in agent, include the agent name or
+alias at the start of the request, for example `@bot @Archy design the
+migration plan`. If the Slack workspace has users named for the agents,
+direct mentions like `@Sally` can resolve to a configured custom agent.
 
 ### Example Requests
 

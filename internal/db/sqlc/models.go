@@ -8,6 +8,37 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type AgentProfile struct {
+	ID            pgtype.UUID        `json:"id"`
+	OrgID         string             `json:"org_id"`
+	Slug          string             `json:"slug"`
+	DisplayName   string             `json:"display_name"`
+	Description   string             `json:"description"`
+	SxBot         string             `json:"sx_bot"`
+	PersonaAsset  string             `json:"persona_asset"`
+	PersonaPrompt string             `json:"persona_prompt"`
+	SlackAliases  []string           `json:"slack_aliases"`
+	Enabled       bool               `json:"enabled"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+	Skills        []string           `json:"skills"`
+	BuiltIn       bool               `json:"built_in"`
+}
+
+type AgentProfileTemplate struct {
+	Slug          string             `json:"slug"`
+	DisplayName   string             `json:"display_name"`
+	Description   string             `json:"description"`
+	SxBot         string             `json:"sx_bot"`
+	PersonaAsset  string             `json:"persona_asset"`
+	PersonaPrompt string             `json:"persona_prompt"`
+	SlackAliases  []string           `json:"slack_aliases"`
+	Skills        []string           `json:"skills"`
+	Enabled       bool               `json:"enabled"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Conversation struct {
 	OrgID          string             `json:"org_id"`
 	ThreadID       string             `json:"thread_id"`
@@ -22,6 +53,8 @@ type Conversation struct {
 	ResponseBlocks [][]byte           `json:"response_blocks"`
 	CustomTitle    string             `json:"custom_title"`
 	CreatorID      string             `json:"creator_id"`
+	AgentSlug      string             `json:"agent_slug"`
+	Model          string             `json:"model"`
 }
 
 type GithubAppInstallation struct {

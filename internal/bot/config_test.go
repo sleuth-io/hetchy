@@ -51,7 +51,7 @@ func TestLoadConfig_AllRequiredSet(t *testing.T) {
 }
 
 func TestLoadConfig_AppliesDefaults(t *testing.T) {
-	clearEnv(t, "AUTH_BYPASS", "WEB_PORT", "DAYTONA_API_URL", "LOGOUT_RETURN_TO")
+	clearEnv(t, "AUTH_BYPASS", "WEB_PORT", "DAYTONA_API_URL", "LOGOUT_RETURN_TO", "HETCHY_SX_PUBLIC_VAULT_URL")
 	setEnv(t, requiredEnv())
 
 	cfg, err := LoadConfig()
@@ -63,6 +63,41 @@ func TestLoadConfig_AppliesDefaults(t *testing.T) {
 	}
 	if cfg.LogoutReturnTo != "http://localhost:8080/" {
 		t.Errorf("LogoutReturnTo default = %q", cfg.LogoutReturnTo)
+	}
+	if cfg.SXPublicVaultURL != DefaultSXPublicVaultURL {
+		t.Errorf("SXPublicVaultURL default = %q", cfg.SXPublicVaultURL)
+	}
+}
+
+func TestLoadConfig_SXPublicVaultOverride(t *testing.T) {
+	clearEnv(t, "AUTH_BYPASS")
+	setEnv(t, requiredEnv())
+	t.Setenv("HETCHY_SX_PUBLIC_VAULT_URL", " https://example.com/custom-vault.git ")
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.SXPublicVaultURL != "https://example.com/custom-vault.git" {
+		t.Errorf("SXPublicVaultURL override = %q", cfg.SXPublicVaultURL)
+	}
+}
+
+func TestLoadConfig_SXPublicVaultDisabled(t *testing.T) {
+	for _, value := range []string{"disabled", "off", "none", "-"} {
+		t.Run(value, func(t *testing.T) {
+			clearEnv(t, "AUTH_BYPASS")
+			setEnv(t, requiredEnv())
+			t.Setenv("HETCHY_SX_PUBLIC_VAULT_URL", " "+value+" ")
+
+			cfg, err := LoadConfig()
+			if err != nil {
+				t.Fatalf("LoadConfig: %v", err)
+			}
+			if cfg.SXPublicVaultURL != "" {
+				t.Errorf("SXPublicVaultURL disabled value = %q", cfg.SXPublicVaultURL)
+			}
+		})
 	}
 }
 

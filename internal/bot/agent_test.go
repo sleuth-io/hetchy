@@ -65,7 +65,9 @@ func TestAgentScript_EmbeddedAndWellFormed(t *testing.T) {
 		`: "${SF_BASE_BRANCH:?required}"`,
 		`: "${SF_PROMPT_B64:?required}"`,
 		"git clone",
-		"claude --print --dangerously-skip-permissions",
+		"local -a claude_args=(",
+		"--dangerously-skip-permissions",
+		`claude_args+=(--model "$HETCHY_CLAUDE_MODEL")`,
 		`if [[ -n "${SX_KEY:-}" ]]; then`,
 		"sx install",
 	}
@@ -86,7 +88,9 @@ func TestFollowupScript_EmbeddedAndWellFormed(t *testing.T) {
 		`: "${SF_PROMPT_B64:?required}"`,
 		"git fetch origin",
 		"git pull --rebase origin",
-		"claude --print --dangerously-skip-permissions",
+		"local -a claude_args=(",
+		"--dangerously-skip-permissions",
+		`claude_args+=(--model "$HETCHY_CLAUDE_MODEL")`,
 	}
 	for _, line := range requiredLines {
 		if !strings.Contains(followupScript, line) {
