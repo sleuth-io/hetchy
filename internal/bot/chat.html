@@ -207,7 +207,12 @@
               min-width: 0; }
   #composer:focus-within { border-color: #0b93f6; }
   #inp  { width: 100%; padding: .15rem .2rem; border: 0; background: transparent;
-          color: #1a1a1a; font-size: 1rem; outline: none; }
+          color: #1a1a1a; font-size: 1rem; outline: none;
+          font-family: inherit; line-height: 1.4; resize: none;
+          overflow-y: hidden; max-height: 16rem;
+          /* Match line-height so a single empty textarea renders at the same
+             height as the previous single-line input — no jump on focus. */
+          min-height: 1.4em; }
   #composer-controls { display: flex; align-items: center;
                        justify-content: space-between; gap: .75rem; }
   #composer-actions { display: flex; align-items: center; gap: .5rem; }
@@ -723,7 +728,7 @@
 <div id="log"></div>
 <div id="bar">
   <div id="composer">
-    <input id="inp" placeholder="Describe a feature, fix or refactor and hetchy will open a pr…" autofocus>
+    <textarea id="inp" rows="1" placeholder="Describe a feature, fix or refactor and hetchy will open a pr…" autofocus></textarea>
     <div id="composer-controls">
       <div id="tools-picker">
         <button id="tools-btn" type="button" aria-label="Open composer options" aria-expanded="false" title="Options">
@@ -857,7 +862,36 @@ if (isFreshChat) {
   history.replaceState(null, '', url);
 }
 
-inp.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
+// Auto-grow the textarea to fit its content. Collapsing the height to 0
+// first sidesteps a Chromium quirk where an empty textarea's scrollHeight
+// reflects the user-agent default rows rather than the actual content
+// height. CSS min-height keeps the visible element at one line.
+function autosizeInput() {
+  inp.style.height = '0px';
+  inp.style.height = inp.scrollHeight + 'px';
+  // Once content exceeds the CSS max-height the element stops growing —
+  // switch overflow back on so the user can scroll within the composer.
+  inp.style.overflowY = inp.scrollHeight > inp.clientHeight ? 'auto' : 'hidden';
+}
+inp.addEventListener('input', autosizeInput);
+// Bare Enter sends; Shift+Enter and Ctrl/Cmd+Enter insert a newline.
+inp.addEventListener('keydown', e => {
+  if (e.key !== 'Enter' || e.isComposing) return;
+  if (e.shiftKey || e.ctrlKey || e.metaKey) {
+    if (e.ctrlKey || e.metaKey) {
+      // Browsers don't insert a newline for Ctrl/Cmd+Enter by default;
+      // do it manually so the modifier behaves the same as Shift+Enter.
+      e.preventDefault();
+      const start = inp.selectionStart, end = inp.selectionEnd;
+      inp.value = inp.value.slice(0, start) + '\n' + inp.value.slice(end);
+      inp.selectionStart = inp.selectionEnd = start + 1;
+      autosizeInput();
+    }
+    return;
+  }
+  e.preventDefault();
+  send();
+});
 
 function addUserMsg(text) {
   // Replace the empty-state placeholder the first time we add a message
@@ -2252,6 +2286,7 @@ async function send() {
   const text = inp.value.trim();
   if (!text) return;
   inp.value = '';
+  autosizeInput();
   btn.disabled = true;
 
   const validateChoice = validateBox ? validateBox.checked : null;
