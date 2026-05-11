@@ -33,13 +33,13 @@ API_URL="${DAYTONA_API_URL:-https://app.daytona.io/api}"
 # at registration time and every sandbox spawned from it inherits the
 # values — the SDK's SnapshotParams used at create time has no resource
 # fields, so this is the only programmatic place to set sizing without
-# clicking through the dashboard. Tuned for Claude Code: 1 vCPU + 3 GB
-# RAM. The 3 GB RAM avoids the OOMs we saw at the CLI default of 1 GB;
-# 1 vCPU is plenty (claude is mostly I/O-bound waiting on tool results)
-# and lets us pack more concurrent sandboxes onto the same runner.
-SNAPSHOT_CPU="${SNAPSHOT_CPU:-1}"
+# clicking through the dashboard. Tuned for Claude Code: 2 vCPU + 3 GB
+# RAM + 4 GB disk. The 3 GB RAM avoids the OOMs we saw at the CLI default
+# of 1 GB, and the extra CPU/disk headroom keeps tool-heavy runs from
+# getting pinned against Daytona's default limits.
+SNAPSHOT_CPU="${SNAPSHOT_CPU:-2}"
 SNAPSHOT_MEMORY_GB="${SNAPSHOT_MEMORY_GB:-3}"
-SNAPSHOT_DISK_GB="${SNAPSHOT_DISK_GB:-3}"
+SNAPSHOT_DISK_GB="${SNAPSHOT_DISK_GB:-4}"
 
 if [[ -z "${DAYTONA_API_KEY:-}" ]]; then
   echo "ERROR: DAYTONA_API_KEY is not set. Run via 'doppler run -- $0' or export it manually." >&2

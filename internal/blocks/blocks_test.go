@@ -79,6 +79,34 @@ func TestTee_FansOut(t *testing.T) {
 	}
 }
 
+type heartbeatRecorder struct {
+	*Recorder
+	heartbeats []string
+}
+
+func (h *heartbeatRecorder) Heartbeat(title, body string) {
+	h.heartbeats = append(h.heartbeats, title+"\n"+body)
+}
+
+func TestTee_HeartbeatBypassesRecordersWhenTransportSupportsIt(t *testing.T) {
+	rec := NewRecorder(0)
+	transport := &heartbeatRecorder{Recorder: NewRecorder(0)}
+	emit := Tee(rec, transport)
+
+	hb, ok := emit.(interface{ Heartbeat(string, string) })
+	if !ok {
+		t.Fatal("tee should expose optional Heartbeat")
+	}
+	hb.Heartbeat("Still working", "Agent has been running for 1m — still in progress.")
+
+	if got := len(rec.Snapshot()); got != 0 {
+		t.Fatalf("heartbeat should not be persisted by recorder, got %d blocks", got)
+	}
+	if got := len(transport.heartbeats); got != 1 {
+		t.Fatalf("transport should receive one heartbeat, got %d", got)
+	}
+}
+
 // stampingRecorder records every (StartAt|DoneAt|FailAt) call's
 // timestamp so the tee-coordination tests below can assert all
 // wrapped emitters saw the *same* time.Time, not two

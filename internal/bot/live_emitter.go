@@ -141,6 +141,10 @@ func (e *liveEmitter) Notify(title, body string) {
 	e.oneShot(blocks.KindNotify, title, body, blocks.StatusDone)
 }
 
+func (e *liveEmitter) Heartbeat(title, body string) {
+	e.emit("heartbeat", sseEvent{Title: title, Delta: body})
+}
+
 func (e *liveEmitter) Result(title, body string) {
 	e.oneShot(blocks.KindResult, title, body, blocks.StatusDone)
 }

@@ -96,3 +96,25 @@ func TestLiveEmitter_FailIncludesEndedAt(t *testing.T) {
 		t.Fatalf("status: want %v, got %v", blocks.StatusError, payload.Status)
 	}
 }
+
+func TestLiveEmitter_HeartbeatUsesSeparateEvent(t *testing.T) {
+	run := newLiveRun()
+	e := newLiveEmitter(run)
+
+	e.Heartbeat("Still working", "Agent has been running for 1m — still in progress.")
+
+	if got := len(run.history); got != 1 {
+		t.Fatalf("want 1 event, got %d", got)
+	}
+	ev := run.history[0]
+	if ev.Event != "heartbeat" {
+		t.Fatalf("want heartbeat event, got %q", ev.Event)
+	}
+	var payload sseEvent
+	if err := json.Unmarshal(ev.Data, &payload); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if payload.Title != "Still working" || payload.Delta == "" {
+		t.Fatalf("unexpected heartbeat payload: %+v", payload)
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/hetchyhq/hetchy/internal/blocks"
 )
@@ -331,12 +332,68 @@ func toolTitle(name string, input map[string]any) string {
 			return "Subagent: " + truncate(d, 60)
 		}
 		return "Spawning subagent"
+	case "ScheduleWakeup":
+		if d := wakeupDelay(input); d != "" {
+			return "Waiting " + d + " before checking again"
+		}
+		return "Waiting before checking again"
+	case "TaskOutput":
+		return "Checking background task output"
+	case "Monitor":
+		return "Monitoring background command"
+	case "ToolSearch":
+		return "Searching available tools"
 	case "TodoWrite":
 		return "Updating todo list"
 	case "":
 		return "Tool call"
 	}
 	return "Using " + name
+}
+
+func wakeupDelay(input map[string]any) string {
+	for _, key := range []string{"delay", "duration", "interval", "wait"} {
+		if s, ok := input[key].(string); ok && strings.TrimSpace(s) != "" {
+			return strings.TrimSpace(s)
+		}
+	}
+	for _, key := range []string{"delay_seconds", "duration_seconds", "seconds"} {
+		if d := numericDuration(input[key], time.Second); d != "" {
+			return d
+		}
+	}
+	for _, key := range []string{"delay_ms", "duration_ms", "milliseconds"} {
+		if d := numericDuration(input[key], time.Millisecond); d != "" {
+			return d
+		}
+	}
+	return ""
+}
+
+func numericDuration(v any, unit time.Duration) string {
+	var n float64
+	switch x := v.(type) {
+	case float64:
+		n = x
+	case float32:
+		n = float64(x)
+	case int:
+		n = float64(x)
+	case int64:
+		n = float64(x)
+	case json.Number:
+		parsed, err := x.Float64()
+		if err != nil {
+			return ""
+		}
+		n = parsed
+	default:
+		return ""
+	}
+	if n <= 0 {
+		return ""
+	}
+	return time.Duration(n * float64(unit)).Round(time.Second).String()
 }
 
 // shortPath collapses long absolute paths to their last two segments
