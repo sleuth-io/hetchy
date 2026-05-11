@@ -363,10 +363,11 @@ func (b *Bot) extractSlackAgent(ctx context.Context, orgID, text string, cli *sl
 				return agent.Slug, rest
 			}
 		}
-		// This was an explicit leading @mention but it didn't match a
-		// configured agent. Pass the Slack user id through so the normal
-		// unknown-agent path tells the user what went wrong.
-		return m[1], rest
+		// A leading Slack user mention often means "loop this teammate in",
+		// not "route to a Hetchy agent". If the mentioned user's Slack names
+		// do not resolve to an agent, leave the message as prose instead of
+		// surfacing an opaque U... id as an unknown agent.
+		return "", text
 	}
 
 	if m := leadingAgentToken.FindStringSubmatch(text); len(m) == 2 {
@@ -390,6 +391,9 @@ func (b *Bot) extractSlackAgent(ctx context.Context, orgID, text string, cli *sl
 }
 
 func slackMentionCandidateNames(log *slog.Logger, cli *slack.Client, userID string) []string {
+	if cli == nil {
+		return nil
+	}
 	u, err := cli.GetUserInfo(userID)
 	if err != nil {
 		log.Warn("slack user lookup for agent mention failed", "user", userID, "error", err)

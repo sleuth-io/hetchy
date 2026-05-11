@@ -20,6 +20,7 @@ func TestExtractSlackAgent(t *testing.T) {
 		{"at alias", "@frontend make the page responsive", "alice", "make the page responsive"},
 		{"colon display name", "Archy: design this", "archy", "design this"},
 		{"unknown explicit", "@sally ship it", "sally", "ship it"},
+		{"unresolved slack user mention stays prose", "<@U07ABC123XYZ> can you take a look?", "", "<@U07ABC123XYZ> can you take a look?"},
 		{"unknown bare stays request", "please ship it", "", "please ship it"},
 	}
 	for _, tc := range cases {
