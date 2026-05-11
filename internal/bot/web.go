@@ -1393,6 +1393,7 @@ type conversationDetail struct {
 	CreatorID      string           `json:"creator_id,omitempty"`
 	AgentSlug      string           `json:"agent_slug,omitempty"`
 	AgentName      string           `json:"agent_name,omitempty"`
+	Model          string           `json:"model,omitempty"`
 	CreatedAt      string           `json:"created_at,omitempty"`
 	History        []string         `json:"history"`
 	ResponseBlocks [][]blocks.Block `json:"response_blocks"`
@@ -1679,6 +1680,7 @@ func (b *Bot) conversationDetailHandler(w http.ResponseWriter, r *http.Request) 
 			CreatorID:      rec.CreatorID,
 			AgentSlug:      agentSlug,
 			AgentName:      agentName,
+			Model:          string(normalizeClaudeModel(ClaudeModel(rec.Model))),
 			CreatedAt:      createdAt,
 			History:        rec.History,
 			ResponseBlocks: rec.ResponseBlocks,

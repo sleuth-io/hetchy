@@ -1,6 +1,10 @@
 package bot
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/hetchyhq/hetchy/internal/convstore"
+)
 
 func TestParseClaudeModel(t *testing.T) {
 	cases := []struct {
@@ -21,6 +25,26 @@ func TestParseClaudeModel(t *testing.T) {
 			got, ok := parseClaudeModel(tc.in)
 			if ok != tc.ok || got != tc.want {
 				t.Fatalf("parseClaudeModel(%q) = (%q, %v), want (%q, %v)", tc.in, got, ok, tc.want, tc.ok)
+			}
+		})
+	}
+}
+
+func TestModelForConversation(t *testing.T) {
+	cases := []struct {
+		name      string
+		record    convstore.Record
+		requested ClaudeModel
+		want      ClaudeModel
+	}{
+		{"pinned model wins", convstore.Record{Model: "haiku"}, ClaudeModelOpus, ClaudeModelHaiku},
+		{"empty falls back to request", convstore.Record{}, ClaudeModelSonnet, ClaudeModelSonnet},
+		{"invalid pinned normalizes to opus", convstore.Record{Model: "bad"}, ClaudeModelHaiku, ClaudeModelOpus},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := modelForConversation(tc.record, tc.requested); got != tc.want {
+				t.Fatalf("modelForConversation() = %q, want %q", got, tc.want)
 			}
 		})
 	}

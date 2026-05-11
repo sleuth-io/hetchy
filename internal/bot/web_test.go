@@ -106,6 +106,8 @@ func TestChatTemplate_ComposerControls(t *testing.T) {
 		`value: 'sonnet'`,
 		`value: 'haiku'`,
 		`model: selectedModel`,
+		`applyConversationModel(detail)`,
+		`setModelPickerLocked(true)`,
 	} {
 		if !strings.Contains(body, w) {
 			t.Errorf("chat template missing %q", w)

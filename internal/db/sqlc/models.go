@@ -54,6 +54,7 @@ type Conversation struct {
 	CustomTitle    string             `json:"custom_title"`
 	CreatorID      string             `json:"creator_id"`
 	AgentSlug      string             `json:"agent_slug"`
+	Model          string             `json:"model"`
 }
 
 type GithubAppInstallation struct {

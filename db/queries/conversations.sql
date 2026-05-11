@@ -1,6 +1,6 @@
 -- name: GetConversation :one
 SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, response_blocks,
-       github_owner, github_repo, custom_title, creator_id, agent_slug
+       github_owner, github_repo, custom_title, creator_id, agent_slug, model
 FROM conversations
 WHERE org_id = $1 AND thread_id = $2;
 
@@ -41,7 +41,7 @@ WHERE org_id = $1 AND thread_id = $2;
 -- + a GIN index on custom_title (and a generated column for
 -- history[1]).
 SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, response_blocks,
-       github_owner, github_repo, custom_title, creator_id, agent_slug
+       github_owner, github_repo, custom_title, creator_id, agent_slug, model
 FROM conversations
 WHERE org_id = $1
   AND (sqlc.arg(creator_id)::text = '' OR creator_id = sqlc.arg(creator_id))
@@ -57,9 +57,9 @@ OFFSET sqlc.arg(off);
 -- name: UpsertConversation :one
 INSERT INTO conversations (
     org_id, thread_id, sandbox_id, branch, pr_url, history, response_blocks,
-    github_owner, github_repo, creator_id, agent_slug
+    github_owner, github_repo, creator_id, agent_slug, model
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
 )
 ON CONFLICT (org_id, thread_id) DO UPDATE SET
     sandbox_id      = EXCLUDED.sandbox_id,
@@ -70,9 +70,10 @@ ON CONFLICT (org_id, thread_id) DO UPDATE SET
     github_owner    = EXCLUDED.github_owner,
     github_repo     = EXCLUDED.github_repo,
     agent_slug      = EXCLUDED.agent_slug,
+    model           = EXCLUDED.model,
     updated_at      = NOW()
 RETURNING org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, response_blocks,
-          github_owner, github_repo, custom_title, creator_id, agent_slug;
+          github_owner, github_repo, custom_title, creator_id, agent_slug, model;
 
 -- name: SaveConversationProgress :exec
 -- Periodic mid-run snapshot used by chatPersister. Only writes the

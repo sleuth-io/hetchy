@@ -1,0 +1,3 @@
+ALTER TABLE conversations
+    ADD COLUMN IF NOT EXISTS model TEXT NOT NULL DEFAULT 'opus';
+

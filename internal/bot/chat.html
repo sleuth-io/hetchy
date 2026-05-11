@@ -812,6 +812,7 @@ let selectedModel = (function () {
   } catch (e) {}
   return 'opus';
 })();
+let modelLocked = false;
 
 // Read session ID from URL (?session=...) so the page can be reloaded or
 // shared to reconnect to an existing sandbox. Generate a new one if absent.
@@ -924,19 +925,41 @@ function populateAgentPicker() {
   updateToolsButton();
 }
 
-function selectedModelLabel() {
-  const found = modelOptions.find(model => model.value === selectedModel);
+function modelLabelFor(value) {
+  const found = modelOptions.find(model => model.value === value);
   return found ? found.label : 'Opus';
+}
+
+function selectedModelLabel() {
+  return modelLabelFor(selectedModel);
 }
 
 function updateModelButton() {
   const label = selectedModelLabel();
   modelLabelEl.textContent = label;
-  modelBtn.title = 'Model: ' + label;
-  modelBtn.setAttribute('aria-label', 'Model: ' + label);
+  const suffix = modelLocked ? ' (set for this chat)' : '';
+  modelBtn.title = 'Model: ' + label + suffix;
+  modelBtn.setAttribute('aria-label', 'Model: ' + label + suffix);
+}
+
+function setModelPickerLocked(locked) {
+  modelLocked = !!locked;
+  modelBtn.disabled = modelLocked;
+  if (modelLocked) closeModelPopover();
+  updateModelButton();
+}
+
+function applyConversationModel(detail) {
+  const hasTurns = !!(detail && Array.isArray(detail.history) && detail.history.length);
+  if (detail && modelOptions.some(model => model.value === detail.model)) {
+    selectedModel = detail.model;
+    populateModelPicker();
+  }
+  setModelPickerLocked(hasTurns);
 }
 
 function chooseModel(value) {
+  if (modelLocked) return;
   if (!modelOptions.some(model => model.value === value)) return;
   selectedModel = value;
   try { localStorage.setItem(modelStorageKey, selectedModel); } catch (e) {}
@@ -1000,6 +1023,7 @@ function closeAgentPopover() {
 }
 
 function openModelPopover() {
+  if (modelLocked) return;
   modelPopover.hidden = false;
   modelBtn.setAttribute('aria-expanded', 'true');
   closeToolsPopover();
@@ -1768,10 +1792,12 @@ function setDocTitle(title) {
 function renderMetadata(detail) {
   const host = document.getElementById('meta-content');
   if (!detail) {
+    applyConversationModel(null);
     host.innerHTML = '<div class="meta-empty">No chat details yet.</div>';
     setDocTitle('');
     return;
   }
+  applyConversationModel(detail);
   setDocTitle(detail.title);
   const owner = detail.github_owner || '';
   const repo = detail.github_repo || '';
@@ -1779,6 +1805,7 @@ function renderMetadata(detail) {
   const prURL = detail.pr_url || '';
   const sandbox = detail.sandbox_id || '';
   const agent = detail.agent_name || detail.agent_slug || '';
+  const model = detail.model || '';
   const created = fmtDate(detail.created_at || detail.updated_at);
 
   const repoSlug = (owner && repo) ? owner + '/' + repo : '';
@@ -1817,6 +1844,9 @@ function renderMetadata(detail) {
     { label: 'Agent',   html: agent
         ? '<span>' + esc(agent) + '</span>'
         : '<span>—</span>', empty: !agent },
+    { label: 'Model',   html: model
+        ? '<span>' + esc(modelLabelFor(model)) + '</span>'
+        : '<span>—</span>', empty: !model },
     { label: 'Repo',    html: repoLink,                 empty: !repoSlug },
     { label: 'Branch',  html: branchLink,               empty: !branch },
     { label: 'PR',      html: prCell,                   empty: !prURL },
@@ -2184,6 +2214,7 @@ async function send() {
 
   const isFirstTurn = log.querySelectorAll('.msg').length === 0;
   addUserMsg(text);
+  if (isFirstTurn) setModelPickerLocked(true);
 
   const payload = { text, session_id: sessionId, model: selectedModel };
   if (validateChoice !== null) {

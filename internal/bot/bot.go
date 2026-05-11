@@ -355,6 +355,10 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 	}
 
 	rec, err := b.convs.Get(ctx, oc.OrgID, threadID)
+	if err == nil {
+		model = modelForConversation(rec, model)
+		rec.Model = string(model)
+	}
 	switch {
 	case err == nil && rec.SandboxID != "" && rec.PRURL != "":
 		// Live conversation — agent succeeded at least once, PR exists.
@@ -418,6 +422,7 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 			ResponseBlocks: [][]blocks.Block{recorder.Snapshot()},
 			CreatorID:      userID,
 			AgentSlug:      agent.Slug,
+			Model:          string(model),
 		}
 		if err := b.convs.Upsert(ctx, partial); err != nil {
 			b.log.Error("convstore upsert (awaiting repo)", "error", err, "org", oc.OrgID, "thread", threadID)
@@ -433,6 +438,7 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		GitHubRepo:  oc.DefaultGitHubRepo,
 		CreatorID:   userID,
 		AgentSlug:   agent.Slug,
+		Model:       string(model),
 	}
 	// Persist the row immediately — before we spend 10–30s creating the
 	// sandbox — so the LHN sidebar and /api/conversations both see this
@@ -463,6 +469,13 @@ func (b *Bot) selectAgentForConversation(ctx context.Context, orgID, pinnedSlug,
 		return agents.Profile{}, false
 	}
 	return agent, true
+}
+
+func modelForConversation(rec convstore.Record, requested ClaudeModel) ClaudeModel {
+	if strings.TrimSpace(rec.Model) != "" {
+		return normalizeClaudeModel(ClaudeModel(rec.Model))
+	}
+	return normalizeClaudeModel(requested)
 }
 
 // handleAwaitingRepoReply parses the user's reply as `owner/name`. On
@@ -496,6 +509,7 @@ func (b *Bot) handleAwaitingRepoReply(ctx context.Context, oc orgcfg.Config, rec
 	rec.GitHubOwner = owner
 	rec.GitHubRepo = name
 	rec.AgentSlug = agent.Slug
+	rec.Model = string(model)
 	originalRequest := rec.History[0]
 	b.runFreshAgent(ctx, oc, rec, agent, originalRequest, requestID, validate, model, recorder, emit)
 }
@@ -543,6 +557,7 @@ func (b *Bot) handleRetryAfterFailure(ctx context.Context, oc orgcfg.Config, rec
 	rec.History = []string{text}
 	rec.ResponseBlocks = nil
 	rec.AgentSlug = agent.Slug
+	rec.Model = string(model)
 	b.runFreshAgent(ctx, oc, rec, agent, text, requestID, validate, model, recorder, emit)
 }
 
@@ -552,6 +567,8 @@ func (b *Bot) handleRetryAfterFailure(ctx context.Context, oc orgcfg.Config, rec
 // repo-reply, and "had repo but no sandbox" paths so they all stamp
 // the row identically.
 func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, userRequest, requestID string, validate bool, model ClaudeModel, recorder *blocks.Recorder, emit blocks.Emitter) {
+	model = normalizeClaudeModel(model)
+	rec.Model = string(model)
 	repo, err := b.resolveRepo(ctx, oc.OrgID, rec.GitHubOwner, rec.GitHubRepo)
 	if err != nil {
 		b.log.Warn("resolve repo failed", "org", oc.OrgID, "owner", rec.GitHubOwner, "name", rec.GitHubRepo, "error", err)
@@ -663,8 +680,10 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 }
 
 func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, text, requestID string, model ClaudeModel, recorder *blocks.Recorder, emit blocks.Emitter) {
+	model = modelForConversation(rec, model)
 	b.log.Info("follow-up received", "org", oc.OrgID, "sandbox", rec.SandboxID, "branch", rec.Branch, "pr", rec.PRURL, "agent", agent.Slug, "model", model)
 	rec.AgentSlug = agent.Slug
+	rec.Model = string(model)
 	if agent.Slug == "" {
 		emit.Notify("Resuming", fmt.Sprintf("Resuming work on %s…", rec.PRURL))
 	} else {

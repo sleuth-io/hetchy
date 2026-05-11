@@ -27,7 +27,7 @@ func (q *Queries) DeleteConversation(ctx context.Context, arg DeleteConversation
 
 const getConversation = `-- name: GetConversation :one
 SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, response_blocks,
-       github_owner, github_repo, custom_title, creator_id, agent_slug
+       github_owner, github_repo, custom_title, creator_id, agent_slug, model
 FROM conversations
 WHERE org_id = $1 AND thread_id = $2
 `
@@ -52,6 +52,7 @@ type GetConversationRow struct {
 	CustomTitle    string             `json:"custom_title"`
 	CreatorID      string             `json:"creator_id"`
 	AgentSlug      string             `json:"agent_slug"`
+	Model          string             `json:"model"`
 }
 
 func (q *Queries) GetConversation(ctx context.Context, arg GetConversationParams) (GetConversationRow, error) {
@@ -72,6 +73,7 @@ func (q *Queries) GetConversation(ctx context.Context, arg GetConversationParams
 		&i.CustomTitle,
 		&i.CreatorID,
 		&i.AgentSlug,
+		&i.Model,
 	)
 	return i, err
 }
@@ -145,7 +147,7 @@ func (q *Queries) SaveConversationProgress(ctx context.Context, arg SaveConversa
 
 const searchConversations = `-- name: SearchConversations :many
 SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, response_blocks,
-       github_owner, github_repo, custom_title, creator_id, agent_slug
+       github_owner, github_repo, custom_title, creator_id, agent_slug, model
 FROM conversations
 WHERE org_id = $1
   AND ($2::text = '' OR creator_id = $2)
@@ -182,6 +184,7 @@ type SearchConversationsRow struct {
 	CustomTitle    string             `json:"custom_title"`
 	CreatorID      string             `json:"creator_id"`
 	AgentSlug      string             `json:"agent_slug"`
+	Model          string             `json:"model"`
 }
 
 // Backs the sidebar list. Filters by optional creator_id and an
@@ -249,6 +252,7 @@ func (q *Queries) SearchConversations(ctx context.Context, arg SearchConversatio
 			&i.CustomTitle,
 			&i.CreatorID,
 			&i.AgentSlug,
+			&i.Model,
 		); err != nil {
 			return nil, err
 		}
@@ -263,9 +267,9 @@ func (q *Queries) SearchConversations(ctx context.Context, arg SearchConversatio
 const upsertConversation = `-- name: UpsertConversation :one
 INSERT INTO conversations (
     org_id, thread_id, sandbox_id, branch, pr_url, history, response_blocks,
-    github_owner, github_repo, creator_id, agent_slug
+    github_owner, github_repo, creator_id, agent_slug, model
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
 )
 ON CONFLICT (org_id, thread_id) DO UPDATE SET
     sandbox_id      = EXCLUDED.sandbox_id,
@@ -276,9 +280,10 @@ ON CONFLICT (org_id, thread_id) DO UPDATE SET
     github_owner    = EXCLUDED.github_owner,
     github_repo     = EXCLUDED.github_repo,
     agent_slug      = EXCLUDED.agent_slug,
+    model           = EXCLUDED.model,
     updated_at      = NOW()
 RETURNING org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, response_blocks,
-          github_owner, github_repo, custom_title, creator_id, agent_slug
+          github_owner, github_repo, custom_title, creator_id, agent_slug, model
 `
 
 type UpsertConversationParams struct {
@@ -293,6 +298,7 @@ type UpsertConversationParams struct {
 	GithubRepo     string   `json:"github_repo"`
 	CreatorID      string   `json:"creator_id"`
 	AgentSlug      string   `json:"agent_slug"`
+	Model          string   `json:"model"`
 }
 
 type UpsertConversationRow struct {
@@ -310,6 +316,7 @@ type UpsertConversationRow struct {
 	CustomTitle    string             `json:"custom_title"`
 	CreatorID      string             `json:"creator_id"`
 	AgentSlug      string             `json:"agent_slug"`
+	Model          string             `json:"model"`
 }
 
 func (q *Queries) UpsertConversation(ctx context.Context, arg UpsertConversationParams) (UpsertConversationRow, error) {
@@ -325,6 +332,7 @@ func (q *Queries) UpsertConversation(ctx context.Context, arg UpsertConversation
 		arg.GithubRepo,
 		arg.CreatorID,
 		arg.AgentSlug,
+		arg.Model,
 	)
 	var i UpsertConversationRow
 	err := row.Scan(
@@ -342,6 +350,7 @@ func (q *Queries) UpsertConversation(ctx context.Context, arg UpsertConversation
 		&i.CustomTitle,
 		&i.CreatorID,
 		&i.AgentSlug,
+		&i.Model,
 	)
 	return i, err
 }
