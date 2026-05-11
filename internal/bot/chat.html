@@ -66,15 +66,25 @@
   .new-chat-btn:hover { background: #f4f4f4; border-color: #d0d0d0; }
   .new-chat-btn .plus { font-size: 1.05rem; line-height: 1; color: #888; }
   #sidebar-filter { padding: .5rem .75rem .25rem; display: flex;
-                    flex-direction: column; gap: .35rem; }
-  #user-filter { width: 100%; padding: .3rem .5rem; border: 1px solid #e5e5e5;
+                    flex-direction: row; align-items: center; gap: .35rem; }
+  #user-filter { flex: 1; min-width: 0; padding: .3rem .5rem; border: 1px solid #e5e5e5;
                  border-radius: .375rem; font-size: .8rem; font-family: inherit;
                  background: #fff; color: #333; cursor: pointer; outline: none; }
   #user-filter:focus { border-color: #0b93f6; }
-  #chat-search { width: 100%; padding: .3rem .5rem; border: 1px solid #e5e5e5;
+  #search-toggle { flex-shrink: 0; display: inline-flex; align-items: center;
+                   justify-content: center; width: 1.75rem; height: 1.75rem;
+                   padding: 0; background: none; border: 1px solid #e5e5e5;
+                   border-radius: .375rem; color: #666; cursor: pointer;
+                   line-height: 0; }
+  #search-toggle:hover { background: #f0f0f0; border-color: #d0d0d0; }
+  #sidebar-filter.is-searching #search-toggle { background: #e8f1fc;
+    border-color: #cfe2f8; color: #0b5ec0; }
+  #chat-search { flex: 1; min-width: 0; padding: .3rem .5rem; border: 1px solid #e5e5e5;
                  border-radius: .375rem; font-size: .8rem; font-family: inherit;
-                 background: #fff; color: #333; outline: none; }
+                 background: #fff; color: #333; outline: none; display: none; }
   #chat-search:focus { border-color: #0b93f6; }
+  #sidebar-filter.is-searching #user-filter { display: none; }
+  #sidebar-filter.is-searching #chat-search { display: block; }
   /* WebKit renders a built-in clear "x" inside type=search fields.
      Default cursor is the I-beam (because the field accepts text);
      this rule swaps it for a pointer so the affordance reads as a
@@ -395,6 +405,10 @@
   html.is-dark .new-chat-btn .plus { color: #9a9aa0; }
   html.is-dark #user-filter { background: #232327; border-color: #2e2e33; color: #c4c4c8; }
   html.is-dark #user-filter:focus { border-color: #7dc4ff; }
+  html.is-dark #search-toggle { border-color: #2e2e33; color: #9a9aa0; }
+  html.is-dark #search-toggle:hover { background: #2a2a2e; border-color: #3a3a40; }
+  html.is-dark #sidebar-filter.is-searching #search-toggle { background: #1a2a3a;
+    border-color: #2a4a6a; color: #7dc4ff; }
   html.is-dark #chat-search { background: #232327; border-color: #2e2e33; color: #c4c4c8; }
   html.is-dark #chat-search:focus { border-color: #7dc4ff; }
   html.is-dark #chat-search::placeholder { color: #6e6e72; }
@@ -494,6 +508,9 @@
     <select id="user-filter" aria-label="Filter chats by user">
       <option value="">All</option>
     </select>
+    <button id="search-toggle" type="button" aria-label="Search chats" title="Search chats" aria-expanded="false">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6.5" cy="6.5" r="4.5"/><line x1="10.5" y1="10.5" x2="14" y2="14"/></svg>
+    </button>
     <input id="chat-search" type="search" placeholder="Search chats…"
            aria-label="Search chats" autocomplete="off">
   </div>
@@ -1916,6 +1933,32 @@ chatSearchInput.addEventListener('input', () => {
 chatSearchInput.addEventListener('search', () => {
   if (searchDebounce) { clearTimeout(searchDebounce); searchDebounce = null; }
   applySearchValue();
+});
+
+// Search toggle — expand the search input over the user filter on click;
+// collapse (and clear) on second click or Escape.
+const searchToggle = document.getElementById('search-toggle');
+const sidebarFilter = document.getElementById('sidebar-filter');
+function openSearch() {
+  sidebarFilter.classList.add('is-searching');
+  searchToggle.setAttribute('aria-expanded', 'true');
+  chatSearchInput.focus();
+}
+function closeSearch() {
+  sidebarFilter.classList.remove('is-searching');
+  searchToggle.setAttribute('aria-expanded', 'false');
+  if (chatSearchInput.value) {
+    chatSearchInput.value = '';
+    applySearchValue();
+  }
+  searchToggle.focus();
+}
+searchToggle.addEventListener('click', () => {
+  if (sidebarFilter.classList.contains('is-searching')) closeSearch();
+  else openSearch();
+});
+chatSearchInput.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { e.stopPropagation(); closeSearch(); }
 });
 
 document.getElementById('chat-list-more-btn').addEventListener('click', loadMoreSidebar);
