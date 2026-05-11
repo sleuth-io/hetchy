@@ -163,7 +163,7 @@ func LoadConfig() (Config, error) {
 		AuthBypassEmail:        getenvDefault("AUTH_BYPASS_EMAIL", "bypass@hetchy.local"),
 		S3Bucket:               strings.TrimSpace(os.Getenv("HETCHY_S3_BUCKET")),
 		S3Region:               strings.TrimSpace(os.Getenv("HETCHY_S3_REGION")),
-		SXPublicVaultURL:       getenvDefaultTrim("HETCHY_SX_PUBLIC_VAULT_URL", DefaultSXPublicVaultURL),
+		SXPublicVaultURL:       getenvDefaultTrimAllowDisabled("HETCHY_SX_PUBLIC_VAULT_URL", DefaultSXPublicVaultURL),
 	}, nil
 }
 
@@ -174,11 +174,17 @@ func getenvDefault(key, def string) string {
 	return def
 }
 
-func getenvDefaultTrim(key, def string) string {
-	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+func getenvDefaultTrimAllowDisabled(key, def string) string {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return def
+	}
+	switch strings.ToLower(v) {
+	case "disabled", "off", "none", "-":
+		return ""
+	default:
 		return v
 	}
-	return def
 }
 
 // PublicBaseURL returns the externally-reachable base URL for the web

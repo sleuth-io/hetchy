@@ -372,16 +372,17 @@ func (b *Bot) extractSlackAgent(ctx context.Context, orgID, text string, cli *sl
 	if m := leadingAgentToken.FindStringSubmatch(text); len(m) == 2 {
 		token := m[1]
 		rest := strings.TrimSpace(text[len(m[0]):])
-		if agent, err := store.Resolve(ctx, orgID, token); err == nil {
-			return agent.Slug, rest
-		}
-		// Only treat unknown bare tokens as agent requests when the user
-		// made the routing syntax explicit with @ or ':' / ','.
+		// Only treat leading words as agent requests when the user made
+		// routing explicit with @ or ':' / ','; otherwise names like
+		// "Bob will..." stay prose.
 		prefix := m[0]
 		explicit := strings.HasPrefix(strings.TrimSpace(prefix), "@") ||
 			strings.Contains(prefix, ":") ||
 			strings.Contains(prefix, ",")
 		if explicit {
+			if agent, err := store.Resolve(ctx, orgID, token); err == nil {
+				return agent.Slug, rest
+			}
 			return token, rest
 		}
 	}

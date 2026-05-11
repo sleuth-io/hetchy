@@ -256,7 +256,7 @@ func (b *Bot) ensureBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo
 	}
 
 	emit.Notify("First-time bootstrap",
-		fmt.Sprintf("`%s` is new to Hetchy — figuring out how to run it end-to-end. This adds a few minutes to the first task; subsequent tasks reuse the result.", repo.Slug))
+		fmt.Sprintf("`%s` is new to Hetchy — figuring out how to run it end-to-end. This one-time analysis uses Opus with high effort, so it adds a few minutes to the first task; subsequent tasks reuse the result.", repo.Slug))
 
 	sessionID := "bootstrap-" + requestID
 	if err := sb.Process.CreateSession(ctx, sessionID); err != nil {

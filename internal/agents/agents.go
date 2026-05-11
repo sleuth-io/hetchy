@@ -153,6 +153,38 @@ func (s *Store) Resolve(ctx context.Context, orgID, requested string) (Profile, 
 	return Profile{}, fmt.Errorf("%w: %s", ErrNotFound, requested)
 }
 
+func (s *Store) GetBySlug(ctx context.Context, orgID, slug string) (Profile, error) {
+	slug = NormalizeSlug(slug)
+	if slug == "" {
+		return Profile{}, fmt.Errorf("%w: empty agent", ErrNotFound)
+	}
+	if s == nil || s.db == nil || orgID == "" {
+		for _, p := range FallbackProfiles() {
+			if p.Enabled && p.Slug == slug {
+				return p, nil
+			}
+		}
+		return Profile{}, fmt.Errorf("%w: %s", ErrNotFound, slug)
+	}
+	if err := s.EnsureSeeded(ctx, orgID); err != nil {
+		return Profile{}, err
+	}
+	row, err := s.db.Queries.GetAgentProfileBySlug(ctx, sqlc.GetAgentProfileBySlugParams{
+		OrgID: orgID,
+		Slug:  slug,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Profile{}, fmt.Errorf("%w: %s", ErrNotFound, slug)
+		}
+		return Profile{}, fmt.Errorf("get agent profile: %w", err)
+	}
+	if !row.Enabled {
+		return Profile{}, fmt.Errorf("%w: %s", ErrNotFound, slug)
+	}
+	return profileFromGetRow(row), nil
+}
+
 func (s *Store) Upsert(ctx context.Context, orgID string, p Profile) (Profile, error) {
 	if s == nil || s.db == nil {
 		return Profile{}, errors.New("agents: store disabled")

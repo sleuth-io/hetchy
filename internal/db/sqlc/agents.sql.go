@@ -311,6 +311,8 @@ ON CONFLICT (org_id, slug) DO UPDATE SET
     persona_prompt = EXCLUDED.persona_prompt,
     slack_aliases  = EXCLUDED.slack_aliases,
     skills         = EXCLUDED.skills,
+    -- Seeded profiles stay marked built-in even after an admin renames their
+    -- org copy; this flag records provenance and is intentionally monotonic.
     built_in       = agent_profiles.built_in OR EXCLUDED.built_in,
     enabled        = EXCLUDED.enabled,
     updated_at     = NOW()

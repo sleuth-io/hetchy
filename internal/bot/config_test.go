@@ -83,6 +83,24 @@ func TestLoadConfig_SXPublicVaultOverride(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_SXPublicVaultDisabled(t *testing.T) {
+	for _, value := range []string{"disabled", "off", "none", "-"} {
+		t.Run(value, func(t *testing.T) {
+			clearEnv(t, "AUTH_BYPASS")
+			setEnv(t, requiredEnv())
+			t.Setenv("HETCHY_SX_PUBLIC_VAULT_URL", " "+value+" ")
+
+			cfg, err := LoadConfig()
+			if err != nil {
+				t.Fatalf("LoadConfig: %v", err)
+			}
+			if cfg.SXPublicVaultURL != "" {
+				t.Errorf("SXPublicVaultURL disabled value = %q", cfg.SXPublicVaultURL)
+			}
+		})
+	}
+}
+
 func TestLoadConfig_MissingRequired(t *testing.T) {
 	clearEnv(t,
 		"AUTH_BYPASS",

@@ -1663,7 +1663,7 @@ func (b *Bot) conversationDetailHandler(w http.ResponseWriter, r *http.Request) 
 			store = agents.NewStore(nil)
 		}
 		if agentSlug != "" {
-			if agent, err := store.Resolve(r.Context(), p.OrgID, agentSlug); err == nil {
+			if agent, err := store.GetBySlug(r.Context(), p.OrgID, agentSlug); err == nil {
 				agentSlug = agent.Slug
 				agentName = agent.DisplayName
 			}

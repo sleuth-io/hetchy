@@ -37,6 +37,20 @@ func TestResolveEmptyAgent(t *testing.T) {
 	}
 }
 
+func TestGetBySlugUsesCanonicalSlugOnly(t *testing.T) {
+	store := NewStore(nil)
+	got, err := store.GetBySlug(t.Context(), "org", "bob")
+	if err != nil {
+		t.Fatalf("GetBySlug(bob): %v", err)
+	}
+	if got.Slug != "bob" {
+		t.Errorf("GetBySlug(bob) = %q, want bob", got.Slug)
+	}
+	if _, err := store.GetBySlug(t.Context(), "org", "backend"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("GetBySlug(alias) error = %v, want ErrNotFound", err)
+	}
+}
+
 func TestNormalizeSlug(t *testing.T) {
 	if got := NormalizeSlug(" Sally Backend "); got != "sally-backend" {
 		t.Errorf("NormalizeSlug = %q, want sally-backend", got)

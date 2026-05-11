@@ -15,7 +15,8 @@ func TestExtractSlackAgent(t *testing.T) {
 		wantAgent   string
 		wantCleaned string
 	}{
-		{"plain slug", "bob fix the API", "bob", "fix the API"},
+		{"plain slug stays prose", "bob fix the API", "", "bob fix the API"},
+		{"colon slug", "bob: fix the API", "bob", "fix the API"},
 		{"at alias", "@frontend make the page responsive", "alice", "make the page responsive"},
 		{"colon display name", "Archy: design this", "archy", "design this"},
 		{"unknown explicit", "@sally ship it", "sally", "ship it"},
