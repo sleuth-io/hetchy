@@ -14,6 +14,13 @@ import (
 //
 // IDs are assigned monotonically per Recorder instance. Snapshot returns
 // a deep copy safe to JSON-encode without further synchronisation.
+//
+// External callers should reach for the un-suffixed methods
+// (Start/Done/Fail). The StartAt/DoneAt/FailAt variants exist
+// primarily so a coordinating wrapper — currently the teeEmitter —
+// can sample time.Now() once and propagate the same instant to every
+// wrapped emitter, keeping the persisted Block.StartedAt aligned with
+// the timestamp the live SSE emitter sends to the browser.
 type Recorder struct {
 	mu      sync.Mutex
 	idGen   atomic.Uint64
@@ -34,6 +41,16 @@ func NewRecorder(maxKeep int) *Recorder {
 }
 
 func (r *Recorder) Start(kind Kind, title string, meta map[string]any) string {
+	return r.StartAt(kind, title, meta, time.Now().UTC())
+}
+
+// StartAt is the timestamp-injecting variant of Start. The teeEmitter
+// uses it so every wrapped emitter agrees on a single StartedAt for a
+// given block — without this, the recorder and the live SSE emitter
+// each sample time.Now() independently and can disagree at minute
+// boundaries, making the live chip and the post-reload replay chip
+// render different HH:MM values.
+func (r *Recorder) StartAt(kind Kind, title string, meta map[string]any, startedAt time.Time) string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	id := "b" + strconv.FormatUint(r.idGen.Add(1), 10)
@@ -43,7 +60,7 @@ func (r *Recorder) Start(kind Kind, title string, meta map[string]any) string {
 		Title:     title,
 		Status:    StatusStreaming,
 		Meta:      meta,
-		StartedAt: time.Now().UTC(),
+		StartedAt: startedAt,
 	}
 	r.order = append(r.order, id)
 	return id
@@ -57,16 +74,27 @@ func (r *Recorder) Append(id, delta string) {
 	}
 }
 
-func (r *Recorder) Done(id, summary string) { r.finish(id, summary, StatusDone) }
-func (r *Recorder) Fail(id, summary string) { r.finish(id, summary, StatusError) }
+func (r *Recorder) Done(id, summary string) { r.finishAt(id, summary, StatusDone, time.Now().UTC()) }
+func (r *Recorder) Fail(id, summary string) { r.finishAt(id, summary, StatusError, time.Now().UTC()) }
 
-func (r *Recorder) finish(id, summary string, status Status) {
+// DoneAt / FailAt are the timestamp-injecting variants that the
+// teeEmitter uses to keep the recorded EndedAt aligned with the
+// EndedAt the live SSE emitter sends to the browser — same rationale
+// as StartAt above.
+func (r *Recorder) DoneAt(id, summary string, endedAt time.Time) {
+	r.finishAt(id, summary, StatusDone, endedAt)
+}
+func (r *Recorder) FailAt(id, summary string, endedAt time.Time) {
+	r.finishAt(id, summary, StatusError, endedAt)
+}
+
+func (r *Recorder) finishAt(id, summary string, status Status, endedAt time.Time) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if b, ok := r.byID[id]; ok {
 		b.Status = status
 		b.Summary = summary
-		b.EndedAt = time.Now().UTC()
+		b.EndedAt = endedAt
 	}
 }
 

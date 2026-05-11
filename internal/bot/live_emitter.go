@@ -13,14 +13,20 @@ import (
 // sseEvent is the typed envelope written as the JSON payload of a
 // `data:` frame. The SSE event name (event:) is set on the wire from
 // the matching method on liveEmitter.
+//
+// StartedAt / EndedAt use `omitzero` for the same reason as
+// blocks.Block.StartedAt — see the comment there. Don't switch to
+// omitempty: it has no effect on time.Time.
 type sseEvent struct {
-	ID      string         `json:"id"`
-	Kind    blocks.Kind    `json:"kind,omitempty"`
-	Title   string         `json:"title,omitempty"`
-	Delta   string         `json:"delta,omitempty"`
-	Status  blocks.Status  `json:"status,omitempty"`
-	Summary string         `json:"summary,omitempty"`
-	Meta    map[string]any `json:"meta,omitempty"`
+	ID        string         `json:"id"`
+	Kind      blocks.Kind    `json:"kind,omitempty"`
+	Title     string         `json:"title,omitempty"`
+	Delta     string         `json:"delta,omitempty"`
+	Status    blocks.Status  `json:"status,omitempty"`
+	Summary   string         `json:"summary,omitempty"`
+	Meta      map[string]any `json:"meta,omitempty"`
+	StartedAt time.Time      `json:"started_at,omitzero"`
+	EndedAt   time.Time      `json:"ended_at,omitzero"`
 }
 
 // liveEmitter is the blocks.Emitter that writes into a liveRun. Each
@@ -48,15 +54,23 @@ func newLiveEmitter(run *liveRun) *liveEmitter {
 }
 
 func (e *liveEmitter) Start(kind blocks.Kind, title string, meta map[string]any) string {
+	return e.StartAt(kind, title, meta, time.Now().UTC())
+}
+
+// StartAt is the timestamp-injecting variant — see blocks.Recorder
+// (StartAt) and blocks.teeEmitter for the rationale (keep the live
+// chip and the post-reload replay chip in sync at minute boundaries).
+func (e *liveEmitter) StartAt(kind blocks.Kind, title string, meta map[string]any, startedAt time.Time) string {
 	id := "w" + strconv.FormatUint(e.idGen.Add(1), 10)
 	e.mu.Lock()
 	e.kinds[id] = kind
 	e.mu.Unlock()
 	e.emit("block_start", sseEvent{
-		ID:    id,
-		Kind:  kind,
-		Title: title,
-		Meta:  meta,
+		ID:        id,
+		Kind:      kind,
+		Title:     title,
+		Meta:      meta,
+		StartedAt: startedAt,
 	})
 	return id
 }
@@ -78,6 +92,10 @@ func (e *liveEmitter) Append(id, delta string) {
 }
 
 func (e *liveEmitter) Done(id, summary string) {
+	e.DoneAt(id, summary, time.Now().UTC())
+}
+
+func (e *liveEmitter) DoneAt(id, summary string, endedAt time.Time) {
 	e.mu.Lock()
 	delete(e.kinds, id)
 	e.mu.Unlock()
@@ -85,10 +103,15 @@ func (e *liveEmitter) Done(id, summary string) {
 		ID:      id,
 		Status:  blocks.StatusDone,
 		Summary: summary,
+		EndedAt: endedAt,
 	})
 }
 
 func (e *liveEmitter) Fail(id, summary string) {
+	e.FailAt(id, summary, time.Now().UTC())
+}
+
+func (e *liveEmitter) FailAt(id, summary string, endedAt time.Time) {
 	e.mu.Lock()
 	delete(e.kinds, id)
 	e.mu.Unlock()
@@ -96,6 +119,7 @@ func (e *liveEmitter) Fail(id, summary string) {
 		ID:      id,
 		Status:  blocks.StatusError,
 		Summary: summary,
+		EndedAt: endedAt,
 	})
 }
 

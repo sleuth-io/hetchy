@@ -50,6 +50,11 @@ var landingHTML []byte
 func (b *Bot) runWeb(ctx context.Context) error {
 	mux := http.NewServeMux()
 
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	})
+
 	mux.HandleFunc("/login", b.auth.LoginHandler)
 	mux.HandleFunc("/signup", b.auth.SignupHandler)
 	mux.HandleFunc("/callback", b.auth.CallbackHandler)
@@ -219,9 +224,8 @@ func (b *Bot) onboardingHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // isAdmin reports whether p holds the admin role for their current org.
-// All member-management actions gate on this; the General tab does not
-// (any member of the org can adjust org-level config — that's a
-// deliberate trust choice for the small-team workflow this app targets).
+// Member-management and all org-settings mutations gate on this; any
+// member can view settings pages but only admins can save changes.
 func isAdmin(p auth.Principal) bool { return p.Role == "admin" }
 
 func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
@@ -283,6 +287,10 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !isAdmin(p) {
+		http.Error(w, "admin role required", http.StatusForbidden)
 		return
 	}
 	if err := requireSameOrigin(r); err != nil {

@@ -47,4 +47,16 @@ dist
 scripts
 sandbox
 
+# Documentation
+docs
+
+# Local dev / editor config
+.air.toml
+.cursor
+.claude
+.oktetoignore
+okteto.yml
+state.json
+sqlc.yaml
+
 

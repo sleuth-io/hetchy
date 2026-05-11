@@ -3,6 +3,12 @@
 <head>
 <meta charset="utf-8">
 <title>Hetchy</title>
+<!-- Favicon — chunky block "H" echoing the ASCII banner shown in the
+     empty state. This is the single source of truth for the mark; JS
+     reads link.href at load to derive the badged "done" variant by
+     splicing a green dot before the closing </svg>, so the H markup
+     never has to be kept in sync between HTML and JS. -->
+<link rel="icon" type="image/svg+xml" id="favicon" href="data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2032%2032%27%3E%3Crect%20width%3D%2732%27%20height%3D%2732%27%20rx%3D%276%27%20fill%3D%27%230d1117%27%2F%3E%3Cg%20fill%3D%27%237dc4ff%27%3E%3Crect%20x%3D%276%27%20y%3D%276%27%20width%3D%276%27%20height%3D%2720%27%2F%3E%3Crect%20x%3D%2720%27%20y%3D%276%27%20width%3D%276%27%20height%3D%2720%27%2F%3E%3Crect%20x%3D%276%27%20y%3D%2714%27%20width%3D%2720%27%20height%3D%274%27%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E">
 <!-- Markdown rendering for bot blocks. DOMPurify sanitizes the HTML
      marked produces — we render server-supplied content (Claude's
      stream-json text, tool inputs/results) and never want raw HTML
@@ -317,6 +323,16 @@
                               text-overflow: ellipsis; }
   .blk > summary .blk-summary { color: #888; font-weight: 400;
                                 font-size: .75rem; flex-shrink: 0; }
+  /* Block start time + total execution duration. Both sit right of
+     the summary, kept dim and monospace-ish so the column reads as
+     metadata rather than content. The :empty rule on each lets older
+     persisted blocks predating the field render unchanged. */
+  .blk > summary .blk-time,
+  .blk > summary .blk-duration { color: #999; font-weight: 400;
+                                  font-size: .72rem; flex-shrink: 0;
+                                  font-variant-numeric: tabular-nums; }
+  .blk > summary .blk-time:empty,
+  .blk > summary .blk-duration:empty { display: none; }
   .blk-body { padding: .5rem .85rem .8rem; font-size: .88rem;
               line-height: 1.5; color: #1a1a1a; }
   .blk-body p { margin: .35rem 0; }
@@ -439,7 +455,9 @@
   html.is-dark .blk[open] { border-color: #3a3a40; }
   html.is-dark .blk > summary { color: #c4c4c8; }
   html.is-dark .blk > summary .caret,
-  html.is-dark .blk > summary .blk-summary { color: #8a8a90; }
+  html.is-dark .blk > summary .blk-summary,
+  html.is-dark .blk > summary .blk-time,
+  html.is-dark .blk > summary .blk-duration { color: #8a8a90; }
   html.is-dark .blk-body { color: #e7e7e9; }
   html.is-dark .blk-body pre { background: #1c1c1f; border-color: #2e2e33; }
   html.is-dark .blk-body code { background: #2a2a2e; }
@@ -774,6 +792,42 @@ document.addEventListener('keydown', e => {
   }
 });
 
+// formatBlockTime renders a block's started_at into a short HH:MM
+// (24-hour, local) string for the summary chip. Returns '' for a
+// missing/invalid input so callers can blindly assign the result —
+// the .blk-time:empty CSS rule hides the element entirely when no
+// time is known (e.g. an older persisted block predating the field).
+function formatBlockTime(value) {
+  if (!value) return '';
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return '';
+  const pad = n => String(n).padStart(2, '0');
+  return pad(d.getHours()) + ':' + pad(d.getMinutes());
+}
+
+// formatBlockDuration turns a (started_at, ended_at) pair into a
+// compact total-execution-time string ("420ms", "3.2s", "1m 4s",
+// "12m 30s"). Returns '' on missing/invalid input or a non-positive
+// delta — the .blk-duration:empty CSS rule then hides the chip.
+function formatBlockDuration(startedAt, endedAt) {
+  if (!startedAt || !endedAt) return '';
+  const a = new Date(startedAt).getTime();
+  const b = new Date(endedAt).getTime();
+  if (isNaN(a) || isNaN(b)) return '';
+  const ms = b - a;
+  if (ms < 0) return '';
+  if (ms < 1000) return ms + 'ms';
+  const totalSec = Math.round(ms / 1000);
+  if (totalSec < 60) {
+    // sub-minute: show one decimal so 3.2s reads sharper than 3s.
+    const s = (ms / 1000).toFixed(1).replace(/\.0$/, '');
+    return s + 's';
+  }
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return s === 0 ? m + 'm' : m + 'm ' + s + 's';
+}
+
 // Per-kind icon glyphs shown in the collapsed summary. Spinner takes
 // over when a block is streaming, so this is just the resting icon.
 const BLK_ICON = {
@@ -832,15 +886,20 @@ function renderBlock(turn, block, opts) {
                  + (block.status === 'error' ? ' blk-kind-error' : '');
   if (open) el.open = true;
   el.dataset.blockId = block.id;
+  el.dataset.startedAt = block.started_at || '';
   el.id = 'block-' + block.id;
   el.innerHTML = '<summary>'
     + '<span class="caret">▶</span>'
     + '<span class="blk-icon"><span>' + (BLK_ICON[block.kind] || '•') + '</span></span>'
     + '<span class="blk-title"></span>'
     + '<span class="blk-summary"></span>'
+    + '<span class="blk-time"></span>'
+    + '<span class="blk-duration"></span>'
     + '</summary><div class="blk-body"></div>';
   el.querySelector('.blk-title').textContent = block.title || '';
   el.querySelector('.blk-summary').textContent = block.summary || '';
+  el.querySelector('.blk-time').textContent = formatBlockTime(block.started_at);
+  el.querySelector('.blk-duration').textContent = formatBlockDuration(block.started_at, block.ended_at);
   if (!isToolUse) {
     el.querySelector('.blk-body').innerHTML = renderMarkdown(block.body || '');
   }
@@ -863,7 +922,7 @@ function renderBlock(turn, block, opts) {
 // without a leading prose chunk). The body holds two regions: a
 // .phase-prose block that streams the rest of the paragraph, and a
 // .phase-tools wrapper that subsequent tool_uses are appended into.
-function openPhase(turn, headerTitle) {
+function openPhase(turn, headerTitle, startedAt) {
   const el = document.createElement('details');
   el.className = 'blk blk-kind-phase blk-streaming';
   el.open = true;
@@ -872,6 +931,8 @@ function openPhase(turn, headerTitle) {
     + '<span class="blk-icon"><span>' + BLK_ICON.phase + '</span></span>'
     + '<span class="blk-title"></span>'
     + '<span class="blk-summary"></span>'
+    + '<span class="blk-time"></span>'
+    + '<span class="blk-duration"></span>'
     + '</summary>'
     + '<div class="blk-body">'
     +   '<div class="phase-prose"></div>'
@@ -881,23 +942,43 @@ function openPhase(turn, headerTitle) {
     el,
     titleEl: el.querySelector('.blk-title'),
     summaryEl: el.querySelector('.blk-summary'),
+    durationEl: el.querySelector('.blk-duration'),
     proseEl: el.querySelector('.phase-prose'),
     toolsEl: el.querySelector('.phase-tools'),
     proseRaw: '',
     toolCount: 0,
     titleLocked: false,
     proseRenderQueued: false,
+    startedAt: startedAt || '',
   };
   phase.titleEl.textContent = headerTitle || 'Working';
+  el.querySelector('.blk-time').textContent = formatBlockTime(startedAt);
   if (headerTitle) phase.titleLocked = true;
   turn.appendChild(el);
   return phase;
 }
 
+// SERVER_CLOCK_NOTE: every duration chip is computed from a pair of
+// server-stamped (started_at, ended_at) values that came over the
+// SSE wire or out of the persisted blocks. We deliberately do NOT
+// fall back to the browser clock for the missing endpoint — a laptop
+// that just resumed from sleep, or a VM with bad NTP, would otherwise
+// paint a duration tens of minutes off (or get clamped to '' by
+// formatBlockDuration when the delta goes negative). Better to hide
+// the chip than show a wrong number.
+
 // closePhase collapses the phase and updates its right-hand summary
 // with the step count so the user sees "5 steps" once it's done.
 // Idempotent — safe to call on a phase that's already closed.
-function closePhase(phase) {
+//
+// endedAt (optional) drives the total-execution-time chip. Callers
+// should pass a server-stamped value: replay uses the trailing tool's
+// ended_at, live uses the started_at of whatever event is closing
+// the phase (next block_start). When neither is available — e.g. the
+// SSE stream dropped before a terminal frame — the chip is left empty
+// rather than synthesising one from the browser clock (see
+// SERVER_CLOCK_NOTE above).
+function closePhase(phase, endedAt) {
   if (!phase || phase._closed) return;
   phase._closed = true;
   phase.el.classList.remove('blk-streaming');
@@ -906,6 +987,9 @@ function closePhase(phase) {
     phase.summaryEl.textContent = phase.toolCount === 1
       ? '1 step'
       : phase.toolCount + ' steps';
+  }
+  if (phase.durationEl && phase.startedAt && endedAt) {
+    phase.durationEl.textContent = formatBlockDuration(phase.startedAt, endedAt);
   }
 }
 
@@ -953,26 +1037,27 @@ function finishPhaseProse(phase) {
 }
 
 // addToolToPhase renders a tool_use one-liner inside the supplied
-// phase. Mirrors the standalone tool_use rendering in renderBlock so
-// the row looks identical whether or not it's inside a phase; this
-// is what keeps the visual treatment consistent across rows that
-// happen to be standalone (no preceding prose) and rows inside a
-// phase.
+// phase. The phase header carries the start-time chip for the whole
+// group, so individual step rows omit it — only the duration chip
+// remains, which is per-step useful (e.g. "287 lines / 1.2s").
 function addToolToPhase(phase, payload) {
   const el = document.createElement('details');
   el.className = 'blk blk-kind-tool_use'
                  + (payload.status === 'streaming' ? ' blk-streaming' : '')
                  + (payload.status === 'error' ? ' blk-kind-error' : '');
   el.dataset.blockId = payload.id;
+  el.dataset.startedAt = payload.started_at || '';
   el.id = 'block-' + payload.id;
   el.innerHTML = '<summary>'
     + '<span class="caret">▶</span>'
     + '<span class="blk-icon"><span>' + BLK_ICON.tool_use + '</span></span>'
     + '<span class="blk-title"></span>'
     + '<span class="blk-summary"></span>'
+    + '<span class="blk-duration"></span>'
     + '</summary><div class="blk-body"></div>';
   el.querySelector('.blk-title').textContent = payload.title || '';
   el.querySelector('.blk-summary').textContent = payload.summary || '';
+  el.querySelector('.blk-duration').textContent = formatBlockDuration(payload.started_at, payload.ended_at);
   el.querySelector('summary').addEventListener('click', e => e.preventDefault());
   phase.toolsEl.appendChild(el);
   phase.toolCount++;
@@ -1008,13 +1093,19 @@ function scheduleBlockRender(el) {
   });
 }
 
-function finishBlock(el, status, summary) {
+function finishBlock(el, status, summary, endedAt) {
   if (!el) return;
   el.classList.remove('blk-streaming');
   const summaryEl = el.querySelector('.blk-summary');
   if (summary && summaryEl) summaryEl.textContent = summary;
   if (status === 'error') {
     el.classList.add('blk-kind-error');
+  }
+  const durationEl = el.querySelector('.blk-duration');
+  const startedAt = el.dataset.startedAt;
+  if (durationEl && startedAt && endedAt) {
+    // Server-stamped only — see SERVER_CLOCK_NOTE near closePhase.
+    durationEl.textContent = formatBlockDuration(startedAt, endedAt);
   }
   // Force a final render so any pending deltas land before the block
   // is collapsed by the next block_start (a collapsed block skips its
@@ -1298,10 +1389,13 @@ async function fetchSidebarPage(offset) {
 }
 
 // loadSidebar refreshes the sidebar from page 0 — used on init, on
-// filter/search changes, and after every send() so a just-finished
-// turn floats to the top. Resets sidebarItems before re-rendering so
-// stale rows from a wider previous query don't linger underneath the
-// new (potentially shorter) result set.
+// filter/search changes, and after every send() so a brand-new chat's
+// row (and any server-side title update) shows up without a manual
+// reload. Order is by creation time, newest first, so existing rows
+// keep their slot when their conversation gets a new turn and a
+// brand-new chat lands at the top of page 0. Resets sidebarItems
+// before re-rendering so stale rows from a wider previous query
+// don't linger underneath the new (potentially shorter) result set.
 //
 // Stale-response handling: a fast typist can fire several searches
 // in quick succession; we never block them, but we discard responses
@@ -1412,6 +1506,15 @@ function encodeBranchPath(b) {
   return b.split('/').map(encodeURIComponent).join('/');
 }
 
+// setDocTitle keeps the browser tab title in sync with the current
+// chat. With multiple chats open in tabs, "Hetchy" everywhere makes
+// the tab strip useless — surfacing the chat title disambiguates them
+// without forcing the user to hover for the URL preview.
+function setDocTitle(title) {
+  const t = (title || '').trim();
+  document.title = t ? t + ' — Hetchy' : 'Hetchy';
+}
+
 // renderMetadata paints the right-hand sidebar from a conversationDetail
 // JSON shape (the same payload loadHistory consumes). Re-entrant —
 // safe to call any time the source data changes (e.g. when a live SSE
@@ -1420,8 +1523,10 @@ function renderMetadata(detail) {
   const host = document.getElementById('meta-content');
   if (!detail) {
     host.innerHTML = '<div class="meta-empty">No chat details yet.</div>';
+    setDocTitle('');
     return;
   }
+  setDocTitle(detail.title);
   const owner = detail.github_owner || '';
   const repo = detail.github_repo || '';
   const branch = detail.branch || '';
@@ -1556,25 +1661,31 @@ async function loadHistory(opts) {
       // sequence. The streamed turn paints the same phase boxes as
       // it goes; replay does it in one shot from the recorded list.
       let phase = null;
+      // Track the trailing tool's ended_at within a phase so the
+      // collapsed phase shows a duration that spans prose start →
+      // last tool finish, matching the live view's elapsed-time feel.
+      let phaseLastEndedAt = '';
       for (const b of blocks) {
         if (b.kind === 'claude_text') {
-          if (phase) closePhase(phase);
-          phase = openPhase(turn, b.title);
+          if (phase) closePhase(phase, phaseLastEndedAt || b.ended_at);
+          phase = openPhase(turn, b.title, b.started_at);
           phase.proseRaw = b.body || '';
           phase.proseEl.innerHTML = renderMarkdown(phase.proseRaw);
+          phaseLastEndedAt = b.ended_at || '';
         } else if (b.kind === 'tool_use') {
-          if (!phase) phase = openPhase(turn, '');
+          if (!phase) phase = openPhase(turn, '', b.started_at);
           addToolToPhase(phase, {
             id: b.id, title: b.title, summary: b.summary,
-            status: b.status,
+            status: b.status, started_at: b.started_at, ended_at: b.ended_at,
           });
+          if (b.ended_at) phaseLastEndedAt = b.ended_at;
         } else {
-          if (phase) { closePhase(phase); phase = null; }
+          if (phase) { closePhase(phase, phaseLastEndedAt); phase = null; phaseLastEndedAt = ''; }
           const open = isLastTurn && (b.kind === 'result' || b.kind === 'error');
           renderBlock(turn, b, { open });
         }
       }
-      if (phase) closePhase(phase);
+      if (phase) closePhase(phase, phaseLastEndedAt);
     }
     // Honour #block-<id> deep links by expanding + scrolling to the
     // referenced block.
@@ -1589,6 +1700,55 @@ async function loadHistory(opts) {
     // Leave the log empty on error; the user can still type a message.
   }
 }
+
+// Favicon swap — keeps a "ready" badge on the tab while the user is
+// elsewhere. The H mark lives only in the static <link> in <head>; we
+// read its href as the idle variant and splice a green dot into the
+// URL-encoded data URL (right before the encoded "</svg>") to build
+// the badged variant. One copy of the markup, no drift risk.
+// Case-insensitive match on the closing tag because the URL spec
+// doesn't pin percent-encoding casing — a future browser or tooling
+// pass that lowercases hex digits would otherwise silently no-op the
+// replace and leave FAVICON_DONE === FAVICON_IDLE. The post-replace
+// warn surfaces any other breakage (e.g. the source SVG losing its
+// closing tag) instead of letting the badge just stop appearing.
+// Defined above consumeSSEResponse so the call site's dependency on
+// FAVICON_DONE is lexical, not just hoisted-and-lucky.
+const FAVICON_IDLE = (document.getElementById('favicon') || {}).href || '';
+const FAVICON_DONE = FAVICON_IDLE.replace(
+  /%3C%2Fsvg%3E/i,
+  // encodeURIComponent leaves single quotes untouched (they're "mark"
+  // characters per RFC 2396), but the static <link> href has its
+  // quotes URL-encoded as %27 — post-process so the spliced fragment
+  // matches the surrounding encoding instead of producing a hybrid.
+  (m) => encodeURIComponent("<circle cx='24' cy='8' r='7' fill='#22c55e' stroke='#0d1117' stroke-width='2'/>").replace(/'/g, '%27') + m
+);
+if (FAVICON_IDLE && FAVICON_DONE === FAVICON_IDLE) {
+  console.warn('Favicon badge build failed: closing </svg> not found in favicon href');
+}
+// Tracks whether the favicon currently shows the "done" badge, so we
+// only rewrite link.href on visibilitychange when something actually
+// needs to change — avoids a re-decode on every tab focus.
+let faviconBadged = false;
+function setFaviconHref(href) {
+  const link = document.getElementById('favicon');
+  if (link) link.href = href;
+}
+function signalTurnDone() {
+  if (document.hidden) {
+    setFaviconHref(FAVICON_DONE);
+    faviconBadged = true;
+  }
+}
+// Clear the badge as soon as the user looks at the tab again. Using
+// visibilitychange (not focus) so switching browser windows without
+// changing tabs doesn't keep the badge stuck on.
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && faviconBadged) {
+    setFaviconHref(FAVICON_IDLE);
+    faviconBadged = false;
+  }
+});
 
 // consumeSSEResponse reads a server-sent-event stream from `res` and
 // renders blocks into a fresh bot turn. Used by both the original
@@ -1617,12 +1777,26 @@ async function consumeSSEResponse(res, onFirstEvent) {
   // standalone block (setup/notify/result/error) starts and closes
   // it.
   let currentPhase = null;
+  // phaseLastEndedAt mirrors the replay-path field: the server-
+  // stamped ended_at of the trailing tool/prose block in the
+  // currently-open phase, used as the phase's closing instant so the
+  // collapsed phase shows a duration even though the wire has no
+  // explicit "phase_done" frame. Reset whenever currentPhase resets.
+  // Server-stamped only — never use the browser clock here (see
+  // SERVER_CLOCK_NOTE in this file).
+  let phaseLastEndedAt = '';
   // lastStandaloneEl is the most recently rendered standalone block
   // (setup, notify, result, error). When the *next* block of any
   // kind starts, we collapse this one so the user always sees the
   // freshest activity expanded — e.g. the long Sandbox setup body
   // tucks itself away when Claude starts streaming its first phase.
   let lastStandaloneEl = null;
+  // Set to true once a terminal standalone block (result/error) is
+  // observed on the wire. Used to gate signalTurnDone() so a network
+  // blip or premature stream close doesn't leave a misleading "ready"
+  // badge on a hidden tab when the turn is actually still running or
+  // disconnected.
+  let sawTurnEnd = false;
 
   const reader = res.body.getReader();
   const dec = new TextDecoder();
@@ -1666,32 +1840,45 @@ async function consumeSSEResponse(res, onFirstEvent) {
         if (payload.kind === 'claude_text') {
           // A new prose chunk starts a fresh phase: collapse the prior
           // phase (if any) and open a new box with this paragraph as
-          // the header.
-          if (currentPhase) closePhase(currentPhase);
-          currentPhase = openPhase(turn, payload.title);
+          // the header. The new block's started_at is a server-stamped
+          // upper bound for when the prior phase ended, so we pass it
+          // through (preferring the trailing tool's ended_at when we
+          // saw one).
+          if (currentPhase) closePhase(currentPhase, phaseLastEndedAt || payload.started_at);
+          currentPhase = openPhase(turn, payload.title, payload.started_at);
+          phaseLastEndedAt = '';
           blockRefs.set(payload.id, { kind: 'phase-prose', phase: currentPhase });
         } else if (payload.kind === 'tool_use') {
           // Tool calls go inside the current phase; if no phase is
           // open (Claude jumped straight to tools without prose),
           // open one with a generic title so the visual treatment
           // stays consistent.
-          if (!currentPhase) currentPhase = openPhase(turn, '');
+          if (!currentPhase) {
+            currentPhase = openPhase(turn, '', payload.started_at);
+            phaseLastEndedAt = '';
+          }
           const el = addToolToPhase(currentPhase, payload);
           blockRefs.set(payload.id, { kind: 'tool', el, phase: currentPhase });
         } else {
           // Standalone block (setup, notify, result, error) — these
           // aren't part of a phase. Close any open phase first so the
-          // step count stamps correctly, then render normally.
+          // step count stamps correctly, then render normally. The
+          // standalone's started_at bounds the phase end on the
+          // server clock when we don't have a tool's ended_at yet.
           if (currentPhase) {
-            closePhase(currentPhase);
+            closePhase(currentPhase, phaseLastEndedAt || payload.started_at);
             currentPhase = null;
+            phaseLastEndedAt = '';
           }
           const el = renderBlock(turn, {
             id: payload.id, kind: payload.kind, title: payload.title,
-            body: '', status: 'streaming',
+            body: '', status: 'streaming', started_at: payload.started_at,
           }, { open: true });
           blockRefs.set(payload.id, { kind: 'standalone', el });
           lastStandaloneEl = el;
+          if (payload.kind === 'result' || payload.kind === 'error') {
+            sawTurnEnd = true;
+          }
         }
         log.scrollTop = log.scrollHeight;
       } else if (event === 'block_append') {
@@ -1708,10 +1895,18 @@ async function consumeSSEResponse(res, onFirstEvent) {
         if (!ref) continue;
         if (ref.kind === 'phase-prose') {
           finishPhaseProse(ref.phase);
+          // The phase prose's own ended_at is also a valid lower
+          // bound for the phase-close instant when no tools follow.
+          if (payload.ended_at && ref.phase === currentPhase) {
+            phaseLastEndedAt = payload.ended_at;
+          }
         } else if (ref.kind === 'tool') {
-          finishBlock(ref.el, payload.status, payload.summary);
+          finishBlock(ref.el, payload.status, payload.summary, payload.ended_at);
+          if (payload.ended_at && ref.phase === currentPhase) {
+            phaseLastEndedAt = payload.ended_at;
+          }
         } else if (ref.kind === 'standalone') {
-          finishBlock(ref.el, payload.status, payload.summary);
+          finishBlock(ref.el, payload.status, payload.summary, payload.ended_at);
         }
       }
     }
@@ -1719,7 +1914,18 @@ async function consumeSSEResponse(res, onFirstEvent) {
   // The SSE stream closed. Idempotent close for any phase that
   // didn't receive a terminal block to push it closed (defensive —
   // a dropped connection should still produce a clean final state).
-  if (currentPhase) closePhase(currentPhase);
+  // We pass phaseLastEndedAt (server-stamped, possibly empty) so the
+  // duration chip stays empty rather than synthesising one from the
+  // browser clock (see SERVER_CLOCK_NOTE).
+  if (currentPhase) closePhase(currentPhase, phaseLastEndedAt);
+  // GitHub-style tab indicator: if the user navigated away while
+  // Hetchy was working, badge the favicon so the just-finished turn
+  // is visible in their tab bar. We only paint the badge when the
+  // tab is hidden — if they're actively watching the page they
+  // already see the result land, and a flash-then-clear would just
+  // be noise. Gated on sawTurnEnd so a dropped/aborted stream doesn't
+  // produce a misleading "ready" indicator on a still-running turn.
+  if (sawTurnEnd) signalTurnDone();
 }
 
 async function send() {
@@ -1760,8 +1966,10 @@ async function send() {
   await consumeSSEResponse(res, isFirstTurn ? () => { loadSidebar(); refreshMetadata(); } : null);
   btn.disabled = false;
   inp.focus();
-  // Refresh the sidebar after every turn so the row's title (server-side)
-  // and ordering (newest activity first) reflect the just-completed turn.
+  // Refresh the sidebar after every turn so the row's title (derived
+  // server-side from the first user message) reflects the just-completed
+  // turn. Ordering is by created_at DESC, so existing rows keep their slot
+  // and a brand-new chat appears at the top of page 0 on the first reload.
   loadSidebar();
   // Metadata may have changed too — branch + PR URL only land at the
   // end of the first turn, and the agent can re-base subsequent turns.

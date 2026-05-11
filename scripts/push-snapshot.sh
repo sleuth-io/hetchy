@@ -100,7 +100,7 @@ wait_until_active() {
 }
 
 if $is_local; then
-  echo "→ local Daytona OSS detected; docker push + API register"
+  echo "→ self-hosted/local Daytona detected; docker push + API register"
   docker tag "$SNAPSHOT_NAME:$SNAPSHOT_TAG" "$LOCAL_REGISTRY_HOST_PORT/$SNAPSHOT_NAME:$SNAPSHOT_TAG"
   docker push "$LOCAL_REGISTRY_HOST_PORT/$SNAPSHOT_NAME:$SNAPSHOT_TAG"
   echo

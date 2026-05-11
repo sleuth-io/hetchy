@@ -55,9 +55,15 @@ func (e *captureEmitter) Start(kind blocks.Kind, title string, _ map[string]any)
 func (e *captureEmitter) Append(id, delta string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if idx, ok := e.open[id]; ok {
-		e.Blocks[idx].Body.WriteString(delta)
+	idx, ok := e.open[id]
+	if !ok {
+		// Append after Done/Fail is a contract violation — the production
+		// teeEmitter would corrupt its idMap. Panic so tests that rely on
+		// correct ordering (e.g. the heartbeat-race test) catch regressions
+		// deterministically without needing -race to trigger a data race.
+		panic("captureEmitter: Append after Done/Fail for id " + id)
 	}
+	e.Blocks[idx].Body.WriteString(delta)
 }
 
 func (e *captureEmitter) Done(id, summary string) {
@@ -66,6 +72,7 @@ func (e *captureEmitter) Done(id, summary string) {
 	if idx, ok := e.open[id]; ok {
 		e.Blocks[idx].Status = blocks.StatusDone
 		e.Blocks[idx].Summary = summary
+		e.recordOneShotLocked(idx)
 		delete(e.open, id)
 	}
 }
@@ -76,8 +83,21 @@ func (e *captureEmitter) Fail(id, summary string) {
 	if idx, ok := e.open[id]; ok {
 		e.Blocks[idx].Status = blocks.StatusError
 		e.Blocks[idx].Summary = summary
+		e.recordOneShotLocked(idx)
 		delete(e.open, id)
 	}
+}
+
+// recordOneShotLocked surfaces a finished notify/result/error block in
+// the Calls list so tests that grep on Calls keep working when the
+// tee dispatches via Start+Append+Done rather than the wrapped
+// emitter's own Notify/Result/Error helper. Caller holds e.mu.
+func (e *captureEmitter) recordOneShotLocked(idx int) {
+	b := &e.Blocks[idx]
+	if b.Kind != blocks.KindNotify && b.Kind != blocks.KindResult && b.Kind != blocks.KindError {
+		return
+	}
+	e.Calls = append(e.Calls, string(b.Kind)+":"+b.Title+"|"+b.Body.String())
 }
 
 func (e *captureEmitter) record(kind, title, body string) {

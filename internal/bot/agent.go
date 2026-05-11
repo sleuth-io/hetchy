@@ -53,6 +53,9 @@ var agentScript = claudeWatchdogScript + "\n" + agentScriptBody
 
 var followupScript = claudeWatchdogScript + "\n" + followupScriptBody
 
+// The no-hard-wrap rule on bullet 5 also covers the Validation section
+// appended by bootstrap.MergeIntoAgentPrompt — see the matching note at
+// internal/bootstrap/validate.go:121.
 const agentPromptTemplate = `You are working inside a fresh sandbox. The repo %s has been cloned
 to %s and %s is checked out. Your task is the user request below.
 
@@ -64,10 +67,8 @@ When you are done implementing the change:
   2. Run ` + "`make format`" + ` to format the code.
   3. Stage and commit your changes with a clear message.
   4. Push the branch to origin (gh CLI is already authenticated).
-  5. Open a pull request against %s with ` + "`gh pr create`" + `, giving it a
-     clear title and a markdown body describing what changed and why.
-  6. The very last line of your output MUST be just the PR URL — no other
-     text on that line.`
+  5. Open a pull request against %s with ` + "`gh pr create`" + `, giving it a clear title and a markdown body describing what changed and why. Write each paragraph or bullet of the PR body as one long line — do NOT insert hard line breaks; let GitHub reflow the text for the reader's viewport.
+  6. The very last line of your output MUST be just the PR URL — no other text on that line.`
 
 const agentFollowUpPromptTemplate = `You are continuing work in %s on branch %s.
 The pull request is at %s.
@@ -84,8 +85,8 @@ When you are done implementing the change:
   3. Push the branch to origin — the PR will update automatically.
   4. DO NOT update the PR title — it should remain consistent with the original
      user request shown in "Conversation so far" above, not this latest change.
-  5. The very last line of your output MUST be just the PR URL — no other
-     text on that line.`
+  5. If you edit the PR body (e.g. to add a Validation section), write each paragraph or bullet as one long line — do NOT insert hard line breaks; let GitHub reflow the text for the reader's viewport.
+  6. The very last line of your output MUST be just the PR URL — no other text on that line.`
 
 // repoCtx carries the resolved per-request repository details into the
 // sandbox: the slug "owner/name", the default branch the agent should
@@ -406,7 +407,7 @@ func (b *Bot) runInlineScript(ctx context.Context, sb *daytona.Sandbox, sessionI
 	scriptPath := "/tmp/sf-" + label + ".sh"
 	body := strings.TrimRight(scriptBody, "\n")
 	writeCmd := heredocWriteCmd(scriptPath, body, true)
-	if _, err := b.shLines(ctx, sb, sessionID, label+"-write", writeCmd, 30*time.Second, func(string) {}); err != nil {
+	if _, err := b.shLines(ctx, sb.ID, sb.Process, sessionID, label+"-write", writeCmd, 30*time.Second, 0, func(string) {}); err != nil {
 		return fmt.Errorf("write %s: %w", label, err)
 	}
 
@@ -422,7 +423,7 @@ func (b *Bot) runInlineScript(ctx context.Context, sb *daytona.Sandbox, sessionI
 	runCmd := prefix.String() + "bash " + scriptPath
 
 	router := newBootstrapLineRouter(emit)
-	if _, err := b.shLines(ctx, sb, sessionID, label+"-run", runCmd, 5*time.Minute, router.Line); err != nil {
+	if _, err := b.shLines(ctx, sb.ID, sb.Process, sessionID, label+"-run", runCmd, 5*time.Minute, 0, router.Line); err != nil {
 		router.Fail(label + " failed")
 		return fmt.Errorf("run %s: %w", label, err)
 	}
@@ -557,7 +558,7 @@ func (b *Bot) runScript(ctx context.Context, sb *daytona.Sandbox, sessionID, lab
 	scriptPath := "/tmp/sf-" + label + ".sh"
 	body := strings.TrimRight(scriptBody, "\n")
 	writeCmd := heredocWriteCmd(scriptPath, body, true)
-	if _, err := b.shLines(ctx, sb, sessionID, "write-script", writeCmd, 15*time.Second, func(string) {}); err != nil {
+	if _, err := b.shLines(ctx, sb.ID, sb.Process, sessionID, "write-script", writeCmd, 15*time.Second, 0, func(string) {}); err != nil {
 		return "", err
 	}
 
@@ -573,8 +574,13 @@ func (b *Bot) runScript(ctx context.Context, sb *daytona.Sandbox, sessionID, lab
 	}
 	runCmd := prefix.String() + "bash " + scriptPath
 
+	// Heartbeat: emit a "still working" block every 5 minutes so the
+	// user knows the agent is alive during long runs.
+	stop := startHeartbeat(ctx, emit, "Still working", "Agent has been running for %v — still in progress.")
+	defer stop()
+
 	router := newAgentLineRouter(emit)
-	if _, err := b.shLines(ctx, sb, sessionID, "run-script", runCmd, 20*time.Minute, router.Line); err != nil {
+	if _, err := b.shLines(ctx, sb.ID, sb.Process, sessionID, "run-script", runCmd, 45*time.Minute, 15*time.Minute, router.Line); err != nil {
 		router.Abort()
 		return "", err
 	}

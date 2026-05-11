@@ -90,6 +90,10 @@ func (b *Bot) slackInstallHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	if !isAdmin(p) {
+		http.Error(w, "admin role required", http.StatusForbidden)
+		return
+	}
 
 	// Cookie + state share the same random nonce. The callback
 	// requires both to match — captured/leaked state alone is useless

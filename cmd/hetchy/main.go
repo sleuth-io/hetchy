@@ -9,7 +9,9 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/joho/godotenv"
 
 	"github.com/hetchyhq/hetchy/db/migrations"
@@ -46,6 +48,7 @@ func main() {
 
 	level := parseLogLevel(os.Getenv("LOG_LEVEL"))
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
+	slog.SetDefault(log)
 	log.Info("hetchy starting",
 		"version", buildinfo.Version,
 		"commit", buildinfo.Commit,
@@ -80,6 +83,37 @@ func main() {
 	}
 }
 
+// waitForDB retries a TCP ping against databaseURL until it succeeds or the
+// deadline is exceeded. It is used by the migration path so the one-shot
+// container survives a slow Postgres start without an immediate failure.
+func waitForDB(ctx context.Context, log *slog.Logger, databaseURL string) error {
+	const (
+		maxWait     = 60 * time.Second
+		initialWait = 2 * time.Second
+		maxDelay    = 16 * time.Second
+	)
+	ctx, cancel := context.WithTimeout(ctx, maxWait)
+	defer cancel()
+
+	delay := initialWait
+	var lastErr error
+	for attempt := 1; ; attempt++ {
+		conn, err := pgx.Connect(ctx, databaseURL)
+		if err == nil {
+			_ = conn.Close(ctx)
+			return nil
+		}
+		lastErr = err
+		log.Warn("database not ready, retrying", "attempt", attempt, "delay", delay, "error", err)
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("database did not become ready within %s: %w", maxWait, lastErr)
+		case <-time.After(delay):
+		}
+		delay = min(delay*2, maxDelay)
+	}
+}
+
 // runMigrate handles --migrate / --migrate-down / --migrate-status without
 // pulling in the rest of the bot's config (which requires WorkOS keys etc.).
 // Only DATABASE_URL is needed.
@@ -88,6 +122,15 @@ func runMigrate(log *slog.Logger, up bool, down int, status bool) {
 	if url == "" {
 		log.Error("DATABASE_URL is required for migrations")
 		os.Exit(1)
+	}
+
+	// --migrate-down is a manual recovery operation; skipping waitForDB lets
+	// the operator see the connection error immediately rather than waiting 60s.
+	if up || status {
+		if err := waitForDB(context.Background(), log, url); err != nil {
+			log.Error("database unavailable", "error", err)
+			os.Exit(1)
+		}
 	}
 
 	switch {

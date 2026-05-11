@@ -18,6 +18,22 @@ WHERE org_id = $1 AND thread_id = $2;
 -- '%', '_' and '\' in the user-typed query so they read as
 -- literals instead of pattern metacharacters.
 --
+-- Ordering is by created_at descending (newest first) so a chat's
+-- position in the sidebar stays stable as new turns land — replying
+-- to an old chat never reshuffles the list, and a brand-new chat
+-- lands on page 0 where the sidebar's offset=0 reload will see it.
+-- thread_id breaks ties when two rows share the same created_at (common
+-- for inserts within the same transaction, since NOW() returns
+-- transaction-start time) so pagination stays deterministic.
+--
+-- Caveat: LIMIT/OFFSET pagination is not snapshot-isolated. A new chat
+-- inserted between a user's page-0 fetch and their "Load more" click
+-- shifts every existing row down by one, so the OFFSET N request may
+-- re-fetch the last row of the previous page or skip a row. Acceptable
+-- at current per-org scale (tens to low hundreds). Future fix: keyset
+-- pagination on (created_at, thread_id) — pass the last row's pair as
+-- a cursor instead of an offset.
+--
 -- Performance note: ILIKE '%foo%' is sequential scan territory
 -- because no B-tree index can cover a leading-wildcard pattern.
 -- Fine for the current per-org chat counts (tens to low hundreds);
@@ -34,7 +50,7 @@ WHERE org_id = $1
     OR custom_title ILIKE '%' || sqlc.arg(query) || '%' ESCAPE '\'
     OR history[1]    ILIKE '%' || sqlc.arg(query) || '%' ESCAPE '\'
   )
-ORDER BY updated_at DESC
+ORDER BY created_at DESC, thread_id DESC
 LIMIT sqlc.arg(lim)
 OFFSET sqlc.arg(off);
 

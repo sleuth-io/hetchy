@@ -44,6 +44,29 @@ func TestIsTransientError(t *testing.T) {
 	}
 }
 
+func TestDaytonaLogTarget(t *testing.T) {
+	cases := []struct {
+		name     string
+		apiURL   string
+		wantMode string
+		wantURL  string
+	}{
+		{"default cloud", "", "cloud", "app.daytona.io"},
+		{"explicit cloud", "https://app.daytona.io/api", "cloud", "https://app.daytona.io/api"},
+		{"localhost", "http://localhost:3000/api", "local", "http://localhost:3000/api"},
+		{"compose api", "http://api:3000/api", "local", "http://api:3000/api"},
+		{"custom", "https://daytona.internal/api", "custom", "https://daytona.internal/api"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotMode, gotURL := daytonaLogTarget(tc.apiURL)
+			if gotMode != tc.wantMode || gotURL != tc.wantURL {
+				t.Fatalf("daytonaLogTarget(%q) = (%q, %q), want (%q, %q)", tc.apiURL, gotMode, gotURL, tc.wantMode, tc.wantURL)
+			}
+		})
+	}
+}
+
 func TestShellQuote(t *testing.T) {
 	cases := []struct {
 		name string
