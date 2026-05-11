@@ -465,15 +465,20 @@
   .phase-tools:empty { margin-top: 0; }
 
 
-  /* Spinner for streaming blocks (status="streaming"). */
-  .blk-streaming > summary .blk-icon::after {
+  /* Spinner for blocks that are actively receiving content, or are
+     the latest one-shot status while the run is still waiting on the
+     next visible event. */
+  .blk-streaming > summary .blk-icon::after,
+  .blk-awaiting-next > summary .blk-icon::after {
     content: ''; display: inline-block; width: .75rem; height: .75rem;
     border: 2px solid currentColor; border-right-color: transparent;
     border-radius: 50%; animation: blk-spin .7s linear infinite;
     vertical-align: -.15em;
   }
-  .blk-streaming > summary .blk-icon { color: #888; }
-  .blk-streaming > summary .blk-icon > * { display: none; }
+  .blk-streaming > summary .blk-icon,
+  .blk-awaiting-next > summary .blk-icon { color: #888; }
+  .blk-streaming > summary .blk-icon > *,
+  .blk-awaiting-next > summary .blk-icon > * { display: none; }
   @keyframes blk-spin { to { transform: rotate(360deg); } }
 
   /* Dark theme — applied via html.is-dark by the bootstrap script. Kept
@@ -877,6 +882,7 @@ function newSessionId() {
 const params = new URLSearchParams(window.location.search);
 const isFreshChat = !params.has('session');
 const sessionId = params.get('session') || newSessionId();
+let conversationHasServerState = !isFreshChat;
 if (isFreshChat) {
   const url = new URL(window.location);
   url.searchParams.set('session', sessionId);
@@ -937,6 +943,7 @@ function chooseAgent(slug) {
   selectedAgentSlug = slug || '';
   populateAgentPicker();
   updateToolsButton();
+  updateMutablePendingAgentMetadata();
   closeAgentPopover();
   closeToolsPopover();
   inp.focus();
@@ -1425,6 +1432,7 @@ function scheduleBlockRender(el) {
 function finishBlock(el, status, summary, endedAt) {
   if (!el) return;
   el.classList.remove('blk-streaming');
+  el.classList.remove('blk-awaiting-next');
   el.classList.remove('blk-live-heartbeat');
   const summaryEl = el.querySelector('.blk-summary');
   if (summary && summaryEl) summaryEl.textContent = summary;
@@ -1444,6 +1452,25 @@ function finishBlock(el, status, summary, endedAt) {
   if (body) body.innerHTML = renderMarkdown(body.dataset.raw || '');
 }
 
+function markBlockAwaitingNext(el) {
+  if (!el) return;
+  el.classList.add('blk-awaiting-next');
+}
+
+function clearBlockActivity(el) {
+  if (!el) return;
+  el.classList.remove('blk-streaming');
+  el.classList.remove('blk-awaiting-next');
+  el.classList.remove('blk-live-heartbeat');
+}
+
+function blockHasActivity(el) {
+  return !!el && (
+    el.classList.contains('blk-streaming') ||
+    el.classList.contains('blk-awaiting-next')
+  );
+}
+
 function heartbeatSummary(title, body, elapsed) {
   if (elapsed) return 'Still running · ' + elapsed;
   const text = body || title || 'Still running';
@@ -1459,7 +1486,7 @@ function applyHeartbeatToActiveBlock(currentPhase, lastStandaloneEl, payload) {
     currentPhase.el.classList.add('blk-live-heartbeat');
     return;
   }
-  if (lastStandaloneEl && lastStandaloneEl.classList.contains('blk-streaming')) {
+  if (blockHasActivity(lastStandaloneEl)) {
     const summaryEl = lastStandaloneEl.querySelector('.blk-summary');
     if (summaryEl) summaryEl.textContent = summary;
     lastStandaloneEl.classList.add('blk-live-heartbeat');
@@ -1953,8 +1980,41 @@ function renderMetadata(detail) {
 // without forcing a second fetch when nothing has changed.
 let lastDetail = null;
 
+function renderPendingMetadata(text) {
+  conversationHasServerState = true;
+  const existing = lastDetail || {};
+  const now = new Date().toISOString();
+  lastDetail = {
+    ...existing,
+    thread_id: sessionId,
+    title: text || existing.title || 'New chat',
+    agent_slug: selectedAgentSlug || '',
+    agent_name: selectedAgentSlug ? selectedAgentName() : '',
+    model: selectedModel,
+    creator_id: existing.creator_id || currentUserID,
+    created_at: existing.created_at || now,
+    updated_at: now,
+    history: text ? [text] : (existing.history || []),
+    response_blocks: existing.response_blocks || [],
+  };
+  renderMetadata(lastDetail);
+}
+
+function conversationAgentIsMutable() {
+  if (!conversationHasServerState) return true;
+  if (!lastDetail) return false;
+  return !(lastDetail.pr_url || '').trim();
+}
+
+function updateMutablePendingAgentMetadata() {
+  if (!conversationAgentIsMutable() || !lastDetail) return;
+  lastDetail.agent_slug = selectedAgentSlug || '';
+  lastDetail.agent_name = selectedAgentSlug ? selectedAgentName() : '';
+  renderMetadata(lastDetail);
+}
+
 async function refreshMetadata() {
-  if (isFreshChat) {
+  if (!conversationHasServerState) {
     renderMetadata(null);
     return;
   }
@@ -1973,8 +2033,10 @@ async function refreshMetadata() {
 async function loadHistory(opts) {
   opts = opts || {};
   const skipLastBotResponse = !!opts.skipLastBotResponse;
-  // Fresh chat: don't probe the API, just show the welcome state.
-  if (isFreshChat) { showEmptyState(); renderMetadata(null); return; }
+  // Fresh chat before the first send: don't probe the API, just show
+  // the welcome state. Once the user submits the first turn, this page
+  // still has isFreshChat=true, but the server conversation now exists.
+  if (!conversationHasServerState) { showEmptyState(); renderMetadata(null); return; }
   try {
     const res = await fetch('/api/conversations/' + encodeURIComponent(sessionId),
                             { headers: { 'Accept': 'application/json' } });
@@ -1982,6 +2044,7 @@ async function loadHistory(opts) {
       // Session id is in the URL but no conversation has been persisted yet
       // (e.g. the user opened a fresh URL with ?session= or the agent for a
       // brand-new chat hasn't completed its first turn). Treat as new chat.
+      conversationHasServerState = false;
       showEmptyState();
       renderMetadata(null);
       return;
@@ -2173,6 +2236,7 @@ async function consumeSSEResponse(res, onFirstEvent) {
       try { payload = JSON.parse(data); } catch (e) { continue; }
       if (!firstEventFired) {
         firstEventFired = true;
+        conversationHasServerState = true;
         if (onFirstEvent) {
           try { onFirstEvent(); } catch (e) {}
         }
@@ -2183,6 +2247,7 @@ async function consumeSSEResponse(res, onFirstEvent) {
         // activity stays expanded. Phase boxes manage their own
         // collapse via closePhase() below.
         if (lastStandaloneEl) {
+          clearBlockActivity(lastStandaloneEl);
           lastStandaloneEl.open = false;
           lastStandaloneEl = null;
         }
@@ -2223,8 +2288,12 @@ async function consumeSSEResponse(res, onFirstEvent) {
             id: payload.id, kind: payload.kind, title: payload.title,
             body: '', status: 'streaming', started_at: payload.started_at,
           }, { open: true });
-          blockRefs.set(payload.id, { kind: 'standalone', el });
+          const terminal = payload.kind === 'result' || payload.kind === 'error';
+          blockRefs.set(payload.id, { kind: 'standalone', blockKind: payload.kind, terminal, el });
           lastStandaloneEl = el;
+          if (payload.kind === 'notify' && payload.title === 'Sandbox ready') {
+            refreshMetadata();
+          }
           if (payload.kind === 'result' || payload.kind === 'error') {
             sawTurnEnd = true;
           }
@@ -2256,6 +2325,9 @@ async function consumeSSEResponse(res, onFirstEvent) {
           }
         } else if (ref.kind === 'standalone') {
           finishBlock(ref.el, payload.status, payload.summary, payload.ended_at);
+          if (!ref.terminal && payload.status !== 'error' && ref.el === lastStandaloneEl) {
+            markBlockAwaitingNext(ref.el);
+          }
         }
       } else if (event === 'heartbeat') {
         applyHeartbeatToActiveBlock(currentPhase, lastStandaloneEl, payload);
@@ -2269,6 +2341,7 @@ async function consumeSSEResponse(res, onFirstEvent) {
   // duration chip stays empty rather than synthesising one from the
   // browser clock (see SERVER_CLOCK_NOTE).
   if (currentPhase) closePhase(currentPhase, phaseLastEndedAt);
+  clearBlockActivity(lastStandaloneEl);
   // GitHub-style tab indicator: if the user navigated away while
   // Hetchy was working, badge the favicon so the just-finished turn
   // is visible in their tab bar. We only paint the badge when the
@@ -2288,15 +2361,19 @@ async function send() {
 
   const validateChoice = validateBox ? validateBox.checked : null;
 
+  const agentChoiceApplies = conversationAgentIsMutable();
   const isFirstTurn = log.querySelectorAll('.msg').length === 0;
   addUserMsg(text);
-  if (isFirstTurn) setModelPickerLocked(true);
+  if (isFirstTurn || agentChoiceApplies) {
+    setModelPickerLocked(true);
+    renderPendingMetadata(text);
+  }
 
   const payload = { text, session_id: sessionId, model: selectedModel };
   if (validateChoice !== null) {
     payload.validate = validateChoice;
   }
-  if (isFirstTurn && selectedAgentSlug) {
+  if (agentChoiceApplies) {
     payload.agent_slug = selectedAgentSlug;
   }
   try {

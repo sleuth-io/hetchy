@@ -330,13 +330,13 @@ func (b *Bot) Run(ctx context.Context) error {
 //
 // Slack always passes true; regular follow-ups ignore the flag because
 // they reuse the already-cloned sandbox and don't re-bootstrap.
-func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, requestID, threadID, userID string, validate bool, requestedAgent string, model ClaudeModel, out blocks.Emitter) {
+func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, requestID, threadID, userID string, validate bool, requestedAgent *string, model ClaudeModel, out blocks.Emitter) {
 	model = normalizeClaudeModel(model)
 	b.log.Info("request received",
 		"org", oc.OrgID,
 		"request_id", requestID,
 		"thread_id", threadID,
-		"requested_agent", requestedAgent,
+		"requested_agent", requestedAgentSlug(requestedAgent),
 		"model", model,
 		"text_len", len(text),
 		"text_preview", truncate(text, 200),
@@ -362,7 +362,7 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 	switch {
 	case err == nil && rec.SandboxID != "" && rec.PRURL != "":
 		// Live conversation — agent succeeded at least once, PR exists.
-		agent, ok := b.selectAgentForConversation(ctx, oc.OrgID, rec.AgentSlug, requestedAgent, emit)
+		agent, ok := b.selectAgentForConversation(ctx, oc.OrgID, rec.AgentSlug, emit)
 		if !ok {
 			return
 		}
@@ -371,7 +371,7 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 	case err == nil && rec.SandboxID != "":
 		// Sandbox was created but the agent failed before producing a
 		// PR. Retry: archive the orphan sandbox + spawn a fresh one.
-		agent, ok := b.selectAgentForConversation(ctx, oc.OrgID, rec.AgentSlug, requestedAgent, emit)
+		agent, ok := b.selectAgentForConversation(ctx, oc.OrgID, mutableConversationAgentSlug(rec.AgentSlug, requestedAgent), emit)
 		if !ok {
 			return
 		}
@@ -386,14 +386,14 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		//      The repo isn't the problem; treat the new message as
 		//      the new request and re-run on the same repo.
 		if rec.GitHubOwner != "" && rec.GitHubRepo != "" {
-			agent, ok := b.selectAgentForConversation(ctx, oc.OrgID, rec.AgentSlug, requestedAgent, emit)
+			agent, ok := b.selectAgentForConversation(ctx, oc.OrgID, mutableConversationAgentSlug(rec.AgentSlug, requestedAgent), emit)
 			if !ok {
 				return
 			}
 			b.handleRetryAfterFailure(ctx, oc, rec, agent, text, requestID, validate, model, recorder, emit)
 			return
 		}
-		agent, ok := b.selectAgentForConversation(ctx, oc.OrgID, rec.AgentSlug, requestedAgent, emit)
+		agent, ok := b.selectAgentForConversation(ctx, oc.OrgID, mutableConversationAgentSlug(rec.AgentSlug, requestedAgent), emit)
 		if !ok {
 			return
 		}
@@ -409,7 +409,7 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 
 	// New conversation. Use the org's default repo if set; otherwise
 	// stash the request and ask the user which repo to use.
-	agent, ok := b.selectAgentForConversation(ctx, oc.OrgID, "", requestedAgent, emit)
+	agent, ok := b.selectAgentForConversation(ctx, oc.OrgID, requestedAgentSlug(requestedAgent), emit)
 	if !ok {
 		return
 	}
@@ -451,12 +451,23 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 	b.runFreshAgent(ctx, oc, rec, agent, text, requestID, validate, model, recorder, emit)
 }
 
-func (b *Bot) selectAgentForConversation(ctx context.Context, orgID, pinnedSlug, requestedSlug string, emit blocks.Emitter) (agents.Profile, bool) {
-	slug := pinnedSlug
-	if slug == "" {
-		slug = requestedSlug
+func requestedAgentSlug(requested *string) string {
+	if requested == nil {
+		return ""
 	}
-	if strings.TrimSpace(slug) == "" {
+	return strings.TrimSpace(*requested)
+}
+
+func mutableConversationAgentSlug(pinnedSlug string, requested *string) string {
+	if requested != nil {
+		return requestedAgentSlug(requested)
+	}
+	return strings.TrimSpace(pinnedSlug)
+}
+
+func (b *Bot) selectAgentForConversation(ctx context.Context, orgID, slug string, emit blocks.Emitter) (agents.Profile, bool) {
+	slug = strings.TrimSpace(slug)
+	if slug == "" {
 		return agents.Profile{}, true
 	}
 	store := b.agents
@@ -593,6 +604,7 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 	}
 
 	rec.AgentSlug = agent.Slug
+	branch := "feature/sf-" + requestID
 	if agent.Slug == "" {
 		emit.Notify("Starting", fmt.Sprintf("Spinning up an isolated sandbox for your request in `%s` (base: `%s`)…", repo.Slug, repo.BaseBranch))
 	} else {
@@ -632,6 +644,11 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 		return
 	}
 	setLiveRunSandboxID(ctx, sb.ID)
+	rec.SandboxID = sb.ID
+	rec.Branch = branch
+	if err := b.convs.Upsert(context.Background(), rec); err != nil {
+		b.log.Error("convstore upsert (sandbox ready)", "error", err)
+	}
 	b.log.Info("sandbox created", "id", sb.ID, "request_id", requestID)
 	emit.Notify("Sandbox ready", fmt.Sprintf("`%s` is up — cloning repo and starting Claude Code.", sb.ID))
 
@@ -652,7 +669,6 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 		persister.Stop()
 	}()
 
-	branch := "feature/sf-" + requestID
 	prURL, runErr := b.runAgent(ctx, sb, repo, oc, agent, userRequest, requestID, validate, model, emit)
 	if runErr != nil {
 		if liveRunCancelled(ctx) {

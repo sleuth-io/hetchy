@@ -1210,10 +1210,10 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 	}
 
 	var body struct {
-		Text      string `json:"text"`
-		SessionID string `json:"session_id"`
-		AgentSlug string `json:"agent_slug,omitempty"`
-		Model     string `json:"model,omitempty"`
+		Text      string  `json:"text"`
+		SessionID string  `json:"session_id"`
+		AgentSlug *string `json:"agent_slug,omitempty"`
+		Model     string  `json:"model,omitempty"`
 		// Validate is the "Validate changes with end-to-end testing"
 		// checkbox state from the new-chat UI. Pointer so missing
 		// field (e.g. follow-up turns, Slack callers, older clients)
