@@ -221,7 +221,7 @@ func TestToolTitle(t *testing.T) {
 		{"Edit", map[string]any{"file_path": "/work/x.txt"}, "Editing x.txt"},
 		{"Grep", map[string]any{"pattern": "TODO"}, "Searching for TODO"},
 		{"WebFetch", map[string]any{"url": "https://x.com"}, "Fetching https://x.com"},
-		{"ScheduleWakeup", map[string]any{"delay_ms": float64(300000)}, "Waiting 5m0s before checking again"},
+		{"ScheduleWakeup", map[string]any{"delay_ms": float64(300000)}, "Waiting 5m before checking again"},
 		{"Monitor", map[string]any{}, "Monitoring background command"},
 		{"TaskOutput", map[string]any{}, "Checking background task output"},
 		{"ToolSearch", map[string]any{}, "Searching available tools"},

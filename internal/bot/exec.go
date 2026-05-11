@@ -41,8 +41,8 @@ type sandboxProcess interface {
 // duration; pass 0 to disable. Distinct from timeout (wall-clock max):
 // a healthy long run keeps producing output and resets the idle clock,
 // while a stuck process goes silent and trips the idle limit early.
-func (b *Bot) shLines(ctx context.Context, sandboxID string, proc sandboxProcess, sessionID, step, cmd string, timeout, idleTimeout time.Duration, onLine func(string)) (string, error) {
-	suppressInputEcho := shouldSuppressSandboxInputEcho(step, cmd)
+func (b *Bot) shLines(ctx context.Context, sandboxID string, proc sandboxProcess, sessionID, step, cmd string, timeout, idleTimeout time.Duration, suppressInputEcho bool, onLine func(string)) (string, error) {
+	suppressInputEcho = effectiveSuppressInputEcho(suppressInputEcho, cmd)
 	b.log.Info("sandbox step start",
 		"sandbox", sandboxID,
 		"step", step,
@@ -254,8 +254,11 @@ func (b *Bot) shLines(ctx context.Context, sandboxID string, proc sandboxProcess
 	return buf.String(), nil
 }
 
-func shouldSuppressSandboxInputEcho(step, cmd string) bool {
-	return strings.Contains(step, "write") || len(cmd) > 8*1024
+func effectiveSuppressInputEcho(explicit bool, cmd string) bool {
+	if explicit {
+		return true
+	}
+	return len(cmd) > 8*1024
 }
 
 func (b *Bot) logSandboxOutputTiming(sandboxID, step string, commandAcceptedAt, lastChunkAt time.Time, seenChunk bool, capturedBytes int, now time.Time) {

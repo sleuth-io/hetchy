@@ -51,7 +51,7 @@ func (r *botRunner) Run(ctx context.Context, label, scriptBody string, env map[s
 	scriptPath := "/tmp/sf-" + label + ".sh"
 	body := claudeWatchdogScript + "\n" + strings.TrimRight(scriptBody, "\n")
 	writeCmd := heredocWriteCmd(scriptPath, body, true)
-	if _, err := r.b.shLines(ctx, r.sb.ID, r.sb.Process, r.sessionID, "bootstrap-write-"+label, writeCmd, 30*time.Second, 0, func(string) {}); err != nil {
+	if _, err := r.b.shLines(ctx, r.sb.ID, r.sb.Process, r.sessionID, "bootstrap-write-"+label, writeCmd, 30*time.Second, 0, true, func(string) {}); err != nil {
 		return "", fmt.Errorf("bootstrap: write script: %w", err)
 	}
 
@@ -70,7 +70,7 @@ func (r *botRunner) Run(ctx context.Context, label, scriptBody string, env map[s
 	}
 	runCmd := prefix.String() + "bash " + scriptPath
 
-	// Heartbeat: emit a block every 5 minutes so the user can see
+	// Heartbeat: emit a lightweight update every minute so the user can see
 	// bootstrap is still in progress during long first-time runs.
 	stop := startHeartbeat(ctx, r.emit, "Still bootstrapping", "First-time repo setup has been running for %v — still in progress.")
 	defer stop()
@@ -80,7 +80,7 @@ func (r *botRunner) Run(ctx context.Context, label, scriptBody string, env map[s
 	// timeout has 15m of headroom — a large npm ci or image pull can
 	// go silent for 10-15 minutes without being genuinely stuck.
 	router := newBootstrapLineRouter(r.emit)
-	out, err := r.b.shLines(ctx, r.sb.ID, r.sb.Process, r.sessionID, "bootstrap-run-"+label, runCmd, 30*time.Minute, 15*time.Minute, router.Line)
+	out, err := r.b.shLines(ctx, r.sb.ID, r.sb.Process, r.sessionID, "bootstrap-run-"+label, runCmd, 30*time.Minute, 15*time.Minute, false, router.Line)
 	if err != nil {
 		router.Fail("Bootstrap step failed: " + label)
 		// Return the partial output even on failure — auto-heal needs
@@ -113,6 +113,7 @@ func (r *botRunner) ReadFile(ctx context.Context, path string) ([]byte, error) {
 	out, err := r.b.shLines(ctx, r.sb.ID, r.sb.Process, r.sessionID, "bootstrap-read",
 		"cat "+shellQuote(path),
 		5*time.Minute, 0,
+		false,
 		func(string) {},
 	)
 	if err != nil {
@@ -128,7 +129,7 @@ func (r *botRunner) ReadFile(ctx context.Context, path string) ([]byte, error) {
 func (r *botRunner) WriteFile(ctx context.Context, path string, data []byte) error {
 	body := strings.TrimRight(string(data), "\n")
 	cmd := heredocWriteCmd(path, body, false)
-	if _, err := r.b.shLines(ctx, r.sb.ID, r.sb.Process, r.sessionID, "bootstrap-write", cmd, 30*time.Second, 0, func(string) {}); err != nil {
+	if _, err := r.b.shLines(ctx, r.sb.ID, r.sb.Process, r.sessionID, "bootstrap-write", cmd, 30*time.Second, 0, true, func(string) {}); err != nil {
 		return fmt.Errorf("bootstrap: write %s: %w", path, err)
 	}
 	return nil

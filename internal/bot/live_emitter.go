@@ -22,6 +22,7 @@ type sseEvent struct {
 	Kind      blocks.Kind    `json:"kind,omitempty"`
 	Title     string         `json:"title,omitempty"`
 	Delta     string         `json:"delta,omitempty"`
+	Elapsed   string         `json:"elapsed,omitempty"`
 	Status    blocks.Status  `json:"status,omitempty"`
 	Summary   string         `json:"summary,omitempty"`
 	Meta      map[string]any `json:"meta,omitempty"`
@@ -141,8 +142,8 @@ func (e *liveEmitter) Notify(title, body string) {
 	e.oneShot(blocks.KindNotify, title, body, blocks.StatusDone)
 }
 
-func (e *liveEmitter) Heartbeat(title, body string) {
-	e.emit("heartbeat", sseEvent{Title: title, Delta: body})
+func (e *liveEmitter) Heartbeat(title, body, elapsed string) {
+	e.emit("heartbeat", sseEvent{Title: title, Delta: body, Elapsed: elapsed})
 }
 
 func (e *liveEmitter) Result(title, body string) {

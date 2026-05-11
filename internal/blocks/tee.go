@@ -37,7 +37,7 @@ type withFailAt interface {
 	FailAt(id, summary string, endedAt time.Time)
 }
 type withHeartbeat interface {
-	Heartbeat(title, body string)
+	Heartbeat(title, body, elapsed string)
 }
 
 type teeEmitter struct {
@@ -110,16 +110,11 @@ func (t *teeEmitter) Notify(title, body string) {
 	t.oneShotAt(KindNotify, title, body, StatusDone)
 }
 
-func (t *teeEmitter) Heartbeat(title, body string) {
-	forwarded := false
+func (t *teeEmitter) Heartbeat(title, body, elapsed string) {
 	for _, e := range t.emitters {
 		if hb, ok := e.(withHeartbeat); ok {
-			hb.Heartbeat(title, body)
-			forwarded = true
+			hb.Heartbeat(title, body, elapsed)
 		}
-	}
-	if !forwarded {
-		t.Notify(title, body)
 	}
 }
 

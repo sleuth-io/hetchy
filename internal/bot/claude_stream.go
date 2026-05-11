@@ -393,7 +393,17 @@ func numericDuration(v any, unit time.Duration) string {
 	if n <= 0 {
 		return ""
 	}
-	return time.Duration(n * float64(unit)).Round(time.Second).String()
+	return compactDurationString(time.Duration(n * float64(unit)).Round(time.Second))
+}
+
+func compactDurationString(d time.Duration) string {
+	if d > 0 && d%time.Hour == 0 {
+		return fmt.Sprintf("%dh", int(d/time.Hour))
+	}
+	if d > 0 && d%time.Minute == 0 {
+		return strings.TrimSuffix(d.String(), "0s")
+	}
+	return d.String()
 }
 
 // shortPath collapses long absolute paths to their last two segments

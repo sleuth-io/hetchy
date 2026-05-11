@@ -84,8 +84,8 @@ type heartbeatRecorder struct {
 	heartbeats []string
 }
 
-func (h *heartbeatRecorder) Heartbeat(title, body string) {
-	h.heartbeats = append(h.heartbeats, title+"\n"+body)
+func (h *heartbeatRecorder) Heartbeat(title, body, elapsed string) {
+	h.heartbeats = append(h.heartbeats, title+"\n"+body+"\n"+elapsed)
 }
 
 func TestTee_HeartbeatBypassesRecordersWhenTransportSupportsIt(t *testing.T) {
@@ -93,17 +93,36 @@ func TestTee_HeartbeatBypassesRecordersWhenTransportSupportsIt(t *testing.T) {
 	transport := &heartbeatRecorder{Recorder: NewRecorder(0)}
 	emit := Tee(rec, transport)
 
-	hb, ok := emit.(interface{ Heartbeat(string, string) })
+	hb, ok := emit.(interface{ Heartbeat(string, string, string) })
 	if !ok {
 		t.Fatal("tee should expose optional Heartbeat")
 	}
-	hb.Heartbeat("Still working", "Agent has been running for 1m — still in progress.")
+	hb.Heartbeat("Still working", "Agent has been running for 1m — still in progress.", "1m")
 
 	if got := len(rec.Snapshot()); got != 0 {
 		t.Fatalf("heartbeat should not be persisted by recorder, got %d blocks", got)
 	}
 	if got := len(transport.heartbeats); got != 1 {
 		t.Fatalf("transport should receive one heartbeat, got %d", got)
+	}
+}
+
+func TestTee_HeartbeatWithoutTransportDoesNotPersistFallback(t *testing.T) {
+	rec := NewRecorder(0)
+	other := NewRecorder(0)
+	emit := Tee(rec, other)
+
+	hb, ok := emit.(interface{ Heartbeat(string, string, string) })
+	if !ok {
+		t.Fatal("tee should expose optional Heartbeat")
+	}
+	hb.Heartbeat("Still working", "Agent has been running for 1m — still in progress.", "1m")
+
+	if got := len(rec.Snapshot()); got != 0 {
+		t.Fatalf("heartbeat fallback should not persist primary transcript blocks, got %d", got)
+	}
+	if got := len(other.Snapshot()); got != 0 {
+		t.Fatalf("heartbeat fallback should not persist secondary transcript blocks, got %d", got)
 	}
 }
 

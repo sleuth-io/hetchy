@@ -411,7 +411,7 @@ func (b *Bot) runInlineScript(ctx context.Context, sb *daytona.Sandbox, sessionI
 	scriptPath := "/tmp/sf-" + label + ".sh"
 	body := strings.TrimRight(scriptBody, "\n")
 	writeCmd := heredocWriteCmd(scriptPath, body, true)
-	if _, err := b.shLines(ctx, sb.ID, sb.Process, sessionID, label+"-write", writeCmd, 30*time.Second, 0, func(string) {}); err != nil {
+	if _, err := b.shLines(ctx, sb.ID, sb.Process, sessionID, label+"-write", writeCmd, 30*time.Second, 0, true, func(string) {}); err != nil {
 		return fmt.Errorf("write %s: %w", label, err)
 	}
 
@@ -427,7 +427,7 @@ func (b *Bot) runInlineScript(ctx context.Context, sb *daytona.Sandbox, sessionI
 	runCmd := prefix.String() + "bash " + scriptPath
 
 	router := newBootstrapLineRouter(emit)
-	if _, err := b.shLines(ctx, sb.ID, sb.Process, sessionID, label+"-run", runCmd, 5*time.Minute, 0, router.Line); err != nil {
+	if _, err := b.shLines(ctx, sb.ID, sb.Process, sessionID, label+"-run", runCmd, 5*time.Minute, 0, false, router.Line); err != nil {
 		router.Fail(label + " failed")
 		return fmt.Errorf("run %s: %w", label, err)
 	}
@@ -564,7 +564,7 @@ func (b *Bot) runScript(ctx context.Context, sb *daytona.Sandbox, sessionID, lab
 	scriptPath := "/tmp/sf-" + label + ".sh"
 	body := strings.TrimRight(scriptBody, "\n")
 	writeCmd := heredocWriteCmd(scriptPath, body, true)
-	if _, err := b.shLines(ctx, sb.ID, sb.Process, sessionID, "write-script", writeCmd, 15*time.Second, 0, func(string) {}); err != nil {
+	if _, err := b.shLines(ctx, sb.ID, sb.Process, sessionID, "write-script", writeCmd, 15*time.Second, 0, true, func(string) {}); err != nil {
 		return "", err
 	}
 
@@ -585,13 +585,13 @@ func (b *Bot) runScript(ctx context.Context, sb *daytona.Sandbox, sessionID, lab
 	}
 	runCmd := prefix.String() + "bash " + scriptPath
 
-	// Heartbeat: emit a "still working" block every 5 minutes so the
+	// Heartbeat: emit a "still working" update every minute so the
 	// user knows the agent is alive during long runs.
 	stop := startHeartbeat(ctx, emit, "Still working", "Agent has been running for %v — still in progress.")
 	defer stop()
 
 	router := newAgentLineRouter(emit)
-	if _, err := b.shLines(ctx, sb.ID, sb.Process, sessionID, "run-script", runCmd, 45*time.Minute, 15*time.Minute, router.Line); err != nil {
+	if _, err := b.shLines(ctx, sb.ID, sb.Process, sessionID, "run-script", runCmd, 45*time.Minute, 15*time.Minute, false, router.Line); err != nil {
 		router.Abort()
 		return "", err
 	}
@@ -632,11 +632,20 @@ func (b *Bot) materializeLargeRunEnv(ctx context.Context, sandboxID string, proc
 	}
 
 	dir := "/tmp/hetchy-env/" + label
+	var cmd strings.Builder
+	cmd.WriteString("rm -rf -- ")
+	cmd.WriteString(shellQuote(dir))
+	cmd.WriteByte('\n')
+	cmd.WriteString("mkdir -p -- ")
+	cmd.WriteString(shellQuote(dir))
+
+	fileVars := make(map[string]string, len(keys))
 	for _, key := range keys {
 		val := env[key]
-		fileKey := sandboxEnvFileKeys[key]
 		path := dir + "/" + strings.ToLower(key) + ".b64"
-		cmd := "mkdir -p " + shellQuote(dir) + "\n" + heredocWriteCmd(path, val, false)
+		fileVars[key] = path
+		cmd.WriteByte('\n')
+		cmd.WriteString(heredocWriteCmd(path, val, false))
 		b.log.Info("sandbox env file write",
 			"sandbox", sandboxID,
 			"session", sessionID,
@@ -644,11 +653,14 @@ func (b *Bot) materializeLargeRunEnv(ctx context.Context, sandboxID string, proc
 			"key", key,
 			"bytes", len(val),
 		)
-		if _, err := b.shLines(ctx, sandboxID, proc, sessionID, "write-env-"+key, cmd, 60*time.Second, 0, func(string) {}); err != nil {
-			return fmt.Errorf("write %s env file: %w", key, err)
-		}
+	}
+	if _, err := b.shLines(ctx, sandboxID, proc, sessionID, "write-env", cmd.String(), 60*time.Second, 0, true, func(string) {}); err != nil {
+		return fmt.Errorf("write env files: %w", err)
+	}
+	for _, key := range keys {
+		fileKey := sandboxEnvFileKeys[key]
 		delete(env, key)
-		env[fileKey] = path
+		env[fileKey] = fileVars[key]
 	}
 	return nil
 }

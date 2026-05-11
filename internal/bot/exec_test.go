@@ -74,6 +74,7 @@ func TestShLines(t *testing.T) {
 		wantOut          string
 		wantErr          error
 		wantErrSubstring string // narrows which error branch fired, not just which sentinel
+		suppressInput    bool
 		wantSuppress     bool
 	}{
 		{
@@ -137,12 +138,21 @@ func TestShLines(t *testing.T) {
 			wantOut:      "ok\n",
 			wantSuppress: true,
 		},
+		{
+			name:          "explicit suppress input echo",
+			proc:          &fakeProcess{chunks: []string{"ok\n"}},
+			cmd:           "echo hi",
+			timeout:       5 * time.Second,
+			wantOut:       "ok\n",
+			suppressInput: true,
+			wantSuppress:  true,
+		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			out, err := b.shLines(context.Background(), "test-sandbox", tc.proc, "sess-1", "test-step", tc.cmd, tc.timeout, tc.idleTimeout, func(string) {})
+			out, err := b.shLines(context.Background(), "test-sandbox", tc.proc, "sess-1", "test-step", tc.cmd, tc.timeout, tc.idleTimeout, tc.suppressInput, func(string) {})
 			if tc.proc.suppressInputEcho != tc.wantSuppress {
 				t.Errorf("suppressInputEcho = %v, want %v", tc.proc.suppressInputEcho, tc.wantSuppress)
 			}

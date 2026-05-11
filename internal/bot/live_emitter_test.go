@@ -101,7 +101,7 @@ func TestLiveEmitter_HeartbeatUsesSeparateEvent(t *testing.T) {
 	run := newLiveRun()
 	e := newLiveEmitter(run)
 
-	e.Heartbeat("Still working", "Agent has been running for 1m — still in progress.")
+	e.Heartbeat("Still working", "Agent has been running for 1m — still in progress.", "1m")
 
 	if got := len(run.history); got != 1 {
 		t.Fatalf("want 1 event, got %d", got)
@@ -114,7 +114,7 @@ func TestLiveEmitter_HeartbeatUsesSeparateEvent(t *testing.T) {
 	if err := json.Unmarshal(ev.Data, &payload); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if payload.Title != "Still working" || payload.Delta == "" {
+	if payload.Title != "Still working" || payload.Delta == "" || payload.Elapsed != "1m" {
 		t.Fatalf("unexpected heartbeat payload: %+v", payload)
 	}
 }

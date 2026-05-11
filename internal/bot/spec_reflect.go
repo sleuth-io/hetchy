@@ -57,7 +57,7 @@ func (b *Bot) applySpecImprovements(ctx context.Context, sb *daytona.Sandbox, se
 		// suspicious by the reflection log so we know the value
 		// was truncated.
 		cmd := fmt.Sprintf("if [ -f %s ]; then head -c 65536 %s; fi", shellQuote(path), shellQuote(path))
-		out, err := b.shLines(ctx, sb.ID, sb.Process, readSessionID, "spec-read", cmd, 30*time.Second, 0, func(string) {})
+		out, err := b.shLines(ctx, sb.ID, sb.Process, readSessionID, "spec-read", cmd, 30*time.Second, 0, false, func(string) {})
 		if err != nil {
 			b.log.Warn("spec-improvements: read", "error", err, "path", path, "repo", repo.Slug)
 			return "", false

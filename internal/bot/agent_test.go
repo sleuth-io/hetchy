@@ -108,8 +108,9 @@ func TestMaterializeLargeRunEnvWritesFileVars(t *testing.T) {
 	b := &Bot{log: discardLogger(), retryBackoff: 0}
 	proc := &fakeProcess{}
 	env := map[string]string{
-		"SF_PROMPT_B64": strings.Repeat("a", sandboxEnvFileThreshold+1),
-		"GITHUB_TOKEN":  "token",
+		"HETCHY_AGENT_PROMPT_B64": strings.Repeat("b", sandboxEnvFileThreshold+1),
+		"SF_PROMPT_B64":           strings.Repeat("a", sandboxEnvFileThreshold+1),
+		"GITHUB_TOKEN":            "token",
 	}
 
 	err := b.materializeLargeRunEnv(context.Background(), "sb-1", proc, "sess-1", "agent", env)
@@ -119,17 +120,32 @@ func TestMaterializeLargeRunEnvWritesFileVars(t *testing.T) {
 	if _, ok := env["SF_PROMPT_B64"]; ok {
 		t.Fatal("SF_PROMPT_B64 should have been replaced by a file var")
 	}
+	if _, ok := env["HETCHY_AGENT_PROMPT_B64"]; ok {
+		t.Fatal("HETCHY_AGENT_PROMPT_B64 should have been replaced by a file var")
+	}
 	if got, want := env["SF_PROMPT_B64_FILE"], "/tmp/hetchy-env/agent/sf_prompt_b64.b64"; got != want {
 		t.Fatalf("SF_PROMPT_B64_FILE = %q, want %q", got, want)
+	}
+	if got, want := env["HETCHY_AGENT_PROMPT_B64_FILE"], "/tmp/hetchy-env/agent/hetchy_agent_prompt_b64.b64"; got != want {
+		t.Fatalf("HETCHY_AGENT_PROMPT_B64_FILE = %q, want %q", got, want)
 	}
 	if got := env["GITHUB_TOKEN"]; got != "token" {
 		t.Fatalf("GITHUB_TOKEN changed to %q", got)
 	}
 	if len(proc.commands) != 1 {
-		t.Fatalf("expected one env write command, got %d", len(proc.commands))
+		t.Fatalf("expected one batched env write command, got %d", len(proc.commands))
+	}
+	if !proc.suppressInputEcho {
+		t.Fatal("env write command should suppress input echo")
+	}
+	if !strings.Contains(proc.commands[0], "rm -rf -- '/tmp/hetchy-env/agent'") {
+		t.Fatalf("write command should clear the per-label env dir first: %q", proc.commands[0])
 	}
 	if !strings.Contains(proc.commands[0], env["SF_PROMPT_B64_FILE"]) {
 		t.Fatalf("write command did not target env file path: %q", proc.commands[0])
+	}
+	if !strings.Contains(proc.commands[0], env["HETCHY_AGENT_PROMPT_B64_FILE"]) {
+		t.Fatalf("write command did not target agent env file path: %q", proc.commands[0])
 	}
 }
 

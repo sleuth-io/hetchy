@@ -1413,15 +1413,16 @@ function finishBlock(el, status, summary, endedAt) {
   if (body) body.innerHTML = renderMarkdown(body.dataset.raw || '');
 }
 
-function heartbeatSummary(title, body) {
+function heartbeatSummary(title, body, elapsed) {
+  if (elapsed) return 'Still running · ' + elapsed;
   const text = body || title || 'Still running';
-  const m = text.match(/\b(?:for|running for)\s+(.+?)\s+—/i);
+  const m = text.match(/\b(?:for|running for)\s+(.+?)\s+[—–-]/i);
   if (m && m[1]) return 'Still running · ' + m[1].trim();
   return title || 'Still running';
 }
 
 function applyHeartbeatToActiveBlock(currentPhase, lastStandaloneEl, payload) {
-  const summary = heartbeatSummary(payload.title, payload.delta);
+  const summary = heartbeatSummary(payload.title, payload.delta, payload.elapsed);
   if (currentPhase && !currentPhase._closed) {
     currentPhase.summaryEl.textContent = summary;
     currentPhase.el.classList.add('blk-live-heartbeat');
