@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hetchyhq/hetchy/internal/auth"
 )
@@ -113,6 +114,7 @@ func TestChatTemplate_ComposerControls(t *testing.T) {
 		`payload.agent_slug = selectedAgentSlug`,
 		`blk-awaiting-next`,
 		`markBlockAwaitingNext(ref.el)`,
+		`payload.meta.tag === 'sandbox_ready'`,
 		`value: 'opus'`,
 		`value: 'sonnet'`,
 		`value: 'haiku'`,
@@ -126,6 +128,122 @@ func TestChatTemplate_ComposerControls(t *testing.T) {
 	}
 	if strings.Contains(body, `id="agent-btn"`) {
 		t.Errorf("chat template should not render the old standalone agent button")
+	}
+}
+
+func TestChatCancelHandlerCancelsRunAndSchedulesCleanup(t *testing.T) {
+	a, err := auth.New(auth.Config{
+		Bypass:      true,
+		BypassUser:  "user_test",
+		BypassOrg:   "org_test",
+		BypassEmail: "test@hetchy.local",
+	})
+	if err != nil {
+		t.Fatalf("auth: %v", err)
+	}
+	b := &Bot{
+		log:  discardLogger(),
+		auth: a,
+		live: newLiveRegistry(),
+	}
+	handler := a.Middleware(a.RequireOrg(http.HandlerFunc(b.chatCancelHandler)))
+
+	run, ok := b.live.RegisterIfAbsent(context.Background(), "org_test", "thread-1")
+	if !ok {
+		t.Fatal("expected live run registration")
+	}
+	run.SetSandboxID("sandbox-1", true)
+
+	type cleanupCall struct {
+		sandboxID string
+		reason    string
+	}
+	cleanupCh := make(chan cleanupCall, 1)
+	b.cleanupSandboxByIDFn = func(sandboxID, reason string) {
+		cleanupCh <- cleanupCall{sandboxID: sandboxID, reason: reason}
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/chat/cancel", strings.NewReader(`{"session_id":"thread-1"}`))
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d; body=%q", rec.Code, http.StatusAccepted, rec.Body.String())
+	}
+	if !run.Cancelled() {
+		t.Fatal("run should be cancelled")
+	}
+	select {
+	case got := <-cleanupCh:
+		if got.sandboxID != "sandbox-1" || got.reason != "cancel requested" {
+			t.Fatalf("cleanup = %+v, want sandbox-1/cancel requested", got)
+		}
+	case <-stopAfter(t):
+		t.Fatal("cleanup was not scheduled")
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/chat/cancel", strings.NewReader(`{"session_id":"thread-1"}`))
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("second cancel status = %d, want %d; body=%q", rec.Code, http.StatusAccepted, rec.Body.String())
+	}
+	select {
+	case got := <-cleanupCh:
+		t.Fatalf("second cancel should not schedule cleanup, got %+v", got)
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	followUpRun, ok := b.live.RegisterIfAbsent(context.Background(), "org_test", "thread-2")
+	if !ok {
+		t.Fatal("expected follow-up live run registration")
+	}
+	followUpRun.SetSandboxID("sandbox-2", false)
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/chat/cancel", strings.NewReader(`{"session_id":"thread-2"}`))
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("follow-up status = %d, want %d; body=%q", rec.Code, http.StatusAccepted, rec.Body.String())
+	}
+	if !followUpRun.Cancelled() {
+		t.Fatal("follow-up run should be cancelled")
+	}
+	select {
+	case got := <-cleanupCh:
+		t.Fatalf("follow-up cancel should not cleanup sandbox, got %+v", got)
+	case <-time.After(20 * time.Millisecond):
+	}
+}
+
+func TestChatCancelHandlerRejectsMissingRunAndWrongMethod(t *testing.T) {
+	a, err := auth.New(auth.Config{
+		Bypass:      true,
+		BypassUser:  "user_test",
+		BypassOrg:   "org_test",
+		BypassEmail: "test@hetchy.local",
+	})
+	if err != nil {
+		t.Fatalf("auth: %v", err)
+	}
+	b := &Bot{
+		log:  discardLogger(),
+		auth: a,
+		live: newLiveRegistry(),
+	}
+	handler := a.Middleware(a.RequireOrg(http.HandlerFunc(b.chatCancelHandler)))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/chat/cancel", strings.NewReader(`{"session_id":"missing"}`))
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("missing run status = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/chat/cancel", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("wrong method status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
 	}
 }
 

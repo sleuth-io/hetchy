@@ -1306,9 +1306,30 @@ func (b *Bot) chatCancelHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no live run", http.StatusNotFound)
 		return
 	}
-	run.Cancel()
-	if sandboxID := run.SandboxID(); sandboxID != "" {
-		go b.cleanupSandboxByID(sandboxID, "cancel requested")
+	cancelled := run.Cancel()
+	sandboxID, cleanupOnCancel := run.CancelCleanupSandboxID()
+	b.log.Info("chat cancel requested",
+		"org", p.OrgID,
+		"thread", sessionID,
+		"user", p.UserID,
+		"sandbox", sandboxID,
+		"cleanup_on_cancel", cleanupOnCancel,
+		"cancelled", cancelled,
+	)
+	if !cancelled {
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+	// Any org member may stop a runaway in-flight turn. We log the actor
+	// above for auditability. Only fresh-run sandboxes are cleaned up from
+	// this handler; follow-up runs reuse the conversation sandbox and must
+	// remain available for the next message.
+	if sandboxID != "" && cleanupOnCancel {
+		cleanup := b.cleanupSandboxByID
+		if b.cleanupSandboxByIDFn != nil {
+			cleanup = b.cleanupSandboxByIDFn
+		}
+		go cleanup(sandboxID, "cancel requested")
 	}
 	w.WriteHeader(http.StatusAccepted)
 }

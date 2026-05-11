@@ -55,6 +55,21 @@ func TestLiveEmitter_StartAtPropagates(t *testing.T) {
 	}
 }
 
+func TestLiveEmitter_StartIncludesMeta(t *testing.T) {
+	run := newLiveRun(context.Background(), func() {})
+	e := newLiveEmitter(run)
+
+	e.Start(blocks.KindNotify, "Sandbox ready", map[string]any{"tag": sandboxReadySSETag})
+
+	var payload sseEvent
+	if err := json.Unmarshal(run.history[0].Data, &payload); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got := payload.Meta["tag"]; got != sandboxReadySSETag {
+		t.Fatalf("meta tag = %v, want %q", got, sandboxReadySSETag)
+	}
+}
+
 // TestLiveEmitter_DoneIncludesEndedAt asserts block_done frames
 // carry `ended_at` so the chat UI can compute the per-block total
 // execution time without consulting the browser clock.

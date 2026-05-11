@@ -21,15 +21,16 @@ type liveEvent struct {
 // makes "open this chat 30 seconds in" work — a fresh subscriber
 // gets the full event list replayed before live updates resume.
 type liveRun struct {
-	ctx       context.Context
-	cancel    context.CancelFunc
-	mu        sync.Mutex
-	history   []liveEvent
-	subs      map[*liveSubscription]struct{}
-	closed    bool
-	cancelled bool
-	sandboxID string
-	doneCh    chan struct{}
+	ctx                    context.Context
+	cancel                 context.CancelFunc
+	mu                     sync.Mutex
+	history                []liveEvent
+	subs                   map[*liveSubscription]struct{}
+	closed                 bool
+	cancelled              bool
+	sandboxID              string
+	cleanupSandboxOnCancel bool
+	doneCh                 chan struct{}
 }
 
 // liveSubscription is one consumer of a liveRun's stream. The
@@ -69,19 +70,26 @@ func (r *liveRun) Cancelled() bool {
 	return r.cancelled
 }
 
-func (r *liveRun) SetSandboxID(id string) {
+func (r *liveRun) SetSandboxID(id string, cleanupOnCancel bool) {
 	if id == "" {
 		return
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.sandboxID = id
+	r.cleanupSandboxOnCancel = cleanupOnCancel
 }
 
 func (r *liveRun) SandboxID() string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.sandboxID
+}
+
+func (r *liveRun) CancelCleanupSandboxID() (string, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.sandboxID, r.cleanupSandboxOnCancel
 }
 
 // Emit appends an event to the run's history and fans it out to every
@@ -190,9 +198,9 @@ func liveRunCancelled(ctx context.Context) bool {
 	return run != nil && run.Cancelled()
 }
 
-func setLiveRunSandboxID(ctx context.Context, sandboxID string) {
+func setLiveRunSandboxID(ctx context.Context, sandboxID string, cleanupOnCancel bool) {
 	if run := liveRunFromContext(ctx); run != nil {
-		run.SetSandboxID(sandboxID)
+		run.SetSandboxID(sandboxID, cleanupOnCancel)
 	}
 }
 

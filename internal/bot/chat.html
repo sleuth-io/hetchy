@@ -2320,7 +2320,7 @@ async function consumeSSEResponse(res, onFirstEvent) {
           const terminal = payload.kind === 'result' || payload.kind === 'error';
           blockRefs.set(payload.id, { kind: 'standalone', blockKind: payload.kind, terminal, el });
           lastStandaloneEl = el;
-          if (payload.kind === 'notify' && payload.title === 'Sandbox ready') {
+          if (payload.kind === 'notify' && payload.meta && payload.meta.tag === 'sandbox_ready') {
             refreshMetadata();
           }
           if (payload.kind === 'result' || payload.kind === 'error') {

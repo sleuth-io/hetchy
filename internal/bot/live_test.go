@@ -11,13 +11,16 @@ func TestLiveRunCancelCancelsContextAndKeepsSandboxID(t *testing.T) {
 	if !ok {
 		t.Fatal("first register should win")
 	}
-	run.SetSandboxID("sandbox-1")
+	run.SetSandboxID("sandbox-1", true)
 
 	if run.Cancelled() {
 		t.Fatal("run should not start cancelled")
 	}
 	if got := run.SandboxID(); got != "sandbox-1" {
 		t.Fatalf("SandboxID = %q, want sandbox-1", got)
+	}
+	if got, cleanup := run.CancelCleanupSandboxID(); got != "sandbox-1" || !cleanup {
+		t.Fatalf("CancelCleanupSandboxID = (%q, %v), want (sandbox-1, true)", got, cleanup)
 	}
 	if !run.Cancel() {
 		t.Fatal("first cancel should report true")
