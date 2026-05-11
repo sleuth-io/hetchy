@@ -275,12 +275,13 @@ configured per-org at `/settings/org`.
 ### Via Web UI
 
 1. Navigate to `http://dev.hetchy.ai:8080` while logged in.
-2. Optionally choose an agent from the small agent icon next to **Send**.
-   The default is no specialized agent.
+2. Optionally open the **+** menu to choose an agent or toggle validation.
+   The default is no specialized agent with validation enabled.
 3. Enter your request in natural language.
-4. Watch real-time progress updates via SSE streaming.
-5. Receive the PR URL when complete.
-6. Bookmark or share the URL to resume the session later — each session has a stable UUID in the query string.
+4. Pick Opus, Sonnet, or Haiku from the model chooser when you want to steer the Claude Code run.
+5. Watch real-time progress updates via SSE streaming.
+6. Receive the PR URL when complete.
+7. Bookmark or share the URL to resume the session later — each session has a stable UUID in the query string.
 
 If you haven't set a default repo, the bot will reply asking which repo
 to work in — answer with `owner/name` and it picks up where you left

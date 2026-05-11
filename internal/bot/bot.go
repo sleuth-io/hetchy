@@ -328,15 +328,16 @@ func (b *Bot) Run(ctx context.Context) error {
 // useful for trivial edits where the bootstrap's overhead outweighs
 // the validation benefit.
 //
-// Slack and follow-ups always pass true; the flag is only meaningful
-// on the first turn of a fresh chat (subsequent turns reuse the
-// already-cloned sandbox and don't re-bootstrap).
-func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, requestID, threadID, userID string, validate bool, requestedAgent string, out blocks.Emitter) {
+// Slack always passes true; regular follow-ups ignore the flag because
+// they reuse the already-cloned sandbox and don't re-bootstrap.
+func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, requestID, threadID, userID string, validate bool, requestedAgent string, model ClaudeModel, out blocks.Emitter) {
+	model = normalizeClaudeModel(model)
 	b.log.Info("request received",
 		"org", oc.OrgID,
 		"request_id", requestID,
 		"thread_id", threadID,
 		"requested_agent", requestedAgent,
+		"model", model,
 		"text_len", len(text),
 		"text_preview", truncate(text, 200),
 	)
@@ -361,7 +362,7 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		if !ok {
 			return
 		}
-		b.handleFollowUp(ctx, oc, rec, agent, text, requestID, recorder, emit)
+		b.handleFollowUp(ctx, oc, rec, agent, text, requestID, model, recorder, emit)
 		return
 	case err == nil && rec.SandboxID != "":
 		// Sandbox was created but the agent failed before producing a
@@ -370,7 +371,7 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		if !ok {
 			return
 		}
-		b.handleRetryAfterFailure(ctx, oc, rec, agent, text, requestID, validate, recorder, emit)
+		b.handleRetryAfterFailure(ctx, oc, rec, agent, text, requestID, validate, model, recorder, emit)
 		return
 	case err == nil:
 		// No sandbox was ever created. Two sub-states distinguished by
@@ -385,14 +386,14 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 			if !ok {
 				return
 			}
-			b.handleRetryAfterFailure(ctx, oc, rec, agent, text, requestID, validate, recorder, emit)
+			b.handleRetryAfterFailure(ctx, oc, rec, agent, text, requestID, validate, model, recorder, emit)
 			return
 		}
 		agent, ok := b.selectAgentForConversation(ctx, oc.OrgID, rec.AgentSlug, requestedAgent, emit)
 		if !ok {
 			return
 		}
-		b.handleAwaitingRepoReply(ctx, oc, rec, agent, text, requestID, validate, recorder, emit)
+		b.handleAwaitingRepoReply(ctx, oc, rec, agent, text, requestID, validate, model, recorder, emit)
 		return
 	case errors.Is(err, convstore.ErrNotFound):
 		// fall through — new conversation
@@ -441,7 +442,7 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 	if err := b.convs.Upsert(ctx, rec); err != nil {
 		b.log.Error("convstore upsert (new chat)", "error", err, "org", oc.OrgID, "thread", threadID)
 	}
-	b.runFreshAgent(ctx, oc, rec, agent, text, requestID, validate, recorder, emit)
+	b.runFreshAgent(ctx, oc, rec, agent, text, requestID, validate, model, recorder, emit)
 }
 
 func (b *Bot) selectAgentForConversation(ctx context.Context, orgID, pinnedSlug, requestedSlug string, emit blocks.Emitter) (agents.Profile, bool) {
@@ -473,7 +474,7 @@ func (b *Bot) selectAgentForConversation(ctx context.Context, orgID, pinnedSlug,
 // rec on entry may have GitHubOwner already set (from a previous
 // resolve-failed attempt); we'll overwrite both with whatever this
 // message resolves to.
-func (b *Bot) handleAwaitingRepoReply(ctx context.Context, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, text, requestID string, validate bool, recorder *blocks.Recorder, emit blocks.Emitter) {
+func (b *Bot) handleAwaitingRepoReply(ctx context.Context, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, text, requestID string, validate bool, model ClaudeModel, recorder *blocks.Recorder, emit blocks.Emitter) {
 	owner, name, ok := parseOwnerRepo(text)
 	if !ok {
 		emit.Notify("Try again", "I couldn't parse that as `owner/name`. For example `acme/website`.")
@@ -496,7 +497,7 @@ func (b *Bot) handleAwaitingRepoReply(ctx context.Context, oc orgcfg.Config, rec
 	rec.GitHubRepo = name
 	rec.AgentSlug = agent.Slug
 	originalRequest := rec.History[0]
-	b.runFreshAgent(ctx, oc, rec, agent, originalRequest, requestID, validate, recorder, emit)
+	b.runFreshAgent(ctx, oc, rec, agent, originalRequest, requestID, validate, model, recorder, emit)
 }
 
 // clearRepoOnFailure rewrites a partial conversation back to the
@@ -526,7 +527,7 @@ func clearRepoOnFailure(rec *convstore.Record) {
 // one. The user retrying is the signal that they're done debugging
 // the previous failure; without this we'd leak a Daytona sandbox per
 // retry.
-func (b *Bot) handleRetryAfterFailure(ctx context.Context, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, text, requestID string, validate bool, recorder *blocks.Recorder, emit blocks.Emitter) {
+func (b *Bot) handleRetryAfterFailure(ctx context.Context, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, text, requestID string, validate bool, model ClaudeModel, recorder *blocks.Recorder, emit blocks.Emitter) {
 	if rec.SandboxID != "" {
 		if sb, err := b.daytona.Get(ctx, rec.SandboxID); err == nil {
 			if err := sb.Stop(ctx); err != nil {
@@ -542,7 +543,7 @@ func (b *Bot) handleRetryAfterFailure(ctx context.Context, oc orgcfg.Config, rec
 	rec.History = []string{text}
 	rec.ResponseBlocks = nil
 	rec.AgentSlug = agent.Slug
-	b.runFreshAgent(ctx, oc, rec, agent, text, requestID, validate, recorder, emit)
+	b.runFreshAgent(ctx, oc, rec, agent, text, requestID, validate, model, recorder, emit)
 }
 
 // runFreshAgent creates a new sandbox, mints an installation token
@@ -550,7 +551,7 @@ func (b *Bot) handleRetryAfterFailure(ctx context.Context, oc orgcfg.Config, rec
 // the resulting conversation. Shared by the new-conversation, awaiting-
 // repo-reply, and "had repo but no sandbox" paths so they all stamp
 // the row identically.
-func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, userRequest, requestID string, validate bool, recorder *blocks.Recorder, emit blocks.Emitter) {
+func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, userRequest, requestID string, validate bool, model ClaudeModel, recorder *blocks.Recorder, emit blocks.Emitter) {
 	repo, err := b.resolveRepo(ctx, oc.OrgID, rec.GitHubOwner, rec.GitHubRepo)
 	if err != nil {
 		b.log.Warn("resolve repo failed", "org", oc.OrgID, "owner", rec.GitHubOwner, "name", rec.GitHubRepo, "error", err)
@@ -623,7 +624,7 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 	}()
 
 	branch := "feature/sf-" + requestID
-	prURL, runErr := b.runAgent(ctx, sb, repo, oc, agent, userRequest, requestID, validate, emit)
+	prURL, runErr := b.runAgent(ctx, sb, repo, oc, agent, userRequest, requestID, validate, model, emit)
 	if runErr != nil {
 		b.log.Error("agent run failed", "sandbox", sb.ID, "request_id", requestID, "error", runErr)
 		if isAgentTimeout(runErr) {
@@ -661,8 +662,8 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 	}
 }
 
-func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, text, requestID string, recorder *blocks.Recorder, emit blocks.Emitter) {
-	b.log.Info("follow-up received", "org", oc.OrgID, "sandbox", rec.SandboxID, "branch", rec.Branch, "pr", rec.PRURL, "agent", agent.Slug)
+func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, text, requestID string, model ClaudeModel, recorder *blocks.Recorder, emit blocks.Emitter) {
+	b.log.Info("follow-up received", "org", oc.OrgID, "sandbox", rec.SandboxID, "branch", rec.Branch, "pr", rec.PRURL, "agent", agent.Slug, "model", model)
 	rec.AgentSlug = agent.Slug
 	if agent.Slug == "" {
 		emit.Notify("Resuming", fmt.Sprintf("Resuming work on %s…", rec.PRURL))
@@ -723,7 +724,7 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 		persister.Stop()
 	}()
 
-	prURL, err := b.runFollowUp(ctx, sb, repo, oc, rec, agent, text, requestID, emit)
+	prURL, err := b.runFollowUp(ctx, sb, repo, oc, rec, agent, text, requestID, model, emit)
 	if err != nil {
 		b.log.Error("follow-up failed", "sandbox", sb.ID, "request_id", requestID, "error", err)
 		emit.Error("Agent failed", fmt.Sprintf("Something went wrong while running the agent. Sandbox `%s` is left running for debugging — check the server logs for details.", sb.ID))

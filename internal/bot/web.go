@@ -45,7 +45,9 @@ var settingsHTMLTpl string
 var profileHTMLTpl string
 
 //go:embed templates/landing.html
-var landingHTML []byte
+var landingHTMLTpl string
+
+const hetchyFaviconHref = "data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2032%2032%27%3E%3Crect%20width%3D%2732%27%20height%3D%2732%27%20rx%3D%276%27%20fill%3D%27%230d1117%27%2F%3E%3Cg%20fill%3D%27%237dc4ff%27%3E%3Crect%20x%3D%276%27%20y%3D%276%27%20width%3D%276%27%20height%3D%2720%27%2F%3E%3Crect%20x%3D%2720%27%20y%3D%276%27%20width%3D%276%27%20height%3D%2720%27%2F%3E%3Crect%20x%3D%276%27%20y%3D%2714%27%20width%3D%2720%27%20height%3D%274%27%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E"
 
 func (b *Bot) runWeb(ctx context.Context) error {
 	mux := http.NewServeMux()
@@ -131,8 +133,7 @@ func (b *Bot) indexHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	p, ok := auth.FromContext(r.Context())
 	if !ok {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write(landingHTML)
+		b.renderTemplate(w, landingHTMLTpl, nil)
 		return
 	}
 	if !p.HasOrg() {
@@ -1156,6 +1157,9 @@ var templateFuncs = template.FuncMap{
 		return m, nil
 	},
 	"minus": func(a, b int) int { return a - b },
+	"faviconHref": func() template.URL {
+		return template.URL(hetchyFaviconHref)
+	},
 	// statusExplain renders a human-friendly tooltip for one of the
 	// bootstrap ValidationStatus values. The Status column is shown as
 	// a small pill in the Repositories tab; users were asking what
@@ -1208,6 +1212,7 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 		Text      string `json:"text"`
 		SessionID string `json:"session_id"`
 		AgentSlug string `json:"agent_slug,omitempty"`
+		Model     string `json:"model,omitempty"`
 		// Validate is the "Validate changes with end-to-end testing"
 		// checkbox state from the new-chat UI. Pointer so missing
 		// field (e.g. follow-up turns, Slack callers, older clients)
@@ -1226,6 +1231,11 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 	}
 	sessionID := strings.TrimSpace(body.SessionID)
 	validate := body.Validate == nil || *body.Validate
+	model, ok := parseClaudeModel(body.Model)
+	if !ok {
+		http.Error(w, "invalid model: choose opus, sonnet, or haiku", http.StatusBadRequest)
+		return
+	}
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -1263,7 +1273,7 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 
 	go func() {
 		defer b.live.Done(p.OrgID, sessionID, run)
-		b.HandleRequest(parentCtx, oc, text, requestID, sessionID, p.UserID, validate, body.AgentSlug, emitter)
+		b.HandleRequest(parentCtx, oc, text, requestID, sessionID, p.UserID, validate, body.AgentSlug, model, emitter)
 	}()
 
 	sub := run.Subscribe()

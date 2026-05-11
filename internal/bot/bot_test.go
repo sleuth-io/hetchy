@@ -140,7 +140,7 @@ func TestHandleRequest_AskForRepo(t *testing.T) {
 	oc := orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "ant"}
 
 	emit := newCaptureEmitter()
-	b.HandleRequest(context.Background(), oc, "do something", "req-1", "thread-1", "", true, "", emit)
+	b.HandleRequest(context.Background(), oc, "do something", "req-1", "thread-1", "", true, "", ClaudeModelOpus, emit)
 
 	if !emit.hasCall("notify", "Which repository") {
 		t.Errorf("expected a Notify with 'Which repository', got Calls=%v", emit.Calls)
@@ -160,7 +160,7 @@ func TestHandleRequest_MissingAnthropic(t *testing.T) {
 		return nil, errors.New("unreachable")
 	}
 	emit := newCaptureEmitter()
-	b.HandleRequest(context.Background(), orgcfg.Config{OrgID: "o"}, "do something", "req", "thread", "", true, "", emit)
+	b.HandleRequest(context.Background(), orgcfg.Config{OrgID: "o"}, "do something", "req", "thread", "", true, "", ClaudeModelOpus, emit)
 	if !emit.hasCall("error", "Missing Claude credentials") {
 		t.Errorf("expected Error call with 'Missing Claude credentials', got Calls=%v", emit.Calls)
 	}
@@ -179,7 +179,7 @@ func TestHandleRequest_SubscriptionTokenSatisfiesCredCheck(t *testing.T) {
 		return nil, errors.New("unreachable")
 	}
 	emit := newCaptureEmitter()
-	b.HandleRequest(context.Background(), orgcfg.Config{OrgID: "o", ClaudeCodeOAuthToken: "sk-ant-oat01-…"}, "do something", "req", "thread", "", true, "", emit)
+	b.HandleRequest(context.Background(), orgcfg.Config{OrgID: "o", ClaudeCodeOAuthToken: "sk-ant-oat01-…"}, "do something", "req", "thread", "", true, "", ClaudeModelOpus, emit)
 	if emit.hasCall("error", "Missing Claude credentials") {
 		t.Errorf("subscription token alone should satisfy cred check, got Calls=%v", emit.Calls)
 	}
@@ -195,7 +195,7 @@ func TestHandleRequest_UnknownAgent(t *testing.T) {
 		return nil, errors.New("unreachable")
 	}
 	emit := newCaptureEmitter()
-	b.HandleRequest(context.Background(), orgcfg.Config{OrgID: "o", ClaudeCodeOAuthToken: "sk-ant-oat01-token"}, "do something", "req", "thread", "", true, "sally", emit)
+	b.HandleRequest(context.Background(), orgcfg.Config{OrgID: "o", ClaudeCodeOAuthToken: "sk-ant-oat01-token"}, "do something", "req", "thread", "", true, "sally", ClaudeModelOpus, emit)
 	if !emit.hasCall("error", "Unknown agent") {
 		t.Errorf("expected Unknown agent error, got Calls=%v", emit.Calls)
 	}

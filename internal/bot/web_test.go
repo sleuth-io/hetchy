@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"html"
 	"io"
 	"log/slog"
 	"maps"
@@ -76,6 +77,104 @@ func TestIndexHandler_RedirectsAuthenticatedNoOrgToOnboarding(t *testing.T) {
 	}
 	if got := rec.Header().Get("Location"); got != "/onboarding" {
 		t.Errorf("Location = %q, want /onboarding", got)
+	}
+}
+
+func TestChatTemplate_ComposerControls(t *testing.T) {
+	b := newBypassBot(t)
+	rec := httptest.NewRecorder()
+	b.renderTemplate(rec, chatHTMLTpl, map[string]any{
+		"Email":       "u@x",
+		"DisplayName": "Test User",
+		"GravatarURL": "https://example.com/avatar.png",
+		"UserID":      "user_test",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, w := range []string{
+		`id="tools-btn"`,
+		`id="agent-selector-btn"`,
+		`id="agent-popover"`,
+		`class="tools-divider"`,
+		`class="tools-checkmark"`,
+		`is-checked`,
+		`id="validate-checkbox"`,
+		`id="model-btn"`,
+		`value: 'opus'`,
+		`value: 'sonnet'`,
+		`value: 'haiku'`,
+		`model: selectedModel`,
+	} {
+		if !strings.Contains(body, w) {
+			t.Errorf("chat template missing %q", w)
+		}
+	}
+	if strings.Contains(body, `id="agent-btn"`) {
+		t.Errorf("chat template should not render the old standalone agent button")
+	}
+}
+
+func TestPageTemplates_RenderFavicon(t *testing.T) {
+	b := newBypassBot(t)
+	cases := []struct {
+		name string
+		body string
+		data any
+	}{
+		{
+			name: "chat",
+			body: chatHTMLTpl,
+			data: map[string]any{
+				"Email":       "u@x",
+				"DisplayName": "Test User",
+				"GravatarURL": "https://example.com/avatar.png",
+				"UserID":      "user_test",
+			},
+		},
+		{
+			name: "settings",
+			body: settingsHTMLTpl,
+			data: map[string]any{
+				"OrgID": "org_x", "OrgName": "Acme Inc.", "Email": "u@x", "Tab": "general",
+				"IsAdmin": true,
+			},
+		},
+		{
+			name: "profile",
+			body: profileHTMLTpl,
+			data: map[string]any{
+				"UserID": "user_x", "Email": "u@x", "FirstName": "Ada", "LastName": "Lovelace",
+			},
+		},
+		{
+			name: "onboarding",
+			body: onboardingHTMLTpl,
+			data: map[string]any{"Email": "u@x"},
+		},
+		{
+			name: "landing",
+			body: landingHTMLTpl,
+			data: nil,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			b.renderTemplate(rec, tc.body, tc.data)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+			}
+			body := html.UnescapeString(rec.Body.String())
+			if !strings.Contains(body, `rel="icon"`) {
+				t.Fatalf("template missing favicon link")
+			}
+			if !strings.Contains(body, hetchyFaviconHref) {
+				t.Fatalf("template missing shared favicon href")
+			}
+		})
 	}
 }
 

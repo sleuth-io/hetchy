@@ -16,6 +16,7 @@
 #   HETCHY_AGENT_PROMPT_B64      fallback persona prompt when the sx asset is unavailable
 #   HETCHY_SX_PUBLIC_VAULT_URL   git sx vault for Hetchy-managed agent assets
 #   SX_KEY                       optional org skills.new bot key
+#   HETCHY_CLAUDE_MODEL          Claude Code model alias: opus, sonnet, or haiku
 
 set -euo pipefail
 

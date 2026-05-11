@@ -103,7 +103,8 @@ type repoCtx struct {
 	TokenExpires time.Time
 }
 
-func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, agent agents.Profile, userRequest, requestID string, validate bool, emit blocks.Emitter) (string, error) {
+func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, agent agents.Profile, userRequest, requestID string, validate bool, model ClaudeModel, emit blocks.Emitter) (string, error) {
+	model = normalizeClaudeModel(model)
 	var spec *bootstrap.Spec
 	// validate=false is the user's explicit "skip end-to-end testing"
 	// opt-out from the new-chat UI. We honour it by not running
@@ -159,11 +160,12 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, o
 	}
 
 	env := map[string]string{
-		"SF_REPO":        repo.Slug,
-		"SF_WORKDIR":     workdir,
-		"SF_BASE_BRANCH": repo.BaseBranch,
-		"SF_PROMPT_B64":  base64.StdEncoding.EncodeToString([]byte(finalPrompt)),
-		"GITHUB_TOKEN":   repo.GitHubToken,
+		"SF_REPO":             repo.Slug,
+		"SF_WORKDIR":          workdir,
+		"SF_BASE_BRANCH":      repo.BaseBranch,
+		"SF_PROMPT_B64":       base64.StdEncoding.EncodeToString([]byte(finalPrompt)),
+		"GITHUB_TOKEN":        repo.GitHubToken,
+		"HETCHY_CLAUDE_MODEL": string(model),
 	}
 	addAgentEnv(env, b.cfg, agent)
 	// When we have a saved spec, ship its setup/start/health scripts
@@ -292,8 +294,10 @@ func (b *Bot) ensureBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo
 		sessionID: sessionID,
 		emit:      emit,
 		baseEnv: map[string]string{
-			authKey:        authVal,
-			"GITHUB_TOKEN": repo.GitHubToken,
+			authKey:                authVal,
+			"GITHUB_TOKEN":         repo.GitHubToken,
+			"HETCHY_CLAUDE_MODEL":  string(ClaudeModelOpus),
+			"HETCHY_CLAUDE_EFFORT": "high",
 		},
 	}
 	res, err := bootstrap.Run(ctx, runner, bootstrap.LoopInput{
@@ -461,7 +465,8 @@ func addAgentEnv(env map[string]string, cfg Config, agent agents.Profile) {
 // token is freshly minted and passed per-run (not just at sandbox-create
 // time) so a token rotation or a re-installed App takes effect on the
 // very next follow-up rather than only on a freshly-created sandbox.
-func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, userRequest, requestID string, emit blocks.Emitter) (string, error) {
+func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, userRequest, requestID string, model ClaudeModel, emit blocks.Emitter) (string, error) {
+	model = normalizeClaudeModel(model)
 	history := strings.Join(rec.History, "\n---\n")
 	prompt := fmt.Sprintf(agentFollowUpPromptTemplate,
 		workdir, rec.Branch, rec.PRURL,
@@ -489,10 +494,11 @@ func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx
 	}
 
 	env := map[string]string{
-		"SF_WORKDIR":    workdir,
-		"SF_BRANCH":     rec.Branch,
-		"SF_PROMPT_B64": base64.StdEncoding.EncodeToString([]byte(prompt)),
-		"GITHUB_TOKEN":  repo.GitHubToken,
+		"SF_WORKDIR":          workdir,
+		"SF_BRANCH":           rec.Branch,
+		"SF_PROMPT_B64":       base64.StdEncoding.EncodeToString([]byte(prompt)),
+		"GITHUB_TOKEN":        repo.GitHubToken,
+		"HETCHY_CLAUDE_MODEL": string(model),
 	}
 	addAgentEnv(env, b.cfg, agent)
 	if len(slotsManifest) > 0 {

@@ -324,7 +324,9 @@ echo "[hetchy-bootstrap] invoking claude" >&2
 # its four artifacts to ${HETCHY_BOOTSTRAP_OUT_DIR}; we just verify
 # they show up. run_claude_with_watchdog is provided by the watchdog
 # prelude that the bot prepends to this script before writing it to
-# the sandbox; see internal/bot/scripts/claude-watchdog.sh.
+# the sandbox; see internal/bot/scripts/claude-watchdog.sh. The bot
+# forces bootstrap to opus/high effort through HETCHY_CLAUDE_MODEL and
+# HETCHY_CLAUDE_EFFORT because this step determines future repo runs.
 run_claude_with_watchdog "${HETCHY_BOOTSTRAP_PROMPT_FILE}"
 
 echo "[hetchy-bootstrap] verifying artifacts" >&2
