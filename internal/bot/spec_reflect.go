@@ -43,7 +43,7 @@ func (b *Bot) applySpecImprovements(ctx context.Context, sb *daytona.Sandbox, se
 		b.log.Warn("spec-improvements: create session", "error", err, "repo", repo.Slug)
 		return
 	}
-	defer func() { _ = sb.Process.DeleteSession(ctx, readSessionID) }()
+	defer func() { b.deleteSandboxSession(sb, readSessionID) }()
 
 	read := func(path string) (string, bool) {
 		// `[ -f path ] && head -c 65536 path || true` — exit-0 on

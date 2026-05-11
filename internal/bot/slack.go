@@ -333,7 +333,11 @@ func (b *Bot) handleSlackEvent(ctx context.Context, oc orgcfg.Config, ev incomin
 	// users routing through Slack typically aren't iterating on
 	// trivial changes). If we add a Slack-side toggle later, plumb
 	// it here.
-	b.HandleRequest(ctx, oc, text, requestID, threadID, creatorID, true, requestedAgent, ClaudeModelOpus, emit)
+	var requestedAgentPtr *string
+	if strings.TrimSpace(requestedAgent) != "" {
+		requestedAgentPtr = &requestedAgent
+	}
+	b.HandleRequest(ctx, oc, text, requestID, threadID, creatorID, true, requestedAgentPtr, ClaudeModelOpus, emit)
 	// Reaction bookkeeping: only swap the eyes/recycle that signalled
 	// "working on it" for a final ✓/✗ when the run actually reached a
 	// terminal state. Bot-driven question turns ("Which repository?"

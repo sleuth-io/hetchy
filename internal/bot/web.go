@@ -93,6 +93,7 @@ func (b *Bot) runWeb(ctx context.Context) error {
 	mux.Handle("/chat", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b.chatHandler(ctx, w, r)
 	}))))
+	mux.Handle("/chat/cancel", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.chatCancelHandler))))
 	mux.Handle("/chat/stream", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.chatStreamHandler))))
 	mux.Handle("/api/repo-secrets", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.repoSecretsHandler))))
 	mux.Handle("/api/repo-bootstrap", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.repoBootstrapResetHandler))))
@@ -1209,10 +1210,10 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 	}
 
 	var body struct {
-		Text      string `json:"text"`
-		SessionID string `json:"session_id"`
-		AgentSlug string `json:"agent_slug,omitempty"`
-		Model     string `json:"model,omitempty"`
+		Text      string  `json:"text"`
+		SessionID string  `json:"session_id"`
+		AgentSlug *string `json:"agent_slug,omitempty"`
+		Model     string  `json:"model,omitempty"`
 		// Validate is the "Validate changes with end-to-end testing"
 		// checkbox state from the new-chat UI. Pointer so missing
 		// field (e.g. follow-up turns, Slack callers, older clients)
@@ -1258,7 +1259,7 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 	// second Close()s the first run mid-stream. On a losing call we
 	// reject with 409 — the reload-to-reattach UX path uses
 	// /chat/stream, not a fresh POST.
-	run, registered := b.live.RegisterIfAbsent(p.OrgID, sessionID)
+	run, registered := b.live.RegisterIfAbsent(parentCtx, p.OrgID, sessionID)
 	if !registered {
 		http.Error(w, "this chat already has a turn in flight; reload to reattach", http.StatusConflict)
 		return
@@ -1273,12 +1274,64 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 
 	go func() {
 		defer b.live.Done(p.OrgID, sessionID, run)
-		b.HandleRequest(parentCtx, oc, text, requestID, sessionID, p.UserID, validate, body.AgentSlug, model, emitter)
+		runCtx := contextWithLiveRun(run.Context(), run)
+		b.HandleRequest(runCtx, oc, text, requestID, sessionID, p.UserID, validate, body.AgentSlug, model, emitter)
 	}()
 
 	sub := run.Subscribe()
 	defer run.Unsubscribe(sub)
 	b.streamLiveSubscription(w, flusher, r.Context(), sub)
+}
+
+func (b *Bot) chatCancelHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	p, _ := auth.FromContext(r.Context())
+	var body struct {
+		SessionID string `json:"session_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	sessionID := strings.TrimSpace(body.SessionID)
+	if sessionID == "" {
+		http.Error(w, "session required", http.StatusBadRequest)
+		return
+	}
+	run := b.live.Get(p.OrgID, sessionID)
+	if run == nil {
+		http.Error(w, "no live run", http.StatusNotFound)
+		return
+	}
+	cancelled := run.Cancel()
+	sandboxID, cleanupOnCancel := run.CancelCleanupSandboxID()
+	b.log.Info("chat cancel requested",
+		"org", p.OrgID,
+		"thread", sessionID,
+		"user", p.UserID,
+		"sandbox", sandboxID,
+		"cleanup_on_cancel", cleanupOnCancel,
+		"cancelled", cancelled,
+	)
+	if !cancelled {
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+	// Any org member may stop a runaway in-flight turn. We log the actor
+	// above for auditability. Only fresh-run sandboxes are cleaned up from
+	// this handler; follow-up runs reuse the conversation sandbox and must
+	// remain available for the next message.
+	if sandboxID != "" && cleanupOnCancel {
+		cleanup := b.cleanupSandboxByID
+		if b.cleanupSandboxByIDFn != nil {
+			cleanup = b.cleanupSandboxByIDFn
+		}
+		go cleanup(sandboxID, "cancel requested")
+	}
+	w.WriteHeader(http.StatusAccepted)
 }
 
 // chatStreamHandler is the reattach endpoint. Hit by chat.html on

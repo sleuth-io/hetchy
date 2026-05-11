@@ -47,6 +47,8 @@ const (
 
 const workdir = "/home/daytona/work"
 
+const sandboxReadySSETag = "sandbox_ready"
+
 // Bot wires the web UI, Slack manager, Daytona, and per-org config
 // together. It owns no per-request mutable state; conversation state lives
 // in the database.
@@ -101,6 +103,9 @@ type Bot struct {
 	// startFn is called by resumeSandbox; overridable in tests.
 	startFn      func(context.Context, *daytona.Sandbox, time.Duration) error
 	retryBackoff time.Duration
+	// cleanupSandboxByIDFn is called by chatCancelHandler for opportunistic
+	// cleanup of a fresh-run sandbox; overridable in tests.
+	cleanupSandboxByIDFn func(string, string)
 	// heartbeatInterval controls how often resumeSandbox emits elapsed-time
 	// progress lines. Zero is treated as 15 s (the production default);
 	// tests set it to 1 ms so the ticker fires without sleeping.
@@ -330,13 +335,13 @@ func (b *Bot) Run(ctx context.Context) error {
 //
 // Slack always passes true; regular follow-ups ignore the flag because
 // they reuse the already-cloned sandbox and don't re-bootstrap.
-func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, requestID, threadID, userID string, validate bool, requestedAgent string, model ClaudeModel, out blocks.Emitter) {
+func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, requestID, threadID, userID string, validate bool, requestedAgent *string, model ClaudeModel, out blocks.Emitter) {
 	model = normalizeClaudeModel(model)
 	b.log.Info("request received",
 		"org", oc.OrgID,
 		"request_id", requestID,
 		"thread_id", threadID,
-		"requested_agent", requestedAgent,
+		"requested_agent", requestedAgentSlug(requestedAgent),
 		"model", model,
 		"text_len", len(text),
 		"text_preview", truncate(text, 200),
@@ -362,7 +367,7 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 	switch {
 	case err == nil && rec.SandboxID != "" && rec.PRURL != "":
 		// Live conversation — agent succeeded at least once, PR exists.
-		agent, ok := b.selectAgentForConversation(ctx, oc.OrgID, rec.AgentSlug, requestedAgent, emit)
+		agent, ok := b.selectAgentForConversation(ctx, oc.OrgID, rec.AgentSlug, emit)
 		if !ok {
 			return
 		}
@@ -371,7 +376,7 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 	case err == nil && rec.SandboxID != "":
 		// Sandbox was created but the agent failed before producing a
 		// PR. Retry: archive the orphan sandbox + spawn a fresh one.
-		agent, ok := b.selectAgentForConversation(ctx, oc.OrgID, rec.AgentSlug, requestedAgent, emit)
+		agent, ok := b.selectAgentForConversation(ctx, oc.OrgID, mutableConversationAgentSlug(rec.AgentSlug, requestedAgent), emit)
 		if !ok {
 			return
 		}
@@ -386,14 +391,14 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		//      The repo isn't the problem; treat the new message as
 		//      the new request and re-run on the same repo.
 		if rec.GitHubOwner != "" && rec.GitHubRepo != "" {
-			agent, ok := b.selectAgentForConversation(ctx, oc.OrgID, rec.AgentSlug, requestedAgent, emit)
+			agent, ok := b.selectAgentForConversation(ctx, oc.OrgID, mutableConversationAgentSlug(rec.AgentSlug, requestedAgent), emit)
 			if !ok {
 				return
 			}
 			b.handleRetryAfterFailure(ctx, oc, rec, agent, text, requestID, validate, model, recorder, emit)
 			return
 		}
-		agent, ok := b.selectAgentForConversation(ctx, oc.OrgID, rec.AgentSlug, requestedAgent, emit)
+		agent, ok := b.selectAgentForConversation(ctx, oc.OrgID, mutableConversationAgentSlug(rec.AgentSlug, requestedAgent), emit)
 		if !ok {
 			return
 		}
@@ -409,7 +414,7 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 
 	// New conversation. Use the org's default repo if set; otherwise
 	// stash the request and ask the user which repo to use.
-	agent, ok := b.selectAgentForConversation(ctx, oc.OrgID, "", requestedAgent, emit)
+	agent, ok := b.selectAgentForConversation(ctx, oc.OrgID, requestedAgentSlug(requestedAgent), emit)
 	if !ok {
 		return
 	}
@@ -451,12 +456,23 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 	b.runFreshAgent(ctx, oc, rec, agent, text, requestID, validate, model, recorder, emit)
 }
 
-func (b *Bot) selectAgentForConversation(ctx context.Context, orgID, pinnedSlug, requestedSlug string, emit blocks.Emitter) (agents.Profile, bool) {
-	slug := pinnedSlug
-	if slug == "" {
-		slug = requestedSlug
+func requestedAgentSlug(requested *string) string {
+	if requested == nil {
+		return ""
 	}
-	if strings.TrimSpace(slug) == "" {
+	return strings.TrimSpace(*requested)
+}
+
+func mutableConversationAgentSlug(pinnedSlug string, requested *string) string {
+	if requested != nil {
+		return requestedAgentSlug(requested)
+	}
+	return strings.TrimSpace(pinnedSlug)
+}
+
+func (b *Bot) selectAgentForConversation(ctx context.Context, orgID, slug string, emit blocks.Emitter) (agents.Profile, bool) {
+	slug = strings.TrimSpace(slug)
+	if slug == "" {
 		return agents.Profile{}, true
 	}
 	store := b.agents
@@ -546,7 +562,8 @@ func (b *Bot) handleRetryAfterFailure(ctx context.Context, oc orgcfg.Config, rec
 		if sb, err := b.daytona.Get(ctx, rec.SandboxID); err == nil {
 			if err := sb.Stop(ctx); err != nil {
 				b.log.Warn("orphan sandbox stop failed", "sandbox", rec.SandboxID, "error", err)
-			} else if err := sb.Archive(ctx); err != nil {
+			}
+			if err := sb.Archive(ctx); err != nil {
 				b.log.Warn("orphan sandbox archive failed", "sandbox", rec.SandboxID, "error", err)
 			}
 		} else {
@@ -571,6 +588,14 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 	rec.Model = string(model)
 	repo, err := b.resolveRepo(ctx, oc.OrgID, rec.GitHubOwner, rec.GitHubRepo)
 	if err != nil {
+		if liveRunCancelled(ctx) {
+			emit.Result("Stopped", "Stopped before the sandbox was created.")
+			appendBlocksToFirstTurn(&rec, recorder.Snapshot())
+			if err := b.convs.Upsert(context.Background(), rec); err != nil {
+				b.log.Error("convstore upsert (cancel before sandbox)", "error", err)
+			}
+			return
+		}
 		b.log.Warn("resolve repo failed", "org", oc.OrgID, "owner", rec.GitHubOwner, "name", rec.GitHubRepo, "error", err)
 		emit.Error("Repo not accessible", fmt.Sprintf("`%s/%s` isn't accessible to this organization's GitHub App installations. Install the App on it at /settings/org → Integrations and try again, or reply with a different `owner/name`.", rec.GitHubOwner, rec.GitHubRepo))
 		// Drop back to the awaiting-repo state so the user's next
@@ -585,6 +610,7 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 	}
 
 	rec.AgentSlug = agent.Slug
+	branch := "feature/sf-" + requestID
 	if agent.Slug == "" {
 		emit.Notify("Starting", fmt.Sprintf("Spinning up an isolated sandbox for your request in `%s` (base: `%s`)…", repo.Slug, repo.BaseBranch))
 	} else {
@@ -600,7 +626,10 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 		Snapshot:          b.cfg.Snapshot,
 	})
 	if err != nil {
-		if ctx.Err() != nil {
+		if liveRunCancelled(ctx) {
+			b.log.Info("sandbox create stopped", "request_id", requestID, "error", err)
+			emit.Result("Stopped", "Stopped before the sandbox finished starting.")
+		} else if ctx.Err() != nil {
 			b.log.Error("sandbox create cancelled", "request_id", requestID, "error", err)
 			emit.Error("Sandbox cancelled", "Sandbox creation was cancelled before it could start. Try again.")
 		} else {
@@ -615,13 +644,25 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 		// turn already has blocks) as "retry pending" and re-runs on
 		// the next message instead of asking for a repo.
 		appendBlocksToFirstTurn(&rec, recorder.Snapshot())
-		if uerr := b.convs.Upsert(ctx, rec); uerr != nil {
+		if uerr := b.convs.Upsert(context.Background(), rec); uerr != nil {
 			b.log.Error("convstore upsert (sandbox create fail)", "error", uerr)
 		}
 		return
 	}
+	// Mark this fresh-run sandbox as owned by the current turn. The
+	// /chat/cancel handler uses this only as an opportunistic cleanup path;
+	// the agent goroutine below remains the authoritative cleanup owner
+	// because a cancel can arrive in the small window before this ID is set.
+	setLiveRunSandboxID(ctx, sb.ID, true)
+	rec.SandboxID = sb.ID
+	rec.Branch = branch
+	if err := b.convs.Upsert(context.Background(), rec); err != nil {
+		b.log.Error("convstore upsert (sandbox ready)", "error", err)
+	}
 	b.log.Info("sandbox created", "id", sb.ID, "request_id", requestID)
-	emit.Notify("Sandbox ready", fmt.Sprintf("`%s` is up — cloning repo and starting Claude Code.", sb.ID))
+	sandboxReadyID := emit.Start(blocks.KindNotify, "Sandbox ready", map[string]any{"tag": sandboxReadySSETag})
+	emit.Append(sandboxReadyID, fmt.Sprintf("`%s` is up — cloning repo and starting Claude Code.", sb.ID))
+	emit.Done(sandboxReadyID, "")
 
 	// Persist progress every 2 s for the rest of the run so a
 	// reload (or bot crash) doesn't lose blocks. The persister
@@ -640,9 +681,18 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 		persister.Stop()
 	}()
 
-	branch := "feature/sf-" + requestID
 	prURL, runErr := b.runAgent(ctx, sb, repo, oc, agent, userRequest, requestID, validate, model, emit)
 	if runErr != nil {
+		if liveRunCancelled(ctx) {
+			b.log.Info("agent run stopped", "sandbox", sb.ID, "request_id", requestID, "error", runErr)
+			b.cleanupSandboxWithTimeout(sb, "cancelled fresh run")
+			emit.Result("Stopped", fmt.Sprintf("Stopped the run and archived sandbox `%s`.", sb.ID))
+			appendBlocksToFirstTurn(&rec, recorder.Snapshot())
+			if err := b.convs.Upsert(context.Background(), rec); err != nil {
+				b.log.Error("convstore upsert (agent stopped)", "error", err)
+			}
+			return
+		}
 		b.log.Error("agent run failed", "sandbox", sb.ID, "request_id", requestID, "error", runErr)
 		if isAgentTimeout(runErr) {
 			emit.Error("Agent timed out", fmt.Sprintf("The agent exceeded its time limit on sandbox `%s`. Reply here to retry (the orphan sandbox will be archived automatically) or check the server logs for details.", sb.ID))
@@ -664,7 +714,8 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 
 	if err := sb.Stop(ctx); err != nil {
 		b.log.Error("sandbox stop failed", "sandbox", sb.ID, "error", err)
-	} else if err := sb.Archive(ctx); err != nil {
+	}
+	if err := sb.Archive(ctx); err != nil {
 		b.log.Error("sandbox archive failed", "sandbox", sb.ID, "error", err)
 	}
 
@@ -692,6 +743,14 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 
 	repo, err := b.resolveRepo(ctx, oc.OrgID, rec.GitHubOwner, rec.GitHubRepo)
 	if err != nil {
+		if liveRunCancelled(ctx) {
+			emit.Result("Stopped", "Stopped before resuming the sandbox.")
+			appendBlocksAsNewTurn(&rec, text, recorder.Snapshot())
+			if err := b.convs.Upsert(context.Background(), rec); err != nil {
+				b.log.Error("convstore upsert (follow-up stopped before resume)", "error", err)
+			}
+			return
+		}
 		b.log.Warn("resolve repo for follow-up failed", "org", oc.OrgID, "owner", rec.GitHubOwner, "name", rec.GitHubRepo, "error", err)
 		emit.Error("Repo access lost", fmt.Sprintf("Lost access to `%s/%s` — check the GitHub App install at /settings/org → Integrations.", rec.GitHubOwner, rec.GitHubRepo))
 		appendBlocksAsNewTurn(&rec, text, recorder.Snapshot())
@@ -703,6 +762,14 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 
 	sb, err := b.daytona.Get(ctx, rec.SandboxID)
 	if err != nil {
+		if liveRunCancelled(ctx) {
+			emit.Result("Stopped", "Stopped before the sandbox was resumed.")
+			appendBlocksAsNewTurn(&rec, text, recorder.Snapshot())
+			if err := b.convs.Upsert(context.Background(), rec); err != nil {
+				b.log.Error("convstore upsert (follow-up stopped before sandbox get)", "error", err)
+			}
+			return
+		}
 		b.log.Error("sandbox get failed", "sandbox", rec.SandboxID, "request_id", requestID, "error", err)
 		emit.Error("Sandbox missing", fmt.Sprintf("Could not find sandbox `%s` — it may have been archived or removed. Start a new chat to continue.", rec.SandboxID))
 		appendBlocksAsNewTurn(&rec, text, recorder.Snapshot())
@@ -711,7 +778,19 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 		}
 		return
 	}
+	// Follow-ups reuse the conversation sandbox. Do not let the cancel
+	// handler archive it; stopping this turn should leave the chat able to
+	// continue on the same sandbox.
+	setLiveRunSandboxID(ctx, sb.ID, false)
 	if err := b.resumeSandbox(ctx, sb, emit); err != nil {
+		if liveRunCancelled(ctx) {
+			emit.Result("Stopped", fmt.Sprintf("Stopped this turn. Sandbox `%s` is still available; send another message to continue.", sb.ID))
+			appendBlocksAsNewTurn(&rec, text, recorder.Snapshot())
+			if err := b.convs.Upsert(context.Background(), rec); err != nil {
+				b.log.Error("convstore upsert (follow-up stopped during resume)", "error", err)
+			}
+			return
+		}
 		b.log.Error("sandbox resume failed", "sandbox", sb.ID, "request_id", requestID, "error", err)
 		var timeoutErr *sdkerrors.DaytonaTimeoutError
 		title := "Sandbox resume failed"
@@ -745,6 +824,15 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 
 	prURL, err := b.runFollowUp(ctx, sb, repo, oc, rec, agent, text, requestID, model, emit)
 	if err != nil {
+		if liveRunCancelled(ctx) {
+			b.log.Info("follow-up stopped", "sandbox", sb.ID, "request_id", requestID, "error", err)
+			emit.Result("Stopped", fmt.Sprintf("Stopped this turn. Sandbox `%s` is still available; send another message to continue.", sb.ID))
+			appendBlocksAsNewTurn(&rec, text, recorder.Snapshot())
+			if err := b.convs.Upsert(context.Background(), rec); err != nil {
+				b.log.Error("convstore upsert (follow-up stopped)", "error", err)
+			}
+			return
+		}
 		b.log.Error("follow-up failed", "sandbox", sb.ID, "request_id", requestID, "error", err)
 		emit.Error("Agent failed", fmt.Sprintf("Something went wrong while running the agent. Sandbox `%s` is left running for debugging — check the server logs for details.", sb.ID))
 		appendBlocksAsNewTurn(&rec, text, recorder.Snapshot())
@@ -756,7 +844,8 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 
 	if err := sb.Stop(ctx); err != nil {
 		b.log.Error("sandbox stop failed", "sandbox", sb.ID, "error", err)
-	} else if err := sb.Archive(ctx); err != nil {
+	}
+	if err := sb.Archive(ctx); err != nil {
 		b.log.Error("sandbox archive failed", "sandbox", sb.ID, "error", err)
 	}
 
@@ -1014,6 +1103,54 @@ func (b *Bot) createSandboxWithRetry(ctx context.Context, params types.SnapshotP
 		return err
 	})
 	return sb, err
+}
+
+func (b *Bot) cleanupSandboxByID(sandboxID, reason string) {
+	if b.daytona == nil || strings.TrimSpace(sandboxID) == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	sb, err := b.daytona.Get(ctx, sandboxID)
+	if err != nil {
+		b.log.Warn("sandbox cleanup lookup failed", "sandbox", sandboxID, "reason", reason, "error", err)
+		return
+	}
+	b.cleanupSandbox(ctx, sb, reason)
+}
+
+func (b *Bot) cleanupSandbox(ctx context.Context, sb *daytona.Sandbox, reason string) {
+	if sb == nil {
+		return
+	}
+	b.log.Info("sandbox cleanup start", "sandbox", sb.ID, "reason", reason)
+	if err := sb.Stop(ctx); err != nil {
+		b.log.Warn("sandbox cleanup stop failed", "sandbox", sb.ID, "reason", reason, "error", err)
+	}
+	if err := sb.Archive(ctx); err != nil {
+		b.log.Warn("sandbox cleanup archive failed", "sandbox", sb.ID, "reason", reason, "error", err)
+	} else {
+		b.log.Info("sandbox cleanup ok", "sandbox", sb.ID, "reason", reason)
+	}
+}
+
+func (b *Bot) cleanupSandboxWithTimeout(sb *daytona.Sandbox, reason string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	b.cleanupSandbox(ctx, sb, reason)
+}
+
+func (b *Bot) deleteSandboxSession(sb *daytona.Sandbox, sessionID string) {
+	if sb == nil || sessionID == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := b.retryWithBackoff(ctx, "delete session", func() error {
+		return sb.Process.DeleteSession(ctx, sessionID)
+	}); err != nil {
+		b.log.Warn("sandbox session delete failed", "sandbox", sb.ID, "session", sessionID, "error", err)
+	}
 }
 
 // resumeSandbox starts a sandbox that has been stopped or archived,

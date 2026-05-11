@@ -115,6 +115,9 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, o
 	if validate && b.bootstrap != nil && repo.InstallID != 0 && repo.RepoID != 0 {
 		s, err := b.ensureBootstrapSpec(ctx, sb, repo, oc, requestID, emit)
 		if err != nil {
+			if ctx.Err() != nil {
+				return "", err
+			}
 			// Bootstrap is best-effort: a failure here logs + continues
 			// with the unmodified prompt. Future tasks against this repo
 			// will retry. Hard-failing would block users on every repo
@@ -263,7 +266,7 @@ func (b *Bot) ensureBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo
 		return nil, fmt.Errorf("create bootstrap session: %w", err)
 	}
 	defer func() {
-		_ = sb.Process.DeleteSession(ctx, sessionID)
+		b.deleteSandboxSession(sb, sessionID)
 	}()
 
 	cloneEnv := map[string]string{
@@ -545,9 +548,7 @@ func (b *Bot) runScript(ctx context.Context, sb *daytona.Sandbox, sessionID, lab
 		return "", fmt.Errorf("create session: %w", err)
 	}
 	defer func() {
-		_ = b.retryWithBackoff(ctx, "delete session", func() error {
-			return sb.Process.DeleteSession(ctx, sessionID)
-		})
+		b.deleteSandboxSession(sb, sessionID)
 	}()
 
 	// Writing the script generates no user-visible output; pass a noop
