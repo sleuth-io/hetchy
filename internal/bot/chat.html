@@ -390,6 +390,7 @@
                               text-overflow: ellipsis; }
   .blk > summary .blk-summary { color: #888; font-weight: 400;
                                 font-size: .75rem; flex-shrink: 0; }
+  .blk.blk-live-heartbeat > summary .blk-summary { color: #0b93f6; }
   /* Block start time + total execution duration. Both sit right of
      the summary, kept dim and monospace-ish so the column reads as
      metadata rather than content. The :empty rule on each lets older
@@ -1278,6 +1279,7 @@ function closePhase(phase, endedAt) {
   if (!phase || phase._closed) return;
   phase._closed = true;
   phase.el.classList.remove('blk-streaming');
+  phase.el.classList.remove('blk-live-heartbeat');
   phase.el.open = false;
   if (phase.toolCount > 0) {
     phase.summaryEl.textContent = phase.toolCount === 1
@@ -1392,6 +1394,7 @@ function scheduleBlockRender(el) {
 function finishBlock(el, status, summary, endedAt) {
   if (!el) return;
   el.classList.remove('blk-streaming');
+  el.classList.remove('blk-live-heartbeat');
   const summaryEl = el.querySelector('.blk-summary');
   if (summary && summaryEl) summaryEl.textContent = summary;
   if (status === 'error') {
@@ -1408,6 +1411,28 @@ function finishBlock(el, status, summary, endedAt) {
   // queued render, so we'd otherwise miss the last few tokens).
   const body = el.querySelector('.blk-body');
   if (body) body.innerHTML = renderMarkdown(body.dataset.raw || '');
+}
+
+function heartbeatSummary(title, body, elapsed) {
+  if (elapsed) return 'Still running · ' + elapsed;
+  const text = body || title || 'Still running';
+  const m = text.match(/\b(?:for|running for)\s+(.+?)\s+[—–-]/i);
+  if (m && m[1]) return 'Still running · ' + m[1].trim();
+  return title || 'Still running';
+}
+
+function applyHeartbeatToActiveBlock(currentPhase, lastStandaloneEl, payload) {
+  const summary = heartbeatSummary(payload.title, payload.delta, payload.elapsed);
+  if (currentPhase && !currentPhase._closed) {
+    currentPhase.summaryEl.textContent = summary;
+    currentPhase.el.classList.add('blk-live-heartbeat');
+    return;
+  }
+  if (lastStandaloneEl && lastStandaloneEl.classList.contains('blk-streaming')) {
+    const summaryEl = lastStandaloneEl.querySelector('.blk-summary');
+    if (summaryEl) summaryEl.textContent = summary;
+    lastStandaloneEl.classList.add('blk-live-heartbeat');
+  }
 }
 
 function showEmptyState() {
@@ -2201,6 +2226,8 @@ async function consumeSSEResponse(res, onFirstEvent) {
         } else if (ref.kind === 'standalone') {
           finishBlock(ref.el, payload.status, payload.summary, payload.ended_at);
         }
+      } else if (event === 'heartbeat') {
+        applyHeartbeatToActiveBlock(currentPhase, lastStandaloneEl, payload);
       }
     }
   }

@@ -6,7 +6,7 @@
 #   SF_REPO          e.g. "owner/repo"
 #   SF_WORKDIR       absolute path to clone into
 #   SF_BASE_BRANCH   branch to check out for the agent's starting point
-#   SF_PROMPT_B64    base64-encoded prompt
+#   SF_PROMPT_B64 or SF_PROMPT_B64_FILE    base64-encoded prompt, inline or file
 #   GITHUB_TOKEN     (sandbox env)
 #
 # Plus exactly one Claude credential — the bot picks which to inject:
@@ -20,9 +20,9 @@
 #   HETCHY_AGENT_PROMPT_B64      fallback persona prompt when the sx asset is unavailable
 #   HETCHY_SX_PUBLIC_VAULT_URL   git sx vault for Hetchy-managed agent assets
 #   SX_KEY  if set, install org skills.new assets after clone, before claude
-#   SF_SPEC_SETUP_B64    base64-encoded setup.sh from the saved bootstrap spec
-#   SF_SPEC_START_B64    base64-encoded start.sh from the saved bootstrap spec
-#   SF_SPEC_HEALTH_B64   base64-encoded health.sh from the saved bootstrap spec
+#   SF_SPEC_SETUP_B64 or SF_SPEC_SETUP_B64_FILE    base64-encoded setup.sh from the saved bootstrap spec
+#   SF_SPEC_START_B64 or SF_SPEC_START_B64_FILE    base64-encoded start.sh from the saved bootstrap spec
+#   SF_SPEC_HEALTH_B64 or SF_SPEC_HEALTH_B64_FILE  base64-encoded health.sh from the saved bootstrap spec
 #   HETCHY_CLAUDE_MODEL  Claude Code model alias: opus, sonnet, or haiku
 # When all three are set, agent.sh runs setup → starts the app in the
 # background → polls health.sh BEFORE invoking claude, so the validation
@@ -33,12 +33,51 @@ set -euo pipefail
 : "${SF_REPO:?required}"
 : "${SF_WORKDIR:?required}"
 : "${SF_BASE_BRANCH:?required}"
-: "${SF_PROMPT_B64:?required}"
 : "${GITHUB_TOKEN:?required}"
 if [[ -z "${ANTHROPIC_API_KEY:-}" && -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
   echo "[hetchy] neither ANTHROPIC_API_KEY nor CLAUDE_CODE_OAUTH_TOKEN is set" >&2
   exit 1
 fi
+
+has_b64_input() {
+  local name="$1"
+  local file_name="${name}_FILE"
+  [[ -n "${!name-}" || -n "${!file_name-}" ]]
+}
+
+require_b64_input() {
+  local name="$1"
+  local file_name="${name}_FILE"
+  if ! has_b64_input "$name"; then
+    echo "[hetchy] ${name} or ${file_name} is required" >&2
+    exit 1
+  fi
+}
+
+decode_b64_input() {
+  local name="$1"
+  local dest="$2"
+  local file_name="${name}_FILE"
+  local file_value="${!file_name-}"
+  if [[ -n "$file_value" ]]; then
+    base64 -d < "$file_value" > "$dest"
+  else
+    printf '%s' "${!name-}" | base64 -d > "$dest"
+  fi
+}
+
+b64_input_size() {
+  local name="$1"
+  local file_name="${name}_FILE"
+  local file_value="${!file_name-}"
+  if [[ -n "$file_value" ]]; then
+    wc -c < "$file_value" | tr -d ' '
+  else
+    printf '%s' "${!name-}" | wc -c | tr -d ' '
+  fi
+}
+
+require_b64_input SF_PROMPT_B64
 
 # Make sure only the credential we explicitly injected is in scope.
 # Claude Code's auth precedence (highest first) is roughly:
@@ -190,16 +229,21 @@ fi
 # four scripts to /tmp/hetchy-spec/, run setup.sh (idempotent), launch
 # start.sh in the background, and poll health.sh until it passes — the
 # validation prompt assumes this work has already been done.
-if [[ -n "${SF_SPEC_SETUP_B64:-}" && -n "${SF_SPEC_START_B64:-}" && -n "${SF_SPEC_HEALTH_B64:-}" ]]; then
+if has_b64_input SF_SPEC_SETUP_B64 && has_b64_input SF_SPEC_START_B64 && has_b64_input SF_SPEC_HEALTH_B64; then
   echo "[hetchy] applying saved repo setup spec"
   mkdir -p /tmp/hetchy-spec
   # Clear any sentinel left over from a prior attempt in the same
   # sandbox; the spec-apply block below will re-create UNHEALTHY only
   # if THIS run's health poll fails.
   rm -f /tmp/hetchy-spec/UNHEALTHY
-  echo "${SF_SPEC_SETUP_B64}"  | base64 -d > /tmp/hetchy-spec/setup.sh
-  echo "${SF_SPEC_START_B64}"  | base64 -d > /tmp/hetchy-spec/start.sh
-  echo "${SF_SPEC_HEALTH_B64}" | base64 -d > /tmp/hetchy-spec/health.sh
+  echo "[hetchy] saved spec payload sizes: setup=$(b64_input_size SF_SPEC_SETUP_B64)B start=$(b64_input_size SF_SPEC_START_B64)B health=$(b64_input_size SF_SPEC_HEALTH_B64)B"
+  echo "[hetchy] writing saved setup.sh"
+  decode_b64_input SF_SPEC_SETUP_B64 /tmp/hetchy-spec/setup.sh
+  echo "[hetchy] writing saved start.sh"
+  decode_b64_input SF_SPEC_START_B64 /tmp/hetchy-spec/start.sh
+  echo "[hetchy] writing saved health.sh"
+  decode_b64_input SF_SPEC_HEALTH_B64 /tmp/hetchy-spec/health.sh
+  echo "[hetchy] making saved setup scripts executable"
   chmod +x /tmp/hetchy-spec/setup.sh /tmp/hetchy-spec/start.sh /tmp/hetchy-spec/health.sh
 
   # Soft-fail setup.sh: a non-zero exit from the saved spec must not
@@ -259,12 +303,12 @@ if [[ -n "${SF_SPEC_SETUP_B64:-}" && -n "${SF_SPEC_START_B64:-}" && -n "${SF_SPE
 fi
 
 echo "[hetchy] running claude"
-echo "${SF_PROMPT_B64}" | base64 -d > /tmp/sf-prompt-base.txt
+decode_b64_input SF_PROMPT_B64 /tmp/sf-prompt-base.txt
 agent_persona_file=""
 if [[ -n "${HETCHY_AGENT_PERSONA_ASSET:-}" && -f "$HOME/.claude/agents/${HETCHY_AGENT_PERSONA_ASSET}.md" ]]; then
   agent_persona_file="$HOME/.claude/agents/${HETCHY_AGENT_PERSONA_ASSET}.md"
-elif [[ -n "${HETCHY_AGENT_PROMPT_B64:-}" ]]; then
-  echo "${HETCHY_AGENT_PROMPT_B64}" | base64 -d > /tmp/hetchy-agent-persona.md
+elif has_b64_input HETCHY_AGENT_PROMPT_B64; then
+  decode_b64_input HETCHY_AGENT_PROMPT_B64 /tmp/hetchy-agent-persona.md
   if [[ -s /tmp/hetchy-agent-persona.md ]]; then
     agent_persona_file="/tmp/hetchy-agent-persona.md"
   fi

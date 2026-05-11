@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -63,7 +64,7 @@ func TestAgentScript_EmbeddedAndWellFormed(t *testing.T) {
 		`: "${SF_REPO:?required}"`,
 		`: "${SF_WORKDIR:?required}"`,
 		`: "${SF_BASE_BRANCH:?required}"`,
-		`: "${SF_PROMPT_B64:?required}"`,
+		"require_b64_input SF_PROMPT_B64",
 		"git clone",
 		"local -a claude_args=(",
 		"--dangerously-skip-permissions",
@@ -85,7 +86,7 @@ func TestFollowupScript_EmbeddedAndWellFormed(t *testing.T) {
 	requiredLines := []string{
 		`: "${SF_WORKDIR:?required}"`,
 		`: "${SF_BRANCH:?required}"`,
-		`: "${SF_PROMPT_B64:?required}"`,
+		"require_b64_input SF_PROMPT_B64",
 		"git fetch origin",
 		"git pull --rebase origin",
 		"local -a claude_args=(",
@@ -100,6 +101,51 @@ func TestFollowupScript_EmbeddedAndWellFormed(t *testing.T) {
 	// Follow-up should NOT contain initial-run setup steps.
 	if strings.Contains(followupScript, "git clone") {
 		t.Error("followupScript should not clone — it reuses an existing sandbox")
+	}
+}
+
+func TestMaterializeLargeRunEnvWritesFileVars(t *testing.T) {
+	b := &Bot{log: discardLogger(), retryBackoff: 0}
+	proc := &fakeProcess{}
+	env := map[string]string{
+		"HETCHY_AGENT_PROMPT_B64": strings.Repeat("b", sandboxEnvFileThreshold+1),
+		"SF_PROMPT_B64":           strings.Repeat("a", sandboxEnvFileThreshold+1),
+		"GITHUB_TOKEN":            "token",
+	}
+
+	err := b.materializeLargeRunEnv(context.Background(), "sb-1", proc, "sess-1", "agent", env)
+	if err != nil {
+		t.Fatalf("materializeLargeRunEnv returned error: %v", err)
+	}
+	if _, ok := env["SF_PROMPT_B64"]; ok {
+		t.Fatal("SF_PROMPT_B64 should have been replaced by a file var")
+	}
+	if _, ok := env["HETCHY_AGENT_PROMPT_B64"]; ok {
+		t.Fatal("HETCHY_AGENT_PROMPT_B64 should have been replaced by a file var")
+	}
+	if got, want := env["SF_PROMPT_B64_FILE"], "/tmp/hetchy-env/agent/sf_prompt_b64.b64"; got != want {
+		t.Fatalf("SF_PROMPT_B64_FILE = %q, want %q", got, want)
+	}
+	if got, want := env["HETCHY_AGENT_PROMPT_B64_FILE"], "/tmp/hetchy-env/agent/hetchy_agent_prompt_b64.b64"; got != want {
+		t.Fatalf("HETCHY_AGENT_PROMPT_B64_FILE = %q, want %q", got, want)
+	}
+	if got := env["GITHUB_TOKEN"]; got != "token" {
+		t.Fatalf("GITHUB_TOKEN changed to %q", got)
+	}
+	if len(proc.commands) != 1 {
+		t.Fatalf("expected one batched env write command, got %d", len(proc.commands))
+	}
+	if !proc.suppressInputEcho {
+		t.Fatal("env write command should suppress input echo")
+	}
+	if !strings.Contains(proc.commands[0], "rm -rf -- '/tmp/hetchy-env/agent'") {
+		t.Fatalf("write command should clear the per-label env dir first: %q", proc.commands[0])
+	}
+	if !strings.Contains(proc.commands[0], env["SF_PROMPT_B64_FILE"]) {
+		t.Fatalf("write command did not target env file path: %q", proc.commands[0])
+	}
+	if !strings.Contains(proc.commands[0], env["HETCHY_AGENT_PROMPT_B64_FILE"]) {
+		t.Fatalf("write command did not target agent env file path: %q", proc.commands[0])
 	}
 }
 

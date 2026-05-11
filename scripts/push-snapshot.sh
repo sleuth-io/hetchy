@@ -18,9 +18,9 @@
 #   SNAPSHOT_TAG              default: 1
 #   LOCAL_REGISTRY_HOST_PORT  default: localhost:6000
 #   LOCAL_REGISTRY_INTERNAL   default: registry:6000
-#   SNAPSHOT_CPU              default: 1 (vCPUs per sandbox)
+#   SNAPSHOT_CPU              default: 2 (vCPUs per sandbox)
 #   SNAPSHOT_MEMORY_GB        default: 3 (memory per sandbox, GB)
-#   SNAPSHOT_DISK_GB          default: 3 (disk per sandbox, GB)
+#   SNAPSHOT_DISK_GB          default: 4 (disk per sandbox, GB)
 set -euo pipefail
 
 SNAPSHOT_NAME="${SNAPSHOT_NAME:-universal-coding}"
@@ -33,13 +33,13 @@ API_URL="${DAYTONA_API_URL:-https://app.daytona.io/api}"
 # at registration time and every sandbox spawned from it inherits the
 # values — the SDK's SnapshotParams used at create time has no resource
 # fields, so this is the only programmatic place to set sizing without
-# clicking through the dashboard. Tuned for Claude Code: 1 vCPU + 3 GB
-# RAM. The 3 GB RAM avoids the OOMs we saw at the CLI default of 1 GB;
-# 1 vCPU is plenty (claude is mostly I/O-bound waiting on tool results)
-# and lets us pack more concurrent sandboxes onto the same runner.
-SNAPSHOT_CPU="${SNAPSHOT_CPU:-1}"
+# clicking through the dashboard. Tuned for Claude Code: 2 vCPU + 3 GB
+# RAM + 4 GB disk. The 3 GB RAM avoids the OOMs we saw at the CLI default
+# of 1 GB, and the extra CPU/disk headroom keeps tool-heavy runs from
+# getting pinned against Daytona's default limits.
+SNAPSHOT_CPU="${SNAPSHOT_CPU:-2}"
 SNAPSHOT_MEMORY_GB="${SNAPSHOT_MEMORY_GB:-3}"
-SNAPSHOT_DISK_GB="${SNAPSHOT_DISK_GB:-3}"
+SNAPSHOT_DISK_GB="${SNAPSHOT_DISK_GB:-4}"
 
 if [[ -z "${DAYTONA_API_KEY:-}" ]]; then
   echo "ERROR: DAYTONA_API_KEY is not set. Run via 'doppler run -- $0' or export it manually." >&2
@@ -122,8 +122,16 @@ else
   echo "→ cloud Daytona; using 'daytona snapshot push'"
   # `snapshot push` requires the keychain-stored creds from `daytona login
   # --api-key`. Unset DAYTONA_API_KEY/URL so the doppler-injected env
-  # doesn't shadow the CLI's persisted credentials. Push handles overwrite
-  # of an existing snapshot of the same name on its own.
+  # doesn't shadow the CLI's persisted credentials. The CLI does not
+  # overwrite an existing snapshot name, so remove the old registration
+  # first and wait for the name to become available.
+  existing_id=$(find_snapshot_id || echo "")
+  if [[ -n "$existing_id" ]]; then
+    echo "→ deleting existing snapshot id=$existing_id"
+    api -X DELETE "$API_URL/snapshots/$existing_id" -o /dev/null
+    wait_until_gone
+  fi
+
   env -u DAYTONA_API_KEY -u DAYTONA_API_URL \
     daytona snapshot push "$SNAPSHOT_NAME:$SNAPSHOT_TAG" --name "$SNAPSHOT_NAME" \
       --cpu "$SNAPSHOT_CPU" --memory "$SNAPSHOT_MEMORY_GB" --disk "$SNAPSHOT_DISK_GB"

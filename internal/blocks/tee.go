@@ -36,6 +36,9 @@ type withDoneAt interface {
 type withFailAt interface {
 	FailAt(id, summary string, endedAt time.Time)
 }
+type withHeartbeat interface {
+	Heartbeat(title, body, elapsed string)
+}
 
 type teeEmitter struct {
 	emitters []Emitter
@@ -105,6 +108,14 @@ func (t *teeEmitter) Fail(id, summary string) {
 
 func (t *teeEmitter) Notify(title, body string) {
 	t.oneShotAt(KindNotify, title, body, StatusDone)
+}
+
+func (t *teeEmitter) Heartbeat(title, body, elapsed string) {
+	for _, e := range t.emitters {
+		if hb, ok := e.(withHeartbeat); ok {
+			hb.Heartbeat(title, body, elapsed)
+		}
+	}
 }
 
 func (t *teeEmitter) Result(title, body string) {
