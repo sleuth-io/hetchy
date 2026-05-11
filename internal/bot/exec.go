@@ -42,7 +42,15 @@ type sandboxProcess interface {
 // a healthy long run keeps producing output and resets the idle clock,
 // while a stuck process goes silent and trips the idle limit early.
 func (b *Bot) shLines(ctx context.Context, sandboxID string, proc sandboxProcess, sessionID, step, cmd string, timeout, idleTimeout time.Duration, onLine func(string)) (string, error) {
-	b.log.Info("sandbox step start", "sandbox", sandboxID, "step", step, "timeout", timeout, "idle_timeout", idleTimeout)
+	suppressInputEcho := shouldSuppressSandboxInputEcho(step, cmd)
+	b.log.Info("sandbox step start",
+		"sandbox", sandboxID,
+		"step", step,
+		"timeout", timeout,
+		"idle_timeout", idleTimeout,
+		"cmd_bytes", len(cmd),
+		"suppress_input_echo", suppressInputEcho,
+	)
 
 	stepCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -52,7 +60,8 @@ func (b *Bot) shLines(ctx context.Context, sandboxID string, proc sandboxProcess
 	var lastActivity atomic.Int64
 	var idledOut atomic.Bool
 
-	res, err := proc.ExecuteSessionCommand(stepCtx, sessionID, cmd, true, false)
+	execStarted := time.Now()
+	res, err := proc.ExecuteSessionCommand(stepCtx, sessionID, cmd, true, suppressInputEcho)
 	if err != nil {
 		b.log.Error("sandbox step exec error", "sandbox", sandboxID, "step", step, "error", err)
 		if errors.Is(err, context.DeadlineExceeded) {
@@ -61,6 +70,13 @@ func (b *Bot) shLines(ctx context.Context, sandboxID string, proc sandboxProcess
 		return "", fmt.Errorf("step %q exec error: %w", step, err)
 	}
 	cmdID, _ := res["id"].(string)
+	commandAcceptedAt := time.Now()
+	b.log.Info("sandbox step command accepted",
+		"sandbox", sandboxID,
+		"step", step,
+		"cmd_id", cmdID,
+		"exec_duration", time.Since(execStarted),
+	)
 
 	// Start the idle clock only after ExecuteSessionCommand returns so
 	// the SDK round-trip (which can take several seconds) doesn't
@@ -109,8 +125,14 @@ func (b *Bot) shLines(ctx context.Context, sandboxID string, proc sandboxProcess
 	// and stderr are buffered separately so a line straddling the two
 	// streams doesn't get glued together out of order.
 	var outTail, errTail strings.Builder
+	lastChunkAt := commandAcceptedAt
+	seenChunk := false
 	flush := func(tail *strings.Builder, chunk, stream string) {
-		lastActivity.Store(time.Now().UnixNano())
+		now := time.Now()
+		b.logSandboxOutputTiming(sandboxID, step, commandAcceptedAt, lastChunkAt, seenChunk, buf.Len(), now)
+		lastChunkAt = now
+		seenChunk = true
+		lastActivity.Store(now.UnixNano())
 		buf.WriteString(chunk)
 		tail.WriteString(chunk)
 		s := tail.String()
@@ -230,4 +252,27 @@ func (b *Bot) shLines(ctx context.Context, sandboxID string, proc sandboxProcess
 
 	b.log.Info("sandbox step ok", "sandbox", sandboxID, "step", step, "output_bytes", buf.Len())
 	return buf.String(), nil
+}
+
+func shouldSuppressSandboxInputEcho(step, cmd string) bool {
+	return strings.Contains(step, "write") || len(cmd) > 8*1024
+}
+
+func (b *Bot) logSandboxOutputTiming(sandboxID, step string, commandAcceptedAt, lastChunkAt time.Time, seenChunk bool, capturedBytes int, now time.Time) {
+	if !seenChunk {
+		b.log.Info("sandbox step first output",
+			"sandbox", sandboxID,
+			"step", step,
+			"since_command_accepted", now.Sub(commandAcceptedAt),
+		)
+		return
+	}
+	if gap := now.Sub(lastChunkAt); gap >= 30*time.Second {
+		b.log.Info("sandbox output resumed after gap",
+			"sandbox", sandboxID,
+			"step", step,
+			"gap", gap.Round(time.Second),
+			"captured_bytes", capturedBytes,
+		)
+	}
 }

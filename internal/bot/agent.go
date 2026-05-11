@@ -568,6 +568,11 @@ func (b *Bot) runScript(ctx context.Context, sb *daytona.Sandbox, sessionID, lab
 		return "", err
 	}
 
+	env = maps.Clone(env)
+	if err := b.materializeLargeRunEnv(ctx, sb.ID, sb.Process, sessionID, label, env); err != nil {
+		return "", err
+	}
+
 	// Sort env keys so the resulting command line is deterministic; Go
 	// map iteration is randomised, which makes log-diffing two runs of
 	// the same script unnecessarily noisy.
@@ -602,4 +607,48 @@ func (b *Bot) runScript(ctx context.Context, sb *daytona.Sandbox, sessionID, lab
 		return "", fmt.Errorf("claude finished the %s run without posting a PR URL — check the agent transcript blocks", label)
 	}
 	return prURL, nil
+}
+
+const sandboxEnvFileThreshold = 8 * 1024
+
+var sandboxEnvFileKeys = map[string]string{
+	"HETCHY_AGENT_PROMPT_B64": "HETCHY_AGENT_PROMPT_B64_FILE",
+	"SF_PROMPT_B64":           "SF_PROMPT_B64_FILE",
+	"SF_SPEC_HEALTH_B64":      "SF_SPEC_HEALTH_B64_FILE",
+	"SF_SPEC_SETUP_B64":       "SF_SPEC_SETUP_B64_FILE",
+	"SF_SPEC_START_B64":       "SF_SPEC_START_B64_FILE",
+}
+
+func (b *Bot) materializeLargeRunEnv(ctx context.Context, sandboxID string, proc sandboxProcess, sessionID, label string, env map[string]string) error {
+	var keys []string
+	for key := range sandboxEnvFileKeys {
+		if val, ok := env[key]; ok && len(val) > sandboxEnvFileThreshold {
+			keys = append(keys, key)
+		}
+	}
+	slices.Sort(keys)
+	if len(keys) == 0 {
+		return nil
+	}
+
+	dir := "/tmp/hetchy-env/" + label
+	for _, key := range keys {
+		val := env[key]
+		fileKey := sandboxEnvFileKeys[key]
+		path := dir + "/" + strings.ToLower(key) + ".b64"
+		cmd := "mkdir -p " + shellQuote(dir) + "\n" + heredocWriteCmd(path, val, false)
+		b.log.Info("sandbox env file write",
+			"sandbox", sandboxID,
+			"session", sessionID,
+			"label", label,
+			"key", key,
+			"bytes", len(val),
+		)
+		if _, err := b.shLines(ctx, sandboxID, proc, sessionID, "write-env-"+key, cmd, 60*time.Second, 0, func(string) {}); err != nil {
+			return fmt.Errorf("write %s env file: %w", key, err)
+		}
+		delete(env, key)
+		env[fileKey] = path
+	}
+	return nil
 }
