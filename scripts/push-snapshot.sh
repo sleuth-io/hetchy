@@ -18,9 +18,9 @@
 #   SNAPSHOT_TAG              default: 1
 #   LOCAL_REGISTRY_HOST_PORT  default: localhost:6000
 #   LOCAL_REGISTRY_INTERNAL   default: registry:6000
-#   SNAPSHOT_CPU              default: 1 (vCPUs per sandbox)
+#   SNAPSHOT_CPU              default: 2 (vCPUs per sandbox)
 #   SNAPSHOT_MEMORY_GB        default: 3 (memory per sandbox, GB)
-#   SNAPSHOT_DISK_GB          default: 3 (disk per sandbox, GB)
+#   SNAPSHOT_DISK_GB          default: 4 (disk per sandbox, GB)
 set -euo pipefail
 
 SNAPSHOT_NAME="${SNAPSHOT_NAME:-universal-coding}"
@@ -122,8 +122,16 @@ else
   echo "→ cloud Daytona; using 'daytona snapshot push'"
   # `snapshot push` requires the keychain-stored creds from `daytona login
   # --api-key`. Unset DAYTONA_API_KEY/URL so the doppler-injected env
-  # doesn't shadow the CLI's persisted credentials. Push handles overwrite
-  # of an existing snapshot of the same name on its own.
+  # doesn't shadow the CLI's persisted credentials. The CLI does not
+  # overwrite an existing snapshot name, so remove the old registration
+  # first and wait for the name to become available.
+  existing_id=$(find_snapshot_id || echo "")
+  if [[ -n "$existing_id" ]]; then
+    echo "→ deleting existing snapshot id=$existing_id"
+    api -X DELETE "$API_URL/snapshots/$existing_id" -o /dev/null
+    wait_until_gone
+  fi
+
   env -u DAYTONA_API_KEY -u DAYTONA_API_URL \
     daytona snapshot push "$SNAPSHOT_NAME:$SNAPSHOT_TAG" --name "$SNAPSHOT_NAME" \
       --cpu "$SNAPSHOT_CPU" --memory "$SNAPSHOT_MEMORY_GB" --disk "$SNAPSHOT_DISK_GB"
