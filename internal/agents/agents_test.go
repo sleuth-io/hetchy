@@ -11,10 +11,10 @@ func TestResolveBuiltInAgents(t *testing.T) {
 		in   string
 		want string
 	}{
-		{"backend", "neckbeard"},
-		{"@frontend", "scriptkiddy"},
+		{"backend", "bob"},
+		{"@frontend", "alice"},
 		{"Architect", "archy"},
-		{"scriptkiddy", "scriptkiddy"},
+		{"alice", "alice"},
 	}
 	for _, tc := range cases {
 		got, err := store.Resolve(t.Context(), "org", tc.in)
@@ -23,6 +23,9 @@ func TestResolveBuiltInAgents(t *testing.T) {
 		}
 		if got.Slug != tc.want {
 			t.Errorf("Resolve(%q) = %q, want %q", tc.in, got.Slug, tc.want)
+		}
+		if len(got.Skills) == 0 {
+			t.Errorf("Resolve(%q) returned no skills", tc.in)
 		}
 	}
 }

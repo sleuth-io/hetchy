@@ -9,6 +9,7 @@ import (
 )
 
 type Querier interface {
+	CountAgentProfilesByOrg(ctx context.Context, orgID string) (int64, error)
 	DeleteConversation(ctx context.Context, arg DeleteConversationParams) error
 	DeleteGithubInstallation(ctx context.Context, installationID int64) error
 	DeleteGithubReposByInstallation(ctx context.Context, installationID int64) error
@@ -19,7 +20,8 @@ type Querier interface {
 	DeleteGithubTeamsByInstallationExcept(ctx context.Context, arg DeleteGithubTeamsByInstallationExceptParams) error
 	DeleteRepoSecretValue(ctx context.Context, arg DeleteRepoSecretValueParams) error
 	DeleteRepoSetupSpec(ctx context.Context, arg DeleteRepoSetupSpecParams) error
-	GetAgentProfileBySlug(ctx context.Context, arg GetAgentProfileBySlugParams) (AgentProfile, error)
+	DisableAgentProfile(ctx context.Context, arg DisableAgentProfileParams) (int64, error)
+	GetAgentProfileBySlug(ctx context.Context, arg GetAgentProfileBySlugParams) (GetAgentProfileBySlugRow, error)
 	GetConversation(ctx context.Context, arg GetConversationParams) (GetConversationRow, error)
 	GetGithubInstallation(ctx context.Context, installationID int64) (GithubAppInstallation, error)
 	// Resolves an (owner, name) the user typed in chat to a concrete
@@ -41,7 +43,7 @@ type Querier interface {
 	// whose race window allowed the user's value to be overwritten with
 	// NULL when the user filled it in between the two statements.
 	InsertRepoSecretValueIfAbsent(ctx context.Context, arg InsertRepoSecretValueIfAbsentParams) error
-	ListAgentProfilesByOrg(ctx context.Context, orgID string) ([]AgentProfile, error)
+	ListAgentProfilesByOrg(ctx context.Context, orgID string) ([]ListAgentProfilesByOrgRow, error)
 	ListGithubInstallationsByOrg(ctx context.Context, orgID string) ([]GithubAppInstallation, error)
 	ListGithubReposByInstallation(ctx context.Context, installationID int64) ([]GithubRepo, error)
 	// Every repo accessible to the given Hetchy org, across all of its
@@ -99,6 +101,22 @@ type Querier interface {
 	// '%', '_' and '\' in the user-typed query so they read as
 	// literals instead of pattern metacharacters.
 	//
+	// Ordering is by created_at descending (newest first) so a chat's
+	// position in the sidebar stays stable as new turns land — replying
+	// to an old chat never reshuffles the list, and a brand-new chat
+	// lands on page 0 where the sidebar's offset=0 reload will see it.
+	// thread_id breaks ties when two rows share the same created_at (common
+	// for inserts within the same transaction, since NOW() returns
+	// transaction-start time) so pagination stays deterministic.
+	//
+	// Caveat: LIMIT/OFFSET pagination is not snapshot-isolated. A new chat
+	// inserted between a user's page-0 fetch and their "Load more" click
+	// shifts every existing row down by one, so the OFFSET N request may
+	// re-fetch the last row of the previous page or skip a row. Acceptable
+	// at current per-org scale (tens to low hundreds). Future fix: keyset
+	// pagination on (created_at, thread_id) — pass the last row's pair as
+	// a cursor instead of an offset.
+	//
 	// Performance note: ILIKE '%foo%' is sequential scan territory
 	// because no B-tree index can cover a leading-wildcard pattern.
 	// Fine for the current per-org chat counts (tens to low hundreds);
@@ -106,12 +124,14 @@ type Querier interface {
 	// + a GIN index on custom_title (and a generated column for
 	// history[1]).
 	SearchConversations(ctx context.Context, arg SearchConversationsParams) ([]SearchConversationsRow, error)
+	SeedDefaultAgentProfilesForOrg(ctx context.Context, orgID string) error
+	UpdateAgentProfileName(ctx context.Context, arg UpdateAgentProfileNameParams) (UpdateAgentProfileNameRow, error)
 	// Lightweight status update used by the runtime apply path: bumps
 	// success/failure counters and the validation_status without
 	// rewriting the whole spec. Avoids re-encoding all the JSONB blobs on
 	// every successful task.
 	UpdateRepoSetupSpecStatus(ctx context.Context, arg UpdateRepoSetupSpecStatusParams) error
-	UpsertAgentProfile(ctx context.Context, arg UpsertAgentProfileParams) (AgentProfile, error)
+	UpsertAgentProfile(ctx context.Context, arg UpsertAgentProfileParams) (UpsertAgentProfileRow, error)
 	UpsertConversation(ctx context.Context, arg UpsertConversationParams) (UpsertConversationRow, error)
 	// Failing-bootstrap upsert. Diverges from UpsertRepoSetupSpec in two
 	// ways: success_count is left untouched (we only ever write a failing

@@ -21,6 +21,22 @@ type AgentProfile struct {
 	Enabled       bool               `json:"enabled"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+	Skills        []string           `json:"skills"`
+	BuiltIn       bool               `json:"built_in"`
+}
+
+type AgentProfileTemplate struct {
+	Slug          string             `json:"slug"`
+	DisplayName   string             `json:"display_name"`
+	Description   string             `json:"description"`
+	SxBot         string             `json:"sx_bot"`
+	PersonaAsset  string             `json:"persona_asset"`
+	PersonaPrompt string             `json:"persona_prompt"`
+	SlackAliases  []string           `json:"slack_aliases"`
+	Skills        []string           `json:"skills"`
+	Enabled       bool               `json:"enabled"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Conversation struct {

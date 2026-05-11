@@ -82,6 +82,7 @@ func (b *Bot) runWeb(ctx context.Context) error {
 	mux.Handle("/", b.auth.Middleware(http.HandlerFunc(b.indexHandler)))
 	mux.Handle("/onboarding", b.auth.Middleware(b.auth.RequireAuth(http.HandlerFunc(b.onboardingHandler))))
 	mux.Handle("/settings/org", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.settingsHandler))))
+	mux.Handle("/settings/org/agents/", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.agentSettingsActionHandler))))
 	mux.Handle("/settings/org/invite", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.inviteHandler))))
 	mux.Handle("/settings/org/invitations/", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.invitationActionHandler))))
 	mux.Handle("/settings/org/members/", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.memberActionHandler))))
@@ -202,6 +203,11 @@ func (b *Bot) onboardingHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := b.orgs.Upsert(r.Context(), orgcfg.Config{OrgID: orgID}); err != nil {
 		b.log.Error("upsert empty org config", "error", err)
+	}
+	if b.agents != nil {
+		if err := b.agents.EnsureSeeded(r.Context(), orgID); err != nil {
+			b.log.Error("seed default agents", "error", err, "org", orgID)
+		}
 	}
 	if err := b.auth.SwitchOrg(w, r, orgID); err != nil {
 		// The org exists in WorkOS and the membership is in place; only the
@@ -506,6 +512,34 @@ func (b *Bot) populateSettingsTabData(ctx context.Context, orgID, tab string, da
 		data["GitHubRepos"] = repos
 		data["BootstrapStatus"] = bootstrapStatus
 
+	case "agents":
+		store := b.agents
+		if store == nil {
+			store = agents.NewStore(nil)
+		}
+		profiles, err := store.List(ctx, orgID)
+		if err != nil {
+			return fmt.Errorf("load agents: %w", err)
+		}
+		out := make([]agentSummary, 0, len(profiles))
+		for _, a := range profiles {
+			if !a.Enabled {
+				continue
+			}
+			out = append(out, agentSummary{
+				Slug:         a.Slug,
+				DisplayName:  a.DisplayName,
+				Description:  a.Description,
+				SXBot:        a.SXBot,
+				PersonaAsset: a.PersonaAsset,
+				SlackAliases: a.SlackAliases,
+				Skills:       a.Skills,
+				BuiltIn:      a.BuiltIn,
+				Default:      a.Slug == agents.DefaultSlug,
+			})
+		}
+		data["Agents"] = out
+
 	case "members":
 		members, err := b.auth.ListMembers(ctx, orgID)
 		if err != nil {
@@ -590,9 +624,100 @@ func savedMessage(s string) string {
 		return "Sync complete."
 	case "github_install_conflict":
 		return "That GitHub installation is already connected to another Hetchy organization. Have the existing org uninstall first (or pick a different account)."
+	case "agent_saved":
+		return "Agent saved."
+	case "agent_deleted":
+		return "Agent deleted."
 	default:
 		return ""
 	}
+}
+
+func (b *Bot) agentSettingsActionHandler(w http.ResponseWriter, r *http.Request) {
+	p, _ := auth.FromContext(r.Context())
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !isAdmin(p) {
+		http.Error(w, "admin role required", http.StatusForbidden)
+		return
+	}
+	if err := requireSameOrigin(r); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	slug, action, ok := splitAgentAction(r.URL.Path)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	store := b.agents
+	if store == nil {
+		store = agents.NewStore(nil)
+	}
+	switch action {
+	case "":
+		name := strings.TrimSpace(r.FormValue("display_name"))
+		if name == "" {
+			http.Error(w, "agent name is required", http.StatusBadRequest)
+			return
+		}
+		if _, err := store.UpdateName(r.Context(), p.OrgID, slug, name); err != nil {
+			if errors.Is(err, agents.ErrNotFound) {
+				http.NotFound(w, r)
+				return
+			}
+			b.log.Error("update agent name", "error", err, "org", p.OrgID, "slug", slug)
+			http.Error(w, "save agent: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		http.Redirect(w, r, "/settings/org?tab=agents&saved=agent_saved", http.StatusFound)
+	case "delete":
+		if err := store.Delete(r.Context(), p.OrgID, slug); err != nil {
+			if errors.Is(err, agents.ErrNotFound) {
+				http.NotFound(w, r)
+				return
+			}
+			b.log.Error("delete agent", "error", err, "org", p.OrgID, "slug", slug)
+			http.Error(w, "delete agent: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		http.Redirect(w, r, "/settings/org?tab=agents&saved=agent_deleted", http.StatusFound)
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func splitAgentAction(path string) (slug, action string, ok bool) {
+	const prefix = "/settings/org/agents/"
+	rest := strings.TrimPrefix(path, prefix)
+	if rest == path || rest == "" {
+		return "", "", false
+	}
+	parts := strings.Split(rest, "/")
+	if len(parts) > 2 || parts[0] == "" {
+		return "", "", false
+	}
+	decoded, err := url.PathUnescape(parts[0])
+	if err != nil {
+		return "", "", false
+	}
+	slug = agents.NormalizeSlug(decoded)
+	if slug == "" || slug != decoded {
+		return "", "", false
+	}
+	if len(parts) == 2 {
+		action = strings.TrimSpace(parts[1])
+		if action == "" {
+			return "", "", false
+		}
+	}
+	return slug, action, true
 }
 
 // inviteHandler creates a pending WorkOS invitation. WorkOS sends the
@@ -1271,6 +1396,7 @@ type agentSummary struct {
 	SXBot        string   `json:"sx_bot,omitempty"`
 	PersonaAsset string   `json:"persona_asset,omitempty"`
 	SlackAliases []string `json:"slack_aliases,omitempty"`
+	Skills       []string `json:"skills,omitempty"`
 	BuiltIn      bool     `json:"built_in"`
 	Default      bool     `json:"default"`
 }
@@ -1302,6 +1428,7 @@ func (b *Bot) agentsHandler(w http.ResponseWriter, r *http.Request) {
 			PersonaAsset  string   `json:"persona_asset"`
 			PersonaPrompt string   `json:"persona_prompt"`
 			SlackAliases  []string `json:"slack_aliases"`
+			Skills        []string `json:"skills"`
 			Enabled       *bool    `json:"enabled"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -1320,6 +1447,7 @@ func (b *Bot) agentsHandler(w http.ResponseWriter, r *http.Request) {
 			PersonaAsset:  body.PersonaAsset,
 			PersonaPrompt: body.PersonaPrompt,
 			SlackAliases:  body.SlackAliases,
+			Skills:        body.Skills,
 			Enabled:       enabled,
 		})
 		if err != nil {
@@ -1334,6 +1462,7 @@ func (b *Bot) agentsHandler(w http.ResponseWriter, r *http.Request) {
 			SXBot:        profile.SXBot,
 			PersonaAsset: profile.PersonaAsset,
 			SlackAliases: profile.SlackAliases,
+			Skills:       profile.Skills,
 			BuiltIn:      profile.BuiltIn,
 			Default:      profile.Slug == agents.DefaultSlug,
 		})
@@ -1357,6 +1486,7 @@ func (b *Bot) agentsHandler(w http.ResponseWriter, r *http.Request) {
 			SXBot:        a.SXBot,
 			PersonaAsset: a.PersonaAsset,
 			SlackAliases: a.SlackAliases,
+			Skills:       a.Skills,
 			BuiltIn:      a.BuiltIn,
 			Default:      a.Slug == agents.DefaultSlug,
 		})

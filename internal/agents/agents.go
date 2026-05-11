@@ -1,9 +1,8 @@
-// Package agents defines Hetchy persona profiles and resolution rules.
+// Package agents defines Hetchy persona profile resolution rules.
 //
-// A profile is routing/configuration metadata for one Hetchy agent. The
-// persona and assets themselves should live in sx vaults; the prompt here is
-// a fallback so built-ins still behave sensibly before the public vault is
-// configured or when an sx install is temporarily unavailable.
+// In normal operation profiles are org-scoped database records. Hetchy's
+// starter agents are seeded from database templates, then users can rename or
+// disable their org's copy without changing global defaults.
 package agents
 
 import (
@@ -34,6 +33,7 @@ type Profile struct {
 	PersonaAsset  string   `json:"persona_asset"`
 	PersonaPrompt string   `json:"-"`
 	SlackAliases  []string `json:"slack_aliases,omitempty"`
+	Skills        []string `json:"skills,omitempty"`
 	Enabled       bool     `json:"enabled"`
 	BuiltIn       bool     `json:"built_in"`
 }
@@ -42,33 +42,37 @@ type Store struct{ db *db.Store }
 
 func NewStore(d *db.Store) *Store { return &Store{db: d} }
 
-func BuiltIns() []Profile {
+// FallbackProfiles mirrors the database seed templates for DB-less unit tests
+// and degraded local wiring. Real org traffic goes through agent_profiles.
+func FallbackProfiles() []Profile {
 	return []Profile{
 		{
-			Slug:         "neckbeard",
-			DisplayName:  "NeckBeard",
+			Slug:         "bob",
+			DisplayName:  "Bob",
 			Description:  "Backend developer for APIs, data models, services, auth, infra, migrations, and tests.",
-			SXBot:        "neckbeard",
-			PersonaAsset: "neckbeard",
+			SXBot:        "bob",
+			PersonaAsset: "bob",
 			SlackAliases: []string{"backend", "api", "server"},
+			Skills:       []string{"golang-pro", "golang-testing", "neon-postgres", "database-migrations"},
 			Enabled:      true,
 			BuiltIn:      true,
 			PersonaPrompt: strings.TrimSpace(`
-You are NeckBeard, Hetchy's backend developer agent.
+You are Bob, Hetchy's backend developer agent.
 
 Bias toward boring, durable backend changes: clear APIs, explicit data contracts, safe migrations, strong tests, and observable failure modes. Before changing code, identify existing service boundaries and reuse local patterns. Prefer small, reviewable patches over speculative rewrites. When the request touches persistence, auth, queues, integrations, or deployment behavior, call out compatibility risks in the PR body and validate the affected server-side path.`),
 		},
 		{
-			Slug:         "scriptkiddy",
-			DisplayName:  "ScriptKiddy",
+			Slug:         "alice",
+			DisplayName:  "Alice",
 			Description:  "Frontend developer for UI implementation, client behavior, accessibility, and browser validation.",
-			SXBot:        "scriptkiddy",
-			PersonaAsset: "scriptkiddy",
+			SXBot:        "alice",
+			PersonaAsset: "alice",
 			SlackAliases: []string{"frontend", "front-end", "ui", "ux", "web"},
+			Skills:       []string{"frontend-design", "react-best-practices", "webapp-testing", "extract-design-system"},
 			Enabled:      true,
 			BuiltIn:      true,
 			PersonaPrompt: strings.TrimSpace(`
-You are ScriptKiddy, Hetchy's frontend developer agent.
+You are Alice, Hetchy's frontend developer agent.
 
 Build the actual user-facing experience, not scaffolding. Follow the existing design system and interaction patterns before inventing new UI. Prioritize responsive layout, readable states, accessibility, and browser-tested behavior. When the task changes visible UI, inspect it in a real browser where possible and include validation evidence in the PR body. Keep markup, styling, and client logic cohesive and avoid decorative complexity that does not serve the workflow.`),
 		},
@@ -79,6 +83,7 @@ Build the actual user-facing experience, not scaffolding. Follow the existing de
 			SXBot:        "archy",
 			PersonaAsset: "archy",
 			SlackAliases: []string{"architect", "architecture", "design"},
+			Skills:       []string{"improve-codebase-architecture", "architecture-blueprint-generator", "documentation-and-adrs", "software-architecture"},
 			Enabled:      true,
 			BuiltIn:      true,
 			PersonaPrompt: strings.TrimSpace(`
@@ -90,21 +95,44 @@ Take a systems view first: clarify boundaries, data flow, migration paths, opera
 }
 
 func (s *Store) List(ctx context.Context, orgID string) ([]Profile, error) {
-	out := BuiltIns()
 	if s == nil || s.db == nil || orgID == "" {
-		return out, nil
+		return FallbackProfiles(), nil
+	}
+	if err := s.EnsureSeeded(ctx, orgID); err != nil {
+		return nil, err
 	}
 	rows, err := s.db.Queries.ListAgentProfilesByOrg(ctx, orgID)
 	if err != nil {
 		return nil, fmt.Errorf("list agent profiles: %w", err)
 	}
+	out := make([]Profile, 0, len(rows))
 	for _, r := range rows {
 		if !r.Enabled {
 			continue
 		}
-		out = append(out, profileFromRow(r))
+		out = append(out, profileFromListRow(r))
 	}
 	return out, nil
+}
+
+// EnsureSeeded copies default agent templates into an org the first time agent
+// data is requested. It intentionally counts disabled rows too: when an admin
+// deletes every starter agent we must not resurrect them on the next page load.
+func (s *Store) EnsureSeeded(ctx context.Context, orgID string) error {
+	if s == nil || s.db == nil || orgID == "" {
+		return nil
+	}
+	n, err := s.db.Queries.CountAgentProfilesByOrg(ctx, orgID)
+	if err != nil {
+		return fmt.Errorf("count agent profiles: %w", err)
+	}
+	if n > 0 {
+		return nil
+	}
+	if err := s.db.Queries.SeedDefaultAgentProfilesForOrg(ctx, orgID); err != nil {
+		return fmt.Errorf("seed default agent profiles: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) Resolve(ctx context.Context, orgID, requested string) (Profile, error) {
@@ -132,6 +160,9 @@ func (s *Store) Upsert(ctx context.Context, orgID string, p Profile) (Profile, e
 	if orgID == "" {
 		return Profile{}, errors.New("agents: org id required")
 	}
+	if err := s.EnsureSeeded(ctx, orgID); err != nil {
+		return Profile{}, err
+	}
 	slug := NormalizeSlug(p.Slug)
 	if slug == "" {
 		return Profile{}, errors.New("agents: slug required")
@@ -149,17 +180,22 @@ func (s *Store) Upsert(ctx context.Context, orgID string, p Profile) (Profile, e
 		PersonaAsset:  strings.TrimSpace(p.PersonaAsset),
 		PersonaPrompt: strings.TrimSpace(p.PersonaPrompt),
 		SlackAliases:  cleanAliases(p.SlackAliases),
+		Skills:        cleanSkills(p.Skills),
+		BuiltIn:       p.BuiltIn,
 		Enabled:       p.Enabled,
 	})
 	if err != nil {
 		return Profile{}, fmt.Errorf("upsert agent profile: %w", err)
 	}
-	return profileFromRow(row), nil
+	return profileFromUpsertRow(row), nil
 }
 
 func (s *Store) GetCustom(ctx context.Context, orgID, slug string) (Profile, error) {
 	if s == nil || s.db == nil {
 		return Profile{}, ErrNotFound
+	}
+	if err := s.EnsureSeeded(ctx, orgID); err != nil {
+		return Profile{}, err
 	}
 	row, err := s.db.Queries.GetAgentProfileBySlug(ctx, sqlc.GetAgentProfileBySlugParams{
 		OrgID: orgID,
@@ -174,7 +210,58 @@ func (s *Store) GetCustom(ctx context.Context, orgID, slug string) (Profile, err
 	if !row.Enabled {
 		return Profile{}, ErrNotFound
 	}
-	return profileFromRow(row), nil
+	return profileFromGetRow(row), nil
+}
+
+func (s *Store) UpdateName(ctx context.Context, orgID, slug, displayName string) (Profile, error) {
+	if s == nil || s.db == nil {
+		return Profile{}, errors.New("agents: store disabled")
+	}
+	if orgID == "" {
+		return Profile{}, errors.New("agents: org id required")
+	}
+	if err := s.EnsureSeeded(ctx, orgID); err != nil {
+		return Profile{}, err
+	}
+	display := strings.TrimSpace(displayName)
+	if display == "" {
+		return Profile{}, errors.New("agents: display name required")
+	}
+	row, err := s.db.Queries.UpdateAgentProfileName(ctx, sqlc.UpdateAgentProfileNameParams{
+		OrgID:       orgID,
+		Slug:        NormalizeSlug(slug),
+		DisplayName: display,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Profile{}, ErrNotFound
+		}
+		return Profile{}, fmt.Errorf("update agent profile name: %w", err)
+	}
+	return profileFromUpdateNameRow(row), nil
+}
+
+func (s *Store) Delete(ctx context.Context, orgID, slug string) error {
+	if s == nil || s.db == nil {
+		return errors.New("agents: store disabled")
+	}
+	if orgID == "" {
+		return errors.New("agents: org id required")
+	}
+	if err := s.EnsureSeeded(ctx, orgID); err != nil {
+		return err
+	}
+	n, err := s.db.Queries.DisableAgentProfile(ctx, sqlc.DisableAgentProfileParams{
+		OrgID: orgID,
+		Slug:  NormalizeSlug(slug),
+	})
+	if err != nil {
+		return fmt.Errorf("disable agent profile: %w", err)
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (p Profile) Matches(token string) bool {
@@ -222,7 +309,7 @@ func NormalizeLookup(s string) string {
 	return s
 }
 
-func profileFromRow(row sqlc.AgentProfile) Profile {
+func profileFromListRow(row sqlc.ListAgentProfilesByOrgRow) Profile {
 	return Profile{
 		Slug:          row.Slug,
 		DisplayName:   row.DisplayName,
@@ -231,8 +318,54 @@ func profileFromRow(row sqlc.AgentProfile) Profile {
 		PersonaAsset:  row.PersonaAsset,
 		PersonaPrompt: row.PersonaPrompt,
 		SlackAliases:  cleanAliases(row.SlackAliases),
+		Skills:        cleanSkills(row.Skills),
 		Enabled:       row.Enabled,
-		BuiltIn:       false,
+		BuiltIn:       row.BuiltIn,
+	}
+}
+
+func profileFromGetRow(row sqlc.GetAgentProfileBySlugRow) Profile {
+	return Profile{
+		Slug:          row.Slug,
+		DisplayName:   row.DisplayName,
+		Description:   row.Description,
+		SXBot:         row.SxBot,
+		PersonaAsset:  row.PersonaAsset,
+		PersonaPrompt: row.PersonaPrompt,
+		SlackAliases:  cleanAliases(row.SlackAliases),
+		Skills:        cleanSkills(row.Skills),
+		Enabled:       row.Enabled,
+		BuiltIn:       row.BuiltIn,
+	}
+}
+
+func profileFromUpsertRow(row sqlc.UpsertAgentProfileRow) Profile {
+	return Profile{
+		Slug:          row.Slug,
+		DisplayName:   row.DisplayName,
+		Description:   row.Description,
+		SXBot:         row.SxBot,
+		PersonaAsset:  row.PersonaAsset,
+		PersonaPrompt: row.PersonaPrompt,
+		SlackAliases:  cleanAliases(row.SlackAliases),
+		Skills:        cleanSkills(row.Skills),
+		Enabled:       row.Enabled,
+		BuiltIn:       row.BuiltIn,
+	}
+}
+
+func profileFromUpdateNameRow(row sqlc.UpdateAgentProfileNameRow) Profile {
+	return Profile{
+		Slug:          row.Slug,
+		DisplayName:   row.DisplayName,
+		Description:   row.Description,
+		SXBot:         row.SxBot,
+		PersonaAsset:  row.PersonaAsset,
+		PersonaPrompt: row.PersonaPrompt,
+		SlackAliases:  cleanAliases(row.SlackAliases),
+		Skills:        cleanSkills(row.Skills),
+		Enabled:       row.Enabled,
+		BuiltIn:       row.BuiltIn,
 	}
 }
 
@@ -244,6 +377,18 @@ func cleanAliases(in []string) []string {
 			continue
 		}
 		out = append(out, a)
+	}
+	return out
+}
+
+func cleanSkills(in []string) []string {
+	out := make([]string, 0, len(in))
+	for _, skill := range in {
+		s := strings.TrimSpace(skill)
+		if s == "" || slices.Contains(out, s) {
+			continue
+		}
+		out = append(out, s)
 	}
 	return out
 }

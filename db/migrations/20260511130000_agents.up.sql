@@ -1,7 +1,7 @@
 -- Agent profiles are org-scoped routing records for Hetchy personas.
--- Built-in agents live in code and the public sx vault; this table lets an
--- org define aliases or custom sx bot/persona mappings such as "Sally".
-CREATE TABLE agent_profiles (
+-- Hetchy's starter agents are seeded as org-owned records; this table also
+-- lets an org define aliases or custom sx bot/persona mappings such as "Sally".
+CREATE TABLE IF NOT EXISTS agent_profiles (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     org_id          TEXT NOT NULL,
     slug            TEXT NOT NULL,
@@ -18,10 +18,10 @@ CREATE TABLE agent_profiles (
     UNIQUE (org_id, slug)
 );
 
-CREATE INDEX agent_profiles_org_enabled_idx
+CREATE INDEX IF NOT EXISTS agent_profiles_org_enabled_idx
     ON agent_profiles (org_id, enabled, slug);
 
 -- Conversations pin the agent selected on the first turn so follow-ups keep
 -- the same persona/assets even when the user does not repeat the alias.
 ALTER TABLE conversations
-    ADD COLUMN agent_slug TEXT NOT NULL DEFAULT '';
+    ADD COLUMN IF NOT EXISTS agent_slug TEXT NOT NULL DEFAULT '';

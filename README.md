@@ -112,7 +112,7 @@ database, not in Doppler. Doppler only holds the *process-level* config:
 | `DAYTONA_API_URL` | Daytona API endpoint |
 | `DAYTONA_API_KEY` | Daytona API key |
 | `DAYTONA_SNAPSHOT` | Sandbox snapshot image |
-| `HETCHY_SX_PUBLIC_VAULT_URL` | Public git sx vault containing Hetchy's built-in agent personas and scoped role skills; defaults to `https://github.com/hetchyhq/hetchy-sx-vault.git` |
+| `HETCHY_SX_PUBLIC_VAULT_URL` | Public git sx vault containing Hetchy's seeded agent personas and scoped role skills; defaults to `https://github.com/hetchyhq/hetchy-sx-vault.git` |
 | `WEB_PORT` | Web UI port (default: 8080) |
 | `GITHUB_APP_ID` | Numeric ID of this env's GitHub App |
 | `GITHUB_APP_SLUG` | App slug — used to build the install URL `github.com/apps/<slug>/installations/new` |
@@ -288,20 +288,24 @@ off. Subsequent messages on the same thread reuse that repo.
 
 ### Agents
 
-Hetchy ships with three built-in optional agents. Each agent maps to an
-sx bot identity so the public sx vault can load a persona plus role-specific
-skills before Claude runs in the Daytona sandbox.
+Hetchy seeds each organization with three optional agent profiles. The profiles
+live as org-scoped database rows, so admins can rename or delete their copy in
+**Organization settings → Agents**. Each profile maps to an sx bot identity so
+the public sx vault can load a persona plus role-specific skills before Claude
+runs in the Daytona sandbox.
 
 | Agent | Slack aliases | Bundled skills |
 |-------|---------------|----------------|
-| `NeckBeard` | `@neckbeard`, `@backend`, `@api`, `@server` | `golang-pro`, `golang-testing`, `neon-postgres`, `database-migrations` |
-| `ScriptKiddy` | `@scriptkiddy`, `@frontend`, `@front-end`, `@ui`, `@ux`, `@web` | `frontend-design`, `react-best-practices`, `webapp-testing`, `extract-design-system` |
+| `Bob` | `@bob`, `@backend`, `@api`, `@server` | `golang-pro`, `golang-testing`, `neon-postgres`, `database-migrations` |
+| `Alice` | `@alice`, `@frontend`, `@front-end`, `@ui`, `@ux`, `@web` | `frontend-design`, `react-best-practices`, `webapp-testing`, `extract-design-system` |
 | `Archy` | `@archy`, `@architect`, `@architecture`, `@design` | `improve-codebase-architecture`, `architecture-blueprint-generator`, `documentation-and-adrs`, `software-architecture` |
 
-The built-in agent assets live in the public
+The seeded profile metadata lives in the database; the agent assets live in the public
 `https://github.com/hetchyhq/hetchy-sx-vault.git` sx vault. Hetchy uses that
 vault by default; set `HETCHY_SX_PUBLIC_VAULT_URL` only to test a fork or
 alternate vault. Per-org skills.new assets are installed separately afterward.
+The Agents settings tab shows the skills currently attached to each seeded
+profile; skill editing will land there later.
 
 ### Via Slack
 

@@ -7,7 +7,42 @@ package sqlc
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const countAgentProfilesByOrg = `-- name: CountAgentProfilesByOrg :one
+SELECT COUNT(*) FROM agent_profiles
+WHERE org_id = $1
+`
+
+func (q *Queries) CountAgentProfilesByOrg(ctx context.Context, orgID string) (int64, error) {
+	row := q.db.QueryRow(ctx, countAgentProfilesByOrg, orgID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const disableAgentProfile = `-- name: DisableAgentProfile :execrows
+UPDATE agent_profiles
+SET enabled = FALSE,
+    updated_at = NOW()
+WHERE org_id = $1
+  AND slug = $2
+`
+
+type DisableAgentProfileParams struct {
+	OrgID string `json:"org_id"`
+	Slug  string `json:"slug"`
+}
+
+func (q *Queries) DisableAgentProfile(ctx context.Context, arg DisableAgentProfileParams) (int64, error) {
+	result, err := q.db.Exec(ctx, disableAgentProfile, arg.OrgID, arg.Slug)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
 
 const getAgentProfileBySlug = `-- name: GetAgentProfileBySlug :one
 SELECT
@@ -20,7 +55,9 @@ SELECT
     persona_asset,
     persona_prompt,
     slack_aliases,
+    skills,
     enabled,
+    built_in,
     created_at,
     updated_at
 FROM agent_profiles
@@ -32,9 +69,26 @@ type GetAgentProfileBySlugParams struct {
 	Slug  string `json:"slug"`
 }
 
-func (q *Queries) GetAgentProfileBySlug(ctx context.Context, arg GetAgentProfileBySlugParams) (AgentProfile, error) {
+type GetAgentProfileBySlugRow struct {
+	ID            pgtype.UUID        `json:"id"`
+	OrgID         string             `json:"org_id"`
+	Slug          string             `json:"slug"`
+	DisplayName   string             `json:"display_name"`
+	Description   string             `json:"description"`
+	SxBot         string             `json:"sx_bot"`
+	PersonaAsset  string             `json:"persona_asset"`
+	PersonaPrompt string             `json:"persona_prompt"`
+	SlackAliases  []string           `json:"slack_aliases"`
+	Skills        []string           `json:"skills"`
+	Enabled       bool               `json:"enabled"`
+	BuiltIn       bool               `json:"built_in"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) GetAgentProfileBySlug(ctx context.Context, arg GetAgentProfileBySlugParams) (GetAgentProfileBySlugRow, error) {
 	row := q.db.QueryRow(ctx, getAgentProfileBySlug, arg.OrgID, arg.Slug)
-	var i AgentProfile
+	var i GetAgentProfileBySlugRow
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
@@ -45,7 +99,9 @@ func (q *Queries) GetAgentProfileBySlug(ctx context.Context, arg GetAgentProfile
 		&i.PersonaAsset,
 		&i.PersonaPrompt,
 		&i.SlackAliases,
+		&i.Skills,
 		&i.Enabled,
+		&i.BuiltIn,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -63,7 +119,9 @@ SELECT
     persona_asset,
     persona_prompt,
     slack_aliases,
+    skills,
     enabled,
+    built_in,
     created_at,
     updated_at
 FROM agent_profiles
@@ -71,15 +129,32 @@ WHERE org_id = $1
 ORDER BY slug
 `
 
-func (q *Queries) ListAgentProfilesByOrg(ctx context.Context, orgID string) ([]AgentProfile, error) {
+type ListAgentProfilesByOrgRow struct {
+	ID            pgtype.UUID        `json:"id"`
+	OrgID         string             `json:"org_id"`
+	Slug          string             `json:"slug"`
+	DisplayName   string             `json:"display_name"`
+	Description   string             `json:"description"`
+	SxBot         string             `json:"sx_bot"`
+	PersonaAsset  string             `json:"persona_asset"`
+	PersonaPrompt string             `json:"persona_prompt"`
+	SlackAliases  []string           `json:"slack_aliases"`
+	Skills        []string           `json:"skills"`
+	Enabled       bool               `json:"enabled"`
+	BuiltIn       bool               `json:"built_in"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) ListAgentProfilesByOrg(ctx context.Context, orgID string) ([]ListAgentProfilesByOrgRow, error) {
 	rows, err := q.db.Query(ctx, listAgentProfilesByOrg, orgID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []AgentProfile
+	var items []ListAgentProfilesByOrgRow
 	for rows.Next() {
-		var i AgentProfile
+		var i ListAgentProfilesByOrgRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.OrgID,
@@ -90,7 +165,9 @@ func (q *Queries) ListAgentProfilesByOrg(ctx context.Context, orgID string) ([]A
 			&i.PersonaAsset,
 			&i.PersonaPrompt,
 			&i.SlackAliases,
+			&i.Skills,
 			&i.Enabled,
+			&i.BuiltIn,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -104,6 +181,112 @@ func (q *Queries) ListAgentProfilesByOrg(ctx context.Context, orgID string) ([]A
 	return items, nil
 }
 
+const seedDefaultAgentProfilesForOrg = `-- name: SeedDefaultAgentProfilesForOrg :exec
+INSERT INTO agent_profiles (
+    org_id,
+    slug,
+    display_name,
+    description,
+    sx_bot,
+    persona_asset,
+    persona_prompt,
+    slack_aliases,
+    skills,
+    built_in,
+    enabled
+)
+SELECT
+    $1,
+    slug,
+    display_name,
+    description,
+    sx_bot,
+    persona_asset,
+    persona_prompt,
+    slack_aliases,
+    skills,
+    TRUE,
+    enabled
+FROM agent_profile_templates
+WHERE enabled
+ON CONFLICT (org_id, slug) DO NOTHING
+`
+
+func (q *Queries) SeedDefaultAgentProfilesForOrg(ctx context.Context, orgID string) error {
+	_, err := q.db.Exec(ctx, seedDefaultAgentProfilesForOrg, orgID)
+	return err
+}
+
+const updateAgentProfileName = `-- name: UpdateAgentProfileName :one
+UPDATE agent_profiles
+SET
+    display_name = $3,
+    updated_at = NOW()
+WHERE org_id = $1
+  AND slug = $2
+  AND enabled = TRUE
+RETURNING
+    id,
+    org_id,
+    slug,
+    display_name,
+    description,
+    sx_bot,
+    persona_asset,
+    persona_prompt,
+    slack_aliases,
+    skills,
+    enabled,
+    built_in,
+    created_at,
+    updated_at
+`
+
+type UpdateAgentProfileNameParams struct {
+	OrgID       string `json:"org_id"`
+	Slug        string `json:"slug"`
+	DisplayName string `json:"display_name"`
+}
+
+type UpdateAgentProfileNameRow struct {
+	ID            pgtype.UUID        `json:"id"`
+	OrgID         string             `json:"org_id"`
+	Slug          string             `json:"slug"`
+	DisplayName   string             `json:"display_name"`
+	Description   string             `json:"description"`
+	SxBot         string             `json:"sx_bot"`
+	PersonaAsset  string             `json:"persona_asset"`
+	PersonaPrompt string             `json:"persona_prompt"`
+	SlackAliases  []string           `json:"slack_aliases"`
+	Skills        []string           `json:"skills"`
+	Enabled       bool               `json:"enabled"`
+	BuiltIn       bool               `json:"built_in"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) UpdateAgentProfileName(ctx context.Context, arg UpdateAgentProfileNameParams) (UpdateAgentProfileNameRow, error) {
+	row := q.db.QueryRow(ctx, updateAgentProfileName, arg.OrgID, arg.Slug, arg.DisplayName)
+	var i UpdateAgentProfileNameRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Slug,
+		&i.DisplayName,
+		&i.Description,
+		&i.SxBot,
+		&i.PersonaAsset,
+		&i.PersonaPrompt,
+		&i.SlackAliases,
+		&i.Skills,
+		&i.Enabled,
+		&i.BuiltIn,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const upsertAgentProfile = `-- name: UpsertAgentProfile :one
 INSERT INTO agent_profiles (
     org_id,
@@ -114,9 +297,11 @@ INSERT INTO agent_profiles (
     persona_asset,
     persona_prompt,
     slack_aliases,
+    skills,
+    built_in,
     enabled
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
 )
 ON CONFLICT (org_id, slug) DO UPDATE SET
     display_name   = EXCLUDED.display_name,
@@ -125,6 +310,8 @@ ON CONFLICT (org_id, slug) DO UPDATE SET
     persona_asset  = EXCLUDED.persona_asset,
     persona_prompt = EXCLUDED.persona_prompt,
     slack_aliases  = EXCLUDED.slack_aliases,
+    skills         = EXCLUDED.skills,
+    built_in       = agent_profiles.built_in OR EXCLUDED.built_in,
     enabled        = EXCLUDED.enabled,
     updated_at     = NOW()
 RETURNING
@@ -137,7 +324,9 @@ RETURNING
     persona_asset,
     persona_prompt,
     slack_aliases,
+    skills,
     enabled,
+    built_in,
     created_at,
     updated_at
 `
@@ -151,10 +340,29 @@ type UpsertAgentProfileParams struct {
 	PersonaAsset  string   `json:"persona_asset"`
 	PersonaPrompt string   `json:"persona_prompt"`
 	SlackAliases  []string `json:"slack_aliases"`
+	Skills        []string `json:"skills"`
+	BuiltIn       bool     `json:"built_in"`
 	Enabled       bool     `json:"enabled"`
 }
 
-func (q *Queries) UpsertAgentProfile(ctx context.Context, arg UpsertAgentProfileParams) (AgentProfile, error) {
+type UpsertAgentProfileRow struct {
+	ID            pgtype.UUID        `json:"id"`
+	OrgID         string             `json:"org_id"`
+	Slug          string             `json:"slug"`
+	DisplayName   string             `json:"display_name"`
+	Description   string             `json:"description"`
+	SxBot         string             `json:"sx_bot"`
+	PersonaAsset  string             `json:"persona_asset"`
+	PersonaPrompt string             `json:"persona_prompt"`
+	SlackAliases  []string           `json:"slack_aliases"`
+	Skills        []string           `json:"skills"`
+	Enabled       bool               `json:"enabled"`
+	BuiltIn       bool               `json:"built_in"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) UpsertAgentProfile(ctx context.Context, arg UpsertAgentProfileParams) (UpsertAgentProfileRow, error) {
 	row := q.db.QueryRow(ctx, upsertAgentProfile,
 		arg.OrgID,
 		arg.Slug,
@@ -164,9 +372,11 @@ func (q *Queries) UpsertAgentProfile(ctx context.Context, arg UpsertAgentProfile
 		arg.PersonaAsset,
 		arg.PersonaPrompt,
 		arg.SlackAliases,
+		arg.Skills,
+		arg.BuiltIn,
 		arg.Enabled,
 	)
-	var i AgentProfile
+	var i UpsertAgentProfileRow
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
@@ -177,7 +387,9 @@ func (q *Queries) UpsertAgentProfile(ctx context.Context, arg UpsertAgentProfile
 		&i.PersonaAsset,
 		&i.PersonaPrompt,
 		&i.SlackAliases,
+		&i.Skills,
 		&i.Enabled,
+		&i.BuiltIn,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
