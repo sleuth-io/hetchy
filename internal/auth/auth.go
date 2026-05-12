@@ -90,9 +90,6 @@ type Config struct {
 	ClientID       string
 	CookiePassword string
 	RedirectURI    string
-	// LogoutReturnTo is where WorkOS will send the browser after a logout
-	// completes. Usually the public-facing app root.
-	LogoutReturnTo string
 	// CookieSecure controls the Secure attribute on the session cookie.
 	// MUST be true in any production deployment served over HTTPS — the
 	// cookie holds a sealed refresh token. Leave false only when running
@@ -119,6 +116,11 @@ type Service struct {
 	// stateKey is the HKDF-derived HMAC key used to sign OAuth state. Cached
 	// at construction time to avoid re-deriving on every request.
 	stateKey []byte
+	// publicHost is host[:port] parsed from cfg.RedirectURI at construction
+	// time. LogoutHandler uses it for the post-logout redirect instead of
+	// r.Host, which is controlled by the client and could be forged via Host
+	// header injection on a misconfigured reverse proxy.
+	publicHost string
 }
 
 // New constructs a Service. The returned value is safe for concurrent use.
@@ -126,19 +128,20 @@ func New(cfg Config) (*Service, error) {
 	if cfg.Bypass {
 		return &Service{cfg: cfg, statePath: "/"}, nil
 	}
-	if cfg.APIKey == "" || cfg.ClientID == "" || cfg.CookiePassword == "" || cfg.RedirectURI == "" || cfg.LogoutReturnTo == "" {
-		return nil, errors.New("auth: APIKey, ClientID, CookiePassword, RedirectURI, LogoutReturnTo are required (set AUTH_BYPASS=1 for tests)")
+	if cfg.APIKey == "" || cfg.ClientID == "" || cfg.CookiePassword == "" || cfg.RedirectURI == "" {
+		return nil, errors.New("auth: APIKey, ClientID, CookiePassword, RedirectURI are required (set AUTH_BYPASS=1 for tests)")
 	}
 	statePath, err := redirectPath(cfg.RedirectURI)
 	if err != nil {
 		return nil, err
 	}
+	ru, _ := url.Parse(cfg.RedirectURI) // already validated by redirectPath
 	stateKey, err := hkdf.Key(sha256.New, []byte(cfg.CookiePassword), nil, oauthStateHKDFInfo, 32)
 	if err != nil {
 		return nil, err
 	}
 	c := workos.NewClient(cfg.APIKey, workos.WithClientID(cfg.ClientID))
-	return &Service{cfg: cfg, client: c, statePath: statePath, stateKey: stateKey}, nil
+	return &Service{cfg: cfg, client: c, statePath: statePath, stateKey: stateKey, publicHost: ru.Host}, nil
 }
 
 // redirectPath extracts the path component of the configured redirect URI so
@@ -170,10 +173,11 @@ h1{font-size:1.2rem;margin-bottom:8px}p,ul{margin:12px 0;line-height:1.5}
 a.btn{display:inline-block;margin-top:20px;padding:10px 22px;background:#0d6efd;color:#fff;border-radius:6px;text-decoration:none;font-weight:600}
 a.btn:hover{background:#0b5ed7}</style></head>
 <body><h1>Login failed</h1>
-<p>Your browser did not send the session cookie back to the callback.</p>
+<p>The login session could not be verified — it may have expired or been interrupted. Common causes:</p>
 <ul>
-<li>Cookies may be blocked or cleared between <code>/login</code> and <code>/callback</code></li>
-<li>A browser extension or privacy setting may be stripping cookies</li>
+<li>The browser back button was used after a login attempt</li>
+<li>Cookies are blocked or cleared between <code>/login</code> and <code>/callback</code></li>
+<li>A browser extension or privacy setting is stripping cookies</li>
 <li>The login was opened inside an iframe or embedded browser</li>
 </ul>
 <p>If this keeps happening, try a private&nbsp;/&nbsp;incognito window.</p>
@@ -321,17 +325,21 @@ func (s *Service) LogoutHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	// Derive the landing URL from the current request rather than the
-	// configured LogoutReturnTo so that the redirect is always correct
-	// regardless of which domain or environment the user is on (dev vs
-	// prod, tunnelled dev server, etc.). CookieSecure is a reliable proxy
-	// for HTTPS: it is true in all TLS-terminated deployments and false
-	// only in plain-HTTP local dev.
+	// Redirect to the canonical root of the app. Prefer the host parsed from
+	// cfg.RedirectURI (set at construction time from the WORKOS_REDIRECT_URI
+	// env var) over r.Host: the latter is controlled by the client and can be
+	// forged via Host-header injection on a misconfigured reverse proxy. Fall
+	// back to r.Host only when publicHost is empty (unusual, e.g. unit tests
+	// that construct Service directly without going through New).
 	scheme := "http"
 	if s.cfg.CookieSecure {
 		scheme = "https"
 	}
-	http.Redirect(w, r, scheme+"://"+r.Host, http.StatusFound)
+	host := s.publicHost
+	if host == "" {
+		host = r.Host
+	}
+	http.Redirect(w, r, scheme+"://"+host, http.StatusFound)
 }
 
 // Middleware validates the session cookie and attaches a Principal to the
