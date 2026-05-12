@@ -274,9 +274,16 @@ func (s *Service) LogoutHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	// AuthenticateSession is a pure-local operation in the WorkOS SDK
 	// (AES-GCM unseal + JWT payload parse, no network round-trip), so we can
-	// use it here without adding latency to logout. A malformed or expired
-	// cookie returns Authenticated == false and we fall through to the
-	// LogoutReturnTo redirect.
+	// use it here without adding latency to logout. It returns
+	// Authenticated == false only when the cookie is missing, fails to
+	// unseal, or contains no parseable access-token JWT — in those cases we
+	// have no SessionID to revoke and fall through to the LogoutReturnTo
+	// redirect. The SDK does not check JWT expiration here, so a long-lived
+	// tab whose access token has expired still gets its session revoked
+	// server-side. We cannot bypass the JWT parse by using
+	// workos.Unseal[workos.SessionData] directly: SessionData exposes only
+	// AccessToken/RefreshToken/User, and the SessionID lives in the JWT's
+	// "sid" claim.
 	if cookie, err := r.Cookie(SessionCookieName); err == nil && cookie.Value != "" {
 		if res, err := workos.AuthenticateSession(cookie.Value, s.cfg.CookiePassword); err == nil && res.Authenticated && res.SessionID != "" {
 			if err := s.client.UserManagement().RevokeSession(r.Context(), &workos.UserManagementRevokeSessionParams{
