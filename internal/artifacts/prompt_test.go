@@ -1,4 +1,4 @@
-package screenshots
+package artifacts
 
 import (
 	"strings"
@@ -9,22 +9,25 @@ func TestUploadInstructions_NonZeroSlotCount(t *testing.T) {
 	got := UploadInstructions(3)
 
 	wants := []string{
-		"HETCHY_SCREENSHOT_SLOTS",
-		"put_url",
-		"get_url",
+		"HETCHY_ARTIFACT_SLOTS",
+		"HETCHY_ARTIFACT_SLOT_URL",
+		"HETCHY_ARTIFACT_SLOT_TOKEN",
+		"kind",
+		"content_type",
+		"video/mp4",
+		"H.264",
+		"whole-screen MP4",
 		"curl -fSs -X PUT",
-		"jq",
-		"PR body or a PR comment",
+		"Authorization: Bearer",
+		"GitHub inline playback is not guaranteed",
 	}
 	for _, w := range wants {
 		if !strings.Contains(got, w) {
-			t.Errorf("upload-instructions missing %q\n%s", w, got)
+			t.Errorf("upload instructions missing %q\n%s", w, got)
 		}
 	}
-	// The legacy local-file pattern must only appear in the negative
-	// "DO NOT do this" sense — never as a copy-pasteable example.
-	if strings.Contains(got, "(screenshot-001.png)") {
-		t.Errorf("upload-instructions still presents the legacy filename markdown pattern\n%s", got)
+	if strings.Contains(got, "HETCHY_SCREENSHOT_SLOTS") {
+		t.Errorf("upload instructions should not mention legacy screenshot slots\n%s", got)
 	}
 }
 

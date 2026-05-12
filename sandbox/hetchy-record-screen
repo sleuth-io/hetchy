@@ -1,0 +1,47 @@
+#!/bin/bash
+# Record the current X11 display as an MP4/H.264 validation artifact.
+#
+# Usage:
+#   hetchy-record-screen [duration_seconds] [output_path]
+#
+# The output defaults under /tmp/hetchy-validate/ so the validation
+# prompt and upload instructions have one predictable artifact root.
+
+set -euo pipefail
+
+duration="${1:-15}"
+output="${2:-}"
+display="${DISPLAY:-:99}"
+screen="${HETCHY_RECORD_SCREEN:-0}"
+fps="${HETCHY_RECORD_FPS:-15}"
+xvfb_size="${HETCHY_RECORD_XVFB_SIZE:-1280x720x24}"
+video_size="${HETCHY_RECORD_GEOMETRY:-}"
+
+mkdir -p /tmp/hetchy-validate
+if [[ -z "$output" ]]; then
+  output="/tmp/hetchy-validate/recording-$(date +%Y%m%d-%H%M%S).mp4"
+fi
+
+if [[ -z "${DISPLAY:-}" && -z "${HETCHY_RECORD_NO_XVFB:-}" ]]; then
+  Xvfb "$display" -screen "$screen" "$xvfb_size" >/tmp/hetchy-validate/xvfb.log 2>&1 &
+  sleep 1
+fi
+export DISPLAY="$display"
+
+if [[ -z "$video_size" ]] && command -v xdpyinfo >/dev/null 2>&1; then
+  video_size="$(xdpyinfo -display "$display" | awk '/dimensions:/{print $2; exit}')"
+fi
+video_size="${video_size:-1280x720}"
+
+ffmpeg -y \
+  -video_size "$video_size" \
+  -framerate "$fps" \
+  -f x11grab \
+  -i "${display}.${screen}" \
+  -t "$duration" \
+  -c:v libx264 \
+  -pix_fmt yuv420p \
+  -movflags +faststart \
+  "$output"
+
+printf '%s\n' "$output"

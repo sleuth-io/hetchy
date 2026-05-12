@@ -83,6 +83,11 @@ func (b *Bot) runWeb(ctx context.Context) error {
 	mux.Handle("/integrations/github/sync", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.githubSyncHandler))))
 	mux.Handle("/integrations/github/disconnect", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.githubDisconnectHandler))))
 
+	// Sandbox artifact uploads use bearer tokens minted per agent run,
+	// not WorkOS cookies. The handler validates the token before issuing
+	// any S3 presigned URLs.
+	mux.HandleFunc(artifactSlotPath, b.artifactSlotsHandler)
+
 	mux.Handle("/", b.auth.Middleware(http.HandlerFunc(b.indexHandler)))
 	mux.Handle("/onboarding", b.auth.Middleware(b.auth.RequireAuth(http.HandlerFunc(b.onboardingHandler))))
 	mux.Handle("/settings/org", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.settingsHandler))))

@@ -17,6 +17,9 @@
 #   HETCHY_SX_PUBLIC_VAULT_URL   git sx vault for Hetchy-managed agent assets
 #   SX_KEY                       optional org skills.new bot key
 #   HETCHY_CLAUDE_MODEL          Claude Code model alias: opus, sonnet, or haiku
+#   HETCHY_ARTIFACT_SLOTS        JSON proof-artifact upload slots
+#   HETCHY_ARTIFACT_SLOT_URL     endpoint for requesting more upload slots
+#   HETCHY_ARTIFACT_SLOT_TOKEN   bearer token for that endpoint
 
 set -euo pipefail
 

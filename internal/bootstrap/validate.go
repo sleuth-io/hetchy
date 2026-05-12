@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/hetchyhq/hetchy/internal/screenshots"
+	"github.com/hetchyhq/hetchy/internal/artifacts"
 )
 
 // ValidationArgs is everything BuildValidationPrompt needs beyond the
@@ -17,13 +17,12 @@ type ValidationArgs struct {
 	Diff      string
 	PRBody    string
 
-	// ScreenshotSlotCount is the number of pre-signed S3 PUT/GET URL
+	// ArtifactSlotCount is the number of pre-signed S3 PUT/GET URL
 	// pairs the bot has minted for this run, available to the agent
-	// in $HETCHY_SCREENSHOT_SLOTS as a JSON array. Zero means no
-	// upload pipeline is wired up — the prompt then tells the agent
-	// to skip embedded screenshots entirely (rather than write
-	// broken-link references that won't render in GitHub markdown).
-	ScreenshotSlotCount int
+	// in $HETCHY_ARTIFACT_SLOTS as a JSON array. Zero means no upload
+	// pipeline is wired up, so the prompt tells the agent to call out
+	// incomplete validation rather than write broken local-file links.
+	ArtifactSlotCount int
 }
 
 // BuildValidationPrompt produces the post-task validation prompt — the
@@ -40,9 +39,9 @@ type ValidationArgs struct {
 //
 // Soft-failure design: if the agent can't produce artifacts (trivial
 // diff, no UI surface affected, validation environment broken), it's
-// expected to write a "Validation: incomplete — <reason>" note rather
+// expected to write a "Validation: incomplete - <reason>" note rather
 // than block the PR. Trivial typo fixes shouldn't get stuck in a
-// screenshot loop.
+// proof loop.
 func BuildValidationPrompt(spec *Spec, args ValidationArgs) string {
 	var b strings.Builder
 
@@ -56,7 +55,7 @@ WHETHER IT SUCCEEDED before assuming you can hit a live URL:
     check never passed within the 90s budget. The app is NOT running.
     Look at /tmp/hetchy-spec/start.log for stderr/stdout from start.sh
     (timeouts, port conflicts, missing deps), record what you see in
-    summary.md as "Validation: incomplete — <reason>", and skip the
+    summary.md as "Validation: incomplete - <specific reason>", and skip the
     end-to-end probing below. Do NOT spend tool calls poking dead
     ports — record the failure and proceed to PR.
   - Otherwise the app is running:
@@ -88,33 +87,44 @@ The PR description you drafted:
 
 %s
 
-Your job: produce evidence the change works.
+Your job: produce proof the change works and include that proof in the PR.
 
-  - For UI changes (any service with kind=ui): use Playwright MCP to
-    navigate to the affected feature and take 1-3 screenshots
-    demonstrating the change. PNG only.
-  - For API/backend changes: exercise the affected endpoint(s) with
-    curl and capture the request + response. Or, if the project has a
-    test runner, run the relevant tests and capture the output.
-  - For mixed changes: do both.
+Choose proof based on the change:
+
+  - Static UI change: use Playwright MCP to navigate to the affected
+    feature and upload screenshot(s). PNG only.
+  - UI/UX flow or interaction change: record the whole screen as MP4
+    with H.264 encoding, then upload and link the recording. Use
+    hetchy-record-screen when available.
+  - Backend architecture change: upload a high-level diagram showing
+    the new shape or data/control flow. PNG or SVG only.
+  - Backend algorithmic or behavior change: include a concise testing
+    matrix in the PR markdown that covers inputs, expected outputs,
+    observed outputs, and pass/fail status.
+  - API/backend endpoint change: exercise the affected endpoint(s)
+    with curl and include request/response evidence in summary.md or
+    the testing matrix.
+  - Mixed changes: include each relevant proof type.
   - For CLI tools (no service URLs): run the binary's help, run the
     command(s) the diff touched, and capture stdout/stderr.
 
 Save evidence under /tmp/hetchy-validate/:
 
   /tmp/hetchy-validate/trace-001.txt, trace-002.txt, ...
+  /tmp/hetchy-validate/recording-001.mp4, recording-002.mp4, ...
+  /tmp/hetchy-validate/diagram-001.svg, diagram-001.png, ...
   /tmp/hetchy-validate/summary.md   (1-3 paragraphs: what you did,
                                      what you verified, any gaps)
 `, truncate(args.Diff, 8000), truncate(args.PRBody, 1500))
 
-	if args.ScreenshotSlotCount > 0 {
-		b.WriteString(screenshots.UploadInstructions(args.ScreenshotSlotCount))
+	if args.ArtifactSlotCount > 0 {
+		b.WriteString(artifacts.UploadInstructions(args.ArtifactSlotCount))
 	} else {
 		b.WriteString(`
-The host has not configured screenshot upload for this run, so DO NOT
-embed screenshots in the PR markdown — broken-image references make
-the PR look unfinished. Describe what you saw in summary.md instead;
-the reviewer will rely on your written description plus the diff.
+The host has not configured artifact upload for this run, so DO NOT
+embed local screenshots, recordings, or diagrams in the PR markdown.
+Broken local-file references make the PR look unfinished. Describe
+the proof you attempted in summary.md and mark validation incomplete.
 `)
 	}
 
@@ -124,16 +134,19 @@ the reviewer will rely on your written description plus the diff.
 	// already covers the Validation section.
 	b.WriteString(`
 After producing artifacts, append a "## Validation" section to the PR
-body before opening the PR.
+body before opening the PR. Include the S3 proof links/images, the
+testing matrix when applicable, and a short note explaining what each
+artifact proves.
 
 If you cannot validate (trivial diff with no observable surface,
 deferred capability blocks the only relevant path, etc.), write
-summary.md with "Validation: incomplete — <reason>" and proceed to PR.
-Don't block on screenshots for changes that don't have a UI surface.
+summary.md and the PR Validation section with
+"Validation: incomplete - <specific reason>" and proceed to PR. Missing
+proof must be called out this way.
 
-DO NOT skip this step silently. The summary.md file MUST exist before
-you finalize the PR — it's the host's signal that you reached this
-stage at all.
+DO NOT skip this step silently. Silently omitting proof is overall task failure.
+The summary.md file MUST exist before you finalize the PR - it is the
+host's signal that you reached this stage at all.
 
 --- BOOTSTRAP SPEC IMPROVEMENT (reflection, optional) ---
 

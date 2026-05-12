@@ -4,7 +4,6 @@ import (
 	"context"
 	_ "embed"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -17,18 +16,12 @@ import (
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
 
 	"github.com/hetchyhq/hetchy/internal/agents"
+	"github.com/hetchyhq/hetchy/internal/artifacts"
 	"github.com/hetchyhq/hetchy/internal/blocks"
 	"github.com/hetchyhq/hetchy/internal/bootstrap"
 	"github.com/hetchyhq/hetchy/internal/convstore"
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
-	"github.com/hetchyhq/hetchy/internal/screenshots"
 )
-
-// screenshotSlotsPerRequest caps how many upload slots the bot mints
-// per task. Three is plenty — most validations need 1-2 screenshots
-// (one light + one dark, or one before + one after) and the cap
-// prevents a runaway prompt from issuing dozens of presigns.
-const screenshotSlotsPerRequest = 3
 
 //go:embed scripts/agent.sh
 var agentScriptBody string
@@ -132,17 +125,25 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, o
 		}
 	}
 
-	// Mint screenshot upload slots before constructing the prompt, so
-	// the validation prompt can include the slot count + matching
-	// instructions only when we actually have a place for the agent
-	// to PUT. Errors here downgrade to "no screenshot pipeline" — the
-	// run still produces a PR, just without embedded screenshots.
-	var slotsManifest []screenshots.Slot
-	if validate && spec != nil && b.screenshots != nil {
+	env := map[string]string{
+		"SF_REPO":             repo.Slug,
+		"SF_WORKDIR":          workdir,
+		"SF_BASE_BRANCH":      repo.BaseBranch,
+		"GITHUB_TOKEN":        repo.GitHubToken,
+		"HETCHY_CLAUDE_MODEL": string(model),
+	}
+	addAgentEnv(env, b.cfg, agent)
+
+	// Mint the default proof-artifact batch before constructing the
+	// prompt, so validation instructions can mention upload slots only
+	// when the S3 path is actually available. The run-scoped token lets
+	// the sandbox request more slots up to artifacts.MaxSlots.
+	var slotsManifest []artifacts.Slot
+	if validate && spec != nil {
 		prefix := fmt.Sprintf("%s/%d/%s", oc.OrgID, repo.RepoID, requestID)
-		s, err := b.screenshots.MintSlots(ctx, prefix, screenshotSlotsPerRequest)
-		if err != nil {
-			b.log.Warn("screenshot slot minting failed",
+		s, err := b.addArtifactRunEnv(ctx, prefix, env)
+		if err != nil && !errors.Is(err, errArtifactSlotsDisabled) {
+			b.log.Warn("artifact slot minting failed",
 				"request_id", requestID, "error", err)
 		} else {
 			slotsManifest = s
@@ -156,21 +157,13 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, o
 	finalPrompt := originalPrompt
 	if spec != nil {
 		finalPrompt = bootstrap.MergeIntoAgentPrompt(originalPrompt, spec, bootstrap.ValidationArgs{
-			OwnerRepo:           repo.Slug,
-			Branch:              "feature/sf-" + requestID,
-			ScreenshotSlotCount: len(slotsManifest),
+			OwnerRepo:         repo.Slug,
+			Branch:            "feature/sf-" + requestID,
+			ArtifactSlotCount: len(slotsManifest),
 		})
 	}
 
-	env := map[string]string{
-		"SF_REPO":             repo.Slug,
-		"SF_WORKDIR":          workdir,
-		"SF_BASE_BRANCH":      repo.BaseBranch,
-		"SF_PROMPT_B64":       base64.StdEncoding.EncodeToString([]byte(finalPrompt)),
-		"GITHUB_TOKEN":        repo.GitHubToken,
-		"HETCHY_CLAUDE_MODEL": string(model),
-	}
-	addAgentEnv(env, b.cfg, agent)
+	env["SF_PROMPT_B64"] = base64.StdEncoding.EncodeToString([]byte(finalPrompt))
 	// When we have a saved spec, ship its setup/start/health scripts
 	// to agent.sh as base64 env vars. agent.sh decodes them before
 	// invoking claude and runs setup → start (bg) → poll health, so
@@ -182,20 +175,6 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, o
 		env["SF_SPEC_SETUP_B64"] = base64.StdEncoding.EncodeToString([]byte(spec.SetupScript))
 		env["SF_SPEC_START_B64"] = base64.StdEncoding.EncodeToString([]byte(spec.StartScript))
 		env["SF_SPEC_HEALTH_B64"] = base64.StdEncoding.EncodeToString([]byte(spec.HealthCheck))
-	}
-	if len(slotsManifest) > 0 {
-		// JSON-encode the slot manifest as a single env var. The
-		// agent parses it with `jq` (already in the sandbox) per the
-		// instructions in the validation prompt.
-		raw, err := json.Marshal(slotsManifest)
-		if err != nil {
-			// Marshalling a fixed-shape struct can't realistically
-			// fail; log and proceed without slots rather than
-			// aborting the whole task on this corner.
-			b.log.Warn("screenshot slot marshal failed", "request_id", requestID, "error", err)
-		} else {
-			env["HETCHY_SCREENSHOT_SLOTS"] = string(raw)
-		}
 	}
 	authKey, authVal := claudeAuthEnv(oc)
 	b.log.Info("claude auth", "method", authKey, "token", maskToken(authVal), "request_id", requestID)
@@ -491,43 +470,26 @@ func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx
 		history, userRequest,
 	)
 
-	// Mint a fresh batch of screenshot slots for the follow-up. The
-	// initial run's slots have a 30-minute PUT expiry and the keys
-	// (screenshot-NNN.png) would collide anyway, so we always issue a
-	// new batch under a `/followup-<requestID>` suffix. Without this
-	// step a follow-up that needs to attach a screenshot has no upload
-	// path, and the agent falls back to embedding broken local-file
-	// markdown that GitHub renders as a non-rendering hyperlink.
-	var slotsManifest []screenshots.Slot
-	if b.screenshots != nil {
-		prefix := fmt.Sprintf("%s/%d/%s/followup-%s", oc.OrgID, repo.RepoID, rec.ThreadID, requestID)
-		s, err := b.screenshots.MintSlots(ctx, prefix, screenshotSlotsPerRequest)
-		if err != nil {
-			b.log.Warn("screenshot slot minting failed (followup)",
-				"request_id", requestID, "error", err)
-		} else {
-			slotsManifest = s
-			prompt += "\n" + screenshots.UploadInstructions(len(slotsManifest))
-		}
-	}
-
 	env := map[string]string{
 		"SF_WORKDIR":          workdir,
 		"SF_BRANCH":           rec.Branch,
-		"SF_PROMPT_B64":       base64.StdEncoding.EncodeToString([]byte(prompt)),
 		"GITHUB_TOKEN":        repo.GitHubToken,
 		"HETCHY_CLAUDE_MODEL": string(model),
 	}
 	addAgentEnv(env, b.cfg, agent)
-	if len(slotsManifest) > 0 {
-		raw, err := json.Marshal(slotsManifest)
-		if err != nil {
-			b.log.Warn("screenshot slot marshal failed (followup)",
-				"request_id", requestID, "error", err)
-		} else {
-			env["HETCHY_SCREENSHOT_SLOTS"] = string(raw)
-		}
+
+	// Follow-ups can still need fresh proof links. Issue a new run-
+	// scoped batch under a follow-up prefix so keys don't collide with
+	// the initial request.
+	prefix := fmt.Sprintf("%s/%d/%s/followup-%s", oc.OrgID, repo.RepoID, rec.ThreadID, requestID)
+	s, err := b.addArtifactRunEnv(ctx, prefix, env)
+	if err != nil && !errors.Is(err, errArtifactSlotsDisabled) {
+		b.log.Warn("artifact slot minting failed (followup)",
+			"request_id", requestID, "error", err)
+	} else if len(s) > 0 {
+		prompt += "\n" + artifacts.UploadInstructions(len(s))
 	}
+	env["SF_PROMPT_B64"] = base64.StdEncoding.EncodeToString([]byte(prompt))
 	authKey, authVal := claudeAuthEnv(oc)
 	b.log.Info("claude auth", "method", authKey, "token", maskToken(authVal), "request_id", requestID)
 	env[authKey] = authVal

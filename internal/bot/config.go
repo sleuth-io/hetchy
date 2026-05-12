@@ -74,10 +74,9 @@ type Config struct {
 	AuthBypassRole  string
 	AuthBypassEmail string
 
-	// S3Bucket and S3Region pin the screenshot-attachment bucket the bot
-	// presigns into. Both empty disables the screenshot upload path —
-	// callers fall back to the legacy /tmp/hetchy-validate filename
-	// references that the agent puts in PR markdown. AWS credentials
+	// S3Bucket and S3Region pin the proof-artifact bucket the bot
+	// presigns into. Both empty disables the artifact upload path.
+	// AWS credentials
 	// come from the standard SDK chain (env vars, ~/.aws/credentials,
 	// IAM role) — we don't read them here.
 	S3Bucket string
