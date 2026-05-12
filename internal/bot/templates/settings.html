@@ -7,12 +7,15 @@
 <link rel="icon" type="image/svg+xml" href="{{faviconHref}}">
 <script>
 // Theme bootstrap — see chat.html for the rationale. Inlined per-page so
-// the page paints in the chosen theme on first frame.
+// the page paints in the chosen theme on first frame. OrgTheme is the
+// org-level default; individual users can override it via their profile.
 (function(){
+  var orgPref = "{{if .OrgTheme}}{{.OrgTheme}}{{end}}";
   var mq = window.matchMedia('(prefers-color-scheme: dark)');
   function apply(){
     var pref;
-    try { pref = localStorage.getItem('theme') || 'system'; } catch(e) { pref = 'system'; }
+    try { pref = localStorage.getItem('theme'); } catch(e) {}
+    if (!pref) { pref = orgPref || 'system'; }
     var dark = pref === 'dark' || (pref === 'system' && mq.matches);
     document.documentElement.classList.toggle('is-dark', dark);
   }
@@ -686,6 +689,16 @@
       <input id="org_name" type="text" name="org_name" value="{{.OrgName}}" required maxlength="120">
       <p class="hint">Shown to your team in the sidebar and on invites.</p>
     </fieldset>
+    <fieldset>
+      <legend>Appearance</legend>
+      <label for="theme">Default theme</label>
+      <select id="theme" name="theme">
+        <option value=""{{if eq .OrgTheme ""}} selected{{end}}>System (follow device)</option>
+        <option value="light"{{if eq .OrgTheme "light"}} selected{{end}}>Light</option>
+        <option value="dark"{{if eq .OrgTheme "dark"}} selected{{end}}>Dark</option>
+      </select>
+      <p class="hint">Sets the default theme for all members. Individual members can override this in their profile.</p>
+    </fieldset>
     <button class="primary" type="submit">Save</button>
   </form>
   {{else}}
@@ -693,6 +706,12 @@
     <legend>Organization</legend>
     <label for="org_name">Name</label>
     <input id="org_name" type="text" value="{{.OrgName}}" readonly>
+    <p class="hint">Only administrators can change organization settings.</p>
+  </fieldset>
+  <fieldset>
+    <legend>Appearance</legend>
+    <label>Default theme</label>
+    <input type="text" value="{{if eq .OrgTheme "light"}}Light{{else if eq .OrgTheme "dark"}}Dark{{else}}System (follow device){{end}}" readonly>
     <p class="hint">Only administrators can change organization settings.</p>
   </fieldset>
   {{end}}

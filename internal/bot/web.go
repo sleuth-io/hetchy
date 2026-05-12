@@ -158,11 +158,16 @@ func (b *Bot) indexHandler(w http.ResponseWriter, r *http.Request) {
 	} else {
 		b.log.Warn("profile fetch for chat header failed", "error", err, "user", p.UserID)
 	}
+	orgCfg, err := b.orgs.Get(r.Context(), p.OrgID)
+	if err != nil && !errors.Is(err, orgcfg.ErrNotFound) {
+		b.log.Warn("org config fetch for chat failed", "error", err, "org", p.OrgID)
+	}
 	b.renderTemplate(w, chatHTMLTpl, map[string]any{
 		"Email":       p.Email,
 		"DisplayName": displayName,
 		"GravatarURL": gravatarURL(p.Email),
 		"UserID":      p.UserID,
+		"OrgTheme":    orgCfg.Theme,
 	})
 }
 
@@ -292,6 +297,7 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 			"SXKeyPreview":                previewSecret(current.SXKey),
 			"GitHubAppEnabled":            b.app != nil,
 			"DefaultRepoSlug":             defaultRepoSlug,
+			"OrgTheme":                    current.Theme,
 		}
 		if err := b.populateSettingsTabData(r.Context(), p.OrgID, tab, data); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -321,9 +327,9 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 		tab = "general"
 	}
 
-	// General tab posts only the org_name field. Pushing it through the
-	// integrations save below would null out default_repo and the API-key
-	// previews, so handle the rename inline and bounce.
+	// General tab posts org_name and theme. Pushing through the integrations
+	// save below would null out default_repo and API-key previews, so handle
+	// both fields inline and bounce.
 	if tab == "general" {
 		name := strings.TrimSpace(r.FormValue("org_name"))
 		if name == "" {
@@ -335,7 +341,22 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "rename: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		b.log.Info("org renamed", "org", p.OrgID, "actor", p.UserID)
+		theme := r.FormValue("theme")
+		if theme != "light" && theme != "dark" {
+			theme = ""
+		}
+		cfg, err := b.orgs.Get(r.Context(), p.OrgID)
+		if err != nil && !errors.Is(err, orgcfg.ErrNotFound) {
+			http.Error(w, "load config: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		cfg.OrgID = p.OrgID
+		cfg.Theme = theme
+		if _, err := b.orgs.Upsert(r.Context(), cfg); err != nil {
+			http.Error(w, "save: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		b.log.Info("org general settings saved", "org", p.OrgID, "actor", p.UserID, "theme", theme)
 		http.Redirect(w, r, "/settings/org?tab=general&saved=1", http.StatusFound)
 		return
 	}
@@ -938,12 +959,17 @@ func (b *Bot) profileHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "load profile: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
+		orgCfg, err := b.orgs.Get(r.Context(), p.OrgID)
+		if err != nil && !errors.Is(err, orgcfg.ErrNotFound) {
+			b.log.Warn("org config fetch for profile failed", "error", err, "org", p.OrgID)
+		}
 		b.renderTemplate(w, profileHTMLTpl, map[string]any{
 			"UserID":    prof.UserID,
 			"Email":     prof.Email,
 			"FirstName": prof.FirstName,
 			"LastName":  prof.LastName,
 			"Saved":     r.URL.Query().Get("saved") == "1",
+			"OrgTheme":  orgCfg.Theme,
 		})
 		return
 	}

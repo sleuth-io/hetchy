@@ -106,6 +106,7 @@ type OrgConfig struct {
 	DefaultGithubOwner            string             `json:"default_github_owner"`
 	DefaultGithubRepo             string             `json:"default_github_repo"`
 	ClaudeCodeOauthTokenEncrypted []byte             `json:"claude_code_oauth_token_encrypted"`
+	Theme                         string             `json:"theme"`
 }
 
 type RepoSecretValue struct {

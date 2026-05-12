@@ -7,12 +7,15 @@
 <link rel="icon" type="image/svg+xml" href="{{faviconHref}}">
 <script>
 // Theme bootstrap — see chat.html for the rationale. Inlined per-page so
-// the page paints in the chosen theme on first frame.
+// the page paints in the chosen theme on first frame. OrgTheme is the
+// org-level default; individual users can override it via this page.
 (function(){
+  var orgPref = "{{if .OrgTheme}}{{.OrgTheme}}{{end}}";
   var mq = window.matchMedia('(prefers-color-scheme: dark)');
   function apply(){
     var pref;
-    try { pref = localStorage.getItem('theme') || 'system'; } catch(e) { pref = 'system'; }
+    try { pref = localStorage.getItem('theme'); } catch(e) {}
+    if (!pref) { pref = orgPref || 'system'; }
     var dark = pref === 'dark' || (pref === 'system' && mq.matches);
     document.documentElement.classList.toggle('is-dark', dark);
   }

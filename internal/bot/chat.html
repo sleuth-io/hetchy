@@ -22,12 +22,16 @@
 // in the chosen theme on first frame (no flash of light content). The
 // preference lives in localStorage under 'theme' with values
 // "system" | "light" | "dark"; "system" (or missing) follows the OS via
-// prefers-color-scheme. A change in either source flips html.is-dark.
+// prefers-color-scheme. OrgTheme is the org-level default set by admins;
+// individual users can override it via their profile. A change in any
+// source flips html.is-dark.
 (function(){
+  var orgPref = "{{if .OrgTheme}}{{.OrgTheme}}{{end}}";
   var mq = window.matchMedia('(prefers-color-scheme: dark)');
   function apply(){
     var pref;
-    try { pref = localStorage.getItem('theme') || 'system'; } catch(e) { pref = 'system'; }
+    try { pref = localStorage.getItem('theme'); } catch(e) {}
+    if (!pref) { pref = orgPref || 'system'; }
     var dark = pref === 'dark' || (pref === 'system' && mq.matches);
     document.documentElement.classList.toggle('is-dark', dark);
   }
