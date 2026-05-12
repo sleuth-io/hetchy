@@ -113,6 +113,55 @@ func TestValidateReportedPRRejectsWrongBranch(t *testing.T) {
 	}
 }
 
+func TestValidateReportedPRRejectsWrongBase(t *testing.T) {
+	withLookupGitHubPullRequest(t, func(context.Context, string, string, string, int) (*github.PullRequest, error) {
+		return &github.PullRequest{
+			HTMLURL: github.String("https://github.com/owner/repo/pull/42"),
+			Head: &github.PullRequestBranch{
+				Ref:  github.String("feature/sf-abc"),
+				Repo: &github.Repository{FullName: github.String("owner/repo")},
+			},
+			Base: &github.PullRequestBranch{Ref: github.String("other-base")},
+		}, nil
+	})
+
+	_, err := (&Bot{}).validateReportedPR(context.Background(),
+		repoCtx{Slug: "owner/repo", GitHubToken: "token"},
+		"feature/sf-abc", "main",
+		"https://github.com/owner/repo/pull/42",
+	)
+	if err == nil {
+		t.Fatal("validateReportedPR succeeded, want error")
+	}
+	if !errors.Is(err, errReportedPRNotVerified) {
+		t.Fatalf("error should wrap errReportedPRNotVerified, got %v", err)
+	}
+	if !strings.Contains(err.Error(), `expected "main"`) {
+		t.Fatalf("error should mention expected base, got %v", err)
+	}
+}
+
+func TestValidateReportedPRHandlesLookupError(t *testing.T) {
+	withLookupGitHubPullRequest(t, func(context.Context, string, string, string, int) (*github.PullRequest, error) {
+		return nil, errors.New("simulated network failure")
+	})
+
+	_, err := (&Bot{}).validateReportedPR(context.Background(),
+		repoCtx{Slug: "owner/repo", GitHubToken: "token"},
+		"feature/sf-abc", "main",
+		"https://github.com/owner/repo/pull/42",
+	)
+	if err == nil {
+		t.Fatal("validateReportedPR succeeded, want error")
+	}
+	if !errors.Is(err, errReportedPRNotVerified) {
+		t.Fatalf("error should wrap errReportedPRNotVerified, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "simulated network failure") {
+		t.Fatalf("error should mention lookup failure, got %v", err)
+	}
+}
+
 func withLookupGitHubPullRequest(t *testing.T, fn func(context.Context, string, string, string, int) (*github.PullRequest, error)) {
 	t.Helper()
 	old := lookupGitHubPullRequest
