@@ -282,6 +282,99 @@ func (b *Bot) githubSyncHandler(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/settings/org?tab=integrations&saved=github_synced", http.StatusFound)
 }
 
+// githubDisconnectHandler removes an installation's binding to this
+// org. The installation is deleted at GitHub (so the App is uninstalled
+// from their account, not just hidden in our UI) and the local row +
+// cascaded repos/teams are dropped. POST-only and admin-gated.
+//
+// The disconnect is best-effort against GitHub: if the API call fails
+// (rate limit, network blip, installation already gone), we still wipe
+// the local record so the org's UI reflects "not connected". The
+// alternative — leaving a stale local row that nobody can clean up via
+// the UI — is what this whole change is meant to fix.
+func (b *Bot) githubDisconnectHandler(w http.ResponseWriter, r *http.Request) {
+	if b.app == nil {
+		http.Error(w, "GitHub App is not configured for this environment.", http.StatusServiceUnavailable)
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := requireSameOrigin(r); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	p, _ := auth.FromContext(r.Context())
+	if !isAdmin(p) {
+		http.Error(w, "admin role required", http.StatusForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	installationID, err := strconv.ParseInt(strings.TrimSpace(r.FormValue("installation_id")), 10, 64)
+	if err != nil {
+		http.Error(w, "installation_id required", http.StatusBadRequest)
+		return
+	}
+
+	// Same ownership guard as the sync handler: only an admin of the
+	// org that owns this installation can disconnect it.
+	row, err := b.store.Queries.GetGithubInstallation(r.Context(), installationID)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if row.OrgID != p.OrgID {
+		http.NotFound(w, r)
+		return
+	}
+
+	appCli, err := b.app.AppClient()
+	if err != nil {
+		b.log.Error("github disconnect: app client", "error", err)
+		http.Error(w, "could not authenticate to GitHub", http.StatusInternalServerError)
+		return
+	}
+	if resp, err := appCli.Apps.DeleteInstallation(r.Context(), installationID); err != nil {
+		// 404 means the installation is already gone on GitHub's side
+		// (e.g. an admin uninstalled via the GitHub UI between page
+		// load and click). Treat as success — we still want to clear
+		// our row.
+		status := 0
+		if resp != nil {
+			status = resp.StatusCode
+		}
+		if status != http.StatusNotFound {
+			b.log.Warn("github disconnect: delete installation failed",
+				"org", p.OrgID, "installation_id", installationID,
+				"status", status, "error", err)
+		}
+	} else {
+		b.log.Info("github disconnect: installation deleted at github",
+			"org", p.OrgID, "installation_id", installationID)
+	}
+
+	// Drop our local row + cached repo/team data. Cascade FK handles
+	// the join tables.
+	if err := b.store.Queries.DeleteGithubInstallation(r.Context(), installationID); err != nil {
+		b.log.Error("github disconnect: delete local installation",
+			"org", p.OrgID, "installation_id", installationID, "error", err)
+		http.Error(w, "delete installation failed", http.StatusInternalServerError)
+		return
+	}
+	b.app.InvalidateInstallation(installationID)
+
+	b.log.Info("github disconnect: completed",
+		"org", p.OrgID,
+		"installation_id", installationID,
+		"actor", p.UserID,
+	)
+	http.Redirect(w, r, "/settings/org?tab=integrations&saved=github_disconnected", http.StatusFound)
+}
+
 func (b *Bot) signGithubInstallState(s githubInstallState) (string, error) {
 	raw, err := json.Marshal(s)
 	if err != nil {

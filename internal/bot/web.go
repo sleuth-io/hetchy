@@ -71,6 +71,7 @@ func (b *Bot) runWeb(ctx context.Context) error {
 	// /slack/install initiates the OAuth flow. Auth-gated so we know
 	// which org this install should be bound to (state carries that).
 	mux.Handle("/slack/install", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.slackInstallHandler))))
+	mux.Handle("/slack/disconnect", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.slackDisconnectHandler))))
 
 	// GitHub App transport. The webhook endpoint is unauthenticated —
 	// it's verified by HMAC inside the handler. The setup callback is
@@ -80,6 +81,7 @@ func (b *Bot) runWeb(ctx context.Context) error {
 	mux.HandleFunc("/integrations/github/setup", b.githubSetupHandler)
 	mux.Handle("/integrations/github/install", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.githubInstallHandler))))
 	mux.Handle("/integrations/github/sync", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.githubSyncHandler))))
+	mux.Handle("/integrations/github/disconnect", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.githubDisconnectHandler))))
 
 	mux.Handle("/", b.auth.Middleware(http.HandlerFunc(b.indexHandler)))
 	mux.Handle("/onboarding", b.auth.Middleware(b.auth.RequireAuth(http.HandlerFunc(b.onboardingHandler))))
@@ -626,6 +628,12 @@ func savedMessage(s string) string {
 		return "Sync complete."
 	case "github_install_conflict":
 		return "That GitHub installation is already connected to another Hetchy organization. Have the existing org uninstall first (or pick a different account)."
+	case "github_disconnected":
+		return "GitHub installation removed. The Hetchy GitHub App has been uninstalled from that account."
+	case "slack_disconnected":
+		return "Slack disconnected. The Hetchy app has been removed from that workspace."
+	case "slack_already_disconnected":
+		return "Slack was already disconnected."
 	case "agent_saved":
 		return "Agent saved."
 	case "agent_deleted":

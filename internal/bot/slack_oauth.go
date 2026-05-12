@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
@@ -248,6 +249,79 @@ func (b *Bot) slackOAuthCallbackHandler(w http.ResponseWriter, r *http.Request) 
 	b.slack.RestartOrg(r.Context(), state.OrgID)
 
 	http.Redirect(w, r, "/settings/org?saved=slack_installed", http.StatusFound)
+}
+
+// slackDisconnectHandler removes the org's Slack connection. The org's
+// bot token is revoked against Slack's auth.revoke endpoint (so we don't
+// leave a live token sitting on Slack's side), the local credentials
+// are wiped, and any Socket Mode connection is torn down. POST-only and
+// admin-gated since this is a destructive integration change.
+//
+// A failure to reach Slack's auth.revoke is logged but does not block
+// the local disconnect — the user's intent is to be detached, and the
+// token would expire on its own once the Slack admin uninstalls the
+// app from their side. Surfacing the failure here would leave the org
+// stuck in a half-disconnected state.
+func (b *Bot) slackDisconnectHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := requireSameOrigin(r); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	p, _ := auth.FromContext(r.Context())
+	if !isAdmin(p) {
+		http.Error(w, "admin role required", http.StatusForbidden)
+		return
+	}
+
+	current, err := b.orgs.Get(r.Context(), p.OrgID)
+	if err != nil && !errors.Is(err, orgcfg.ErrNotFound) {
+		b.log.Error("slack disconnect: load org config", "org", p.OrgID, "error", err)
+		http.Error(w, "load org config failed", http.StatusInternalServerError)
+		return
+	}
+	if current.SlackBotToken == "" && current.SlackSocketToken == "" && current.SlackTeamID == "" {
+		// Nothing to disconnect — return a friendly banner rather than an
+		// error so re-entering this from an open tab is idempotent.
+		http.Redirect(w, r, "/settings/org?tab=integrations&saved=slack_already_disconnected", http.StatusFound)
+		return
+	}
+
+	// Revoke the bot token server-side at Slack so the app is removed
+	// from the workspace, not just disabled in our DB. Done on a fresh
+	// 10s context so a slow Slack response doesn't tie up the request
+	// past the user's patience, and best-effort: a non-OK response is
+	// logged but doesn't abort the local wipe below.
+	if current.SlackBotToken != "" {
+		revokeCtx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+		cli := slack.New(current.SlackBotToken)
+		if resp, err := cli.SendAuthRevokeContext(revokeCtx, ""); err != nil {
+			b.log.Warn("slack disconnect: auth.revoke failed",
+				"org", p.OrgID, "team_id", current.SlackTeamID, "error", err)
+		} else if !resp.Revoked {
+			b.log.Warn("slack disconnect: auth.revoke returned not-revoked",
+				"org", p.OrgID, "team_id", current.SlackTeamID, "slack_error", resp.Error)
+		} else {
+			b.log.Info("slack disconnect: token revoked at slack",
+				"org", p.OrgID, "team_id", current.SlackTeamID)
+		}
+	}
+
+	// Wipe local creds via slackManager.clearInstall — same path the
+	// app_uninstalled/tokens_revoked webhooks use, so the side effects
+	// (Socket Mode teardown, audit log line) match the
+	// Slack-initiated disconnect exactly.
+	b.slack.clearInstall(current, "user_disconnect")
+
+	b.log.Info("slack disconnect: completed",
+		"org", p.OrgID,
+		"actor", p.UserID,
+	)
+	http.Redirect(w, r, "/settings/org?tab=integrations&saved=slack_disconnected", http.StatusFound)
 }
 
 func (b *Bot) slackOAuthConfigured() bool {
