@@ -27,6 +27,14 @@ type Querier interface {
 	// The caller distinguishes these via pgx.ErrNoRows.
 	ClaimActiveSession(ctx context.Context, arg ClaimActiveSessionParams) (ActiveSession, error)
 	CountAgentProfilesByOrg(ctx context.Context, orgID string) (int64, error)
+	// Garbage-collect cancelled tombstones. The owner's Release path
+	// deletes its own rows, but a crash AFTER the cancel flag was flipped
+	// and BEFORE the owner's renew loop noticed leaves a permanent row —
+	// ListExpiredActiveSessions skips cancelled rows so recovery never
+	// claims them either. The cleanup tick in recovery.go invokes this
+	// with a grace window so a cancel-in-flight isn't deleted out from
+	// under its owner.
+	DeleteCancelledActiveSessions(ctx context.Context, graceSeconds int32) (int64, error)
 	DeleteConversation(ctx context.Context, arg DeleteConversationParams) error
 	DeleteGithubInstallation(ctx context.Context, installationID int64) error
 	DeleteGithubReposByInstallation(ctx context.Context, installationID int64) error
@@ -102,6 +110,14 @@ type Querier interface {
 	// where the user can see every target Hetchy has bootstrapped under
 	// one repository.
 	ListRepoSetupSpecs(ctx context.Context, arg ListRepoSetupSpecsParams) ([]RepoSetupSpec, error)
+	// Bounded retention for the SSE event log. An event is only needed
+	// long enough for the most recent in-flight turn to replay it; a
+	// conversation last touched weeks ago has its derived snapshot in
+	// conversations.response_blocks, which is what the sidebar / detail
+	// endpoints render from anyway. The recovery worker's cleanup tick
+	// invokes this with a configurable retention window so a busy
+	// deployment doesn't accumulate event rows without bound.
+	PruneConversationEvents(ctx context.Context, retentionSeconds int32) (int64, error)
 	// Owner-side terminal release. Either the turn finished cleanly or the
 	// replica is shutting down — drop the row so recovery does not pick it
 	// up as a stale lease.

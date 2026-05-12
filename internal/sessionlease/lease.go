@@ -84,6 +84,13 @@ type Lease struct {
 	// reads this via Lost() and aborts.
 	lost atomic.Bool
 
+	// lastSeq is the conversation_events.seq watermark inherited from
+	// the active_sessions row at claim time. chatHandler subscribes
+	// from this seq so a follow-up turn's SSE response doesn't replay
+	// every event from prior turns — only events the *current* turn
+	// produces (seq > lastSeq) show up in the response.
+	lastSeq atomic.Int64
+
 	stopOnce sync.Once
 	stopCh   chan struct{}
 	doneCh   chan struct{}
@@ -123,6 +130,7 @@ func (m *Manager) Claim(ctx context.Context, orgID, threadID, requestID string) 
 		doneCh:    make(chan struct{}),
 	}
 	l.cancelled.Store(row.Cancelled)
+	l.lastSeq.Store(row.LastSeq)
 	go l.renewLoop()
 	return l, nil
 }
@@ -131,7 +139,7 @@ func (m *Manager) Claim(ctx context.Context, orgID, threadID, requestID string) 
 // passed. Caller has already loaded the row via ListExpiredActiveSessions
 // inside the same transaction (FOR UPDATE SKIP LOCKED) so this is just
 // the post-commit handle construction.
-func (m *Manager) ClaimExpired(orgID, threadID, requestID string, alreadyCancelled bool) *Lease {
+func (m *Manager) ClaimExpired(orgID, threadID, requestID string, alreadyCancelled bool, lastSeq int64) *Lease {
 	l := &Lease{
 		mgr:       m,
 		orgID:     orgID,
@@ -141,6 +149,7 @@ func (m *Manager) ClaimExpired(orgID, threadID, requestID string, alreadyCancell
 		doneCh:    make(chan struct{}),
 	}
 	l.cancelled.Store(alreadyCancelled)
+	l.lastSeq.Store(lastSeq)
 	go l.renewLoop()
 	return l
 }
@@ -160,6 +169,12 @@ func (l *Lease) Cancelled() bool { return l.cancelled.Load() }
 // replica claimed the lease out from under us). The agent path treats
 // this as a hard abort.
 func (l *Lease) Lost() bool { return l.lost.Load() }
+
+// LastSeq returns the conversation_events.seq watermark inherited from
+// the active_sessions row at claim time. chatHandler uses this as the
+// starting cursor for the SSE subscription so a follow-up turn's
+// response replay doesn't duplicate events from prior turns.
+func (l *Lease) LastSeq() int64 { return l.lastSeq.Load() }
 
 // SetSandbox stamps the Daytona handle on the row. Called once per turn,
 // right after ExecuteSessionCommand returns. Recovery on another replica

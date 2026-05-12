@@ -23,6 +23,26 @@ const recoveryScanInterval = 5 * time.Second
 // peer crashes hard.
 const recoveryClaimLimit = 4
 
+// cleanupInterval governs how often the cleanup tick runs. Hourly is
+// plenty: cancelled tombstones and old events are cosmetic
+// (correctness doesn't depend on them being removed), so the trade-off
+// here is purely "how much storage are we willing to waste between
+// sweeps". Multiple replicas all running the same tick is fine — the
+// DELETEs are idempotent.
+const cleanupInterval = time.Hour
+
+// cancelledTombstoneGrace is how long a cancelled lease can sit
+// before cleanup deletes it. Wider than the renew interval so a
+// cancel-in-flight (renew loop saw cancelled, owner is processing
+// the abort) isn't deleted before the owner's Release fires.
+const cancelledTombstoneGrace = 5 * time.Minute
+
+// eventRetention bounds how long conversation_events rows live. 30
+// days is conservative: in-flight replay only needs the most recent
+// turn, and the per-row JSONB[] snapshot in conversations is what the
+// sidebar/detail endpoints render from for older threads.
+const eventRetention = 30 * 24 * time.Hour
+
 // recoveryWorker scans active_sessions for expired leases and takes
 // them over. The owner replica may have crashed; the Daytona sandbox
 // (an external process) is still running, the agent script keeps
@@ -47,17 +67,52 @@ func newRecoveryWorker(b *Bot) *recoveryWorker {
 // Run loops until ctx is cancelled. Safe for a single instance per
 // replica; the lease takeover SQL uses FOR UPDATE SKIP LOCKED so
 // running this on every replica is correct and self-balancing.
+//
+// A separate cleanup ticker runs on a much slower cadence (hourly) to
+// garbage-collect cancelled tombstones and prune old events. Both
+// DELETEs are idempotent so it's fine for every replica to attempt
+// them.
 func (r *recoveryWorker) Run(ctx context.Context) {
-	t := time.NewTicker(recoveryScanInterval)
-	defer t.Stop()
-	r.log.Info("recovery worker started", "replica", r.bot.replicaID, "interval", recoveryScanInterval)
+	scan := time.NewTicker(recoveryScanInterval)
+	defer scan.Stop()
+	cleanup := time.NewTicker(cleanupInterval)
+	defer cleanup.Stop()
+	r.log.Info("recovery worker started",
+		"replica", r.bot.replicaID,
+		"scan_interval", recoveryScanInterval,
+		"cleanup_interval", cleanupInterval,
+	)
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.C:
+		case <-scan.C:
 			r.scanOnce(ctx)
+		case <-cleanup.C:
+			r.cleanupOnce(ctx)
 		}
+	}
+}
+
+// cleanupOnce deletes cancelled lease tombstones older than the grace
+// window and conversation_events rows older than the retention
+// window. Best-effort: a DB error is logged but never fatal — the
+// next tick retries.
+func (r *recoveryWorker) cleanupOnce(ctx context.Context) {
+	tombstones, err := r.bot.store.Queries.DeleteCancelledActiveSessions(
+		ctx, int32(cancelledTombstoneGrace.Seconds()),
+	)
+	if err != nil && !errors.Is(err, context.Canceled) {
+		r.log.Warn("cleanup: delete cancelled tombstones failed", "error", err)
+	}
+	events, err := r.bot.store.Queries.PruneConversationEvents(
+		ctx, int32(eventRetention.Seconds()),
+	)
+	if err != nil && !errors.Is(err, context.Canceled) {
+		r.log.Warn("cleanup: prune events failed", "error", err)
+	}
+	if tombstones > 0 || events > 0 {
+		r.log.Info("cleanup tick", "tombstones_deleted", tombstones, "events_pruned", events)
 	}
 }
 
@@ -123,7 +178,7 @@ func (r *recoveryWorker) resume(parentCtx context.Context, row sqlc.ActiveSessio
 
 	// Build a Lease handle and start the renew loop ourselves so the
 	// emitter can renew alongside heartbeats.
-	lease := r.bot.leases.ClaimExpired(row.OrgID, row.ThreadID, row.RequestID, row.Cancelled)
+	lease := r.bot.leases.ClaimExpired(row.OrgID, row.ThreadID, row.RequestID, row.Cancelled, row.LastSeq)
 	// Keep conversations.status consistent with the in-flight state.
 	// Claim() does this for fresh turns; ClaimExpired doesn't, so we
 	// stamp here. Best-effort: a transient DB error just leaves the
@@ -301,6 +356,6 @@ func numericExit(v any) (int64, bool) {
 func emitFailureAndRelease(ctx context.Context, b *Bot, row sqlc.ActiveSession, msg string) {
 	emitter := newLiveEmitter(b.log, b.events, row.OrgID, row.ThreadID)
 	emitter.Error("Recovery aborted", msg)
-	lease := b.leases.ClaimExpired(row.OrgID, row.ThreadID, row.RequestID, row.Cancelled)
+	lease := b.leases.ClaimExpired(row.OrgID, row.ThreadID, row.RequestID, row.Cancelled, row.LastSeq)
 	_ = lease.Release(ctx, "failed")
 }

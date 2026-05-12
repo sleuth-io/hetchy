@@ -1298,9 +1298,13 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 	emitter := newLiveEmitter(b.log, b.events, p.OrgID, sessionID)
 
 	// Subscribe BEFORE spawning the agent goroutine so we don't miss
-	// events that fire before the SSE response loop is ready. Cursor 0
-	// gives us the full replay of this turn's events.
-	sub := b.fanout.Subscribe(p.OrgID, sessionID, 0)
+	// events that fire before the SSE response loop is ready. Use the
+	// lease's inherited last_seq as the cursor — events from prior
+	// turns on this thread keep their seq numbers in
+	// conversation_events, and subscribing from 0 would replay them
+	// all on every follow-up POST. lease.LastSeq() == 0 on a fresh
+	// turn, so the first-turn behaviour is unchanged.
+	sub := b.fanout.Subscribe(p.OrgID, sessionID, lease.LastSeq())
 	defer sub.Close()
 
 	go func() {

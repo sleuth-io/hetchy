@@ -91,10 +91,15 @@ func (s *Store) Append(ctx context.Context, orgID, threadID, kind string, payloa
 	if err != nil {
 		return 0, err
 	}
-	// NOTIFY outside the tx — pg_notify inside the tx already queues for
-	// commit, but we have a transactional helper that hides the conn from
-	// us. Best-effort: a failed notify just means the cross-replica
-	// fanout misses a beat; the next event's notify re-converges.
+	// Fire pg_notify post-commit on a separate connection from the pool.
+	// Best-effort delivery: if this fails the cross-replica fanout
+	// misses one wake-up, and the next event's notify re-converges
+	// (a subscriber's minCursor read picks up the gap). Doing it
+	// in-tx would be stronger, but WithTx hides the conn handle so
+	// we'd need a parallel transactional wrapper that exposed it; the
+	// extra complexity isn't worth the marginal durability gain for
+	// what's already a hint channel — the durable copy is in
+	// conversation_events.
 	if _, err := s.db.Pool().Exec(ctx,
 		"SELECT pg_notify($1, $2)",
 		NotifyChannel,

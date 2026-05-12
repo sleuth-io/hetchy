@@ -115,6 +115,18 @@ ORDER BY lease_expires_at
 LIMIT sqlc.arg(lim)
 FOR UPDATE SKIP LOCKED;
 
+-- name: DeleteCancelledActiveSessions :execrows
+-- Garbage-collect cancelled tombstones. The owner's Release path
+-- deletes its own rows, but a crash AFTER the cancel flag was flipped
+-- and BEFORE the owner's renew loop noticed leaves a permanent row —
+-- ListExpiredActiveSessions skips cancelled rows so recovery never
+-- claims them either. The cleanup tick in recovery.go invokes this
+-- with a grace window so a cancel-in-flight isn't deleted out from
+-- under its owner.
+DELETE FROM active_sessions
+ WHERE cancelled = TRUE
+   AND lease_expires_at < NOW() - (sqlc.arg(grace_seconds)::int || ' seconds')::interval;
+
 -- name: TakeOverActiveSession :execrows
 -- Recovery worker: after ListExpiredActiveSessions returns a row inside a
 -- transaction, this writes the new owner + extends the lease before

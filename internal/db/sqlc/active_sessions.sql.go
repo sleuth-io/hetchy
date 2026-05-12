@@ -116,6 +116,27 @@ func (q *Queries) ClaimActiveSession(ctx context.Context, arg ClaimActiveSession
 	return i, err
 }
 
+const deleteCancelledActiveSessions = `-- name: DeleteCancelledActiveSessions :execrows
+DELETE FROM active_sessions
+ WHERE cancelled = TRUE
+   AND lease_expires_at < NOW() - ($1::int || ' seconds')::interval
+`
+
+// Garbage-collect cancelled tombstones. The owner's Release path
+// deletes its own rows, but a crash AFTER the cancel flag was flipped
+// and BEFORE the owner's renew loop noticed leaves a permanent row —
+// ListExpiredActiveSessions skips cancelled rows so recovery never
+// claims them either. The cleanup tick in recovery.go invokes this
+// with a grace window so a cancel-in-flight isn't deleted out from
+// under its owner.
+func (q *Queries) DeleteCancelledActiveSessions(ctx context.Context, graceSeconds int32) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteCancelledActiveSessions, graceSeconds)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const expireActiveSession = `-- name: ExpireActiveSession :execrows
 UPDATE active_sessions
    SET lease_expires_at = NOW()

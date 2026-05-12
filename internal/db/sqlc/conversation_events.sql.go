@@ -36,6 +36,26 @@ func (q *Queries) InsertConversationEvent(ctx context.Context, arg InsertConvers
 	return err
 }
 
+const pruneConversationEvents = `-- name: PruneConversationEvents :execrows
+DELETE FROM conversation_events
+ WHERE created_at < NOW() - ($1::int || ' seconds')::interval
+`
+
+// Bounded retention for the SSE event log. An event is only needed
+// long enough for the most recent in-flight turn to replay it; a
+// conversation last touched weeks ago has its derived snapshot in
+// conversations.response_blocks, which is what the sidebar / detail
+// endpoints render from anyway. The recovery worker's cleanup tick
+// invokes this with a configurable retention window so a busy
+// deployment doesn't accumulate event rows without bound.
+func (q *Queries) PruneConversationEvents(ctx context.Context, retentionSeconds int32) (int64, error) {
+	result, err := q.db.Exec(ctx, pruneConversationEvents, retentionSeconds)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const replayConversationEvents = `-- name: ReplayConversationEvents :many
 SELECT org_id, thread_id, seq, kind, payload, created_at
 FROM conversation_events
