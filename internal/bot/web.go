@@ -38,6 +38,9 @@ var chatHTMLTpl string
 //go:embed templates/onboarding.html
 var onboardingHTMLTpl string
 
+//go:embed templates/welcome.html
+var welcomeHTMLTpl string
+
 //go:embed templates/settings.html
 var settingsHTMLTpl string
 
@@ -84,6 +87,7 @@ func (b *Bot) runWeb(ctx context.Context) error {
 	mux.Handle("/integrations/github/disconnect", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.githubDisconnectHandler))))
 
 	mux.Handle("/", b.auth.Middleware(http.HandlerFunc(b.indexHandler)))
+	mux.Handle("/onboarding/welcome", b.auth.Middleware(b.auth.RequireAuth(http.HandlerFunc(b.welcomeHandler))))
 	mux.Handle("/onboarding", b.auth.Middleware(b.auth.RequireAuth(http.HandlerFunc(b.onboardingHandler))))
 	mux.Handle("/settings/org", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.settingsHandler))))
 	mux.Handle("/settings/org/agents/", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.agentSettingsActionHandler))))
@@ -146,7 +150,7 @@ func (b *Bot) indexHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !p.HasOrg() {
-		http.Redirect(w, r, "/onboarding", http.StatusFound)
+		http.Redirect(w, r, "/onboarding/welcome", http.StatusFound)
 		return
 	}
 	// Profile fetch supplies the display name shown in the avatar
@@ -165,6 +169,23 @@ func (b *Bot) indexHandler(w http.ResponseWriter, r *http.Request) {
 		"GravatarURL": gravatarURL(p.Email),
 		"UserID":      p.UserID,
 	})
+}
+
+// welcomeHandler is the first stop in onboarding: a brief intro that
+// orients the user before we ask them to name an org and connect
+// integrations. The "Get started" button links to /onboarding, which
+// continues the flow into org creation and then the integrations panel.
+func (b *Bot) welcomeHandler(w http.ResponseWriter, r *http.Request) {
+	p, _ := auth.FromContext(r.Context())
+	if p.HasOrg() {
+		http.Redirect(w, r, "/", http.StatusFound)
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	b.renderTemplate(w, welcomeHTMLTpl, map[string]any{"Email": p.Email})
 }
 
 func (b *Bot) onboardingHandler(w http.ResponseWriter, r *http.Request) {

@@ -70,14 +70,37 @@ func TestIndexHandler_RedirectsAuthenticatedNoOrgToOnboarding(t *testing.T) {
 	rec := httptest.NewRecorder()
 
 	// Run the request through the bypass middleware so a Principal is
-	// attached, but our bypass config has no org -> expect a 302 to /onboarding.
+	// attached, but our bypass config has no org -> expect a 302 to the
+	// onboarding welcome screen (the first step in the flow).
 	b.auth.Middleware(http.HandlerFunc(b.indexHandler)).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusFound {
 		t.Fatalf("status = %d, want 302", rec.Code)
 	}
-	if got := rec.Header().Get("Location"); got != "/onboarding" {
-		t.Errorf("Location = %q, want /onboarding", got)
+	if got := rec.Header().Get("Location"); got != "/onboarding/welcome" {
+		t.Errorf("Location = %q, want /onboarding/welcome", got)
+	}
+}
+
+func TestWelcomeHandler_RendersWithGetStartedLink(t *testing.T) {
+	b := newBypassBot(t)
+	req := httptest.NewRequest(http.MethodGet, "/onboarding/welcome", nil)
+	rec := httptest.NewRecorder()
+	b.auth.Middleware(b.auth.RequireAuth(http.HandlerFunc(b.welcomeHandler))).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, w := range []string{
+		"Welcome to Hetchy",
+		`href="/onboarding"`,
+		"Get started",
+		"Connect your integrations",
+	} {
+		if !strings.Contains(body, w) {
+			t.Errorf("welcome template missing %q", w)
+		}
 	}
 }
 
@@ -300,6 +323,11 @@ func TestPageTemplates_RenderFavicon(t *testing.T) {
 		{
 			name: "onboarding",
 			body: onboardingHTMLTpl,
+			data: map[string]any{"Email": "u@x"},
+		},
+		{
+			name: "welcome",
+			body: welcomeHTMLTpl,
 			data: map[string]any{"Email": "u@x"},
 		},
 		{

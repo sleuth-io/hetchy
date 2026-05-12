@@ -1,0 +1,94 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Welcome to Hetchy</title>
+<link rel="icon" type="image/svg+xml" href="{{faviconHref}}">
+<script>
+(function(){
+  var mq = window.matchMedia('(prefers-color-scheme: dark)');
+  function apply(){
+    var pref;
+    try { pref = localStorage.getItem('theme') || 'system'; } catch(e) { pref = 'system'; }
+    var dark = pref === 'dark' || (pref === 'system' && mq.matches);
+    document.documentElement.classList.toggle('is-dark', dark);
+  }
+  apply();
+  mq.addEventListener('change', apply);
+  window.addEventListener('storage', function(e){ if (e.key === 'theme') apply(); });
+})();
+</script>
+<style>
+  body { font-family: system-ui, sans-serif; background: #f5f5f5; margin: 0;
+         display: flex; align-items: center; justify-content: center;
+         min-height: 100vh; padding: 1rem; box-sizing: border-box; }
+  .card { background: #fff; padding: 2.25rem 2.5rem; border-radius: 1rem;
+          box-shadow: 0 6px 24px rgba(0,0,0,.08); width: 100%; max-width: 30rem;
+          box-sizing: border-box; }
+  @media (max-width: 480px) {
+    .card { padding: 1.75rem 1.25rem; }
+  }
+  .brand { display: flex; align-items: center; gap: .6rem; margin-bottom: 1.25rem; }
+  .brand svg { width: 2rem; height: 2rem; flex-shrink: 0; }
+  .brand-name { font-weight: 600; font-size: 1.05rem; color: #1a1a1a; letter-spacing: .01em; }
+  h1 { margin: 0 0 .5rem; font-size: 1.5rem; line-height: 1.25; }
+  .lede { color: #555; margin: 0 0 1.25rem; font-size: .95rem; line-height: 1.5; }
+  ul.steps { list-style: none; padding: 0; margin: 0 0 1.5rem; display: flex;
+             flex-direction: column; gap: .65rem; }
+  ul.steps li { display: flex; align-items: flex-start; gap: .65rem;
+                font-size: .9rem; color: #444; line-height: 1.45; }
+  ul.steps .num { display: inline-flex; align-items: center; justify-content: center;
+                  flex-shrink: 0; width: 1.4rem; height: 1.4rem; border-radius: 999px;
+                  background: #e9eef5; color: #0b66c3; font-weight: 600;
+                  font-size: .75rem; margin-top: .05rem; }
+  ul.steps strong { color: #1a1a1a; font-weight: 600; }
+  a.btn { display: block; text-align: center; margin-top: .25rem;
+          padding: .7rem; background: #0b93f6; color: #fff; border: none;
+          border-radius: .4rem; font-size: 1rem; cursor: pointer;
+          text-decoration: none; font-weight: 500; }
+  a.btn:hover { background: #0a7fd9; }
+  .who { color: #999; font-size: .8rem; margin-top: 1rem; text-align: center; }
+  .who a { color: #999; }
+
+  html { color-scheme: light; }
+  html.is-dark { color-scheme: dark; }
+  html.is-dark body { background: #0f0f10; }
+  html.is-dark .card { background: #1c1c1f; color: #e7e7e9;
+                       box-shadow: 0 6px 24px rgba(0,0,0,.5); }
+  html.is-dark h1 { color: #f5f5f7; }
+  html.is-dark .brand-name { color: #f5f5f7; }
+  html.is-dark .lede { color: #b8b8bc; }
+  html.is-dark ul.steps li { color: #c5c5cc; }
+  html.is-dark ul.steps strong { color: #f0f0f3; }
+  html.is-dark ul.steps .num { background: #1f2a3a; color: #7dc4ff; }
+  html.is-dark a.btn { background: #1f7fd0; }
+  html.is-dark a.btn:hover { background: #2a8fe0; }
+  html.is-dark .who, html.is-dark .who a { color: #6e6e72; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="brand">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" aria-hidden="true">
+      <rect width="32" height="32" rx="6" fill="#0d1117"/>
+      <g fill="#7dc4ff">
+        <rect x="6" y="6" width="6" height="20"/>
+        <rect x="20" y="6" width="6" height="20"/>
+        <rect x="6" y="14" width="20" height="4"/>
+      </g>
+    </svg>
+    <span class="brand-name">Hetchy</span>
+  </div>
+  <h1>Welcome to Hetchy</h1>
+  <p class="lede">Hetchy turns chat conversations into shipped pull requests. Let's get your workspace ready in three quick steps.</p>
+  <ul class="steps">
+    <li><span class="num">1</span><span><strong>Name your organization.</strong> It groups your repos, integrations, and teammates.</span></li>
+    <li><span class="num">2</span><span><strong>Connect your integrations.</strong> Link GitHub, paste your Anthropic key, and add Slack so the bot can post and open PRs.</span></li>
+    <li><span class="num">3</span><span><strong>Start shipping.</strong> Mention the bot in a channel or open a chat to kick off your first task.</span></li>
+  </ul>
+  <a class="btn" href="/onboarding">Get started</a>
+  <p class="who">Signed in as {{.Email}} · <a href="/logout">Log out</a></p>
+</div>
+</body>
+</html>
