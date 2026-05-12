@@ -121,7 +121,19 @@ func LoadConfig() (Config, error) {
 
 	port := getenvDefault("WEB_PORT", "8080")
 	logout := getenvDefault("LOGOUT_RETURN_TO", "http://localhost:"+port+"/")
+	// CookieSecure defaults to true (required for production HTTPS). It is
+	// forced to false when COOKIE_INSECURE=1 is set OR when WORKOS_REDIRECT_URI
+	// starts with http:// — that scheme indicates the server is running over
+	// plain HTTP (local dev), where browsers refuse Secure cookies. Relying
+	// solely on COOKIE_INSECURE=1 breaks when Doppler (or any secret manager)
+	// overwrites the Makefile-exported value with an empty string from its own
+	// config; deriving from the URI removes that dependency.
 	cookieSecure := os.Getenv("COOKIE_INSECURE") == ""
+	if cookieSecure {
+		if ru := strings.TrimSpace(os.Getenv("WORKOS_REDIRECT_URI")); strings.HasPrefix(ru, "http://") {
+			cookieSecure = false
+		}
+	}
 
 	var ghAppID int64
 	if v := os.Getenv("GITHUB_APP_ID"); v != "" {
