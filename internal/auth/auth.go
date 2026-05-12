@@ -156,7 +156,31 @@ func redirectPath(redirectURI string) (string, error) {
 }
 
 // LoginHandler redirects the browser to AuthKit's hosted sign-in screen.
+// If the callback sent ?error=callback_failed (because the state cookie was
+// missing or mismatched — most often caused by cookies being blocked), we
+// show an error page instead of redirecting again, which would loop.
 func (s *Service) LoginHandler(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("error") == "callback_failed" {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write([]byte(`<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>Login failed</title>
+<style>body{font-family:sans-serif;max-width:480px;margin:80px auto;padding:0 16px;color:#1a1a1a}
+h1{font-size:1.2rem;margin-bottom:8px}p,ul{margin:12px 0;line-height:1.5}
+a.btn{display:inline-block;margin-top:20px;padding:10px 22px;background:#0d6efd;color:#fff;border-radius:6px;text-decoration:none;font-weight:600}
+a.btn:hover{background:#0b5ed7}</style></head>
+<body><h1>Login failed</h1>
+<p>Your browser did not send the session cookie back to the callback.</p>
+<ul>
+<li>Cookies may be blocked or cleared between <code>/login</code> and <code>/callback</code></li>
+<li>A browser extension or privacy setting may be stripping cookies</li>
+<li>The login was opened inside an iframe or embedded browser</li>
+</ul>
+<p>If this keeps happening, try a private&nbsp;/&nbsp;incognito window.</p>
+<a class="btn" href="/login">Try again</a>
+</body></html>`))
+		return
+	}
 	s.redirectToAuthKit(w, r, workos.UserManagementAuthenticationScreenHintSignIn)
 }
 
@@ -176,7 +200,14 @@ func (s *Service) redirectToAuthKit(w http.ResponseWriter, r *http.Request, hint
 		http.Error(w, "generate oauth state: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.setOAuthStateCookie(w, s.signOAuthState(state))
+	signed := s.signOAuthState(state)
+	s.setOAuthStateCookie(w, signed)
+	slog.Info("oauth state cookie set",
+		"cookie_name", oauthStateCookieName,
+		"cookie_path", s.statePath,
+		"cookie_secure", s.cfg.CookieSecure,
+		"redirect_uri", s.cfg.RedirectURI,
+	)
 	provider := workos.UserManagementAuthenticationProviderAuthkit
 	hintCopy := hint
 	url := s.client.UserManagement().GetAuthorizationURL(&workos.UserManagementGetAuthorizationURLParams{
@@ -213,13 +244,13 @@ func (s *Service) CallbackHandler(w http.ResponseWriter, r *http.Request) {
 	s.clearOAuthStateCookie(w)
 	if cookieErr != nil || stateCookie.Value == "" {
 		s.logStateRejection(r, "missing cookie")
-		http.Redirect(w, r, "/login", http.StatusFound)
+		http.Redirect(w, r, "/login?error=callback_failed", http.StatusFound)
 		return
 	}
 	queryState := r.URL.Query().Get("state")
 	if queryState == "" || !s.verifyOAuthState(stateCookie.Value, queryState) {
 		s.logStateRejection(r, "state mismatch or invalid hmac")
-		http.Redirect(w, r, "/login", http.StatusFound)
+		http.Redirect(w, r, "/login?error=callback_failed", http.StatusFound)
 		return
 	}
 	code := r.URL.Query().Get("code")
@@ -290,7 +321,17 @@ func (s *Service) LogoutHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	http.Redirect(w, r, s.cfg.LogoutReturnTo, http.StatusFound)
+	// Derive the landing URL from the current request rather than the
+	// configured LogoutReturnTo so that the redirect is always correct
+	// regardless of which domain or environment the user is on (dev vs
+	// prod, tunnelled dev server, etc.). CookieSecure is a reliable proxy
+	// for HTTPS: it is true in all TLS-terminated deployments and false
+	// only in plain-HTTP local dev.
+	scheme := "http"
+	if s.cfg.CookieSecure {
+		scheme = "https"
+	}
+	http.Redirect(w, r, scheme+"://"+r.Host, http.StatusFound)
 }
 
 // Middleware validates the session cookie and attaches a Principal to the
@@ -534,6 +575,18 @@ func (s *Service) logStateRejection(r *http.Request, reason string) {
 	}
 	if state := r.URL.Query().Get("state"); len(state) >= 8 {
 		attrs = append(attrs, "flow_id", state[:8])
+	}
+	// Log cookie names present in the request (never values) so we can tell
+	// whether the browser is sending no cookies at all, the session cookie
+	// only, or something else — useful for diagnosing SameSite/path issues.
+	cookieNames := make([]string, 0, len(r.Cookies()))
+	for _, c := range r.Cookies() {
+		cookieNames = append(cookieNames, c.Name)
+	}
+	if len(cookieNames) == 0 {
+		attrs = append(attrs, "present_cookies", "(none)")
+	} else {
+		attrs = append(attrs, "present_cookies", strings.Join(cookieNames, ","))
 	}
 	slog.Warn("oauth callback rejected", attrs...)
 }
