@@ -22,6 +22,7 @@ set -euo pipefail
 
 : "${SF_WORKDIR:?required}"
 : "${SF_BRANCH:?required}"
+: "${GITHUB_TOKEN:?required}"
 if [[ -z "${ANTHROPIC_API_KEY:-}" && -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
   echo "[hetchy] neither ANTHROPIC_API_KEY nor CLAUDE_CODE_OAUTH_TOKEN is set" >&2
   exit 1
@@ -84,6 +85,13 @@ fi
 # agent.sh for why this matters (without it, the raw KEY=VALUE pairs
 # leak into logs).
 echo "[hetchy] env scan: $(env | { grep -E '^(ANTHROPIC_|CLAUDE_)' || true; } | cut -d= -f1 | sort | tr '\n' ' ')"
+
+echo "[hetchy] refreshing git credential"
+# The sandbox may have been archived/unarchived across multiple requests,
+# so the token agent.sh baked into ~/.gitconfig is likely expired (tokens
+# live ~1 hour). Re-run the same url.insteadOf rewrite with the fresh
+# installation token the bot minted for this follow-up run.
+git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
 
 echo "[hetchy] checking out branch"
 cd "${SF_WORKDIR}"
