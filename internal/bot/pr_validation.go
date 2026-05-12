@@ -30,7 +30,7 @@ var lookupGitHubPullRequest = func(ctx context.Context, token, owner, repo strin
 func (b *Bot) validateReportedPR(ctx context.Context, repo repoCtx, expectedBranch, expectedBase, rawURL string) (string, error) {
 	parsed, err := parseGitHubPRURL(rawURL)
 	if err != nil {
-		return "", fmt.Errorf("%w: %v", errReportedPRNotVerified, err)
+		return "", fmt.Errorf("%w: %w", errReportedPRNotVerified, err)
 	}
 	if !sameGitHubSlug(parsed.Owner+"/"+parsed.Repo, repo.Slug) {
 		return "", fmt.Errorf("%w: reported PR URL %q is for %s/%s, expected %s", errReportedPRNotVerified, rawURL, parsed.Owner, parsed.Repo, repo.Slug)
@@ -38,11 +38,11 @@ func (b *Bot) validateReportedPR(ctx context.Context, repo repoCtx, expectedBran
 
 	token, err := b.githubTokenForPRValidation(ctx, repo)
 	if err != nil {
-		return "", fmt.Errorf("%w: %v", errReportedPRNotVerified, err)
+		return "", fmt.Errorf("%w: %w", errReportedPRNotVerified, err)
 	}
 	pr, err := lookupGitHubPullRequest(ctx, token, parsed.Owner, parsed.Repo, parsed.Number)
 	if err != nil {
-		return "", fmt.Errorf("%w: verify reported PR %q: %v", errReportedPRNotVerified, rawURL, err)
+		return "", fmt.Errorf("%w: verify reported PR %q: %w", errReportedPRNotVerified, rawURL, err)
 	}
 	if pr == nil {
 		return "", fmt.Errorf("%w: verify reported PR %q: empty GitHub response", errReportedPRNotVerified, rawURL)

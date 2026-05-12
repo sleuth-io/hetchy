@@ -35,7 +35,7 @@ func TestValidateReportedPRRejectsWrongRepoWithoutGitHubLookup(t *testing.T) {
 	called := false
 	withLookupGitHubPullRequest(t, func(context.Context, string, string, string, int) (*github.PullRequest, error) {
 		called = true
-		return nil, nil
+		return nil, errors.New("unexpected GitHub lookup")
 	})
 
 	_, err := (&Bot{}).validateReportedPR(context.Background(),
