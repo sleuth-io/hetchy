@@ -285,8 +285,8 @@ func (s *Service) CallbackHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // LogoutHandler clears the session cookie, revokes the session at WorkOS
-// via a server-to-server API call, and redirects the browser to
-// LogoutReturnTo.
+// via a server-to-server API call, and redirects the browser to the
+// canonical app root (scheme://publicHost).
 //
 // We deliberately do NOT route the browser through WorkOS' hosted
 // /user_management/sessions/logout URL. That hop relies on the AuthKit
@@ -309,7 +309,7 @@ func (s *Service) LogoutHandler(w http.ResponseWriter, r *http.Request) {
 	// use it here without adding latency to logout. It returns
 	// Authenticated == false only when the cookie is missing, fails to
 	// unseal, or contains no parseable access-token JWT — in those cases we
-	// have no SessionID to revoke and fall through to the LogoutReturnTo
+	// have no SessionID to revoke and fall through to the publicHost
 	// redirect. The SDK does not check JWT expiration here, so a long-lived
 	// tab whose access token has expired still gets its session revoked
 	// server-side. We cannot bypass the JWT parse by using

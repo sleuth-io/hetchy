@@ -200,12 +200,11 @@ func getenvDefaultTrimAllowDisabled(key, def string) string {
 }
 
 // PublicBaseURL returns the externally-reachable base URL for the web
-// app (no trailing slash). Doppler sets LOGOUT_RETURN_TO per-env (it's
-// the canonical "public app root" — required by WorkOS for the logout
-// redirect), so we reuse it here for any link that needs to point back
-// into our running instance from elsewhere (e.g. Slack deep links).
-// Falls back to the local bind URL when LOGOUT_RETURN_TO is unset, so
-// dev without Doppler still works.
+// app (no trailing slash). LOGOUT_RETURN_TO is the canonical "public app
+// root" used for external link generation (e.g. Slack deep links) — it no
+// longer controls the post-logout redirect, which is derived from
+// WORKOS_REDIRECT_URI in auth.New(). Falls back to the local bind URL when
+// LOGOUT_RETURN_TO is unset.
 func (c Config) PublicBaseURL() string {
 	if base := strings.TrimSuffix(c.LogoutReturnTo, "/"); base != "" {
 		return base

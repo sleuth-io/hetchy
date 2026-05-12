@@ -272,6 +272,36 @@ func TestLogoutNonBypassMalformedCookieFallsThrough(t *testing.T) {
 	}
 }
 
+// TestLogoutUsesPublicHostNotRHost verifies that LogoutHandler redirects to
+// the host parsed from cfg.RedirectURI (set at construction) and ignores a
+// forged Host header. A regression that dropped the s.publicHost line would
+// leave the other logout tests green (they use the r.Host fallback) but
+// break this one.
+func TestLogoutUsesPublicHostNotRHost(t *testing.T) {
+	s, err := New(Config{
+		APIKey:         "k",
+		ClientID:       "c",
+		CookiePassword: "password-long-enough-for-hkdf",
+		RedirectURI:    "https://app.example.com/callback",
+		CookieSecure:   true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/logout", nil)
+	req.Host = "attacker.com"
+	rec := httptest.NewRecorder()
+	s.LogoutHandler(rec, req)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("expected 302, got %d", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "https://app.example.com" {
+		t.Fatalf("expected redirect to publicHost, got %q", loc)
+	}
+}
+
 func TestRedirectPath(t *testing.T) {
 	cases := map[string]string{
 		"https://app.example.com/callback":            "/callback",
