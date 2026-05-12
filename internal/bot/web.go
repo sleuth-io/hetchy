@@ -137,7 +137,7 @@ func (b *Bot) indexHandler(w http.ResponseWriter, r *http.Request) {
 	// SignedOutParam is set by LogoutHandler in bypass mode, where the
 	// middleware always fabricates a Principal and we can't clear it any
 	// other way. Show the landing page so logout has a visible effect.
-	if b.cfg.AuthBypass && r.URL.Query().Get(auth.SignedOutParam) == "1" {
+	if b.cfg.AuthBypass && r.URL.Query().Has(auth.SignedOutParam) {
 		b.renderTemplate(w, landingHTMLTpl, nil)
 		return
 	}
