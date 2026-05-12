@@ -249,8 +249,19 @@ func (s *Service) CallbackHandler(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, dest, http.StatusFound)
 }
 
-// LogoutHandler clears the session cookie and bounces the browser through
-// AuthKit's logout endpoint so the WorkOS-side session is also revoked.
+// LogoutHandler clears the session cookie, revokes the session at WorkOS
+// via a server-to-server API call, and redirects the browser to
+// LogoutReturnTo.
+//
+// We deliberately do NOT route the browser through WorkOS' hosted
+// /user_management/sessions/logout URL. That hop relies on the AuthKit
+// cookie being reachable at api.workos.com and on return_to being
+// allowlisted on the WorkOS dashboard; in setups where either is off,
+// WorkOS bounces the browser through an AuthKit page that picks the
+// session right back up via SSO — the symptom users reported as
+// "logout signs me back in". A direct server-side revoke avoids that
+// entirely: the session is dead at WorkOS, the cookie is gone locally,
+// and we hand the browser straight to the public landing page.
 func (s *Service) LogoutHandler(w http.ResponseWriter, r *http.Request) {
 	s.clearSessionCookie(w)
 	if s.cfg.Bypass {
@@ -261,22 +272,16 @@ func (s *Service) LogoutHandler(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/?"+SignedOutParam+"=1", http.StatusFound)
 		return
 	}
-	cookie, err := r.Cookie(SessionCookieName)
-	if err != nil || cookie.Value == "" {
-		http.Redirect(w, r, s.cfg.LogoutReturnTo, http.StatusFound)
-		return
+	if cookie, err := r.Cookie(SessionCookieName); err == nil && cookie.Value != "" {
+		if res, err := workos.AuthenticateSession(cookie.Value, s.cfg.CookiePassword); err == nil && res.Authenticated && res.SessionID != "" {
+			if err := s.client.UserManagement().RevokeSession(r.Context(), &workos.UserManagementRevokeSessionParams{
+				SessionID: res.SessionID,
+			}); err != nil {
+				slog.Warn("workos revoke session failed", "error", err, "session_id", res.SessionID)
+			}
+		}
 	}
-	res, err := workos.AuthenticateSession(cookie.Value, s.cfg.CookiePassword)
-	if err != nil || !res.Authenticated || res.SessionID == "" {
-		http.Redirect(w, r, s.cfg.LogoutReturnTo, http.StatusFound)
-		return
-	}
-	returnTo := s.cfg.LogoutReturnTo
-	logoutURL := s.client.UserManagement().GetLogoutURL(&workos.UserManagementGetLogoutURLParams{
-		SessionID: res.SessionID,
-		ReturnTo:  &returnTo,
-	})
-	http.Redirect(w, r, logoutURL, http.StatusFound)
+	http.Redirect(w, r, s.cfg.LogoutReturnTo, http.StatusFound)
 }
 
 // Middleware validates the session cookie and attaches a Principal to the

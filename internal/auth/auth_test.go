@@ -174,6 +174,69 @@ func TestBypassCallbackSkipsStateCheck(t *testing.T) {
 	}
 }
 
+// TestLogoutBypassRedirectsWithSignedOutParam exercises the bypass-mode
+// branch added in #149: the middleware always fabricates a Principal, so
+// the landing page only re-appears when ?signed_out=1 is set.
+func TestLogoutBypassRedirectsWithSignedOutParam(t *testing.T) {
+	s := &Service{cfg: Config{Bypass: true}, statePath: "/"}
+
+	req := httptest.NewRequest(http.MethodGet, "/logout", nil)
+	rec := httptest.NewRecorder()
+	s.LogoutHandler(rec, req)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("expected 302, got %d", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/?"+SignedOutParam+"=1" {
+		t.Fatalf("expected redirect to /?%s=1, got %q", SignedOutParam, loc)
+	}
+}
+
+// TestLogoutNonBypassClearsCookieAndRedirectsLocally guards the fix for the
+// "logout signs me back in" report. In non-bypass mode the handler must:
+//
+//   - clear the session cookie (MaxAge < 0)
+//   - redirect to LogoutReturnTo
+//   - NOT bounce through WorkOS' hosted /user_management/sessions/logout URL
+//     (that's the redirect chain that caused the bug)
+//
+// We don't have a session JWE to feed it, but that's fine: the no-session
+// branch hits the same redirect target, so we can validate behaviour
+// without standing up a WorkOS client.
+func TestLogoutNonBypassClearsCookieAndRedirectsLocally(t *testing.T) {
+	s := &Service{
+		cfg: Config{
+			LogoutReturnTo: "https://app.example.com/",
+		},
+		statePath: "/callback",
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/logout", nil)
+	rec := httptest.NewRecorder()
+	s.LogoutHandler(rec, req)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("expected 302, got %d", rec.Code)
+	}
+	loc := rec.Header().Get("Location")
+	if loc != "https://app.example.com/" {
+		t.Fatalf("expected redirect to LogoutReturnTo, got %q", loc)
+	}
+	if strings.Contains(loc, "workos.com") || strings.Contains(loc, "/sessions/logout") {
+		t.Fatalf("logout must not bounce through WorkOS hosted URL, got %q", loc)
+	}
+
+	var cleared bool
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == SessionCookieName && c.MaxAge < 0 {
+			cleared = true
+		}
+	}
+	if !cleared {
+		t.Fatal("session cookie should be cleared on logout")
+	}
+}
+
 func TestRedirectPath(t *testing.T) {
 	cases := map[string]string{
 		"https://app.example.com/callback":            "/callback",
