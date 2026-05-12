@@ -89,14 +89,15 @@ func TestCallbackRejectsMissingState(t *testing.T) {
 	rec := httptest.NewRecorder()
 	s.CallbackHandler(rec, req)
 
-	// Missing state cookie redirects to /login so the user can restart the
-	// flow (e.g. after an expired cookie from a long password-reset) rather
-	// than hitting a hard 400.
+	// Missing state cookie redirects to /login?error=callback_failed so the
+	// user can restart the flow without hitting the infinite redirect that
+	// /login alone would cause (LoginHandler detects the param and shows an
+	// error page instead of starting another auth round-trip).
 	if rec.Code != http.StatusFound {
 		t.Fatalf("expected 302 redirect with no state cookie, got %d", rec.Code)
 	}
-	if loc := rec.Header().Get("Location"); loc != "/login" {
-		t.Fatalf("expected redirect to /login, got %q", loc)
+	if loc := rec.Header().Get("Location"); loc != "/login?error=callback_failed" {
+		t.Fatalf("expected redirect to /login?error=callback_failed, got %q", loc)
 	}
 }
 
@@ -117,8 +118,8 @@ func TestCallbackRejectsMismatchedState(t *testing.T) {
 	if rec.Code != http.StatusFound {
 		t.Fatalf("expected 302 redirect on state mismatch, got %d", rec.Code)
 	}
-	if loc := rec.Header().Get("Location"); loc != "/login" {
-		t.Fatalf("expected redirect to /login, got %q", loc)
+	if loc := rec.Header().Get("Location"); loc != "/login?error=callback_failed" {
+		t.Fatalf("expected redirect to /login?error=callback_failed, got %q", loc)
 	}
 
 	// The cookie must be cleared on the way out so a single signed
@@ -196,18 +197,19 @@ func TestLogoutBypassRedirectsWithSignedOutParam(t *testing.T) {
 // "logout signs me back in" report. In non-bypass mode the handler must:
 //
 //   - clear the session cookie (MaxAge < 0)
-//   - redirect to LogoutReturnTo
+//   - redirect to scheme://r.Host (derived from the request, not LogoutReturnTo)
 //   - NOT bounce through WorkOS' hosted /user_management/sessions/logout URL
 //     (that's the redirect chain that caused the bug)
 //
 // We don't have a session JWE to feed it, but that's fine: the no-session
 // branch hits the same redirect target, so we can validate behaviour
 // without standing up a WorkOS client.
+//
+// httptest.NewRequest sets r.Host = "example.com"; CookieSecure defaults to
+// false, so the expected redirect is http://example.com.
 func TestLogoutNonBypassClearsCookieAndRedirectsLocally(t *testing.T) {
 	s := &Service{
-		cfg: Config{
-			LogoutReturnTo: "https://app.example.com/",
-		},
+		cfg:       Config{},
 		statePath: "/callback",
 	}
 
@@ -219,8 +221,8 @@ func TestLogoutNonBypassClearsCookieAndRedirectsLocally(t *testing.T) {
 		t.Fatalf("expected 302, got %d", rec.Code)
 	}
 	loc := rec.Header().Get("Location")
-	if loc != "https://app.example.com/" {
-		t.Fatalf("expected redirect to LogoutReturnTo, got %q", loc)
+	if loc != "http://example.com" {
+		t.Fatalf("expected redirect to http://example.com (scheme://r.Host), got %q", loc)
 	}
 	if strings.Contains(loc, "workos.com") || strings.Contains(loc, "/sessions/logout") {
 		t.Fatalf("logout must not bounce through WorkOS hosted URL, got %q", loc)
@@ -258,8 +260,8 @@ func TestLogoutNonBypassMalformedCookieFallsThrough(t *testing.T) {
 	if rec.Code != http.StatusFound {
 		t.Fatalf("expected 302, got %d", rec.Code)
 	}
-	if loc := rec.Header().Get("Location"); loc != "https://app.example.com/" {
-		t.Fatalf("expected redirect to LogoutReturnTo, got %q", loc)
+	if loc := rec.Header().Get("Location"); loc != "http://example.com" {
+		t.Fatalf("expected redirect to http://example.com (scheme://r.Host), got %q", loc)
 	}
 
 	var cleared bool
