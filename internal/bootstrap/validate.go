@@ -95,7 +95,15 @@ Choose proof based on the change:
     feature and upload screenshot(s). PNG only.
   - UI/UX flow or interaction change: record the whole screen as MP4
     with H.264 encoding, then upload and link the recording. Use
-    hetchy-record-screen when available.
+    hetchy-record-screen when available. Recommended pattern: write a
+    headed Playwright automation script with
+    chromium.launch({ headless: false }) and run it as:
+    hetchy-record-screen 20 /tmp/hetchy-validate/recording-001.mp4 -- node /tmp/hetchy-validate/flow.mjs
+    If hetchy-record-screen is unavailable or cannot capture the
+    relevant surface, say so explicitly in summary.md and the PR
+    Validation section; a fallback such as Playwright recordVideo +
+    ffmpeg is acceptable only when you explain why the whole-screen
+    helper path could not be used.
   - Backend architecture change: upload a high-level diagram showing
     the new shape or data/control flow. PNG or SVG only.
   - Backend algorithmic or behavior change: include a concise testing

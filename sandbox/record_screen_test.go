@@ -15,11 +15,15 @@ func TestRecordScreenHelperUsesX11GrabMP4(t *testing.T) {
 	for _, want := range []string{
 		"/tmp/hetchy-validate",
 		".mp4",
+		"-- command [args...]",
 		"ffmpeg -y",
 		"-f x11grab",
 		"-c:v libx264",
 		"-pix_fmt yuv420p",
 		"${display}.${screen}",
+		"ffmpeg_pid=$!",
+		"\"${cmd[@]}\"",
+		"kill -INT \"$ffmpeg_pid\"",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("helper missing %q\n%s", want, got)
@@ -40,6 +44,7 @@ func TestDockerfileAvoidsPlaywrightChromeAptInstall(t *testing.T) {
 		"-path '*/chrome-linux/chrome'",
 		"-path '*/chrome-linux64/chrome'",
 		"ffmpeg xvfb xauth x11-utils",
+		"xz-utils file",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("Dockerfile missing %q\n%s", want, got)

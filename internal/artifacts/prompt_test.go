@@ -20,6 +20,9 @@ func TestUploadInstructions_NonZeroSlotCount(t *testing.T) {
 		"curl -fSs -X PUT",
 		"Authorization: Bearer",
 		"GitHub inline playback is not guaranteed",
+		"Do not print $HETCHY_ARTIFACT_SLOTS",
+		"signed URLs",
+		"slot index, kind, content_type",
 	}
 	for _, w := range wants {
 		if !strings.Contains(got, w) {

@@ -25,6 +25,10 @@ match the artifact you produced:
   - recording: video/mp4
   - diagram: image/png or image/svg+xml
 
+Do not print $HETCHY_ARTIFACT_SLOTS, put_url, or signed URLs into
+logs or chat. They are credentials while valid. For debugging, print
+only slot index, kind, content_type, and file byte size.
+
 Upload with curl using exactly the slot's put_url and content_type:
 
   SLOT_INDEX=0

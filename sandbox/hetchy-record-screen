@@ -3,19 +3,75 @@
 #
 # Usage:
 #   hetchy-record-screen [duration_seconds] [output_path]
+#   hetchy-record-screen [duration_seconds] [output_path] -- command [args...]
 #
 # The output defaults under /tmp/hetchy-validate/ so the validation
 # prompt and upload instructions have one predictable artifact root.
 
 set -euo pipefail
 
+usage() {
+  cat >&2 <<'EOF'
+Usage:
+  hetchy-record-screen [duration_seconds] [output_path]
+  hetchy-record-screen [duration_seconds] [output_path] -- command [args...]
+
+Records the X11 display as an MP4/H.264 validation artifact. When a
+command is provided, the helper starts ffmpeg first, runs the command
+with DISPLAY exported, then finalizes the recording when the command
+exits.
+EOF
+}
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  usage
+  exit 0
+fi
+
 duration="${1:-15}"
-output="${2:-}"
+if [[ $# -gt 0 ]]; then
+  shift
+fi
+
+output=""
+if [[ $# -gt 0 && "${1:-}" != "--" ]]; then
+  output="$1"
+  shift
+fi
+
+cmd=()
+if [[ $# -gt 0 ]]; then
+  if [[ "$1" != "--" ]]; then
+    usage
+    exit 64
+  fi
+  shift
+  if [[ $# -eq 0 ]]; then
+    usage
+    exit 64
+  fi
+  cmd=("$@")
+fi
+
 display="${DISPLAY:-:99}"
 screen="${HETCHY_RECORD_SCREEN:-0}"
 fps="${HETCHY_RECORD_FPS:-15}"
 xvfb_size="${HETCHY_RECORD_XVFB_SIZE:-1280x720x24}"
 video_size="${HETCHY_RECORD_GEOMETRY:-}"
+xvfb_pid=""
+ffmpeg_pid=""
+
+cleanup() {
+  if [[ -n "$ffmpeg_pid" ]] && kill -0 "$ffmpeg_pid" >/dev/null 2>&1; then
+    kill -INT "$ffmpeg_pid" >/dev/null 2>&1 || true
+    wait "$ffmpeg_pid" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$xvfb_pid" ]] && kill -0 "$xvfb_pid" >/dev/null 2>&1; then
+    kill "$xvfb_pid" >/dev/null 2>&1 || true
+    wait "$xvfb_pid" >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup EXIT
 
 mkdir -p /tmp/hetchy-validate
 if [[ -z "$output" ]]; then
@@ -24,6 +80,7 @@ fi
 
 if [[ -z "${DISPLAY:-}" && -z "${HETCHY_RECORD_NO_XVFB:-}" ]]; then
   Xvfb "$display" -screen "$screen" "$xvfb_size" >/tmp/hetchy-validate/xvfb.log 2>&1 &
+  xvfb_pid=$!
   sleep 1
 fi
 export DISPLAY="$display"
@@ -33,7 +90,8 @@ if [[ -z "$video_size" ]] && command -v xdpyinfo >/dev/null 2>&1; then
 fi
 video_size="${video_size:-1280x720}"
 
-ffmpeg -y \
+ffmpeg_cmd=(
+  ffmpeg -y
   -video_size "$video_size" \
   -framerate "$fps" \
   -f x11grab \
@@ -43,5 +101,43 @@ ffmpeg -y \
   -pix_fmt yuv420p \
   -movflags +faststart \
   "$output"
+)
 
+if [[ ${#cmd[@]} -eq 0 ]]; then
+  "${ffmpeg_cmd[@]}"
+  printf '%s\n' "$output"
+  exit 0
+fi
+
+"${ffmpeg_cmd[@]}" &
+ffmpeg_pid=$!
+sleep "${HETCHY_RECORD_STARTUP_DELAY:-1}"
+
+set +e
+"${cmd[@]}"
+cmd_status=$?
+set -e
+
+if kill -0 "$ffmpeg_pid" >/dev/null 2>&1; then
+  kill -INT "$ffmpeg_pid" >/dev/null 2>&1 || true
+fi
+set +e
+wait "$ffmpeg_pid"
+ffmpeg_status=$?
+set -e
+ffmpeg_pid=""
+
+if [[ ! -s "$output" ]]; then
+  echo "hetchy-record-screen: ffmpeg did not produce $output" >&2
+  exit 1
+fi
+
+# ffmpeg commonly exits non-zero after SIGINT finalizes the MP4 trailer.
+# Treat a non-empty file as success unless the wrapped command failed.
+if [[ "$cmd_status" -ne 0 ]]; then
+  exit "$cmd_status"
+fi
+if [[ "$ffmpeg_status" -ne 0 ]]; then
+  echo "hetchy-record-screen: finalized $output after ffmpeg status $ffmpeg_status" >&2
+fi
 printf '%s\n' "$output"
