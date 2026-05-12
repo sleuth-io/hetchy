@@ -134,6 +134,13 @@ func (b *Bot) indexHandler(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	// signed_out=1 is set by LogoutHandler in bypass mode, where the
+	// middleware always fabricates a Principal and we can't clear it any
+	// other way. Show the landing page so logout has a visible effect.
+	if r.URL.Query().Get("signed_out") == "1" {
+		b.renderTemplate(w, landingHTMLTpl, nil)
+		return
+	}
 	p, ok := auth.FromContext(r.Context())
 	if !ok {
 		b.renderTemplate(w, landingHTMLTpl, nil)
