@@ -2,12 +2,14 @@ package bot
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
 	"time"
 
+	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
 	"github.com/hetchyhq/hetchy/internal/db/sqlc"
 	"github.com/hetchyhq/hetchy/internal/sessionlease"
 )
@@ -169,11 +171,36 @@ func (r *recoveryWorker) resume(parentCtx context.Context, row sqlc.ActiveSessio
 	r.log.Info("recovery: resuming turn", logCtx...)
 
 	if row.SandboxID == "" || row.SessionToken == "" || row.CommandID == "" {
-		// The previous owner died before stamping the Daytona handle.
-		// Nothing to reattach to — mark the turn failed and release.
-		r.log.Warn("recovery: incomplete daytona handle, marking failed", logCtx...)
-		emitFailureAndRelease(parentCtx, r.bot, row, "Service restart aborted this turn before it produced output. Retry the message.")
-		return
+		if row.SandboxID != "" {
+			// Sandbox exists but session/cmd weren't stamped before the
+			// previous owner died. Try to discover the still-running command
+			// from the sandbox's session history before giving up.
+			sb, sessionID, cmdID, found := r.discoverDaytonaHandle(parentCtx, row)
+			if found {
+				r.log.Info("recovery: discovered daytona handle from sandbox",
+					append(logCtx, "session", sessionID, "cmd_id", cmdID)...)
+				row.SessionToken = sessionID
+				row.CommandID = cmdID
+			} else {
+				r.log.Warn("recovery: incomplete daytona handle, marking failed", logCtx...)
+				if sb != nil {
+					if err := sb.Stop(parentCtx); err != nil {
+						r.log.Warn("recovery: orphan sandbox stop failed", append(logCtx, "error", err)...)
+					}
+					if err := sb.Archive(parentCtx); err != nil {
+						r.log.Warn("recovery: orphan sandbox archive failed", append(logCtx, "error", err)...)
+					}
+				} else {
+					r.log.Warn("recovery: orphan sandbox lookup failed; assuming already gone", logCtx...)
+				}
+				emitFailureAndRelease(parentCtx, r.bot, row, "Service restart aborted this turn before it produced output. Retry the message.")
+				return
+			}
+		} else {
+			r.log.Warn("recovery: no daytona handle, marking failed", logCtx...)
+			emitFailureAndRelease(parentCtx, r.bot, row, "Service restart aborted this turn before it produced output. Retry the message.")
+			return
+		}
 	}
 
 	// Build a Lease handle and start the renew loop ourselves so the
@@ -197,7 +224,6 @@ func (r *recoveryWorker) resume(parentCtx context.Context, row sqlc.ActiveSessio
 	defer r.bot.live.Done(row.OrgID, row.ThreadID, run)
 
 	emitter := newLiveEmitter(r.log, r.bot.events, row.OrgID, row.ThreadID)
-	emitter.Notify("Recovered", fmt.Sprintf("Service restart — resuming turn against sandbox `%s`.", row.SandboxID))
 
 	sandbox, err := r.bot.daytona.Get(runCtx, row.SandboxID)
 	if err != nil {
@@ -290,6 +316,38 @@ loop:
 		r.log.Warn("recovery: lease release failed", append(logCtx, "error", err)...)
 	}
 	r.log.Info("recovery: resume finished", append(logCtx, "status", terminalStatus, "pr_url", prURL)...)
+}
+
+// discoverDaytonaHandle tries to find a running command in the sandbox for the
+// given row. It looks for the session named "agent-<requestID>" and returns the
+// first command with no exit code (still running). Returns the sandbox (for
+// cleanup on failure even when no command is found) alongside the discovered
+// session/cmd IDs. If the sandbox itself cannot be fetched, sb is nil.
+func (r *recoveryWorker) discoverDaytonaHandle(ctx context.Context, row sqlc.ActiveSession) (sb *daytona.Sandbox, sessionID, cmdID string, ok bool) {
+	var err error
+	sb, err = r.bot.daytona.Get(ctx, row.SandboxID)
+	if err != nil {
+		return nil, "", "", false
+	}
+	sessionID = "agent-" + row.RequestID
+	info, err := sb.Process.GetSession(ctx, sessionID)
+	if err != nil {
+		return sb, "", "", false
+	}
+	data, _ := json.Marshal(info["commands"])
+	var cmds []struct {
+		Id       string   `json:"id"`
+		ExitCode *float32 `json:"exitCode"`
+	}
+	if err := json.Unmarshal(data, &cmds); err != nil {
+		return sb, "", "", false
+	}
+	for _, cmd := range cmds {
+		if cmd.ExitCode == nil {
+			return sb, sessionID, cmd.Id, true
+		}
+	}
+	return sb, "", "", false
 }
 
 func (r *recoveryWorker) consumeStream(ctx context.Context, router *agentLineRouter, stdout, stderr chan string) {

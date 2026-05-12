@@ -200,7 +200,7 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 	if replicaID == "" {
 		replicaID = fmt.Sprintf("replica-%d", time.Now().UnixNano())
 	}
-	eventsStore := events.New(log, store)
+	eventsStore := events.New(log, store, replicaID)
 	b := &Bot{
 		cfg:              cfg,
 		log:              log,

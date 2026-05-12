@@ -2386,53 +2386,20 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
-// consumeSSEResponse reads a server-sent-event stream from `res` and
-// renders blocks into a fresh bot turn. Used by both the original
-// POST-/chat send() flow and the GET-/chat/stream reload reattach
-// flow — the event shape is identical, only the source URL differs.
-//
-// onFirstEvent (optional) fires exactly once, the first time we
-// successfully parse a payload. send() uses it to refresh the sidebar
-// the moment the server confirms work has begun — by then the
-// conversation row has been Upserted and the LHN can render the new
-// chat without an optimistic placeholder.
-async function consumeSSEResponse(res, onFirstEvent) {
+// consumeSSEResponse reads one SSE response stream and renders its events
+// into a bot turn. resumeState is null for a fresh turn or the state object
+// returned by a prior call when reconnecting after a dropped stream. Returns
+// {sawTurnEnd, lastSeq, state} so the caller can reconnect if needed.
+async function consumeSSEResponse(res, onFirstEvent, resumeState) {
   let firstEventFired = false;
-  const turn = startBotTurn();
-  // blockRefs is the per-id map of "what to do on append/done". Each
-  // ref is a tagged shape:
-  //   { kind: 'phase-prose', phase }      — claude_text inside a phase
-  //   { kind: 'tool',        el, phase }  — tool_use inside a phase
-  //   { kind: 'standalone',  el }         — setup/notify/result/error
-  // Phase-prose appends update the phase body; tool appends are
-  // dropped (the live emitter never fires them); standalone appends
-  // go through the original appendToBlock path.
-  const blockRefs = new Map();
-  // currentPhase is the open phase box accepting new tool_uses. Set
-  // when claude_text or the first tool_use opens one; cleared when a
-  // standalone block (setup/notify/result/error) starts and closes
-  // it.
-  let currentPhase = null;
-  // phaseLastEndedAt mirrors the replay-path field: the server-
-  // stamped ended_at of the trailing tool/prose block in the
-  // currently-open phase, used as the phase's closing instant so the
-  // collapsed phase shows a duration even though the wire has no
-  // explicit "phase_done" frame. Reset whenever currentPhase resets.
-  // Server-stamped only — never use the browser clock here (see
-  // SERVER_CLOCK_NOTE in this file).
-  let phaseLastEndedAt = '';
-  // lastStandaloneEl is the most recently rendered standalone block
-  // (setup, notify, result, error). When the *next* block of any
-  // kind starts, we collapse this one so the user always sees the
-  // freshest activity expanded — e.g. the long Sandbox setup body
-  // tucks itself away when Claude starts streaming its first phase.
-  let lastStandaloneEl = null;
-  // Set to true once a terminal standalone block (result/error) is
-  // observed on the wire. Used to gate signalTurnDone() so a network
-  // blip or premature stream close doesn't leave a misleading "ready"
-  // badge on a hidden tab when the turn is actually still running or
-  // disconnected.
+  const turn = resumeState ? resumeState.turn : startBotTurn();
+  const blockRefs = resumeState ? resumeState.blockRefs : new Map();
+  let currentPhase = resumeState ? resumeState.currentPhase : null;
+  let phaseLastEndedAt = resumeState ? resumeState.phaseLastEndedAt : '';
+  let lastStandaloneEl = resumeState ? resumeState.lastStandaloneEl : null;
   let sawTurnEnd = false;
+  // lastSeq tracks the SSE id: field so reconnects can send Last-Event-Id.
+  let lastSeq = resumeState ? resumeState.lastSeq : 0;
 
   const reader = res.body.getReader();
   const dec = new TextDecoder();
@@ -2454,6 +2421,7 @@ async function consumeSSEResponse(res, onFirstEvent) {
       for (const line of part.split('\n')) {
         if (line.startsWith('event: ')) event = line.slice(7).trim();
         else if (line.startsWith('data: ')) data += (data ? '\n' : '') + line.slice(6);
+        else if (line.startsWith('id: ')) lastSeq = parseInt(line.slice(4).trim(), 10) || lastSeq;
       }
       if (!data) continue;
       let payload;
@@ -2566,13 +2534,62 @@ async function consumeSSEResponse(res, onFirstEvent) {
   // browser clock (see SERVER_CLOCK_NOTE).
   if (currentPhase) closePhase(currentPhase, phaseLastEndedAt);
   clearBlockActivity(lastStandaloneEl);
-  // GitHub-style tab indicator: if the user navigated away while
-  // Hetchy was working, badge the favicon so the just-finished turn
-  // is visible in their tab bar. We only paint the badge when the
-  // tab is hidden — if they're actively watching the page they
-  // already see the result land, and a flash-then-clear would just
-  // be noise. Gated on sawTurnEnd so a dropped/aborted stream doesn't
-  // produce a misleading "ready" indicator on a still-running turn.
+  // Return state so the caller can reconnect. After closePhase the
+  // phase container is closed but the DOM nodes are still valid —
+  // a reconnect resumes into the same turn div with null currentPhase
+  // so new block_starts open fresh phases naturally.
+  return {
+    sawTurnEnd,
+    lastSeq,
+    state: { turn, blockRefs, currentPhase: null, phaseLastEndedAt: '', lastStandaloneEl: null, lastSeq },
+  };
+}
+
+// streamTurnWithReconnect drives the full lifecycle of one bot turn's SSE
+// stream, including automatic reconnects when the stream drops before a
+// terminal event. initialRes is the already-open response from either a
+// POST /chat or a GET /chat/stream. onFirstEvent fires once on the first
+// event received (used to trigger sidebar refresh in send()).
+async function streamTurnWithReconnect(initialRes, onFirstEvent) {
+  const MAX_RECONNECTS = 10;
+  const RECONNECT_DELAY_MS = 2000;
+
+  let res = initialRes;
+  let resumeState = null;
+  let lastSeq = 0;
+  let sawTurnEnd = false;
+
+  for (let attempt = 0; attempt <= MAX_RECONNECTS; attempt++) {
+    let result;
+    try {
+      result = await consumeSSEResponse(res, attempt === 0 ? onFirstEvent : null, resumeState);
+    } catch (e) {
+      // Reader error (e.g. network reset mid-stream). Treat as a drop.
+      result = { sawTurnEnd: false, lastSeq, state: resumeState };
+    }
+    sawTurnEnd = result.sawTurnEnd;
+    if (result.lastSeq > lastSeq) lastSeq = result.lastSeq;
+    resumeState = result.state;
+
+    if (sawTurnEnd) break;
+    if (attempt === MAX_RECONNECTS) break;
+
+    // Stream dropped without a terminal event — wait, then reattach.
+    await new Promise(resolve => setTimeout(resolve, RECONNECT_DELAY_MS));
+    try {
+      const headers = { 'Accept': 'text/event-stream' };
+      if (lastSeq > 0) headers['Last-Event-Id'] = String(lastSeq);
+      const r = await fetch('/chat/stream?session=' + encodeURIComponent(sessionId), { headers });
+      if (!r.ok) break; // 404 means turn finished or no active session
+      res = r;
+    } catch (e) {
+      break; // network error during reconnect fetch
+    }
+  }
+
+  // GitHub-style tab indicator: badge the favicon when the turn finishes
+  // while the tab is hidden. Gated on sawTurnEnd so dropped streams don't
+  // produce a misleading "ready" badge on a still-running turn.
   if (sawTurnEnd) signalTurnDone();
 }
 
@@ -2612,7 +2629,7 @@ async function send() {
     // reaches us the row is committed, so triggering a sidebar refresh on
     // first event surfaces the new chat immediately rather than waiting
     // for the agent to finish (which can take minutes).
-    await consumeSSEResponse(res, isFirstTurn ? () => { loadSidebar(); refreshMetadata(); } : null);
+    await streamTurnWithReconnect(res, isFirstTurn ? () => { loadSidebar(); refreshMetadata(); } : null);
   } finally {
     setRunState(false);
     inp.focus();
@@ -2915,7 +2932,7 @@ async function init() {
   if (liveRes) {
     setRunState(true);
     try {
-      await consumeSSEResponse(liveRes);
+      await streamTurnWithReconnect(liveRes, null);
     } finally {
       setRunState(false);
       inp.focus();

@@ -82,7 +82,8 @@ type Lease struct {
 	// lost is set when a renew call comes back with 0 rows affected,
 	// meaning another replica stole the lease. The agent goroutine
 	// reads this via Lost() and aborts.
-	lost atomic.Bool
+	lost   atomic.Bool
+	onLost func() // called once when lost is set; see SetOnLost
 
 	// lastSeq is the conversation_events.seq watermark inherited from
 	// the active_sessions row at claim time. chatHandler subscribes
@@ -170,6 +171,12 @@ func (l *Lease) Cancelled() bool { return l.cancelled.Load() }
 // this as a hard abort.
 func (l *Lease) Lost() bool { return l.lost.Load() }
 
+// SetOnLost registers fn to be called exactly once when the lease is
+// stolen by another replica. Must be called before the renew loop can
+// set lost (i.e. immediately after Claim). fn is called from the renew
+// goroutine so it must not block.
+func (l *Lease) SetOnLost(fn func()) { l.onLost = fn }
+
 // LastSeq returns the conversation_events.seq watermark inherited from
 // the active_sessions row at claim time. chatHandler uses this as the
 // starting cursor for the SSE subscription so a follow-up turn's
@@ -205,8 +212,9 @@ func (l *Lease) AllocateSeq(ctx context.Context, q *sqlc.Queries) (int64, error)
 		q = l.mgr.db.Queries
 	}
 	seq, err := q.AllocateNextSeq(ctx, sqlc.AllocateNextSeqParams{
-		OrgID:    l.orgID,
-		ThreadID: l.threadID,
+		OrgID:        l.orgID,
+		ThreadID:     l.threadID,
+		OwnerReplica: l.mgr.replica,
 	})
 	if err != nil {
 		return 0, fmt.Errorf("allocate seq: %w", err)
@@ -293,8 +301,12 @@ func (l *Lease) renewLoop() {
 			}
 			if n == 0 {
 				// Owner column no longer matches: another replica stole
-				// the lease. Mark lost and stop renewing.
+				// the lease. Mark lost, notify the agent goroutine, and
+				// stop renewing.
 				l.lost.Store(true)
+				if fn := l.onLost; fn != nil {
+					fn()
+				}
 				l.mgr.log.Warn("sessionlease: lease lost to another replica",
 					"org", l.orgID, "thread", l.threadID)
 				cancel()

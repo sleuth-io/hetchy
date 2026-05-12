@@ -51,12 +51,13 @@ UPDATE active_sessions
 -- name: AllocateNextSeq :one
 -- Returns the next seq for events.Append. Bumping last_seq inside the
 -- same transaction as the event INSERT prevents two concurrent appenders
--- from minting the same seq even if the owner column briefly disagrees
--- (e.g. mid-failover).
+-- from minting the same seq. The owner_replica guard ensures a
+-- partitioned-but-alive old owner cannot mint seqs after a takeover.
 UPDATE active_sessions
    SET last_seq = last_seq + 1
  WHERE org_id = $1
    AND thread_id = $2
+   AND owner_replica = sqlc.arg(owner_replica)
 RETURNING last_seq;
 
 -- name: GetActiveSession :one

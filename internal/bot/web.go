@@ -1293,6 +1293,7 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 
 	runCtx, runCancel := context.WithCancel(parentCtx)
 	run := newLiveRun(runCtx, runCancel, lease)
+	lease.SetOnLost(func() { run.Cancel() })
 	b.live.Register(p.OrgID, sessionID, run)
 
 	emitter := newLiveEmitter(b.log, b.events, p.OrgID, sessionID)
@@ -1319,6 +1320,13 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 		// converted into a Fail block, otherwise mis-labelled below).
 		releaseCtx, releaseCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer releaseCancel()
+		if lease.Lost() {
+			// Another replica stole the lease; it is responsible for
+			// terminal state. Release with empty status so we don't
+			// overwrite its conversation status stamp.
+			_ = lease.Release(releaseCtx, "")
+			return
+		}
 		status := terminalStatusFor(emitter)
 		if run.Cancelled() {
 			status = "cancelled"

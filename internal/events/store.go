@@ -28,7 +28,7 @@ import (
 )
 
 // NotifyChannel is the Postgres LISTEN/NOTIFY channel name. Every Append
-// fires a NOTIFY with payload "<orgID>\x00<threadID>:<seq>" so subscribers
+// fires a NOTIFY with payload "<orgID>|<threadID>:<seq>" so subscribers
 // know which (org, thread) to read forward from.
 const NotifyChannel = "hetchy_events"
 
@@ -47,13 +47,14 @@ type Event struct {
 // Store appends events and replays them. Stateless; one instance per
 // process.
 type Store struct {
-	log *slog.Logger
-	db  *db.Store
+	log       *slog.Logger
+	db        *db.Store
+	replicaID string
 }
 
 // New returns a Store. db must not be nil.
-func New(log *slog.Logger, store *db.Store) *Store {
-	return &Store{log: log, db: store}
+func New(log *slog.Logger, store *db.Store, replicaID string) *Store {
+	return &Store{log: log, db: store, replicaID: replicaID}
 }
 
 // Append durably records an event for (orgID, threadID). seq is allocated
@@ -70,8 +71,9 @@ func (s *Store) Append(ctx context.Context, orgID, threadID, kind string, payloa
 	var seq int64
 	err := s.db.WithTx(ctx, func(q *sqlc.Queries) error {
 		next, err := q.AllocateNextSeq(ctx, sqlc.AllocateNextSeqParams{
-			OrgID:    orgID,
-			ThreadID: threadID,
+			OrgID:        orgID,
+			ThreadID:     threadID,
+			OwnerReplica: s.replicaID,
 		})
 		if err != nil {
 			return fmt.Errorf("allocate seq: %w", err)
@@ -103,7 +105,7 @@ func (s *Store) Append(ctx context.Context, orgID, threadID, kind string, payloa
 	if _, err := s.db.Pool().Exec(ctx,
 		"SELECT pg_notify($1, $2)",
 		NotifyChannel,
-		fmt.Sprintf("%s\x00%s:%d", orgID, threadID, seq),
+		fmt.Sprintf("%s|%s:%d", orgID, threadID, seq),
 	); err != nil {
 		s.log.Warn("events: pg_notify failed", "error", err)
 	}

@@ -14,20 +14,22 @@ UPDATE active_sessions
    SET last_seq = last_seq + 1
  WHERE org_id = $1
    AND thread_id = $2
+   AND owner_replica = $3
 RETURNING last_seq
 `
 
 type AllocateNextSeqParams struct {
-	OrgID    string `json:"org_id"`
-	ThreadID string `json:"thread_id"`
+	OrgID        string `json:"org_id"`
+	ThreadID     string `json:"thread_id"`
+	OwnerReplica string `json:"owner_replica"`
 }
 
 // Returns the next seq for events.Append. Bumping last_seq inside the
 // same transaction as the event INSERT prevents two concurrent appenders
-// from minting the same seq even if the owner column briefly disagrees
-// (e.g. mid-failover).
+// from minting the same seq. The owner_replica guard ensures a
+// partitioned-but-alive old owner cannot mint seqs after a takeover.
 func (q *Queries) AllocateNextSeq(ctx context.Context, arg AllocateNextSeqParams) (int64, error) {
-	row := q.db.QueryRow(ctx, allocateNextSeq, arg.OrgID, arg.ThreadID)
+	row := q.db.QueryRow(ctx, allocateNextSeq, arg.OrgID, arg.ThreadID, arg.OwnerReplica)
 	var last_seq int64
 	err := row.Scan(&last_seq)
 	return last_seq, err

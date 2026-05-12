@@ -96,6 +96,10 @@ func (p *claudeStreamParser) Line(line string) {
 	if err := json.Unmarshal([]byte(line), &env); err != nil {
 		return
 	}
+	// Skip events from subagents (--verbose bubbles their stream into ours).
+	if env.ParentToolUseID != "" {
+		return
+	}
 	switch env.Type {
 	case "assistant":
 		p.handleAssistant(env)
@@ -259,6 +263,12 @@ type streamEnvelope struct {
 	Subtype string        `json:"subtype,omitempty"`
 	Message streamMessage `json:"message,omitzero"`
 	Result  string        `json:"result,omitempty"`
+	// ParentToolUseID is set (non-null) on events that originate from a
+	// subagent spawned by the Agent tool when --verbose is active. These
+	// events are interleaved with the parent stream and must be skipped so
+	// we don't render subagent prose/tool blocks as if they were the parent
+	// agent's output. Parent events have this field absent or null (→ "").
+	ParentToolUseID string `json:"parent_tool_use_id,omitempty"`
 }
 
 type streamMessage struct {
@@ -431,9 +441,10 @@ func toolInputBody(input map[string]any) string {
 }
 
 // toolResultBody decodes the tool_result content, which can be either
-// a plain string or an array of content blocks. We collapse to a
-// single string and truncate aggressively — the rich UI is the chat
-// transcript, not the per-result payload.
+// a plain string, an array of content blocks, or (Claude Code 4.x
+// --verbose) a structured object. We collapse to a single string and
+// truncate aggressively — the rich UI is the chat transcript, not the
+// per-result payload.
 func toolResultBody(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""
@@ -441,9 +452,19 @@ func toolResultBody(raw json.RawMessage) string {
 	// Try string first (most common shape).
 	var s string
 	if err := json.Unmarshal(raw, &s); err == nil {
+		// Claude Code --verbose stores the Agent/Task subagent's full
+		// NDJSON stream as the tool result string. Detect and extract
+		// just the final result text rather than dumping raw JSON into
+		// the UI.
+		if r := extractStreamJSONResult(s); r != "" {
+			return truncateMid(r, 4*1024)
+		}
+		if isStreamJSONBlob(s) {
+			return "" // stream blob with no extractable result
+		}
 		return truncateMid(s, 4*1024)
 	}
-	// Fall back to []{type,text} content blocks.
+	// Try []{type,text} content blocks.
 	var blocks []struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
@@ -458,7 +479,81 @@ func toolResultBody(raw json.RawMessage) string {
 		}
 		return truncateMid(sb.String(), 4*1024)
 	}
-	return truncateMid(string(raw), 4*1024)
+	// Try the verbose object format emitted by Claude Code --verbose:
+	// {"parent_tool_use_id":…, "tool_use_result":{"type":"text","file":{"content":"…"}}}
+	// or {"tool_use_result":{"type":"text","output":"…"}} for command results.
+	var verbose struct {
+		ToolUseResult *struct {
+			Output string `json:"output"`
+			File   *struct {
+				Content string `json:"content"`
+			} `json:"file"`
+		} `json:"tool_use_result"`
+	}
+	if err := json.Unmarshal(raw, &verbose); err == nil && verbose.ToolUseResult != nil {
+		if verbose.ToolUseResult.File != nil && verbose.ToolUseResult.File.Content != "" {
+			return truncateMid(verbose.ToolUseResult.File.Content, 4*1024)
+		}
+		if verbose.ToolUseResult.Output != "" {
+			return truncateMid(verbose.ToolUseResult.Output, 4*1024)
+		}
+	}
+	// Unknown format — return nothing rather than dumping raw JSON into the UI.
+	return ""
+}
+
+// isStreamJSONBlob reports whether s looks like an NDJSON stream-json
+// dump: the first non-empty line must parse as an envelope whose type
+// is one of the known stream-json values. Used to guard against
+// returning a raw multi-line JSON blob from toolResultBody when Claude
+// Code --verbose embeds the subagent's stream as the tool result string.
+func isStreamJSONBlob(s string) bool {
+	for line := range strings.SplitSeq(s, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if len(line) < 2 || line[0] != '{' {
+			return false
+		}
+		var env struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal([]byte(line), &env); err != nil {
+			return false
+		}
+		switch env.Type {
+		case "assistant", "user", "system", "result":
+			return true
+		}
+		return false
+	}
+	return false
+}
+
+// extractStreamJSONResult scans an NDJSON stream-json blob for the last
+// "result" envelope and returns its Result field. The last match is used
+// because the dump may contain both a subagent result and a parent result;
+// the subagent result (which carries the actual findings) is typically last.
+func extractStreamJSONResult(s string) string {
+	var last string
+	for line := range strings.SplitSeq(s, "\n") {
+		line = strings.TrimSpace(line)
+		if len(line) < 2 || line[0] != '{' {
+			continue
+		}
+		var env struct {
+			Type   string `json:"type"`
+			Result string `json:"result,omitempty"`
+		}
+		if err := json.Unmarshal([]byte(line), &env); err != nil {
+			continue
+		}
+		if env.Type == "result" && env.Result != "" {
+			last = env.Result
+		}
+	}
+	return last
 }
 
 // truncateMid keeps the head and the tail of s when it exceeds n,

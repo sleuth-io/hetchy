@@ -30,7 +30,7 @@ type Fanout struct {
 	store *Store
 
 	mu   sync.Mutex
-	subs map[string]map[*Subscription]struct{} // key: orgID + "\x00" + threadID
+	subs map[string]map[*Subscription]struct{} // key: orgID + "|" + threadID
 
 	closeOnce sync.Once
 	closeCh   chan struct{}
@@ -316,14 +316,14 @@ func (f *Fanout) deliver(orgID, threadID string, events []Event) {
 }
 
 func keyFor(orgID, threadID string) string {
-	return orgID + "\x00" + threadID
+	return orgID + "|" + threadID
 }
 
-// parseNotifyPayload splits "<orgID>\x00<threadID>:<seq>". The colon-
+// parseNotifyPayload splits "<orgID>|<threadID>:<seq>". The colon-
 // delimited seq is on the end so org IDs containing colons (UUIDs don't,
 // but defensive) parse correctly.
 func parseNotifyPayload(p string) (orgID, threadID string, seq int64, ok bool) {
-	orgID, rest, found := strings.Cut(p, "\x00")
+	orgID, rest, found := strings.Cut(p, "|")
 	if !found {
 		return "", "", 0, false
 	}
