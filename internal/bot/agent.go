@@ -204,6 +204,9 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, o
 	}
 	sessionID := "agent-" + requestID
 	prURL, err := b.runScript(ctx, sb, sessionID, "agent", agentScript, env, emit)
+	if err == nil {
+		prURL, err = b.validateReportedPR(ctx, repo, "feature/sf-"+requestID, repo.BaseBranch, prURL)
+	}
 	if err == nil && spec != nil {
 		// Post-success reflection: read /tmp/hetchy-spec/improved/ to
 		// see if the agent flagged any setup/start/health changes that
@@ -534,7 +537,11 @@ func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx
 			env["SF_SPEC_HEALTH_B64"] = base64.StdEncoding.EncodeToString([]byte(spec.HealthCheck))
 		}
 	}
-	return b.runScript(ctx, sb, "followup-"+requestID, "followup", followupScript, env, emit)
+	prURL, err := b.runScript(ctx, sb, "followup-"+requestID, "followup", followupScript, env, emit)
+	if err != nil {
+		return "", err
+	}
+	return b.validateReportedPR(ctx, repo, rec.Branch, "", prURL)
 }
 
 // runScript writes scriptBody to /tmp/sf-<label>.sh inside the sandbox
