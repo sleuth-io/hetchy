@@ -108,7 +108,7 @@
      turn the card into a wall of text. */
   .repo-card-cols { display: grid; grid-template-columns: 1fr;
                     gap: 1rem; }
-  @media (min-width: 720px) {
+  @media (min-width: 768px) {
     .repo-card-cols { grid-template-columns: 1fr 1fr; }
   }
   .repo-card-col { min-width: 0; }
@@ -538,10 +538,10 @@
 
   /* Mobile — stack the settings sidebar above the content as a
      horizontal nav row, collapse multi-column form grids, and let the
-     integration cards breathe. The 720px breakpoint matches the
+     integration cards breathe. The 768px breakpoint matches the
      repo-card-cols rule above; below that the desktop two-pane shell
      starts cramping. */
-  @media (max-width: 720px) {
+  @media (max-width: 768px) {
     body { padding: 0; }
     .modal-page { grid-template-columns: 1fr;
                   grid-template-rows: auto 1fr;
@@ -591,6 +591,7 @@
     table.members .row-actions { text-align: left; }
     dialog.api-modal, dialog.app-dialog { width: calc(100vw - 1.5rem);
                                           max-width: calc(100vw - 1.5rem); }
+    html.is-dark .sidebar { border-bottom-color: #2a2a2d; }
   }
 
   @media (max-width: 480px) {
@@ -598,8 +599,6 @@
                                                  justify-content: center; }
     .cred-tabs { flex-wrap: wrap; }
   }
-
-  html.is-dark .sidebar { border-bottom-color: #2a2a2d; }
 </style>
 </head>
 <body>

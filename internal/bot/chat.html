@@ -844,7 +844,8 @@
        in from the left as a fixed overlay. On desktop the sidebar is
        always visible and this button is hidden. -->
   <button id="sidebar-toggle" type="button"
-          aria-label="Toggle chat list" title="Toggle chat list" aria-expanded="false">
+          aria-label="Toggle chat list" title="Toggle chat list"
+          aria-expanded="false" aria-controls="sidebar">
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor"
          stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
       <line x1="2.5" y1="4" x2="13.5" y2="4"/>
@@ -2735,6 +2736,7 @@ const metaHiddenStorageKey = 'hetchy.metaHidden';
 // defined further down; declaring them up here keeps the TDZ happy.
 const sidebarToggleBtn = document.getElementById('sidebar-toggle');
 const overlayScrim = document.getElementById('overlay-scrim');
+const mobileSidebarQuery = window.matchMedia('(max-width: 768px)');
 function applyMetaHidden(hidden) {
   document.documentElement.classList.toggle('meta-hidden', hidden);
   const btn = document.getElementById('meta-toggle');
@@ -2775,6 +2777,10 @@ function syncOverlayScrim() {
 }
 sidebarToggleBtn.addEventListener('click', e => {
   e.stopPropagation();
+  closeToolsPopover();
+  closeModelPopover();
+  closeAgentPopover();
+  setUserMenuOpen(false);
   const open = !document.documentElement.classList.contains('sidebar-open');
   setSidebarOpen(open);
   // Same one-overlay-at-a-time rule as the meta toggle above.
@@ -2793,7 +2799,7 @@ overlayScrim.addEventListener('click', () => {
 // Tapping a chat in the sidebar navigates — close the overlay so the
 // user lands on the chat instead of staring at the same list.
 document.getElementById('chat-list').addEventListener('click', e => {
-  if (e.target.closest('a.chat-item') && window.matchMedia('(max-width: 768px)').matches) {
+  if (e.target.closest('a.chat-item') && mobileSidebarQuery.matches) {
     setSidebarOpen(false);
   }
 });
@@ -2803,14 +2809,12 @@ document.addEventListener('keydown', e => {
     setSidebarOpen(false);
   }
 });
-// Clear the overlay state when growing past the mobile breakpoint so
+// Clear the overlay state when crossing past the mobile breakpoint so
 // rotating a tablet doesn't leave the desktop layout with a stuck
 // "open" class.
-window.addEventListener('resize', () => {
-  if (!window.matchMedia('(max-width: 768px)').matches) {
-    if (document.documentElement.classList.contains('sidebar-open')) {
-      setSidebarOpen(false);
-    }
+mobileSidebarQuery.addEventListener('change', e => {
+  if (!e.matches && document.documentElement.classList.contains('sidebar-open')) {
+    setSidebarOpen(false);
   }
 });
 syncOverlayScrim();
