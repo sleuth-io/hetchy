@@ -254,10 +254,7 @@ func (s *Service) CallbackHandler(w http.ResponseWriter, r *http.Request) {
 func (s *Service) LogoutHandler(w http.ResponseWriter, r *http.Request) {
 	s.clearSessionCookie(w)
 	if s.cfg.Bypass {
-		// In bypass mode there's no real session to revoke, but redirect to
-		// the landing page so the logout button produces a visible change.
-		// We use ?signed_out=1 so the index handler can render the landing
-		// page even though bypass middleware always fabricates a Principal.
+		// bypass: no real session to revoke; ?signed_out=1 lets indexHandler show the landing page.
 		http.Redirect(w, r, "/?"+SignedOutParam+"=1", http.StatusFound)
 		return
 	}
