@@ -20,6 +20,7 @@ import (
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/types"
 
 	"github.com/hetchyhq/hetchy/internal/agents"
+	"github.com/hetchyhq/hetchy/internal/artifacts"
 	"github.com/hetchyhq/hetchy/internal/auth"
 	"github.com/hetchyhq/hetchy/internal/blocks"
 	"github.com/hetchyhq/hetchy/internal/bootstrap"
@@ -28,7 +29,6 @@ import (
 	"github.com/hetchyhq/hetchy/internal/db/sqlc"
 	"github.com/hetchyhq/hetchy/internal/githubapp"
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
-	"github.com/hetchyhq/hetchy/internal/screenshots"
 	"github.com/hetchyhq/hetchy/internal/secrets"
 )
 
@@ -63,13 +63,13 @@ type Bot struct {
 	auth      *auth.Service
 	slack     *slackManager
 	bootstrap *bootstrap.Store
-	// screenshots is the S3 presigner used to mint per-request upload
-	// slots for the validation prompt. Nil when HETCHY_S3_BUCKET /
-	// HETCHY_S3_REGION aren't configured — runAgent falls back to
-	// the legacy /tmp/hetchy-validate filename references in that
-	// case. We construct one Signer at startup; the underlying
-	// S3 client is safe for concurrent use.
-	screenshots *screenshots.Signer
+	// artifacts is the S3 presigner used to mint per-request proof
+	// artifact upload slots for the validation prompt. Nil when
+	// HETCHY_S3_BUCKET / HETCHY_S3_REGION aren't configured.
+	artifacts artifactMinter
+	// artifactSlots tracks run-scoped bearer tokens for in-sandbox
+	// requests that need more slots than the default batch.
+	artifactSlots *artifactSlotBroker
 	// live tracks in-flight chat turns so the /chat/stream
 	// reattach endpoint can find them and replay buffered
 	// SSE events to a reloading tab. Goroutine-safe.
@@ -157,21 +157,21 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 		return nil, fmt.Errorf("auth: %w", err)
 	}
 
-	// Screenshot upload signer. ErrNotConfigured is the "feature
+	// Artifact upload signer. ErrNotConfigured is the "feature
 	// disabled" sentinel — log + continue. Other errors mean AWS
 	// config loading itself failed (corrupt ~/.aws/config, etc.); we
 	// also continue without the feature rather than refusing to
-	// start, since hetchy is useful without screenshot upload.
-	screenshotSigner, err := screenshots.New(context.Background(), cfg.S3Bucket, cfg.S3Region)
+	// start, since hetchy is useful without proof artifact upload.
+	artifactSigner, err := artifacts.New(context.Background(), cfg.S3Bucket, cfg.S3Region)
 	switch {
-	case errors.Is(err, screenshots.ErrNotConfigured):
-		log.Info("screenshot upload disabled: HETCHY_S3_BUCKET / HETCHY_S3_REGION not set")
-		screenshotSigner = nil
+	case errors.Is(err, artifacts.ErrNotConfigured):
+		log.Info("artifact upload disabled: HETCHY_S3_BUCKET / HETCHY_S3_REGION not set")
+		artifactSigner = nil
 	case err != nil:
-		log.Warn("screenshot signer disabled", "error", err)
-		screenshotSigner = nil
+		log.Warn("artifact signer disabled", "error", err)
+		artifactSigner = nil
 	default:
-		log.Info("screenshot upload configured", "bucket", cfg.S3Bucket, "region", cfg.S3Region)
+		log.Info("artifact upload configured", "bucket", cfg.S3Bucket, "region", cfg.S3Region)
 	}
 
 	b := &Bot{
@@ -183,7 +183,8 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 		convs:            convstore.New(store),
 		agents:           agents.NewStore(store),
 		bootstrap:        bootstrap.New(store, cipher),
-		screenshots:      screenshotSigner,
+		artifacts:        artifactSigner,
+		artifactSlots:    newArtifactSlotBroker(artifactSigner),
 		live:             newLiveRegistry(),
 		auth:             authSvc,
 		cipher:           cipher,
@@ -325,15 +326,16 @@ func (b *Bot) Run(ctx context.Context) error {
 // repo-bootstrap pipeline + post-change validation prompt: when true
 // (the default for new chats from the web UI and for every Slack
 // request) the agent does first-time bootstrap, applies the saved
-// spec, and is told to produce screenshot/test evidence before
+// spec, and is told to produce proof artifacts/test evidence before
 // opening the PR. When false (web user explicitly unchecks the
 // "Validate changes with end-to-end testing" box) we skip both and
 // fall back to the legacy "make the change, open the PR" flow —
 // useful for trivial edits where the bootstrap's overhead outweighs
 // the validation benefit.
 //
-// Slack always passes true; regular follow-ups ignore the flag because
-// they reuse the already-cloned sandbox and don't re-bootstrap.
+// Slack always passes true. Follow-ups also receive the flag; when true
+// and a saved spec exists, they rerun the validation handoff without
+// re-bootstrap.
 func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, requestID, threadID, userID string, validate bool, requestedAgent *string, model ClaudeModel, out blocks.Emitter) {
 	model = normalizeClaudeModel(model)
 	b.log.Info("request received",
@@ -370,7 +372,7 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		if !ok {
 			return
 		}
-		b.handleFollowUp(ctx, oc, rec, agent, text, requestID, model, recorder, emit)
+		b.handleFollowUp(ctx, oc, rec, agent, text, requestID, validate, model, recorder, emit)
 		return
 	case err == nil && rec.SandboxID != "":
 		// Sandbox was created but the agent failed before producing a
@@ -731,7 +733,7 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 	}
 }
 
-func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, text, requestID string, model ClaudeModel, recorder *blocks.Recorder, emit blocks.Emitter) {
+func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, text, requestID string, validate bool, model ClaudeModel, recorder *blocks.Recorder, emit blocks.Emitter) {
 	model = modelForConversation(rec, model)
 	b.log.Info("follow-up received", "org", oc.OrgID, "sandbox", rec.SandboxID, "branch", rec.Branch, "pr", rec.PRURL, "agent", agent.Slug, "model", model)
 	rec.AgentSlug = agent.Slug
@@ -823,7 +825,7 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 		persister.Stop()
 	}()
 
-	prURL, err := b.runFollowUp(ctx, sb, repo, oc, rec, agent, text, requestID, model, emit)
+	prURL, err := b.runFollowUp(ctx, sb, repo, oc, rec, agent, text, requestID, validate, model, emit)
 	if err != nil {
 		if liveRunCancelled(ctx) {
 			b.log.Info("follow-up stopped", "sandbox", sb.ID, "request_id", requestID, "error", err)

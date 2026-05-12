@@ -24,6 +24,9 @@
 #   SF_SPEC_START_B64 or SF_SPEC_START_B64_FILE    base64-encoded start.sh from the saved bootstrap spec
 #   SF_SPEC_HEALTH_B64 or SF_SPEC_HEALTH_B64_FILE  base64-encoded health.sh from the saved bootstrap spec
 #   HETCHY_CLAUDE_MODEL  Claude Code model alias: opus, sonnet, or haiku
+#   HETCHY_ARTIFACT_SLOTS      JSON proof-artifact upload slots
+#   HETCHY_ARTIFACT_SLOT_URL   endpoint for requesting more upload slots
+#   HETCHY_ARTIFACT_SLOT_TOKEN bearer token for that endpoint
 # When all three are set, agent.sh runs setup → starts the app in the
 # background → polls health.sh BEFORE invoking claude, so the validation
 # prompt's claim that "the app is running" is actually true.
