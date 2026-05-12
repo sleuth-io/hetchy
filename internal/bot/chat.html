@@ -969,15 +969,19 @@ const validateRow = document.querySelector('.tools-checkbox-row');
 // sidebar filter to "my chats".
 const currentUserID = '{{.UserID}}';
 let agentOptions = [];
+let agentOptionsLoaded = false;
 const agentStorageKey = 'hetchy.agent.' + currentUserID;
-let selectedAgentSlug = (function () {
+
+function readStoredAgentSlug() {
   try {
     const saved = localStorage.getItem(agentStorageKey);
     return saved === null ? '' : saved.trim();
   } catch (e) {
     return '';
   }
-})();
+}
+
+let selectedAgentSlug = readStoredAgentSlug();
 const modelOptions = [
   { value: 'opus', label: 'Opus', description: 'Most capable' },
   { value: 'sonnet', label: 'Sonnet', description: 'Balanced everyday work' },
@@ -1084,16 +1088,16 @@ function addUserMsg(text) {
 }
 
 async function loadAgents() {
-  let loaded = false;
+  agentOptionsLoaded = false;
   try {
     const res = await fetch('/api/agents', { headers: { 'Accept': 'application/json' } });
     if (!res.ok) throw new Error('agents fetch failed: ' + res.status);
     agentOptions = await res.json();
-    loaded = true;
+    agentOptionsLoaded = true;
   } catch (e) {
     agentOptions = [];
   }
-  if (loaded) reconcileSelectedAgentWithOptions();
+  if (agentOptionsLoaded) reconcileSelectedAgentWithOptions();
   populateAgentPicker();
 }
 
@@ -1106,6 +1110,7 @@ function agentSlugIsKnown(slug) {
 }
 
 function reconcileSelectedAgentWithOptions() {
+  if (!agentOptionsLoaded) return;
   if (agentSlugIsKnown(selectedAgentSlug)) return;
   selectedAgentSlug = '';
   persistSelectedAgent();
@@ -1207,8 +1212,8 @@ function applyConversationModel(detail) {
 }
 
 function applyConversationAgent(detail) {
-  if (!detail) return;
-  selectedAgentSlug = detail.agent_slug || '';
+  selectedAgentSlug = detail ? (detail.agent_slug || '') : readStoredAgentSlug();
+  if (!detail) reconcileSelectedAgentWithOptions();
   populateAgentPicker();
   updateToolsButton();
 }
@@ -2110,6 +2115,7 @@ function renderMetadata(detail) {
   const host = document.getElementById('meta-content');
   if (!detail) {
     applyConversationModel(null);
+    applyConversationAgent(null);
     host.innerHTML = '<div class="meta-empty">No chat details yet.</div>';
     setDocTitle('');
     return;
