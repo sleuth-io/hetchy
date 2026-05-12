@@ -158,11 +158,16 @@ func (b *Bot) indexHandler(w http.ResponseWriter, r *http.Request) {
 	} else {
 		b.log.Warn("profile fetch for chat header failed", "error", err, "user", p.UserID)
 	}
+	theme := "system"
+	if oc, err := b.orgs.Get(r.Context(), p.OrgID); err == nil && oc.Theme != "" {
+		theme = oc.Theme
+	}
 	b.renderTemplate(w, chatHTMLTpl, map[string]any{
 		"Email":       p.Email,
 		"DisplayName": displayName,
 		"GravatarURL": gravatarURL(p.Email),
 		"UserID":      p.UserID,
+		"Theme":       theme,
 	})
 }
 
@@ -173,7 +178,10 @@ func (b *Bot) onboardingHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodGet {
-		b.renderTemplate(w, onboardingHTMLTpl, map[string]any{"Email": p.Email})
+		b.renderTemplate(w, onboardingHTMLTpl, map[string]any{
+			"Email": p.Email,
+			"Theme": "system",
+		})
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -292,6 +300,7 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 			"SXKeyPreview":                previewSecret(current.SXKey),
 			"GitHubAppEnabled":            b.app != nil,
 			"DefaultRepoSlug":             defaultRepoSlug,
+			"Theme":                       current.Theme,
 		}
 		if err := b.populateSettingsTabData(r.Context(), p.OrgID, tab, data); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -321,9 +330,9 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 		tab = "general"
 	}
 
-	// General tab posts only the org_name field. Pushing it through the
+	// General tab posts org_name and theme fields. Pushing it through the
 	// integrations save below would null out default_repo and the API-key
-	// previews, so handle the rename inline and bounce.
+	// previews, so handle the rename and theme inline and bounce.
 	if tab == "general" {
 		name := strings.TrimSpace(r.FormValue("org_name"))
 		if name == "" {
@@ -335,7 +344,23 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "rename: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		b.log.Info("org renamed", "org", p.OrgID, "actor", p.UserID)
+		theme := strings.TrimSpace(r.FormValue("theme"))
+		if theme == "" {
+			theme = "system"
+		}
+		current, err := b.orgs.Get(r.Context(), p.OrgID)
+		if err != nil && !errors.Is(err, orgcfg.ErrNotFound) {
+			http.Error(w, "load config: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		current.OrgID = p.OrgID
+		current.Theme = theme
+		if _, err := b.orgs.Upsert(r.Context(), current); err != nil {
+			b.log.Error("update theme failed", "error", err, "org", p.OrgID)
+			http.Error(w, "theme: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		b.log.Info("org settings updated", "org", p.OrgID, "actor", p.UserID, "theme", theme)
 		http.Redirect(w, r, "/settings/org?tab=general&saved=1", http.StatusFound)
 		return
 	}
@@ -938,12 +963,19 @@ func (b *Bot) profileHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "load profile: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
+		theme := "system"
+		if p.HasOrg() {
+			if oc, err := b.orgs.Get(r.Context(), p.OrgID); err == nil && oc.Theme != "" {
+				theme = oc.Theme
+			}
+		}
 		b.renderTemplate(w, profileHTMLTpl, map[string]any{
 			"UserID":    prof.UserID,
 			"Email":     prof.Email,
 			"FirstName": prof.FirstName,
 			"LastName":  prof.LastName,
 			"Saved":     r.URL.Query().Get("saved") == "1",
+			"Theme":     theme,
 		})
 		return
 	}

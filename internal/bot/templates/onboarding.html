@@ -10,7 +10,12 @@
   var mq = window.matchMedia('(prefers-color-scheme: dark)');
   function apply(){
     var pref;
-    try { pref = localStorage.getItem('theme') || 'system'; } catch(e) { pref = 'system'; }
+    var orgTheme = '{{.Theme}}';
+    try {
+      pref = orgTheme && orgTheme !== 'undefined' ? orgTheme : (localStorage.getItem('theme') || 'system');
+    } catch(e) {
+      pref = orgTheme && orgTheme !== 'undefined' ? orgTheme : 'system';
+    }
     var dark = pref === 'dark' || (pref === 'system' && mq.matches);
     document.documentElement.classList.toggle('is-dark', dark);
   }
