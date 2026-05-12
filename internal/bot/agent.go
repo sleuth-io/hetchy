@@ -465,11 +465,7 @@ func maskToken(s string) string {
 	if len(s) == 0 {
 		return "(empty)"
 	}
-	n := len(s)
-	if n > 8 {
-		n = 8
-	}
-	return strings.Repeat("*", n)
+	return strings.Repeat("*", min(len(s), 8))
 }
 
 func addAgentEnv(env map[string]string, cfg Config, agent agents.Profile) {
