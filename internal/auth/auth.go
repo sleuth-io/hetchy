@@ -165,7 +165,7 @@ func redirectPath(redirectURI string) (string, error) {
 func (s *Service) LoginHandler(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("error") == "callback_failed" {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.WriteHeader(http.StatusUnprocessableEntity)
+		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write([]byte(`<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><title>Login failed</title>
 <style>body{font-family:sans-serif;max-width:480px;margin:80px auto;padding:0 16px;color:#1a1a1a}
