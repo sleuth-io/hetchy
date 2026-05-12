@@ -2,6 +2,7 @@ package bot
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -130,7 +131,7 @@ func LoadConfig() (Config, error) {
 	// config; deriving from the URI removes that dependency.
 	cookieSecure := os.Getenv("COOKIE_INSECURE") == ""
 	if cookieSecure {
-		if ru := strings.TrimSpace(os.Getenv("WORKOS_REDIRECT_URI")); strings.HasPrefix(ru, "http://") {
+		if u, err := url.Parse(strings.TrimSpace(os.Getenv("WORKOS_REDIRECT_URI"))); err == nil && u.Scheme == "http" {
 			cookieSecure = false
 		}
 	}

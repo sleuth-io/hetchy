@@ -458,14 +458,18 @@ func claudeAuthEnv(oc orgcfg.Config) (name, value string) {
 	return "ANTHROPIC_API_KEY", oc.AnthropicAPIKey
 }
 
-// maskToken returns the first 5 and last 5 characters of s separated by
-// "...", so logs show enough to identify a token without exposing it.
-// Tokens shorter than 10 characters are fully masked.
+// maskToken returns a fixed-length asterisk string so logs confirm a token is
+// set without revealing any characters. The length is capped at 8 so long and
+// short tokens are indistinguishable and no structural information leaks.
 func maskToken(s string) string {
-	if len(s) <= 10 {
-		return strings.Repeat("*", len(s))
+	if len(s) == 0 {
+		return "(empty)"
 	}
-	return s[:5] + "..." + s[len(s)-5:]
+	n := len(s)
+	if n > 8 {
+		n = 8
+	}
+	return strings.Repeat("*", n)
 }
 
 func addAgentEnv(env map[string]string, cfg Config, agent agents.Profile) {
