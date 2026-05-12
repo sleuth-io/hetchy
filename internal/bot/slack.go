@@ -247,14 +247,16 @@ func (m *slackManager) dispatchCallback(ctx context.Context, oc orgcfg.Config, e
 }
 
 // clearInstall wipes the Slack-related fields on an org's config and
-// tears down any Socket Mode connection. Called from the lifecycle
-// event handlers (app_uninstalled, tokens_revoked).
+// schedules any Socket Mode connection for teardown. Called from the
+// lifecycle event handlers (app_uninstalled, tokens_revoked).
 //
-// Runs on a fresh detached context — never the caller's, since the
-// caller's context (in the Socket Mode dispatch path) is the
+// The wipe itself runs on a fresh detached context — never the caller's,
+// since the caller's context (in the Socket Mode dispatch path) is the
 // per-connection context that RestartOrg cancels as part of teardown.
 // Using the caller's context would race the upsert against its own
-// cancellation and silently no-op the reload.
+// cancellation and silently no-op the reload. RestartOrg runs
+// asynchronously after the wipe persists so HTTP disconnects can redirect
+// without waiting for a websocket drain.
 func (m *slackManager) clearInstall(oc orgcfg.Config, reason string) {
 	prevTeamID := oc.SlackTeamID
 	m.log.Info("slack: clearing install",
@@ -273,7 +275,13 @@ func (m *slackManager) clearInstall(oc orgcfg.Config, reason string) {
 	}
 	// Tear down the socket if one is open. RestartOrg reloads the org
 	// config, sees the empty tokens, and stays disconnected.
-	m.RestartOrg(ctx, oc.OrgID)
+	go m.restartOrgDetached(oc.OrgID)
+}
+
+func (m *slackManager) restartOrgDetached(orgID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	m.RestartOrg(ctx, orgID)
 }
 
 // handleSlackEvent is the Bot-side dispatcher passed to slackManager. It

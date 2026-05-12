@@ -312,9 +312,9 @@ func (b *Bot) slackDisconnectHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Wipe local creds via slackManager.clearInstall — same path the
-	// app_uninstalled/tokens_revoked webhooks use, so the side effects
-	// (Socket Mode teardown, audit log line) match the
-	// Slack-initiated disconnect exactly.
+	// app_uninstalled/tokens_revoked webhooks use. The DB wipe persists
+	// before this returns; Socket Mode teardown is queued so the redirect
+	// is not held up by websocket drain.
 	b.slack.clearInstall(current, "user_disconnect")
 
 	b.log.Info("slack disconnect: completed",
