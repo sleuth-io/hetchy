@@ -969,7 +969,15 @@ const validateRow = document.querySelector('.tools-checkbox-row');
 // sidebar filter to "my chats".
 const currentUserID = '{{.UserID}}';
 let agentOptions = [];
-let selectedAgentSlug = '';
+const agentStorageKey = 'hetchy.agent.' + currentUserID;
+let selectedAgentSlug = (function () {
+  try {
+    const saved = localStorage.getItem(agentStorageKey);
+    return saved === null ? '' : saved.trim();
+  } catch (e) {
+    return '';
+  }
+})();
 const modelOptions = [
   { value: 'opus', label: 'Opus', description: 'Most capable' },
   { value: 'sonnet', label: 'Sonnet', description: 'Balanced everyday work' },
@@ -1076,14 +1084,31 @@ function addUserMsg(text) {
 }
 
 async function loadAgents() {
+  let loaded = false;
   try {
     const res = await fetch('/api/agents', { headers: { 'Accept': 'application/json' } });
-    if (!res.ok) return;
+    if (!res.ok) throw new Error('agents fetch failed: ' + res.status);
     agentOptions = await res.json();
+    loaded = true;
   } catch (e) {
     agentOptions = [];
   }
+  if (loaded) reconcileSelectedAgentWithOptions();
   populateAgentPicker();
+}
+
+function persistSelectedAgent() {
+  try { localStorage.setItem(agentStorageKey, selectedAgentSlug); } catch (e) {}
+}
+
+function agentSlugIsKnown(slug) {
+  return !slug || agentOptions.some(agent => agent.slug === slug);
+}
+
+function reconcileSelectedAgentWithOptions() {
+  if (agentSlugIsKnown(selectedAgentSlug)) return;
+  selectedAgentSlug = '';
+  persistSelectedAgent();
 }
 
 function selectedAgentName() {
@@ -1107,6 +1132,7 @@ function updateToolsButton() {
 
 function chooseAgent(slug) {
   selectedAgentSlug = slug || '';
+  persistSelectedAgent();
   populateAgentPicker();
   updateToolsButton();
   updateMutablePendingAgentMetadata();
@@ -1178,6 +1204,13 @@ function applyConversationModel(detail) {
     populateModelPicker();
   }
   setModelPickerLocked(hasTurns);
+}
+
+function applyConversationAgent(detail) {
+  if (!detail) return;
+  selectedAgentSlug = detail.agent_slug || '';
+  populateAgentPicker();
+  updateToolsButton();
 }
 
 function chooseModel(value) {
@@ -2082,6 +2115,7 @@ function renderMetadata(detail) {
     return;
   }
   applyConversationModel(detail);
+  applyConversationAgent(detail);
   setDocTitle(detail.title);
   const owner = detail.github_owner || '';
   const repo = detail.github_repo || '';
