@@ -1220,7 +1220,21 @@ const BLK_ICON = {
 function renderMarkdown(md) {
   if (!md) return '';
   const html = marked.parse(md, { breaks: true, gfm: true });
-  return DOMPurify.sanitize(html);
+  const sanitized = DOMPurify.sanitize(html);
+  // Post-process to add target="_blank" and rel="noopener" to all links
+  const temp = document.createElement('div');
+  temp.innerHTML = sanitized;
+  temp.querySelectorAll('a').forEach(a => {
+    if (!a.hasAttribute('target')) {
+      a.setAttribute('target', '_blank');
+    }
+    if (!a.hasAttribute('rel')) {
+      a.setAttribute('rel', 'noopener');
+    } else if (!a.getAttribute('rel').includes('noopener')) {
+      a.setAttribute('rel', a.getAttribute('rel') + ' noopener');
+    }
+  });
+  return temp.innerHTML;
 }
 
 // startBotTurn ensures there's a container the streaming blocks are
