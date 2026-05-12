@@ -674,7 +674,7 @@
 
 {{define "general"}}
   <h1>General</h1>
-  <p class="desc">Organization-level info. Integrations (GitHub, Slack, Claude, SX) live on the next tab.</p>
+  <p class="desc"></p>
 
   {{if .SavedMessage}}<div class="saved-banner">{{.SavedMessage}}</div>{{end}}
 
@@ -684,7 +684,7 @@
       <legend>Organization</legend>
       <label for="org_name">Name</label>
       <input id="org_name" type="text" name="org_name" value="{{.OrgName}}" required maxlength="120">
-      <p class="hint">Shown to your team in the sidebar and on invites. Pushed straight through to WorkOS on save.</p>
+      <p class="hint">Shown to your team in the sidebar and on invites.</p>
     </fieldset>
     <button class="primary" type="submit">Save</button>
   </form>
@@ -700,6 +700,7 @@
 
 {{define "integrations"}}
   <h1>Integrations</h1>
+  <p/>
   <p class="desc">Connect Hetchy to GitHub for repo access, Slack for chat, Claude for the agent, and SX for skills.</p>
 
   {{if .SavedMessage}}<div class="saved-banner">{{.SavedMessage}}</div>{{end}}
@@ -808,7 +809,7 @@
             {{else}}
               <input type="text" name="default_repo" value="{{.DefaultRepoSlug}}" placeholder="acme/website">
             {{end}}
-            <p class="hint">Used when a chat message (especially in Slack) doesn't say which repo to work in. Leave empty to require an explicit selection every time.</p>
+            <p class="hint">Used when a chat isn't explicit about which repo to work in. Leave empty to require a selection every time.</p>
             <button class="primary" type="submit">Save default</button>
           </form>
           {{else}}
@@ -1049,7 +1050,8 @@
 
 {{define "agents"}}
   <h1>Agents</h1>
-  <p class="desc">Org-scoped agent profiles. Each profile selects an sx bot identity and the skills installed for that identity before Claude runs.</p>
+  <p/>
+  <p class="desc">Each profile selects a bot identity and the skills installed for that identity before Claude runs.</p>
 
   {{if .SavedMessage}}<div class="saved-banner">{{.SavedMessage}}</div>{{end}}
   {{if not .IsAdmin}}<p class="hint">Only administrators can change agents.</p>{{end}}
@@ -1109,7 +1111,8 @@
 
 {{define "members"}}
   <h1>Members</h1>
-  <p class="desc">Manage who can use this organization. WorkOS handles invitation emails and password resets.</p>
+  <p/>
+  <p class="desc">Manage who can use this organization.</p>
 
   {{if .SavedMessage}}<div class="saved-banner">{{.SavedMessage}}</div>{{end}}
 
@@ -1195,7 +1198,8 @@
 
 {{define "repositories"}}
   <h1>Repositories</h1>
-  <p class="desc">Per-repo bootstrap state, deferred capabilities, and admin actions. The first task Hetchy runs on a repo spends a few minutes characterizing it; that work is cached as a "bootstrap spec" and reused on every subsequent task.</p>
+  <p/>
+  <p class="desc">The first task Hetchy runs on a repo spends a few minutes characterizing it; that work is cached as a "bootstrap spec" and reused on every subsequent task.</p>
 
   {{if not .GitHubRepos}}
     <div class="body-section">
