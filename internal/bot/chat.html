@@ -333,6 +333,14 @@
   .meta-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
                font-size: .78rem; }
 
+  #meta-actions { padding: .85rem 1rem; border-top: 1px solid #f0f0f0; }
+  #download-btn { width: 100%; padding: .6rem 1rem; background: #0b93f6;
+                  color: #fff; border: none; border-radius: .35rem;
+                  font-size: .85rem; cursor: pointer; font-family: inherit;
+                  font-weight: 500; }
+  #download-btn:hover { background: #0973cc; }
+  #download-btn:disabled { opacity: .5; cursor: default; }
+
   /* User menu — sidebar footer with click-to-open popup */
   .user-menu { position: relative; border-top: 1px solid #f0f0f0;
                margin-top: auto; padding-bottom: .75rem; }
@@ -622,6 +630,9 @@
   html.is-dark .meta-row .meta-value a { color: #7dc4ff; }
   html.is-dark .meta-row.is-empty .meta-value { color: #555a60; }
   html.is-dark .meta-empty { color: #8a8a90; }
+  html.is-dark #meta-actions { border-top-color: #2a2a2d; }
+  html.is-dark #download-btn { background: #0b93f6; }
+  html.is-dark #download-btn:hover { background: #0973cc; }
   html.is-dark .user-menu { border-top-color: #2a2a2d; }
   html.is-dark .user-menu-trigger { color: #e7e7e9; }
   html.is-dark .user-menu-trigger:hover,
@@ -2196,7 +2207,61 @@ function renderMetadata(detail) {
     '<div class="meta-section">'
     +   '<div class="meta-title">Details</div>'
     +   rowHTML
+    + '</div>'
+    + '<div id="meta-actions">'
+    +   '<button id="download-btn" aria-label="Download conversation">Download</button>'
     + '</div>';
+
+  // Re-attach event listener to the new download button
+  setupDownloadButton();
+}
+
+function setupDownloadButton() {
+  const btn = document.getElementById('download-btn');
+  if (!btn) return;
+  // Remove any existing listeners by cloning the element
+  const newBtn = btn.cloneNode(true);
+  btn.parentNode.replaceChild(newBtn, btn);
+  newBtn.addEventListener('click', downloadConversation);
+}
+
+async function downloadConversation() {
+  try {
+    const btn = document.getElementById('download-btn');
+    if (!btn) return;
+    btn.disabled = true;
+    btn.textContent = 'Downloading...';
+
+    const res = await fetch('/api/conversations/download/' + encodeURIComponent(sessionId));
+    if (!res.ok) {
+      btn.disabled = false;
+      btn.textContent = 'Download';
+      alert('Failed to download conversation');
+      return;
+    }
+
+    const blob = await res.blob();
+    const filename = (lastDetail?.title || 'conversation').replace(/[^a-z0-9_\-. ]/gi, '_') + '.json';
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    btn.disabled = false;
+    btn.textContent = 'Download';
+  } catch (e) {
+    console.error('Download failed:', e);
+    const btn = document.getElementById('download-btn');
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = 'Download';
+    }
+    alert('Failed to download conversation');
+  }
 }
 
 // Most recent conversationDetail we've seen for this session, kept so
