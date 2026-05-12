@@ -272,7 +272,6 @@ func TestLogoutNonBypassMalformedCookieFallsThrough(t *testing.T) {
 	}
 }
 
-
 func TestRedirectPath(t *testing.T) {
 	cases := map[string]string{
 		"https://app.example.com/callback":            "/callback",
