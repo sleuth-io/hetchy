@@ -2,6 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Hetchy</title>
 <!-- Favicon — chunky block "H" echoing the ASCII banner shown in the
      empty state. The data URI comes from web.go's faviconHref helper; JS
@@ -40,9 +41,16 @@
 // it away on reloads where the user previously hid it. Setting the
 // class on <html> before any styles apply paints the right layout
 // on the first frame.
+//
+// On phone-sized viewports the panel becomes a fixed overlay (see the
+// @media block in the stylesheet) — defaulting to hidden there keeps
+// first-time mobile visitors from landing on a screen the slide-in
+// panel has fully covered.
 (function(){
   try {
-    if (localStorage.getItem('hetchy.metaHidden') === '1') {
+    var pref = localStorage.getItem('hetchy.metaHidden');
+    var mobile = window.matchMedia('(max-width: 768px)').matches;
+    if (pref === '1' || (pref === null && mobile)) {
       document.documentElement.classList.add('meta-hidden');
     }
   } catch (e) {}
@@ -629,6 +637,110 @@
   html.is-dark .user-menu-dropdown a.item:hover { background: #2a2a2e; }
   html.is-dark .user-menu-dropdown a.item .ico { color: #9a9aa0; }
   html.is-dark .user-menu-dropdown .divider { border-top-color: #2a2a2d; }
+
+  /* Sidebar toggle — hidden on desktop, visible on mobile to slide
+     #sidebar in. The button styling mirrors #meta-toggle so the two
+     header controls match. */
+  #sidebar-toggle { display: none; align-items: center; justify-content: center;
+                    padding: .35rem; background: none; border: 1px solid transparent;
+                    border-radius: .35rem; color: #555; cursor: pointer;
+                    line-height: 0; }
+  #sidebar-toggle:hover { background: #efefef; border-color: #e0e0e0; }
+  #sidebar-toggle svg { width: 1.1rem; height: 1.1rem; }
+  html.is-dark #sidebar-toggle { color: #c4c4c8; }
+  html.is-dark #sidebar-toggle:hover { background: #2a2a2e; border-color: #3a3a40; }
+
+  /* Scrim behind sidebar/meta overlays on mobile. display:none on
+     desktop and when neither panel is open. */
+  #overlay-scrim { position: fixed; inset: 0; background: rgba(0,0,0,.38);
+                   z-index: 90; display: none; }
+  #overlay-scrim[hidden] { display: none; }
+
+  /* ----- Mobile (<= 768px) ------------------------------------------
+     Three structural changes:
+       1. Sidebar slides in from the left as a fixed overlay, gated by
+          html.sidebar-open. Toggled via #sidebar-toggle in #main-top.
+       2. Meta sidebar slides in from the right as a fixed overlay,
+          gated by html:not(.meta-hidden). The head bootstrap forces
+          meta-hidden on first mobile visit so the panel doesn't take
+          over the screen before the user has interacted.
+       3. Composer + messages widen to use the available column and
+          drop excess padding so input is the priority.
+     The scrim (#overlay-scrim) is shown by JS whenever either panel
+     is open and dismisses both on click.
+  */
+  @media (max-width: 768px) {
+    /* Don't let the body itself scroll; #log and the sidebar lists own
+       their own scrollable regions. Lock height to viewport height so
+       mobile browser chrome doesn't cause the layout to jitter. */
+    body { height: 100vh; height: 100dvh; overflow: hidden; }
+
+    #sidebar-toggle { display: inline-flex; }
+    #main-top { justify-content: space-between; padding: .5rem .65rem; }
+
+    #sidebar { position: fixed; top: 0; left: 0; bottom: 0;
+               width: min(85%, 320px); z-index: 100;
+               box-shadow: 8px 0 24px rgba(0,0,0,.18);
+               transform: translateX(-100%);
+               transition: transform .22s ease; }
+    html.sidebar-open #sidebar { transform: translateX(0); }
+
+    /* Meta sidebar overlays from the right when toggled on. Default is
+       hidden via the html.meta-hidden class (set by the head
+       bootstrap on first mobile visit). */
+    #meta-sidebar { position: fixed; top: 0; right: 0; bottom: 0;
+                    width: min(85%, 320px); z-index: 100;
+                    box-shadow: -8px 0 24px rgba(0,0,0,.18);
+                    transform: translateX(100%);
+                    transition: transform .22s ease;
+                    display: flex; }
+    html:not(.meta-hidden) #meta-sidebar { transform: translateX(0); }
+    /* Override the desktop "display:none" rule for meta-hidden so the
+       slide-out transition still runs. The transform keeps it
+       off-screen visually. */
+    html.meta-hidden #meta-sidebar { display: flex; }
+
+    /* Show the scrim whenever either overlay is open. */
+    html.sidebar-open #overlay-scrim,
+    html:not(.meta-hidden) #overlay-scrim { display: block; }
+
+    /* Roomier message bubbles + bot-turn so chat reads on a narrow
+       column without becoming a stack of skinny boxes. */
+    #log { padding: 1rem .75rem; gap: .65rem; }
+    .msg { max-width: 92%; }
+    .bot-turn { width: 100%; }
+    #bar { padding: .65rem; }
+    #composer { padding: .55rem; border-radius: 1rem; }
+    #composer-controls { gap: .5rem; }
+    #composer-actions { gap: .35rem; }
+    #model-btn { min-width: 4.8rem; padding: 0 .5rem; font-size: .82rem; }
+
+    /* Empty-state ASCII art is wider than a phone — scale it down so
+       it still fits in the centered card without horizontal scroll. */
+    .empty-ascii { font-size: .45rem; }
+
+    /* Composer popovers — pin to the viewport so they don't overflow
+       a 360px screen. */
+    #tools-popover, #model-popover { width: min(18rem, calc(100vw - 1.5rem)); }
+    #tools-popover { left: 0; }
+    #model-popover { right: 0; }
+    /* The agent flyout normally pops to the right of the tools
+       menu; on a phone it would shoot off-screen, so anchor it back
+       under the tools menu instead. */
+    #agent-popover { left: 0; right: auto; top: 100%; bottom: auto;
+                     width: min(18rem, calc(100vw - 1.5rem));
+                     max-height: min(20rem, 60vh); }
+  }
+
+  /* Phone-portrait niceties — shave a bit more padding so the
+     composer + first user bubble both fit above the keyboard. */
+  @media (max-width: 480px) {
+    #log { padding: .75rem .5rem; }
+    .msg { max-width: 95%; padding: .5rem .8rem; border-radius: .9rem; }
+    #bar { padding: .5rem .5rem .65rem; }
+    #composer { padding: .45rem .55rem; }
+    #empty-state { font-size: .85rem; }
+  }
 </style>
 </head>
 <body>
@@ -727,6 +839,20 @@
 
 <div id="main">
 <div id="main-top">
+  <!-- Sidebar toggle — only visible on mobile via CSS. Toggles the
+       `sidebar-open` class on <html> which slides the chat-list aside
+       in from the left as a fixed overlay. On desktop the sidebar is
+       always visible and this button is hidden. -->
+  <button id="sidebar-toggle" type="button"
+          aria-label="Toggle chat list" title="Toggle chat list"
+          aria-expanded="false" aria-controls="sidebar">
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor"
+         stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <line x1="2.5" y1="4" x2="13.5" y2="4"/>
+      <line x1="2.5" y1="8" x2="13.5" y2="8"/>
+      <line x1="2.5" y1="12" x2="13.5" y2="12"/>
+    </svg>
+  </button>
   <!-- aria-pressed is intentionally omitted here — the head-bootstrap
        toggles `html.meta-hidden` before paint, then applyMetaHidden()
        on init sets the right aria-pressed value to match. Hard-coding
@@ -741,6 +867,9 @@
     </svg>
   </button>
 </div>
+<!-- Backdrop behind the sidebar/meta overlays on mobile. Clicking it
+     closes whichever panel is open. The CSS hides this on desktop. -->
+<div id="overlay-scrim" hidden></div>
 <div id="log"></div>
 <div id="bar">
   <div id="composer">
@@ -840,7 +969,19 @@ const validateRow = document.querySelector('.tools-checkbox-row');
 // sidebar filter to "my chats".
 const currentUserID = '{{.UserID}}';
 let agentOptions = [];
-let selectedAgentSlug = '';
+let agentOptionsLoaded = false;
+const agentStorageKey = 'hetchy.agent.' + currentUserID;
+
+function readStoredAgentSlug() {
+  try {
+    const saved = localStorage.getItem(agentStorageKey);
+    return saved === null ? '' : saved.trim();
+  } catch (e) {
+    return '';
+  }
+}
+
+let selectedAgentSlug = readStoredAgentSlug();
 const modelOptions = [
   { value: 'opus', label: 'Opus', description: 'Most capable' },
   { value: 'sonnet', label: 'Sonnet', description: 'Balanced everyday work' },
@@ -947,14 +1088,32 @@ function addUserMsg(text) {
 }
 
 async function loadAgents() {
+  agentOptionsLoaded = false;
   try {
     const res = await fetch('/api/agents', { headers: { 'Accept': 'application/json' } });
-    if (!res.ok) return;
+    if (!res.ok) throw new Error('agents fetch failed: ' + res.status);
     agentOptions = await res.json();
+    agentOptionsLoaded = true;
   } catch (e) {
     agentOptions = [];
   }
+  if (agentOptionsLoaded) reconcileSelectedAgentWithOptions();
   populateAgentPicker();
+}
+
+function persistSelectedAgent() {
+  try { localStorage.setItem(agentStorageKey, selectedAgentSlug); } catch (e) {}
+}
+
+function agentSlugIsKnown(slug) {
+  return !slug || agentOptions.some(agent => agent.slug === slug);
+}
+
+function reconcileSelectedAgentWithOptions() {
+  if (!agentOptionsLoaded) return;
+  if (agentSlugIsKnown(selectedAgentSlug)) return;
+  selectedAgentSlug = '';
+  persistSelectedAgent();
 }
 
 function selectedAgentName() {
@@ -978,6 +1137,7 @@ function updateToolsButton() {
 
 function chooseAgent(slug) {
   selectedAgentSlug = slug || '';
+  persistSelectedAgent();
   populateAgentPicker();
   updateToolsButton();
   updateMutablePendingAgentMetadata();
@@ -1049,6 +1209,13 @@ function applyConversationModel(detail) {
     populateModelPicker();
   }
   setModelPickerLocked(hasTurns);
+}
+
+function applyConversationAgent(detail) {
+  selectedAgentSlug = detail ? (detail.agent_slug || '') : readStoredAgentSlug();
+  if (!detail) reconcileSelectedAgentWithOptions();
+  populateAgentPicker();
+  updateToolsButton();
 }
 
 function chooseModel(value) {
@@ -1948,11 +2115,13 @@ function renderMetadata(detail) {
   const host = document.getElementById('meta-content');
   if (!detail) {
     applyConversationModel(null);
+    applyConversationAgent(null);
     host.innerHTML = '<div class="meta-empty">No chat details yet.</div>';
     setDocTitle('');
     return;
   }
   applyConversationModel(detail);
+  applyConversationAgent(detail);
   setDocTitle(detail.title);
   const owner = detail.github_owner || '';
   const repo = detail.github_repo || '';
@@ -2597,12 +2766,22 @@ document.getElementById('chat-list-more-btn').addEventListener('click', loadMore
 // Metadata sidebar visibility — persisted across reloads so the user's
 // preference sticks. The class is set on <html> by the head-bootstrap
 // (no FOUC); this block keeps the button's aria-pressed in sync and
-// wires the click handler. Default = visible.
+// wires the click handler. Default = visible on desktop; hidden on
+// mobile-first-visit (the head bootstrap defaults the class on for
+// small viewports so the slide-in panel doesn't cover the chat).
 const metaHiddenStorageKey = 'hetchy.metaHidden';
+// Forward references for the mobile sidebar overlay — the metaHidden
+// path below calls syncOverlayScrim() which reads overlayScrim, and
+// the meta-toggle click handler calls setSidebarOpen(). Both are
+// defined further down; declaring them up here keeps the TDZ happy.
+const sidebarToggleBtn = document.getElementById('sidebar-toggle');
+const overlayScrim = document.getElementById('overlay-scrim');
+const mobileSidebarQuery = window.matchMedia('(max-width: 768px)');
 function applyMetaHidden(hidden) {
   document.documentElement.classList.toggle('meta-hidden', hidden);
   const btn = document.getElementById('meta-toggle');
   btn.setAttribute('aria-pressed', String(!hidden));
+  syncOverlayScrim();
 }
 // The bootstrap script in <head> already added the class if needed —
 // re-read the same source here so aria-pressed matches.
@@ -2611,7 +2790,74 @@ document.getElementById('meta-toggle').addEventListener('click', () => {
   const nowHidden = !document.documentElement.classList.contains('meta-hidden');
   applyMetaHidden(nowHidden);
   try { localStorage.setItem(metaHiddenStorageKey, nowHidden ? '1' : '0'); } catch (e) {}
+  // Opening the meta panel on mobile should close the chat-list panel
+  // (and vice versa) so only one overlay covers the screen at a time.
+  if (!nowHidden) setSidebarOpen(false);
 });
+
+// Mobile sidebar overlay — toggled by #sidebar-toggle in #main-top.
+// Adds `html.sidebar-open` to slide the existing chat-list sidebar in
+// from the left. The class is meaningless on desktop (CSS only acts
+// on it inside the mobile @media block) but we still clear it on
+// resize so a stale state doesn't leak across breakpoints.
+function setSidebarOpen(open) {
+  document.documentElement.classList.toggle('sidebar-open', !!open);
+  sidebarToggleBtn.setAttribute('aria-expanded', String(!!open));
+  syncOverlayScrim();
+}
+function syncOverlayScrim() {
+  // The scrim is visible whenever a phone-width overlay is open.
+  // On desktop the @media display:none rule keeps it hidden regardless
+  // of the [hidden] attribute. Keeping the attribute in sync avoids
+  // catching pointer events when neither overlay is active.
+  const anyOpen =
+    document.documentElement.classList.contains('sidebar-open') ||
+    !document.documentElement.classList.contains('meta-hidden');
+  overlayScrim.hidden = !anyOpen;
+}
+sidebarToggleBtn.addEventListener('click', e => {
+  e.stopPropagation();
+  closeToolsPopover();
+  closeModelPopover();
+  closeAgentPopover();
+  setUserMenuOpen(false);
+  const open = !document.documentElement.classList.contains('sidebar-open');
+  setSidebarOpen(open);
+  // Same one-overlay-at-a-time rule as the meta toggle above.
+  if (open && !document.documentElement.classList.contains('meta-hidden')) {
+    applyMetaHidden(true);
+    try { localStorage.setItem(metaHiddenStorageKey, '1'); } catch (e) {}
+  }
+});
+overlayScrim.addEventListener('click', () => {
+  setSidebarOpen(false);
+  if (!document.documentElement.classList.contains('meta-hidden')) {
+    applyMetaHidden(true);
+    try { localStorage.setItem(metaHiddenStorageKey, '1'); } catch (e) {}
+  }
+});
+// Tapping a chat in the sidebar navigates — close the overlay so the
+// user lands on the chat instead of staring at the same list.
+document.getElementById('chat-list').addEventListener('click', e => {
+  if (e.target.closest('a.chat-item') && mobileSidebarQuery.matches) {
+    setSidebarOpen(false);
+  }
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' &&
+      document.documentElement.classList.contains('sidebar-open')) {
+    setSidebarOpen(false);
+  }
+});
+// Clear the overlay state when crossing past the mobile breakpoint so
+// rotating a tablet doesn't leave the desktop layout with a stuck
+// "open" class.
+mobileSidebarQuery.addEventListener('change', e => {
+  if (!e.matches && document.documentElement.classList.contains('sidebar-open')) {
+    setSidebarOpen(false);
+  }
+});
+syncOverlayScrim();
 // Avatar dropdown — toggle on click, close on outside-click or Escape.
 const userMenuBtn = document.getElementById('user-menu-btn');
 const userMenuDrop = document.getElementById('user-menu-dropdown');
