@@ -198,6 +198,7 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, o
 		}
 	}
 	authKey, authVal := claudeAuthEnv(oc)
+	b.log.Info("claude auth", "method", authKey, "token", maskToken(authVal), "request_id", requestID)
 	env[authKey] = authVal
 	if oc.SXKey != "" {
 		env["SX_KEY"] = oc.SXKey
@@ -294,6 +295,7 @@ func (b *Bot) ensureBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo
 	}
 
 	authKey, authVal := claudeAuthEnv(oc)
+	b.log.Info("claude auth", "method", authKey, "token", maskToken(authVal), "request_id", sessionID)
 	runner := &botRunner{
 		b:         b,
 		sb:        sb,
@@ -456,6 +458,16 @@ func claudeAuthEnv(oc orgcfg.Config) (name, value string) {
 	return "ANTHROPIC_API_KEY", oc.AnthropicAPIKey
 }
 
+// maskToken returns exactly 8 asterisks so logs confirm a token is set without
+// revealing any characters or length information. Returns "(empty)" when s is
+// empty so callers can distinguish a missing token from a present one.
+func maskToken(s string) string {
+	if len(s) == 0 {
+		return "(empty)"
+	}
+	return "********"
+}
+
 func addAgentEnv(env map[string]string, cfg Config, agent agents.Profile) {
 	env["HETCHY_AGENT_SLUG"] = agent.Slug
 	env["HETCHY_AGENT_NAME"] = agent.DisplayName
@@ -517,6 +529,7 @@ func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx
 		}
 	}
 	authKey, authVal := claudeAuthEnv(oc)
+	b.log.Info("claude auth", "method", authKey, "token", maskToken(authVal), "request_id", requestID)
 	env[authKey] = authVal
 	if oc.SXKey != "" {
 		env["SX_KEY"] = oc.SXKey

@@ -90,9 +90,6 @@ type Config struct {
 	ClientID       string
 	CookiePassword string
 	RedirectURI    string
-	// LogoutReturnTo is where WorkOS will send the browser after a logout
-	// completes. Usually the public-facing app root.
-	LogoutReturnTo string
 	// CookieSecure controls the Secure attribute on the session cookie.
 	// MUST be true in any production deployment served over HTTPS — the
 	// cookie holds a sealed refresh token. Leave false only when running
@@ -119,6 +116,11 @@ type Service struct {
 	// stateKey is the HKDF-derived HMAC key used to sign OAuth state. Cached
 	// at construction time to avoid re-deriving on every request.
 	stateKey []byte
+	// publicHost is host[:port] parsed from cfg.RedirectURI at construction
+	// time. LogoutHandler uses it for the post-logout redirect instead of
+	// r.Host, which is controlled by the client and could be forged via Host
+	// header injection on a misconfigured reverse proxy.
+	publicHost string
 }
 
 // New constructs a Service. The returned value is safe for concurrent use.
@@ -126,19 +128,20 @@ func New(cfg Config) (*Service, error) {
 	if cfg.Bypass {
 		return &Service{cfg: cfg, statePath: "/"}, nil
 	}
-	if cfg.APIKey == "" || cfg.ClientID == "" || cfg.CookiePassword == "" || cfg.RedirectURI == "" || cfg.LogoutReturnTo == "" {
-		return nil, errors.New("auth: APIKey, ClientID, CookiePassword, RedirectURI, LogoutReturnTo are required (set AUTH_BYPASS=1 for tests)")
+	if cfg.APIKey == "" || cfg.ClientID == "" || cfg.CookiePassword == "" || cfg.RedirectURI == "" {
+		return nil, errors.New("auth: APIKey, ClientID, CookiePassword, RedirectURI are required (set AUTH_BYPASS=1 for tests)")
 	}
 	statePath, err := redirectPath(cfg.RedirectURI)
 	if err != nil {
 		return nil, err
 	}
+	ru, _ := url.Parse(cfg.RedirectURI) // already validated by redirectPath
 	stateKey, err := hkdf.Key(sha256.New, []byte(cfg.CookiePassword), nil, oauthStateHKDFInfo, 32)
 	if err != nil {
 		return nil, err
 	}
 	c := workos.NewClient(cfg.APIKey, workos.WithClientID(cfg.ClientID))
-	return &Service{cfg: cfg, client: c, statePath: statePath, stateKey: stateKey}, nil
+	return &Service{cfg: cfg, client: c, statePath: statePath, stateKey: stateKey, publicHost: ru.Host}, nil
 }
 
 // redirectPath extracts the path component of the configured redirect URI so
@@ -156,7 +159,32 @@ func redirectPath(redirectURI string) (string, error) {
 }
 
 // LoginHandler redirects the browser to AuthKit's hosted sign-in screen.
+// If the callback sent ?error=callback_failed (because the state cookie was
+// missing or mismatched — most often caused by cookies being blocked), we
+// show an error page instead of redirecting again, which would loop.
 func (s *Service) LoginHandler(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("error") == "callback_failed" {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>Login failed</title>
+<style>body{font-family:sans-serif;max-width:480px;margin:80px auto;padding:0 16px;color:#1a1a1a}
+h1{font-size:1.2rem;margin-bottom:8px}p,ul{margin:12px 0;line-height:1.5}
+a.btn{display:inline-block;margin-top:20px;padding:10px 22px;background:#0d6efd;color:#fff;border-radius:6px;text-decoration:none;font-weight:600}
+a.btn:hover{background:#0b5ed7}</style></head>
+<body><h1>Login failed</h1>
+<p>The login session could not be verified — it may have expired or been interrupted. Common causes:</p>
+<ul>
+<li>The browser back button was used after a login attempt</li>
+<li>Cookies are blocked or cleared between <code>/login</code> and <code>/callback</code></li>
+<li>A browser extension or privacy setting is stripping cookies</li>
+<li>The login was opened inside an iframe or embedded browser</li>
+</ul>
+<p>If this keeps happening, try a private&nbsp;/&nbsp;incognito window.</p>
+<a class="btn" href="/login">Try again</a>
+</body></html>`))
+		return
+	}
 	s.redirectToAuthKit(w, r, workos.UserManagementAuthenticationScreenHintSignIn)
 }
 
@@ -176,7 +204,14 @@ func (s *Service) redirectToAuthKit(w http.ResponseWriter, r *http.Request, hint
 		http.Error(w, "generate oauth state: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.setOAuthStateCookie(w, s.signOAuthState(state))
+	signed := s.signOAuthState(state)
+	s.setOAuthStateCookie(w, signed)
+	slog.Info("oauth state cookie set",
+		"cookie_name", oauthStateCookieName,
+		"cookie_path", s.statePath,
+		"cookie_secure", s.cfg.CookieSecure,
+		"redirect_uri", s.cfg.RedirectURI,
+	)
 	provider := workos.UserManagementAuthenticationProviderAuthkit
 	hintCopy := hint
 	url := s.client.UserManagement().GetAuthorizationURL(&workos.UserManagementGetAuthorizationURLParams{
@@ -213,13 +248,13 @@ func (s *Service) CallbackHandler(w http.ResponseWriter, r *http.Request) {
 	s.clearOAuthStateCookie(w)
 	if cookieErr != nil || stateCookie.Value == "" {
 		s.logStateRejection(r, "missing cookie")
-		http.Redirect(w, r, "/login", http.StatusFound)
+		http.Redirect(w, r, "/login?error=callback_failed", http.StatusFound)
 		return
 	}
 	queryState := r.URL.Query().Get("state")
 	if queryState == "" || !s.verifyOAuthState(stateCookie.Value, queryState) {
 		s.logStateRejection(r, "state mismatch or invalid hmac")
-		http.Redirect(w, r, "/login", http.StatusFound)
+		http.Redirect(w, r, "/login?error=callback_failed", http.StatusFound)
 		return
 	}
 	code := r.URL.Query().Get("code")
@@ -250,8 +285,8 @@ func (s *Service) CallbackHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // LogoutHandler clears the session cookie, revokes the session at WorkOS
-// via a server-to-server API call, and redirects the browser to
-// LogoutReturnTo.
+// via a server-to-server API call, and redirects the browser to the
+// canonical app root (scheme://publicHost).
 //
 // We deliberately do NOT route the browser through WorkOS' hosted
 // /user_management/sessions/logout URL. That hop relies on the AuthKit
@@ -274,7 +309,7 @@ func (s *Service) LogoutHandler(w http.ResponseWriter, r *http.Request) {
 	// use it here without adding latency to logout. It returns
 	// Authenticated == false only when the cookie is missing, fails to
 	// unseal, or contains no parseable access-token JWT — in those cases we
-	// have no SessionID to revoke and fall through to the LogoutReturnTo
+	// have no SessionID to revoke and fall through to the publicHost
 	// redirect. The SDK does not check JWT expiration here, so a long-lived
 	// tab whose access token has expired still gets its session revoked
 	// server-side. We cannot bypass the JWT parse by using
@@ -290,7 +325,21 @@ func (s *Service) LogoutHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	http.Redirect(w, r, s.cfg.LogoutReturnTo, http.StatusFound)
+	// Redirect to the canonical root of the app. Prefer the host parsed from
+	// cfg.RedirectURI (set at construction time from the WORKOS_REDIRECT_URI
+	// env var) over r.Host: the latter is controlled by the client and can be
+	// forged via Host-header injection on a misconfigured reverse proxy. Fall
+	// back to r.Host only when publicHost is empty (unusual, e.g. unit tests
+	// that construct Service directly without going through New).
+	scheme := "http"
+	if s.cfg.CookieSecure {
+		scheme = "https"
+	}
+	host := s.publicHost
+	if host == "" {
+		host = r.Host
+	}
+	http.Redirect(w, r, scheme+"://"+host, http.StatusFound)
 }
 
 // Middleware validates the session cookie and attaches a Principal to the
@@ -534,6 +583,18 @@ func (s *Service) logStateRejection(r *http.Request, reason string) {
 	}
 	if state := r.URL.Query().Get("state"); len(state) >= 8 {
 		attrs = append(attrs, "flow_id", state[:8])
+	}
+	// Log cookie names present in the request (never values) so we can tell
+	// whether the browser is sending no cookies at all, the session cookie
+	// only, or something else — useful for diagnosing SameSite/path issues.
+	cookieNames := make([]string, 0, len(r.Cookies()))
+	for _, c := range r.Cookies() {
+		cookieNames = append(cookieNames, c.Name)
+	}
+	if len(cookieNames) == 0 {
+		attrs = append(attrs, "present_cookies", "(none)")
+	} else {
+		attrs = append(attrs, "present_cookies", strings.Join(cookieNames, ","))
 	}
 	slog.Warn("oauth callback rejected", attrs...)
 }

@@ -2,6 +2,7 @@ package bot
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -121,7 +122,19 @@ func LoadConfig() (Config, error) {
 
 	port := getenvDefault("WEB_PORT", "8080")
 	logout := getenvDefault("LOGOUT_RETURN_TO", "http://localhost:"+port+"/")
+	// CookieSecure defaults to true (required for production HTTPS). It is
+	// forced to false when COOKIE_INSECURE=1 is set OR when WORKOS_REDIRECT_URI
+	// starts with http:// — that scheme indicates the server is running over
+	// plain HTTP (local dev), where browsers refuse Secure cookies. Relying
+	// solely on COOKIE_INSECURE=1 breaks when Doppler (or any secret manager)
+	// overwrites the Makefile-exported value with an empty string from its own
+	// config; deriving from the URI removes that dependency.
 	cookieSecure := os.Getenv("COOKIE_INSECURE") == ""
+	if cookieSecure {
+		if u, err := url.Parse(strings.TrimSpace(os.Getenv("WORKOS_REDIRECT_URI"))); err == nil && u.Scheme == "http" {
+			cookieSecure = false
+		}
+	}
 
 	var ghAppID int64
 	if v := os.Getenv("GITHUB_APP_ID"); v != "" {
@@ -188,12 +201,11 @@ func getenvDefaultTrimAllowDisabled(key, def string) string {
 }
 
 // PublicBaseURL returns the externally-reachable base URL for the web
-// app (no trailing slash). Doppler sets LOGOUT_RETURN_TO per-env (it's
-// the canonical "public app root" — required by WorkOS for the logout
-// redirect), so we reuse it here for any link that needs to point back
-// into our running instance from elsewhere (e.g. Slack deep links).
-// Falls back to the local bind URL when LOGOUT_RETURN_TO is unset, so
-// dev without Doppler still works.
+// app (no trailing slash). LOGOUT_RETURN_TO is the canonical "public app
+// root" used for external link generation (e.g. Slack deep links) — it no
+// longer controls the post-logout redirect, which is derived from
+// WORKOS_REDIRECT_URI in auth.New(). Falls back to the local bind URL when
+// LOGOUT_RETURN_TO is unset.
 func (c Config) PublicBaseURL() string {
 	if base := strings.TrimSuffix(c.LogoutReturnTo, "/"); base != "" {
 		return base

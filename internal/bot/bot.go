@@ -145,7 +145,6 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 		ClientID:       cfg.WorkOSClientID,
 		CookiePassword: cfg.WorkOSCookiePassword,
 		RedirectURI:    cfg.WorkOSRedirectURI,
-		LogoutReturnTo: cfg.LogoutReturnTo,
 		CookieSecure:   cfg.CookieSecure,
 		Bypass:         cfg.AuthBypass,
 		BypassUser:     cfg.AuthBypassUser,
