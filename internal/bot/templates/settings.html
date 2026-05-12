@@ -207,6 +207,24 @@
   .agent-meta { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: .75rem; }
   .agent-meta span { color: #777; background: #fafafa; border: 1px solid #eee;
                      border-radius: .35rem; padding: .2rem .45rem; font-size: .75rem; }
+  .agent-create { background: #fff; border: 1px dashed #d6d6d6;
+                  border-radius: .5rem; padding: .35rem 1rem; margin-bottom: 1rem; }
+  .agent-create[open] { padding-bottom: 1rem; }
+  .agent-create > summary { cursor: pointer; padding: .55rem 0;
+                            font-size: .9rem; color: #0b93f6;
+                            list-style: none; user-select: none; }
+  .agent-create > summary::-webkit-details-marker { display: none; }
+  .agent-create > summary:hover { color: #0a83d8; }
+  .agent-create[open] > summary { color: #555; }
+  .agent-create-form fieldset { margin: 0 0 1rem; }
+  .agent-create-form textarea {
+    width: 100%; padding: .55rem .75rem; border: 1px solid #ccc;
+    border-radius: .4rem; font-size: .9rem; box-sizing: border-box;
+    font-family: ui-monospace, monospace; background: #fff;
+    resize: vertical; min-height: 5rem;
+  }
+  .agent-create-form textarea:focus { outline: none; border-color: #0b93f6; }
+  .agent-create-form .primary { margin-top: 0; }
 
   /* Status tags shared across all bootstrap UI */
   .tag { display: inline-block; font-size: .72rem; padding: .15rem .55rem;
@@ -479,6 +497,12 @@
   html.is-dark .agent-card p { color: #9a9aa0; }
   html.is-dark .agent-skills-label { color: #8a8a90; }
   html.is-dark .agent-meta span { background: #1c1c1f; border-color: #2e2e33; color: #9a9aa0; }
+  html.is-dark .agent-create { background: #232327; border-color: #3a3a40; }
+  html.is-dark .agent-create > summary { color: #6cb6ff; }
+  html.is-dark .agent-create > summary:hover { color: #8ec6ff; }
+  html.is-dark .agent-create[open] > summary { color: #aaa; }
+  html.is-dark .agent-create-form textarea { background: #1a1a1d; color: #f5f5f7;
+                                              border-color: #3a3a40; }
 
   html.is-dark .tag-validated { background: #1a3a26; color: #6cd084; }
   html.is-dark .tag-partial   { background: #3a2e0c; color: #f0b674; }
@@ -1055,6 +1079,65 @@
 
   {{if .SavedMessage}}<div class="saved-banner">{{.SavedMessage}}</div>{{end}}
   {{if not .IsAdmin}}<p class="hint">Only administrators can change agents.</p>{{end}}
+
+  {{if .IsAdmin}}
+  <details class="agent-create">
+    <summary>+ Create a custom agent</summary>
+    <form method="POST" action="/settings/org/agents/new" class="agent-create-form">
+      <fieldset>
+        <legend>Identity</legend>
+        <label for="agent-create-slug">Slug</label>
+        <input id="agent-create-slug" type="text" name="slug" required maxlength="60"
+               pattern="[A-Za-z0-9][A-Za-z0-9 _\-]*"
+               placeholder="e.g. sally-backend"
+               autocomplete="off">
+        <p class="hint">Lowercase letters, digits, and dashes. Used in <code>@mentions</code> and URLs; can't be changed later.</p>
+
+        <label for="agent-create-name">Display name</label>
+        <input id="agent-create-name" type="text" name="display_name" maxlength="80"
+               placeholder="e.g. Sally" autocomplete="off">
+        <p class="hint">Shown in the agent picker. Defaults to the slug if left blank.</p>
+
+        <label for="agent-create-description">Description</label>
+        <input id="agent-create-description" type="text" name="description" maxlength="240"
+               placeholder="One-line summary shown in the agent picker." autocomplete="off">
+      </fieldset>
+
+      <fieldset>
+        <legend>Persona</legend>
+        <label for="agent-create-persona-prompt">Persona prompt</label>
+        <textarea id="agent-create-persona-prompt" name="persona_prompt" rows="6"
+                  placeholder="You are Sally, …"></textarea>
+        <p class="hint">Prepended to Claude's system prompt for every turn that uses this agent.</p>
+
+        <label for="agent-create-skills">Skills</label>
+        <input id="agent-create-skills" type="text" name="skills"
+               placeholder="golang-pro, database-migrations" autocomplete="off">
+        <p class="hint">Comma-separated list of sx skill names. Installed into the sandbox before the agent runs.</p>
+      </fieldset>
+
+      <fieldset>
+        <legend>Aliases (optional)</legend>
+        <label for="agent-create-sx-bot">sx bot</label>
+        <input id="agent-create-sx-bot" type="text" name="sx_bot" maxlength="60"
+               placeholder="bob" autocomplete="off">
+        <p class="hint">If set, the sx bot identity to assume when running this agent. Leave blank to reuse the slug.</p>
+
+        <label for="agent-create-persona-asset">Persona asset</label>
+        <input id="agent-create-persona-asset" type="text" name="persona_asset" maxlength="60"
+               placeholder="bob" autocomplete="off">
+        <p class="hint">Optional asset name (avatar / persona pack). Leave blank if unsure.</p>
+
+        <label for="agent-create-aliases">Slack aliases</label>
+        <input id="agent-create-aliases" type="text" name="slack_aliases"
+               placeholder="backend, api, server" autocomplete="off">
+        <p class="hint">Comma-separated extra @mentions that should route to this agent in Slack.</p>
+      </fieldset>
+
+      <button class="primary" type="submit">Create agent</button>
+    </form>
+  </details>
+  {{end}}
 
   {{if .Agents}}
     <div class="agent-list">

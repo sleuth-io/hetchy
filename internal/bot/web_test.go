@@ -626,6 +626,12 @@ func TestSettingsTemplate_RendersAgentsTab(t *testing.T) {
 		`database-migrations`,
 		`sx bot: <code>bob</code>`,
 		`aliases: @backend, @api`,
+		// Admin sees the "create custom agent" form on this tab.
+		`action="/settings/org/agents/new"`,
+		`id="agent-create-slug"`,
+		`name="persona_prompt"`,
+		`name="skills"`,
+		`name="slack_aliases"`,
 	} {
 		if !strings.Contains(body, w) {
 			t.Errorf("agents tab missing %q", w)
@@ -741,6 +747,8 @@ func TestSettingsTemplate_NonAdminReadOnly(t *testing.T) {
 			`action="/settings/org/agents/backend"`,
 			`action="/settings/org/agents/backend/delete"`,
 			`name="display_name"`,
+			`action="/settings/org/agents/new"`,
+			`id="agent-create-slug"`,
 		} {
 			if strings.Contains(body, n) {
 				t.Errorf("non-admin agents tab: must not render mutating control %q", n)
@@ -1030,18 +1038,118 @@ func TestValidRoleSlug(t *testing.T) {
 
 func TestSavedMessage(t *testing.T) {
 	cases := map[string]string{
-		"":        "",
-		"unknown": "",
-		"1":       "Settings saved.",
-		"invited": "Invitation sent.",
-		"revoked": "Invitation revoked.",
-		"removed": "Member removed.",
-		"role":    "Role updated.",
+		"":              "",
+		"unknown":       "",
+		"1":             "Settings saved.",
+		"invited":       "Invitation sent.",
+		"revoked":       "Invitation revoked.",
+		"removed":       "Member removed.",
+		"role":          "Role updated.",
+		"agent_created": "Agent created.",
+		"agent_saved":   "Agent saved.",
+		"agent_deleted": "Agent deleted.",
 	}
 	for in, want := range cases {
 		if got := savedMessage(in); got != want {
 			t.Errorf("savedMessage(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestSplitCSVList(t *testing.T) {
+	cases := []struct {
+		in   string
+		want []string
+	}{
+		{"", nil},
+		{"  ", nil},
+		{"alpha", []string{"alpha"}},
+		{"alpha, beta", []string{"alpha", "beta"}},
+		{" a , , b ,c", []string{"a", "b", "c"}},
+		{",,,", nil},
+	}
+	for _, tc := range cases {
+		got := splitCSVList(tc.in)
+		if len(got) != len(tc.want) {
+			t.Fatalf("splitCSVList(%q) = %v, want %v", tc.in, got, tc.want)
+		}
+		for i := range got {
+			if got[i] != tc.want[i] {
+				t.Errorf("splitCSVList(%q)[%d] = %q, want %q", tc.in, i, got[i], tc.want[i])
+			}
+		}
+	}
+}
+
+// TestAgentCreateHandler_NonAdminReturns403 verifies the role gate fires
+// before any DB work, matching the rest of the admin-only settings POSTs.
+func TestAgentCreateHandler_NonAdminReturns403(t *testing.T) {
+	a, err := auth.New(auth.Config{
+		Bypass: true, BypassUser: "user_member", BypassEmail: "m@hetchy.local",
+		BypassOrg: "org_test", BypassRole: "member",
+	})
+	if err != nil {
+		t.Fatalf("auth: %v", err)
+	}
+	b := &Bot{log: discardLogger(), cfg: Config{WebPort: "0"}, auth: a}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/settings/org/agents/new",
+		strings.NewReader("slug=sally"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	a.Middleware(a.RequireOrg(http.HandlerFunc(b.agentCreateHandler))).ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want 403; body=%q", rec.Code, rec.Body.String())
+	}
+}
+
+// TestAgentCreateHandler_RejectsBlankSlug guards against empty / whitespace
+// slug input — admins can still post the form without typing a slug, and
+// we want a 400 with a meaningful message rather than silently creating
+// a malformed row.
+func TestAgentCreateHandler_RejectsBlankSlug(t *testing.T) {
+	a, err := auth.New(auth.Config{
+		Bypass: true, BypassUser: "user_admin", BypassEmail: "a@hetchy.local",
+		BypassOrg: "org_test", BypassRole: "admin",
+	})
+	if err != nil {
+		t.Fatalf("auth: %v", err)
+	}
+	b := &Bot{log: discardLogger(), cfg: Config{WebPort: "0"}, auth: a}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/settings/org/agents/new",
+		strings.NewReader("slug=%20%20"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", "http://"+req.Host)
+	a.Middleware(a.RequireOrg(http.HandlerFunc(b.agentCreateHandler))).ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400; body=%q", rec.Code, rec.Body.String())
+	}
+}
+
+// TestAgentCreateHandler_ReservesNewSlug ensures a user can't post a slug
+// that collides with the create-handler's own URL path. Without the
+// reservation, later POSTs to /settings/org/agents/new (intended to rename
+// that agent) would land back in the create handler and create a duplicate.
+func TestAgentCreateHandler_ReservesNewSlug(t *testing.T) {
+	a, err := auth.New(auth.Config{
+		Bypass: true, BypassUser: "user_admin", BypassEmail: "a@hetchy.local",
+		BypassOrg: "org_test", BypassRole: "admin",
+	})
+	if err != nil {
+		t.Fatalf("auth: %v", err)
+	}
+	b := &Bot{log: discardLogger(), cfg: Config{WebPort: "0"}, auth: a}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/settings/org/agents/new",
+		strings.NewReader("slug=new"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", "http://"+req.Host)
+	a.Middleware(a.RequireOrg(http.HandlerFunc(b.agentCreateHandler))).ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400; body=%q", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "reserved") {
+		t.Errorf("body = %q, want a 'reserved' explanation", rec.Body.String())
 	}
 }
 

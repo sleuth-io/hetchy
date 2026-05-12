@@ -86,6 +86,7 @@ func (b *Bot) runWeb(ctx context.Context) error {
 	mux.Handle("/", b.auth.Middleware(http.HandlerFunc(b.indexHandler)))
 	mux.Handle("/onboarding", b.auth.Middleware(b.auth.RequireAuth(http.HandlerFunc(b.onboardingHandler))))
 	mux.Handle("/settings/org", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.settingsHandler))))
+	mux.Handle("/settings/org/agents/new", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.agentCreateHandler))))
 	mux.Handle("/settings/org/agents/", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.agentSettingsActionHandler))))
 	mux.Handle("/settings/org/invite", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.inviteHandler))))
 	mux.Handle("/settings/org/invitations/", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.invitationActionHandler))))
@@ -641,6 +642,8 @@ func savedMessage(s string) string {
 		return "Slack was already disconnected."
 	case "agent_saved":
 		return "Agent saved."
+	case "agent_created":
+		return "Agent created."
 	case "agent_deleted":
 		return "Agent deleted."
 	default:
@@ -706,6 +709,93 @@ func (b *Bot) agentSettingsActionHandler(w http.ResponseWriter, r *http.Request)
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// agentCreateHandler accepts a POST to /settings/org/agents/new and
+// adds a new custom agent profile for the caller's org. The exact-path
+// route registration wins over the trailing-slash agentSettingsAction
+// subtree, so this handler always owns the "new" path even when the
+// org has an agent whose slug normalizes to it (we reject that slug
+// below to keep the rename URL space unambiguous).
+func (b *Bot) agentCreateHandler(w http.ResponseWriter, r *http.Request) {
+	p, _ := auth.FromContext(r.Context())
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !isAdmin(p) {
+		http.Error(w, "admin role required", http.StatusForbidden)
+		return
+	}
+	if err := requireSameOrigin(r); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	rawSlug := strings.TrimSpace(r.FormValue("slug"))
+	slug := agents.NormalizeSlug(rawSlug)
+	if slug == "" {
+		http.Error(w, "slug is required", http.StatusBadRequest)
+		return
+	}
+	// "new" is the URL path of this handler — letting it through as a
+	// slug would mean later POSTs to /settings/org/agents/new (intended
+	// to rename the agent) would hit this create handler instead.
+	if slug == "new" {
+		http.Error(w, "slug 'new' is reserved", http.StatusBadRequest)
+		return
+	}
+	displayName := strings.TrimSpace(r.FormValue("display_name"))
+	if displayName == "" {
+		displayName = slug
+	}
+	store := b.agents
+	if store == nil {
+		store = agents.NewStore(nil)
+	}
+	if existing, err := store.GetCustom(r.Context(), p.OrgID, slug); err == nil && existing.Slug == slug {
+		http.Error(w, fmt.Sprintf("agent %q already exists — rename or delete the existing one first", slug), http.StatusConflict)
+		return
+	}
+	if _, err := store.Upsert(r.Context(), p.OrgID, agents.Profile{
+		Slug:          slug,
+		DisplayName:   displayName,
+		Description:   strings.TrimSpace(r.FormValue("description")),
+		SXBot:         strings.TrimSpace(r.FormValue("sx_bot")),
+		PersonaAsset:  strings.TrimSpace(r.FormValue("persona_asset")),
+		PersonaPrompt: strings.TrimSpace(r.FormValue("persona_prompt")),
+		SlackAliases:  splitCSVList(r.FormValue("slack_aliases")),
+		Skills:        splitCSVList(r.FormValue("skills")),
+		Enabled:       true,
+	}); err != nil {
+		b.log.Error("create agent", "error", err, "org", p.OrgID, "slug", slug)
+		http.Error(w, "create agent: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/settings/org?tab=agents&saved=agent_created", http.StatusFound)
+}
+
+// splitCSVList splits a comma-separated form field into a deduped
+// trimmed slice. Empty input yields nil so the upstream cleaners
+// (cleanAliases / cleanSkills) don't have to special-case it.
+func splitCSVList(s string) []string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
 }
 
 func splitAgentAction(path string) (slug, action string, ok bool) {
