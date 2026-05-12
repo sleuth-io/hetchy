@@ -81,6 +81,21 @@ func TestIndexHandler_RedirectsAuthenticatedNoOrgToOnboarding(t *testing.T) {
 	}
 }
 
+func TestIndexHandler_ShowsLandingAfterBypassLogout(t *testing.T) {
+	b := newBypassBot(t)
+	b.cfg.AuthBypass = true
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/?"+auth.SignedOutParam+"=1", nil)
+	// Run through middleware so a Principal is injected — the short-circuit must fire anyway.
+	b.auth.Middleware(http.HandlerFunc(b.indexHandler)).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "Sign up") {
+		t.Errorf("expected landing page, got: %s", rec.Body.String())
+	}
+}
+
 func TestChatTemplate_ComposerControls(t *testing.T) {
 	b := newBypassBot(t)
 	rec := httptest.NewRecorder()
