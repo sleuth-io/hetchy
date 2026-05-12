@@ -237,6 +237,57 @@ func TestLogoutNonBypassClearsCookieAndRedirectsLocally(t *testing.T) {
 	}
 }
 
+// TestLogoutNonBypassMalformedCookieFallsThrough ensures a garbage session
+// cookie does not block logout. AuthenticateSession returns Authenticated ==
+// false on an invalid sealed value, RevokeSession is skipped, and the
+// handler still clears the cookie and redirects to LogoutReturnTo.
+func TestLogoutNonBypassMalformedCookieFallsThrough(t *testing.T) {
+	s := &Service{
+		cfg: Config{
+			CookiePassword: "test-cookie-password-keep-it-long",
+			LogoutReturnTo: "https://app.example.com/",
+		},
+		statePath: "/callback",
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/logout", nil)
+	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: "not-a-real-sealed-session"})
+	rec := httptest.NewRecorder()
+	s.LogoutHandler(rec, req)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("expected 302, got %d", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "https://app.example.com/" {
+		t.Fatalf("expected redirect to LogoutReturnTo, got %q", loc)
+	}
+
+	var cleared bool
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == SessionCookieName && c.MaxAge < 0 {
+			cleared = true
+		}
+	}
+	if !cleared {
+		t.Fatal("session cookie should be cleared on logout even with malformed cookie")
+	}
+}
+
+// TestNewRequiresLogoutReturnTo guards the construction-time validation: an
+// empty LogoutReturnTo would silently degrade non-bypass logout to a redirect
+// to the current URL rather than the public landing page.
+func TestNewRequiresLogoutReturnTo(t *testing.T) {
+	cfg := Config{
+		APIKey:         "key",
+		ClientID:       "client",
+		CookiePassword: "pw",
+		RedirectURI:    "https://app.example.com/callback",
+	}
+	if _, err := New(cfg); err == nil {
+		t.Fatal("expected error when LogoutReturnTo is empty")
+	}
+}
+
 func TestRedirectPath(t *testing.T) {
 	cases := map[string]string{
 		"https://app.example.com/callback":            "/callback",

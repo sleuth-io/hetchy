@@ -126,8 +126,8 @@ func New(cfg Config) (*Service, error) {
 	if cfg.Bypass {
 		return &Service{cfg: cfg, statePath: "/"}, nil
 	}
-	if cfg.APIKey == "" || cfg.ClientID == "" || cfg.CookiePassword == "" || cfg.RedirectURI == "" {
-		return nil, errors.New("auth: APIKey, ClientID, CookiePassword, RedirectURI are required (set AUTH_BYPASS=1 for tests)")
+	if cfg.APIKey == "" || cfg.ClientID == "" || cfg.CookiePassword == "" || cfg.RedirectURI == "" || cfg.LogoutReturnTo == "" {
+		return nil, errors.New("auth: APIKey, ClientID, CookiePassword, RedirectURI, LogoutReturnTo are required (set AUTH_BYPASS=1 for tests)")
 	}
 	statePath, err := redirectPath(cfg.RedirectURI)
 	if err != nil {
@@ -272,6 +272,11 @@ func (s *Service) LogoutHandler(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/?"+SignedOutParam+"=1", http.StatusFound)
 		return
 	}
+	// AuthenticateSession is a pure-local operation in the WorkOS SDK
+	// (AES-GCM unseal + JWT payload parse, no network round-trip), so we can
+	// use it here without adding latency to logout. A malformed or expired
+	// cookie returns Authenticated == false and we fall through to the
+	// LogoutReturnTo redirect.
 	if cookie, err := r.Cookie(SessionCookieName); err == nil && cookie.Value != "" {
 		if res, err := workos.AuthenticateSession(cookie.Value, s.cfg.CookiePassword); err == nil && res.Authenticated && res.SessionID != "" {
 			if err := s.client.UserManagement().RevokeSession(r.Context(), &workos.UserManagementRevokeSessionParams{
