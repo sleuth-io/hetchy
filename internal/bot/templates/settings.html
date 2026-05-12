@@ -336,7 +336,7 @@
                          margin-top: .5rem; flex-wrap: wrap; }
   .integration-actions form { margin: 0; }
   .integration-actions .primary { margin-top: 0; }
-  .integration-disconnect-form { margin: .75rem 0 0; }
+  .integration-disconnect-form { margin: 0; }
 
   /* Credential tabs (Anthropic integration: API key vs subscription token).
      Two mutually exclusive panels share one form so a single Save covers
@@ -649,6 +649,17 @@
     {{template "integration_sx" .}}
   </div>
 
+  <dialog class="app-dialog" id="integration-disconnect-dialog" aria-labelledby="integration-disconnect-title">
+    <div class="dlg-body">
+      <h3 id="integration-disconnect-title">Disconnect integration?</h3>
+      <p id="integration-disconnect-message">This integration will be disconnected.</p>
+    </div>
+    <div class="dlg-actions">
+      <button type="button" class="dlg-cancel" id="integration-disconnect-cancel">Cancel</button>
+      <button type="button" class="dlg-delete" id="integration-disconnect-confirm">Disconnect</button>
+    </div>
+  </dialog>
+
   {{template "modal_sx" .}}
 {{end}}
 
@@ -705,7 +716,8 @@
                   <button type="submit" class="link-btn" style="color:#0b93f6">Sync</button>
                 </form>
                 <form method="POST" action="/integrations/github/disconnect"
-                      onsubmit="return confirm('Disconnect {{.AccountLogin}}? The Hetchy GitHub App will be uninstalled from that account, dropping access to all {{len .Repos}} repo{{if ne (len .Repos) 1}}s{{end}}. You can reinstall later from this page.');">
+                      data-confirm-title="Disconnect {{.AccountLogin}}?"
+                      data-confirm-message="The Hetchy GitHub App will be uninstalled from that account, dropping access to all {{len .Repos}} repo{{if ne (len .Repos) 1}}s{{end}}. You can reinstall later from this page.">
                   <input type="hidden" name="installation_id" value="{{.InstallationID}}">
                   <button type="submit" class="danger-btn">Disconnect</button>
                 </form>
@@ -808,7 +820,8 @@
           <div class="integration-actions">
             <a class="btn-enable" href="/slack/install">Reinstall</a>
             <form method="POST" action="/slack/disconnect" class="integration-disconnect-form"
-                  onsubmit="return confirm('Disconnect Slack? The Hetchy app will be removed from the workspace and you will need to reinstall to re-enable.');">
+                  data-confirm-title="Disconnect Slack?"
+                  data-confirm-message="The Hetchy app will be removed from the workspace and you will need to reinstall to re-enable.">
               <button type="submit" class="danger-btn">Disconnect</button>
             </form>
           </div>
@@ -829,7 +842,8 @@
           <button class="primary" type="submit" form="slack-dev-token-form">Save</button>
           {{if $devEnabled}}
           <form method="POST" action="/slack/disconnect" class="integration-disconnect-form"
-                onsubmit="return confirm('Disconnect Slack? The pasted bot and socket tokens will be cleared and the bot will stop responding in Slack.');">
+                data-confirm-title="Disconnect Slack?"
+                data-confirm-message="The pasted bot and socket tokens will be cleared and the bot will stop responding in Slack.">
             <button type="submit" class="danger-btn">Disconnect</button>
           </form>
           {{end}}
@@ -1602,6 +1616,65 @@
   document.querySelectorAll('[data-close-modal]').forEach(btn => {
     btn.addEventListener('click', () => btn.closest('dialog').close());
   });
+
+  // Integration disconnect confirms use the shared app-dialog styling
+  // instead of native browser confirm() prompts.
+  (function () {
+    const dlg = document.getElementById('integration-disconnect-dialog');
+    if (!dlg) return;
+    const title = document.getElementById('integration-disconnect-title');
+    const message = document.getElementById('integration-disconnect-message');
+    const cancel = document.getElementById('integration-disconnect-cancel');
+    const confirm = document.getElementById('integration-disconnect-confirm');
+    let pendingForm = null;
+
+    function resetDialog() {
+      pendingForm = null;
+      if (confirm) {
+        confirm.disabled = false;
+        confirm.textContent = 'Disconnect';
+      }
+    }
+
+    function submitPending() {
+      if (!pendingForm) return;
+      const form = pendingForm;
+      pendingForm = null;
+      form.dataset.confirmed = '1';
+      if (confirm) {
+        confirm.disabled = true;
+        confirm.textContent = 'Disconnecting…';
+      }
+      if (typeof form.requestSubmit === 'function') {
+        form.requestSubmit();
+      } else {
+        form.submit();
+      }
+    }
+
+    document.querySelectorAll('form[data-confirm-title][data-confirm-message]').forEach(form => {
+      form.addEventListener('submit', e => {
+        if (form.dataset.confirmed === '1') return;
+        e.preventDefault();
+        pendingForm = form;
+        if (title) title.textContent = form.dataset.confirmTitle || 'Disconnect integration?';
+        if (message) message.textContent = form.dataset.confirmMessage || 'This integration will be disconnected.';
+        if (confirm) {
+          confirm.disabled = false;
+          confirm.textContent = 'Disconnect';
+        }
+        if (typeof dlg.showModal === 'function') {
+          dlg.showModal();
+        } else {
+          submitPending();
+        }
+      });
+    });
+
+    if (cancel) cancel.addEventListener('click', () => dlg.close());
+    if (confirm) confirm.addEventListener('click', submitPending);
+    dlg.addEventListener('close', resetDialog);
+  })();
 
   // Existing rotate/remove logic for the "secret" sub-template.
   document.querySelectorAll('[data-rotate]').forEach(btn => {

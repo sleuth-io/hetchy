@@ -828,8 +828,13 @@ func TestSettingsIntegrationsTemplate_DisconnectActionsUseDangerButton(t *testin
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
+		`id="integration-disconnect-dialog"`,
 		`action="/integrations/github/disconnect"`,
 		`action="/slack/disconnect"`,
+		`data-confirm-title="Disconnect hetchyhq?"`,
+		`data-confirm-message="The Hetchy GitHub App will be uninstalled from that account, dropping access to all 1 repo. You can reinstall later from this page."`,
+		`data-confirm-title="Disconnect Slack?"`,
+		`data-confirm-message="The Hetchy app will be removed from the workspace and you will need to reinstall to re-enable."`,
 		`Disconnect hetchyhq?`,
 		`Connected workspace: <code>T123456</code>`,
 	} {
@@ -842,6 +847,9 @@ func TestSettingsIntegrationsTemplate_DisconnectActionsUseDangerButton(t *testin
 	}
 	if strings.Contains(body, `link-btn danger-link">Disconnect</button>`) {
 		t.Errorf("GitHub Disconnect should use the shared danger button treatment")
+	}
+	if strings.Contains(body, `onsubmit="return confirm('Disconnect`) {
+		t.Errorf("integration disconnects should use the shared app dialog, not browser confirm()")
 	}
 }
 
@@ -885,11 +893,16 @@ func TestSettingsIntegrationsTemplate_SlackDevSaveAndDisconnectShareActionRow(t 
 	for _, want := range []string{
 		`form="slack-dev-token-form">Save</button>`,
 		`action="/slack/disconnect"`,
+		`data-confirm-title="Disconnect Slack?"`,
+		`data-confirm-message="The pasted bot and socket tokens will be cleared and the bot will stop responding in Slack."`,
 		`class="danger-btn">Disconnect</button>`,
 	} {
 		if !strings.Contains(row, want) {
 			t.Errorf("Slack dev action row missing %q", want)
 		}
+	}
+	if strings.Contains(row, `onsubmit="return confirm('Disconnect`) {
+		t.Errorf("Slack dev disconnect should use the shared app dialog, not browser confirm()")
 	}
 }
 
