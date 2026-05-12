@@ -1,13 +1,16 @@
 package bot
 
 import (
+	"context"
 	"encoding/json"
+	"log/slog"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/hetchyhq/hetchy/internal/blocks"
+	"github.com/hetchyhq/hetchy/internal/events"
 )
 
 // sseEvent is the typed envelope written as the JSON payload of a
@@ -30,27 +33,51 @@ type sseEvent struct {
 	EndedAt   time.Time      `json:"ended_at,omitzero"`
 }
 
-// liveEmitter is the blocks.Emitter that writes into a liveRun. Each
-// Start/Append/Done/Fail/Notify/Result/Error call is JSON-encoded
-// once and pushed to the run's fan-out, where the original POSTing
-// tab AND any reattaching tabs receive it.
+// EventEnvelope is the wire shape consumed by SSE clients after the
+// multi-replica refactor. It's also the JSON written to
+// conversation_events.payload, so a replica that picks up a turn via
+// recovery can replay the exact same bytes that the owner would have
+// emitted in real time.
+type EventEnvelope struct {
+	Event string          `json:"event"`
+	Data  json.RawMessage `json:"data"`
+}
+
+// liveEmitter is the blocks.Emitter that writes through to the durable
+// event log (events.Store.Append). Each Start/Append/Done/Fail/Notify/
+// Result/Error call is JSON-encoded once and appended to
+// conversation_events; the cross-replica events.Fanout LISTEN loop then
+// delivers it to every attached SSE subscriber — including the original
+// POSTing tab on this same replica.
 //
-// Replaces the old single-channel webEmitter. The kind-tracking and
-// tool_use append-suppression logic carries over verbatim — those
-// rules govern how the chat UI renders blocks and aren't tied to the
-// transport layer.
+// Replaces the old in-memory liveRun.Emit fan-out so a process restart
+// doesn't lose the replay buffer and a peer replica's SSE handler can
+// serve the stream uniformly.
 type liveEmitter struct {
+	log      *slog.Logger
+	store    *events.Store
+	orgID    string
+	threadID string
+
 	idGen atomic.Uint64
-	run   *liveRun
 
 	mu    sync.Mutex
 	kinds map[string]blocks.Kind
+
+	// testCapture, when non-nil, receives every envelope the emitter
+	// would have appended to events.Store. Set by unit tests to assert
+	// on the wire payload without standing up Postgres. Production
+	// code never sets this; the live path goes through store.Append.
+	testCapture func(kind string, envelope []byte)
 }
 
-func newLiveEmitter(run *liveRun) *liveEmitter {
+func newLiveEmitter(log *slog.Logger, store *events.Store, orgID, threadID string) *liveEmitter {
 	return &liveEmitter{
-		run:   run,
-		kinds: map[string]blocks.Kind{},
+		log:      log,
+		store:    store,
+		orgID:    orgID,
+		threadID: threadID,
+		kinds:    map[string]blocks.Kind{},
 	}
 }
 
@@ -161,7 +188,27 @@ func (e *liveEmitter) emit(name string, data sseEvent) {
 		// drop the event rather than crash the run.
 		return
 	}
-	e.run.Emit(liveEvent{Event: name, Data: payload})
+	envelope, err := json.Marshal(EventEnvelope{Event: name, Data: payload})
+	if err != nil {
+		return
+	}
+	if e.testCapture != nil {
+		e.testCapture(name, envelope)
+		return
+	}
+	if e.store == nil {
+		// Tests construct an emitter without a backing store; nothing
+		// to persist, the Tee'd recorder still captures the block tree.
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := e.store.Append(ctx, e.orgID, e.threadID, name, envelope); err != nil {
+		if e.log != nil {
+			e.log.Warn("live emitter: events.Append failed",
+				"org", e.orgID, "thread", e.threadID, "kind", name, "error", err)
+		}
+	}
 }
 
 // keepaliveInterval is short enough to beat typical proxy idle

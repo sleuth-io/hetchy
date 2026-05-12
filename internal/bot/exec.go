@@ -41,7 +41,13 @@ type sandboxProcess interface {
 // duration; pass 0 to disable. Distinct from timeout (wall-clock max):
 // a healthy long run keeps producing output and resets the idle clock,
 // while a stuck process goes silent and trips the idle limit early.
-func (b *Bot) shLines(ctx context.Context, sandboxID string, proc sandboxProcess, sessionID, step, cmd string, timeout, idleTimeout time.Duration, suppressInputEcho bool, onLine func(string)) (string, error) {
+//
+// onCommandAccepted, if non-nil, fires exactly once with the Daytona
+// command id (the cursor a recovery replica needs to re-attach the log
+// stream after the owner crashes). Always called before any onLine
+// invocation; the agent path uses it to stamp active_sessions.command_id
+// + session_token while the stream is still draining.
+func (b *Bot) shLines(ctx context.Context, sandboxID string, proc sandboxProcess, sessionID, step, cmd string, timeout, idleTimeout time.Duration, suppressInputEcho bool, onLine func(string), onCommandAccepted func(sessionID, commandID string)) (string, error) {
 	suppressInputEcho = effectiveSuppressInputEcho(suppressInputEcho, cmd)
 	b.log.Info("sandbox step start",
 		"sandbox", sandboxID,
@@ -77,6 +83,12 @@ func (b *Bot) shLines(ctx context.Context, sandboxID string, proc sandboxProcess
 		"cmd_id", cmdID,
 		"exec_duration", time.Since(execStarted),
 	)
+	// Fire the recovery cursor callback before any byte arrives so a
+	// crash mid-stream leaves enough state on disk for another replica
+	// to reattach.
+	if onCommandAccepted != nil && cmdID != "" {
+		onCommandAccepted(sessionID, cmdID)
+	}
 
 	// Start the idle clock only after ExecuteSessionCommand returns so
 	// the SDK round-trip (which can take several seconds) doesn't

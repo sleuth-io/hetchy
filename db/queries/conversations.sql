@@ -1,6 +1,6 @@
 -- name: GetConversation :one
 SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, response_blocks,
-       github_owner, github_repo, custom_title, creator_id, agent_slug, model
+       github_owner, github_repo, custom_title, creator_id, agent_slug, model, status, last_seq
 FROM conversations
 WHERE org_id = $1 AND thread_id = $2;
 
@@ -41,7 +41,7 @@ WHERE org_id = $1 AND thread_id = $2;
 -- + a GIN index on custom_title (and a generated column for
 -- history[1]).
 SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, response_blocks,
-       github_owner, github_repo, custom_title, creator_id, agent_slug, model
+       github_owner, github_repo, custom_title, creator_id, agent_slug, model, status, last_seq
 FROM conversations
 WHERE org_id = $1
   AND (sqlc.arg(creator_id)::text = '' OR creator_id = sqlc.arg(creator_id))
@@ -73,17 +73,21 @@ ON CONFLICT (org_id, thread_id) DO UPDATE SET
     model           = EXCLUDED.model,
     updated_at      = NOW()
 RETURNING org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, response_blocks,
-          github_owner, github_repo, custom_title, creator_id, agent_slug, model;
+          github_owner, github_repo, custom_title, creator_id, agent_slug, model, status, last_seq;
 
 -- name: SaveConversationProgress :exec
--- Periodic mid-run snapshot used by chatPersister. Only writes the
--- handful of fields that change progressively as the agent emits
--- blocks (history + response_blocks + creator_id). The fields that
--- track terminal state (sandbox_id, branch, pr_url, github_owner,
--- github_repo) are deliberately left alone — their canonical values
--- are written by UpsertConversation at end-of-turn, and overwriting
--- them here mid-run would race the dispatcher into the wrong state
--- machine branch on a concurrent reload.
+-- Periodic mid-run snapshot used by chatPersister. Writes the fields that
+-- change progressively as the agent emits blocks (history +
+-- response_blocks + creator_id) plus sandbox_id, which is stamped on the
+-- row as soon as the sandbox is created so recovery on another replica
+-- can find a Daytona handle to attach to.
+--
+-- Note: branch, pr_url, github_owner, github_repo, agent_slug, model are
+-- still owned by UpsertConversation — overwriting them here mid-run
+-- would race the dispatcher into the wrong state machine branch on a
+-- concurrent reload (e.g. an empty pr_url is read as "still running").
+-- sandbox_id is the exception: it monotonically transitions from empty
+-- to a real value and never bounces, so stamping it early is safe.
 --
 -- Pure UPDATE. We rely on the dispatcher's entry-Upsert (in
 -- HandleRequest, before runFreshAgent) to create the row with the
@@ -100,8 +104,22 @@ UPDATE conversations
                              WHEN creator_id = '' THEN $5
                              ELSE creator_id
                          END,
+       sandbox_id      = CASE
+                             WHEN sqlc.arg(sandbox_id)::text <> '' THEN sqlc.arg(sandbox_id)::text
+                             ELSE sandbox_id
+                         END,
        updated_at      = NOW()
 WHERE org_id = $1 AND thread_id = $2;
+
+-- name: SetConversationStatus :execrows
+-- Updates the lifecycle status column. Used by the lease lifecycle to
+-- mark a conversation 'running' on claim and 'succeeded'/'failed'/
+-- 'cancelled' on release. Drives the sidebar's running indicator.
+UPDATE conversations
+   SET status     = sqlc.arg(status)::text,
+       updated_at = NOW()
+ WHERE org_id    = $1
+   AND thread_id = $2;
 
 -- name: DeleteConversation :exec
 DELETE FROM conversations WHERE org_id = $1 AND thread_id = $2;

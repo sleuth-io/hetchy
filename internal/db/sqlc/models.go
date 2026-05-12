@@ -8,6 +8,20 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type ActiveSession struct {
+	OrgID          string             `json:"org_id"`
+	ThreadID       string             `json:"thread_id"`
+	RequestID      string             `json:"request_id"`
+	OwnerReplica   string             `json:"owner_replica"`
+	LeaseExpiresAt pgtype.Timestamptz `json:"lease_expires_at"`
+	SandboxID      string             `json:"sandbox_id"`
+	SessionToken   string             `json:"session_token"`
+	CommandID      string             `json:"command_id"`
+	LastSeq        int64              `json:"last_seq"`
+	Cancelled      bool               `json:"cancelled"`
+	StartedAt      pgtype.Timestamptz `json:"started_at"`
+}
+
 type AgentProfile struct {
 	ID            pgtype.UUID        `json:"id"`
 	OrgID         string             `json:"org_id"`
@@ -55,6 +69,17 @@ type Conversation struct {
 	CreatorID      string             `json:"creator_id"`
 	AgentSlug      string             `json:"agent_slug"`
 	Model          string             `json:"model"`
+	Status         string             `json:"status"`
+	LastSeq        int64              `json:"last_seq"`
+}
+
+type ConversationEvent struct {
+	OrgID     string             `json:"org_id"`
+	ThreadID  string             `json:"thread_id"`
+	Seq       int64              `json:"seq"`
+	Kind      string             `json:"kind"`
+	Payload   []byte             `json:"payload"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
 type GithubAppInstallation struct {

@@ -152,7 +152,7 @@ func TestShLines(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			out, err := b.shLines(context.Background(), "test-sandbox", tc.proc, "sess-1", "test-step", tc.cmd, tc.timeout, tc.idleTimeout, tc.suppressInput, func(string) {})
+			out, err := b.shLines(context.Background(), "test-sandbox", tc.proc, "sess-1", "test-step", tc.cmd, tc.timeout, tc.idleTimeout, tc.suppressInput, func(string) {}, nil)
 			if tc.proc.suppressInputEcho != tc.wantSuppress {
 				t.Errorf("suppressInputEcho = %v, want %v", tc.proc.suppressInputEcho, tc.wantSuppress)
 			}

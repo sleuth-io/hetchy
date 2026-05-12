@@ -156,14 +156,16 @@ func (s *Store) Search(ctx context.Context, orgID string, opts SearchOptions) ([
 	return out, nil
 }
 
-// SaveProgress writes only the fields that change progressively as a
-// chat turn streams: history, response_blocks, and (the first time)
-// creator_id. It deliberately leaves sandbox_id, branch, pr_url, and
-// the GitHub fields untouched — their authoritative values come from
-// the terminal Upsert at end-of-turn, and overwriting them mid-run
+// SaveProgress writes the fields that change progressively as a chat
+// turn streams: history, response_blocks, creator_id (first time only),
+// and sandbox_id (monotonic empty→value transition, safe to stamp
+// mid-run so a recovery replica can find a Daytona handle).
+//
+// branch, pr_url, github_owner, github_repo, agent_slug, and model are
+// deliberately left alone — their authoritative values come from the
+// terminal Upsert at end-of-turn, and overwriting them here mid-run
 // would race the dispatcher into the wrong state machine branch on a
-// concurrent reload (e.g. an empty sandbox_id is interpreted as
-// "agent failed before creating a sandbox" and triggers a retry).
+// concurrent reload (e.g. an empty pr_url is read as "still running").
 //
 // Used by chatPersister to surface in-flight progress without
 // disturbing the canonical record. No-op when the store is nil.
@@ -181,6 +183,7 @@ func (s *Store) SaveProgress(ctx context.Context, r Record) error {
 		History:        r.History,
 		ResponseBlocks: encoded,
 		CreatorID:      r.CreatorID,
+		SandboxID:      r.SandboxID,
 	}); err != nil {
 		return fmt.Errorf("save progress: %w", err)
 	}

@@ -57,6 +57,19 @@ func (s *Store) Close() {
 	s.pool.Close()
 }
 
+// Pool returns the underlying pgx pool. Use this only for capabilities the
+// sqlc layer can't express on its own: LISTEN/NOTIFY (requires a long-lived
+// connection that does not return to the pool between commands) and
+// session-scoped advisory locks (the lock is released when the connection
+// returns to the pool, which is fatal — those callers acquire a connection
+// for the duration of the lock).
+func (s *Store) Pool() *pgxpool.Pool {
+	if s == nil {
+		return nil
+	}
+	return s.pool
+}
+
 // WithTx runs fn inside a transaction, passing it a *sqlc.Queries scoped to
 // that transaction. The transaction is committed if fn returns nil and rolled
 // back otherwise. Errors from Begin / Commit / Rollback are wrapped.

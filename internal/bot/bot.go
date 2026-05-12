@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -26,10 +27,12 @@ import (
 	"github.com/hetchyhq/hetchy/internal/convstore"
 	"github.com/hetchyhq/hetchy/internal/db"
 	"github.com/hetchyhq/hetchy/internal/db/sqlc"
+	"github.com/hetchyhq/hetchy/internal/events"
 	"github.com/hetchyhq/hetchy/internal/githubapp"
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
 	"github.com/hetchyhq/hetchy/internal/screenshots"
 	"github.com/hetchyhq/hetchy/internal/secrets"
+	"github.com/hetchyhq/hetchy/internal/sessionlease"
 )
 
 // maxBlocksPerTurn caps how many blocks we persist per turn. The full
@@ -70,10 +73,29 @@ type Bot struct {
 	// case. We construct one Signer at startup; the underlying
 	// S3 client is safe for concurrent use.
 	screenshots *screenshots.Signer
-	// live tracks in-flight chat turns so the /chat/stream
-	// reattach endpoint can find them and replay buffered
-	// SSE events to a reloading tab. Goroutine-safe.
+	// live tracks the per-replica subset of in-flight runs whose agent
+	// goroutines run on *this* process. Cluster-level ownership lives
+	// in active_sessions via leases; live is just the in-process index
+	// so /chat/cancel and the Delete-conversation guard can find the
+	// run this replica is driving.
 	live *liveRegistry
+	// leases is the cluster-wide ownership primitive. Backed by the
+	// active_sessions table; one replica wins claim per
+	// (org_id, thread_id) at a time. nil only in tests that don't need
+	// the DB-backed path.
+	leases *sessionlease.Manager
+	// events is the durable append-only log behind the SSE stream.
+	// Every emitted progress block becomes a row in
+	// conversation_events; subscribers (any replica) consume via the
+	// fanout below.
+	events *events.Store
+	// fanout dispatches LISTEN/NOTIFY hits from `hetchy_events` to the
+	// local SSE handlers attached on this process. nil in tests that
+	// skip the cross-replica fanout.
+	fanout *events.Fanout
+	// replicaID is a stable identifier for this process; stamped on
+	// every lease so graceful shutdown can find rows owned here.
+	replicaID string
 	// app is the GitHub App handle (per-environment dev/staging/prod).
 	// Nil when GITHUB_APP_* env vars aren't configured — the install
 	// button is hidden and inbound webhooks refused in that case, so
@@ -174,6 +196,11 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 		log.Info("screenshot upload configured", "bucket", cfg.S3Bucket, "region", cfg.S3Region)
 	}
 
+	replicaID := strings.TrimSpace(os.Getenv("HOSTNAME"))
+	if replicaID == "" {
+		replicaID = fmt.Sprintf("replica-%d", time.Now().UnixNano())
+	}
+	eventsStore := events.New(log, store)
 	b := &Bot{
 		cfg:              cfg,
 		log:              log,
@@ -185,6 +212,10 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 		bootstrap:        bootstrap.New(store, cipher),
 		screenshots:      screenshotSigner,
 		live:             newLiveRegistry(),
+		leases:           sessionlease.New(log, store, replicaID),
+		events:           eventsStore,
+		fanout:           events.NewFanout(log, store.Pool(), eventsStore),
+		replicaID:        replicaID,
 		auth:             authSvc,
 		cipher:           cipher,
 		retryBackoff:     initialBackoff,
@@ -197,7 +228,7 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 		return sb.StartWithTimeout(ctx, timeout)
 	}
 	b.slackUsers = newSlackUserResolver(log, authSvc)
-	b.slack = newSlackManager(log, b.orgs, b.handleSlackEvent)
+	b.slack = newSlackManager(log, b.orgs, b.handleSlackEvent, store.Pool())
 	b.warnIfSlackOAuthMisconfigured()
 
 	// Surface a few config values that are easy to misset on a dev box
@@ -285,16 +316,28 @@ func (b *Bot) warnIfSlackOAuthMisconfigured() {
 // Close releases external resources held by the bot. Safe to call once
 // after Run returns.
 func (b *Bot) Close() {
+	if b.fanout != nil {
+		b.fanout.Close()
+	}
 	if b.store != nil {
 		b.store.Close()
 	}
 }
 
-// Run starts the web UI and the per-org Slack manager. Either failing
-// returns the first error and cancels the other.
+// Run starts the web UI, the per-org Slack manager, and the recovery
+// worker that picks up expired leases left behind by crashed peers.
+// The first subsystem to error stops the others and is returned.
 func (b *Bot) Run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+
+	recoveryDone := make(chan struct{})
+	go func() {
+		defer close(recoveryDone)
+		if b.leases != nil {
+			newRecoveryWorker(b).Run(ctx)
+		}
+	}()
 
 	errCh := make(chan error, 2)
 	go func() { errCh <- b.runWeb(ctx) }()
@@ -303,7 +346,43 @@ func (b *Bot) Run(ctx context.Context) error {
 	err := <-errCh
 	cancel()
 	<-errCh
+	<-recoveryDone
+	// Release any leases this replica still owns so a peer's recovery
+	// worker picks them up immediately instead of waiting for natural
+	// expiry. Best-effort: a hard kill (SIGKILL) skips this, in which
+	// case the natural expiry path covers us.
+	b.releaseOwnedLeases(context.Background())
 	return err
+}
+
+// releaseOwnedLeases is the graceful-shutdown counterpart to the
+// recovery worker. It enumerates active_sessions rows owned by this
+// replica and expires their leases NOW — peers see the rows in their
+// next 5-second scan and take over without waiting the full 30-second
+// natural expiry.
+func (b *Bot) releaseOwnedLeases(ctx context.Context) {
+	if b.store == nil || b.replicaID == "" {
+		return
+	}
+	rows, err := b.store.Queries.ListMyActiveSessions(ctx, b.replicaID)
+	if err != nil {
+		b.log.Warn("graceful shutdown: list owned sessions failed", "error", err)
+		return
+	}
+	for _, row := range rows {
+		if _, err := b.store.Queries.ExpireActiveSession(ctx, sqlc.ExpireActiveSessionParams{
+			OrgID:        row.OrgID,
+			ThreadID:     row.ThreadID,
+			OwnerReplica: b.replicaID,
+		}); err != nil {
+			b.log.Warn("graceful shutdown: expire lease failed",
+				"org", row.OrgID, "thread", row.ThreadID, "error", err)
+		}
+	}
+	if len(rows) > 0 {
+		b.log.Info("graceful shutdown: leases expired for handoff",
+			"replica", b.replicaID, "count", len(rows))
+	}
 }
 
 // HandleRequest is the shared core. It expects an already-resolved org
@@ -672,7 +751,7 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 	// every terminal Upsert in this function — a mismatch would
 	// let a late tick overwrite the terminal save with a different
 	// shape and drop turns from the UI.
-	persister := newChatPersister(b.log, b.convs, recorder, rec, appendToFirstTurn, 2*time.Second)
+	persister := newChatPersister(b.log, b.convs, recorder, rec, appendToFirstTurn, 30*time.Second)
 	persisterCtx, cancelPersister := context.WithCancel(ctx)
 	go persister.Run(persisterCtx)
 	defer func() {
@@ -815,7 +894,7 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 	// used by the terminal Upsert in this function.
 	recForPersist := rec
 	recForPersist.History = append(append([]string(nil), rec.History...), text)
-	persister := newChatPersister(b.log, b.convs, recorder, recForPersist, appendAsNewTurn, 2*time.Second)
+	persister := newChatPersister(b.log, b.convs, recorder, recForPersist, appendAsNewTurn, 30*time.Second)
 	persisterCtx, cancelPersister := context.WithCancel(ctx)
 	go persister.Run(persisterCtx)
 	defer func() {

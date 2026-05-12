@@ -75,7 +75,7 @@ func (b *Bot) detectViaSandbox(ctx context.Context, sb *daytona.Sandbox, session
         -czT - \
     | base64`, shellQuote(workdir))
 
-	out, err := b.shLines(ctx, sb.ID, sb.Process, sessionID, "detect-tar", tarCmd, 90*time.Second, 0, false, func(string) {})
+	out, err := b.shLines(ctx, sb.ID, sb.Process, sessionID, "detect-tar", tarCmd, 90*time.Second, 0, false, func(string) {}, nil)
 	if err != nil {
 		_ = os.RemoveAll(tempRoot)
 		return nil, "", fmt.Errorf("detect: tar via sandbox: %w", err)

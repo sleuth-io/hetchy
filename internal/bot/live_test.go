@@ -6,11 +6,8 @@ import (
 )
 
 func TestLiveRunCancelCancelsContextAndKeepsSandboxID(t *testing.T) {
-	reg := newLiveRegistry()
-	run, ok := reg.RegisterIfAbsent(context.Background(), "org", "thread")
-	if !ok {
-		t.Fatal("first register should win")
-	}
+	ctx, cancel := context.WithCancel(context.Background())
+	run := newLiveRun(ctx, cancel, nil)
 	run.SetSandboxID("sandbox-1", true)
 
 	if run.Cancelled() {
@@ -36,17 +33,25 @@ func TestLiveRunCancelCancelsContextAndKeepsSandboxID(t *testing.T) {
 	}
 }
 
-func TestLiveRegistryRejectsDuplicateAndCleansUpOnDone(t *testing.T) {
+// TestLiveRegistry asserts the local-only registry semantics: Register
+// stores, Get returns the registered run, Done removes and cancels.
+// Cluster-level uniqueness (no two replicas owning the same turn) is
+// asserted in sessionlease tests, not here — this map is intentionally
+// per-replica.
+func TestLiveRegistry(t *testing.T) {
 	reg := newLiveRegistry()
-	run, ok := reg.RegisterIfAbsent(context.Background(), "org", "thread")
-	if !ok {
-		t.Fatal("first register should win")
-	}
-	if _, ok := reg.RegisterIfAbsent(context.Background(), "org", "thread"); ok {
-		t.Fatal("duplicate register should lose")
+	ctx, cancel := context.WithCancel(context.Background())
+	run := newLiveRun(ctx, cancel, nil)
+	reg.Register("org", "thread", run)
+
+	if got := reg.Get("org", "thread"); got != run {
+		t.Fatalf("Get = %v, want %v", got, run)
 	}
 	reg.Done("org", "thread", run)
 	if got := reg.Get("org", "thread"); got != nil {
 		t.Fatalf("run should be removed after Done, got %+v", got)
+	}
+	if !run.Cancelled() {
+		t.Fatal("Done should cancel the run")
 	}
 }

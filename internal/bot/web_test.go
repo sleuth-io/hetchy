@@ -166,10 +166,9 @@ func TestChatCancelHandlerCancelsRunAndSchedulesCleanup(t *testing.T) {
 	}
 	handler := a.Middleware(a.RequireOrg(http.HandlerFunc(b.chatCancelHandler)))
 
-	run, ok := b.live.RegisterIfAbsent(context.Background(), "org_test", "thread-1")
-	if !ok {
-		t.Fatal("expected live run registration")
-	}
+	runCtx, runCancel := context.WithCancel(context.Background())
+	run := newLiveRun(runCtx, runCancel, nil)
+	b.live.Register("org_test", "thread-1", run)
 	run.SetSandboxID("sandbox-1", true)
 
 	type cleanupCall struct {
@@ -212,10 +211,9 @@ func TestChatCancelHandlerCancelsRunAndSchedulesCleanup(t *testing.T) {
 	case <-time.After(20 * time.Millisecond):
 	}
 
-	followUpRun, ok := b.live.RegisterIfAbsent(context.Background(), "org_test", "thread-2")
-	if !ok {
-		t.Fatal("expected follow-up live run registration")
-	}
+	followUpCtx, followUpCancel := context.WithCancel(context.Background())
+	followUpRun := newLiveRun(followUpCtx, followUpCancel, nil)
+	b.live.Register("org_test", "thread-2", followUpRun)
 	followUpRun.SetSandboxID("sandbox-2", false)
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodPost, "/chat/cancel", strings.NewReader(`{"session_id":"thread-2"}`))
@@ -250,11 +248,16 @@ func TestChatCancelHandlerRejectsMissingRunAndWrongMethod(t *testing.T) {
 	}
 	handler := a.Middleware(a.RequireOrg(http.HandlerFunc(b.chatCancelHandler)))
 
+	// In the multi-replica model the cancel handler is replica-agnostic:
+	// any pod accepts the request and marks the row cancelled. If this
+	// pod doesn't own the run locally, it still answers 202 — the owner
+	// (or the recovery worker on a future pod) will see the flag on its
+	// next renew tick and propagate. So a "missing run" no longer 404s.
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/chat/cancel", strings.NewReader(`{"session_id":"missing"}`))
 	handler.ServeHTTP(rec, req)
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("missing run status = %d, want %d", rec.Code, http.StatusNotFound)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("missing run status = %d, want %d", rec.Code, http.StatusAccepted)
 	}
 
 	rec = httptest.NewRecorder()

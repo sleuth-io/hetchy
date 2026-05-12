@@ -27,7 +27,7 @@ func (q *Queries) DeleteConversation(ctx context.Context, arg DeleteConversation
 
 const getConversation = `-- name: GetConversation :one
 SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, response_blocks,
-       github_owner, github_repo, custom_title, creator_id, agent_slug, model
+       github_owner, github_repo, custom_title, creator_id, agent_slug, model, status, last_seq
 FROM conversations
 WHERE org_id = $1 AND thread_id = $2
 `
@@ -53,6 +53,8 @@ type GetConversationRow struct {
 	CreatorID      string             `json:"creator_id"`
 	AgentSlug      string             `json:"agent_slug"`
 	Model          string             `json:"model"`
+	Status         string             `json:"status"`
+	LastSeq        int64              `json:"last_seq"`
 }
 
 func (q *Queries) GetConversation(ctx context.Context, arg GetConversationParams) (GetConversationRow, error) {
@@ -74,6 +76,8 @@ func (q *Queries) GetConversation(ctx context.Context, arg GetConversationParams
 		&i.CreatorID,
 		&i.AgentSlug,
 		&i.Model,
+		&i.Status,
+		&i.LastSeq,
 	)
 	return i, err
 }
@@ -105,6 +109,10 @@ UPDATE conversations
                              WHEN creator_id = '' THEN $5
                              ELSE creator_id
                          END,
+       sandbox_id      = CASE
+                             WHEN $6::text <> '' THEN $6::text
+                             ELSE sandbox_id
+                         END,
        updated_at      = NOW()
 WHERE org_id = $1 AND thread_id = $2
 `
@@ -115,16 +123,21 @@ type SaveConversationProgressParams struct {
 	History        []string `json:"history"`
 	ResponseBlocks [][]byte `json:"response_blocks"`
 	CreatorID      string   `json:"creator_id"`
+	SandboxID      string   `json:"sandbox_id"`
 }
 
-// Periodic mid-run snapshot used by chatPersister. Only writes the
-// handful of fields that change progressively as the agent emits
-// blocks (history + response_blocks + creator_id). The fields that
-// track terminal state (sandbox_id, branch, pr_url, github_owner,
-// github_repo) are deliberately left alone — their canonical values
-// are written by UpsertConversation at end-of-turn, and overwriting
-// them here mid-run would race the dispatcher into the wrong state
-// machine branch on a concurrent reload.
+// Periodic mid-run snapshot used by chatPersister. Writes the fields that
+// change progressively as the agent emits blocks (history +
+// response_blocks + creator_id) plus sandbox_id, which is stamped on the
+// row as soon as the sandbox is created so recovery on another replica
+// can find a Daytona handle to attach to.
+//
+// Note: branch, pr_url, github_owner, github_repo, agent_slug, model are
+// still owned by UpsertConversation — overwriting them here mid-run
+// would race the dispatcher into the wrong state machine branch on a
+// concurrent reload (e.g. an empty pr_url is read as "still running").
+// sandbox_id is the exception: it monotonically transitions from empty
+// to a real value and never bounces, so stamping it early is safe.
 //
 // Pure UPDATE. We rely on the dispatcher's entry-Upsert (in
 // HandleRequest, before runFreshAgent) to create the row with the
@@ -141,13 +154,14 @@ func (q *Queries) SaveConversationProgress(ctx context.Context, arg SaveConversa
 		arg.History,
 		arg.ResponseBlocks,
 		arg.CreatorID,
+		arg.SandboxID,
 	)
 	return err
 }
 
 const searchConversations = `-- name: SearchConversations :many
 SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, response_blocks,
-       github_owner, github_repo, custom_title, creator_id, agent_slug, model
+       github_owner, github_repo, custom_title, creator_id, agent_slug, model, status, last_seq
 FROM conversations
 WHERE org_id = $1
   AND ($2::text = '' OR creator_id = $2)
@@ -185,6 +199,8 @@ type SearchConversationsRow struct {
 	CreatorID      string             `json:"creator_id"`
 	AgentSlug      string             `json:"agent_slug"`
 	Model          string             `json:"model"`
+	Status         string             `json:"status"`
+	LastSeq        int64              `json:"last_seq"`
 }
 
 // Backs the sidebar list. Filters by optional creator_id and an
@@ -253,6 +269,8 @@ func (q *Queries) SearchConversations(ctx context.Context, arg SearchConversatio
 			&i.CreatorID,
 			&i.AgentSlug,
 			&i.Model,
+			&i.Status,
+			&i.LastSeq,
 		); err != nil {
 			return nil, err
 		}
@@ -262,6 +280,31 @@ func (q *Queries) SearchConversations(ctx context.Context, arg SearchConversatio
 		return nil, err
 	}
 	return items, nil
+}
+
+const setConversationStatus = `-- name: SetConversationStatus :execrows
+UPDATE conversations
+   SET status     = $3::text,
+       updated_at = NOW()
+ WHERE org_id    = $1
+   AND thread_id = $2
+`
+
+type SetConversationStatusParams struct {
+	OrgID    string `json:"org_id"`
+	ThreadID string `json:"thread_id"`
+	Status   string `json:"status"`
+}
+
+// Updates the lifecycle status column. Used by the lease lifecycle to
+// mark a conversation 'running' on claim and 'succeeded'/'failed'/
+// 'cancelled' on release. Drives the sidebar's running indicator.
+func (q *Queries) SetConversationStatus(ctx context.Context, arg SetConversationStatusParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setConversationStatus, arg.OrgID, arg.ThreadID, arg.Status)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const upsertConversation = `-- name: UpsertConversation :one
@@ -283,7 +326,7 @@ ON CONFLICT (org_id, thread_id) DO UPDATE SET
     model           = EXCLUDED.model,
     updated_at      = NOW()
 RETURNING org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, response_blocks,
-          github_owner, github_repo, custom_title, creator_id, agent_slug, model
+          github_owner, github_repo, custom_title, creator_id, agent_slug, model, status, last_seq
 `
 
 type UpsertConversationParams struct {
@@ -317,6 +360,8 @@ type UpsertConversationRow struct {
 	CreatorID      string             `json:"creator_id"`
 	AgentSlug      string             `json:"agent_slug"`
 	Model          string             `json:"model"`
+	Status         string             `json:"status"`
+	LastSeq        int64              `json:"last_seq"`
 }
 
 func (q *Queries) UpsertConversation(ctx context.Context, arg UpsertConversationParams) (UpsertConversationRow, error) {
@@ -351,6 +396,8 @@ func (q *Queries) UpsertConversation(ctx context.Context, arg UpsertConversation
 		&i.CreatorID,
 		&i.AgentSlug,
 		&i.Model,
+		&i.Status,
+		&i.LastSeq,
 	)
 	return i, err
 }

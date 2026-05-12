@@ -419,7 +419,7 @@ func (b *Bot) runInlineScript(ctx context.Context, sb *daytona.Sandbox, sessionI
 	scriptPath := "/tmp/sf-" + label + ".sh"
 	body := strings.TrimRight(scriptBody, "\n")
 	writeCmd := heredocWriteCmd(scriptPath, body, true)
-	if _, err := b.shLines(ctx, sb.ID, sb.Process, sessionID, label+"-write", writeCmd, 30*time.Second, 0, true, func(string) {}); err != nil {
+	if _, err := b.shLines(ctx, sb.ID, sb.Process, sessionID, label+"-write", writeCmd, 30*time.Second, 0, true, func(string) {}, nil); err != nil {
 		return fmt.Errorf("write %s: %w", label, err)
 	}
 
@@ -435,7 +435,7 @@ func (b *Bot) runInlineScript(ctx context.Context, sb *daytona.Sandbox, sessionI
 	runCmd := prefix.String() + "bash " + scriptPath
 
 	router := newBootstrapLineRouter(emit)
-	if _, err := b.shLines(ctx, sb.ID, sb.Process, sessionID, label+"-run", runCmd, 5*time.Minute, 0, false, router.Line); err != nil {
+	if _, err := b.shLines(ctx, sb.ID, sb.Process, sessionID, label+"-run", runCmd, 5*time.Minute, 0, false, router.Line, nil); err != nil {
 		router.Fail(label + " failed")
 		return fmt.Errorf("run %s: %w", label, err)
 	}
@@ -585,7 +585,7 @@ func (b *Bot) runScript(ctx context.Context, sb *daytona.Sandbox, sessionID, lab
 	scriptPath := "/tmp/sf-" + label + ".sh"
 	body := strings.TrimRight(scriptBody, "\n")
 	writeCmd := heredocWriteCmd(scriptPath, body, true)
-	if _, err := b.shLines(ctx, sb.ID, sb.Process, sessionID, "write-script", writeCmd, 15*time.Second, 0, true, func(string) {}); err != nil {
+	if _, err := b.shLines(ctx, sb.ID, sb.Process, sessionID, "write-script", writeCmd, 15*time.Second, 0, true, func(string) {}, nil); err != nil {
 		return "", err
 	}
 
@@ -612,7 +612,26 @@ func (b *Bot) runScript(ctx context.Context, sb *daytona.Sandbox, sessionID, lab
 	defer stop()
 
 	router := newAgentLineRouter(emit)
-	if _, err := b.shLines(ctx, sb.ID, sb.Process, sessionID, "run-script", runCmd, 45*time.Minute, 15*time.Minute, false, router.Line); err != nil {
+	// Stamp the lease's recovery cursor (session_token + command_id +
+	// sandbox_id) as soon as Daytona accepts the command. Without this,
+	// a crash before the first output byte leaves the recovery worker
+	// on another replica with no handle to reattach to. We capture the
+	// liveRun from ctx so runScript stays usable by tests that don't
+	// pass a real lease.
+	onAccepted := func(daytonaSession, cmdID string) {
+		if run := liveRunFromContext(ctx); run != nil {
+			if lease := run.Lease(); lease != nil {
+				stampCtx, stampCancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer stampCancel()
+				if err := lease.SetSandbox(stampCtx, sb.ID, daytonaSession, cmdID); err != nil {
+					b.log.Warn("lease set sandbox failed",
+						"org", lease.OrgID(), "thread", lease.ThreadID(),
+						"sandbox", sb.ID, "session", daytonaSession, "cmd", cmdID, "error", err)
+				}
+			}
+		}
+	}
+	if _, err := b.shLines(ctx, sb.ID, sb.Process, sessionID, "run-script", runCmd, 45*time.Minute, 15*time.Minute, false, router.Line, onAccepted); err != nil {
 		router.Abort()
 		return "", err
 	}
@@ -675,7 +694,7 @@ func (b *Bot) materializeLargeRunEnv(ctx context.Context, sandboxID string, proc
 			"bytes", len(val),
 		)
 	}
-	if _, err := b.shLines(ctx, sandboxID, proc, sessionID, "write-env", cmd.String(), 60*time.Second, 0, true, func(string) {}); err != nil {
+	if _, err := b.shLines(ctx, sandboxID, proc, sessionID, "write-env", cmd.String(), 60*time.Second, 0, true, func(string) {}, nil); err != nil {
 		return fmt.Errorf("write env files: %w", err)
 	}
 	for _, key := range keys {

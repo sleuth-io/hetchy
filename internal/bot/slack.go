@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"log/slog"
 	"regexp"
 	"slices"
@@ -11,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
@@ -19,6 +21,20 @@ import (
 	"github.com/hetchyhq/hetchy/internal/blocks"
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
 )
+
+// slackLeaderRetry governs how often a non-leader replica retries
+// pg_try_advisory_lock for an org's Slack socket. Short enough that
+// failover after a leader crash kicks in quickly; long enough not to
+// hammer the DB.
+const slackLeaderRetry = 5 * time.Second
+
+// slackLockClassID is a stable namespace for Slack-socket advisory
+// locks. Postgres advisory locks accept (classid, objid) — a constant
+// classid lets the lock target be derived purely from the org's hash
+// without colliding with future advisory locks we might add (the
+// bootstrap spec lock referenced in repo_bootstrap migration comments,
+// for example).
+const slackLockClassID = 0x534C4B31 // "SLK1"
 
 var mentionPrefix = regexp.MustCompile(`^<@[A-Z0-9]+>\s*`)
 var leadingSlackMention = regexp.MustCompile(`^<@([A-Z0-9]+)>\s*`)
@@ -39,13 +55,26 @@ type incoming struct {
 }
 
 // slackManager owns one socket-mode connection per org with Slack creds.
-// Lifecycle: Run() loads all orgs at startup and spins up a goroutine for
-// each; RestartOrg() reloads a single org after its settings change;
-// remove happens implicitly when an org's tokens go missing on reload.
+// In a single-replica deployment the manager opens every org's socket
+// directly; in a multi-replica deployment it wraps each connection in
+// a Postgres advisory-lock leader election so only one replica per org
+// holds a socket at a time. Slack delivers each event to exactly one
+// of the org's two configured tokens, so without leader election N
+// replicas would each receive — and dispatch — every event N times.
+//
+// Lifecycle: Run() loads all orgs at startup and spins up a leader-
+// election goroutine for each; RestartOrg() restarts a single org's
+// loop after its settings change; remove happens implicitly when an
+// org's tokens go missing on reload.
 type slackManager struct {
 	log     *slog.Logger
 	orgs    *orgcfg.Store
 	handler slackHandler
+
+	// pool is the pgx pool used for advisory-lock leader election.
+	// nil disables the leader-election path entirely (tests, or a dev
+	// instance that doesn't need failover).
+	pool *pgxpool.Pool
 
 	mu    sync.Mutex
 	conns map[string]*slackConn // orgID -> running connection
@@ -59,8 +88,8 @@ type slackConn struct {
 	done   chan struct{}
 }
 
-func newSlackManager(log *slog.Logger, orgs *orgcfg.Store, h slackHandler) *slackManager {
-	return &slackManager{log: log, orgs: orgs, handler: h, conns: make(map[string]*slackConn)}
+func newSlackManager(log *slog.Logger, orgs *orgcfg.Store, h slackHandler, pool *pgxpool.Pool) *slackManager {
+	return &slackManager{log: log, orgs: orgs, handler: h, pool: pool, conns: make(map[string]*slackConn)}
 }
 
 // Run boots every configured org's socket connection and blocks until
@@ -138,8 +167,109 @@ func (m *slackManager) startConn(ctx context.Context, oc orgcfg.Config) {
 
 	go func() {
 		defer close(done)
-		m.runConn(connCtx, oc)
+		if m.pool == nil {
+			// No DB pool wired — fall back to direct-connect (single
+			// replica, tests). This path opened sockets immediately
+			// pre-refactor and we preserve that behaviour for parity.
+			m.runConn(connCtx, oc)
+			return
+		}
+		m.runWithLeaderElection(connCtx, oc)
 	}()
+}
+
+// runWithLeaderElection holds a Postgres session advisory lock for the
+// duration of the org's Socket Mode connection. The lock is tied to the
+// pgx connection — a replica crash drops the lock automatically, so
+// failover requires no orphan-cleanup.
+//
+// On success: keep the connection alive (and the lock with it) until
+// the parent ctx is cancelled. On failure to acquire (a peer holds the
+// lock): sleep slackLeaderRetry and try again. RestartOrg cancels ctx
+// to tear the loop down on settings changes.
+func (m *slackManager) runWithLeaderElection(ctx context.Context, oc orgcfg.Config) {
+	key := slackLockKeyFor(oc.OrgID)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		acquired := m.tryHoldSlackLock(ctx, oc, key)
+		if !acquired {
+			// Another replica holds the lock. Wait and retry; if that
+			// replica dies the lock auto-releases on its connection
+			// close and our next try-lock wins.
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(slackLeaderRetry):
+			}
+		}
+	}
+}
+
+// tryHoldSlackLock acquires the advisory lock on a dedicated connection,
+// runs the socket loop while holding it, and releases on exit. Returns
+// true if the lock was acquired (regardless of how runConn ultimately
+// ended), false if not — the caller decides whether to retry.
+func (m *slackManager) tryHoldSlackLock(ctx context.Context, oc orgcfg.Config, key int64) bool {
+	conn, err := m.pool.Acquire(ctx)
+	if err != nil {
+		if !errors.Is(err, context.Canceled) {
+			m.log.Warn("slack: pool acquire for advisory lock failed",
+				"org", oc.OrgID, "error", err)
+		}
+		return false
+	}
+	// Release wraps both UnlockOnReturn and the pool.Release so a leak
+	// here can't leave a connection in the LISTEN/lock-held state.
+	defer conn.Release()
+
+	var got bool
+	if err := conn.QueryRow(ctx,
+		"SELECT pg_try_advisory_lock($1, $2)",
+		int32(slackLockClassID), int32(key),
+	).Scan(&got); err != nil {
+		if !errors.Is(err, context.Canceled) {
+			m.log.Warn("slack: pg_try_advisory_lock failed",
+				"org", oc.OrgID, "error", err)
+		}
+		return false
+	}
+	if !got {
+		return false
+	}
+	m.log.Info("slack: leader elected", "org", oc.OrgID, "lock", key)
+
+	defer func() {
+		// Try to release explicitly so the next replica can claim
+		// without waiting for the connection to drop. Best-effort: if
+		// the conn is broken we'll fall back to the auto-release on
+		// connection close.
+		releaseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if _, err := conn.Exec(releaseCtx,
+			"SELECT pg_advisory_unlock($1, $2)",
+			int32(slackLockClassID), int32(key),
+		); err != nil && !errors.Is(err, context.Canceled) {
+			m.log.Warn("slack: pg_advisory_unlock failed",
+				"org", oc.OrgID, "error", err)
+		}
+		m.log.Info("slack: leader released", "org", oc.OrgID)
+	}()
+
+	m.runConn(ctx, oc)
+	return true
+}
+
+// slackLockKeyFor hashes an orgID into an int32 keyspace suitable for
+// pg_try_advisory_lock(classid, objid). FNV-1a is cheap and gives a
+// uniform distribution; orgs are UUIDs, so collisions are negligible.
+func slackLockKeyFor(orgID string) int64 {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(orgID))
+	return int64(int32(h.Sum32())) // cast through int32 to fit Postgres signed int4
 }
 
 func (m *slackManager) runConn(ctx context.Context, oc orgcfg.Config) {

@@ -9,6 +9,23 @@ import (
 )
 
 type Querier interface {
+	// Returns the next seq for events.Append. Bumping last_seq inside the
+	// same transaction as the event INSERT prevents two concurrent appenders
+	// from minting the same seq even if the owner column briefly disagrees
+	// (e.g. mid-failover).
+	AllocateNextSeq(ctx context.Context, arg AllocateNextSeqParams) (int64, error)
+	// The cancel handler can be served by any replica. Setting the flag here
+	// causes the owner's renew loop (or the cancel-aware emitter check) to
+	// propagate the cancel locally. A recovery replica also reads this flag
+	// when scanning expired leases and skips re-attaching.
+	CancelActiveSession(ctx context.Context, arg CancelActiveSessionParams) (int64, error)
+	// Atomic lease acquisition. Wins when:
+	//   (a) no row exists for (org_id, thread_id), OR
+	//   (b) the existing row's lease_expires_at has passed (the previous
+	//       owner crashed / shut down without releasing).
+	// Loses (returns 0 rows) when another replica still holds a live lease.
+	// The caller distinguishes these via pgx.ErrNoRows.
+	ClaimActiveSession(ctx context.Context, arg ClaimActiveSessionParams) (ActiveSession, error)
 	CountAgentProfilesByOrg(ctx context.Context, orgID string) (int64, error)
 	DeleteConversation(ctx context.Context, arg DeleteConversationParams) error
 	DeleteGithubInstallation(ctx context.Context, installationID int64) error
@@ -21,6 +38,11 @@ type Querier interface {
 	DeleteRepoSecretValue(ctx context.Context, arg DeleteRepoSecretValueParams) error
 	DeleteRepoSetupSpec(ctx context.Context, arg DeleteRepoSetupSpecParams) error
 	DisableAgentProfile(ctx context.Context, arg DisableAgentProfileParams) (int64, error)
+	// Force the lease to expire NOW so a different replica can claim it
+	// without waiting for the natural expiry. Used by graceful shutdown when
+	// we want recovery to pick the turn up immediately on another pod.
+	ExpireActiveSession(ctx context.Context, arg ExpireActiveSessionParams) (int64, error)
+	GetActiveSession(ctx context.Context, arg GetActiveSessionParams) (ActiveSession, error)
 	GetAgentProfileBySlug(ctx context.Context, arg GetAgentProfileBySlugParams) (GetAgentProfileBySlugRow, error)
 	GetConversation(ctx context.Context, arg GetConversationParams) (GetConversationRow, error)
 	GetGithubInstallation(ctx context.Context, installationID int64) (GithubAppInstallation, error)
@@ -35,6 +57,10 @@ type Querier interface {
 	GetOrgConfigBySlackTeamID(ctx context.Context, slackTeamID *string) (OrgConfig, error)
 	GetRepoSecretValue(ctx context.Context, arg GetRepoSecretValueParams) (RepoSecretValue, error)
 	GetRepoSetupSpec(ctx context.Context, arg GetRepoSetupSpecParams) (RepoSetupSpec, error)
+	// Append-only event log. The seq is supplied by the caller after
+	// AllocateNextSeq inside the same transaction; pg_notify on commit wakes
+	// any replica with attached SSE subscribers.
+	InsertConversationEvent(ctx context.Context, arg InsertConversationEventParams) error
 	// Used by DeclareRequiredSecret to register a placeholder row for a
 	// secret the bootstrap manifest asked for. ON CONFLICT DO NOTHING is
 	// the key distinction from UpsertRepoSecretValue: re-declaring a
@@ -44,6 +70,10 @@ type Querier interface {
 	// NULL when the user filled it in between the two statements.
 	InsertRepoSecretValueIfAbsent(ctx context.Context, arg InsertRepoSecretValueIfAbsentParams) error
 	ListAgentProfilesByOrg(ctx context.Context, orgID string) ([]ListAgentProfilesByOrgRow, error)
+	// The recovery worker's scan target. FOR UPDATE SKIP LOCKED so multiple
+	// replicas can scan concurrently without blocking each other; LIMIT keeps
+	// a runaway recovery loop from claiming everything at once.
+	ListExpiredActiveSessions(ctx context.Context, lim int32) ([]ActiveSession, error)
 	ListGithubInstallationsByOrg(ctx context.Context, orgID string) ([]GithubAppInstallation, error)
 	ListGithubReposByInstallation(ctx context.Context, installationID int64) ([]GithubRepo, error)
 	// Every repo accessible to the given Hetchy org, across all of its
@@ -52,6 +82,9 @@ type Querier interface {
 	ListGithubReposByOrg(ctx context.Context, orgID string) ([]GithubRepo, error)
 	ListGithubTeamMembers(ctx context.Context, arg ListGithubTeamMembersParams) ([]GithubTeamMember, error)
 	ListGithubTeamsByInstallation(ctx context.Context, installationID int64) ([]GithubTeam, error)
+	// Used during graceful shutdown to enumerate the leases this replica
+	// still holds, so we can expire each in turn before exiting.
+	ListMyActiveSessions(ctx context.Context, ownerReplica string) ([]ActiveSession, error)
 	// Lists Socket-Mode-installed orgs only. The slackManager iterates
 	// this on startup to open one socket per org.
 	//
@@ -69,15 +102,31 @@ type Querier interface {
 	// where the user can see every target Hetchy has bootstrapped under
 	// one repository.
 	ListRepoSetupSpecs(ctx context.Context, arg ListRepoSetupSpecsParams) ([]RepoSetupSpec, error)
+	// Owner-side terminal release. Either the turn finished cleanly or the
+	// replica is shutting down — drop the row so recovery does not pick it
+	// up as a stale lease.
+	ReleaseActiveSession(ctx context.Context, arg ReleaseActiveSessionParams) error
 	RenameConversation(ctx context.Context, arg RenameConversationParams) (int64, error)
-	// Periodic mid-run snapshot used by chatPersister. Only writes the
-	// handful of fields that change progressively as the agent emits
-	// blocks (history + response_blocks + creator_id). The fields that
-	// track terminal state (sandbox_id, branch, pr_url, github_owner,
-	// github_repo) are deliberately left alone — their canonical values
-	// are written by UpsertConversation at end-of-turn, and overwriting
-	// them here mid-run would race the dispatcher into the wrong state
-	// machine branch on a concurrent reload.
+	// Refresh the lease while the owner is still alive. Returns 0 rows if
+	// another replica has stolen the lease (the owner column will not match),
+	// which the caller treats as "we lost ownership, abort".
+	RenewActiveSession(ctx context.Context, arg RenewActiveSessionParams) (int64, error)
+	// SSE replay path. Returns events strictly after sinceSeq so a client
+	// reattaching after a network blip with Last-Event-Id set to its last
+	// seq sees the gap and only the gap.
+	ReplayConversationEvents(ctx context.Context, arg ReplayConversationEventsParams) ([]ConversationEvent, error)
+	// Periodic mid-run snapshot used by chatPersister. Writes the fields that
+	// change progressively as the agent emits blocks (history +
+	// response_blocks + creator_id) plus sandbox_id, which is stamped on the
+	// row as soon as the sandbox is created so recovery on another replica
+	// can find a Daytona handle to attach to.
+	//
+	// Note: branch, pr_url, github_owner, github_repo, agent_slug, model are
+	// still owned by UpsertConversation — overwriting them here mid-run
+	// would race the dispatcher into the wrong state machine branch on a
+	// concurrent reload (e.g. an empty pr_url is read as "still running").
+	// sandbox_id is the exception: it monotonically transitions from empty
+	// to a real value and never bounces, so stamping it early is safe.
 	//
 	// Pure UPDATE. We rely on the dispatcher's entry-Upsert (in
 	// HandleRequest, before runFreshAgent) to create the row with the
@@ -125,6 +174,19 @@ type Querier interface {
 	// history[1]).
 	SearchConversations(ctx context.Context, arg SearchConversationsParams) ([]SearchConversationsRow, error)
 	SeedDefaultAgentProfilesForOrg(ctx context.Context, orgID string) error
+	// Stamp the Daytona handle on the lease as soon as ExecuteSessionCommand
+	// returns. Without this, a recovery replica has no way to reattach to the
+	// running command after the owner crashes.
+	SetActiveSessionSandbox(ctx context.Context, arg SetActiveSessionSandboxParams) (int64, error)
+	// Updates the lifecycle status column. Used by the lease lifecycle to
+	// mark a conversation 'running' on claim and 'succeeded'/'failed'/
+	// 'cancelled' on release. Drives the sidebar's running indicator.
+	SetConversationStatus(ctx context.Context, arg SetConversationStatusParams) (int64, error)
+	// Recovery worker: after ListExpiredActiveSessions returns a row inside a
+	// transaction, this writes the new owner + extends the lease before
+	// committing. Same transaction as the SELECT so SKIP LOCKED's row lock
+	// guards the handoff.
+	TakeOverActiveSession(ctx context.Context, arg TakeOverActiveSessionParams) (int64, error)
 	UpdateAgentProfileName(ctx context.Context, arg UpdateAgentProfileNameParams) (UpdateAgentProfileNameRow, error)
 	// Lightweight status update used by the runtime apply path: bumps
 	// success/failure counters and the validation_status without

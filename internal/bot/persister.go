@@ -34,18 +34,23 @@ const (
 	appendAsNewTurn
 )
 
-// chatPersister periodically writes the in-flight conversation row to
-// convstore so a mid-run reload (or a bot crash) doesn't lose the
-// blocks accumulated so far. Without this, the only persistence
-// happens at the terminal end-of-turn save — anyone who reloaded the
-// page mid-run got a blank chat until the run finished.
+// chatPersister keeps the conversation row's response_blocks JSONB[]
+// snapshot eventually consistent with the durable event log. Each
+// emitted block is *already* in conversation_events (the source of
+// truth for SSE streaming), so the persister no longer needs to fire
+// frequent ticks just to avoid losing a mid-run crash — that case is
+// now covered by recovery + replay.
 //
-// The persister writes via convstore.SaveProgress, which only touches
-// the immutable-during-run fields (history, response_blocks,
-// creator_id). The terminal Upsert at end-of-turn is unchanged and
-// still owns the canonical sandbox_id / branch / pr_url / GitHub
-// fields. This split avoids the race where a periodic save with an
-// empty sandbox_id would clobber the terminal save's real value.
+// What the persister still buys us: a derived row that the sidebar
+// list (/api/conversations) and chat detail (/api/conversations/{id})
+// can render without scanning the events table. We tick on a long
+// interval (30s) as a safety net and write one last snapshot on Stop
+// so a normal turn end has the freshest data in the row.
+//
+// The persister writes via convstore.SaveProgress, which keeps
+// branch / pr_url / github_owner / github_repo / agent_slug / model
+// untouched (those still come from the terminal Upsert) and stamps
+// sandbox_id monotonically once it's known.
 type chatPersister struct {
 	log      *slog.Logger
 	convs    *convstore.Store
@@ -134,10 +139,11 @@ func (p *chatPersister) snapshot() convstore.Record {
 }
 
 // Run launches the persister loop. Returns when Stop is called or
-// ctx is done. Does NOT flush on exit — the handler's terminal
-// Upsert is responsible for the final canonical state, and our
-// stale shadow could otherwise overwrite it. The caller relies on
-// the previous tick's flush to cover up to the last 2 s of blocks.
+// ctx is done. The loop ticks slowly (default 30s) — durable
+// event streaming is the primary durability path now, the row's
+// JSONB[] snapshot is just a derived list-view cache. The terminal
+// Stop fires one final flush so a normal turn end leaves the
+// freshest data in the row without depending on the next tick.
 func (p *chatPersister) Run(ctx context.Context) {
 	defer close(p.doneCh)
 	t := time.NewTicker(p.tick)
@@ -146,8 +152,6 @@ func (p *chatPersister) Run(ctx context.Context) {
 	var lastDigest [32]byte
 	flush := func() {
 		rec := p.snapshot()
-		// Hash the blocks payload so an idle tick (no new blocks
-		// since last flush) doesn't churn the row.
 		buf, err := json.Marshal(rec.ResponseBlocks)
 		if err != nil {
 			return
@@ -157,8 +161,6 @@ func (p *chatPersister) Run(ctx context.Context) {
 			return
 		}
 		lastDigest = d
-		// Use a fresh background context so a cancelled parent
-		// doesn't sabotage the in-flight save.
 		if err := p.convs.SaveProgress(context.Background(), rec); err != nil {
 			p.log.Warn("periodic persist failed",
 				"org", rec.OrgID, "thread", rec.ThreadID, "error", err)
@@ -168,8 +170,10 @@ func (p *chatPersister) Run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
+			flush()
 			return
 		case <-p.stopCh:
+			flush()
 			return
 		case <-t.C:
 			flush()

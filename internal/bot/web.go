@@ -15,12 +15,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/hetchyhq/hetchy/internal/agents"
 	"github.com/hetchyhq/hetchy/internal/auth"
 	"github.com/hetchyhq/hetchy/internal/blocks"
 	"github.com/hetchyhq/hetchy/internal/convstore"
 	"github.com/hetchyhq/hetchy/internal/db/sqlc"
+	"github.com/hetchyhq/hetchy/internal/events"
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
+	"github.com/hetchyhq/hetchy/internal/sessionlease"
 )
 
 // gravatarURL returns a gravatar.com avatar link for email. Gravatar
@@ -1266,15 +1270,19 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 		sessionID = requestID
 	}
 
-	// Atomically claim the in-flight slot. RegisterIfAbsent collapses
-	// the prior Get-then-Register TOCTOU where two concurrent POSTs
-	// could each observe an empty slot, both call Register, and the
-	// second Close()s the first run mid-stream. On a losing call we
-	// reject with 409 — the reload-to-reattach UX path uses
-	// /chat/stream, not a fresh POST.
-	run, registered := b.live.RegisterIfAbsent(parentCtx, p.OrgID, sessionID)
-	if !registered {
-		http.Error(w, "this chat already has a turn in flight; reload to reattach", http.StatusConflict)
+	// Cluster-level ownership claim via active_sessions. Wins atomically
+	// across all replicas; a peer replica or a stale lease whose owner
+	// crashed mid-turn returns ErrAlreadyClaimed → 409 here, and the
+	// UI's reload-to-reattach path takes over via /chat/stream (which
+	// is stateless across replicas via events.Fanout).
+	lease, err := b.leases.Claim(parentCtx, p.OrgID, sessionID, requestID)
+	if err != nil {
+		if errors.Is(err, sessionlease.ErrAlreadyClaimed) {
+			http.Error(w, "this chat already has a turn in flight; reload to reattach", http.StatusConflict)
+			return
+		}
+		b.log.Error("session lease claim failed", "org", p.OrgID, "thread", sessionID, "error", err)
+		http.Error(w, "could not start chat", http.StatusInternalServerError)
 		return
 	}
 
@@ -1283,17 +1291,35 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
 
-	emitter := newLiveEmitter(run)
+	runCtx, runCancel := context.WithCancel(parentCtx)
+	run := newLiveRun(runCtx, runCancel, lease)
+	b.live.Register(p.OrgID, sessionID, run)
+
+	emitter := newLiveEmitter(b.log, b.events, p.OrgID, sessionID)
+
+	// Subscribe BEFORE spawning the agent goroutine so we don't miss
+	// events that fire before the SSE response loop is ready. Cursor 0
+	// gives us the full replay of this turn's events.
+	sub := b.fanout.Subscribe(p.OrgID, sessionID, 0)
+	defer sub.Close()
 
 	go func() {
 		defer b.live.Done(p.OrgID, sessionID, run)
-		runCtx := contextWithLiveRun(run.Context(), run)
-		b.HandleRequest(runCtx, oc, text, requestID, sessionID, p.UserID, validate, body.AgentSlug, model, emitter)
+		agentCtx := contextWithLiveRun(run.Context(), run)
+		b.HandleRequest(agentCtx, oc, text, requestID, sessionID, p.UserID, validate, body.AgentSlug, model, emitter)
+		// Release the lease so /chat/stream can answer with terminal
+		// state and the recovery worker doesn't try to take this turn
+		// over after it finished cleanly. Status comes from whatever
+		// the emitter wrote last; the conversations row's terminal
+		// state is the canonical place to read it from.
+		releaseCtx, releaseCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer releaseCancel()
+		if err := lease.Release(releaseCtx, terminalStatusFor(emitter)); err != nil {
+			b.log.Warn("lease release failed", "org", p.OrgID, "thread", sessionID, "error", err)
+		}
 	}()
 
-	sub := run.Subscribe()
-	defer run.Unsubscribe(sub)
-	b.streamLiveSubscription(w, flusher, r.Context(), sub)
+	b.streamSSE(w, flusher, r.Context(), p.OrgID, sessionID, sub)
 }
 
 func (b *Bot) chatCancelHandler(w http.ResponseWriter, r *http.Request) {
@@ -1314,9 +1340,26 @@ func (b *Bot) chatCancelHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "session required", http.StatusBadRequest)
 		return
 	}
+	// Cancel can land on any replica. Mark the row cancelled — the
+	// owner's renew loop reads this and propagates to its local ctx —
+	// then opportunistically kill the in-process run if we happen to
+	// own it.
+	if b.store != nil {
+		if _, err := b.store.Queries.CancelActiveSession(r.Context(), sqlc.CancelActiveSessionParams{
+			OrgID:    p.OrgID,
+			ThreadID: sessionID,
+		}); err != nil {
+			b.log.Warn("chat cancel: db flag failed",
+				"org", p.OrgID, "thread", sessionID, "error", err)
+		}
+	}
 	run := b.live.Get(p.OrgID, sessionID)
 	if run == nil {
-		http.Error(w, "no live run", http.StatusNotFound)
+		// Not the owner replica; the DB flag will propagate via the
+		// owner's renew loop.
+		b.log.Info("chat cancel requested (not local owner)",
+			"org", p.OrgID, "thread", sessionID, "user", p.UserID)
+		w.WriteHeader(http.StatusAccepted)
 		return
 	}
 	cancelled := run.Cancel()
@@ -1348,11 +1391,14 @@ func (b *Bot) chatCancelHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // chatStreamHandler is the reattach endpoint. Hit by chat.html on
-// page load: if a live run is in flight for this (org, session) the
-// browser receives the full event history (replayed) followed by
-// the live event stream until the run ends. If no run is active,
-// returns 404 — the client falls back to /api/conversations to
-// render the persisted snapshot.
+// page load: returns the full event history (replayed from
+// conversation_events) followed by the live event stream until the
+// turn ends. Fully stateless across replicas — the request can land on
+// any pod, not just the one running the agent.
+//
+// If no events have ever been written for (org, session) and no lease
+// exists, returns 404 so the client falls back to /api/conversations
+// to render the persisted snapshot.
 func (b *Bot) chatStreamHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -1364,11 +1410,45 @@ func (b *Bot) chatStreamHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "session required", http.StatusBadRequest)
 		return
 	}
-	run := b.live.Get(p.OrgID, sessionID)
-	if run == nil {
-		http.Error(w, "no live run", http.StatusNotFound)
-		return
+
+	// Honour Last-Event-Id (set by the browser's EventSource on reconnect
+	// after a network blip) so a tab that already has events 1..N only
+	// receives events with seq > N.
+	var sinceSeq int64
+	if lastID := strings.TrimSpace(r.Header.Get("Last-Event-Id")); lastID != "" {
+		if n, err := strconv.ParseInt(lastID, 10, 64); err == nil {
+			sinceSeq = n
+		}
 	}
+
+	// Cheap pre-flight: if neither a lease nor any historical event exists,
+	// 404 so the client falls back to /api/conversations.
+	lease, err := b.store.Queries.GetActiveSession(r.Context(), sqlc.GetActiveSessionParams{
+		OrgID:    p.OrgID,
+		ThreadID: sessionID,
+	})
+	leaseExists := err == nil
+	_ = lease
+	if !leaseExists && !errors.Is(err, pgx.ErrNoRows) {
+		b.log.Warn("chat stream: get lease failed",
+			"org", p.OrgID, "thread", sessionID, "error", err)
+	}
+	if !leaseExists {
+		// No live turn. Check if any events were ever recorded so we
+		// can replay a finished turn without forcing the client to use
+		// /api/conversations for the JSON snapshot. If both are empty,
+		// the chat genuinely has no streamed events to show.
+		evs, err := b.events.Replay(r.Context(), p.OrgID, sessionID, sinceSeq)
+		if err != nil {
+			b.log.Warn("chat stream: replay failed",
+				"org", p.OrgID, "thread", sessionID, "error", err)
+		}
+		if len(evs) == 0 {
+			http.Error(w, "no live run", http.StatusNotFound)
+			return
+		}
+	}
+
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
@@ -1379,30 +1459,60 @@ func (b *Bot) chatStreamHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
 
-	sub := run.Subscribe()
-	defer run.Unsubscribe(sub)
-	b.streamLiveSubscription(w, flusher, r.Context(), sub)
+	sub := b.fanout.Subscribe(p.OrgID, sessionID, sinceSeq)
+	defer sub.Close()
+	b.streamSSE(w, flusher, r.Context(), p.OrgID, sessionID, sub)
 }
 
-// streamLiveSubscription drains a liveSubscription to the SSE
-// response. Sends the catch-up history first, then live events
-// until the request context is cancelled or the run closes. Heart-
-// beats every keepaliveLiveInterval to beat proxy idle timeouts.
-func (b *Bot) streamLiveSubscription(w http.ResponseWriter, flusher http.Flusher, ctx context.Context, sub *liveSubscription) {
-	write := func(ev liveEvent) error {
-		if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", ev.Event, ev.Data); err != nil {
+// streamSSE drains an events.Subscription to the SSE response. Replays
+// the durable history first via events.Store.Replay (so a fresh tab
+// catches up regardless of which replica is serving it), then follows
+// the live stream over the LISTEN/NOTIFY fanout until the request
+// context is cancelled. Each frame carries the seq as its SSE id so a
+// reconnect with Last-Event-Id resumes without duplicates.
+//
+// Heartbeats every keepaliveLiveInterval to beat proxy idle timeouts.
+func (b *Bot) streamSSE(w http.ResponseWriter, flusher http.Flusher, ctx context.Context, orgID, threadID string, sub *events.Subscription) {
+	write := func(ev events.Event) error {
+		var env EventEnvelope
+		if err := json.Unmarshal(ev.Payload, &env); err != nil {
+			// Payload is always EventEnvelope JSON written by liveEmitter
+			// — a decode failure means schema drift. Skip the row but
+			// don't fail the whole stream.
+			b.log.Warn("chat stream: malformed event payload",
+				"org", orgID, "thread", threadID, "seq", ev.Seq, "error", err)
+			return nil
+		}
+		if _, err := fmt.Fprintf(w, "id: %d\nevent: %s\ndata: %s\n\n", ev.Seq, env.Event, env.Data); err != nil {
 			return err
 		}
 		flusher.Flush()
 		return nil
 	}
 
-	// Replay history. The subscription was created under the run's
-	// mutex, so the history slice is a stable snapshot — no race
-	// with concurrent Emits.
-	for _, ev := range sub.history {
-		if err := write(ev); err != nil {
-			return
+	// Drain the durable backlog in batches; events.MaxReplayBatch caps
+	// each call, so a long turn gets paginated.
+	cursor := sub.Cursor()
+	for {
+		batch, err := b.events.Replay(ctx, orgID, threadID, cursor)
+		if err != nil {
+			b.log.Warn("chat stream: replay batch failed",
+				"org", orgID, "thread", threadID, "since", cursor, "error", err)
+			break
+		}
+		if len(batch) == 0 {
+			break
+		}
+		for _, ev := range batch {
+			if err := write(ev); err != nil {
+				return
+			}
+			if ev.Seq > cursor {
+				cursor = ev.Seq
+			}
+		}
+		if len(batch) < events.MaxReplayBatch {
+			break
 		}
 	}
 
@@ -1410,13 +1520,19 @@ func (b *Bot) streamLiveSubscription(w http.ResponseWriter, flusher http.Flusher
 	defer keepalive.Stop()
 	for {
 		select {
-		case ev, ok := <-sub.ch:
+		case ev, ok := <-sub.Ch():
 			if !ok {
 				return
+			}
+			if ev.Seq <= cursor {
+				// Replay-then-tail seam: events <= cursor were already
+				// delivered above. Skip the dupe.
+				continue
 			}
 			if err := write(ev); err != nil {
 				return
 			}
+			cursor = ev.Seq
 		case <-keepalive.C:
 			if _, err := fmt.Fprintf(w, ": keepalive\n\n"); err != nil {
 				return
@@ -1426,6 +1542,21 @@ func (b *Bot) streamLiveSubscription(w http.ResponseWriter, flusher http.Flusher
 			return
 		}
 	}
+}
+
+// terminalStatusFor maps the last terminal kind seen by the emitter to
+// the lease's terminal status. The emitter exposes terminated and
+// lastTerminalKind on its slack/web counterparts; for the live emitter
+// we currently don't track terminal state, so a missing signal defaults
+// to "succeeded" (the cancel path takes a different release route via
+// MarkCancelled before this is called).
+func terminalStatusFor(_ *liveEmitter) string {
+	// Future: thread last-block status into the emitter so we can
+	// distinguish failed vs succeeded here without inspecting the
+	// conversations row again. For now the row's pr_url presence is
+	// the authoritative success signal — Release just records "the
+	// turn ended".
+	return "succeeded"
 }
 
 // conversationSummary is the shape returned by GET /api/conversations.
@@ -1768,9 +1899,19 @@ func (b *Bot) conversationDetailHandler(w http.ResponseWriter, r *http.Request) 
 		// re-check; here we close it from the other side because
 		// teaching every terminal Upsert site to re-fetch is more
 		// invasive than a single 409 here.
-		if run := b.live.Get(p.OrgID, threadID); run != nil {
+		// Refuse delete while a lease exists for (org, thread) on any
+		// replica — otherwise the terminal Upsert that fires when the
+		// agent finishes would silently re-INSERT the row we just
+		// dropped.
+		if _, err := b.store.Queries.GetActiveSession(r.Context(), sqlc.GetActiveSessionParams{
+			OrgID:    p.OrgID,
+			ThreadID: threadID,
+		}); err == nil {
 			http.Error(w, "this chat has a turn in flight; wait for it to finish before deleting", http.StatusConflict)
 			return
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			b.log.Warn("delete conversation: get lease failed",
+				"org", p.OrgID, "thread", threadID, "error", err)
 		}
 		if err := b.convs.Delete(r.Context(), p.OrgID, threadID); err != nil {
 			b.log.Error("delete conversation", "error", err, "org", p.OrgID, "thread", threadID)
