@@ -2,6 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Organization settings · Hetchy</title>
 <link rel="icon" type="image/svg+xml" href="{{faviconHref}}">
 <script>
@@ -534,6 +535,71 @@
   html.is-dark table.members .pill { background: #2e2e33; color: #b8b8bc; }
   html.is-dark table.members .pill.pending { background: #3a3220; color: #f0c674; }
   html.is-dark .empty { color: #6e6e72; }
+
+  /* Mobile — stack the settings sidebar above the content as a
+     horizontal nav row, collapse multi-column form grids, and let the
+     integration cards breathe. The 720px breakpoint matches the
+     repo-card-cols rule above; below that the desktop two-pane shell
+     starts cramping. */
+  @media (max-width: 720px) {
+    body { padding: 0; }
+    .modal-page { grid-template-columns: 1fr;
+                  grid-template-rows: auto 1fr;
+                  border-radius: 0;
+                  min-height: 100vh; box-shadow: none; }
+    .sidebar { border-right: 0; border-bottom: 1px solid #e8e8e8;
+               padding: .85rem 1rem .65rem; }
+    .sidebar h2 { font-size: 1rem; }
+    .sidebar .subhead { margin-bottom: .65rem; }
+    .sidebar nav { flex-direction: row; flex-wrap: nowrap;
+                   gap: .25rem; overflow-x: auto;
+                   -webkit-overflow-scrolling: touch;
+                   margin: 0 -1rem; padding: 0 1rem .15rem; }
+    .sidebar nav a { flex-shrink: 0; white-space: nowrap;
+                     padding: .45rem .75rem; }
+    .content { padding: 1.25rem 1rem 1.5rem; }
+    .content .close { top: .85rem; right: 1rem; }
+    .invite-form { grid-template-columns: 1fr; }
+    .invite-form button { width: 100%; }
+    .agent-edit-form { grid-template-columns: 1fr; }
+    .agent-edit-form .primary { width: 100%; }
+    .connection { grid-template-columns: 1fr; }
+    .connection .actions { justify-content: flex-start;
+                           margin-top: .35rem; }
+    .connection .repos { max-width: 100%; white-space: normal;
+                         overflow-wrap: anywhere; }
+    .integration-head { grid-template-columns: 2rem 1fr;
+                        grid-template-areas: "icon title" "status status";
+                        gap: .75rem; padding: .85rem 1rem; }
+    .integration-icon { grid-area: icon; width: 2rem; height: 2rem; }
+    .integration-title { grid-area: title; min-width: 0; }
+    .integration-title p { min-height: 0; }
+    .integration-status { grid-area: status; justify-content: space-between; }
+    .integration-body { padding: 0 1rem 1rem; }
+    .repo-card { padding: .85rem 1rem; }
+    .repo-card-foot { flex-wrap: wrap; gap: .5rem; }
+    table.members { display: block; }
+    table.members thead { display: none; }
+    table.members tbody, table.members tr,
+    table.members td { display: block; width: 100%;
+                       box-sizing: border-box; }
+    table.members tr { padding: .65rem 0;
+                       border-bottom: 1px solid #f3f3f3; }
+    table.members tr:last-child { border-bottom: none; }
+    table.members td { padding: .2rem 0; border-bottom: none; }
+    table.members .role select { width: 100%; }
+    table.members .row-actions { text-align: left; }
+    dialog.api-modal, dialog.app-dialog { width: calc(100vw - 1.5rem);
+                                          max-width: calc(100vw - 1.5rem); }
+  }
+
+  @media (max-width: 480px) {
+    button.primary, .btn-enable, .btn-enabled { width: 100%;
+                                                 justify-content: center; }
+    .cred-tabs { flex-wrap: wrap; }
+  }
+
+  html.is-dark .sidebar { border-bottom-color: #2a2a2d; }
 </style>
 </head>
 <body>
