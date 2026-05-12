@@ -163,6 +163,29 @@ func TestCallbackPassesStateGate(t *testing.T) {
 	}
 }
 
+// TestLoginHandlerErrorPage verifies that LoginHandler returns a 400 HTML
+// error page when ?error=callback_failed is present. This guards both the
+// status code (changed from 422) and the presence of a "Try again" link so
+// users can restart the flow.
+func TestLoginHandlerErrorPage(t *testing.T) {
+	s := newTestService(t, "test-cookie-password-keep-it-long")
+
+	req := httptest.NewRequest(http.MethodGet, "/login?error=callback_failed", nil)
+	rec := httptest.NewRecorder()
+	s.LoginHandler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for error page, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Try again") {
+		t.Fatalf("expected 'Try again' link in error page body, got %q", body)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
+		t.Fatalf("expected text/html content-type, got %q", ct)
+	}
+}
+
 func TestBypassCallbackSkipsStateCheck(t *testing.T) {
 	s := &Service{cfg: Config{Bypass: true}, statePath: "/"}
 
