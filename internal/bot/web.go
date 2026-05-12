@@ -100,6 +100,7 @@ func (b *Bot) runWeb(ctx context.Context) error {
 	mux.Handle("/api/repo-secrets", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.repoSecretsHandler))))
 	mux.Handle("/api/repo-bootstrap", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.repoBootstrapResetHandler))))
 	mux.Handle("/api/conversations", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.conversationsHandler))))
+	mux.Handle("/api/conversations/download/", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.conversationDownloadHandler))))
 	mux.Handle("/api/conversations/", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.conversationDetailHandler))))
 	mux.Handle("/api/agents", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.agentsHandler))))
 	mux.Handle("/api/members", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.membersHandler))))
@@ -1816,6 +1817,77 @@ func (b *Bot) conversationDetailHandler(w http.ResponseWriter, r *http.Request) 
 
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (b *Bot) conversationDownloadHandler(w http.ResponseWriter, r *http.Request) {
+	threadID := strings.TrimPrefix(r.URL.Path, "/api/conversations/download/")
+	if threadID == "" || strings.Contains(threadID, "/") {
+		http.NotFound(w, r)
+		return
+	}
+	if !isSafeThreadID(threadID) {
+		http.NotFound(w, r)
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	p, _ := auth.FromContext(r.Context())
+
+	rec, err := b.convs.Get(r.Context(), p.OrgID, threadID)
+	if err != nil {
+		if errors.Is(err, convstore.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		b.log.Error("get conversation for download", "error", err, "org", p.OrgID, "thread", threadID)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	var createdAt string
+	if !rec.CreatedAt.IsZero() {
+		createdAt = rec.CreatedAt.UTC().Format(time.RFC3339)
+	}
+	agentSlug := rec.AgentSlug
+	agentName := ""
+	store := b.agents
+	if store == nil {
+		store = agents.NewStore(nil)
+	}
+	if agentSlug != "" {
+		if agent, err := store.GetBySlug(r.Context(), p.OrgID, agentSlug); err == nil {
+			agentSlug = agent.Slug
+			agentName = agent.DisplayName
+		}
+	}
+
+	downloadData := conversationDetail{
+		ThreadID:       rec.ThreadID,
+		Title:          conversationTitle(rec),
+		PRURL:          rec.PRURL,
+		Branch:         rec.Branch,
+		GitHubOwner:    rec.GitHubOwner,
+		GitHubRepo:     rec.GitHubRepo,
+		SandboxID:      rec.SandboxID,
+		CreatorID:      rec.CreatorID,
+		AgentSlug:      agentSlug,
+		AgentName:      agentName,
+		Model:          string(normalizeClaudeModel(ClaudeModel(rec.Model))),
+		CreatedAt:      createdAt,
+		History:        rec.History,
+		ResponseBlocks: rec.ResponseBlocks,
+		UpdatedAt:      rec.UpdatedAt.UTC().Format(time.RFC3339),
+	}
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	filename := "conversation-" + threadID + ".json"
+	w.Header().Set("Content-Disposition", "attachment; filename="+strconv.Quote(filename))
+
+	if err := json.NewEncoder(w).Encode(downloadData); err != nil {
+		b.log.Error("encode conversation for download", "error", err, "org", p.OrgID, "thread", threadID)
 	}
 }
 
