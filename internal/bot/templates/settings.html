@@ -685,6 +685,14 @@
       <label for="org_name">Name</label>
       <input id="org_name" type="text" name="org_name" value="{{.OrgName}}" required maxlength="120">
       <p class="hint">Shown to your team in the sidebar and on invites.</p>
+
+      <label for="ui_theme">Theme</label>
+      <select id="ui_theme" name="ui_theme">
+        <option value="light" {{if eq .UITheme "light"}}selected{{end}}>Light</option>
+        <option value="dark" {{if eq .UITheme "dark"}}selected{{end}}>Dark</option>
+        <option value="auto" {{if eq .UITheme "auto"}}selected{{end}}>Auto</option>
+      </select>
+      <p class="hint">Choose how the UI should appear.</p>
     </fieldset>
     <button class="primary" type="submit">Save</button>
   </form>

@@ -48,6 +48,7 @@ type Config struct {
 	SXKey                string
 	DefaultGitHubOwner   string
 	DefaultGitHubRepo    string
+	UITheme              string
 }
 
 // Store wires a *db.Store to a *secrets.Cipher and exposes plaintext
@@ -152,6 +153,7 @@ func (s *Store) Upsert(ctx context.Context, c Config) (Config, error) {
 		SlackTeamID:                   teamID,
 		DefaultGithubOwner:            c.DefaultGitHubOwner,
 		DefaultGithubRepo:             c.DefaultGitHubRepo,
+		UiTheme:                       c.UITheme,
 	})
 	if err != nil {
 		return Config{}, fmt.Errorf("upsert org config: %w", err)
@@ -194,5 +196,6 @@ func (s *Store) decrypt(row sqlc.OrgConfig) (Config, error) {
 		ClaudeCodeOAuthToken: cc,
 		DefaultGitHubOwner:   row.DefaultGithubOwner,
 		DefaultGitHubRepo:    row.DefaultGithubRepo,
+		UITheme:              row.UiTheme,
 	}, nil
 }
