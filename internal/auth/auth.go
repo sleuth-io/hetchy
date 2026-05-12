@@ -43,6 +43,11 @@ const oauthStateCookieName = "hetchy_oauth_state"
 // can easily exceed 10 minutes.
 const oauthStateCookieTTL = time.Hour
 
+// SignedOutParam is the query parameter appended to the post-logout redirect
+// in bypass mode so indexHandler can show the landing page even though bypass
+// middleware always fabricates a Principal.
+const SignedOutParam = "signed_out"
+
 // oauthStateHKDFInfo is the HKDF "info" tag used to derive the HMAC key for
 // the OAuth state cookie from CookiePassword. Using a distinct info string
 // keeps the OAuth-state key cryptographically independent from the WorkOS
@@ -249,7 +254,11 @@ func (s *Service) CallbackHandler(w http.ResponseWriter, r *http.Request) {
 func (s *Service) LogoutHandler(w http.ResponseWriter, r *http.Request) {
 	s.clearSessionCookie(w)
 	if s.cfg.Bypass {
-		http.Redirect(w, r, "/", http.StatusFound)
+		// In bypass mode there's no real session to revoke, but redirect to
+		// the landing page so the logout button produces a visible change.
+		// We use ?signed_out=1 so the index handler can render the landing
+		// page even though bypass middleware always fabricates a Principal.
+		http.Redirect(w, r, "/?"+SignedOutParam+"=1", http.StatusFound)
 		return
 	}
 	cookie, err := r.Cookie(SessionCookieName)
