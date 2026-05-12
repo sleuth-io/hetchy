@@ -81,7 +81,22 @@ fi
 if [[ -z "${DISPLAY:-}" && -z "${HETCHY_RECORD_NO_XVFB:-}" ]]; then
   Xvfb "$display" -screen "$screen" "$xvfb_size" >/tmp/hetchy-validate/xvfb.log 2>&1 &
   xvfb_pid=$!
-  sleep 1
+  if command -v xdpyinfo >/dev/null 2>&1; then
+    xvfb_ready=0
+    for _ in {1..30}; do
+      if xdpyinfo -display "$display" >/dev/null 2>&1; then
+        xvfb_ready=1
+        break
+      fi
+      sleep 0.2
+    done
+    if [[ "$xvfb_ready" -ne 1 ]]; then
+      echo "hetchy-record-screen: Xvfb did not become ready on $display" >&2
+      exit 1
+    fi
+  else
+    sleep 1
+  fi
 fi
 export DISPLAY="$display"
 

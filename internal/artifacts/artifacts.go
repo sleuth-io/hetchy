@@ -185,7 +185,7 @@ func (s *Signer) MintSlots(ctx context.Context, prefix string, req MintRequest) 
 	}
 	spec, _ := specFor(req.Kind, req.ContentType)
 	slots := make([]Slot, 0, req.Count)
-	for i := 0; i < req.Count; i++ {
+	for i := range req.Count {
 		index := req.StartIndex + i
 		key := fmt.Sprintf("%s/%s-%03d%s", prefix, spec.stem, index, spec.ext)
 		// ContentType is baked into the SigV4 signature, so the agent

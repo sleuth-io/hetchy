@@ -24,6 +24,9 @@ func TestRecordScreenHelperUsesX11GrabMP4(t *testing.T) {
 		"ffmpeg_pid=$!",
 		"\"${cmd[@]}\"",
 		"kill -INT \"$ffmpeg_pid\"",
+		"for _ in {1..30}",
+		"xdpyinfo -display \"$display\"",
+		"sleep 0.2",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("helper missing %q\n%s", want, got)

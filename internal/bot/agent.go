@@ -142,11 +142,16 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, o
 	if validate && spec != nil {
 		prefix := fmt.Sprintf("%s/%d/%s", oc.OrgID, repo.RepoID, requestID)
 		s, err := b.addArtifactRunEnv(ctx, prefix, env)
-		if err != nil && !errors.Is(err, errArtifactSlotsDisabled) {
+		switch {
+		case err == nil:
+			slotsManifest = s
+		case errors.Is(err, errArtifactSlotsDisabled):
+			// No S3 upload path configured; BuildValidationPrompt will
+			// tell the agent to mark artifact proof incomplete rather
+			// than write broken local-file links.
+		default:
 			b.log.Warn("artifact slot minting failed",
 				"request_id", requestID, "error", err)
-		} else {
-			slotsManifest = s
 		}
 	}
 
@@ -462,13 +467,21 @@ func addAgentEnv(env map[string]string, cfg Config, agent agents.Profile) {
 // token is freshly minted and passed per-run (not just at sandbox-create
 // time) so a token rotation or a re-installed App takes effect on the
 // very next follow-up rather than only on a freshly-created sandbox.
-func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, userRequest, requestID string, model ClaudeModel, emit blocks.Emitter) (string, error) {
+func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, userRequest, requestID string, validate bool, model ClaudeModel, emit blocks.Emitter) (string, error) {
 	model = normalizeClaudeModel(model)
-	history := strings.Join(rec.History, "\n---\n")
-	prompt := fmt.Sprintf(agentFollowUpPromptTemplate,
-		workdir, rec.Branch, rec.PRURL,
-		history, userRequest,
-	)
+	var spec *bootstrap.Spec
+	if validate && b.bootstrap != nil && repo.InstallID != 0 && repo.RepoID != 0 {
+		s, err := b.bootstrap.GetSpec(ctx, repo.InstallID, repo.RepoID, "")
+		switch {
+		case err == nil:
+			spec = s
+		case errors.Is(err, bootstrap.ErrNotFound):
+			// No saved spec yet; follow-up remains a normal PR update.
+		default:
+			b.log.Warn("get bootstrap spec for follow-up failed",
+				"request_id", requestID, "repo", repo.Slug, "error", err)
+		}
+	}
 
 	env := map[string]string{
 		"SF_WORKDIR":          workdir,
@@ -478,17 +491,25 @@ func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx
 	}
 	addAgentEnv(env, b.cfg, agent)
 
-	// Follow-ups can still need fresh proof links. Issue a new run-
-	// scoped batch under a follow-up prefix so keys don't collide with
-	// the initial request.
-	prefix := fmt.Sprintf("%s/%d/%s/followup-%s", oc.OrgID, repo.RepoID, rec.ThreadID, requestID)
-	s, err := b.addArtifactRunEnv(ctx, prefix, env)
-	if err != nil && !errors.Is(err, errArtifactSlotsDisabled) {
-		b.log.Warn("artifact slot minting failed (followup)",
-			"request_id", requestID, "error", err)
-	} else if len(s) > 0 {
-		prompt += "\n" + artifacts.UploadInstructions(len(s))
+	var slotsManifest []artifacts.Slot
+	if validate && spec != nil {
+		// Follow-ups can still need fresh proof links. Issue a new
+		// run-scoped batch under a follow-up prefix so keys don't
+		// collide with the initial request.
+		prefix := fmt.Sprintf("%s/%d/%s/followup-%s", oc.OrgID, repo.RepoID, rec.ThreadID, requestID)
+		s, err := b.addArtifactRunEnv(ctx, prefix, env)
+		switch {
+		case err == nil:
+			slotsManifest = s
+		case errors.Is(err, errArtifactSlotsDisabled):
+			// No S3 upload path configured; validation prompt will
+			// require an explicit incomplete-artifact note.
+		default:
+			b.log.Warn("artifact slot minting failed (followup)",
+				"request_id", requestID, "error", err)
+		}
 	}
+	prompt := buildFollowUpPrompt(repo.Slug, rec, userRequest, spec, len(slotsManifest))
 	env["SF_PROMPT_B64"] = base64.StdEncoding.EncodeToString([]byte(prompt))
 	authKey, authVal := claudeAuthEnv(oc)
 	b.log.Info("claude auth", "method", authKey, "token", maskToken(authVal), "request_id", requestID)
@@ -504,19 +525,32 @@ func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx
 	// re-run setup → start → poll health, mirroring agent.sh. Errors
 	// here are best-effort: a missing spec just means the follow-up
 	// runs without a live app, same as before.
-	if b.bootstrap != nil && repo.InstallID != 0 && repo.RepoID != 0 {
-		spec, err := b.bootstrap.GetSpec(ctx, repo.InstallID, repo.RepoID, "")
-		if err == nil && spec.SetupScript != "" && spec.StartScript != "" && spec.HealthCheck != "" {
-			env["SF_SPEC_SETUP_B64"] = base64.StdEncoding.EncodeToString([]byte(spec.SetupScript))
-			env["SF_SPEC_START_B64"] = base64.StdEncoding.EncodeToString([]byte(spec.StartScript))
-			env["SF_SPEC_HEALTH_B64"] = base64.StdEncoding.EncodeToString([]byte(spec.HealthCheck))
-		}
+	if spec != nil && spec.SetupScript != "" && spec.StartScript != "" && spec.HealthCheck != "" {
+		env["SF_SPEC_SETUP_B64"] = base64.StdEncoding.EncodeToString([]byte(spec.SetupScript))
+		env["SF_SPEC_START_B64"] = base64.StdEncoding.EncodeToString([]byte(spec.StartScript))
+		env["SF_SPEC_HEALTH_B64"] = base64.StdEncoding.EncodeToString([]byte(spec.HealthCheck))
 	}
 	prURL, err := b.runScript(ctx, sb, "followup-"+requestID, "followup", followupScript, env, emit)
 	if err != nil {
 		return "", err
 	}
 	return b.validateReportedPR(ctx, repo, rec.Branch, "", prURL)
+}
+
+func buildFollowUpPrompt(ownerRepo string, rec convstore.Record, userRequest string, spec *bootstrap.Spec, artifactSlotCount int) string {
+	history := strings.Join(rec.History, "\n---\n")
+	prompt := fmt.Sprintf(agentFollowUpPromptTemplate,
+		workdir, rec.Branch, rec.PRURL,
+		history, userRequest,
+	)
+	if spec == nil {
+		return prompt
+	}
+	return bootstrap.MergeIntoAgentPrompt(prompt, spec, bootstrap.ValidationArgs{
+		OwnerRepo:         ownerRepo,
+		Branch:            rec.Branch,
+		ArtifactSlotCount: artifactSlotCount,
+	})
 }
 
 // runScript writes scriptBody to /tmp/sf-<label>.sh inside the sandbox

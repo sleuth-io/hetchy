@@ -61,19 +61,11 @@ func newArtifactSlotBroker(signer artifactMinter) *artifactSlotBroker {
 	}
 }
 
-func (b *Bot) ensureArtifactSlotBroker() *artifactSlotBroker {
-	if b.artifactSlots != nil {
-		return b.artifactSlots
-	}
-	b.artifactSlots = newArtifactSlotBroker(b.artifacts)
-	return b.artifactSlots
-}
-
 func (b *Bot) startArtifactRun(ctx context.Context, prefix string) ([]artifacts.Slot, string, error) {
 	if b.artifacts == nil {
 		return nil, "", errArtifactSlotsDisabled
 	}
-	return b.ensureArtifactSlotBroker().Start(ctx, prefix, defaultArtifactSlotRequests)
+	return b.artifactSlots.Start(ctx, prefix, defaultArtifactSlotRequests)
 }
 
 func (b *Bot) addArtifactRunEnv(ctx context.Context, prefix string, env map[string]string) ([]artifacts.Slot, error) {
@@ -209,7 +201,7 @@ func (b *Bot) artifactSlotsHandler(w http.ResponseWriter, r *http.Request) {
 		ContentType: body.ContentType,
 		Count:       body.Count,
 	}
-	slots, err := b.ensureArtifactSlotBroker().Mint(r.Context(), token, req)
+	slots, err := b.artifactSlots.Mint(r.Context(), token, req)
 	switch {
 	case err == nil:
 		writeJSON(w, slots)

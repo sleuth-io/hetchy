@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/hetchyhq/hetchy/internal/artifacts"
 )
@@ -33,7 +35,7 @@ func (f *fakeArtifactMinter) MintSlots(_ context.Context, prefix string, req art
 		return nil, f.fail
 	}
 	slots := make([]artifacts.Slot, 0, req.Count)
-	for i := 0; i < req.Count; i++ {
+	for i := range req.Count {
 		index := req.StartIndex + i
 		slots = append(slots, artifacts.Slot{
 			Kind:        req.Kind,
@@ -43,6 +45,37 @@ func (f *fakeArtifactMinter) MintSlots(_ context.Context, prefix string, req art
 		})
 	}
 	return slots, nil
+}
+
+func TestArtifactSlotBrokerRejectsAndPrunesExpiredToken(t *testing.T) {
+	fake := &fakeArtifactMinter{}
+	br := newArtifactSlotBroker(fake)
+	now := time.Unix(1_700_000_000, 0)
+	br.now = func() time.Time { return now }
+
+	_, token, err := br.Start(context.Background(), "org_abc/42/req_1", defaultArtifactSlotRequests)
+	if err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+	if token == "" {
+		t.Fatal("token is empty")
+	}
+	if got := len(br.runs); got != 1 {
+		t.Fatalf("runs before expiry = %d, want 1", got)
+	}
+
+	now = now.Add(artifacts.PutExpiry + time.Second)
+	_, err = br.Mint(context.Background(), token, artifacts.MintRequest{
+		Kind:        artifacts.KindScreenshot,
+		ContentType: artifacts.ContentTypePNG,
+		Count:       1,
+	})
+	if !errors.Is(err, errArtifactTokenInvalid) {
+		t.Fatalf("Mint expired token error = %v, want %v", err, errArtifactTokenInvalid)
+	}
+	if got := len(br.runs); got != 0 {
+		t.Fatalf("runs after expiry prune = %d, want 0", got)
+	}
 }
 
 func TestAddArtifactRunEnvInitialAndFollowup(t *testing.T) {

@@ -333,8 +333,9 @@ func (b *Bot) Run(ctx context.Context) error {
 // useful for trivial edits where the bootstrap's overhead outweighs
 // the validation benefit.
 //
-// Slack always passes true; regular follow-ups ignore the flag because
-// they reuse the already-cloned sandbox and don't re-bootstrap.
+// Slack always passes true. Follow-ups also receive the flag; when true
+// and a saved spec exists, they rerun the validation handoff without
+// re-bootstrap.
 func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, requestID, threadID, userID string, validate bool, requestedAgent *string, model ClaudeModel, out blocks.Emitter) {
 	model = normalizeClaudeModel(model)
 	b.log.Info("request received",
@@ -371,7 +372,7 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		if !ok {
 			return
 		}
-		b.handleFollowUp(ctx, oc, rec, agent, text, requestID, model, recorder, emit)
+		b.handleFollowUp(ctx, oc, rec, agent, text, requestID, validate, model, recorder, emit)
 		return
 	case err == nil && rec.SandboxID != "":
 		// Sandbox was created but the agent failed before producing a
@@ -732,7 +733,7 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 	}
 }
 
-func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, text, requestID string, model ClaudeModel, recorder *blocks.Recorder, emit blocks.Emitter) {
+func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, text, requestID string, validate bool, model ClaudeModel, recorder *blocks.Recorder, emit blocks.Emitter) {
 	model = modelForConversation(rec, model)
 	b.log.Info("follow-up received", "org", oc.OrgID, "sandbox", rec.SandboxID, "branch", rec.Branch, "pr", rec.PRURL, "agent", agent.Slug, "model", model)
 	rec.AgentSlug = agent.Slug
@@ -824,7 +825,7 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 		persister.Stop()
 	}()
 
-	prURL, err := b.runFollowUp(ctx, sb, repo, oc, rec, agent, text, requestID, model, emit)
+	prURL, err := b.runFollowUp(ctx, sb, repo, oc, rec, agent, text, requestID, validate, model, emit)
 	if err != nil {
 		if liveRunCancelled(ctx) {
 			b.log.Info("follow-up stopped", "sandbox", sb.ID, "request_id", requestID, "error", err)

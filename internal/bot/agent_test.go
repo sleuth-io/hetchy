@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/hetchyhq/hetchy/internal/bootstrap"
+	"github.com/hetchyhq/hetchy/internal/convstore"
 )
 
 func TestAgentPromptTemplate_IncludesAllInputs(t *testing.T) {
@@ -53,6 +56,47 @@ func TestAgentFollowUpPromptTemplate_IncludesAllInputs(t *testing.T) {
 		if !strings.Contains(prompt, w) {
 			t.Errorf("follow-up prompt missing %q\n%s", w, prompt)
 		}
+	}
+}
+
+func TestBuildFollowUpPromptAddsValidationWhenSpecPresent(t *testing.T) {
+	rec := convstore.Record{
+		Branch:  "feature/sf-1",
+		PRURL:   "https://github.com/owner/repo/pull/42",
+		History: []string{"first turn"},
+	}
+	spec := &bootstrap.Spec{
+		Services: []bootstrap.Service{
+			{Name: "web", URL: "http://localhost:3000", Kind: "ui"},
+		},
+	}
+	prompt := buildFollowUpPrompt("owner/repo", rec, "please adjust the flow", spec, 3)
+
+	wants := []string{
+		"POST-CHANGE VALIDATION",
+		"http://localhost:3000",
+		"HETCHY_ARTIFACT_SLOTS",
+		"summary.md",
+		"BOOTSTRAP SPEC IMPROVEMENT",
+		"feature/sf-1",
+	}
+	for _, w := range wants {
+		if !strings.Contains(prompt, w) {
+			t.Errorf("validated follow-up prompt missing %q\n%s", w, prompt)
+		}
+	}
+}
+
+func TestBuildFollowUpPromptWithoutSpecSkipsValidation(t *testing.T) {
+	rec := convstore.Record{
+		Branch:  "feature/sf-1",
+		PRURL:   "https://github.com/owner/repo/pull/42",
+		History: []string{"first turn"},
+	}
+	prompt := buildFollowUpPrompt("owner/repo", rec, "please adjust the flow", nil, 3)
+
+	if strings.Contains(prompt, "POST-CHANGE VALIDATION") || strings.Contains(prompt, "HETCHY_ARTIFACT_SLOTS") {
+		t.Fatalf("follow-up prompt without spec should not include validation/upload instructions\n%s", prompt)
 	}
 }
 
