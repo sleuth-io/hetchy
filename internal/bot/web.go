@@ -292,6 +292,7 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 			"SXKeyPreview":                previewSecret(current.SXKey),
 			"GitHubAppEnabled":            b.app != nil,
 			"DefaultRepoSlug":             defaultRepoSlug,
+			"ThemePreference":             current.ThemePreference,
 		}
 		if err := b.populateSettingsTabData(r.Context(), p.OrgID, tab, data); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -321,9 +322,8 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 		tab = "general"
 	}
 
-	// General tab posts only the org_name field. Pushing it through the
-	// integrations save below would null out default_repo and the API-key
-	// previews, so handle the rename inline and bounce.
+	// General tab posts org_name and theme_preference. Handle separately
+	// to avoid affecting other settings like default_repo.
 	if tab == "general" {
 		name := strings.TrimSpace(r.FormValue("org_name"))
 		if name == "" {
@@ -336,6 +336,23 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		b.log.Info("org renamed", "org", p.OrgID, "actor", p.UserID)
+
+		theme := strings.TrimSpace(r.FormValue("theme_preference"))
+		if theme == "" {
+			theme = "system"
+		}
+		current, err := b.orgs.Get(r.Context(), p.OrgID)
+		if err != nil && !errors.Is(err, orgcfg.ErrNotFound) {
+			http.Error(w, "load config: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		current.OrgID = p.OrgID
+		current.ThemePreference = theme
+		if _, err := b.orgs.Upsert(r.Context(), current); err != nil {
+			http.Error(w, "save theme: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		b.log.Info("org theme updated", "org", p.OrgID, "theme", theme, "actor", p.UserID)
 		http.Redirect(w, r, "/settings/org?tab=general&saved=1", http.StatusFound)
 		return
 	}

@@ -10,7 +10,8 @@ SELECT
     slack_team_id,
     default_github_owner,
     default_github_repo,
-    claude_code_oauth_token_encrypted
+    claude_code_oauth_token_encrypted,
+    theme_preference
 FROM org_configs
 WHERE org_id = $1;
 
@@ -26,7 +27,8 @@ SELECT
     slack_team_id,
     default_github_owner,
     default_github_repo,
-    claude_code_oauth_token_encrypted
+    claude_code_oauth_token_encrypted,
+    theme_preference
 FROM org_configs
 WHERE slack_team_id = $1;
 
@@ -51,7 +53,8 @@ SELECT
     slack_team_id,
     default_github_owner,
     default_github_repo,
-    claude_code_oauth_token_encrypted
+    claude_code_oauth_token_encrypted,
+    theme_preference
 FROM org_configs
 WHERE slack_bot_token_encrypted IS NOT NULL
   AND slack_socket_token_encrypted IS NOT NULL;
@@ -66,9 +69,10 @@ INSERT INTO org_configs (
     slack_team_id,
     default_github_owner,
     default_github_repo,
-    claude_code_oauth_token_encrypted
+    claude_code_oauth_token_encrypted,
+    theme_preference
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
 )
 ON CONFLICT (org_id) DO UPDATE SET
     slack_bot_token_encrypted         = EXCLUDED.slack_bot_token_encrypted,
@@ -79,6 +83,7 @@ ON CONFLICT (org_id) DO UPDATE SET
     default_github_owner              = EXCLUDED.default_github_owner,
     default_github_repo               = EXCLUDED.default_github_repo,
     claude_code_oauth_token_encrypted = EXCLUDED.claude_code_oauth_token_encrypted,
+    theme_preference                  = EXCLUDED.theme_preference,
     updated_at                        = NOW()
 RETURNING
     org_id,
@@ -91,4 +96,5 @@ RETURNING
     slack_team_id,
     default_github_owner,
     default_github_repo,
-    claude_code_oauth_token_encrypted;
+    claude_code_oauth_token_encrypted,
+    theme_preference;

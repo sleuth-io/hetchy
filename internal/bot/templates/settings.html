@@ -686,6 +686,16 @@
       <input id="org_name" type="text" name="org_name" value="{{.OrgName}}" required maxlength="120">
       <p class="hint">Shown to your team in the sidebar and on invites.</p>
     </fieldset>
+    <fieldset>
+      <legend>Appearance</legend>
+      <label for="theme_preference">Theme</label>
+      <select id="theme_preference" name="theme_preference">
+        <option value="system"{{if eq .ThemePreference "system"}} selected{{end}}>System</option>
+        <option value="light"{{if eq .ThemePreference "light"}} selected{{end}}>Light</option>
+        <option value="dark"{{if eq .ThemePreference "dark"}} selected{{end}}>Dark</option>
+      </select>
+      <p class="hint">Choose how the UI theme is displayed. System uses your device settings.</p>
+    </fieldset>
     <button class="primary" type="submit">Save</button>
   </form>
   {{else}}
@@ -694,6 +704,16 @@
     <label for="org_name">Name</label>
     <input id="org_name" type="text" value="{{.OrgName}}" readonly>
     <p class="hint">Only administrators can change organization settings.</p>
+  </fieldset>
+  <fieldset>
+    <legend>Appearance</legend>
+    <label for="theme_preference">Theme</label>
+    <select id="theme_preference" name="theme_preference" disabled>
+      <option value="system"{{if eq .ThemePreference "system"}} selected{{end}}>System</option>
+      <option value="light"{{if eq .ThemePreference "light"}} selected{{end}}>Light</option>
+      <option value="dark"{{if eq .ThemePreference "dark"}} selected{{end}}>Dark</option>
+    </select>
+    <p class="hint">Only administrators can change appearance settings.</p>
   </fieldset>
   {{end}}
 {{end}}
