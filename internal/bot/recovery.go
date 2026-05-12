@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/hetchyhq/hetchy/internal/db/sqlc"
@@ -123,6 +124,13 @@ func (r *recoveryWorker) resume(parentCtx context.Context, row sqlc.ActiveSessio
 	// Build a Lease handle and start the renew loop ourselves so the
 	// emitter can renew alongside heartbeats.
 	lease := r.bot.leases.ClaimExpired(row.OrgID, row.ThreadID, row.RequestID, row.Cancelled)
+	// Keep conversations.status consistent with the in-flight state.
+	// Claim() does this for fresh turns; ClaimExpired doesn't, so we
+	// stamp here. Best-effort: a transient DB error just leaves the
+	// status column stale and the sidebar's running indicator may lag.
+	if err := r.bot.leases.MarkRunning(parentCtx, row.OrgID, row.ThreadID); err != nil {
+		r.log.Warn("recovery: mark running failed", append(logCtx, "error", err)...)
+	}
 
 	// Local run scaffolding so /chat/cancel on this replica still
 	// reaches the right ctx. We pick up the recovery context as parent
@@ -178,6 +186,16 @@ loop:
 			}
 			break loop
 		case <-statusTicker.C:
+			// If our renew loop saw the lease stolen by another
+			// replica (e.g. a network partition let a peer claim
+			// the same expired row), stop emitting under a lease
+			// we no longer hold so we don't race the new owner's
+			// writes.
+			if lease.Lost() {
+				r.log.Warn("recovery: lease lost mid-resume, aborting", logCtx...)
+				terminalStatus = ""
+				break loop
+			}
 			status, err := sandbox.Process.GetSessionCommand(runCtx, row.SessionToken, row.CommandID)
 			if err != nil {
 				r.log.Warn("recovery: get command status failed", append(logCtx, "error", err)...)
@@ -196,6 +214,13 @@ loop:
 	}
 
 	prURL := router.Finish()
+	if lease.Lost() {
+		// New owner is responsible for emitting + releasing. Don't
+		// step on its toes — stop the renew loop locally and exit.
+		r.log.Info("recovery: yielding to new owner", logCtx...)
+		_ = lease.Release(parentCtx, "")
+		return
+	}
 	if prURL != "" {
 		emitter.Result("Done!", prURL+"\n\nReply here to make further changes to this PR.")
 	} else if terminated {
@@ -240,21 +265,21 @@ func (r *recoveryWorker) consumeStream(ctx context.Context, router *agentLineRou
 // splitLines splits a chunk on '\n' and drops the trailing empty
 // element from a trailing newline. We can't reuse exec.go's tail
 // buffer logic because we own the channels directly here.
+//
+// Note: this drops the partial-line-stitching that exec.go does
+// between chunks (a Daytona chunk can end mid-line and exec.go
+// buffers the tail). For recovery this is acceptable because the
+// agentLineRouter only cares about whole lines that look like Claude
+// NDJSON or [hetchy] sentinels; mid-line splits are recombined when
+// the line completes in the next chunk via the line router's parse
+// failures being non-fatal. If we observe split-line artefacts in
+// recovered transcripts in practice, port the tail-buffer pattern.
 func splitLines(chunk string) []string {
-	out := []string{}
-	cur := ""
-	for _, c := range chunk {
-		if c == '\n' {
-			out = append(out, cur)
-			cur = ""
-			continue
-		}
-		cur += string(c)
+	parts := strings.Split(chunk, "\n")
+	if len(parts) > 0 && parts[len(parts)-1] == "" {
+		parts = parts[:len(parts)-1]
 	}
-	if cur != "" {
-		out = append(out, cur)
-	}
-	return out
+	return parts
 }
 
 func numericExit(v any) (int64, bool) {

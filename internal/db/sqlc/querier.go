@@ -177,6 +177,11 @@ type Querier interface {
 	// Stamp the Daytona handle on the lease as soon as ExecuteSessionCommand
 	// returns. Without this, a recovery replica has no way to reattach to the
 	// running command after the owner crashes.
+	//
+	// The owner_replica guard prevents a delayed write from a crashed owner
+	// (or one that briefly partitioned away) from clobbering the handle a
+	// recovery replica has already stamped. Without the guard, recovery
+	// could end up attached to the wrong Daytona command.
 	SetActiveSessionSandbox(ctx context.Context, arg SetActiveSessionSandboxParams) (int64, error)
 	// Updates the lifecycle status column. Used by the lease lifecycle to
 	// mark a conversation 'running' on claim and 'succeeded'/'failed'/

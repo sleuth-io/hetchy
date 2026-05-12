@@ -227,43 +227,49 @@ func (b *Bot) shLines(ctx context.Context, sandboxID string, proc sandboxProcess
 		// uses this transcript to seed the next iteration's prompt.
 		return buf.String(), fmt.Errorf("step %q status: %w", step, err)
 	}
-	if exitCode, ok := status["exitCode"]; ok {
-		// status is map[string]any populated by the Daytona SDK from
-		// a JSON HTTP response, so numbers arrive as float64 — a
-		// blind exitCode.(int32) assertion fails for every real
-		// value, silently turning every non-zero exit into 0. Cover
-		// every plausible numeric type so a sandbox script that
-		// fails actually surfaces an error.
-		var code int64
-		switch v := exitCode.(type) {
-		case float64:
-			code = int64(v)
-		case float32:
-			code = int64(v)
-		case int:
-			code = int64(v)
-		case int32:
-			code = int64(v)
-		case int64:
-			code = v
+	if code, ok := parseSandboxExitCode(status); ok && code != 0 {
+		full := buf.String()
+		out := full
+		if len(out) > 2000 {
+			out = "...(truncated)...\n" + out[len(out)-2000:]
 		}
-		if code != 0 {
-			full := buf.String()
-			out := full
-			if len(out) > 2000 {
-				out = "...(truncated)...\n" + out[len(out)-2000:]
-			}
-			b.log.Error("sandbox step failed", "sandbox", sandboxID, "step", step, "exit", code)
-			// Return the full captured output (not the trimmed error
-			// blurb) so callers like botRunner can persist a useful
-			// failure trace into bootstrap_log. The error message
-			// retains its 2KB tail for log readability.
-			return full, fmt.Errorf("step %q exit %d:\n%s", step, code, out)
-		}
+		b.log.Error("sandbox step failed", "sandbox", sandboxID, "step", step, "exit", code)
+		// Return the full captured output (not the trimmed error
+		// blurb) so callers like botRunner can persist a useful
+		// failure trace into bootstrap_log. The error message
+		// retains its 2KB tail for log readability.
+		return full, fmt.Errorf("step %q exit %d:\n%s", step, code, out)
 	}
 
 	b.log.Info("sandbox step ok", "sandbox", sandboxID, "step", step, "output_bytes", buf.Len())
 	return buf.String(), nil
+}
+
+// parseSandboxExitCode unpacks the exitCode field of the Daytona
+// GetSessionCommand response. status is map[string]any populated by
+// the SDK from a JSON HTTP response, so numbers arrive as float64 — a
+// blind exitCode.(int32) assertion fails for every real value,
+// silently turning every non-zero exit into 0. Cover every plausible
+// numeric type so a sandbox script that fails actually surfaces an
+// error.
+func parseSandboxExitCode(status map[string]any) (int64, bool) {
+	exitCode, ok := status["exitCode"]
+	if !ok {
+		return 0, false
+	}
+	switch v := exitCode.(type) {
+	case float64:
+		return int64(v), true
+	case float32:
+		return int64(v), true
+	case int:
+		return int64(v), true
+	case int32:
+		return int64(v), true
+	case int64:
+		return v, true
+	}
+	return 0, false
 }
 
 func effectiveSuppressInputEcho(explicit bool, cmd string) bool {

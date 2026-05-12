@@ -64,6 +64,13 @@ type liveEmitter struct {
 	mu    sync.Mutex
 	kinds map[string]blocks.Kind
 
+	// lastTerminalErrored records whether the most recent terminal-shape
+	// emission (Fail/Error vs Done/Result) was an error. Read by
+	// terminalStatusFor when the agent goroutine releases the lease at
+	// end-of-turn so conversations.status reflects the actual outcome.
+	// Atomic so the release path can read without taking mu.
+	lastTerminalErrored atomic.Bool
+
 	// testCapture, when non-nil, receives every envelope the emitter
 	// would have appended to events.Store. Set by unit tests to assert
 	// on the wire payload without standing up Postgres. Production
@@ -127,6 +134,7 @@ func (e *liveEmitter) DoneAt(id, summary string, endedAt time.Time) {
 	e.mu.Lock()
 	delete(e.kinds, id)
 	e.mu.Unlock()
+	e.lastTerminalErrored.Store(false)
 	e.emit("block_done", sseEvent{
 		ID:      id,
 		Status:  blocks.StatusDone,
@@ -143,6 +151,7 @@ func (e *liveEmitter) FailAt(id, summary string, endedAt time.Time) {
 	e.mu.Lock()
 	delete(e.kinds, id)
 	e.mu.Unlock()
+	e.lastTerminalErrored.Store(true)
 	e.emit("block_done", sseEvent{
 		ID:      id,
 		Status:  blocks.StatusError,

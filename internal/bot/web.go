@@ -1309,12 +1309,17 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 		b.HandleRequest(agentCtx, oc, text, requestID, sessionID, p.UserID, validate, body.AgentSlug, model, emitter)
 		// Release the lease so /chat/stream can answer with terminal
 		// state and the recovery worker doesn't try to take this turn
-		// over after it finished cleanly. Status comes from whatever
-		// the emitter wrote last; the conversations row's terminal
-		// state is the canonical place to read it from.
+		// over after it finished cleanly. Prefer the cancelled signal
+		// over the emitter's last-terminal-kind so a user-initiated
+		// stop is recorded as such (which the renew loop may have
+		// converted into a Fail block, otherwise mis-labelled below).
 		releaseCtx, releaseCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer releaseCancel()
-		if err := lease.Release(releaseCtx, terminalStatusFor(emitter)); err != nil {
+		status := terminalStatusFor(emitter)
+		if run.Cancelled() {
+			status = "cancelled"
+		}
+		if err := lease.Release(releaseCtx, status); err != nil {
 			b.log.Warn("lease release failed", "org", p.OrgID, "thread", sessionID, "error", err)
 		}
 	}()
@@ -1544,18 +1549,16 @@ func (b *Bot) streamSSE(w http.ResponseWriter, flusher http.Flusher, ctx context
 	}
 }
 
-// terminalStatusFor maps the last terminal kind seen by the emitter to
-// the lease's terminal status. The emitter exposes terminated and
-// lastTerminalKind on its slack/web counterparts; for the live emitter
-// we currently don't track terminal state, so a missing signal defaults
-// to "succeeded" (the cancel path takes a different release route via
-// MarkCancelled before this is called).
-func terminalStatusFor(_ *liveEmitter) string {
-	// Future: thread last-block status into the emitter so we can
-	// distinguish failed vs succeeded here without inspecting the
-	// conversations row again. For now the row's pr_url presence is
-	// the authoritative success signal — Release just records "the
-	// turn ended".
+// terminalStatusFor maps the most recent Done/Fail/Result/Error
+// emission to the lease's terminal status. The cancelled path takes a
+// separate release route before this is reached, so this only has to
+// distinguish success from failure for the conversations.status
+// column. Used by the sidebar's running indicator and future
+// analytics.
+func terminalStatusFor(e *liveEmitter) string {
+	if e != nil && e.lastTerminalErrored.Load() {
+		return "failed"
+	}
 	return "succeeded"
 }
 

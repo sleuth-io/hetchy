@@ -316,8 +316,9 @@ UPDATE active_sessions
    SET sandbox_id    = $3,
        session_token = $4,
        command_id    = $5
- WHERE org_id = $1
-   AND thread_id = $2
+ WHERE org_id        = $1
+   AND thread_id     = $2
+   AND owner_replica = $6
 `
 
 type SetActiveSessionSandboxParams struct {
@@ -326,11 +327,17 @@ type SetActiveSessionSandboxParams struct {
 	SandboxID    string `json:"sandbox_id"`
 	SessionToken string `json:"session_token"`
 	CommandID    string `json:"command_id"`
+	OwnerReplica string `json:"owner_replica"`
 }
 
 // Stamp the Daytona handle on the lease as soon as ExecuteSessionCommand
 // returns. Without this, a recovery replica has no way to reattach to the
 // running command after the owner crashes.
+//
+// The owner_replica guard prevents a delayed write from a crashed owner
+// (or one that briefly partitioned away) from clobbering the handle a
+// recovery replica has already stamped. Without the guard, recovery
+// could end up attached to the wrong Daytona command.
 func (q *Queries) SetActiveSessionSandbox(ctx context.Context, arg SetActiveSessionSandboxParams) (int64, error) {
 	result, err := q.db.Exec(ctx, setActiveSessionSandbox,
 		arg.OrgID,
@@ -338,6 +345,7 @@ func (q *Queries) SetActiveSessionSandbox(ctx context.Context, arg SetActiveSess
 		arg.SandboxID,
 		arg.SessionToken,
 		arg.CommandID,
+		arg.OwnerReplica,
 	)
 	if err != nil {
 		return 0, err

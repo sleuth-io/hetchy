@@ -164,4 +164,3 @@ func TestLiveEmitter_HeartbeatUsesSeparateEvent(t *testing.T) {
 		t.Fatalf("unexpected heartbeat payload: %+v", payload)
 	}
 }
-

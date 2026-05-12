@@ -35,12 +35,18 @@ UPDATE active_sessions
 -- Stamp the Daytona handle on the lease as soon as ExecuteSessionCommand
 -- returns. Without this, a recovery replica has no way to reattach to the
 -- running command after the owner crashes.
+--
+-- The owner_replica guard prevents a delayed write from a crashed owner
+-- (or one that briefly partitioned away) from clobbering the handle a
+-- recovery replica has already stamped. Without the guard, recovery
+-- could end up attached to the wrong Daytona command.
 UPDATE active_sessions
    SET sandbox_id    = $3,
        session_token = $4,
        command_id    = $5
- WHERE org_id = $1
-   AND thread_id = $2;
+ WHERE org_id        = $1
+   AND thread_id     = $2
+   AND owner_replica = sqlc.arg(owner_replica);
 
 -- name: AllocateNextSeq :one
 -- Returns the next seq for events.Append. Bumping last_seq inside the

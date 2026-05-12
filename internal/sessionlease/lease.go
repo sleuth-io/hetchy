@@ -98,11 +98,11 @@ func (m *Manager) Claim(ctx context.Context, orgID, threadID, requestID string) 
 		return nil, errors.New("sessionlease: manager not configured")
 	}
 	row, err := m.db.Queries.ClaimActiveSession(ctx, sqlc.ClaimActiveSessionParams{
-		OrgID:         orgID,
-		ThreadID:      threadID,
-		RequestID:     requestID,
-		OwnerReplica:  m.replica,
-		LeaseSeconds:  LeaseSeconds,
+		OrgID:        orgID,
+		ThreadID:     threadID,
+		RequestID:    requestID,
+		OwnerReplica: m.replica,
+		LeaseSeconds: LeaseSeconds,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -174,6 +174,7 @@ func (l *Lease) SetSandbox(ctx context.Context, sandboxID, sessionToken, command
 		SandboxID:    sandboxID,
 		SessionToken: sessionToken,
 		CommandID:    commandID,
+		OwnerReplica: l.mgr.replica,
 	}); err != nil {
 		return fmt.Errorf("set active session sandbox: %w", err)
 	}
@@ -254,10 +255,7 @@ func (l *Lease) Expire(ctx context.Context) error {
 // cancelled flag. Exits when stop() is closed.
 func (l *Lease) renewLoop() {
 	defer close(l.doneCh)
-	interval := time.Duration(LeaseSeconds) * time.Second / 3
-	if interval < time.Second {
-		interval = time.Second
-	}
+	interval := max(time.Duration(LeaseSeconds)*time.Second/3, time.Second)
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {
@@ -317,4 +315,12 @@ func (m *Manager) markRunning(ctx context.Context, orgID, threadID string) error
 		Status:   "running",
 	})
 	return err
+}
+
+// MarkRunning flips conversations.status to 'running'. Claim already
+// does this for fresh turns; this is exported for the recovery path so
+// a turn picked up by ClaimExpired also surfaces as running in the
+// sidebar's status indicator.
+func (m *Manager) MarkRunning(ctx context.Context, orgID, threadID string) error {
+	return m.markRunning(ctx, orgID, threadID)
 }

@@ -276,6 +276,7 @@ func (f *Fanout) deliver(orgID, threadID string, events []Event) {
 		if closed {
 			continue
 		}
+		overflow := false
 		for _, ev := range events {
 			if ev.Seq <= cursor {
 				continue
@@ -289,26 +290,27 @@ func (f *Fanout) deliver(orgID, threadID string, events []Event) {
 				sub.mu.Unlock()
 				cursor = ev.Seq
 			default:
-				// Slow client: drop oldest by reading one off the
-				// channel. Clients can recover by calling Replay with
-				// their last delivered seq.
-				select {
-				case <-sub.ch:
-				default:
-				}
-				select {
-				case sub.ch <- ev:
-					sub.mu.Lock()
-					if ev.Seq > sub.cursor {
-						sub.cursor = ev.Seq
-					}
-					sub.mu.Unlock()
-					cursor = ev.Seq
-				default:
-					f.log.Warn("events fanout: subscriber buffer overflowed; event dropped",
-						"org", orgID, "thread", threadID, "seq", ev.Seq)
-				}
+				// Slow client: the 256-event buffer is full. We
+				// previously dropped the oldest event and advanced
+				// the cursor, but that caused permanent event loss
+				// because a reconnect with Last-Event-Id reads from
+				// the advanced cursor and skips the dropped event.
+				//
+				// Cleaner: terminate the subscription. The browser's
+				// EventSource auto-reconnects, the new
+				// chatStreamHandler does a fresh Replay from the
+				// last-delivered seq (which the SSE handler tracks
+				// independently), and no event is lost.
+				overflow = true
 			}
+			if overflow {
+				break
+			}
+		}
+		if overflow {
+			f.log.Warn("events fanout: subscriber buffer overflowed; terminating subscription so the client reconnects",
+				"org", orgID, "thread", threadID, "cursor", cursor)
+			f.unsubscribe(sub)
 		}
 	}
 }
@@ -321,19 +323,16 @@ func keyFor(orgID, threadID string) string {
 // delimited seq is on the end so org IDs containing colons (UUIDs don't,
 // but defensive) parse correctly.
 func parseNotifyPayload(p string) (orgID, threadID string, seq int64, ok bool) {
-	sep := strings.IndexByte(p, '\x00')
-	if sep < 0 {
+	orgID, rest, found := strings.Cut(p, "\x00")
+	if !found {
 		return "", "", 0, false
 	}
-	orgID = p[:sep]
-	rest := p[sep+1:]
 	colon := strings.LastIndexByte(rest, ':')
 	if colon < 0 {
 		return "", "", 0, false
 	}
 	threadID = rest[:colon]
-	seqStr := rest[colon+1:]
-	n, err := strconv.ParseInt(seqStr, 10, 64)
+	n, err := strconv.ParseInt(rest[colon+1:], 10, 64)
 	if err != nil {
 		return "", "", 0, false
 	}
