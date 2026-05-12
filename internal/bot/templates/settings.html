@@ -12,7 +12,9 @@
   var mq = window.matchMedia('(prefers-color-scheme: dark)');
   function apply(){
     var pref;
-    try { pref = localStorage.getItem('theme') || 'system'; } catch(e) { pref = 'system'; }
+    var orgTheme = '{{.Theme}}' || 'system';
+    try { pref = localStorage.getItem('theme'); } catch(e) { pref = null; }
+    pref = pref || orgTheme || 'system';
     var dark = pref === 'dark' || (pref === 'system' && mq.matches);
     document.documentElement.classList.toggle('is-dark', dark);
   }
@@ -686,6 +688,16 @@
       <input id="org_name" type="text" name="org_name" value="{{.OrgName}}" required maxlength="120">
       <p class="hint">Shown to your team in the sidebar and on invites.</p>
     </fieldset>
+    <fieldset>
+      <legend>Theme</legend>
+      <label for="theme">UI Theme</label>
+      <select id="theme" name="theme">
+        <option value="system"{{if eq .Theme "system"}} selected{{end}}>System (follow device settings)</option>
+        <option value="light"{{if eq .Theme "light"}} selected{{end}}>Light</option>
+        <option value="dark"{{if eq .Theme "dark"}} selected{{end}}>Dark</option>
+      </select>
+      <p class="hint">Choose how the interface should appear.</p>
+    </fieldset>
     <button class="primary" type="submit">Save</button>
   </form>
   {{else}}
@@ -693,6 +705,16 @@
     <legend>Organization</legend>
     <label for="org_name">Name</label>
     <input id="org_name" type="text" value="{{.OrgName}}" readonly>
+    <p class="hint">Only administrators can change organization settings.</p>
+  </fieldset>
+  <fieldset>
+    <legend>Theme</legend>
+    <label for="theme">UI Theme</label>
+    <select id="theme" name="theme" disabled>
+      <option{{if eq .Theme "system"}} selected{{end}}>System (follow device settings)</option>
+      <option{{if eq .Theme "light"}} selected{{end}}>Light</option>
+      <option{{if eq .Theme "dark"}} selected{{end}}>Dark</option>
+    </select>
     <p class="hint">Only administrators can change organization settings.</p>
   </fieldset>
   {{end}}

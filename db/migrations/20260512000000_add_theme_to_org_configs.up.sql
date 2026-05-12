@@ -1,0 +1,1 @@
+ALTER TABLE org_configs ADD COLUMN theme TEXT NOT NULL DEFAULT 'system';

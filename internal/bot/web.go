@@ -158,11 +158,21 @@ func (b *Bot) indexHandler(w http.ResponseWriter, r *http.Request) {
 	} else {
 		b.log.Warn("profile fetch for chat header failed", "error", err, "user", p.UserID)
 	}
+
+	// Fetch organization theme preference
+	theme := "system"
+	if oc, err := b.orgs.Get(r.Context(), p.OrgID); err == nil {
+		theme = oc.Theme
+	} else if !errors.Is(err, orgcfg.ErrNotFound) {
+		b.log.Warn("org config fetch for theme failed", "error", err, "org", p.OrgID)
+	}
+
 	b.renderTemplate(w, chatHTMLTpl, map[string]any{
 		"Email":       p.Email,
 		"DisplayName": displayName,
 		"GravatarURL": gravatarURL(p.Email),
 		"UserID":      p.UserID,
+		"Theme":       theme,
 	})
 }
 
@@ -292,6 +302,7 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 			"SXKeyPreview":                previewSecret(current.SXKey),
 			"GitHubAppEnabled":            b.app != nil,
 			"DefaultRepoSlug":             defaultRepoSlug,
+			"Theme":                       current.Theme,
 		}
 		if err := b.populateSettingsTabData(r.Context(), p.OrgID, tab, data); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -321,22 +332,11 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 		tab = "general"
 	}
 
-	// General tab posts only the org_name field. Pushing it through the
+	// General tab posts org_name and theme fields. Pushing it through the
 	// integrations save below would null out default_repo and the API-key
 	// previews, so handle the rename inline and bounce.
 	if tab == "general" {
-		name := strings.TrimSpace(r.FormValue("org_name"))
-		if name == "" {
-			http.Error(w, "organization name is required", http.StatusBadRequest)
-			return
-		}
-		if err := b.auth.UpdateOrganizationName(r.Context(), p.OrgID, name); err != nil {
-			b.log.Error("update org name failed", "error", err, "org", p.OrgID)
-			http.Error(w, "rename: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		b.log.Info("org renamed", "org", p.OrgID, "actor", p.UserID)
-		http.Redirect(w, r, "/settings/org?tab=general&saved=1", http.StatusFound)
+		b.handleGeneralSettingsSave(w, r, p)
 		return
 	}
 
@@ -383,6 +383,46 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 	// Slack creds may have changed; rebuild that org's connection.
 	b.slack.RestartOrg(r.Context(), p.OrgID)
 	http.Redirect(w, r, "/settings/org?tab="+tab+"&saved=1", http.StatusFound)
+}
+
+// handleGeneralSettingsSave processes POST requests for the general settings tab.
+func (b *Bot) handleGeneralSettingsSave(w http.ResponseWriter, r *http.Request, p auth.Principal) {
+	name := strings.TrimSpace(r.FormValue("org_name"))
+	if name == "" {
+		http.Error(w, "organization name is required", http.StatusBadRequest)
+		return
+	}
+	if err := b.auth.UpdateOrganizationName(r.Context(), p.OrgID, name); err != nil {
+		b.log.Error("update org name failed", "error", err, "org", p.OrgID)
+		http.Error(w, "rename: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	current, err := b.orgs.Get(r.Context(), p.OrgID)
+	if err != nil && !errors.Is(err, orgcfg.ErrNotFound) {
+		b.log.Error("get org config failed", "error", err, "org", p.OrgID)
+		http.Error(w, "get config: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	theme := strings.TrimSpace(r.FormValue("theme"))
+	if theme == "" {
+		theme = "system"
+	}
+	if theme != "light" && theme != "dark" && theme != "system" {
+		http.Error(w, "invalid theme value", http.StatusBadRequest)
+		return
+	}
+	current.Theme = theme
+	current.OrgID = p.OrgID
+	if _, err := b.orgs.Upsert(r.Context(), current); err != nil {
+		b.log.Error("update theme failed", "error", err, "org", p.OrgID)
+		http.Error(w, "save theme: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	b.log.Info("org renamed and theme updated", "org", p.OrgID, "actor", p.UserID, "theme", theme)
+	http.Redirect(w, r, "/settings/org?tab=general&saved=1", http.StatusFound)
 }
 
 // integrationInstallation is the per-installation row passed to the
