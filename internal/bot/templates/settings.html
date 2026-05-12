@@ -314,7 +314,8 @@
                        color: #888; margin-top: .15rem;
                        overflow: hidden; text-overflow: ellipsis;
                        white-space: nowrap; max-width: 30rem; }
-  .connection .actions { display: flex; gap: .75rem; align-items: center;
+  .connection .actions { display: flex; gap: .5rem; align-items: center;
+                         justify-content: flex-end; flex-wrap: wrap;
                          font-size: .8rem; }
   .connection .actions a { color: #0b93f6; text-decoration: none; }
   .connection .actions a:hover { text-decoration: underline; }
@@ -334,6 +335,7 @@
   .integration-actions { display: flex; gap: .5rem; align-items: center;
                          margin-top: .5rem; flex-wrap: wrap; }
   .integration-actions form { margin: 0; }
+  .integration-actions .primary { margin-top: 0; }
   .integration-disconnect-form { margin: .75rem 0 0; }
 
   /* Credential tabs (Anthropic integration: API key vs subscription token).
@@ -705,7 +707,7 @@
                 <form method="POST" action="/integrations/github/disconnect"
                       onsubmit="return confirm('Disconnect {{.AccountLogin}}? The Hetchy GitHub App will be uninstalled from that account, dropping access to all {{len .Repos}} repo{{if ne (len .Repos) 1}}s{{end}}. You can reinstall later from this page.');">
                   <input type="hidden" name="installation_id" value="{{.InstallationID}}">
-                  <button type="submit" class="link-btn danger-link">Disconnect</button>
+                  <button type="submit" class="danger-btn">Disconnect</button>
                 </form>
                 {{end}}
               </div>
@@ -816,20 +818,22 @@
       {{if and .IsDev .IsAdmin}}
       <div class="body-section">
         <legend>Dev: paste tokens manually</legend>
-        <form method="POST" action="/settings/org?tab=integrations">
+        <form id="slack-dev-token-form" method="POST" action="/settings/org?tab=integrations">
           {{template "secret" dict "Field" "slack_bot_token" "Label" "Bot token" "Preview" .SlackBotTokenPreview "Placeholder" "xoxb-…" "Required" false}}
           {{template "secret" dict "Field" "slack_socket_token" "Label" "Socket token" "Preview" .SlackSocketTokenPreview "Placeholder" "xapp-…" "Required" false}}
           <p class="hint">Run <code>make slack-app NAME=…</code> to create a personal Socket Mode app, then paste its bot + socket tokens here. Both must be set for the integration to show as Enabled.</p>
-          <button class="primary" type="submit">Save</button>
         </form>
         {{/* Dev's manual-paste flow has no OAuth row to disconnect from, but
              admins still want a single click to wipe the pasted tokens. */}}
-        {{if $devEnabled}}
-        <form method="POST" action="/slack/disconnect" class="integration-disconnect-form"
-              onsubmit="return confirm('Disconnect Slack? The pasted bot and socket tokens will be cleared and the bot will stop responding in Slack.');">
-          <button type="submit" class="danger-btn">Disconnect</button>
-        </form>
-        {{end}}
+        <div class="integration-actions">
+          <button class="primary" type="submit" form="slack-dev-token-form">Save</button>
+          {{if $devEnabled}}
+          <form method="POST" action="/slack/disconnect" class="integration-disconnect-form"
+                onsubmit="return confirm('Disconnect Slack? The pasted bot and socket tokens will be cleared and the bot will stop responding in Slack.');">
+            <button type="submit" class="danger-btn">Disconnect</button>
+          </form>
+          {{end}}
+        </div>
       </div>
       {{end}}
     </div>

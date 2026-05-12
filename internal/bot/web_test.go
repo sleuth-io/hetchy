@@ -804,6 +804,95 @@ func TestSlackInstallHandler_NonAdminReturns403(t *testing.T) {
 	}
 }
 
+func TestSettingsIntegrationsTemplate_DisconnectActionsUseDangerButton(t *testing.T) {
+	b := newBypassBot(t)
+	rec := httptest.NewRecorder()
+	b.renderTemplate(rec, settingsHTMLTpl, map[string]any{
+		"OrgID":                  "org_test",
+		"OrgName":                "Test Org",
+		"Email":                  "test@hetchy.local",
+		"IsAdmin":                true,
+		"Tab":                    "integrations",
+		"GitHubAppEnabled":       true,
+		"GitHubInstallations":    []integrationInstallation{{InstallationID: 42, AccountLogin: "hetchyhq", AccountType: "Organization", ManageURL: "https://github.com/organizations/hetchyhq/settings/installations/42", Repos: []integrationRepo{{Owner: "hetchyhq", Name: "hetchy", DefaultBranch: "main"}}}},
+		"GitHubRepos":            []integrationRepo{{Owner: "hetchyhq", Name: "hetchy", DefaultBranch: "main"}},
+		"DefaultRepoSlug":        "hetchyhq/hetchy",
+		"SlackOAuthEnabled":      true,
+		"SlackTeamID":            "T123456",
+		"IsDev":                  false,
+		"AnthropicAPIKeyPreview": "sk-ant-...tail",
+		"SXKeyPreview":           "",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`action="/integrations/github/disconnect"`,
+		`action="/slack/disconnect"`,
+		`Disconnect hetchyhq?`,
+		`Connected workspace: <code>T123456</code>`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("settings integrations missing %q", want)
+		}
+	}
+	if got := strings.Count(body, `class="danger-btn">Disconnect</button>`); got != 2 {
+		t.Errorf("danger Disconnect button count = %d, want 2", got)
+	}
+	if strings.Contains(body, `link-btn danger-link">Disconnect</button>`) {
+		t.Errorf("GitHub Disconnect should use the shared danger button treatment")
+	}
+}
+
+func TestSettingsIntegrationsTemplate_SlackDevSaveAndDisconnectShareActionRow(t *testing.T) {
+	b := newBypassBot(t)
+	rec := httptest.NewRecorder()
+	b.renderTemplate(rec, settingsHTMLTpl, map[string]any{
+		"OrgID":                   "org_test",
+		"OrgName":                 "Test Org",
+		"Email":                   "test@hetchy.local",
+		"IsAdmin":                 true,
+		"Tab":                     "integrations",
+		"GitHubAppEnabled":        false,
+		"SlackOAuthEnabled":       false,
+		"SlackBotTokenPreview":    "xoxb-...tail",
+		"SlackSocketTokenPreview": "xapp-...tail",
+		"IsDev":                   true,
+		"AnthropicAPIKeyPreview":  "sk-ant-...tail",
+		"SXKeyPreview":            "",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `id="slack-dev-token-form"`) {
+		t.Fatalf("Slack dev token form missing")
+	}
+	saveIdx := strings.Index(body, `form="slack-dev-token-form">Save</button>`)
+	if saveIdx < 0 {
+		t.Fatalf("Slack dev Save button is not bound to the token form")
+	}
+	rowStart := strings.LastIndex(body[:saveIdx], `<div class="integration-actions">`)
+	if rowStart < 0 {
+		t.Fatalf("Slack dev Save button is not inside an integration action row")
+	}
+	rowEnd := strings.Index(body[saveIdx:], `</div>`)
+	if rowEnd < 0 {
+		t.Fatalf("Slack dev action row is not closed")
+	}
+	row := body[rowStart : saveIdx+rowEnd]
+	for _, want := range []string{
+		`form="slack-dev-token-form">Save</button>`,
+		`action="/slack/disconnect"`,
+		`class="danger-btn">Disconnect</button>`,
+	} {
+		if !strings.Contains(row, want) {
+			t.Errorf("Slack dev action row missing %q", want)
+		}
+	}
+}
+
 func TestProfileTemplate_Renders(t *testing.T) {
 	b := newBypassBot(t)
 	rec := httptest.NewRecorder()
