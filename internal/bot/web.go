@@ -158,11 +158,17 @@ func (b *Bot) indexHandler(w http.ResponseWriter, r *http.Request) {
 	} else {
 		b.log.Warn("profile fetch for chat header failed", "error", err, "user", p.UserID)
 	}
+	// Fetch org config to get the theme preference
+	theme := "system"
+	if oc, err := b.orgs.Get(r.Context(), p.OrgID); err == nil {
+		theme = oc.Theme
+	}
 	b.renderTemplate(w, chatHTMLTpl, map[string]any{
 		"Email":       p.Email,
 		"DisplayName": displayName,
 		"GravatarURL": gravatarURL(p.Email),
 		"UserID":      p.UserID,
+		"OrgTheme":    theme,
 	})
 }
 
@@ -292,6 +298,7 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 			"SXKeyPreview":                previewSecret(current.SXKey),
 			"GitHubAppEnabled":            b.app != nil,
 			"DefaultRepoSlug":             defaultRepoSlug,
+			"Theme":                       current.Theme,
 		}
 		if err := b.populateSettingsTabData(r.Context(), p.OrgID, tab, data); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -321,9 +328,9 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 		tab = "general"
 	}
 
-	// General tab posts only the org_name field. Pushing it through the
-	// integrations save below would null out default_repo and the API-key
-	// previews, so handle the rename inline and bounce.
+	// General tab posts only the org_name and theme fields. Pushing them
+	// through the integrations save below would null out default_repo and
+	// the API-key previews, so handle them inline and bounce.
 	if tab == "general" {
 		name := strings.TrimSpace(r.FormValue("org_name"))
 		if name == "" {
@@ -335,7 +342,24 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "rename: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		b.log.Info("org renamed", "org", p.OrgID, "actor", p.UserID)
+		theme := strings.TrimSpace(r.FormValue("org_theme"))
+		if theme == "" {
+			theme = "system"
+		}
+		current, err := b.orgs.Get(r.Context(), p.OrgID)
+		if err != nil && !errors.Is(err, orgcfg.ErrNotFound) {
+			b.log.Error("load org config failed", "error", err, "org", p.OrgID)
+			http.Error(w, "load: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		current.OrgID = p.OrgID
+		current.Theme = theme
+		if _, err := b.orgs.Upsert(r.Context(), current); err != nil {
+			b.log.Error("save org config failed", "error", err, "org", p.OrgID)
+			http.Error(w, "save: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		b.log.Info("org renamed and theme updated", "org", p.OrgID, "actor", p.UserID, "theme", theme)
 		http.Redirect(w, r, "/settings/org?tab=general&saved=1", http.StatusFound)
 		return
 	}

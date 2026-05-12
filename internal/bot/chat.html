@@ -20,14 +20,18 @@
 <script>
 // Theme bootstrap — runs before any styles are applied so the page paints
 // in the chosen theme on first frame (no flash of light content). The
-// preference lives in localStorage under 'theme' with values
-// "system" | "light" | "dark"; "system" (or missing) follows the OS via
-// prefers-color-scheme. A change in either source flips html.is-dark.
+// preference is determined by (in order): localStorage override, org-level
+// theme setting, or "system" as the fallback. Values are "system" | "light"
+// | "dark"; "system" follows the OS via prefers-color-scheme. A change in
+// either source flips html.is-dark.
 (function(){
   var mq = window.matchMedia('(prefers-color-scheme: dark)');
   function apply(){
     var pref;
-    try { pref = localStorage.getItem('theme') || 'system'; } catch(e) { pref = 'system'; }
+    try { pref = localStorage.getItem('theme'); } catch(e) { pref = null; }
+    if (pref === null) {
+      pref = '{{.OrgTheme}}' || 'system';
+    }
     var dark = pref === 'dark' || (pref === 'system' && mq.matches);
     document.documentElement.classList.toggle('is-dark', dark);
   }

@@ -686,6 +686,16 @@
       <input id="org_name" type="text" name="org_name" value="{{.OrgName}}" required maxlength="120">
       <p class="hint">Shown to your team in the sidebar and on invites.</p>
     </fieldset>
+    <fieldset>
+      <legend>Theme</legend>
+      <label for="org_theme">UI Theme</label>
+      <select id="org_theme" name="org_theme">
+        <option value="system"{{if eq .Theme "system"}} selected{{end}}>System (follow device settings)</option>
+        <option value="light"{{if eq .Theme "light"}} selected{{end}}>Light</option>
+        <option value="dark"{{if eq .Theme "dark"}} selected{{end}}>Dark</option>
+      </select>
+      <p class="hint">Choose how the interface appears across your organization.</p>
+    </fieldset>
     <button class="primary" type="submit">Save</button>
   </form>
   {{else}}
