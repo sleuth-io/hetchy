@@ -1421,14 +1421,15 @@ func (b *Bot) chatStreamHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	run := b.live.Get(p.OrgID, sessionID)
 	var replay []liveEvent
-	var lastSeq int64
+	afterSeq := parseSSEAfterSeq(r.URL.Query().Get("after_seq"))
+	lastSeq := afterSeq
 	if b.runs != nil && b.runs.Enabled() {
 		latest, err := b.runs.LatestForThread(r.Context(), p.OrgID, sessionID)
-		if err == nil && (!isTerminalRunState(latest.State) || run != nil) {
+		if err == nil && (!isTerminalRunState(latest.State) || run != nil || afterSeq > 0) {
 			if run == nil && !isTerminalRunState(latest.State) {
 				run = b.recoverRunForReattach(r.Context(), latest)
 			}
-			events, err := b.runs.EventsAfter(r.Context(), latest.ID, 0)
+			events, err := b.runs.EventsAfter(r.Context(), latest.ID, afterSeq)
 			if err != nil {
 				b.log.Warn("list run events for stream", "org", p.OrgID, "thread", sessionID, "run", latest.ID, "error", err)
 			} else {
@@ -1442,6 +1443,7 @@ func (b *Bot) chatStreamHandler(w http.ResponseWriter, r *http.Request) {
 					"thread", sessionID,
 					"run_id", latest.ID,
 					"state", latest.State,
+					"after_seq", afterSeq,
 					"events", len(events),
 					"live_attached", run != nil,
 				)
@@ -1466,7 +1468,7 @@ func (b *Bot) chatStreamHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Accel-Buffering", "no")
 
 	for _, ev := range replay {
-		if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", ev.Event, ev.Data); err != nil {
+		if err := writeLiveEvent(w, ev); err != nil {
 			return
 		}
 		flusher.Flush()
@@ -1479,13 +1481,34 @@ func (b *Bot) chatStreamHandler(w http.ResponseWriter, r *http.Request) {
 	b.streamLiveSubscription(w, flusher, r.Context(), sub)
 }
 
+func parseSSEAfterSeq(raw string) int64 {
+	if raw == "" {
+		return 0
+	}
+	n, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
+}
+
+func writeLiveEvent(w http.ResponseWriter, ev liveEvent) error {
+	if ev.Seq > 0 {
+		if _, err := fmt.Fprintf(w, "id: %d\n", ev.Seq); err != nil {
+			return err
+		}
+	}
+	_, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", ev.Event, ev.Data)
+	return err
+}
+
 // streamLiveSubscription drains a liveSubscription to the SSE
 // response. Sends the catch-up history first, then live events
 // until the request context is cancelled or the run closes. Heart-
 // beats every keepaliveLiveInterval to beat proxy idle timeouts.
 func (b *Bot) streamLiveSubscription(w http.ResponseWriter, flusher http.Flusher, ctx context.Context, sub *liveSubscription) {
 	write := func(ev liveEvent) error {
-		if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", ev.Event, ev.Data); err != nil {
+		if err := writeLiveEvent(w, ev); err != nil {
 			return err
 		}
 		flusher.Flush()
