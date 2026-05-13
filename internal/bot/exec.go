@@ -268,6 +268,7 @@ func (b *Bot) readSandboxStreams(ctx context.Context, stdout, stderr <-chan stri
 			stderr = nil
 		case <-ctx.Done():
 			streamErr = ctx.Err()
+			drainSandboxStreams(stdout, stderr, onStdout, onStderr)
 			stdout = nil
 			stderr = nil
 		}

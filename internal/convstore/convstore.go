@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -319,6 +320,7 @@ func encodeTaskOptions(opts map[string]bool) []byte {
 	if err != nil {
 		// map[string]bool cannot fail to marshal; keep the fallback to
 		// avoid ever writing invalid JSON if that type changes later.
+		slog.Error("encode task_options", "error", err)
 		return []byte("{}")
 	}
 	return raw
@@ -359,7 +361,8 @@ func recordFromFields(f rowFields) (Record, error) {
 	}
 	taskOptions, err := decodeTaskOptions(f.TaskOptions)
 	if err != nil {
-		return Record{}, fmt.Errorf("decode task_options: %w", err)
+		slog.Warn("decode task_options", "error", err, "raw", string(f.TaskOptions))
+		taskOptions = map[string]bool{}
 	}
 	return Record{
 		OrgID:          f.OrgID,
