@@ -200,7 +200,7 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, o
 		env["SX_KEY"] = oc.SXKey
 	}
 	sessionID := "agent-" + requestID
-	prURL, err := b.runScript(ctx, sb, sessionID, "agent", agentScript, env, emit)
+	prURL, err := b.runScriptForRequest(ctx, sb, sessionID, "agent", agentScript, env, emit)
 	if err == nil {
 		b.markRunFinalizing(ctx)
 		prURL, err = b.validateReportedPR(ctx, repo, "feature/sf-"+requestID, repo.BaseBranch, prURL)
@@ -543,7 +543,7 @@ func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx
 		env["SF_SPEC_START_B64"] = base64.StdEncoding.EncodeToString([]byte(spec.StartScript))
 		env["SF_SPEC_HEALTH_B64"] = base64.StdEncoding.EncodeToString([]byte(spec.HealthCheck))
 	}
-	prURL, err := b.runScript(ctx, sb, "followup-"+requestID, "followup", followupScript, env, emit)
+	prURL, err := b.runScriptForRequest(ctx, sb, "followup-"+requestID, "followup", followupScript, env, emit)
 	if err != nil {
 		return "", err
 	}
@@ -565,6 +565,13 @@ func buildFollowUpPrompt(ownerRepo string, rec convstore.Record, userRequest str
 		Branch:            rec.Branch,
 		ArtifactSlotCount: artifactSlotCount,
 	})
+}
+
+func (b *Bot) runScriptForRequest(ctx context.Context, sb *daytona.Sandbox, sessionID, label, scriptBody string, env map[string]string, emit blocks.Emitter) (string, error) {
+	if b.runScriptFn != nil {
+		return b.runScriptFn(ctx, sb, sessionID, label, scriptBody, env, emit)
+	}
+	return b.runScript(ctx, sb, sessionID, label, scriptBody, env, emit)
 }
 
 // runScript writes scriptBody to /tmp/sf-<label>.sh inside the sandbox

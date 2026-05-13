@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"time"
 
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/hetchyhq/hetchy/internal/bootstrap"
 	"github.com/hetchyhq/hetchy/internal/convstore"
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
+	"github.com/hetchyhq/hetchy/internal/runstore"
 )
 
 type conversationStore interface {
@@ -27,6 +29,39 @@ type repoResolveFunc func(context.Context, string, string, string) (repoCtx, err
 type agentRunFunc func(context.Context, *daytona.Sandbox, repoCtx, orgcfg.Config, agents.Profile, string, string, chatTaskOptions, ClaudeModel, blocks.Emitter) (string, error)
 
 type followUpRunFunc func(context.Context, *daytona.Sandbox, repoCtx, orgcfg.Config, convstore.Record, agents.Profile, string, string, chatTaskOptions, ClaudeModel, blocks.Emitter) (string, error)
+
+type scriptRunFunc func(context.Context, *daytona.Sandbox, string, string, string, map[string]string, blocks.Emitter) (string, error)
+
+type orgStore interface {
+	Get(context.Context, string) (orgcfg.Config, error)
+	GetBySlackTeamID(context.Context, string) (orgcfg.Config, error)
+	ListWithSlack(context.Context) ([]orgcfg.Config, error)
+	Upsert(context.Context, orgcfg.Config) (orgcfg.Config, error)
+}
+
+type runStore interface {
+	Enabled() bool
+	Create(context.Context, runstore.Run, string, time.Duration) (runstore.Run, bool, error)
+	Get(context.Context, string) (runstore.Run, error)
+	LatestForThread(context.Context, string, string) (runstore.Run, error)
+	ActiveForThread(context.Context, string, string) (runstore.Run, error)
+	UpdateKind(context.Context, string, string, string)
+	UpdateBranch(context.Context, string, string, string)
+	UpdateSandbox(context.Context, string, string, string)
+	UpdateSession(context.Context, string, string, string)
+	UpdateCommand(context.Context, string, string, string, string, time.Duration)
+	UpdateState(context.Context, string, string, string, string)
+	TouchLease(context.Context, string, string, time.Duration)
+	UpdateLogCursor(context.Context, string, int64, string)
+	ListExpired(context.Context, int32) ([]runstore.Run, error)
+	ListActiveForLeaseOwnerPrefix(context.Context, string, int32) ([]runstore.Run, error)
+	Claim(context.Context, string, string, time.Duration) (runstore.Run, error)
+	ClaimFromOwner(context.Context, string, string, string, time.Duration) (runstore.Run, error)
+	Cancel(context.Context, string, string, string, time.Duration, []runstore.PendingEvent) (runstore.Run, error)
+	AppendEvent(context.Context, string, string, []byte, string) (int64, error)
+	AppendEventsAndAdvanceCursor(context.Context, string, []runstore.PendingEvent, int64, string) ([]int64, error)
+	EventsAfter(context.Context, string, int64) ([]runstore.Event, error)
+}
 
 type bootstrapStore interface {
 	GetSpec(context.Context, int64, int64, string) (*bootstrap.Spec, error)

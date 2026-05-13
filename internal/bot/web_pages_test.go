@@ -202,6 +202,120 @@ func TestWelcomeTemplate_LinksToIntegrations(t *testing.T) {
 	}
 }
 
+func TestOnboardingHandlerGetAndMethodHandling(t *testing.T) {
+	b := newBypassBot(t)
+	handler := b.auth.Middleware(http.HandlerFunc(b.onboardingHandler))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/onboarding", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "test@hetchy.local") {
+		t.Fatalf("onboarding page missing bypass email: %q", rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodDelete, "/onboarding", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("DELETE status = %d, want 405", rec.Code)
+	}
+}
+
+func TestOnboardingHandlerRedirectsWhenOrgPresent(t *testing.T) {
+	b := newBypassOrgBot(t, "admin")
+	handler := b.auth.Middleware(http.HandlerFunc(b.onboardingHandler))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/onboarding", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302", rec.Code)
+	}
+	if got := rec.Header().Get("Location"); got != "/" {
+		t.Fatalf("Location = %q, want /", got)
+	}
+}
+
+func TestWelcomeHandlerUsesBypassProfileAndOrg(t *testing.T) {
+	b := newBypassOrgBot(t, "member")
+	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.welcomeHandler)))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/welcome", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"Bypass", "org_test", "Connect GitHub"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("welcome body missing %q: %q", want, body)
+		}
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/welcome", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("POST status = %d, want 405", rec.Code)
+	}
+}
+
+func TestProfileHandlerGetAndPost(t *testing.T) {
+	b := newBypassOrgBot(t, "member")
+	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.profileHandler)))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/settings/profile?saved=1", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `value="Bypass"`) || !strings.Contains(rec.Body.String(), "Profile saved.") {
+		t.Fatalf("profile GET body missing expected fields: %q", rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/settings/profile", strings.NewReader("first_name=Ada&last_name=Lovelace"))
+	req.Host = "app.example.test"
+	req.Header.Set("Origin", "https://app.example.test")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("POST status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Location"); got != "/settings/profile?saved=1" {
+		t.Fatalf("Location = %q, want saved profile redirect", got)
+	}
+}
+
+func TestPasswordResetHandlerRedirectsInBypassMode(t *testing.T) {
+	b := newBypassOrgBot(t, "member")
+	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.passwordResetHandler)))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/settings/profile/password-reset", nil)
+	req.Host = "app.example.test"
+	req.Header.Set("Origin", "https://app.example.test")
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Location"); got != "/" {
+		t.Fatalf("Location = %q, want /", got)
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/settings/profile/password-reset", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET status = %d, want 405", rec.Code)
+	}
+}
+
 // TestSettingsTemplate_GeneralTab covers the General tab: the org name
 // is editable and posts back to /settings/org?tab=general so the rename
 

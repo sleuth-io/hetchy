@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/hetchyhq/hetchy/internal/auth"
+	"github.com/hetchyhq/hetchy/internal/blocks"
+	"github.com/hetchyhq/hetchy/internal/runstore"
 	"github.com/hetchyhq/hetchy/internal/webui"
 )
 
@@ -175,6 +177,35 @@ func TestChatStreamHandlerReplaysClosedLiveRun(t *testing.T) {
 	}
 }
 
+func TestChatStreamHandlerReplaysDurableRunEvents(t *testing.T) {
+	b := newBypassOrgBot(t, "member")
+	ev := runEventForTest(t, "block_start", sseEvent{ID: "p2", Kind: blocks.KindResult, Title: "Done"})
+	ev.Seq = 2
+	b.runs = &fakeRunStore{
+		enabled:   true,
+		latestRun: runstore.Run{ID: "run_1", OrgID: "org_test", ThreadID: "thread-1", State: runstore.StateSucceeded},
+		events:    []runstore.Event{ev},
+	}
+	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.chatStreamHandler)))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/chat/stream?session=thread-1&after_seq=1", nil)
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	for _, want := range []string{
+		"id: 2\n",
+		"event: block_start\n",
+		`"title":"Done"`,
+	} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Fatalf("stream response missing %q: %q", want, rec.Body.String())
+		}
+	}
+}
+
 func TestChatStreamHandlerRejectsBadRequests(t *testing.T) {
 	b := newBypassOrgBot(t, "member")
 	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.chatStreamHandler)))
@@ -295,6 +326,31 @@ func TestChatCancelHandlerCancelsRunAndSchedulesCleanup(t *testing.T) {
 	case got := <-cleanupCh:
 		t.Fatalf("follow-up cancel should not cleanup sandbox, got %+v", got)
 	case <-time.After(20 * time.Millisecond):
+	}
+}
+
+func TestChatCancelHandlerCancelsDurableRunWithoutLiveRun(t *testing.T) {
+	b := newBypassOrgBot(t, "member")
+	b.runs = &fakeRunStore{
+		enabled:   true,
+		activeRun: runstore.Run{ID: "run_1", OrgID: "org_test", ThreadID: "thread-1", RunKind: "followup", State: runstore.StateRunning, UserRequest: "stop me"},
+		cancelRun: runstore.Run{ID: "run_1", OrgID: "org_test", ThreadID: "thread-1", RunKind: "followup", State: runstore.StateRunning, UserRequest: "stop me"},
+	}
+	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.chatCancelHandler)))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/chat/cancel", strings.NewReader(`{"session_id":"thread-1"}`))
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d; body=%q", rec.Code, http.StatusAccepted, rec.Body.String())
+	}
+	store := b.runs.(*fakeRunStore)
+	if len(store.cancelPending) != 3 {
+		t.Fatalf("cancel pending events = %d, want 3", len(store.cancelPending))
+	}
+	if store.cancelRun.State != runstore.StateCancelled || store.cancelRun.LastError != "cancel requested" {
+		t.Fatalf("cancelled run = %+v", store.cancelRun)
 	}
 }
 

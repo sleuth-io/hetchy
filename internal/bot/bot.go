@@ -59,9 +59,9 @@ type Bot struct {
 	log       *slog.Logger
 	daytona   *daytona.Client
 	store     *db.Store
-	orgs      *orgcfg.Store
+	orgs      orgStore
 	convs     conversationStore
-	runs      *runstore.Store
+	runs      runStore
 	agents    *agents.Store
 	auth      *auth.Service
 	slack     *slackManager
@@ -113,6 +113,7 @@ type Bot struct {
 	resolveRepoFn          repoResolveFunc
 	runAgentFn             agentRunFunc
 	runFollowUpFn          followUpRunFunc
+	runScriptFn            scriptRunFunc
 	getSandboxFn           func(context.Context, string) (*daytona.Sandbox, error)
 	resumeSandboxFn        func(context.Context, *daytona.Sandbox, blocks.Emitter) error
 	deleteSandboxSessionFn func(*daytona.Sandbox, string)
