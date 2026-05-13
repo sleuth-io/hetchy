@@ -13,6 +13,7 @@ import (
 type liveEvent struct {
 	Event string
 	Data  []byte
+	Seq   int64
 }
 
 // liveRun tracks one active chat turn's event stream. Subscribers
@@ -119,13 +120,24 @@ func (r *liveRun) Emit(ev liveEvent) {
 // The history slice is a copy — the caller can iterate without
 // holding the run's mutex.
 func (r *liveRun) Subscribe() *liveSubscription {
+	return r.SubscribeAfter(0)
+}
+
+// SubscribeAfter is Subscribe with durable-event de-duplication. When
+// /chat/stream has already replayed agent_run_events through seq N,
+// it asks the in-memory fanout only for newer live events. Events with
+// Seq==0 are process-local fallback events and are always included.
+func (r *liveRun) SubscribeAfter(seq int64) *liveSubscription {
 	sub := &liveSubscription{
 		ch: make(chan liveEvent, 256),
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	sub.history = make([]liveEvent, len(r.history))
-	copy(sub.history, r.history)
+	for _, ev := range r.history {
+		if ev.Seq == 0 || ev.Seq > seq {
+			sub.history = append(sub.history, ev)
+		}
+	}
 	if r.closed {
 		// Run already over: deliver the history but immediately close
 		// the live channel so the caller exits its loop cleanly after

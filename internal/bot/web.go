@@ -15,6 +15,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/hetchyhq/hetchy/internal/agents"
 	"github.com/hetchyhq/hetchy/internal/auth"
 	"github.com/hetchyhq/hetchy/internal/blocks"
@@ -1299,7 +1301,10 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
 
-	emitter := newLiveEmitter(run)
+	var emitter blocks.Emitter = newLiveEmitter(run)
+	if b.runs != nil && b.runs.Enabled() {
+		emitter = noopEmitter{}
+	}
 
 	go func() {
 		defer b.live.Done(p.OrgID, sessionID, run)
@@ -1381,7 +1386,26 @@ func (b *Bot) chatStreamHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	run := b.live.Get(p.OrgID, sessionID)
-	if run == nil {
+	var replay []liveEvent
+	var lastSeq int64
+	if b.runs != nil && b.runs.Enabled() {
+		latest, err := b.runs.LatestForThread(r.Context(), p.OrgID, sessionID)
+		if err == nil && (!isTerminalRunState(latest.State) || run != nil) {
+			events, err := b.runs.EventsAfter(r.Context(), latest.ID, 0)
+			if err != nil {
+				b.log.Warn("list run events for stream", "org", p.OrgID, "thread", sessionID, "run", latest.ID, "error", err)
+			} else {
+				replay = make([]liveEvent, 0, len(events))
+				for _, ev := range events {
+					replay = append(replay, liveEvent{Event: ev.Event, Data: ev.Data, Seq: ev.Seq})
+					lastSeq = ev.Seq
+				}
+			}
+		} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			b.log.Warn("latest run lookup for stream", "org", p.OrgID, "thread", sessionID, "error", err)
+		}
+	}
+	if run == nil && len(replay) == 0 {
 		http.Error(w, "no live run", http.StatusNotFound)
 		return
 	}
@@ -1395,7 +1419,16 @@ func (b *Bot) chatStreamHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
 
-	sub := run.Subscribe()
+	for _, ev := range replay {
+		if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", ev.Event, ev.Data); err != nil {
+			return
+		}
+		flusher.Flush()
+	}
+	if run == nil {
+		return
+	}
+	sub := run.SubscribeAfter(lastSeq)
 	defer run.Unsubscribe(sub)
 	b.streamLiveSubscription(w, flusher, r.Context(), sub)
 }

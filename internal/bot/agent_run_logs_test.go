@@ -1,0 +1,129 @@
+package bot
+
+import (
+	"encoding/json"
+	"reflect"
+	"testing"
+
+	"github.com/hetchyhq/hetchy/internal/blocks"
+	"github.com/hetchyhq/hetchy/internal/runstore"
+)
+
+func runEventForTest(t *testing.T, event string, payload sseEvent) runstore.Event {
+	t.Helper()
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return runstore.Event{Event: event, Data: data}
+}
+
+func TestHetchyFrameRouterFiltersNoiseAndSentinels(t *testing.T) {
+	var got []string
+	var cursors []int64
+	r := newHetchyFrameRouter("run_abc", func(line string) {
+		got = append(got, line)
+	}, func(cursor int64) {
+		cursors = append(cursors, cursor)
+	})
+
+	for _, line := range []string{
+		"daytona noise before",
+		"__HETCHY_RUN_BEGIN run_abc__",
+		"[hetchy] setup",
+		`{"type":"result","result":"https://github.com/acme/repo/pull/1"}`,
+		"__HETCHY_RUN_END run_abc 0__",
+		"daytona noise after",
+	} {
+		r.Line(line)
+	}
+
+	want := []string{
+		"[hetchy] setup",
+		`{"type":"result","result":"https://github.com/acme/repo/pull/1"}`,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("filtered lines = %#v, want %#v", got, want)
+	}
+	if !r.SeenBegin() || !r.SeenEnd() || r.ExitCode() != 0 {
+		t.Fatalf("frame state = begin:%v end:%v exit:%d", r.SeenBegin(), r.SeenEnd(), r.ExitCode())
+	}
+	if len(cursors) == 0 || cursors[len(cursors)-1] == 0 {
+		t.Fatalf("cursor was not advanced: %#v", cursors)
+	}
+}
+
+func TestReplayHetchyFramedLogSuppressesConsumedPrefix(t *testing.T) {
+	const runID = "run_abc"
+	logText := "noise\n" +
+		"__HETCHY_RUN_BEGIN run_abc__\n" +
+		"[hetchy] first\n" +
+		"[hetchy] second\n" +
+		"__HETCHY_RUN_END run_abc 0__\n" +
+		"tail\n"
+	cursor := int64(len("noise\n" +
+		"__HETCHY_RUN_BEGIN run_abc__\n" +
+		"[hetchy] first\n"))
+
+	gate := &testSuppressionGate{}
+	var got []string
+	res := replayHetchyFramedLog(runID, logText, cursor, gate, func(line string) {
+		if !gate.suppressed {
+			got = append(got, line)
+		}
+	}, nil)
+
+	if !res.SeenBegin || !res.SeenEnd || res.ExitCode != 0 {
+		t.Fatalf("frame result = %+v", res)
+	}
+	if want := []string{"[hetchy] second"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("replayed lines = %#v, want %#v", got, want)
+	}
+}
+
+func TestReplayHetchyFramedLogAdvancesCursorForSuppressedLines(t *testing.T) {
+	const runID = "run_abc"
+	logText := "__HETCHY_RUN_BEGIN run_abc__\n" +
+		"[hetchy] first\n" +
+		"[hetchy] second\n"
+	suppressThrough := int64(len("__HETCHY_RUN_BEGIN run_abc__\n" +
+		"[hetchy] first\n"))
+
+	gate := &testSuppressionGate{}
+	var cursors []int64
+	replayHetchyFramedLog(runID, logText, suppressThrough, gate, func(string) {}, func(cursor int64) {
+		cursors = append(cursors, cursor)
+	})
+
+	if len(cursors) != 3 {
+		t.Fatalf("cursor callbacks = %#v, want begin + two framed lines", cursors)
+	}
+	if cursors[len(cursors)-1] != int64(len(logText)) {
+		t.Fatalf("last cursor = %d, want %d", cursors[len(cursors)-1], len(logText))
+	}
+}
+
+func TestBlocksFromRunEventsProjectsSSEBlocks(t *testing.T) {
+	events := []runstore.Event{
+		runEventForTest(t, "block_start", sseEvent{ID: "p1", Kind: blocks.KindSetup, Title: "Sandbox setup"}),
+		runEventForTest(t, "block_append", sseEvent{ID: "p1", Delta: "Cloning\n"}),
+		runEventForTest(t, "heartbeat", sseEvent{Title: "Still working"}),
+		runEventForTest(t, "block_done", sseEvent{ID: "p1", Status: blocks.StatusDone, Summary: "ready"}),
+	}
+
+	got := blocksFromRunEvents(events)
+	if len(got) != 1 {
+		t.Fatalf("blocks = %#v, want one projected block", got)
+	}
+	if got[0].ID != "p1" || got[0].Kind != blocks.KindSetup || got[0].Body != "Cloning\n" || got[0].Status != blocks.StatusDone || got[0].Summary != "ready" {
+		t.Fatalf("projected block = %+v", got[0])
+	}
+}
+
+type testSuppressionGate struct {
+	suppressed bool
+}
+
+func (g *testSuppressionGate) SetSuppressed(v bool) {
+	g.suppressed = v
+}

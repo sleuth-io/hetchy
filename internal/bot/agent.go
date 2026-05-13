@@ -575,9 +575,7 @@ func (b *Bot) runScript(ctx context.Context, sb *daytona.Sandbox, sessionID, lab
 	if err := sb.Process.CreateSession(ctx, sessionID); err != nil {
 		return "", fmt.Errorf("create session: %w", err)
 	}
-	defer func() {
-		b.deleteSandboxSession(sb, sessionID)
-	}()
+	b.markRunSession(ctx, sessionID)
 
 	// Writing the script generates no user-visible output; pass a noop
 	// line handler so it doesn't open a stray block.
@@ -612,7 +610,11 @@ func (b *Bot) runScript(ctx context.Context, sb *daytona.Sandbox, sessionID, lab
 		prefix.WriteString(shellQuote(env[k]))
 		prefix.WriteByte(' ')
 	}
-	runCmd := prefix.String() + "bash " + scriptPath
+	runID := currentAgentRunID(ctx)
+	if runID == "" {
+		runID = stableAgentRunID(sb.ID, sessionID, label)
+	}
+	runCmd := prefix.String() + framedAgentCommand(runID, scriptPath)
 
 	// Heartbeat: emit a "still working" update every minute so the
 	// user knows the agent is alive during long runs.
@@ -620,11 +622,40 @@ func (b *Bot) runScript(ctx context.Context, sb *daytona.Sandbox, sessionID, lab
 	defer stop()
 
 	router := newAgentLineRouter(emit)
-	if _, err := b.shLines(ctx, sb.ID, sb.Process, sessionID, "run-script", runCmd, 45*time.Minute, 15*time.Minute, false, router.Line); err != nil {
+	durable := agentRunEmitterFromContext(ctx)
+	framed := newHetchyFrameRouter(runID, func(line string) {
+		if durable != nil {
+			durable.BeginBatch()
+		}
+		router.Line(line)
+	}, func(cursor int64) {
+		if durable != nil {
+			_ = durable.FlushBatch(cursor)
+		} else {
+			b.markRunCursor(ctx, cursor)
+		}
+	})
+	if _, err := b.shLines(ctx, sb.ID, sb.Process, sessionID, "run-script", runCmd, 45*time.Minute, 15*time.Minute, true, framed.Line); err != nil {
 		router.Abort()
 		return "", err
 	}
+	if durable != nil {
+		if err := durable.Err(); err != nil {
+			router.Abort()
+			return "", fmt.Errorf("persist agent run events: %w", err)
+		}
+	}
+	if !framed.SeenBegin() {
+		router.Abort()
+		return "", fmt.Errorf("agent run %s produced no Hetchy begin sentinel", runID)
+	}
 	prURL := router.Finish()
+	if durable != nil {
+		if err := durable.Err(); err != nil {
+			router.Abort()
+			return "", fmt.Errorf("persist agent run events: %w", err)
+		}
+	}
 	if prURL == "" {
 		// Distinguish "setup never reached claude" from "claude ran
 		// but didn't post a URL". Both surface here but they need

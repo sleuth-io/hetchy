@@ -77,6 +77,9 @@ func (b *Bot) shLines(ctx context.Context, sandboxID string, proc sandboxProcess
 		"cmd_id", cmdID,
 		"exec_duration", time.Since(execStarted),
 	)
+	if step == "run-script" && cmdID != "" {
+		b.markRunCommand(ctx, sessionID, cmdID)
+	}
 
 	// Start the idle clock only after ExecuteSessionCommand returns so
 	// the SDK round-trip (which can take several seconds) doesn't

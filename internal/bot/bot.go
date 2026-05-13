@@ -30,6 +30,7 @@ import (
 	"github.com/hetchyhq/hetchy/internal/db/sqlc"
 	"github.com/hetchyhq/hetchy/internal/githubapp"
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
+	"github.com/hetchyhq/hetchy/internal/runstore"
 	"github.com/hetchyhq/hetchy/internal/secrets"
 )
 
@@ -60,6 +61,7 @@ type Bot struct {
 	store     *db.Store
 	orgs      *orgcfg.Store
 	convs     *convstore.Store
+	runs      *runstore.Store
 	agents    *agents.Store
 	auth      *auth.Service
 	slack     *slackManager
@@ -111,6 +113,7 @@ type Bot struct {
 	// progress lines. Zero is treated as 15 s (the production default);
 	// tests set it to 1 ms so the ticker fires without sleeping.
 	heartbeatInterval time.Duration
+	workerID          string
 }
 
 // New constructs a Bot from config and a logger. It opens the database
@@ -182,6 +185,7 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 		store:            store,
 		orgs:             orgcfg.New(store, cipher),
 		convs:            convstore.New(store),
+		runs:             runstore.New(store),
 		agents:           agents.NewStore(store),
 		bootstrap:        bootstrap.New(store, cipher),
 		artifacts:        artifactSigner,
@@ -191,6 +195,7 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 		cipher:           cipher,
 		retryBackoff:     initialBackoff,
 		githubWebhookSem: make(chan struct{}, webhookDispatchConcurrency),
+		workerID:         newWorkerID(),
 	}
 	b.createFn = func(ctx context.Context, params any) (*daytona.Sandbox, error) {
 		return dc.Create(ctx, params)
@@ -299,6 +304,7 @@ func (b *Bot) Run(ctx context.Context) error {
 	defer cancel()
 
 	errCh := make(chan error, 2)
+	go b.runRecoveryLoop(ctx)
 	go func() { errCh <- b.runWeb(ctx) }()
 	go func() { errCh <- b.slack.Run(ctx) }()
 
@@ -407,15 +413,41 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		"text_preview", truncate(text, 200),
 	)
 
-	// Wrap the transport emitter with a Recorder so every block streamed
-	// to the user is also captured for persistence. A reopened chat
-	// replays the same block tree the user originally saw.
 	recorder := blocks.NewRecorder(maxBlocksPerTurn)
-	emit := blocks.Tee(recorder, out)
+	run, runOK, runErr := b.createAgentRun(ctx, oc.OrgID, threadID, requestID, text)
+	if runErr != nil {
+		b.log.Error("agent run create failed", "org", oc.OrgID, "thread", threadID, "request_id", requestID, "error", runErr)
+	}
+	if !runOK {
+		b.log.Info("duplicate in-flight agent run ignored",
+			"org", oc.OrgID, "thread", threadID, "request_id", requestID, "run_id", run.ID, "state", run.State)
+		return
+	}
+	if run.ID != "" {
+		ctx = contextWithAgentRun(ctx, run)
+	}
+
+	// Wrap the transport emitter with a Recorder so every block streamed
+	// to the user is also captured for the legacy response_blocks
+	// projection. When a durable run row exists, the first tee target is
+	// the canonical SSE event appender; web live fanout also happens
+	// there so DB replay and live reattach use the same event IDs.
+	emitters := []blocks.Emitter{recorder, out}
+	if run.ID != "" && b.runs != nil && b.runs.Enabled() {
+		runEmitter := newAgentRunEmitter(b.runs, run.ID, b.workerID, liveRunFromContext(ctx))
+		ctx = contextWithAgentRunEmitter(ctx, runEmitter)
+		emitters = []blocks.Emitter{
+			runEmitter,
+			recorder,
+			out,
+		}
+	}
+	emit := blocks.Tee(emitters...)
 
 	if oc.AnthropicAPIKey == "" && oc.ClaudeCodeOAuthToken == "" {
 		b.log.Warn("org missing claude credentials", "org", oc.OrgID)
 		emit.Error("Missing Claude credentials", "This organization has neither a Claude API key nor a subscription token set. Add one at /settings/org → Integrations → Claude (Anthropic).")
+		b.markRunState(ctx, runstore.StateFailed, errors.New("missing claude credentials"))
 		return
 	}
 
@@ -441,6 +473,7 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		// Live conversation — agent succeeded at least once, PR exists.
 		agent, ok := b.selectAgentForConversation(ctx, oc.OrgID, rec.AgentSlug, emit)
 		if !ok {
+			b.markRunState(ctx, runstore.StateFailed, errors.New("unknown agent"))
 			return
 		}
 		b.handleFollowUp(ctx, oc, rec, agent, text, requestID, opts, model, recorder, emit)
@@ -450,6 +483,7 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		// PR. Retry: archive the orphan sandbox + spawn a fresh one.
 		agent, ok := b.selectAgentForConversation(ctx, oc.OrgID, mutableConversationAgentSlug(rec.AgentSlug, requestedAgent), emit)
 		if !ok {
+			b.markRunState(ctx, runstore.StateFailed, errors.New("unknown agent"))
 			return
 		}
 		b.handleRetryAfterFailure(ctx, oc, rec, agent, text, requestID, opts, model, recorder, emit)
@@ -465,6 +499,7 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		if rec.GitHubOwner != "" && rec.GitHubRepo != "" {
 			agent, ok := b.selectAgentForConversation(ctx, oc.OrgID, mutableConversationAgentSlug(rec.AgentSlug, requestedAgent), emit)
 			if !ok {
+				b.markRunState(ctx, runstore.StateFailed, errors.New("unknown agent"))
 				return
 			}
 			b.handleRetryAfterFailure(ctx, oc, rec, agent, text, requestID, opts, model, recorder, emit)
@@ -472,6 +507,7 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		}
 		agent, ok := b.selectAgentForConversation(ctx, oc.OrgID, mutableConversationAgentSlug(rec.AgentSlug, requestedAgent), emit)
 		if !ok {
+			b.markRunState(ctx, runstore.StateFailed, errors.New("unknown agent"))
 			return
 		}
 		b.handleAwaitingRepoReply(ctx, oc, rec, agent, text, requestID, opts, model, recorder, emit)
@@ -481,6 +517,7 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 	default:
 		b.log.Error("convstore get", "error", err)
 		emit.Error("Conversation lookup failed", fmt.Sprintf("`%v`", err))
+		b.markRunState(ctx, runstore.StateFailed, err)
 		return
 	}
 
@@ -488,6 +525,7 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 	// stash the request and ask the user which repo to use.
 	agent, ok := b.selectAgentForConversation(ctx, oc.OrgID, requestedAgentSlug(requestedAgent), emit)
 	if !ok {
+		b.markRunState(ctx, runstore.StateFailed, errors.New("unknown agent"))
 		return
 	}
 	if oc.DefaultGitHubOwner == "" || oc.DefaultGitHubRepo == "" {
@@ -505,6 +543,7 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		if err := b.convs.Upsert(ctx, partial); err != nil {
 			b.log.Error("convstore upsert (awaiting repo)", "error", err, "org", oc.OrgID, "thread", threadID)
 		}
+		b.markRunState(ctx, runstore.StateSucceeded, nil)
 		return
 	}
 
@@ -587,6 +626,7 @@ func (b *Bot) handleAwaitingRepoReply(ctx context.Context, oc orgcfg.Config, rec
 		if err := b.convs.Upsert(ctx, rec); err != nil {
 			b.log.Error("convstore upsert (parse retry)", "error", err)
 		}
+		b.markRunState(ctx, runstore.StateSucceeded, nil)
 		return
 	}
 	if len(rec.History) == 0 {
@@ -660,6 +700,7 @@ func (b *Bot) handleRetryAfterFailure(ctx context.Context, oc orgcfg.Config, rec
 func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, userRequest, requestID string, opts chatTaskOptions, model ClaudeModel, recorder *blocks.Recorder, emit blocks.Emitter) {
 	model = normalizeClaudeModel(model)
 	rec.Model = string(model)
+	b.markRunKind(ctx, "fresh")
 	repo, err := b.resolveRepo(ctx, oc.OrgID, rec.GitHubOwner, rec.GitHubRepo)
 	if err != nil {
 		if liveRunCancelled(ctx) {
@@ -668,6 +709,7 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 			if err := b.convs.Upsert(context.Background(), rec); err != nil {
 				b.log.Error("convstore upsert (cancel before sandbox)", "error", err)
 			}
+			b.markRunState(ctx, runstore.StateCancelled, nil)
 			return
 		}
 		b.log.Warn("resolve repo failed", "org", oc.OrgID, "owner", rec.GitHubOwner, "name", rec.GitHubRepo, "error", err)
@@ -680,11 +722,13 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 		if err := b.convs.Upsert(ctx, rec); err != nil {
 			b.log.Error("convstore upsert (resolve fail)", "error", err)
 		}
+		b.markRunState(ctx, runstore.StateFailed, err)
 		return
 	}
 
 	rec.AgentSlug = agent.Slug
 	branch := "feature/sf-" + requestID
+	b.markRunBranch(ctx, branch)
 	if agent.Slug == "" {
 		emit.Notify("Starting", fmt.Sprintf("Spinning up an isolated sandbox for your request in `%s` (base: `%s`)…", repo.Slug, repo.BaseBranch))
 	} else {
@@ -721,6 +765,11 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 		if uerr := b.convs.Upsert(context.Background(), rec); uerr != nil {
 			b.log.Error("convstore upsert (sandbox create fail)", "error", uerr)
 		}
+		if liveRunCancelled(ctx) {
+			b.markRunState(ctx, runstore.StateCancelled, err)
+		} else {
+			b.markRunState(ctx, runstore.StateFailed, err)
+		}
 		return
 	}
 	// Mark this fresh-run sandbox as owned by the current turn. The
@@ -730,6 +779,7 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 	setLiveRunSandboxID(ctx, sb.ID, true)
 	rec.SandboxID = sb.ID
 	rec.Branch = branch
+	b.markRunSandbox(ctx, sb.ID)
 	if err := b.convs.Upsert(context.Background(), rec); err != nil {
 		b.log.Error("convstore upsert (sandbox ready)", "error", err)
 	}
@@ -765,6 +815,7 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 			if err := b.convs.Upsert(context.Background(), rec); err != nil {
 				b.log.Error("convstore upsert (agent stopped)", "error", err)
 			}
+			b.markRunState(ctx, runstore.StateCancelled, runErr)
 			return
 		}
 		b.log.Error("agent run failed", "sandbox", sb.ID, "request_id", requestID, "error", runErr)
@@ -785,17 +836,15 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 		if err := b.convs.Upsert(ctx, rec); err != nil {
 			b.log.Error("convstore upsert (agent fail)", "error", err)
 		}
+		b.markRunState(ctx, runstore.StateFailed, runErr)
 		return
 	}
 
-	if err := sb.Stop(ctx); err != nil {
-		b.log.Error("sandbox stop failed", "sandbox", sb.ID, "error", err)
-	}
-	if err := sb.Archive(ctx); err != nil {
-		b.log.Error("sandbox archive failed", "sandbox", sb.ID, "error", err)
-	}
-
 	emit.Result("Done!", prURL+"\n\nReply here to make further changes to this PR.")
+	if err := agentRunDurabilityErr(ctx); err != nil {
+		b.markRunState(ctx, runstore.StateFailed, err)
+		return
+	}
 
 	rec.SandboxID = sb.ID
 	rec.Branch = branch
@@ -803,12 +852,26 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 	appendBlocksToFirstTurn(&rec, recorder.Snapshot())
 	if err := b.convs.Upsert(ctx, rec); err != nil {
 		b.log.Error("convstore upsert", "error", err)
+		b.markRunState(ctx, runstore.StateFailed, err)
+		return
+	}
+	b.markRunState(ctx, runstore.StateSucceeded, nil)
+	b.deleteSandboxSession(sb, "agent-"+requestID)
+
+	if err := sb.Stop(ctx); err != nil {
+		b.log.Error("sandbox stop failed", "sandbox", sb.ID, "error", err)
+	}
+	if err := sb.Archive(ctx); err != nil {
+		b.log.Error("sandbox archive failed", "sandbox", sb.ID, "error", err)
 	}
 }
 
 func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, text, requestID string, opts chatTaskOptions, model ClaudeModel, recorder *blocks.Recorder, emit blocks.Emitter) {
 	model = modelForConversation(rec, model)
 	b.log.Info("follow-up received", "org", oc.OrgID, "sandbox", rec.SandboxID, "branch", rec.Branch, "pr", rec.PRURL, "agent", agent.Slug, "model", model)
+	b.markRunKind(ctx, "followup")
+	b.markRunBranch(ctx, rec.Branch)
+	b.markRunSandbox(ctx, rec.SandboxID)
 	rec.AgentSlug = agent.Slug
 	rec.Model = string(model)
 	if agent.Slug == "" {
@@ -825,6 +888,7 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 			if err := b.convs.Upsert(context.Background(), rec); err != nil {
 				b.log.Error("convstore upsert (follow-up stopped before resume)", "error", err)
 			}
+			b.markRunState(ctx, runstore.StateCancelled, nil)
 			return
 		}
 		b.log.Warn("resolve repo for follow-up failed", "org", oc.OrgID, "owner", rec.GitHubOwner, "name", rec.GitHubRepo, "error", err)
@@ -833,6 +897,7 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 		if err := b.convs.Upsert(ctx, rec); err != nil {
 			b.log.Error("convstore upsert (follow-up resolve fail)", "error", err)
 		}
+		b.markRunState(ctx, runstore.StateFailed, err)
 		return
 	}
 
@@ -844,6 +909,7 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 			if err := b.convs.Upsert(context.Background(), rec); err != nil {
 				b.log.Error("convstore upsert (follow-up stopped before sandbox get)", "error", err)
 			}
+			b.markRunState(ctx, runstore.StateCancelled, nil)
 			return
 		}
 		b.log.Error("sandbox get failed", "sandbox", rec.SandboxID, "request_id", requestID, "error", err)
@@ -852,6 +918,7 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 		if err := b.convs.Upsert(ctx, rec); err != nil {
 			b.log.Error("convstore upsert (follow-up sandbox missing)", "error", err)
 		}
+		b.markRunState(ctx, runstore.StateFailed, err)
 		return
 	}
 	// Follow-ups reuse the conversation sandbox. Do not let the cancel
@@ -865,6 +932,7 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 			if err := b.convs.Upsert(context.Background(), rec); err != nil {
 				b.log.Error("convstore upsert (follow-up stopped during resume)", "error", err)
 			}
+			b.markRunState(ctx, runstore.StateCancelled, err)
 			return
 		}
 		b.log.Error("sandbox resume failed", "sandbox", sb.ID, "request_id", requestID, "error", err)
@@ -880,6 +948,7 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 		if err := b.convs.Upsert(ctx, rec); err != nil {
 			b.log.Error("convstore upsert (follow-up sandbox resume)", "error", err)
 		}
+		b.markRunState(ctx, runstore.StateFailed, err)
 		return
 	}
 
@@ -907,6 +976,7 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 			if err := b.convs.Upsert(context.Background(), rec); err != nil {
 				b.log.Error("convstore upsert (follow-up stopped)", "error", err)
 			}
+			b.markRunState(ctx, runstore.StateCancelled, err)
 			return
 		}
 		b.log.Error("follow-up failed", "sandbox", sb.ID, "request_id", requestID, "error", err)
@@ -919,24 +989,33 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 		if err := b.convs.Upsert(ctx, rec); err != nil {
 			b.log.Error("convstore upsert (follow-up agent fail)", "error", err)
 		}
+		b.markRunState(ctx, runstore.StateFailed, err)
 		return
 	}
+
+	// Result first so the recorded snapshot includes the closing block,
+	// then upsert with the new user turn + this turn's blocks.
+	emit.Result("Done!", prURL)
+	if err := agentRunDurabilityErr(ctx); err != nil {
+		b.markRunState(ctx, runstore.StateFailed, err)
+		return
+	}
+
+	rec.PRURL = prURL
+	appendBlocksAsNewTurn(&rec, text, recorder.Snapshot())
+	if err := b.convs.Upsert(ctx, rec); err != nil {
+		b.log.Error("convstore upsert", "error", err)
+		b.markRunState(ctx, runstore.StateFailed, err)
+		return
+	}
+	b.markRunState(ctx, runstore.StateSucceeded, nil)
+	b.deleteSandboxSession(sb, "followup-"+requestID)
 
 	if err := sb.Stop(ctx); err != nil {
 		b.log.Error("sandbox stop failed", "sandbox", sb.ID, "error", err)
 	}
 	if err := sb.Archive(ctx); err != nil {
 		b.log.Error("sandbox archive failed", "sandbox", sb.ID, "error", err)
-	}
-
-	// Result first so the recorded snapshot includes the closing block,
-	// then upsert with the new user turn + this turn's blocks.
-	emit.Result("Done!", prURL)
-
-	rec.PRURL = prURL
-	appendBlocksAsNewTurn(&rec, text, recorder.Snapshot())
-	if err := b.convs.Upsert(ctx, rec); err != nil {
-		b.log.Error("convstore upsert", "error", err)
 	}
 }
 
