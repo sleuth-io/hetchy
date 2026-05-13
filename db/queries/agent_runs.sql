@@ -8,13 +8,13 @@ INSERT INTO agent_runs (
 )
 ON CONFLICT DO NOTHING
 RETURNING id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
-          user_request, session_id, command_id, state, log_cursor, next_event_seq,
+          user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
           lease_owner, lease_expires_at, heartbeat_at, last_error,
           created_at, updated_at;
 
 -- name: GetAgentRun :one
 SELECT id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
-       user_request, session_id, command_id, state, log_cursor, next_event_seq,
+       user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
        lease_owner, lease_expires_at, heartbeat_at, last_error,
        created_at, updated_at
 FROM agent_runs
@@ -22,7 +22,7 @@ WHERE id = $1;
 
 -- name: GetAgentRunByRequest :one
 SELECT id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
-       user_request, session_id, command_id, state, log_cursor, next_event_seq,
+       user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
        lease_owner, lease_expires_at, heartbeat_at, last_error,
        created_at, updated_at
 FROM agent_runs
@@ -30,7 +30,7 @@ WHERE org_id = $1 AND request_id = $2;
 
 -- name: GetActiveAgentRunForThread :one
 SELECT id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
-       user_request, session_id, command_id, state, log_cursor, next_event_seq,
+       user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
        lease_owner, lease_expires_at, heartbeat_at, last_error,
        created_at, updated_at
 FROM agent_runs
@@ -41,7 +41,7 @@ LIMIT 1;
 
 -- name: GetLatestAgentRunForThread :one
 SELECT id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
-       user_request, session_id, command_id, state, log_cursor, next_event_seq,
+       user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
        lease_owner, lease_expires_at, heartbeat_at, last_error,
        created_at, updated_at
 FROM agent_runs
@@ -85,6 +85,7 @@ WHERE id = $1
 UPDATE agent_runs
    SET session_id = $2,
        command_id = $3,
+       command_start_seq = next_event_seq,
        state = 'running',
        heartbeat_at = NOW(),
        lease_owner = $4,
@@ -125,7 +126,7 @@ WHERE id = $1
 
 -- name: ListExpiredAgentRuns :many
 SELECT id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
-       user_request, session_id, command_id, state, log_cursor, next_event_seq,
+       user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
        lease_owner, lease_expires_at, heartbeat_at, last_error,
        created_at, updated_at
 FROM agent_runs
@@ -145,7 +146,7 @@ WHERE id = $1
   AND state IN ('preparing', 'running', 'recovering', 'finalizing')
   AND (lease_expires_at IS NULL OR lease_expires_at < NOW() OR lease_owner = $2)
 RETURNING id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
-          user_request, session_id, command_id, state, log_cursor, next_event_seq,
+          user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
           lease_owner, lease_expires_at, heartbeat_at, last_error,
           created_at, updated_at;
 

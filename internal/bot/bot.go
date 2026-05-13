@@ -421,6 +421,9 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 	if !runOK {
 		b.log.Info("duplicate in-flight agent run ignored",
 			"org", oc.OrgID, "thread", threadID, "request_id", requestID, "run_id", run.ID, "state", run.State)
+		if run.RequestID != "" && run.RequestID != requestID {
+			out.Error("Run already in flight", "This chat already has a turn in flight. Reload to reattach before sending another message.")
+		}
 		return
 	}
 	if run.ID != "" {
@@ -818,6 +821,11 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 			b.markRunState(ctx, runstore.StateCancelled, runErr)
 			return
 		}
+		if errors.Is(runErr, errAgentRunDurability) {
+			b.log.Error("agent run durability failed; leaving run recoverable", "sandbox", sb.ID, "request_id", requestID, "error", runErr)
+			b.markRunState(ctx, runstore.StateRecovering, runErr)
+			return
+		}
 		b.log.Error("agent run failed", "sandbox", sb.ID, "request_id", requestID, "error", runErr)
 		if isAgentTimeout(runErr) {
 			emit.Error("Agent timed out", fmt.Sprintf("The agent exceeded its time limit on sandbox `%s`. Reply here to retry (the orphan sandbox will be archived automatically) or check the server logs for details.", sb.ID))
@@ -842,7 +850,7 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 
 	emit.Result("Done!", prURL+"\n\nReply here to make further changes to this PR.")
 	if err := agentRunDurabilityErr(ctx); err != nil {
-		b.markRunState(ctx, runstore.StateFailed, err)
+		b.markRunState(ctx, runstore.StateRecovering, err)
 		return
 	}
 
@@ -979,6 +987,11 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 			b.markRunState(ctx, runstore.StateCancelled, err)
 			return
 		}
+		if errors.Is(err, errAgentRunDurability) {
+			b.log.Error("follow-up durability failed; leaving run recoverable", "sandbox", sb.ID, "request_id", requestID, "error", err)
+			b.markRunState(ctx, runstore.StateRecovering, err)
+			return
+		}
 		b.log.Error("follow-up failed", "sandbox", sb.ID, "request_id", requestID, "error", err)
 		if errors.Is(err, errReportedPRNotVerified) {
 			emit.Error("PR not verified", fmt.Sprintf("The agent reported a PR URL, but GitHub did not verify it for branch `%s`. Sandbox `%s` is left running for debugging — check the transcript and server logs for details.", rec.Branch, sb.ID))
@@ -997,7 +1010,7 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 	// then upsert with the new user turn + this turn's blocks.
 	emit.Result("Done!", prURL)
 	if err := agentRunDurabilityErr(ctx); err != nil {
-		b.markRunState(ctx, runstore.StateFailed, err)
+		b.markRunState(ctx, runstore.StateRecovering, err)
 		return
 	}
 

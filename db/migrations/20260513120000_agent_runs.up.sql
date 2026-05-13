@@ -9,6 +9,7 @@ CREATE TABLE agent_runs (
     user_request     TEXT NOT NULL DEFAULT '',
     session_id       TEXT NOT NULL DEFAULT '',
     command_id       TEXT NOT NULL DEFAULT '',
+    command_start_seq BIGINT NOT NULL DEFAULT 0,
     state            TEXT NOT NULL DEFAULT 'preparing'
         CHECK (state IN ('preparing', 'running', 'recovering', 'finalizing', 'succeeded', 'failed', 'cancelled')),
     log_cursor       BIGINT NOT NULL DEFAULT 0,

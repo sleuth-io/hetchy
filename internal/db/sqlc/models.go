@@ -40,25 +40,26 @@ type AgentProfileTemplate struct {
 }
 
 type AgentRun struct {
-	ID             string             `json:"id"`
-	OrgID          string             `json:"org_id"`
-	ThreadID       string             `json:"thread_id"`
-	RunKind        string             `json:"run_kind"`
-	RequestID      string             `json:"request_id"`
-	SandboxID      string             `json:"sandbox_id"`
-	Branch         string             `json:"branch"`
-	UserRequest    string             `json:"user_request"`
-	SessionID      string             `json:"session_id"`
-	CommandID      string             `json:"command_id"`
-	State          string             `json:"state"`
-	LogCursor      int64              `json:"log_cursor"`
-	NextEventSeq   int64              `json:"next_event_seq"`
-	LeaseOwner     string             `json:"lease_owner"`
-	LeaseExpiresAt pgtype.Timestamptz `json:"lease_expires_at"`
-	HeartbeatAt    pgtype.Timestamptz `json:"heartbeat_at"`
-	LastError      string             `json:"last_error"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	ID              string             `json:"id"`
+	OrgID           string             `json:"org_id"`
+	ThreadID        string             `json:"thread_id"`
+	RunKind         string             `json:"run_kind"`
+	RequestID       string             `json:"request_id"`
+	SandboxID       string             `json:"sandbox_id"`
+	Branch          string             `json:"branch"`
+	UserRequest     string             `json:"user_request"`
+	SessionID       string             `json:"session_id"`
+	CommandID       string             `json:"command_id"`
+	CommandStartSeq int64              `json:"command_start_seq"`
+	State           string             `json:"state"`
+	LogCursor       int64              `json:"log_cursor"`
+	NextEventSeq    int64              `json:"next_event_seq"`
+	LeaseOwner      string             `json:"lease_owner"`
+	LeaseExpiresAt  pgtype.Timestamptz `json:"lease_expires_at"`
+	HeartbeatAt     pgtype.Timestamptz `json:"heartbeat_at"`
+	LastError       string             `json:"last_error"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 }
 
 type AgentRunEvent struct {

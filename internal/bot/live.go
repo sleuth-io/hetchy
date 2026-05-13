@@ -39,8 +39,9 @@ type liveRun struct {
 // the history slice is the catch-up backlog the handler should
 // replay first.
 type liveSubscription struct {
-	history []liveEvent
-	ch      chan liveEvent
+	history  []liveEvent
+	ch       chan liveEvent
+	afterSeq int64
 }
 
 func newLiveRun(ctx context.Context, cancel context.CancelFunc) *liveRun {
@@ -105,6 +106,9 @@ func (r *liveRun) Emit(ev liveEvent) {
 	}
 	r.history = append(r.history, ev)
 	for sub := range r.subs {
+		if ev.Seq != 0 && ev.Seq <= sub.afterSeq {
+			continue
+		}
 		select {
 		case sub.ch <- ev:
 		default:
@@ -129,7 +133,8 @@ func (r *liveRun) Subscribe() *liveSubscription {
 // Seq==0 are process-local fallback events and are always included.
 func (r *liveRun) SubscribeAfter(seq int64) *liveSubscription {
 	sub := &liveSubscription{
-		ch: make(chan liveEvent, 256),
+		ch:       make(chan liveEvent, 256),
+		afterSeq: seq,
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()

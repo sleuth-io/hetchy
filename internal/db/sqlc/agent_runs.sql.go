@@ -58,7 +58,7 @@ WHERE id = $1
   AND state IN ('preparing', 'running', 'recovering', 'finalizing')
   AND (lease_expires_at IS NULL OR lease_expires_at < NOW() OR lease_owner = $2)
 RETURNING id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
-          user_request, session_id, command_id, state, log_cursor, next_event_seq,
+          user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
           lease_owner, lease_expires_at, heartbeat_at, last_error,
           created_at, updated_at
 `
@@ -83,6 +83,7 @@ func (q *Queries) ClaimAgentRunLease(ctx context.Context, arg ClaimAgentRunLease
 		&i.UserRequest,
 		&i.SessionID,
 		&i.CommandID,
+		&i.CommandStartSeq,
 		&i.State,
 		&i.LogCursor,
 		&i.NextEventSeq,
@@ -106,7 +107,7 @@ INSERT INTO agent_runs (
 )
 ON CONFLICT DO NOTHING
 RETURNING id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
-          user_request, session_id, command_id, state, log_cursor, next_event_seq,
+          user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
           lease_owner, lease_expires_at, heartbeat_at, last_error,
           created_at, updated_at
 `
@@ -145,6 +146,7 @@ func (q *Queries) CreateAgentRun(ctx context.Context, arg CreateAgentRunParams) 
 		&i.UserRequest,
 		&i.SessionID,
 		&i.CommandID,
+		&i.CommandStartSeq,
 		&i.State,
 		&i.LogCursor,
 		&i.NextEventSeq,
@@ -160,7 +162,7 @@ func (q *Queries) CreateAgentRun(ctx context.Context, arg CreateAgentRunParams) 
 
 const getActiveAgentRunForThread = `-- name: GetActiveAgentRunForThread :one
 SELECT id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
-       user_request, session_id, command_id, state, log_cursor, next_event_seq,
+       user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
        lease_owner, lease_expires_at, heartbeat_at, last_error,
        created_at, updated_at
 FROM agent_runs
@@ -189,6 +191,7 @@ func (q *Queries) GetActiveAgentRunForThread(ctx context.Context, arg GetActiveA
 		&i.UserRequest,
 		&i.SessionID,
 		&i.CommandID,
+		&i.CommandStartSeq,
 		&i.State,
 		&i.LogCursor,
 		&i.NextEventSeq,
@@ -204,7 +207,7 @@ func (q *Queries) GetActiveAgentRunForThread(ctx context.Context, arg GetActiveA
 
 const getAgentRun = `-- name: GetAgentRun :one
 SELECT id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
-       user_request, session_id, command_id, state, log_cursor, next_event_seq,
+       user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
        lease_owner, lease_expires_at, heartbeat_at, last_error,
        created_at, updated_at
 FROM agent_runs
@@ -225,6 +228,7 @@ func (q *Queries) GetAgentRun(ctx context.Context, id string) (AgentRun, error) 
 		&i.UserRequest,
 		&i.SessionID,
 		&i.CommandID,
+		&i.CommandStartSeq,
 		&i.State,
 		&i.LogCursor,
 		&i.NextEventSeq,
@@ -240,7 +244,7 @@ func (q *Queries) GetAgentRun(ctx context.Context, id string) (AgentRun, error) 
 
 const getAgentRunByRequest = `-- name: GetAgentRunByRequest :one
 SELECT id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
-       user_request, session_id, command_id, state, log_cursor, next_event_seq,
+       user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
        lease_owner, lease_expires_at, heartbeat_at, last_error,
        created_at, updated_at
 FROM agent_runs
@@ -266,6 +270,7 @@ func (q *Queries) GetAgentRunByRequest(ctx context.Context, arg GetAgentRunByReq
 		&i.UserRequest,
 		&i.SessionID,
 		&i.CommandID,
+		&i.CommandStartSeq,
 		&i.State,
 		&i.LogCursor,
 		&i.NextEventSeq,
@@ -281,7 +286,7 @@ func (q *Queries) GetAgentRunByRequest(ctx context.Context, arg GetAgentRunByReq
 
 const getLatestAgentRunForThread = `-- name: GetLatestAgentRunForThread :one
 SELECT id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
-       user_request, session_id, command_id, state, log_cursor, next_event_seq,
+       user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
        lease_owner, lease_expires_at, heartbeat_at, last_error,
        created_at, updated_at
 FROM agent_runs
@@ -309,6 +314,7 @@ func (q *Queries) GetLatestAgentRunForThread(ctx context.Context, arg GetLatestA
 		&i.UserRequest,
 		&i.SessionID,
 		&i.CommandID,
+		&i.CommandStartSeq,
 		&i.State,
 		&i.LogCursor,
 		&i.NextEventSeq,
@@ -362,7 +368,7 @@ func (q *Queries) ListAgentRunEventsFromSeq(ctx context.Context, arg ListAgentRu
 
 const listExpiredAgentRuns = `-- name: ListExpiredAgentRuns :many
 SELECT id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
-       user_request, session_id, command_id, state, log_cursor, next_event_seq,
+       user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
        lease_owner, lease_expires_at, heartbeat_at, last_error,
        created_at, updated_at
 FROM agent_runs
@@ -392,6 +398,7 @@ func (q *Queries) ListExpiredAgentRuns(ctx context.Context, limit int32) ([]Agen
 			&i.UserRequest,
 			&i.SessionID,
 			&i.CommandID,
+			&i.CommandStartSeq,
 			&i.State,
 			&i.LogCursor,
 			&i.NextEventSeq,
@@ -458,6 +465,7 @@ const updateAgentRunCommand = `-- name: UpdateAgentRunCommand :exec
 UPDATE agent_runs
    SET session_id = $2,
        command_id = $3,
+       command_start_seq = next_event_seq,
        state = 'running',
        heartbeat_at = NOW(),
        lease_owner = $4,

@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -19,6 +20,8 @@ import (
 )
 
 const agentRunLeaseDuration = 5 * time.Minute
+
+var errAgentRunDurability = errors.New("agent run durability failure")
 
 type agentRunContextKey struct{}
 type agentRunEmitterContextKey struct{}
@@ -170,6 +173,9 @@ type agentRunEmitter struct {
 	err        error
 	buffering  bool
 	buffer     []durableRunEvent
+
+	replayStartIDs []string
+	replayStart    int
 }
 
 type durableRunEvent struct {
@@ -186,6 +192,51 @@ func newAgentRunEmitter(store *runstore.Store, runID, workerID string, live *liv
 		leasePeriod: agentRunLeaseDuration,
 		kinds:       map[string]blocks.Kind{},
 	}
+}
+
+func newRecoveredAgentRunEmitter(store *runstore.Store, run runstore.Run, workerID string, live *liveRun, events []runstore.Event) *agentRunEmitter {
+	em := newAgentRunEmitter(store, run.ID, workerID, live)
+	maxID, replayIDs := recoveredAgentRunEmitterIDs(events, run.CommandStartSeq)
+	em.idGen.Store(maxID)
+	em.replayStartIDs = replayIDs
+	return em
+}
+
+func newAgentRunEmitterAfterEvents(store *runstore.Store, runID, workerID string, live *liveRun, events []runstore.Event) *agentRunEmitter {
+	em := newAgentRunEmitter(store, runID, workerID, live)
+	maxID, _ := recoveredAgentRunEmitterIDs(events, 0)
+	em.idGen.Store(maxID)
+	return em
+}
+
+func recoveredAgentRunEmitterIDs(events []runstore.Event, commandStartSeq int64) (uint64, []string) {
+	var maxID uint64
+	var replayIDs []string
+	for _, ev := range events {
+		if ev.Event != "block_start" {
+			continue
+		}
+		var payload sseEvent
+		if err := json.Unmarshal(ev.Data, &payload); err != nil || payload.ID == "" {
+			continue
+		}
+		if n, ok := parseAgentRunEmitterID(payload.ID); ok && n > maxID {
+			maxID = n
+		}
+		if commandStartSeq > 0 && ev.Seq >= commandStartSeq {
+			replayIDs = append(replayIDs, payload.ID)
+		}
+	}
+	return maxID, replayIDs
+}
+
+func parseAgentRunEmitterID(id string) (uint64, bool) {
+	raw, ok := strings.CutPrefix(id, "p")
+	if !ok || raw == "" {
+		return 0, false
+	}
+	n, err := strconv.ParseUint(raw, 10, 64)
+	return n, err == nil
 }
 
 func (e *agentRunEmitter) SetSuppressed(v bool) {
@@ -266,7 +317,7 @@ func (e *agentRunEmitter) Start(kind blocks.Kind, title string, meta map[string]
 }
 
 func (e *agentRunEmitter) StartAt(kind blocks.Kind, title string, meta map[string]any, startedAt time.Time) string {
-	id := "p" + strconv.FormatUint(e.idGen.Add(1), 10)
+	id := e.nextBlockID()
 	e.mu.Lock()
 	e.kinds[id] = kind
 	e.mu.Unlock()
@@ -278,6 +329,17 @@ func (e *agentRunEmitter) StartAt(kind blocks.Kind, title string, meta map[strin
 		StartedAt: startedAt,
 	})
 	return id
+}
+
+func (e *agentRunEmitter) nextBlockID() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.replayStart < len(e.replayStartIDs) {
+		id := e.replayStartIDs[e.replayStart]
+		e.replayStart++
+		return id
+	}
+	return "p" + strconv.FormatUint(e.idGen.Add(1), 10)
 }
 
 func (e *agentRunEmitter) Append(id, delta string) {

@@ -120,6 +120,40 @@ func TestBlocksFromRunEventsProjectsSSEBlocks(t *testing.T) {
 	}
 }
 
+func TestRecoveredAgentRunEmitterReusesOnlyCommandBlockIDs(t *testing.T) {
+	preCommand := runEventForTest(t, "block_start", sseEvent{ID: "p1", Kind: blocks.KindNotify, Title: "Starting"})
+	preCommand.Seq = 1
+	commandSetup := runEventForTest(t, "block_start", sseEvent{ID: "p2", Kind: blocks.KindSetup, Title: "Sandbox setup"})
+	commandSetup.Seq = 4
+
+	em := newRecoveredAgentRunEmitter(nil, runstore.Run{ID: "run_abc", CommandStartSeq: 4}, "worker", nil, []runstore.Event{
+		preCommand,
+		commandSetup,
+	})
+
+	if got := em.Start(blocks.KindSetup, "Sandbox setup", nil); got != "p2" {
+		t.Fatalf("first recovered command block id = %q, want p2", got)
+	}
+	if got := em.Start(blocks.KindToolUse, "Running bash", nil); got != "p3" {
+		t.Fatalf("next recovered block id = %q, want p3", got)
+	}
+}
+
+func TestRecoveredTerminalEmitterStartsAfterExistingBlockIDs(t *testing.T) {
+	preCommand := runEventForTest(t, "block_start", sseEvent{ID: "p1", Kind: blocks.KindNotify, Title: "Starting"})
+	preCommand.Seq = 1
+	commandSetup := runEventForTest(t, "block_start", sseEvent{ID: "p2", Kind: blocks.KindSetup, Title: "Sandbox setup"})
+	commandSetup.Seq = 4
+
+	em := newAgentRunEmitterAfterEvents(nil, "run_abc", "worker", nil, []runstore.Event{
+		preCommand,
+		commandSetup,
+	})
+	if got := em.Start(blocks.KindError, "Agent failed", nil); got != "p3" {
+		t.Fatalf("terminal block id = %q, want p3", got)
+	}
+}
+
 type testSuppressionGate struct {
 	suppressed bool
 }

@@ -1284,6 +1284,19 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 		sessionID = requestID
 	}
 
+	if b.runs != nil && b.runs.Enabled() {
+		if active, err := b.runs.ActiveForThread(r.Context(), p.OrgID, sessionID); err == nil {
+			b.log.Info("chat post rejected due active durable run",
+				"org", p.OrgID, "thread", sessionID, "run_id", active.ID, "state", active.State)
+			http.Error(w, "this chat already has a turn in flight; reload to reattach", http.StatusConflict)
+			return
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			b.log.Warn("active run lookup for chat post", "org", p.OrgID, "thread", sessionID, "error", err)
+			http.Error(w, "could not check active chat run", http.StatusInternalServerError)
+			return
+		}
+	}
+
 	// Atomically claim the in-flight slot. RegisterIfAbsent collapses
 	// the prior Get-then-Register TOCTOU where two concurrent POSTs
 	// could each observe an empty slot, both call Register, and the
@@ -1811,6 +1824,18 @@ func (b *Bot) conversationDetailHandler(w http.ResponseWriter, r *http.Request) 
 		if run := b.live.Get(p.OrgID, threadID); run != nil {
 			http.Error(w, "this chat has a turn in flight; wait for it to finish before deleting", http.StatusConflict)
 			return
+		}
+		if b.runs != nil && b.runs.Enabled() {
+			if active, err := b.runs.ActiveForThread(r.Context(), p.OrgID, threadID); err == nil {
+				b.log.Info("conversation delete rejected due active durable run",
+					"org", p.OrgID, "thread", threadID, "run_id", active.ID, "state", active.State)
+				http.Error(w, "this chat has a turn in flight; wait for it to finish before deleting", http.StatusConflict)
+				return
+			} else if !errors.Is(err, pgx.ErrNoRows) {
+				b.log.Warn("active run lookup for conversation delete", "org", p.OrgID, "thread", threadID, "error", err)
+				http.Error(w, "internal server error", http.StatusInternalServerError)
+				return
+			}
 		}
 		if err := b.convs.Delete(r.Context(), p.OrgID, threadID); err != nil {
 			b.log.Error("delete conversation", "error", err, "org", p.OrgID, "thread", threadID)

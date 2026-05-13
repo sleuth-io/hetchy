@@ -65,7 +65,7 @@ func (b *Bot) recoverAgentRun(ctx context.Context, run runstore.Run) {
 	}
 	if run.SandboxID == "" || run.SessionID == "" || run.CommandID == "" {
 		err := errors.New("run has no recoverable Daytona command")
-		b.runs.UpdateState(context.Background(), run.ID, runstore.StateFailed, err.Error(), b.workerID)
+		b.finishRecoveredFailure(ctx, run, live, "Agent failed", "The interrupted run did not reach a recoverable sandbox command.", err)
 		return
 	}
 
@@ -90,7 +90,12 @@ func (b *Bot) recoverAgentRun(ctx context.Context, run runstore.Run) {
 			return
 		}
 
-		em := newAgentRunEmitter(b.runs, run.ID, b.workerID, live)
+		existingEvents, err := b.runs.EventsAfter(ctx, run.ID, 0)
+		if err != nil {
+			b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
+			return
+		}
+		em := newRecoveredAgentRunEmitter(b.runs, run, b.workerID, live, existingEvents)
 		router := newAgentLineRouter(em)
 		res := replayHetchyFramedLog(run.ID, logText, run.LogCursor, em, func(line string) {
 			em.BeginBatch()
@@ -127,7 +132,6 @@ func (b *Bot) recoverAgentRun(ctx context.Context, run runstore.Run) {
 }
 
 func (b *Bot) finalizeRecoveredRun(ctx context.Context, sb *daytona.Sandbox, run runstore.Run, router *agentLineRouter, replayEm *agentRunEmitter, exitCode int64, live *liveRun) {
-	em := newAgentRunEmitter(b.runs, run.ID, b.workerID, live)
 	if exitCode != 0 {
 		router.Abort()
 		if err := replayEm.Err(); err != nil {
@@ -135,7 +139,7 @@ func (b *Bot) finalizeRecoveredRun(ctx context.Context, sb *daytona.Sandbox, run
 			return
 		}
 		err := fmt.Errorf("agent command exited %d during recovery", exitCode)
-		b.finishRecoveredFailure(ctx, run, em, "Agent failed", fmt.Sprintf("The recovered agent command exited with status %d.", exitCode), err)
+		b.finishRecoveredFailure(ctx, run, live, "Agent failed", fmt.Sprintf("The recovered agent command exited with status %d.", exitCode), err)
 		return
 	}
 	prURL := router.Finish()
@@ -145,7 +149,7 @@ func (b *Bot) finalizeRecoveredRun(ctx context.Context, sb *daytona.Sandbox, run
 	}
 	if prURL == "" {
 		err := errors.New("recovered agent command finished without a PR URL")
-		b.finishRecoveredFailure(ctx, run, em, "Agent failed", "The recovered agent command finished without posting a PR URL.", err)
+		b.finishRecoveredFailure(ctx, run, live, "Agent failed", "The recovered agent command finished without posting a PR URL.", err)
 		return
 	}
 
@@ -155,7 +159,7 @@ func (b *Bot) finalizeRecoveredRun(ctx context.Context, sb *daytona.Sandbox, run
 		if !errors.Is(err, errReportedPRNotVerified) {
 			body = "The recovered agent command reported a PR URL, but Hetchy could not validate it: `" + err.Error() + "`"
 		}
-		b.finishRecoveredFailure(ctx, run, em, "PR not verified", body, err)
+		b.finishRecoveredFailure(ctx, run, live, "PR not verified", body, err)
 		return
 	}
 
@@ -168,11 +172,16 @@ func (b *Bot) finalizeRecoveredRun(ctx context.Context, sb *daytona.Sandbox, run
 		body += "\n\nReply here to make further changes to this PR."
 	}
 	if !b.recoveredRunHasTerminalBlock(ctx, run.ID, blocks.KindResult) {
+		em, err := b.recoveredTerminalEmitter(ctx, run, live)
+		if err != nil {
+			b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
+			return
+		}
 		em.Result("Done!", body)
-	}
-	if err := em.Err(); err != nil {
-		b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
-		return
+		if err := em.Err(); err != nil {
+			b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
+			return
+		}
 	}
 	if err := b.projectRecoveredConversation(ctx, run, prURL); err != nil {
 		b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
@@ -183,13 +192,18 @@ func (b *Bot) finalizeRecoveredRun(ctx context.Context, sb *daytona.Sandbox, run
 	b.cleanupSandbox(ctx, sb, "recovered successful run")
 }
 
-func (b *Bot) finishRecoveredFailure(ctx context.Context, run runstore.Run, em *agentRunEmitter, title, body string, cause error) {
+func (b *Bot) finishRecoveredFailure(ctx context.Context, run runstore.Run, live *liveRun, title, body string, cause error) {
 	if !b.recoveredRunHasTerminalBlock(ctx, run.ID, blocks.KindError) {
+		em, err := b.recoveredTerminalEmitter(ctx, run, live)
+		if err != nil {
+			b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
+			return
+		}
 		em.Error(title, body)
-	}
-	if err := em.Err(); err != nil {
-		b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
-		return
+		if err := em.Err(); err != nil {
+			b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
+			return
+		}
 	}
 	if err := b.projectRecoveredConversation(ctx, run, ""); err != nil {
 		b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
@@ -200,6 +214,14 @@ func (b *Bot) finishRecoveredFailure(ctx context.Context, run runstore.Run, em *
 		lastErr = cause.Error()
 	}
 	b.runs.UpdateState(context.Background(), run.ID, runstore.StateFailed, lastErr, b.workerID)
+}
+
+func (b *Bot) recoveredTerminalEmitter(ctx context.Context, run runstore.Run, live *liveRun) (*agentRunEmitter, error) {
+	events, err := b.runs.EventsAfter(ctx, run.ID, 0)
+	if err != nil {
+		return nil, err
+	}
+	return newAgentRunEmitterAfterEvents(b.runs, run.ID, b.workerID, live, events), nil
 }
 
 func (b *Bot) validateRecoveredPR(ctx context.Context, run runstore.Run, prURL string) (string, string, error) {

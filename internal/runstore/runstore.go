@@ -24,24 +24,25 @@ const (
 )
 
 type Run struct {
-	ID             string
-	OrgID          string
-	ThreadID       string
-	RunKind        string
-	RequestID      string
-	SandboxID      string
-	Branch         string
-	UserRequest    string
-	SessionID      string
-	CommandID      string
-	State          string
-	LogCursor      int64
-	LeaseOwner     string
-	LeaseExpiresAt time.Time
-	HeartbeatAt    time.Time
-	LastError      string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID              string
+	OrgID           string
+	ThreadID        string
+	RunKind         string
+	RequestID       string
+	SandboxID       string
+	Branch          string
+	UserRequest     string
+	SessionID       string
+	CommandID       string
+	CommandStartSeq int64
+	State           string
+	LogCursor       int64
+	LeaseOwner      string
+	LeaseExpiresAt  time.Time
+	HeartbeatAt     time.Time
+	LastError       string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 type Event struct {
@@ -121,6 +122,20 @@ func (s *Store) LatestForThread(ctx context.Context, orgID, threadID string) (Ru
 		return Run{}, pgx.ErrNoRows
 	}
 	row, err := s.db.Queries.GetLatestAgentRunForThread(ctx, sqlc.GetLatestAgentRunForThreadParams{
+		OrgID:    orgID,
+		ThreadID: threadID,
+	})
+	if err != nil {
+		return Run{}, err
+	}
+	return fromRunRow(row), nil
+}
+
+func (s *Store) ActiveForThread(ctx context.Context, orgID, threadID string) (Run, error) {
+	if !s.Enabled() {
+		return Run{}, pgx.ErrNoRows
+	}
+	row, err := s.db.Queries.GetActiveAgentRunForThread(ctx, sqlc.GetActiveAgentRunForThreadParams{
 		OrgID:    orgID,
 		ThreadID: threadID,
 	})
@@ -308,23 +323,24 @@ func interval(d time.Duration) pgtype.Interval {
 
 func fromRunRow(row sqlc.AgentRun) Run {
 	return Run{
-		ID:             row.ID,
-		OrgID:          row.OrgID,
-		ThreadID:       row.ThreadID,
-		RunKind:        row.RunKind,
-		RequestID:      row.RequestID,
-		SandboxID:      row.SandboxID,
-		Branch:         row.Branch,
-		UserRequest:    row.UserRequest,
-		SessionID:      row.SessionID,
-		CommandID:      row.CommandID,
-		State:          row.State,
-		LogCursor:      row.LogCursor,
-		LeaseOwner:     row.LeaseOwner,
-		LeaseExpiresAt: row.LeaseExpiresAt.Time,
-		HeartbeatAt:    row.HeartbeatAt.Time,
-		LastError:      row.LastError,
-		CreatedAt:      row.CreatedAt.Time,
-		UpdatedAt:      row.UpdatedAt.Time,
+		ID:              row.ID,
+		OrgID:           row.OrgID,
+		ThreadID:        row.ThreadID,
+		RunKind:         row.RunKind,
+		RequestID:       row.RequestID,
+		SandboxID:       row.SandboxID,
+		Branch:          row.Branch,
+		UserRequest:     row.UserRequest,
+		SessionID:       row.SessionID,
+		CommandID:       row.CommandID,
+		CommandStartSeq: row.CommandStartSeq,
+		State:           row.State,
+		LogCursor:       row.LogCursor,
+		LeaseOwner:      row.LeaseOwner,
+		LeaseExpiresAt:  row.LeaseExpiresAt.Time,
+		HeartbeatAt:     row.HeartbeatAt.Time,
+		LastError:       row.LastError,
+		CreatedAt:       row.CreatedAt.Time,
+		UpdatedAt:       row.UpdatedAt.Time,
 	}
 }
