@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/hetchyhq/hetchy/internal/auth"
+	"github.com/hetchyhq/hetchy/internal/convstore"
 	"github.com/hetchyhq/hetchy/internal/webui"
 )
 
@@ -42,7 +43,7 @@ func newBypassBot(t *testing.T) *Bot {
 	if err != nil {
 		t.Fatalf("auth: %v", err)
 	}
-	return &Bot{log: discardLogger(), cfg: Config{WebPort: "0"}, auth: a}
+	return &Bot{log: discardLogger(), cfg: Config{WebPort: "0"}, auth: a, convs: convstore.New(nil)}
 }
 
 func newBypassOrgBot(t *testing.T, role string) *Bot {
@@ -60,7 +61,7 @@ func newBypassOrgBot(t *testing.T, role string) *Bot {
 	if err != nil {
 		t.Fatalf("auth: %v", err)
 	}
-	return &Bot{log: discardLogger(), cfg: Config{WebPort: "0"}, auth: a, live: newLiveRegistry()}
+	return &Bot{log: discardLogger(), cfg: Config{WebPort: "0"}, auth: a, convs: convstore.New(nil), live: newLiveRegistry()}
 }
 
 func readWebUIAsset(t *testing.T, name string) string {

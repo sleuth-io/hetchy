@@ -695,7 +695,7 @@ func (b *Bot) validateRecoveredPR(ctx context.Context, run runstore.Run, prURL s
 	if err != nil {
 		return "", run.Branch, err
 	}
-	repo, err := b.resolveRepo(ctx, run.OrgID, rec.GitHubOwner, rec.GitHubRepo)
+	repo, err := b.resolveRepoForRun(ctx, run.OrgID, rec.GitHubOwner, rec.GitHubRepo)
 	if err != nil {
 		return "", run.Branch, err
 	}

@@ -60,7 +60,7 @@ type Bot struct {
 	daytona   *daytona.Client
 	store     *db.Store
 	orgs      *orgcfg.Store
-	convs     *convstore.Store
+	convs     conversationStore
 	runs      *runstore.Store
 	agents    *agents.Store
 	auth      *auth.Service
@@ -106,6 +106,17 @@ type Bot struct {
 	// startFn is called by resumeSandbox; overridable in tests.
 	startFn      func(context.Context, *daytona.Sandbox, time.Duration) error
 	retryBackoff time.Duration
+	// resolveRepoFn/runAgentFn/runFollowUpFn/getSandboxFn/deleteSandboxSessionFn
+	// are narrow seams around external systems used by the chat state machine.
+	// Tests install hand-written fakes here so core request logic can be
+	// exercised without GitHub, Daytona, or shell execution.
+	resolveRepoFn          repoResolveFunc
+	runAgentFn             agentRunFunc
+	runFollowUpFn          followUpRunFunc
+	getSandboxFn           func(context.Context, string) (*daytona.Sandbox, error)
+	resumeSandboxFn        func(context.Context, *daytona.Sandbox, blocks.Emitter) error
+	deleteSandboxSessionFn func(*daytona.Sandbox, string)
+	stopAndArchiveFn       func(context.Context, *daytona.Sandbox)
 	// cleanupSandboxByIDFn is called by chatCancelHandler for opportunistic
 	// cleanup of a fresh-run sandbox; overridable in tests.
 	cleanupSandboxByIDFn func(string, string)
@@ -687,7 +698,7 @@ func clearRepoOnFailure(rec *convstore.Record) {
 // retry.
 func (b *Bot) handleRetryAfterFailure(ctx context.Context, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, text, requestID string, opts chatTaskOptions, model ClaudeModel, recorder *blocks.Recorder, emit blocks.Emitter) {
 	if rec.SandboxID != "" {
-		if sb, err := b.daytona.Get(ctx, rec.SandboxID); err == nil {
+		if sb, err := b.getSandbox(ctx, rec.SandboxID); err == nil {
 			if err := sb.Stop(ctx); err != nil {
 				b.log.Warn("orphan sandbox stop failed", "sandbox", rec.SandboxID, "error", err)
 			}
@@ -715,7 +726,7 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 	model = normalizeClaudeModel(model)
 	rec.Model = string(model)
 	b.markRunKind(ctx, "fresh")
-	repo, err := b.resolveRepo(ctx, oc.OrgID, rec.GitHubOwner, rec.GitHubRepo)
+	repo, err := b.resolveRepoForRun(ctx, oc.OrgID, rec.GitHubOwner, rec.GitHubRepo)
 	if err != nil {
 		if liveRunCancelled(ctx) {
 			emit.Result("Stopped", "Stopped before the sandbox was created.")
@@ -819,7 +830,7 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 		persister.Stop()
 	}()
 
-	prURL, runErr := b.runAgent(ctx, sb, repo, oc, agent, userRequest, requestID, opts, model, emit)
+	prURL, runErr := b.runAgentForRequest(ctx, sb, repo, oc, agent, userRequest, requestID, opts, model, emit)
 	if runErr != nil {
 		if liveRunCancelled(ctx) {
 			b.log.Info("agent run stopped", "sandbox", sb.ID, "request_id", requestID, "error", runErr)
@@ -876,13 +887,7 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 	}
 	b.markRunState(ctx, runstore.StateSucceeded, nil)
 	b.deleteSandboxSession(sb, b.currentAgentRunSessionID(ctx, "agent-"+requestID))
-
-	if err := sb.Stop(ctx); err != nil {
-		b.log.Error("sandbox stop failed", "sandbox", sb.ID, "error", err)
-	}
-	if err := sb.Archive(ctx); err != nil {
-		b.log.Error("sandbox archive failed", "sandbox", sb.ID, "error", err)
-	}
+	b.stopAndArchiveSandbox(ctx, sb)
 }
 
 func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, text, requestID string, opts chatTaskOptions, model ClaudeModel, recorder *blocks.Recorder, emit blocks.Emitter) {
@@ -899,7 +904,7 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 		emit.Notify("Resuming", fmt.Sprintf("Resuming `%s` on %s…", agent.DisplayName, rec.PRURL))
 	}
 
-	repo, err := b.resolveRepo(ctx, oc.OrgID, rec.GitHubOwner, rec.GitHubRepo)
+	repo, err := b.resolveRepoForRun(ctx, oc.OrgID, rec.GitHubOwner, rec.GitHubRepo)
 	if err != nil {
 		if liveRunCancelled(ctx) {
 			emit.Result("Stopped", "Stopped before resuming the sandbox.")
@@ -920,7 +925,7 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 		return
 	}
 
-	sb, err := b.daytona.Get(ctx, rec.SandboxID)
+	sb, err := b.getSandbox(ctx, rec.SandboxID)
 	if err != nil {
 		if liveRunCancelled(ctx) {
 			emit.Result("Stopped", "Stopped before the sandbox was resumed.")
@@ -944,7 +949,7 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 	// handler archive it; stopping this turn should leave the chat able to
 	// continue on the same sandbox.
 	setLiveRunSandboxID(ctx, sb.ID, false)
-	if err := b.resumeSandbox(ctx, sb, emit); err != nil {
+	if err := b.resumeSandboxForRun(ctx, sb, emit); err != nil {
 		if liveRunCancelled(ctx) {
 			emit.Result("Stopped", fmt.Sprintf("Stopped this turn. Sandbox `%s` is still available; send another message to continue.", sb.ID))
 			appendBlocksAsNewTurn(&rec, text, recorder.Snapshot())
@@ -986,7 +991,7 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 		persister.Stop()
 	}()
 
-	prURL, err := b.runFollowUp(ctx, sb, repo, oc, rec, agent, text, requestID, opts, model, emit)
+	prURL, err := b.runFollowUpForRequest(ctx, sb, repo, oc, rec, agent, text, requestID, opts, model, emit)
 	if err != nil {
 		if liveRunCancelled(ctx) {
 			b.log.Info("follow-up stopped", "sandbox", sb.ID, "request_id", requestID, "error", err)
@@ -1036,7 +1041,55 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 	}
 	b.markRunState(ctx, runstore.StateSucceeded, nil)
 	b.deleteSandboxSession(sb, b.currentAgentRunSessionID(ctx, "followup-"+requestID))
+	b.stopAndArchiveSandbox(ctx, sb)
+}
 
+func (b *Bot) resolveRepoForRun(ctx context.Context, orgID, owner, name string) (repoCtx, error) {
+	if b.resolveRepoFn != nil {
+		return b.resolveRepoFn(ctx, orgID, owner, name)
+	}
+	return b.resolveRepo(ctx, orgID, owner, name)
+}
+
+func (b *Bot) runAgentForRequest(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, agent agents.Profile, userRequest, requestID string, opts chatTaskOptions, model ClaudeModel, emit blocks.Emitter) (string, error) {
+	if b.runAgentFn != nil {
+		return b.runAgentFn(ctx, sb, repo, oc, agent, userRequest, requestID, opts, model, emit)
+	}
+	return b.runAgent(ctx, sb, repo, oc, agent, userRequest, requestID, opts, model, emit)
+}
+
+func (b *Bot) runFollowUpForRequest(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, text, requestID string, opts chatTaskOptions, model ClaudeModel, emit blocks.Emitter) (string, error) {
+	if b.runFollowUpFn != nil {
+		return b.runFollowUpFn(ctx, sb, repo, oc, rec, agent, text, requestID, opts, model, emit)
+	}
+	return b.runFollowUp(ctx, sb, repo, oc, rec, agent, text, requestID, opts, model, emit)
+}
+
+func (b *Bot) getSandbox(ctx context.Context, sandboxID string) (*daytona.Sandbox, error) {
+	if b.getSandboxFn != nil {
+		return b.getSandboxFn(ctx, sandboxID)
+	}
+	if b.daytona == nil {
+		return nil, errors.New("daytona client not configured")
+	}
+	return b.daytona.Get(ctx, sandboxID)
+}
+
+func (b *Bot) resumeSandboxForRun(ctx context.Context, sb *daytona.Sandbox, emit blocks.Emitter) error {
+	if b.resumeSandboxFn != nil {
+		return b.resumeSandboxFn(ctx, sb, emit)
+	}
+	return b.resumeSandbox(ctx, sb, emit)
+}
+
+func (b *Bot) stopAndArchiveSandbox(ctx context.Context, sb *daytona.Sandbox) {
+	if sb == nil {
+		return
+	}
+	if b.stopAndArchiveFn != nil {
+		b.stopAndArchiveFn(ctx, sb)
+		return
+	}
 	if err := sb.Stop(ctx); err != nil {
 		b.log.Error("sandbox stop failed", "sandbox", sb.ID, "error", err)
 	}
@@ -1445,6 +1498,10 @@ func (b *Bot) cleanupSandboxWithTimeout(sb *daytona.Sandbox, reason string) {
 
 func (b *Bot) deleteSandboxSession(sb *daytona.Sandbox, sessionID string) {
 	if sb == nil || sessionID == "" {
+		return
+	}
+	if b.deleteSandboxSessionFn != nil {
+		b.deleteSandboxSessionFn(sb, sessionID)
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
