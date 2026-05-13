@@ -290,6 +290,7 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 			"Tab":                         tab,
 			"Saved":                       r.URL.Query().Get("saved") == "1",
 			"SavedMessage":                savedMessage(r.URL.Query().Get("saved")),
+			"ErrorMessage":                errorMessage(r.URL.Query().Get("error")),
 			"AnthropicAPIKeyPreview":      previewSecret(current.AnthropicAPIKey),
 			"ClaudeCodeOAuthTokenPreview": previewSecret(current.ClaudeCodeOAuthToken),
 			"SlackBotTokenPreview":        previewSecret(current.SlackBotToken),
@@ -364,13 +365,28 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 	// SlackTeamID is set by the OAuth callback, not the form — only the
 	// HTTP transport needs it, and OAuth is its source of truth.
 	current.SXKey = applyTokenChange(r, "sx_key", current.SXKey)
-	applyAnthropicCredsChange(r, &current)
+	newCredKind, newCredValue := applyAnthropicCredsChange(r, &current)
 	// Anthropic is required at chat-launch time (HandleRequest enforces
 	// it), but no longer required at settings-save time: each
 	// integration on the new card-based UI is its own form, and saving
 	// (say) the SX key shouldn't refuse on the grounds that Anthropic
 	// hasn't been pasted yet. The bot still surfaces a clear error to
 	// the user the moment they try to chat without a key.
+	//
+	// If the user just pasted a fresh Anthropic credential, ping
+	// Anthropic to confirm it's actually valid before we encrypt and
+	// store it. This catches typos, mis-pasted tokens, and stale
+	// `claude setup-token` output immediately at save time, instead of
+	// letting the user discover the breakage minutes later when their
+	// first chat fails inside a sandbox. We only validate on a real
+	// change so a no-op save of an unrelated integration doesn't
+	// hammer Anthropic on every form post.
+	if newCredValue != "" {
+		if err := validateAnthropicCredential(r.Context(), newCredKind, newCredValue); err != nil {
+			b.redirectAnthropicValidationError(w, r, tab, newCredKind, err)
+			return
+		}
+	}
 
 	saved, err := b.orgs.Upsert(r.Context(), current)
 	if err != nil {
@@ -613,6 +629,27 @@ func githubInstallationManageURL(accountType, accountLogin string, installationI
 		return fmt.Sprintf("https://github.com/organizations/%s/settings/installations/%d", accountLogin, installationID)
 	}
 	return fmt.Sprintf("https://github.com/settings/installations/%d", installationID)
+}
+
+// errorMessage maps the ?error= sentinel to the red banner text shown
+// at the top of a tab when a POST was rejected for a reason the user
+// can fix (e.g. an Anthropic API key that Anthropic rejected). The
+// sentinel is intentionally narrow — only failures we want to surface
+// inline use this path; everything else still goes through http.Error.
+// Empty string → no banner.
+func errorMessage(s string) string {
+	switch s {
+	case "anthropic_api_key_invalid":
+		return "Anthropic rejected that API key. Double-check you copied it from console.anthropic.com and try again."
+	case "anthropic_api_key_unverified":
+		return "Couldn't reach Anthropic to verify that API key. The key wasn't saved — please try again in a moment."
+	case "anthropic_oauth_invalid":
+		return "Anthropic rejected that subscription token. Re-run `claude setup-token` and paste the fresh value."
+	case "anthropic_oauth_unverified":
+		return "Couldn't reach Anthropic to verify that subscription token. The token wasn't saved — please try again in a moment."
+	default:
+		return ""
+	}
 }
 
 // savedMessage maps the ?saved= sentinel to the green banner text shown
@@ -1108,7 +1145,12 @@ func (b *Bot) applyDefaultRepoChange(w http.ResponseWriter, r *http.Request, org
 // — the tabbed UI doesn't allow it without JS-level shenanigans), we
 // pick OAuth because that's what claudeAuthEnv returns; storing the
 // API key alongside would mismatch the dispatch behavior.
-func applyAnthropicCredsChange(r *http.Request, current *orgcfg.Config) {
+//
+// Returns the kind + value of the newly-set credential (if any), so the
+// caller can validate it against Anthropic before persisting. When no
+// new credential was supplied, newKind is anthropicCredAPIKey and
+// newValue is "" — callers should branch on newValue == "".
+func applyAnthropicCredsChange(r *http.Request, current *orgcfg.Config) (newKind anthropicCredKind, newValue string) {
 	beforeAPI := current.AnthropicAPIKey
 	beforeOAuth := current.ClaudeCodeOAuthToken
 	current.AnthropicAPIKey = applyTokenChange(r, "anthropic_api_key", current.AnthropicAPIKey)
@@ -1118,11 +1160,42 @@ func applyAnthropicCredsChange(r *http.Request, current *orgcfg.Config) {
 	switch {
 	case apiNew && oauthNew:
 		current.AnthropicAPIKey = ""
+		return anthropicCredOAuthToken, current.ClaudeCodeOAuthToken
 	case apiNew:
 		current.ClaudeCodeOAuthToken = ""
+		return anthropicCredAPIKey, current.AnthropicAPIKey
 	case oauthNew:
 		current.AnthropicAPIKey = ""
+		return anthropicCredOAuthToken, current.ClaudeCodeOAuthToken
 	}
+	return anthropicCredAPIKey, ""
+}
+
+// redirectAnthropicValidationError logs the validation failure (without
+// the credential itself) and bounces the user back to the integrations
+// tab with a sentinel that errorMessage maps to a friendly banner. We
+// avoid http.Error here because that would dump the user on a blank
+// text page and lose their place in the settings UI; a redirect with a
+// banner keeps the flow recoverable.
+func (b *Bot) redirectAnthropicValidationError(w http.ResponseWriter, r *http.Request, tab string, kind anthropicCredKind, err error) {
+	rejected := errors.Is(err, errAnthropicInvalidCredential)
+	var sentinel string
+	switch {
+	case kind == anthropicCredOAuthToken && rejected:
+		sentinel = "anthropic_oauth_invalid"
+	case kind == anthropicCredOAuthToken:
+		sentinel = "anthropic_oauth_unverified"
+	case rejected:
+		sentinel = "anthropic_api_key_invalid"
+	default:
+		sentinel = "anthropic_api_key_unverified"
+	}
+	b.log.Warn("anthropic credential validation failed",
+		"sentinel", sentinel,
+		"rejected", rejected,
+		"error", err,
+	)
+	http.Redirect(w, r, "/settings/org?tab="+url.QueryEscape(tab)+"&error="+sentinel, http.StatusFound)
 }
 
 // credLineBreakStripper drops CR and LF that sneak into pasted
