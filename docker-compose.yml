@@ -103,6 +103,15 @@ services:
       # sx (optional)
       SX_KEY: ${SX_KEY:-}
 
+      # Proof artifact upload. Validation runs use these settings
+      # to mint pre-signed S3 slots so screenshots and recordings can be
+      # linked in PR bodies.
+      HETCHY_S3_BUCKET: ${HETCHY_S3_BUCKET:-}
+      HETCHY_S3_REGION: ${HETCHY_S3_REGION:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+
       # Database — defaults to the bundled postgres service. Override
       # DATABASE_URL to point at Supabase or another instance.
       # Nested ${...} in default values is unsupported by Docker Compose interpolation,
