@@ -336,6 +336,10 @@ func (b *Bot) recoverAgentRunReady(ctx context.Context, run runstore.Run, ready 
 	poll := time.NewTicker(5 * time.Second)
 	defer poll.Stop()
 	for {
+		if live != nil && live.Cancelled() {
+			b.finishRecoveredCancellation(ctx, run)
+			return
+		}
 		b.runs.TouchLease(context.Background(), run.ID, b.workerID, agentRunLeaseDuration)
 
 		res, err := b.replayRecoveredLogTail(ctx, sb, &run, em, router, &frameState, &replayCursor)
@@ -636,6 +640,48 @@ func (b *Bot) finishRecoveredFailure(ctx context.Context, run runstore.Run, live
 		"command", run.CommandID,
 		"error", lastErr,
 	)
+}
+
+func (b *Bot) finishRecoveredCancellation(ctx context.Context, run runstore.Run) {
+	events, err := b.runs.EventsAfter(ctx, run.ID, 0)
+	if err != nil {
+		b.log.Warn("list recovered cancel events failed",
+			"run_id", run.ID,
+			"org", run.OrgID,
+			"thread", run.ThreadID,
+			"error", err,
+		)
+		events = nil
+	}
+	cancelled, err := b.runs.Cancel(ctx, run.ID, "cancel requested", b.workerID, agentRunLeaseDuration, cancelledAgentRunEvents(events))
+	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			b.log.Warn("agent run recovery cancel failed",
+				"run_id", run.ID,
+				"org", run.OrgID,
+				"thread", run.ThreadID,
+				"error", err,
+			)
+		}
+		return
+	}
+	if err := b.projectCancelledDurableRun(ctx, cancelled); err != nil {
+		b.log.Warn("project recovered cancellation failed",
+			"run_id", cancelled.ID,
+			"org", cancelled.OrgID,
+			"thread", cancelled.ThreadID,
+			"error", err,
+		)
+	}
+	b.log.Info("agent run recovery cancelled",
+		"run_id", cancelled.ID,
+		"org", cancelled.OrgID,
+		"thread", cancelled.ThreadID,
+		"sandbox", cancelled.SandboxID,
+		"session", cancelled.SessionID,
+		"command", cancelled.CommandID,
+	)
+	b.cleanupCancelledDurableRun(cancelled)
 }
 
 func (b *Bot) recoveredTerminalEmitter(run runstore.Run, live *liveRun, events []runstore.Event) *agentRunEmitter {

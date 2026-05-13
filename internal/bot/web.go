@@ -1388,11 +1388,37 @@ func (b *Bot) chatCancelHandler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusAccepted)
 		return
 	}
+	durableCancelled := false
+	if b.runs != nil && b.runs.Enabled() {
+		active, err := b.runs.ActiveForThread(r.Context(), p.OrgID, sessionID)
+		if err == nil {
+			if err := b.cancelDurableRun(r.Context(), active, p.UserID); err != nil {
+				if !errors.Is(err, pgx.ErrNoRows) {
+					b.log.Warn("durable chat cancel failed",
+						"org", p.OrgID,
+						"thread", sessionID,
+						"user", p.UserID,
+						"run_id", active.ID,
+						"error", err,
+					)
+				}
+			} else {
+				durableCancelled = true
+			}
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			b.log.Warn("active run lookup for live chat cancel",
+				"org", p.OrgID,
+				"thread", sessionID,
+				"user", p.UserID,
+				"error", err,
+			)
+		}
+	}
 	// Any org member may stop a runaway in-flight turn. We log the actor
 	// above for auditability. Only fresh-run sandboxes are cleaned up from
 	// this handler; follow-up runs reuse the conversation sandbox and must
 	// remain available for the next message.
-	if sandboxID != "" && cleanupOnCancel {
+	if sandboxID != "" && cleanupOnCancel && !durableCancelled {
 		cleanup := b.cleanupSandboxByID
 		if b.cleanupSandboxByIDFn != nil {
 			cleanup = b.cleanupSandboxByIDFn

@@ -1095,6 +1095,7 @@ let selectedModel = (function () {
 let modelLocked = false;
 let isRunning = false;
 let isStopping = false;
+let stopRequested = false;
 
 function setRunState(running, stopping = false) {
   isRunning = running;
@@ -2632,8 +2633,15 @@ async function streamTurnWithReconnect(initialRes, options = {}) {
   let firstStreamEventSeen = false;
   let sawDisconnect = false;
 
+  const finishStopped = async () => {
+    hideToast('stream-disconnected');
+    await loadHistory();
+    return { terminal: true, state };
+  };
+
   while (true) {
     try {
+      if (stopRequested) return await finishStopped();
       if (!res) res = await openChatStream(state.lastSeq);
       if (!res.ok) {
         if (res.body) {
@@ -2662,8 +2670,10 @@ async function streamTurnWithReconnect(initialRes, options = {}) {
         hideToast('stream-disconnected');
         return result;
       }
+      if (stopRequested) return await finishStopped();
       throw new Error('chat stream closed before the turn finished');
     } catch (e) {
+      if (stopRequested) return await finishStopped();
       sawDisconnect = true;
       showToast('stream-disconnected', 'Connection lost. Retrying…', 'warn');
       attempts += 1;
@@ -2891,6 +2901,7 @@ async function send() {
   if (isRunning) return;
   const text = inp.value.trim();
   if (!text) return;
+  stopRequested = false;
   inp.value = '';
   autosizeInput();
   setRunState(true);
@@ -2932,6 +2943,7 @@ async function send() {
       onFirstEvent: isFirstTurn ? () => { loadSidebar(); refreshMetadata(); } : null
     });
   } finally {
+    stopRequested = false;
     setRunState(false);
     inp.focus();
     // Refresh the sidebar after every turn so the row's title (derived
@@ -2947,6 +2959,7 @@ async function send() {
 
 async function stopRun() {
   if (!isRunning || isStopping) return;
+  stopRequested = true;
   setRunState(true, true);
   try {
     const res = await fetch('/chat/cancel', {
@@ -2955,9 +2968,14 @@ async function stopRun() {
       body: JSON.stringify({ session_id: sessionId })
     });
     if (!res.ok) {
+      stopRequested = false;
       setRunState(res.status !== 404, false);
+      return;
     }
+    hideToast('stream-disconnected');
+    await loadHistory();
   } catch (e) {
+    stopRequested = false;
     setRunState(true, false);
   }
 }
@@ -3233,6 +3251,7 @@ async function init() {
     try {
       await streamTurnWithReconnect(liveRes);
     } finally {
+      stopRequested = false;
       setRunState(false);
       inp.focus();
       // Refresh the sidebar so the just-completed turn's metadata

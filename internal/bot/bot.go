@@ -1336,6 +1336,9 @@ func (b *Bot) cancelDurableRun(ctx context.Context, run runstore.Run, actor stri
 	if err != nil {
 		return fmt.Errorf("cancel run: %w", err)
 	}
+	if err := b.projectCancelledDurableRun(ctx, cancelled); err != nil {
+		return fmt.Errorf("project cancelled run: %w", err)
+	}
 	cleanupOnCancel := cancelled.RunKind != "followup"
 	b.log.Info("durable chat cancel requested",
 		"org", cancelled.OrgID,
@@ -1348,6 +1351,17 @@ func (b *Bot) cancelDurableRun(ctx context.Context, run runstore.Run, actor stri
 	)
 	b.cleanupCancelledDurableRun(cancelled)
 	return nil
+}
+
+func (b *Bot) projectCancelledDurableRun(ctx context.Context, run runstore.Run) error {
+	if b.convs == nil {
+		return nil
+	}
+	events, err := b.runs.EventsAfter(ctx, run.ID, 0)
+	if err != nil {
+		return err
+	}
+	return b.projectRecoveredConversation(ctx, run, "", events)
 }
 
 func (b *Bot) cleanupCancelledDurableRun(run runstore.Run) {

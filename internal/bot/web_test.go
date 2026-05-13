@@ -132,6 +132,7 @@ func TestChatTemplate_ComposerControls(t *testing.T) {
 		`after_seq`,
 		`Connection lost. Retrying`,
 		`id="toast-stack"`,
+		`stopRequested`,
 		`conversationHasServerState`,
 		`renderPendingMetadata(text)`,
 		`conversationAgentIsMutable()`,
