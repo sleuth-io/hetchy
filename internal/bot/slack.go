@@ -337,15 +337,13 @@ func (b *Bot) handleSlackEvent(ctx context.Context, oc orgcfg.Config, ev incomin
 	// the chat appears under their LHN filter. Empty string when the
 	// author has no matching org member; HandleRequest tolerates that.
 	creatorID := b.slackUsers.Resolve(ctx, cli, oc.OrgID, ev.user)
-	// Slack always validates — there's no UI surface to opt out (and
-	// users routing through Slack typically aren't iterating on
-	// trivial changes). If we add a Slack-side toggle later, plumb
-	// it here.
+	// Slack has no UI surface for task toggles. Pass an empty patch so
+	// saved values are reused and missing keys default on.
 	var requestedAgentPtr *string
 	if strings.TrimSpace(requestedAgent) != "" {
 		requestedAgentPtr = &requestedAgent
 	}
-	b.HandleRequest(ctx, oc, text, requestID, threadID, creatorID, true, requestedAgentPtr, ClaudeModelOpus, emit)
+	b.HandleRequest(ctx, oc, text, requestID, threadID, creatorID, chatTaskOptionPatch{}, requestedAgentPtr, ClaudeModelOpus, emit)
 	// Reaction bookkeeping: only swap the eyes/recycle that signalled
 	// "working on it" for a final ✓/✗ when the run actually reached a
 	// terminal state. Bot-driven question turns ("Which repository?"
