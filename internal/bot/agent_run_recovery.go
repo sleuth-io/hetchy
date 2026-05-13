@@ -222,6 +222,7 @@ func (b *Bot) finalizeRecoveredRun(ctx context.Context, sb *daytona.Sandbox, run
 		return
 	}
 
+	b.runs.UpdateState(context.Background(), run.ID, runstore.StateFinalizing, "", b.workerID)
 	validatedPR, branch, err := b.validateRecoveredPR(ctx, run, prURL)
 	if err != nil {
 		body := fmt.Sprintf("The recovered agent command reported a PR URL, but GitHub did not verify it for branch `%s`.", branch)

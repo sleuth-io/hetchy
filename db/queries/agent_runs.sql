@@ -26,7 +26,8 @@ SELECT id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
        lease_owner, lease_expires_at, heartbeat_at, last_error,
        created_at, updated_at
 FROM agent_runs
-WHERE org_id = $1 AND request_id = $2;
+WHERE org_id = $1 AND request_id = $2
+  AND state IN ('preparing', 'running', 'recovering', 'finalizing');
 
 -- name: GetActiveAgentRunForThread :one
 SELECT id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,

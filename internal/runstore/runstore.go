@@ -17,6 +17,8 @@ const (
 	StatePreparing  = "preparing"
 	StateRunning    = "running"
 	StateRecovering = "recovering"
+	// StateFinalizing means the sandbox command has exited and Hetchy is
+	// validating/projecting terminal output before marking the run terminal.
 	StateFinalizing = "finalizing"
 	StateSucceeded  = "succeeded"
 	StateFailed     = "failed"
@@ -101,6 +103,9 @@ func (s *Store) Create(ctx context.Context, r Run, leaseOwner string, leaseDurat
 		ThreadID: r.ThreadID,
 	})
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Run{}, false, fmt.Errorf("request id already used by a terminal run: %w", err)
+		}
 		return Run{}, false, fmt.Errorf("get active run: %w", err)
 	}
 	return fromRunRow(active), false, nil

@@ -148,6 +148,10 @@ func (b *Bot) markRunState(ctx context.Context, state string, err error) {
 	}
 }
 
+func (b *Bot) markRunFinalizing(ctx context.Context) {
+	b.markRunState(ctx, runstore.StateFinalizing, nil)
+}
+
 func (b *Bot) markRunCursor(ctx context.Context, cursor int64) {
 	if run, ok := agentRunFromContext(ctx); ok && b.runs != nil {
 		b.runs.UpdateLogCursor(context.Background(), run.ID, cursor, b.workerID)

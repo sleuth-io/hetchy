@@ -299,6 +299,7 @@ SELECT id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
        created_at, updated_at
 FROM agent_runs
 WHERE org_id = $1 AND request_id = $2
+  AND state IN ('preparing', 'running', 'recovering', 'finalizing')
 `
 
 type GetAgentRunByRequestParams struct {

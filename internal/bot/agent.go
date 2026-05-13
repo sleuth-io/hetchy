@@ -202,6 +202,7 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, o
 	sessionID := "agent-" + requestID
 	prURL, err := b.runScript(ctx, sb, sessionID, "agent", agentScript, env, emit)
 	if err == nil {
+		b.markRunFinalizing(ctx)
 		prURL, err = b.validateReportedPR(ctx, repo, "feature/sf-"+requestID, repo.BaseBranch, prURL)
 	}
 	if err == nil && spec != nil {
@@ -546,6 +547,7 @@ func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx
 	if err != nil {
 		return "", err
 	}
+	b.markRunFinalizing(ctx)
 	return b.validateReportedPR(ctx, repo, rec.Branch, "", prURL)
 }
 
