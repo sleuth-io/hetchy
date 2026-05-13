@@ -40,6 +40,9 @@ var chatHTMLTpl string
 //go:embed templates/onboarding.html
 var onboardingHTMLTpl string
 
+//go:embed templates/welcome.html
+var welcomeHTMLTpl string
+
 //go:embed templates/settings.html
 var settingsHTMLTpl string
 
@@ -92,6 +95,7 @@ func (b *Bot) runWeb(ctx context.Context) error {
 
 	mux.Handle("/", b.auth.Middleware(http.HandlerFunc(b.indexHandler)))
 	mux.Handle("/onboarding", b.auth.Middleware(b.auth.RequireAuth(http.HandlerFunc(b.onboardingHandler))))
+	mux.Handle("/welcome", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.welcomeHandler))))
 	mux.Handle("/settings/org", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.settingsHandler))))
 	mux.Handle("/settings/org/agents/", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.agentSettingsActionHandler))))
 	mux.Handle("/settings/org/invite", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.inviteHandler))))
@@ -240,10 +244,43 @@ func (b *Bot) onboardingHandler(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	// Land newly-onboarded orgs on Integrations rather than General —
-	// the very first thing they need to do is connect GitHub + paste
-	// an Anthropic key, so put them in front of those controls.
-	http.Redirect(w, r, "/settings/org?tab=integrations", http.StatusFound)
+	// Land newly-onboarded orgs on the welcome screen — it orients the
+	// user on what to set up next (GitHub + Anthropic creds), then sends
+	// them through to /settings/org?tab=integrations.
+	http.Redirect(w, r, "/welcome", http.StatusFound)
+}
+
+// welcomeHandler renders the post-org-creation welcome step. It's the
+// bridge between /onboarding (org name capture) and
+// /settings/org?tab=integrations (where the user actually wires up
+// GitHub, Anthropic, etc.) so first-time users land on something that
+// explains what's about to happen rather than dropping straight into a
+// dense settings tab.
+func (b *Bot) welcomeHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	p, _ := auth.FromContext(r.Context())
+	displayName := ""
+	if prof, err := b.auth.GetProfile(r.Context(), p.UserID); err == nil {
+		if first := strings.TrimSpace(prof.FirstName); first != "" {
+			displayName = first
+		}
+	} else {
+		b.log.Warn("profile fetch for welcome screen failed", "error", err, "user", p.UserID)
+	}
+	orgName := ""
+	if name, err := b.auth.GetOrganizationName(r.Context(), p.OrgID); err == nil {
+		orgName = name
+	} else {
+		b.log.Warn("workos: org name lookup failed", "org", p.OrgID, "error", err)
+	}
+	b.renderTemplate(w, welcomeHTMLTpl, map[string]any{
+		"Email":       p.Email,
+		"DisplayName": displayName,
+		"OrgName":     orgName,
+	})
 }
 
 // isAdmin reports whether p holds the admin role for their current org.

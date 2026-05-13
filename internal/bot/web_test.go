@@ -333,6 +333,11 @@ func TestPageTemplates_RenderFavicon(t *testing.T) {
 			data: map[string]any{"Email": "u@x"},
 		},
 		{
+			name: "welcome",
+			body: welcomeHTMLTpl,
+			data: map[string]any{"Email": "u@x", "DisplayName": "Ada", "OrgName": "Acme Inc."},
+		},
+		{
 			name: "landing",
 			body: landingHTMLTpl,
 			data: nil,
@@ -354,6 +359,36 @@ func TestPageTemplates_RenderFavicon(t *testing.T) {
 				t.Fatalf("template missing shared favicon href")
 			}
 		})
+	}
+}
+
+// TestWelcomeTemplate_LinksToIntegrations verifies the post-org-creation
+// welcome screen actually points at the integrations tab — the whole
+// reason it exists is to hand the user off to that screen, so a missing
+// or wrong CTA should fail loudly.
+func TestWelcomeTemplate_LinksToIntegrations(t *testing.T) {
+	b := newBypassBot(t)
+	rec := httptest.NewRecorder()
+	b.renderTemplate(rec, welcomeHTMLTpl, map[string]any{
+		"Email":       "u@x",
+		"DisplayName": "Ada",
+		"OrgName":     "Acme Inc.",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, w := range []string{
+		`href="/settings/org?tab=integrations"`,
+		"Welcome",
+		"Ada",
+		"Acme Inc.",
+		"Connect GitHub",
+		"Anthropic",
+	} {
+		if !strings.Contains(body, w) {
+			t.Errorf("welcome template missing %q", w)
+		}
 	}
 }
 
