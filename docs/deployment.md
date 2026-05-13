@@ -40,3 +40,6 @@ The compose file reads environment variables from your shell (injected by Dopple
 | `WEB_PORT` | Web UI port (default: 8080) |
 | `DISABLE_SLACK` | Set to 1 to run web UI only |
 | `DATABASE_URL` | PostgreSQL connection string (optional, enables conversation persistence) |
+| `HETCHY_S3_BUCKET` | S3 bucket used for validation proof artifacts |
+| `HETCHY_S3_REGION` | AWS region for the validation proof artifact bucket |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` | AWS credentials used to mint pre-signed artifact upload URLs; session token is optional |

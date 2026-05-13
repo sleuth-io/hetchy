@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -134,6 +135,26 @@ func TestLoadConfig_BypassRelaxesWorkOSRequirements(t *testing.T) {
 	}
 	if !cfg.AuthBypass {
 		t.Error("AuthBypass should be true")
+	}
+}
+
+func TestComposeForwardsArtifactUploadEnv(t *testing.T) {
+	raw, err := os.ReadFile("../../docker-compose.yml")
+	if err != nil {
+		t.Fatalf("read docker-compose.yml: %v", err)
+	}
+	compose := string(raw)
+	for _, key := range []string{
+		"HETCHY_S3_BUCKET",
+		"HETCHY_S3_REGION",
+		"AWS_ACCESS_KEY_ID",
+		"AWS_SECRET_ACCESS_KEY",
+		"AWS_SESSION_TOKEN",
+	} {
+		want := key + ": ${" + key + ":-}"
+		if !strings.Contains(compose, want) {
+			t.Errorf("docker-compose.yml does not forward %s to the hetchy service", key)
+		}
 	}
 }
 
