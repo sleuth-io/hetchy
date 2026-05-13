@@ -33,7 +33,7 @@ func newSearchTestStore(t *testing.T) (*convstore.Store, *pgxpool.Pool) {
 	}
 	ctx := context.Background()
 
-	d, err := db.Open(ctx, dsn)
+	d, err := db.Open(ctx, dsn, 0)
 	if err != nil {
 		t.Fatalf("db open: %v", err)
 	}

@@ -1486,9 +1486,11 @@ func (b *Bot) chatStreamHandler(w http.ResponseWriter, r *http.Request) {
 	var replay []liveEvent
 	afterSeq := parseSSEAfterSeq(r.URL.Query().Get("after_seq"))
 	lastSeq := afterSeq
+	activeDurableRun := false
 	if b.runs != nil && b.runs.Enabled() {
 		latest, err := b.runs.LatestForThread(r.Context(), p.OrgID, sessionID)
 		if err == nil && (!isTerminalRunState(latest.State) || run != nil || afterSeq > 0) {
+			activeDurableRun = !isTerminalRunState(latest.State)
 			if run == nil && !isTerminalRunState(latest.State) {
 				run = b.recoverRunForReattach(r.Context(), latest)
 			}
@@ -1516,6 +1518,13 @@ func (b *Bot) chatStreamHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if run == nil && len(replay) == 0 {
+		if activeDurableRun {
+			b.log.Info("chat stream active durable run not attached yet",
+				"org", p.OrgID, "thread", sessionID, "after_seq", afterSeq)
+			w.Header().Set("Retry-After", "2")
+			http.Error(w, "active run is reconnecting", http.StatusConflict)
+			return
+		}
 		b.log.Info("chat stream reattach found no live or durable run", "org", p.OrgID, "thread", sessionID)
 		http.Error(w, "no live run", http.StatusNotFound)
 		return

@@ -53,7 +53,7 @@ func newTestStore(t *testing.T) (*Store, int64, int64) {
 	if err != nil {
 		t.Fatalf("cipher: %v", err)
 	}
-	d, err := db.Open(context.Background(), dsn)
+	d, err := db.Open(context.Background(), dsn, 0)
 	if err != nil {
 		t.Fatalf("db open: %v", err)
 	}

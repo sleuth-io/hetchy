@@ -150,12 +150,51 @@ func TestComposeForwardsArtifactUploadEnv(t *testing.T) {
 		"AWS_ACCESS_KEY_ID",
 		"AWS_SECRET_ACCESS_KEY",
 		"AWS_SESSION_TOKEN",
+		"DATABASE_MAX_CONNS",
 	} {
 		want := key + ": ${" + key + ":-}"
 		if !strings.Contains(compose, want) {
 			t.Errorf("docker-compose.yml does not forward %s to the hetchy service", key)
 		}
 	}
+}
+
+func TestLoadConfig_DatabaseMaxConns(t *testing.T) {
+	t.Run("unset_leaves_zero", func(t *testing.T) {
+		clearEnv(t, "AUTH_BYPASS", "DATABASE_MAX_CONNS")
+		setEnv(t, requiredEnv())
+		cfg, err := LoadConfig()
+		if err != nil {
+			t.Fatalf("LoadConfig: %v", err)
+		}
+		if cfg.DatabaseMaxConns != 0 {
+			t.Errorf("DatabaseMaxConns = %d, want 0", cfg.DatabaseMaxConns)
+		}
+	})
+	t.Run("parses_positive_int", func(t *testing.T) {
+		clearEnv(t, "AUTH_BYPASS")
+		setEnv(t, requiredEnv())
+		t.Setenv("DATABASE_MAX_CONNS", "25")
+		cfg, err := LoadConfig()
+		if err != nil {
+			t.Fatalf("LoadConfig: %v", err)
+		}
+		if cfg.DatabaseMaxConns != 25 {
+			t.Errorf("DatabaseMaxConns = %d, want 25", cfg.DatabaseMaxConns)
+		}
+	})
+	t.Run("rejects_zero_and_negative", func(t *testing.T) {
+		for _, v := range []string{"0", "-1", "abc"} {
+			t.Run(v, func(t *testing.T) {
+				clearEnv(t, "AUTH_BYPASS")
+				setEnv(t, requiredEnv())
+				t.Setenv("DATABASE_MAX_CONNS", v)
+				if _, err := LoadConfig(); err == nil {
+					t.Fatalf("expected error for DATABASE_MAX_CONNS=%q", v)
+				}
+			})
+		}
+	})
 }
 
 func TestGetenvDefault(t *testing.T) {

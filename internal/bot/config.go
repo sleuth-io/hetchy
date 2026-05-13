@@ -25,7 +25,12 @@ type Config struct {
 	DaytonaAPIURL string
 	Snapshot      string
 	DatabaseURL   string
-	WebPort       string
+	// DatabaseMaxConns caps the pgx connection pool. Zero leaves the
+	// pgx default (max(4, NumCPU)) — fine for `make bot`, but in
+	// staging/prod set DATABASE_MAX_CONNS so the pool doesn't starve
+	// under SSE + recovery-loop concurrency.
+	DatabaseMaxConns int32
+	WebPort          string
 
 	WorkOSAPIKey         string
 	WorkOSClientID       string
@@ -144,11 +149,21 @@ func LoadConfig() (Config, error) {
 		ghAppID = n
 	}
 
+	var dbMaxConns int32
+	if v := strings.TrimSpace(os.Getenv("DATABASE_MAX_CONNS")); v != "" {
+		n, err := strconv.ParseInt(v, 10, 32)
+		if err != nil || n < 1 {
+			return Config{}, fmt.Errorf("DATABASE_MAX_CONNS must be a positive integer (got %q)", v)
+		}
+		dbMaxConns = int32(n)
+	}
+
 	return Config{
 		Env:                   getenvDefault("HETCHY_ENV", "prod"),
 		DaytonaAPIURL:         strings.TrimSpace(os.Getenv("DAYTONA_API_URL")),
 		Snapshot:              os.Getenv("DAYTONA_SNAPSHOT"),
 		DatabaseURL:           os.Getenv("DATABASE_URL"),
+		DatabaseMaxConns:      dbMaxConns,
 		WebPort:               port,
 		WorkOSAPIKey:          strings.TrimSpace(os.Getenv("WORKOS_API_KEY")),
 		WorkOSClientID:        strings.TrimSpace(os.Getenv("WORKOS_CLIENT_ID")),

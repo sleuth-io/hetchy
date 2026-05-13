@@ -47,7 +47,7 @@ func newE2EStore(t *testing.T, label string) (*Store, int64, int64) {
 	if err != nil {
 		t.Fatalf("cipher: %v", err)
 	}
-	d, err := db.Open(context.Background(), dsn)
+	d, err := db.Open(context.Background(), dsn, 0)
 	if err != nil {
 		t.Fatalf("db: %v", err)
 	}

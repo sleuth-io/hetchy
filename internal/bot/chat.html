@@ -2675,9 +2675,26 @@ async function streamTurnWithReconnect(initialRes, options = {}) {
   let onFirstEvent = options.onFirstEvent || null;
   let firstStreamEventSeen = false;
   let sawDisconnect = false;
+  let waitingBlock = null;
+
+  const clearWaitingBlock = () => {
+    if (!waitingBlock) return;
+    waitingBlock.remove();
+    waitingBlock = null;
+  };
+  if (options.waitingTitle || options.waitingBody) {
+    waitingBlock = renderBlock(state.turn, {
+      id: 'reattach-waiting',
+      kind: 'notify',
+      title: options.waitingTitle || 'Reconnecting',
+      body: options.waitingBody || '',
+      status: 'streaming',
+    }, { open: true });
+  }
 
   const finishStopped = async () => {
     hideToast('stream-disconnected');
+    clearWaitingBlock();
     await loadHistory();
     return { terminal: true, state };
   };
@@ -2692,8 +2709,14 @@ async function streamTurnWithReconnect(initialRes, options = {}) {
         }
         if (res.status === 404) {
           hideToast('stream-disconnected');
+          clearWaitingBlock();
           await loadHistory();
           return { terminal: true, state };
+        }
+        if (res.status === 409) {
+          const err = new Error('active run is reconnecting');
+          err.reattachPending = true;
+          throw err;
         }
         throw new Error('chat stream failed: ' + res.status);
       }
@@ -2705,12 +2728,14 @@ async function streamTurnWithReconnect(initialRes, options = {}) {
       }
 
       const result = await consumeSSEResponse(res, onFirstEvent ? () => {
+        clearWaitingBlock();
         if (firstStreamEventSeen) return;
         firstStreamEventSeen = true;
         onFirstEvent();
-      } : null, state);
+      } : clearWaitingBlock, state);
       if (result.terminal) {
         hideToast('stream-disconnected');
+        clearWaitingBlock();
         return result;
       }
       if (stopRequested) return await finishStopped();
@@ -2718,7 +2743,10 @@ async function streamTurnWithReconnect(initialRes, options = {}) {
     } catch (e) {
       if (stopRequested) return await finishStopped();
       sawDisconnect = true;
-      showToast('stream-disconnected', 'Connection lost. Retrying…', 'warn');
+      const msg = e && e.reattachPending
+        ? 'Run is still active. Reconnecting…'
+        : 'Connection lost. Retrying…';
+      showToast('stream-disconnected', msg, 'warn');
       attempts += 1;
       const delay = Math.min(10000, 1000 * Math.pow(2, Math.min(attempts - 1, 4)));
       await sleep(delay);
@@ -3276,10 +3304,16 @@ async function init() {
   }
 
   let liveRes = null;
+  let reattachPending = false;
   try {
     const r = await openChatStream();
     if (r.ok) {
       liveRes = r;
+    } else if (r.status === 409) {
+      reattachPending = true;
+      if (r.body) {
+        try { await r.body.cancel(); } catch (e) {}
+      }
     } else if (r.body) {
       // 404 / other — drain so the connection releases promptly.
       try { await r.body.cancel(); } catch (e) {}
@@ -3288,11 +3322,14 @@ async function init() {
     // Network blip — fall back to the persisted snapshot.
   }
 
-  await loadHistory({ skipLastBotResponse: !!liveRes });
-  if (liveRes) {
+  await loadHistory({ skipLastBotResponse: !!liveRes || reattachPending });
+  if (liveRes || reattachPending) {
     setRunState(true);
     try {
-      await streamTurnWithReconnect(liveRes);
+      await streamTurnWithReconnect(liveRes, {
+        waitingTitle: 'Reconnecting',
+        waitingBody: 'Waiting for the active run to resume after the page reconnected.'
+      });
     } finally {
       stopRequested = false;
       setRunState(false);
