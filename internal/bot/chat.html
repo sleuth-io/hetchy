@@ -354,7 +354,8 @@
                    font-size: 1.1rem; color: #888; display: inline-flex;
                    align-items: center; justify-content: center;
                    line-height: 1; font-family: inherit; }
-  #meta-more-btn:hover { background: #eee; color: #333; }
+  #meta-more-btn:hover,
+  #meta-more-btn[aria-expanded="true"] { background: #eee; color: #333; }
   #meta-dropdown { position: absolute; top: calc(100% + .2rem); right: 0;
                    background: #fff; border: 1px solid #e5e5e5;
                    border-radius: .45rem; box-shadow: 0 4px 16px rgba(0,0,0,.10);
@@ -670,7 +671,8 @@
   html.is-dark .meta-row.is-empty .meta-value { color: #555a60; }
   html.is-dark .meta-empty { color: #8a8a90; }
   html.is-dark #meta-more-btn { color: #8a8a90; }
-  html.is-dark #meta-more-btn:hover { background: #2a2a2e; color: #e7e7e9; }
+  html.is-dark #meta-more-btn:hover,
+  html.is-dark #meta-more-btn[aria-expanded="true"] { background: #2a2a2e; color: #e7e7e9; }
   html.is-dark #meta-dropdown { background: #232327; border-color: #2e2e33;
                                  box-shadow: 0 4px 16px rgba(0,0,0,.4); }
   html.is-dark .meta-dropdown-item { color: #c4c4c8; }
@@ -2376,9 +2378,9 @@ function renderMetadata(detail) {
     +     '<div class="meta-title">Details</div>'
     +     '<div class="meta-more-wrap">'
     +       '<button id="meta-more-btn" type="button" aria-label="More options"'
-    +       ' aria-haspopup="true" aria-expanded="false">&#x2026;</button>'
-    +       '<div id="meta-dropdown" hidden>'
-    +         '<button id="download-btn" type="button" class="meta-dropdown-item">'
+    +       ' aria-haspopup="menu" aria-expanded="false">&#x2026;</button>'
+    +       '<div id="meta-dropdown" role="menu" hidden>'
+    +         '<button id="download-btn" type="button" role="menuitem" class="meta-dropdown-item">'
     +           'Download</button>'
     +       '</div>'
     +     '</div>'
@@ -2395,20 +2397,16 @@ function setupMetaMenu() {
   const downloadBtn = document.getElementById('download-btn');
   if (!moreBtn || !dropdown) return;
 
-  const newMoreBtn = moreBtn.cloneNode(true);
-  moreBtn.parentNode.replaceChild(newMoreBtn, moreBtn);
-  newMoreBtn.addEventListener('click', e => {
+  // DOM is rebuilt fresh by renderMetadata before each call, so no
+  // prior listeners exist — just attach directly without clone/replace.
+  moreBtn.addEventListener('click', e => {
     e.stopPropagation();
     const opening = dropdown.hidden;
     dropdown.hidden = !opening;
-    newMoreBtn.setAttribute('aria-expanded', String(opening));
+    moreBtn.setAttribute('aria-expanded', String(opening));
   });
 
-  if (downloadBtn) {
-    const newDlBtn = downloadBtn.cloneNode(true);
-    downloadBtn.parentNode.replaceChild(newDlBtn, downloadBtn);
-    newDlBtn.addEventListener('click', downloadConversation);
-  }
+  if (downloadBtn) downloadBtn.addEventListener('click', downloadConversation);
 }
 
 function closeMetaDropdown() {
