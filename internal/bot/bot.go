@@ -996,6 +996,7 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 				b.log.Error("convstore upsert (follow-up stopped)", "error", err)
 			}
 			b.markRunState(ctx, runstore.StateCancelled, err)
+			b.deleteSandboxSession(sb, b.currentAgentRunSessionID(ctx, "followup-"+requestID))
 			return
 		}
 		if errors.Is(err, errAgentRunDurability) {
@@ -1014,6 +1015,7 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 			b.log.Error("convstore upsert (follow-up agent fail)", "error", err)
 		}
 		b.markRunState(ctx, runstore.StateFailed, err)
+		b.deleteSandboxSession(sb, b.currentAgentRunSessionID(ctx, "followup-"+requestID))
 		return
 	}
 
@@ -1332,12 +1334,19 @@ func (b *Bot) cancelDurableRun(ctx context.Context, run runstore.Run, actor stri
 	if err != nil {
 		return fmt.Errorf("list cancel events: %w", err)
 	}
-	cancelled, err := b.runs.Cancel(ctx, run.ID, "cancel requested", b.workerID, agentRunLeaseDuration, cancelledAgentRunEvents(events))
+	cancelEvents := cancelledAgentRunEvents(events)
+	cancelled, err := b.runs.Cancel(ctx, run.ID, "cancel requested", b.workerID, agentRunLeaseDuration, cancelEvents)
 	if err != nil {
 		return fmt.Errorf("cancel run: %w", err)
 	}
-	if err := b.projectCancelledDurableRun(ctx, cancelled); err != nil {
-		return fmt.Errorf("project cancelled run: %w", err)
+	projectEvents := appendPendingRunEvents(events, cancelled.ID, cancelEvents)
+	if err := b.projectCancelledDurableRun(ctx, cancelled, projectEvents); err != nil {
+		b.log.Warn("project cancelled run",
+			"run_id", cancelled.ID,
+			"org", cancelled.OrgID,
+			"thread", cancelled.ThreadID,
+			"error", err,
+		)
 	}
 	cleanupOnCancel := cancelled.RunKind != "followup"
 	b.log.Info("durable chat cancel requested",
@@ -1353,15 +1362,31 @@ func (b *Bot) cancelDurableRun(ctx context.Context, run runstore.Run, actor stri
 	return nil
 }
 
-func (b *Bot) projectCancelledDurableRun(ctx context.Context, run runstore.Run) error {
+func (b *Bot) projectCancelledDurableRun(ctx context.Context, run runstore.Run, events []runstore.Event) error {
 	if b.convs == nil {
 		return nil
 	}
-	events, err := b.runs.EventsAfter(ctx, run.ID, 0)
-	if err != nil {
-		return err
-	}
 	return b.projectRecoveredConversation(ctx, run, "", events)
+}
+
+func appendPendingRunEvents(events []runstore.Event, runID string, pending []runstore.PendingEvent) []runstore.Event {
+	out := append([]runstore.Event(nil), events...)
+	var seq int64
+	if len(out) > 0 {
+		seq = out[len(out)-1].Seq
+	}
+	now := time.Now().UTC()
+	for _, ev := range pending {
+		seq++
+		out = append(out, runstore.Event{
+			RunID:     runID,
+			Seq:       seq,
+			Event:     ev.Event,
+			Data:      ev.Data,
+			CreatedAt: now,
+		})
+	}
+	return out
 }
 
 func (b *Bot) cleanupCancelledDurableRun(run runstore.Run) {

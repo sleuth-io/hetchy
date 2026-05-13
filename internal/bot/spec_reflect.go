@@ -35,9 +35,8 @@ func (b *Bot) applySpecImprovements(ctx context.Context, sb *daytona.Sandbox, se
 		return
 	}
 
-	// One-shot read session — the agent's session is gone by the time
-	// we get here (runScript deletes it), so we open a fresh one and
-	// tear it down in a defer. Cheap; sessions are stateless.
+	// One-shot read session — uses a distinct session ID so it does not
+	// interfere with the agent's session, which the caller cleans up on success.
 	readSessionID := sessionID + "-improvements"
 	if err := sb.Process.CreateSession(ctx, readSessionID); err != nil {
 		b.log.Warn("spec-improvements: create session", "error", err, "repo", repo.Slug)

@@ -653,7 +653,8 @@ func (b *Bot) finishRecoveredCancellation(ctx context.Context, run runstore.Run)
 		)
 		events = nil
 	}
-	cancelled, err := b.runs.Cancel(ctx, run.ID, "cancel requested", b.workerID, agentRunLeaseDuration, cancelledAgentRunEvents(events))
+	cancelEvents := cancelledAgentRunEvents(events)
+	cancelled, err := b.runs.Cancel(ctx, run.ID, "cancel requested", b.workerID, agentRunLeaseDuration, cancelEvents)
 	if err != nil {
 		if !errors.Is(err, pgx.ErrNoRows) {
 			b.log.Warn("agent run recovery cancel failed",
@@ -665,7 +666,8 @@ func (b *Bot) finishRecoveredCancellation(ctx context.Context, run runstore.Run)
 		}
 		return
 	}
-	if err := b.projectCancelledDurableRun(ctx, cancelled); err != nil {
+	projectEvents := appendPendingRunEvents(events, cancelled.ID, cancelEvents)
+	if err := b.projectCancelledDurableRun(ctx, cancelled, projectEvents); err != nil {
 		b.log.Warn("project recovered cancellation failed",
 			"run_id", cancelled.ID,
 			"org", cancelled.OrgID,
