@@ -1,0 +1,331 @@
+package bot
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/hetchyhq/hetchy/internal/auth"
+	"github.com/hetchyhq/hetchy/internal/webui"
+)
+
+func TestChatTemplate_ComposerControls(t *testing.T) {
+	b := newBypassBot(t)
+	rec := httptest.NewRecorder()
+	b.renderTemplate(rec, webui.Chat, map[string]any{
+		"Email":       "u@x",
+		"DisplayName": "Test User",
+		"GravatarURL": "https://example.com/avatar.png",
+		"UserID":      "user_test",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, w := range []string{
+		`id="tools-btn"`,
+		`id="agent-selector-btn"`,
+		`id="agent-popover"`,
+		`class="tools-divider"`,
+		`class="tools-checkmark"`,
+		`id="validate-checkbox"`,
+		`id="review-before-push-checkbox"`,
+		`id="action-pr-checks-checkbox"`,
+		`class="tools-help"`,
+		`sub-agent to review`,
+		`automated AI reviews`,
+		`id="model-btn"`,
+		`onclick="handleComposerAction()"`,
+		`class="stop-icon"`,
+		`src="/assets/chat_bootstrap.js`,
+		`href="/assets/chat.css`,
+		`src="/assets/chat_core.js`,
+		`src="/assets/chat_stream.js`,
+		`src="/assets/chat_init.js`,
+		`data-current-user-id="user_test"`,
+		`id="toast-stack"`,
+	} {
+		if !strings.Contains(body, w) {
+			t.Errorf("chat template missing %q", w)
+		}
+	}
+	if strings.Contains(body, `id="agent-btn"`) {
+		t.Errorf("chat template should not render the old standalone agent button")
+	}
+	if strings.Contains(body, `src="/assets/chat.js`) {
+		t.Errorf("chat template should not render the removed monolithic chat.js")
+	}
+
+	script := readChatScripts(t)
+	for _, w := range []string{
+		`is-checked`,
+		`function stopRun()`,
+		`/chat/cancel`,
+		`setRunState(true)`,
+		`streamTurnWithReconnect`,
+		`after_seq`,
+		`Connection lost. Retrying`,
+		`r.status === 409`,
+		`Run is still active. Reconnecting`,
+		`waitingTitle: 'Reconnecting'`,
+		`stopRequested`,
+		`conversationHasServerState`,
+		`renderPendingMetadata(text)`,
+		`conversationAgentIsMutable()`,
+		`payload.agent_slug = selectedAgentSlug`,
+		`document.body.dataset.currentUserId`,
+		`taskOptionKeys`,
+		`applyConversationTaskOptions(detail)`,
+		`payload.review_code_before_push = taskOptions[taskOptionKeys.reviewBeforePush]`,
+		`payload.action_pr_checks_for_done = taskOptions[taskOptionKeys.actionPRChecks]`,
+		`agentStorageKey`,
+		`localStorage.setItem(agentStorageKey`,
+		`applyConversationAgent(detail)`,
+		`blk-awaiting-next`,
+		`markBlockAwaitingNext(ref.el)`,
+		`payload.meta.tag === 'sandbox_ready'`,
+		`value: 'opus'`,
+		`value: 'sonnet'`,
+		`value: 'haiku'`,
+		`model: selectedModel`,
+		`applyConversationModel(detail)`,
+		`setModelPickerLocked(true)`,
+	} {
+		if !strings.Contains(script, w) {
+			t.Errorf("chat asset missing %q", w)
+		}
+	}
+}
+
+func TestChatTemplate_LoadsSplitScriptsInOrder(t *testing.T) {
+	b := newBypassBot(t)
+	rec := httptest.NewRecorder()
+	b.renderTemplate(rec, webui.Chat, map[string]any{
+		"Email":       "u@x",
+		"DisplayName": "Test User",
+		"GravatarURL": "https://example.com/avatar.png",
+		"UserID":      "user_test",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+	}
+
+	body := rec.Body.String()
+	last := -1
+	for _, name := range chatScriptAssets {
+		needle := `src="/assets/` + name
+		idx := strings.Index(body, needle)
+		if idx < 0 {
+			t.Fatalf("chat template missing %s", name)
+		}
+		if idx <= last {
+			t.Fatalf("chat script %s loaded out of order", name)
+		}
+		last = idx
+	}
+	if strings.Contains(body, `src="/assets/chat.js`) {
+		t.Fatal("chat template still references removed chat.js")
+	}
+}
+
+func TestParseSSEAfterSeq(t *testing.T) {
+	cases := map[string]int64{
+		"":     0,
+		" 42 ": 42,
+		"-1":   0,
+		"abc":  0,
+		"1.5":  0,
+	}
+	for in, want := range cases {
+		if got := parseSSEAfterSeq(in); got != want {
+			t.Errorf("parseSSEAfterSeq(%q) = %d, want %d", in, got, want)
+		}
+	}
+}
+
+func TestChatStreamHandlerReplaysClosedLiveRun(t *testing.T) {
+	b := newBypassOrgBot(t, "member")
+	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.chatStreamHandler)))
+
+	run, ok := b.live.RegisterIfAbsent(context.Background(), "org_test", "thread-1")
+	if !ok {
+		t.Fatal("expected live run registration")
+	}
+	run.Emit(liveEvent{Event: "notify", Data: []byte(`{"text":"hello"}`), Seq: 3})
+	run.Close()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/chat/stream?session=thread-1&after_seq=2", nil)
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	for _, want := range []string{
+		"id: 3\n",
+		"event: notify\n",
+		`data: {"text":"hello"}`,
+	} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Fatalf("stream response missing %q: %q", want, rec.Body.String())
+		}
+	}
+}
+
+func TestChatStreamHandlerRejectsBadRequests(t *testing.T) {
+	b := newBypassOrgBot(t, "member")
+	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.chatStreamHandler)))
+
+	cases := []struct {
+		method string
+		path   string
+		want   int
+	}{
+		{method: http.MethodPost, path: "/chat/stream?session=thread-1", want: http.StatusMethodNotAllowed},
+		{method: http.MethodGet, path: "/chat/stream", want: http.StatusBadRequest},
+		{method: http.MethodGet, path: "/chat/stream?session=missing", want: http.StatusNotFound},
+	}
+	for _, tc := range cases {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(tc.method, tc.path, nil)
+		handler.ServeHTTP(rec, req)
+		if rec.Code != tc.want {
+			t.Fatalf("%s %s status = %d, want %d", tc.method, tc.path, rec.Code, tc.want)
+		}
+	}
+}
+
+func TestWriteLiveEventIncludesSequenceID(t *testing.T) {
+	rec := httptest.NewRecorder()
+	err := writeLiveEvent(rec, liveEvent{
+		Event: "block_start",
+		Data:  []byte(`{"id":"blk_1"}`),
+		Seq:   42,
+	})
+	if err != nil {
+		t.Fatalf("writeLiveEvent: %v", err)
+	}
+	want := "id: 42\nevent: block_start\ndata: {\"id\":\"blk_1\"}\n\n"
+	if got := rec.Body.String(); got != want {
+		t.Fatalf("body = %q, want %q", got, want)
+	}
+}
+
+func TestChatCancelHandlerCancelsRunAndSchedulesCleanup(t *testing.T) {
+	a, err := auth.New(auth.Config{
+		Bypass:      true,
+		BypassUser:  "user_test",
+		BypassOrg:   "org_test",
+		BypassEmail: "test@hetchy.local",
+	})
+	if err != nil {
+		t.Fatalf("auth: %v", err)
+	}
+	b := &Bot{
+		log:  discardLogger(),
+		auth: a,
+		live: newLiveRegistry(),
+	}
+	handler := a.Middleware(a.RequireOrg(http.HandlerFunc(b.chatCancelHandler)))
+
+	run, ok := b.live.RegisterIfAbsent(context.Background(), "org_test", "thread-1")
+	if !ok {
+		t.Fatal("expected live run registration")
+	}
+	run.SetSandboxID("sandbox-1", true)
+
+	type cleanupCall struct {
+		sandboxID string
+		reason    string
+	}
+	cleanupCh := make(chan cleanupCall, 1)
+	b.cleanupSandboxByIDFn = func(sandboxID, reason string) {
+		cleanupCh <- cleanupCall{sandboxID: sandboxID, reason: reason}
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/chat/cancel", strings.NewReader(`{"session_id":"thread-1"}`))
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d; body=%q", rec.Code, http.StatusAccepted, rec.Body.String())
+	}
+	if !run.Cancelled() {
+		t.Fatal("run should be cancelled")
+	}
+	select {
+	case got := <-cleanupCh:
+		if got.sandboxID != "sandbox-1" || got.reason != "cancel requested" {
+			t.Fatalf("cleanup = %+v, want sandbox-1/cancel requested", got)
+		}
+	case <-stopAfter(t):
+		t.Fatal("cleanup was not scheduled")
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/chat/cancel", strings.NewReader(`{"session_id":"thread-1"}`))
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("second cancel status = %d, want %d; body=%q", rec.Code, http.StatusAccepted, rec.Body.String())
+	}
+	select {
+	case got := <-cleanupCh:
+		t.Fatalf("second cancel should not schedule cleanup, got %+v", got)
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	followUpRun, ok := b.live.RegisterIfAbsent(context.Background(), "org_test", "thread-2")
+	if !ok {
+		t.Fatal("expected follow-up live run registration")
+	}
+	followUpRun.SetSandboxID("sandbox-2", false)
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/chat/cancel", strings.NewReader(`{"session_id":"thread-2"}`))
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("follow-up status = %d, want %d; body=%q", rec.Code, http.StatusAccepted, rec.Body.String())
+	}
+	if !followUpRun.Cancelled() {
+		t.Fatal("follow-up run should be cancelled")
+	}
+	select {
+	case got := <-cleanupCh:
+		t.Fatalf("follow-up cancel should not cleanup sandbox, got %+v", got)
+	case <-time.After(20 * time.Millisecond):
+	}
+}
+
+func TestChatCancelHandlerRejectsMissingRunAndWrongMethod(t *testing.T) {
+	a, err := auth.New(auth.Config{
+		Bypass:      true,
+		BypassUser:  "user_test",
+		BypassOrg:   "org_test",
+		BypassEmail: "test@hetchy.local",
+	})
+	if err != nil {
+		t.Fatalf("auth: %v", err)
+	}
+	b := &Bot{
+		log:  discardLogger(),
+		auth: a,
+		live: newLiveRegistry(),
+	}
+	handler := a.Middleware(a.RequireOrg(http.HandlerFunc(b.chatCancelHandler)))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/chat/cancel", strings.NewReader(`{"session_id":"missing"}`))
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("missing run status = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/chat/cancel", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("wrong method status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
+	}
+}

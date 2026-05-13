@@ -25,17 +25,22 @@ func TestRenderChatTemplate(t *testing.T) {
 		`data-current-user-id="user_test"`,
 		`src="/assets/chat_bootstrap.js`,
 		`href="/assets/chat.css`,
-		`src="/assets/chat.js`,
+		`src="/assets/chat_core.js`,
+		`src="/assets/chat_stream.js`,
+		`src="/assets/chat_init.js`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("rendered chat template missing %q", want)
 		}
 	}
+	if strings.Contains(body, `src="/assets/chat.js`) {
+		t.Fatalf("rendered chat template still references removed chat.js")
+	}
 }
 
 func TestAssetHandlerServesEmbeddedAssets(t *testing.T) {
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/assets/chat.js", nil)
+	req := httptest.NewRequest(http.MethodGet, "/assets/chat_core.js", nil)
 	AssetHandler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
@@ -44,7 +49,7 @@ func TestAssetHandlerServesEmbeddedAssets(t *testing.T) {
 		t.Fatalf("Cache-Control = %q, want no-cache for dev asset version", got)
 	}
 	if !strings.Contains(rec.Body.String(), "document.body.dataset.currentUserId") {
-		t.Fatalf("chat.js did not contain expected bootstrapped user-id read")
+		t.Fatalf("chat_core.js did not contain expected bootstrapped user-id read")
 	}
 
 	rec = httptest.NewRecorder()
