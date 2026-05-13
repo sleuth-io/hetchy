@@ -117,6 +117,10 @@ services:
       # Nested ${...} in default values is unsupported by Docker Compose interpolation,
       # so defaults are hardcoded to match the postgres service's own defaults above.
       DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/hetchy?sslmode=disable}
+      # Optional pgx pool ceiling. Empty leaves the pgx default
+      # (max(4, NumCPU)). Set in Doppler per environment — see
+      # internal/db/db.go for sizing guidance.
+      DATABASE_MAX_CONNS: ${DATABASE_MAX_CONNS:-}
 
       # Web UI configuration
       WEB_PORT: ${WEB_PORT:-8080}

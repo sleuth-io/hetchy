@@ -132,11 +132,11 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 	mode, url := daytonaLogTarget(cfg.DaytonaAPIURL)
 	log.Info("daytona configured", "mode", mode, "url", url)
 
-	store, err := db.Open(context.Background(), cfg.DatabaseURL)
+	store, err := db.Open(context.Background(), cfg.DatabaseURL, cfg.DatabaseMaxConns)
 	if err != nil {
 		return nil, fmt.Errorf("database open: %w", err)
 	}
-	log.Info("database connected")
+	log.Info("database connected", "pool_max_conns", cfg.DatabaseMaxConns)
 
 	cipher, err := secrets.New(cfg.SecretsEncryptionKey)
 	if err != nil {
