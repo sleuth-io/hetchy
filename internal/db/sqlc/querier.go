@@ -88,6 +88,7 @@ type Querier interface {
 	// neither is desirable, and the persister has no business creating
 	// rows on its own.
 	SaveConversationProgress(ctx context.Context, arg SaveConversationProgressParams) error
+	SaveConversationTaskOptions(ctx context.Context, arg SaveConversationTaskOptionsParams) error
 	// Backs the sidebar list. Filters by optional creator_id and an
 	// optional case-insensitive substring match against either the
 	// custom_title or the first user message (history[1] — Postgres

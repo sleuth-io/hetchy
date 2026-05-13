@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"strings"
 	"time"
@@ -307,6 +308,62 @@ func (b *Bot) Run(ctx context.Context) error {
 	return err
 }
 
+// Chat task option keys are persisted in conversations.task_options.
+// Keep them stable: the web API uses the same names.
+const (
+	chatTaskValidateKey              = "validate"
+	chatTaskReviewCodeBeforePushKey  = "review_code_before_push"
+	chatTaskActionPRChecksForDoneKey = "action_pr_checks_for_done"
+)
+
+// chatTaskOptions are the resolved per-turn conditional tasks surfaced
+// in the web composer. Missing stored keys default on.
+type chatTaskOptions struct {
+	ValidateChanges       bool
+	ReviewCodeBeforePush  bool
+	ActionPRChecksForDone bool
+}
+
+// chatTaskOptionPatch carries only the option values present on an
+// inbound request. Applying it over the saved generic task_options bag
+// preserves unknown future keys and avoids resetting older clients'
+// omitted fields.
+type chatTaskOptionPatch map[string]bool
+
+func defaultChatTaskOptions() chatTaskOptions {
+	return chatTaskOptions{
+		ValidateChanges:       true,
+		ReviewCodeBeforePush:  true,
+		ActionPRChecksForDone: true,
+	}
+}
+
+func resolveChatTaskOptions(saved map[string]bool, patch chatTaskOptionPatch) (chatTaskOptions, map[string]bool) {
+	merged := mergeChatTaskOptionValues(saved, patch)
+	return chatTaskOptions{
+		ValidateChanges:       chatTaskOptionEnabled(merged, chatTaskValidateKey),
+		ReviewCodeBeforePush:  chatTaskOptionEnabled(merged, chatTaskReviewCodeBeforePushKey),
+		ActionPRChecksForDone: chatTaskOptionEnabled(merged, chatTaskActionPRChecksForDoneKey),
+	}, merged
+}
+
+func mergeChatTaskOptionValues(saved map[string]bool, patch chatTaskOptionPatch) map[string]bool {
+	if len(saved) == 0 && len(patch) == 0 {
+		return nil
+	}
+	merged := make(map[string]bool, len(saved)+len(patch))
+	maps.Copy(merged, saved)
+	maps.Copy(merged, patch)
+	return merged
+}
+
+func chatTaskOptionEnabled(values map[string]bool, key string) bool {
+	if v, ok := values[key]; ok {
+		return v
+	}
+	return true
+}
+
 // HandleRequest is the shared core. It expects an already-resolved org
 // config — callers (web/slack) pull oc from the principal's org id (web)
 // or the org that owns the inbound socket (slack) and pass it in.
@@ -322,21 +379,23 @@ func (b *Bot) Run(ctx context.Context) error {
 // user to reply with `owner/name`. The next message into a conversation
 // in that "awaiting repo" state is interpreted as the repo selection,
 // not as a new task.
-// HandleRequest dispatches a single user turn. validate gates the
-// repo-bootstrap pipeline + post-change validation prompt: when true
-// (the default for new chats from the web UI and for every Slack
-// request) the agent does first-time bootstrap, applies the saved
-// spec, and is told to produce proof artifacts/test evidence before
-// opening the PR. When false (web user explicitly unchecks the
-// "Validate changes with end-to-end testing" box) we skip both and
-// fall back to the legacy "make the change, open the PR" flow —
-// useful for trivial edits where the bootstrap's overhead outweighs
-// the validation benefit.
 //
-// Slack always passes true. Follow-ups also receive the flag; when true
-// and a saved spec exists, they rerun the validation handoff without
-// re-bootstrap.
-func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, requestID, threadID, userID string, validate bool, requestedAgent *string, model ClaudeModel, out blocks.Emitter) {
+// The incoming option patch is applied over the conversation's saved
+// task_options JSON object.
+// opts.ValidateChanges gates the repo-bootstrap pipeline + post-change
+// validation prompt: when true (the default for missing saved keys) the
+// agent does first-time bootstrap, applies the saved spec, and is told
+// to produce proof artifacts/test evidence before opening the PR. When
+// false (web user explicitly unchecks the "Validate changes with
+// end-to-end testing" box) we skip both and fall back to the legacy
+// "make the change, open the PR" flow — useful for trivial edits where
+// the bootstrap's overhead outweighs the validation benefit.
+//
+// Slack sends no option patch, so saved values are reused and missing
+// keys default on. Follow-ups also receive the resolved options; when
+// validation is true and a saved spec exists, they rerun the validation
+// handoff without re-bootstrap.
+func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, requestID, threadID, userID string, optionPatch chatTaskOptionPatch, requestedAgent *string, model ClaudeModel, out blocks.Emitter) {
 	model = normalizeClaudeModel(model)
 	b.log.Info("request received",
 		"org", oc.OrgID,
@@ -361,9 +420,21 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 	}
 
 	rec, err := b.convs.Get(ctx, oc.OrgID, threadID)
+	var opts chatTaskOptions
+	var taskOptions map[string]bool
 	if err == nil {
 		model = modelForConversation(rec, model)
 		rec.Model = string(model)
+		opts, taskOptions = resolveChatTaskOptions(rec.TaskOptions, optionPatch)
+		rec.TaskOptions = taskOptions
+		if len(optionPatch) > 0 {
+			if saveErr := b.convs.SaveTaskOptions(ctx, rec.OrgID, rec.ThreadID, taskOptions); saveErr != nil {
+				b.log.Warn("save chat task options",
+					"org", rec.OrgID, "thread", rec.ThreadID, "error", saveErr)
+			}
+		}
+	} else {
+		opts, taskOptions = resolveChatTaskOptions(nil, optionPatch)
 	}
 	switch {
 	case err == nil && rec.SandboxID != "" && rec.PRURL != "":
@@ -372,7 +443,7 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		if !ok {
 			return
 		}
-		b.handleFollowUp(ctx, oc, rec, agent, text, requestID, validate, model, recorder, emit)
+		b.handleFollowUp(ctx, oc, rec, agent, text, requestID, opts, model, recorder, emit)
 		return
 	case err == nil && rec.SandboxID != "":
 		// Sandbox was created but the agent failed before producing a
@@ -381,7 +452,7 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		if !ok {
 			return
 		}
-		b.handleRetryAfterFailure(ctx, oc, rec, agent, text, requestID, validate, model, recorder, emit)
+		b.handleRetryAfterFailure(ctx, oc, rec, agent, text, requestID, opts, model, recorder, emit)
 		return
 	case err == nil:
 		// No sandbox was ever created. Two sub-states distinguished by
@@ -396,14 +467,14 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 			if !ok {
 				return
 			}
-			b.handleRetryAfterFailure(ctx, oc, rec, agent, text, requestID, validate, model, recorder, emit)
+			b.handleRetryAfterFailure(ctx, oc, rec, agent, text, requestID, opts, model, recorder, emit)
 			return
 		}
 		agent, ok := b.selectAgentForConversation(ctx, oc.OrgID, mutableConversationAgentSlug(rec.AgentSlug, requestedAgent), emit)
 		if !ok {
 			return
 		}
-		b.handleAwaitingRepoReply(ctx, oc, rec, agent, text, requestID, validate, model, recorder, emit)
+		b.handleAwaitingRepoReply(ctx, oc, rec, agent, text, requestID, opts, model, recorder, emit)
 		return
 	case errors.Is(err, convstore.ErrNotFound):
 		// fall through — new conversation
@@ -429,6 +500,7 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 			CreatorID:      userID,
 			AgentSlug:      agent.Slug,
 			Model:          string(model),
+			TaskOptions:    taskOptions,
 		}
 		if err := b.convs.Upsert(ctx, partial); err != nil {
 			b.log.Error("convstore upsert (awaiting repo)", "error", err, "org", oc.OrgID, "thread", threadID)
@@ -445,6 +517,7 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		CreatorID:   userID,
 		AgentSlug:   agent.Slug,
 		Model:       string(model),
+		TaskOptions: taskOptions,
 	}
 	// Persist the row immediately — before we spend 10–30s creating the
 	// sandbox — so the LHN sidebar and /api/conversations both see this
@@ -454,7 +527,7 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 	if err := b.convs.Upsert(ctx, rec); err != nil {
 		b.log.Error("convstore upsert (new chat)", "error", err, "org", oc.OrgID, "thread", threadID)
 	}
-	b.runFreshAgent(ctx, oc, rec, agent, text, requestID, validate, model, recorder, emit)
+	b.runFreshAgent(ctx, oc, rec, agent, text, requestID, opts, model, recorder, emit)
 }
 
 func requestedAgentSlug(requested *string) string {
@@ -504,7 +577,7 @@ func modelForConversation(rec convstore.Record, requested ClaudeModel) ClaudeMod
 // rec on entry may have GitHubOwner already set (from a previous
 // resolve-failed attempt); we'll overwrite both with whatever this
 // message resolves to.
-func (b *Bot) handleAwaitingRepoReply(ctx context.Context, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, text, requestID string, validate bool, model ClaudeModel, recorder *blocks.Recorder, emit blocks.Emitter) {
+func (b *Bot) handleAwaitingRepoReply(ctx context.Context, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, text, requestID string, opts chatTaskOptions, model ClaudeModel, recorder *blocks.Recorder, emit blocks.Emitter) {
 	owner, name, ok := parseOwnerRepo(text)
 	if !ok {
 		emit.Notify("Try again", "I couldn't parse that as `owner/name`. For example `acme/website`.")
@@ -528,7 +601,7 @@ func (b *Bot) handleAwaitingRepoReply(ctx context.Context, oc orgcfg.Config, rec
 	rec.AgentSlug = agent.Slug
 	rec.Model = string(model)
 	originalRequest := rec.History[0]
-	b.runFreshAgent(ctx, oc, rec, agent, originalRequest, requestID, validate, model, recorder, emit)
+	b.runFreshAgent(ctx, oc, rec, agent, originalRequest, requestID, opts, model, recorder, emit)
 }
 
 // clearRepoOnFailure rewrites a partial conversation back to the
@@ -558,7 +631,7 @@ func clearRepoOnFailure(rec *convstore.Record) {
 // one. The user retrying is the signal that they're done debugging
 // the previous failure; without this we'd leak a Daytona sandbox per
 // retry.
-func (b *Bot) handleRetryAfterFailure(ctx context.Context, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, text, requestID string, validate bool, model ClaudeModel, recorder *blocks.Recorder, emit blocks.Emitter) {
+func (b *Bot) handleRetryAfterFailure(ctx context.Context, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, text, requestID string, opts chatTaskOptions, model ClaudeModel, recorder *blocks.Recorder, emit blocks.Emitter) {
 	if rec.SandboxID != "" {
 		if sb, err := b.daytona.Get(ctx, rec.SandboxID); err == nil {
 			if err := sb.Stop(ctx); err != nil {
@@ -576,7 +649,7 @@ func (b *Bot) handleRetryAfterFailure(ctx context.Context, oc orgcfg.Config, rec
 	rec.ResponseBlocks = nil
 	rec.AgentSlug = agent.Slug
 	rec.Model = string(model)
-	b.runFreshAgent(ctx, oc, rec, agent, text, requestID, validate, model, recorder, emit)
+	b.runFreshAgent(ctx, oc, rec, agent, text, requestID, opts, model, recorder, emit)
 }
 
 // runFreshAgent creates a new sandbox, mints an installation token
@@ -584,7 +657,7 @@ func (b *Bot) handleRetryAfterFailure(ctx context.Context, oc orgcfg.Config, rec
 // the resulting conversation. Shared by the new-conversation, awaiting-
 // repo-reply, and "had repo but no sandbox" paths so they all stamp
 // the row identically.
-func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, userRequest, requestID string, validate bool, model ClaudeModel, recorder *blocks.Recorder, emit blocks.Emitter) {
+func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, userRequest, requestID string, opts chatTaskOptions, model ClaudeModel, recorder *blocks.Recorder, emit blocks.Emitter) {
 	model = normalizeClaudeModel(model)
 	rec.Model = string(model)
 	repo, err := b.resolveRepo(ctx, oc.OrgID, rec.GitHubOwner, rec.GitHubRepo)
@@ -682,7 +755,7 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 		persister.Stop()
 	}()
 
-	prURL, runErr := b.runAgent(ctx, sb, repo, oc, agent, userRequest, requestID, validate, model, emit)
+	prURL, runErr := b.runAgent(ctx, sb, repo, oc, agent, userRequest, requestID, opts, model, emit)
 	if runErr != nil {
 		if liveRunCancelled(ctx) {
 			b.log.Info("agent run stopped", "sandbox", sb.ID, "request_id", requestID, "error", runErr)
@@ -733,7 +806,7 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 	}
 }
 
-func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, text, requestID string, validate bool, model ClaudeModel, recorder *blocks.Recorder, emit blocks.Emitter) {
+func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, text, requestID string, opts chatTaskOptions, model ClaudeModel, recorder *blocks.Recorder, emit blocks.Emitter) {
 	model = modelForConversation(rec, model)
 	b.log.Info("follow-up received", "org", oc.OrgID, "sandbox", rec.SandboxID, "branch", rec.Branch, "pr", rec.PRURL, "agent", agent.Slug, "model", model)
 	rec.AgentSlug = agent.Slug
@@ -825,7 +898,7 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 		persister.Stop()
 	}()
 
-	prURL, err := b.runFollowUp(ctx, sb, repo, oc, rec, agent, text, requestID, validate, model, emit)
+	prURL, err := b.runFollowUp(ctx, sb, repo, oc, rec, agent, text, requestID, opts, model, emit)
 	if err != nil {
 		if liveRunCancelled(ctx) {
 			b.log.Info("follow-up stopped", "sandbox", sb.ID, "request_id", requestID, "error", err)

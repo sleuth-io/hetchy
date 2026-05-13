@@ -62,9 +62,12 @@ type Record struct {
 	// Model pins the Claude model selected on the first turn so follow-ups
 	// keep the same cost/performance profile after reloads or on another
 	// browser.
-	Model     string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	Model string
+	// TaskOptions is a generic per-chat bag for composer task toggles.
+	// Missing keys are meaningful: callers decide their own defaults.
+	TaskOptions map[string]bool
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 // Store wraps the sqlc queries with the loose Record shape used elsewhere.
@@ -209,9 +212,26 @@ func (s *Store) Upsert(ctx context.Context, r Record) error {
 		CreatorID:      r.CreatorID,
 		AgentSlug:      r.AgentSlug,
 		Model:          r.Model,
+		TaskOptions:    encodeTaskOptions(r.TaskOptions),
 	})
 	if err != nil {
 		return fmt.Errorf("upsert conversation: %w", err)
+	}
+	return nil
+}
+
+// SaveTaskOptions updates the generic per-chat task option bag without
+// touching transcript or terminal run state. No-op when the store is nil.
+func (s *Store) SaveTaskOptions(ctx context.Context, orgID, threadID string, opts map[string]bool) error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+	if err := s.db.Queries.SaveConversationTaskOptions(ctx, sqlc.SaveConversationTaskOptionsParams{
+		OrgID:       orgID,
+		ThreadID:    threadID,
+		TaskOptions: encodeTaskOptions(opts),
+	}); err != nil {
+		return fmt.Errorf("save task options: %w", err)
 	}
 	return nil
 }
@@ -291,6 +311,30 @@ func decodeBlocks(raw [][]byte) ([][]blocks.Block, error) {
 	return out, nil
 }
 
+func encodeTaskOptions(opts map[string]bool) []byte {
+	if len(opts) == 0 {
+		return []byte("{}")
+	}
+	raw, err := json.Marshal(opts)
+	if err != nil {
+		// map[string]bool cannot fail to marshal; keep the fallback to
+		// avoid ever writing invalid JSON if that type changes later.
+		return []byte("{}")
+	}
+	return raw
+}
+
+func decodeTaskOptions(raw []byte) (map[string]bool, error) {
+	if len(raw) == 0 {
+		return map[string]bool{}, nil
+	}
+	var opts map[string]bool
+	if err := json.Unmarshal(raw, &opts); err != nil {
+		return nil, err
+	}
+	return opts, nil
+}
+
 // rowFields is the scalar projection shared by every conversations
 // query (Get / ListByOrg / ListByOrgAndUser). The sqlc-generated row
 // types are distinct (one per query), so a helper keyed on this value
@@ -304,6 +348,7 @@ type rowFields struct {
 	GithubOwner, GithubRepo, CustomTitle      string
 	CreatorID                                 string
 	AgentSlug, Model                          string
+	TaskOptions                               []byte
 	CreatedAt, UpdatedAt                      pgtype.Timestamptz
 }
 
@@ -311,6 +356,10 @@ func recordFromFields(f rowFields) (Record, error) {
 	bs, err := decodeBlocks(f.ResponseBlocks)
 	if err != nil {
 		return Record{}, err
+	}
+	taskOptions, err := decodeTaskOptions(f.TaskOptions)
+	if err != nil {
+		return Record{}, fmt.Errorf("decode task_options: %w", err)
 	}
 	return Record{
 		OrgID:          f.OrgID,
@@ -326,6 +375,7 @@ func recordFromFields(f rowFields) (Record, error) {
 		CreatorID:      f.CreatorID,
 		AgentSlug:      f.AgentSlug,
 		Model:          f.Model,
+		TaskOptions:    taskOptions,
 		CreatedAt:      f.CreatedAt.Time,
 		UpdatedAt:      f.UpdatedAt.Time,
 	}, nil
@@ -338,7 +388,8 @@ func recordFromGetRow(row sqlc.GetConversationRow) (Record, error) {
 		ResponseBlocks: row.ResponseBlocks,
 		GithubOwner:    row.GithubOwner, GithubRepo: row.GithubRepo,
 		CustomTitle: row.CustomTitle, CreatorID: row.CreatorID, AgentSlug: row.AgentSlug, Model: row.Model,
-		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+		TaskOptions: row.TaskOptions,
+		CreatedAt:   row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	})
 }
 
@@ -349,6 +400,7 @@ func recordFromSearchRow(row sqlc.SearchConversationsRow) (Record, error) {
 		ResponseBlocks: row.ResponseBlocks,
 		GithubOwner:    row.GithubOwner, GithubRepo: row.GithubRepo,
 		CustomTitle: row.CustomTitle, CreatorID: row.CreatorID, AgentSlug: row.AgentSlug, Model: row.Model,
-		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+		TaskOptions: row.TaskOptions,
+		CreatedAt:   row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	})
 }

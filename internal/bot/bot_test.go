@@ -140,7 +140,7 @@ func TestHandleRequest_AskForRepo(t *testing.T) {
 	oc := orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "ant"}
 
 	emit := newCaptureEmitter()
-	b.HandleRequest(context.Background(), oc, "do something", "req-1", "thread-1", "", true, nil, ClaudeModelOpus, emit)
+	b.HandleRequest(context.Background(), oc, "do something", "req-1", "thread-1", "", chatTaskOptionPatch{}, nil, ClaudeModelOpus, emit)
 
 	if !emit.hasCall("notify", "Which repository") {
 		t.Errorf("expected a Notify with 'Which repository', got Calls=%v", emit.Calls)
@@ -160,7 +160,7 @@ func TestHandleRequest_MissingAnthropic(t *testing.T) {
 		return nil, errors.New("unreachable")
 	}
 	emit := newCaptureEmitter()
-	b.HandleRequest(context.Background(), orgcfg.Config{OrgID: "o"}, "do something", "req", "thread", "", true, nil, ClaudeModelOpus, emit)
+	b.HandleRequest(context.Background(), orgcfg.Config{OrgID: "o"}, "do something", "req", "thread", "", chatTaskOptionPatch{}, nil, ClaudeModelOpus, emit)
 	if !emit.hasCall("error", "Missing Claude credentials") {
 		t.Errorf("expected Error call with 'Missing Claude credentials', got Calls=%v", emit.Calls)
 	}
@@ -179,7 +179,7 @@ func TestHandleRequest_SubscriptionTokenSatisfiesCredCheck(t *testing.T) {
 		return nil, errors.New("unreachable")
 	}
 	emit := newCaptureEmitter()
-	b.HandleRequest(context.Background(), orgcfg.Config{OrgID: "o", ClaudeCodeOAuthToken: "sk-ant-oat01-…"}, "do something", "req", "thread", "", true, nil, ClaudeModelOpus, emit)
+	b.HandleRequest(context.Background(), orgcfg.Config{OrgID: "o", ClaudeCodeOAuthToken: "sk-ant-oat01-…"}, "do something", "req", "thread", "", chatTaskOptionPatch{}, nil, ClaudeModelOpus, emit)
 	if emit.hasCall("error", "Missing Claude credentials") {
 		t.Errorf("subscription token alone should satisfy cred check, got Calls=%v", emit.Calls)
 	}
@@ -196,9 +196,37 @@ func TestHandleRequest_UnknownAgent(t *testing.T) {
 	}
 	emit := newCaptureEmitter()
 	requestedAgent := "sally"
-	b.HandleRequest(context.Background(), orgcfg.Config{OrgID: "o", ClaudeCodeOAuthToken: "sk-ant-oat01-token"}, "do something", "req", "thread", "", true, &requestedAgent, ClaudeModelOpus, emit)
+	b.HandleRequest(context.Background(), orgcfg.Config{OrgID: "o", ClaudeCodeOAuthToken: "sk-ant-oat01-token"}, "do something", "req", "thread", "", chatTaskOptionPatch{}, &requestedAgent, ClaudeModelOpus, emit)
 	if !emit.hasCall("error", "Unknown agent") {
 		t.Errorf("expected Unknown agent error, got Calls=%v", emit.Calls)
+	}
+}
+
+func TestResolveChatTaskOptionsMergesPatchAndDefaultsMissingOn(t *testing.T) {
+	opts, saved := resolveChatTaskOptions(
+		map[string]bool{
+			chatTaskValidateKey: false,
+			"future_option":     false,
+		},
+		chatTaskOptionPatch{
+			chatTaskReviewCodeBeforePushKey: false,
+		},
+	)
+
+	if opts.ValidateChanges {
+		t.Fatal("saved validate=false should be respected")
+	}
+	if opts.ReviewCodeBeforePush {
+		t.Fatal("incoming review_code_before_push=false should be respected")
+	}
+	if !opts.ActionPRChecksForDone {
+		t.Fatal("missing action_pr_checks_for_done should default on")
+	}
+	if got, ok := saved["future_option"]; !ok || got {
+		t.Fatalf("future option should be preserved as false, got %v present=%v", got, ok)
+	}
+	if got, ok := saved[chatTaskReviewCodeBeforePushKey]; !ok || got {
+		t.Fatalf("patch value should be saved as false, got %v present=%v", got, ok)
 	}
 }
 

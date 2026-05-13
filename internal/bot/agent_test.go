@@ -14,6 +14,7 @@ func TestAgentPromptTemplate_IncludesAllInputs(t *testing.T) {
 	prompt := fmt.Sprintf(agentPromptTemplate,
 		"owner/repo", "/work", "main",
 		"Add a feature flag to gate the new login flow",
+		"",
 		"req-12345",
 		"main",
 	)
@@ -40,6 +41,7 @@ func TestAgentFollowUpPromptTemplate_IncludesAllInputs(t *testing.T) {
 		"/work", "feature/sf-1", "https://github.com/owner/repo/pull/42",
 		"first turn\n---\nsecond turn",
 		"please change the button color",
+		"",
 	)
 
 	wants := []string{
@@ -70,7 +72,7 @@ func TestBuildFollowUpPromptAddsValidationWhenSpecPresent(t *testing.T) {
 			{Name: "web", URL: "http://localhost:3000", Kind: "ui"},
 		},
 	}
-	prompt := buildFollowUpPrompt("owner/repo", rec, "please adjust the flow", spec, 3)
+	prompt := buildFollowUpPrompt("owner/repo", rec, "please adjust the flow", spec, 3, defaultChatTaskOptions())
 
 	wants := []string{
 		"POST-CHANGE VALIDATION",
@@ -79,6 +81,8 @@ func TestBuildFollowUpPromptAddsValidationWhenSpecPresent(t *testing.T) {
 		"summary.md",
 		"BOOTSTRAP SPEC IMPROVEMENT",
 		"feature/sf-1",
+		"Review code before push",
+		"Action PR checks for done",
 	}
 	for _, w := range wants {
 		if !strings.Contains(prompt, w) {
@@ -93,10 +97,37 @@ func TestBuildFollowUpPromptWithoutSpecSkipsValidation(t *testing.T) {
 		PRURL:   "https://github.com/owner/repo/pull/42",
 		History: []string{"first turn"},
 	}
-	prompt := buildFollowUpPrompt("owner/repo", rec, "please adjust the flow", nil, 3)
+	prompt := buildFollowUpPrompt("owner/repo", rec, "please adjust the flow", nil, 3, defaultChatTaskOptions())
 
 	if strings.Contains(prompt, "POST-CHANGE VALIDATION") || strings.Contains(prompt, "HETCHY_ARTIFACT_SLOTS") {
 		t.Fatalf("follow-up prompt without spec should not include validation/upload instructions\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "Review code before push") || !strings.Contains(prompt, "Action PR checks for done") {
+		t.Fatalf("follow-up prompt without spec should still include enabled conditional tasks\n%s", prompt)
+	}
+}
+
+func TestConditionalTasksPromptRespectsOptions(t *testing.T) {
+	prompt := conditionalTasksPrompt(chatTaskOptions{
+		ValidateChanges:       true,
+		ReviewCodeBeforePush:  true,
+		ActionPRChecksForDone: true,
+	})
+	for _, w := range []string{
+		"Review code before push",
+		"sub-agent",
+		"Action PR checks for done",
+		"automated AI review",
+		"LOW severity",
+	} {
+		if !strings.Contains(prompt, w) {
+			t.Errorf("conditional tasks prompt missing %q\n%s", w, prompt)
+		}
+	}
+
+	prompt = conditionalTasksPrompt(chatTaskOptions{ValidateChanges: true})
+	if prompt != "" {
+		t.Fatalf("disabled conditional tasks should produce no prompt, got:\n%s", prompt)
 	}
 }
 

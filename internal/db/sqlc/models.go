@@ -55,6 +55,7 @@ type Conversation struct {
 	CreatorID      string             `json:"creator_id"`
 	AgentSlug      string             `json:"agent_slug"`
 	Model          string             `json:"model"`
+	TaskOptions    []byte             `json:"task_options"`
 }
 
 type GithubAppInstallation struct {
