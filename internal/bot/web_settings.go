@@ -219,9 +219,7 @@ func (b *Bot) loadBootstrapStatus(ctx context.Context, repos []integrationRepo) 
 	for _, repo := range repos {
 		// We only have (owner, name) here — look up the (installation,
 		// repo_id) once via the org repo lookup, then read the spec.
-		row, err := b.store.Queries.GetGithubRepoForOrg(ctx, sqlc.GetGithubRepoForOrgParams{
-			OrgID: repo.OrgID, Owner: repo.Owner, Name: repo.Name,
-		})
+		row, err := b.lookupRepoForOrg(ctx, repo.OrgID, repo.Owner, repo.Name)
 		if err != nil {
 			continue
 		}
@@ -256,6 +254,18 @@ func (b *Bot) loadBootstrapStatus(ctx context.Context, repos []integrationRepo) 
 		}
 	}
 	return out, nil
+}
+
+type agentSettingsView struct {
+	Slug         string
+	DisplayName  string
+	Description  string
+	SXBot        string
+	PersonaAsset string
+	SlackAliases []string
+	Skills       []string
+	BuiltIn      bool
+	Default      bool
 }
 
 // populateSettingsTabData fetches the per-tab data the template needs
@@ -302,12 +312,12 @@ func (b *Bot) populateSettingsTabData(ctx context.Context, orgID, tab string, da
 		if err != nil {
 			return fmt.Errorf("load agents: %w", err)
 		}
-		out := make([]agentSummary, 0, len(profiles))
+		out := make([]agentSettingsView, 0, len(profiles))
 		for _, a := range profiles {
 			if !a.Enabled {
 				continue
 			}
-			out = append(out, agentSummary{
+			out = append(out, agentSettingsView{
 				Slug:         a.Slug,
 				DisplayName:  a.DisplayName,
 				Description:  a.Description,

@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 
 	"github.com/hetchyhq/hetchy/internal/buildinfo"
 )
@@ -57,43 +58,30 @@ func AssetHandler() http.Handler {
 	if err != nil {
 		panic("webui assets missing: " + err.Error())
 	}
-	fileServer := http.FileServer(http.FS(sub))
+	fileServer := http.StripPrefix("/assets/", http.FileServer(http.FS(sub)))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 		w.Header().Set("Cache-Control", assetCacheControl())
-		r2 := new(http.Request)
-		*r2 = *r
-		u := *r.URL
-		r2.URL = &u
-		r2.URL.Path = strings.TrimPrefix(r.URL.Path, "/assets/")
-		if !strings.HasPrefix(r2.URL.Path, "/") {
-			r2.URL.Path = "/" + r2.URL.Path
-		}
-		fileServer.ServeHTTP(w, r2)
+		fileServer.ServeHTTP(w, r)
 	})
 }
 
 // Render parses and executes an embedded page template.
 func Render(log *slog.Logger, w http.ResponseWriter, name Template, data any) {
-	path, ok := templateFiles[name]
+	tpls := parsedTemplates()
+	if tpls.err != nil {
+		if log != nil {
+			log.Error("template parse failed", "error", tpls.err)
+		}
+		http.Error(w, tpls.err.Error(), http.StatusInternalServerError)
+		return
+	}
+	tpl, ok := tpls.byName[name]
 	if !ok {
 		http.Error(w, "template not found", http.StatusInternalServerError)
-		return
-	}
-	body, err := files.ReadFile(path)
-	if err != nil {
-		http.Error(w, "template not found", http.StatusInternalServerError)
-		return
-	}
-	tpl, err := template.New("page").Funcs(templateFuncs).Parse(string(body))
-	if err != nil {
-		if log != nil {
-			log.Error("template parse failed", "template", name, "error", err)
-		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -105,6 +93,27 @@ func Render(log *slog.Logger, w http.ResponseWriter, name Template, data any) {
 		}
 	}
 }
+
+type templateCache struct {
+	byName map[Template]*template.Template
+	err    error
+}
+
+var parsedTemplates = sync.OnceValue(func() templateCache {
+	out := make(map[Template]*template.Template, len(templateFiles))
+	for name, path := range templateFiles {
+		body, err := files.ReadFile(path)
+		if err != nil {
+			return templateCache{err: fmt.Errorf("%s: %w", name, err)}
+		}
+		tpl, err := template.New("page").Funcs(templateFuncs).Parse(string(body))
+		if err != nil {
+			return templateCache{err: fmt.Errorf("%s: %w", name, err)}
+		}
+		out[name] = tpl
+	}
+	return templateCache{byName: out}
+})
 
 const hetchyFaviconHref = "data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2032%2032%27%3E%3Crect%20width%3D%2732%27%20height%3D%2732%27%20rx%3D%276%27%20fill%3D%27%230d1117%27%2F%3E%3Cg%20fill%3D%27%237dc4ff%27%3E%3Crect%20x%3D%276%27%20y%3D%276%27%20width%3D%276%27%20height%3D%2720%27%2F%3E%3Crect%20x%3D%2720%27%20y%3D%276%27%20width%3D%276%27%20height%3D%2720%27%2F%3E%3Crect%20x%3D%276%27%20y%3D%2714%27%20width%3D%2720%27%20height%3D%274%27%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E"
 

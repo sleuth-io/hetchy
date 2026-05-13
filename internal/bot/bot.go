@@ -65,7 +65,7 @@ type Bot struct {
 	agents    *agents.Store
 	auth      *auth.Service
 	slack     *slackManager
-	bootstrap *bootstrap.Store
+	bootstrap bootstrapStore
 	// artifacts is the S3 presigner used to mint per-request proof
 	// artifact upload slots for the validation prompt. Nil when
 	// HETCHY_S3_BUCKET / HETCHY_S3_REGION aren't configured.
@@ -117,6 +117,7 @@ type Bot struct {
 	resumeSandboxFn        func(context.Context, *daytona.Sandbox, blocks.Emitter) error
 	deleteSandboxSessionFn func(*daytona.Sandbox, string)
 	stopAndArchiveFn       func(context.Context, *daytona.Sandbox)
+	lookupRepoFn           func(context.Context, string, string, string) (sqlc.GithubRepo, error)
 	// cleanupSandboxByIDFn is called by chatCancelHandler for opportunistic
 	// cleanup of a fresh-run sandbox; overridable in tests.
 	cleanupSandboxByIDFn func(string, string)

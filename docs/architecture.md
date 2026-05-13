@@ -38,6 +38,7 @@ hetchy/
 │   │   ├── slack.go        # Slack socket-mode event dispatcher
 │   │   ├── web.go          # HTTP server wiring
 │   │   ├── web_chat.go     # Chat POST/cancel/SSE handlers
+│   │   ├── web_pages.go    # Page handlers (index, onboarding, profile, welcome)
 │   │   ├── web_settings.go # Organization settings handlers and view models
 │   │   ├── web_api.go      # JSON API handlers
 │   │   ├── web_test.go     # Tests for web server behaviour

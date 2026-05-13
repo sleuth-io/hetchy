@@ -1,12 +1,17 @@
 package bot
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/hetchyhq/hetchy/internal/auth"
+	"github.com/hetchyhq/hetchy/internal/bootstrap"
+	"github.com/hetchyhq/hetchy/internal/db/sqlc"
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
 )
 
@@ -25,6 +30,84 @@ func TestGithubInstallationManageURL(t *testing.T) {
 		if got != tc.want {
 			t.Fatalf("githubInstallationManageURL(%q, %q, %d) = %q, want %q",
 				tc.accountType, tc.account, tc.id, got, tc.want)
+		}
+	}
+}
+
+func TestLoadBootstrapStatusUsesRepoAndBootstrapFakes(t *testing.T) {
+	boot := &fakeBootstrapStore{
+		spec: &bootstrap.Spec{
+			Kind:                 "node",
+			ValidationStatus:     bootstrap.StatusPartial,
+			DeferredCapabilities: []string{"oauth"},
+		},
+		summaries: []bootstrap.SecretSummary{
+			{Name: "API_KEY", Filled: true},
+			{Name: "OAUTH_CLIENT_SECRET", Filled: false},
+		},
+	}
+	b := newBypassOrgBot(t, "admin")
+	b.bootstrap = boot
+	b.lookupRepoFn = func(_ context.Context, orgID, owner, name string) (sqlc.GithubRepo, error) {
+		if orgID != "org_test" || owner != "hetchyhq" {
+			t.Fatalf("lookup repo got org=%q owner=%q", orgID, owner)
+		}
+		if name == "missing" {
+			return sqlc.GithubRepo{}, pgx.ErrNoRows
+		}
+		return sqlc.GithubRepo{InstallationID: 11, RepoID: 22, Owner: owner, Name: name}, nil
+	}
+
+	got, err := b.loadBootstrapStatus(context.Background(), []integrationRepo{
+		{OrgID: "org_test", Owner: "hetchyhq", Name: "hetchy"},
+		{OrgID: "org_test", Owner: "hetchyhq", Name: "missing"},
+	})
+	if err != nil {
+		t.Fatalf("loadBootstrapStatus: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("status count = %d, want 1: %#v", len(got), got)
+	}
+	status := got["hetchyhq/hetchy"]
+	if status.Status != string(bootstrap.StatusPartial) || status.Kind != "node" {
+		t.Fatalf("status = %+v", status)
+	}
+	if status.AllFilled {
+		t.Fatal("AllFilled = true, want false when one secret is missing")
+	}
+	if len(status.Secrets) != 2 || status.Secrets[1].Name != "OAUTH_CLIENT_SECRET" || status.Secrets[1].Filled {
+		t.Fatalf("secrets = %+v", status.Secrets)
+	}
+	if len(status.DeferredCapabilities) != 1 || status.DeferredCapabilities[0] != "oauth" {
+		t.Fatalf("deferred capabilities = %#v", status.DeferredCapabilities)
+	}
+}
+
+func TestPopulateSettingsTabDataAgentsUsesFallbackProfiles(t *testing.T) {
+	b := newBypassOrgBot(t, "admin")
+	data := map[string]any{}
+
+	if err := b.populateSettingsTabData(context.Background(), "org_test", "agents", data); err != nil {
+		t.Fatalf("populateSettingsTabData: %v", err)
+	}
+
+	agents, ok := data["Agents"].([]agentSettingsView)
+	if !ok {
+		t.Fatalf("Agents type = %T, want []agentSettingsView", data["Agents"])
+	}
+	if len(agents) < 3 {
+		t.Fatalf("agents count = %d, want fallback profiles: %#v", len(agents), agents)
+	}
+	for _, want := range []string{"bob", "alice", "archy"} {
+		found := false
+		for _, got := range agents {
+			if got.Slug == want && got.BuiltIn {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("fallback agent %q not found in %#v", want, agents)
 		}
 	}
 }

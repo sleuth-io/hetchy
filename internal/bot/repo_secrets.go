@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -162,7 +163,14 @@ func (b *Bot) repoSecretsDelete(w http.ResponseWriter, r *http.Request, p auth.P
 // installation token for the chat agent — secrets CRUD only needs the
 // row identity.
 func (b *Bot) lookupRepo(r *http.Request, orgID, owner, name string) (sqlc.GithubRepo, error) {
-	return b.store.Queries.GetGithubRepoForOrg(r.Context(), sqlc.GetGithubRepoForOrgParams{
+	return b.lookupRepoForOrg(r.Context(), orgID, owner, name)
+}
+
+func (b *Bot) lookupRepoForOrg(ctx context.Context, orgID, owner, name string) (sqlc.GithubRepo, error) {
+	if b.lookupRepoFn != nil {
+		return b.lookupRepoFn(ctx, orgID, owner, name)
+	}
+	return b.store.Queries.GetGithubRepoForOrg(ctx, sqlc.GetGithubRepoForOrgParams{
 		OrgID: orgID,
 		Owner: owner,
 		Name:  name,

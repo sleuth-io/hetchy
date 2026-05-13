@@ -1,4 +1,4 @@
-.PHONY: help build install test ci lint format clean tidy deps verify update-deps init prepush postpull bot logs dev services-up services-down services-logs snapshot push-snapshot db-up db-down db-status db-new check-migrations sqlc-generate pg-up pg-down pg-logs pg-psql pg-reset slack-app
+.PHONY: help build install test coverage-bot ci lint format clean tidy deps verify update-deps init prepush postpull bot logs dev services-up services-down services-logs snapshot push-snapshot db-up db-down db-status db-new check-migrations sqlc-generate pg-up pg-down pg-logs pg-psql pg-reset slack-app
 
 # Default target
 help: ## Show this help message
@@ -37,6 +37,9 @@ test: ## Run tests
 	@echo "Running tests..."
 	@go test -race -cover ./...
 
+coverage-bot: ## Check internal/bot coverage against the CI baseline
+	@bash scripts/check-go-coverage.sh ./internal/bot .github/coverage/internal-bot.min
+
 ci: ## Run the same read-only checks CI does (gofmt, vet, lint, test -v, build)
 	@echo "Checking formatting..."
 	@if [ -n "$$(gofmt -l .)" ]; then \
@@ -50,6 +53,8 @@ ci: ## Run the same read-only checks CI does (gofmt, vet, lint, test -v, build)
 	@go tool golangci-lint run
 	@echo "Running tests..."
 	@go test -v -race -cover ./...
+	@echo "Checking bot coverage..."
+	@bash scripts/check-go-coverage.sh ./internal/bot .github/coverage/internal-bot.min
 	@echo "Building..."
 	@go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) $(MAIN_PATH)
 	@echo "✓ all CI checks passed"
@@ -87,7 +92,7 @@ update-deps: ## Update all dependencies to latest versions
 
 init: deps ## Initialize development environment
 
-prepush: format lint test build check-migrations ## Run before pushing (format, lint, test, build, check-migrations)
+prepush: format lint build check-migrations ## Run before pushing (format, lint, build, check-migrations)
 
 check-migrations: ## Verify branch-added migrations won't be silently skipped vs origin/main
 	@./scripts/check-migrations-order.sh
