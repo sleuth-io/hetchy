@@ -95,7 +95,7 @@ check-migrations: ## Verify branch-added migrations won't be silently skipped vs
 postpull: init ## Run after pulling (download dependencies)
 
 # Bot runtime
-# `bot` uses air for live-reload — saving a .go/.html/.sql file rebuilds
+# `bot` uses air for live-reload — saving a .go/.html/.css/.js/.sql file rebuilds
 # and restarts the binary in ~1-2s. Air is run via `go run pkg@version`
 # so contributors don't need a global install. Config lives in .air.toml.
 AIR_VERSION ?= v1.52.3

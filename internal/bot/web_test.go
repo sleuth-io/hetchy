@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/hetchyhq/hetchy/internal/auth"
+	"github.com/hetchyhq/hetchy/internal/webui"
 )
 
 func discardLogger() *slog.Logger {
@@ -34,6 +35,17 @@ func newBypassBot(t *testing.T) *Bot {
 		t.Fatalf("auth: %v", err)
 	}
 	return &Bot{log: discardLogger(), cfg: Config{WebPort: "0"}, auth: a}
+}
+
+func readWebUIAsset(t *testing.T, name string) string {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/assets/"+name, nil)
+	webui.AssetHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("asset %s status = %d body=%q", name, rec.Code, rec.Body.String())
+	}
+	return rec.Body.String()
 }
 
 func TestIndexHandler_ShowsLandingForAnonymous(t *testing.T) {
@@ -99,7 +111,7 @@ func TestIndexHandler_ShowsLandingAfterBypassLogout(t *testing.T) {
 func TestChatTemplate_ComposerControls(t *testing.T) {
 	b := newBypassBot(t)
 	rec := httptest.NewRecorder()
-	b.renderTemplate(rec, chatHTMLTpl, map[string]any{
+	b.renderTemplate(rec, webui.Chat, map[string]any{
 		"Email":       "u@x",
 		"DisplayName": "Test User",
 		"GravatarURL": "https://example.com/avatar.png",
@@ -115,7 +127,6 @@ func TestChatTemplate_ComposerControls(t *testing.T) {
 		`id="agent-popover"`,
 		`class="tools-divider"`,
 		`class="tools-checkmark"`,
-		`is-checked`,
 		`id="validate-checkbox"`,
 		`id="review-before-push-checkbox"`,
 		`id="action-pr-checks-checkbox"`,
@@ -125,6 +136,23 @@ func TestChatTemplate_ComposerControls(t *testing.T) {
 		`id="model-btn"`,
 		`onclick="handleComposerAction()"`,
 		`class="stop-icon"`,
+		`src="/assets/chat_bootstrap.js`,
+		`href="/assets/chat.css`,
+		`src="/assets/chat.js`,
+		`data-current-user-id="user_test"`,
+		`id="toast-stack"`,
+	} {
+		if !strings.Contains(body, w) {
+			t.Errorf("chat template missing %q", w)
+		}
+	}
+	if strings.Contains(body, `id="agent-btn"`) {
+		t.Errorf("chat template should not render the old standalone agent button")
+	}
+
+	script := readWebUIAsset(t, "chat.js")
+	for _, w := range []string{
+		`is-checked`,
 		`function stopRun()`,
 		`/chat/cancel`,
 		`setRunState(true)`,
@@ -134,12 +162,12 @@ func TestChatTemplate_ComposerControls(t *testing.T) {
 		`r.status === 409`,
 		`Run is still active. Reconnecting`,
 		`waitingTitle: 'Reconnecting'`,
-		`id="toast-stack"`,
 		`stopRequested`,
 		`conversationHasServerState`,
 		`renderPendingMetadata(text)`,
 		`conversationAgentIsMutable()`,
 		`payload.agent_slug = selectedAgentSlug`,
+		`document.body.dataset.currentUserId`,
 		`taskOptionKeys`,
 		`applyConversationTaskOptions(detail)`,
 		`payload.review_code_before_push = taskOptions[taskOptionKeys.reviewBeforePush]`,
@@ -157,12 +185,9 @@ func TestChatTemplate_ComposerControls(t *testing.T) {
 		`applyConversationModel(detail)`,
 		`setModelPickerLocked(true)`,
 	} {
-		if !strings.Contains(body, w) {
-			t.Errorf("chat template missing %q", w)
+		if !strings.Contains(script, w) {
+			t.Errorf("chat asset missing %q", w)
 		}
-	}
-	if strings.Contains(body, `id="agent-btn"`) {
-		t.Errorf("chat template should not render the old standalone agent button")
 	}
 }
 
@@ -302,12 +327,12 @@ func TestPageTemplates_RenderFavicon(t *testing.T) {
 	b := newBypassBot(t)
 	cases := []struct {
 		name string
-		body string
+		body webui.Template
 		data any
 	}{
 		{
 			name: "chat",
-			body: chatHTMLTpl,
+			body: webui.Chat,
 			data: map[string]any{
 				"Email":       "u@x",
 				"DisplayName": "Test User",
@@ -317,7 +342,7 @@ func TestPageTemplates_RenderFavicon(t *testing.T) {
 		},
 		{
 			name: "settings",
-			body: settingsHTMLTpl,
+			body: webui.Settings,
 			data: map[string]any{
 				"OrgID": "org_x", "OrgName": "Acme Inc.", "Email": "u@x", "Tab": "general",
 				"IsAdmin": true,
@@ -325,24 +350,24 @@ func TestPageTemplates_RenderFavicon(t *testing.T) {
 		},
 		{
 			name: "profile",
-			body: profileHTMLTpl,
+			body: webui.Profile,
 			data: map[string]any{
 				"UserID": "user_x", "Email": "u@x", "FirstName": "Ada", "LastName": "Lovelace",
 			},
 		},
 		{
 			name: "onboarding",
-			body: onboardingHTMLTpl,
+			body: webui.Onboarding,
 			data: map[string]any{"Email": "u@x"},
 		},
 		{
 			name: "welcome",
-			body: welcomeHTMLTpl,
+			body: webui.Welcome,
 			data: map[string]any{"Email": "u@x", "DisplayName": "Ada", "OrgName": "Acme Inc."},
 		},
 		{
 			name: "landing",
-			body: landingHTMLTpl,
+			body: webui.Landing,
 			data: nil,
 		},
 	}
@@ -358,7 +383,7 @@ func TestPageTemplates_RenderFavicon(t *testing.T) {
 			if !strings.Contains(body, `rel="icon"`) {
 				t.Fatalf("template missing favicon link")
 			}
-			if !strings.Contains(body, hetchyFaviconHref) {
+			if !strings.Contains(body, `data:image/svg+xml`) {
 				t.Fatalf("template missing shared favicon href")
 			}
 		})
@@ -372,7 +397,7 @@ func TestPageTemplates_RenderFavicon(t *testing.T) {
 func TestWelcomeTemplate_LinksToIntegrations(t *testing.T) {
 	b := newBypassBot(t)
 	rec := httptest.NewRecorder()
-	b.renderTemplate(rec, welcomeHTMLTpl, map[string]any{
+	b.renderTemplate(rec, webui.Welcome, map[string]any{
 		"Email":       "u@x",
 		"DisplayName": "Ada",
 		"OrgName":     "Acme Inc.",
@@ -401,7 +426,7 @@ func TestWelcomeTemplate_LinksToIntegrations(t *testing.T) {
 func TestSettingsTemplate_GeneralTab(t *testing.T) {
 	b := newBypassBot(t)
 	rec := httptest.NewRecorder()
-	b.renderTemplate(rec, settingsHTMLTpl, map[string]any{
+	b.renderTemplate(rec, webui.Settings, map[string]any{
 		"OrgID": "org_x", "OrgName": "Acme Inc.", "Email": "u@x", "Tab": "general",
 		"IsAdmin": true,
 	})
@@ -537,7 +562,7 @@ func TestSettingsTemplate_IntegrationsTab(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
-			b.renderTemplate(rec, settingsHTMLTpl, tc.data)
+			b.renderTemplate(rec, webui.Settings, tc.data)
 			if rec.Code != http.StatusOK {
 				t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
 			}
@@ -612,7 +637,7 @@ func TestApplyTokenChange(t *testing.T) {
 func TestSettingsTemplate_RendersMembersTab(t *testing.T) {
 	b := newBypassBot(t)
 	rec := httptest.NewRecorder()
-	b.renderTemplate(rec, settingsHTMLTpl, map[string]any{
+	b.renderTemplate(rec, webui.Settings, map[string]any{
 		"OrgID": "org_y", "OrgName": "Acme", "Email": "u@y", "PrincipalUserID": "user_me",
 		"IsAdmin": true, "Tab": "members", "Saved": false, "SavedMessage": "",
 		"AnthropicAPIKeyPreview":      "",
@@ -665,7 +690,7 @@ func TestSettingsTemplate_RendersMembersTab(t *testing.T) {
 func TestSettingsTemplate_RendersAgentsTab(t *testing.T) {
 	b := newBypassBot(t)
 	rec := httptest.NewRecorder()
-	b.renderTemplate(rec, settingsHTMLTpl, map[string]any{
+	b.renderTemplate(rec, webui.Settings, map[string]any{
 		"OrgID": "org_y", "OrgName": "Acme", "Email": "u@y", "PrincipalUserID": "user_me",
 		"IsAdmin": true, "Tab": "agents", "SavedMessage": "",
 		"Agents": []agentSummary{
@@ -704,7 +729,7 @@ func TestSettingsTemplate_RendersAgentsTab(t *testing.T) {
 func TestSettingsTemplate_HidesMembersTabForNonAdmin(t *testing.T) {
 	b := newBypassBot(t)
 	rec := httptest.NewRecorder()
-	b.renderTemplate(rec, settingsHTMLTpl, map[string]any{
+	b.renderTemplate(rec, webui.Settings, map[string]any{
 		"OrgID": "o", "OrgName": "o", "Email": "u", "PrincipalUserID": "u",
 		"IsAdmin": false, "Tab": "general",
 		"AnthropicAPIKeyPreview":      "",
@@ -740,7 +765,7 @@ func TestSettingsTemplate_NonAdminReadOnly(t *testing.T) {
 		data := maps.Clone(nonAdminBase)
 		data["Tab"] = "general"
 		rec := httptest.NewRecorder()
-		b.renderTemplate(rec, settingsHTMLTpl, data)
+		b.renderTemplate(rec, webui.Settings, data)
 		body := rec.Body.String()
 
 		if !strings.Contains(body, `readonly`) {
@@ -758,7 +783,7 @@ func TestSettingsTemplate_NonAdminReadOnly(t *testing.T) {
 		data := maps.Clone(nonAdminBase)
 		data["Tab"] = "integrations"
 		rec := httptest.NewRecorder()
-		b.renderTemplate(rec, settingsHTMLTpl, data)
+		b.renderTemplate(rec, webui.Settings, data)
 		body := rec.Body.String()
 
 		if !strings.Contains(body, "Only administrators can change integration settings") {
@@ -783,7 +808,7 @@ func TestSettingsTemplate_NonAdminReadOnly(t *testing.T) {
 		data["Tab"] = "integrations"
 		data["SlackTeamID"] = "T12345" // connected workspace
 		rec := httptest.NewRecorder()
-		b.renderTemplate(rec, settingsHTMLTpl, data)
+		b.renderTemplate(rec, webui.Settings, data)
 		if strings.Contains(rec.Body.String(), `href="/slack/install"`) {
 			t.Error("non-admin should not see Reinstall link when Slack is connected")
 		}
@@ -799,7 +824,7 @@ func TestSettingsTemplate_NonAdminReadOnly(t *testing.T) {
 			Skills:      []string{"golang-pro"},
 		}}
 		rec := httptest.NewRecorder()
-		b.renderTemplate(rec, settingsHTMLTpl, data)
+		b.renderTemplate(rec, webui.Settings, data)
 		body := rec.Body.String()
 
 		if !strings.Contains(body, "Only administrators can change agents") {
@@ -893,7 +918,7 @@ func TestSlackInstallHandler_NonAdminReturns403(t *testing.T) {
 func TestSettingsIntegrationsTemplate_DisconnectActionsUseDangerButton(t *testing.T) {
 	b := newBypassBot(t)
 	rec := httptest.NewRecorder()
-	b.renderTemplate(rec, settingsHTMLTpl, map[string]any{
+	b.renderTemplate(rec, webui.Settings, map[string]any{
 		"OrgID":                  "org_test",
 		"OrgName":                "Test Org",
 		"Email":                  "test@hetchy.local",
@@ -942,7 +967,7 @@ func TestSettingsIntegrationsTemplate_DisconnectActionsUseDangerButton(t *testin
 func TestSettingsIntegrationsTemplate_SlackDevSaveAndDisconnectShareActionRow(t *testing.T) {
 	b := newBypassBot(t)
 	rec := httptest.NewRecorder()
-	b.renderTemplate(rec, settingsHTMLTpl, map[string]any{
+	b.renderTemplate(rec, webui.Settings, map[string]any{
 		"OrgID":                   "org_test",
 		"OrgName":                 "Test Org",
 		"Email":                   "test@hetchy.local",
@@ -995,7 +1020,7 @@ func TestSettingsIntegrationsTemplate_SlackDevSaveAndDisconnectShareActionRow(t 
 func TestProfileTemplate_Renders(t *testing.T) {
 	b := newBypassBot(t)
 	rec := httptest.NewRecorder()
-	b.renderTemplate(rec, profileHTMLTpl, map[string]any{
+	b.renderTemplate(rec, webui.Profile, map[string]any{
 		"UserID": "user_x", "Email": "u@x", "FirstName": "Ada", "LastName": "Lovelace", "Saved": true,
 	})
 	if rec.Code != http.StatusOK {
@@ -1028,7 +1053,7 @@ func TestProfileTemplate_Renders(t *testing.T) {
 func TestChatTemplate_SidebarUserMenu(t *testing.T) {
 	b := newBypassBot(t)
 	rec := httptest.NewRecorder()
-	b.renderTemplate(rec, chatHTMLTpl, map[string]any{
+	b.renderTemplate(rec, webui.Chat, map[string]any{
 		"Email":       "ada@example.com",
 		"DisplayName": "Ada Lovelace",
 		"GravatarURL": "https://example.com/avatar.png",

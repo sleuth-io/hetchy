@@ -1,0 +1,67 @@
+package webui
+
+import (
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
+
+func TestRenderChatTemplate(t *testing.T) {
+	rec := httptest.NewRecorder()
+	Render(slog.New(slog.NewTextHandler(io.Discard, nil)), rec, Chat, map[string]any{
+		"Email":       "u@example.com",
+		"DisplayName": "Test User",
+		"GravatarURL": "https://example.com/avatar.png",
+		"UserID":      "user_test",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`data-current-user-id="user_test"`,
+		`src="/assets/chat_bootstrap.js`,
+		`href="/assets/chat.css`,
+		`src="/assets/chat.js`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("rendered chat template missing %q", want)
+		}
+	}
+}
+
+func TestAssetHandlerServesEmbeddedAssets(t *testing.T) {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/assets/chat.js", nil)
+	AssetHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-cache" {
+		t.Fatalf("Cache-Control = %q, want no-cache for dev asset version", got)
+	}
+	if !strings.Contains(rec.Body.String(), "document.body.dataset.currentUserId") {
+		t.Fatalf("chat.js did not contain expected bootstrapped user-id read")
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/assets/chat.css", nil)
+	AssetHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		".chat-menu-btn",
+		"position: absolute",
+		"pointer-events: auto",
+		"z-index: 1",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("chat.css did not contain expected sidebar menu rule %q", want)
+		}
+	}
+}
