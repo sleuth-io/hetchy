@@ -42,6 +42,7 @@ func newHetchyFrameRouter(runID string, onLine func(string), onCursor func(int64
 }
 
 func (r *hetchyFrameRouter) Line(line string) {
+	line = sanitizeDaytonaLogLine(line)
 	// shLines strips the newline before calling us. Daytona's snapshot
 	// cursor is byte-oriented, so this streaming cursor is an approximation
 	// at line granularity; recovery treats it as a lower bound.
@@ -135,8 +136,9 @@ func replayHetchyFramedLogState(runID, logText string, startCursor, suppressThro
 		lineStart := cursor
 		cursor += lineBytes
 		result.Cursor = cursor
+		line := sanitizeDaytonaLogLine(raw)
 
-		if raw == hetchyRunBeginSentinel(runID) {
+		if line == hetchyRunBeginSentinel(runID) {
 			inFrame = true
 			result.SeenBegin = true
 			state.seenBegin = true
@@ -145,10 +147,10 @@ func replayHetchyFramedLogState(runID, logText string, startCursor, suppressThro
 			}
 			continue
 		}
-		if strings.HasPrefix(raw, hetchyRunEndPrefix(runID)) && strings.HasSuffix(raw, "__") {
+		if strings.HasPrefix(line, hetchyRunEndPrefix(runID)) && strings.HasSuffix(line, "__") {
 			inFrame = false
 			result.SeenEnd = true
-			result.ExitCode, _ = parseHetchyRunExitCode(runID, raw)
+			result.ExitCode, _ = parseHetchyRunExitCode(runID, line)
 			state.seenEnd = true
 			state.exitCode = result.ExitCode
 			if onCursor != nil {
@@ -157,15 +159,12 @@ func replayHetchyFramedLogState(runID, logText string, startCursor, suppressThro
 			continue
 		}
 		if !inFrame {
-			if onCursor != nil {
-				onCursor(cursor)
-			}
 			continue
 		}
 		if gate != nil {
 			gate.SetSuppressed(lineStart < suppressThrough)
 		}
-		onLine(raw)
+		onLine(line)
 		if onCursor != nil {
 			onCursor(cursor)
 		}
@@ -175,6 +174,12 @@ func replayHetchyFramedLogState(runID, logText string, startCursor, suppressThro
 	}
 	state.inFrame = inFrame
 	return result, state
+}
+
+func sanitizeDaytonaLogLine(line string) string {
+	return strings.TrimLeftFunc(line, func(r rune) bool {
+		return r >= 0 && r < ' ' && r != '\t'
+	})
 }
 
 func errMissingHetchyFrame(runID string) error {

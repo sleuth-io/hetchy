@@ -82,6 +82,30 @@ func TestReplayHetchyFramedLogSuppressesConsumedPrefix(t *testing.T) {
 	}
 }
 
+func TestReplayHetchyFramedLogStripsDaytonaControlPrefixes(t *testing.T) {
+	const runID = "run_abc"
+	logText := "\x01\x01__HETCHY_RUN_BEGIN run_abc__\n" +
+		"\x01\x01\x01[hetchy] running claude\n" +
+		"\x01{\"type\":\"result\",\"result\":\"https://github.com/acme/repo/pull/1\"}\n" +
+		"\x01__HETCHY_RUN_END run_abc 0__\n"
+
+	var got []string
+	res := replayHetchyFramedLog(runID, logText, 0, &testSuppressionGate{}, func(line string) {
+		got = append(got, line)
+	}, nil)
+
+	if !res.SeenBegin || !res.SeenEnd {
+		t.Fatalf("frame result = %+v, want begin and end", res)
+	}
+	want := []string{
+		"[hetchy] running claude",
+		`{"type":"result","result":"https://github.com/acme/repo/pull/1"}`,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("replayed lines = %#v, want %#v", got, want)
+	}
+}
+
 func TestReplayHetchyFramedLogCursorBoundaryDoesNotDoubleEmit(t *testing.T) {
 	const runID = "run_abc"
 	logText := "__HETCHY_RUN_BEGIN run_abc__\n" +
@@ -189,6 +213,59 @@ func TestRecoveredAgentRunEmitterReusesOnlyCommandBlockIDs(t *testing.T) {
 	}
 	if got := em.Start(blocks.KindToolUse, "Running bash", nil); got != "p3" {
 		t.Fatalf("next recovered block id = %q, want p3", got)
+	}
+}
+
+func TestInitialRecoveryFrameStateResumesWhenCommandEventsExist(t *testing.T) {
+	events := []runstore.Event{
+		{Seq: 1, Event: "block_start"},
+		{Seq: 7, Event: "block_append"},
+	}
+	state := initialRecoveryFrameState(runstore.Run{
+		ID:              "run_abc",
+		CommandStartSeq: 7,
+		LogCursor:       123,
+	}, events)
+
+	if !state.seenBegin || !state.inFrame {
+		t.Fatalf("state = %+v, want already inside frame", state)
+	}
+}
+
+func TestInitialRecoveryFrameStateRequiresCommandEvents(t *testing.T) {
+	state := initialRecoveryFrameState(runstore.Run{
+		ID:              "run_abc",
+		CommandStartSeq: 7,
+		LogCursor:       123,
+	}, []runstore.Event{{Seq: 6, Event: "block_append"}})
+
+	if state.seenBegin || state.inFrame {
+		t.Fatalf("state = %+v, want empty frame state", state)
+	}
+}
+
+func TestReplayableCommandEventCountStopsAtTerminalBlock(t *testing.T) {
+	events := []runstore.Event{
+		runEventForTest(t, "block_start", sseEvent{ID: "p1", Kind: blocks.KindNotify, Title: "Starting"}),
+		runEventForTest(t, "block_start", sseEvent{ID: "p2", Kind: blocks.KindSetup, Title: "Sandbox setup"}),
+		runEventForTest(t, "block_append", sseEvent{ID: "p2", Delta: "Running setup\n"}),
+		runEventForTest(t, "heartbeat", sseEvent{Title: "Still working"}),
+		runEventForTest(t, "block_start", sseEvent{ID: "p3", Kind: blocks.KindError, Title: "Agent failed"}),
+		runEventForTest(t, "block_append", sseEvent{ID: "p3", Delta: "terminal"}),
+	}
+	for i := range events {
+		events[i].Seq = int64(i + 1)
+	}
+
+	if got := replayableCommandEventCount(events, 2); got != 2 {
+		t.Fatalf("replayableCommandEventCount = %d, want 2", got)
+	}
+	maxID, replayIDs := recoveredAgentRunEmitterIDs(events, 2)
+	if maxID != 3 {
+		t.Fatalf("maxID = %d, want 3", maxID)
+	}
+	if want := []string{"p2"}; !reflect.DeepEqual(replayIDs, want) {
+		t.Fatalf("replayIDs = %#v, want %#v", replayIDs, want)
 	}
 }
 

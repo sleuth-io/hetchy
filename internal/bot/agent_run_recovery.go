@@ -28,6 +28,8 @@ const rawDaytonaCommandLogTimeout = 30 * time.Second
 const recoveryStartupLimit = 20
 const recoveryLiveAttachTimeout = 2 * time.Second
 
+const unrecoverableCommandLogBody = "The interrupted run could not be recovered from Daytona command logs. Please retry the request."
+
 func (b *Bot) runRecoveryLoop(ctx context.Context) {
 	if b.runs == nil || !b.runs.Enabled() || b.daytona == nil {
 		return
@@ -127,7 +129,6 @@ func (b *Bot) recoverExpiredRuns(ctx context.Context) {
 		return
 	}
 	if len(runs) == 0 {
-		b.log.Debug("agent run recovery sweep complete", "candidates", 0, "claimed", 0)
 		return
 	}
 	claimedCount := 0
@@ -154,7 +155,7 @@ func (b *Bot) recoverExpiredRuns(ctx context.Context) {
 		)
 		b.launchRecoverAgentRun(ctx, claimed, false)
 	}
-	b.log.Debug("agent run recovery sweep complete", "candidates", len(runs), "claimed", claimedCount)
+	b.log.Info("agent run recovery sweep complete", "candidates", len(runs), "claimed", claimedCount)
 }
 
 func (b *Bot) launchRecoverAgentRun(ctx context.Context, run runstore.Run, waitForLive bool) {
@@ -329,6 +330,7 @@ func (b *Bot) recoverAgentRunReady(ctx context.Context, run runstore.Run, ready 
 	em := newRecoveredAgentRunEmitter(b.runs, run, b.workerID, live, existingEvents)
 	router := newAgentLineRouter(em)
 	frameState := replayFrameState{}
+	resumeFrameState := initialRecoveryFrameState(run, existingEvents)
 	replayCursor := int64(0)
 
 	poll := time.NewTicker(5 * time.Second)
@@ -340,6 +342,23 @@ func (b *Bot) recoverAgentRunReady(ctx context.Context, run runstore.Run, ready 
 		if err != nil {
 			b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
 			return
+		}
+		if !res.SeenBegin && resumeFrameState.seenBegin && replayCursor > 0 {
+			b.log.Info("agent run recovery resuming from command log without begin frame",
+				"run_id", run.ID,
+				"org", run.OrgID,
+				"thread", run.ThreadID,
+				"log_cursor", run.LogCursor,
+				"command_start_seq", run.CommandStartSeq,
+			)
+			frameState = resumeFrameState
+			resumeFrameState = replayFrameState{}
+			replayCursor = 0
+			res, err = b.replayRecoveredLogTail(ctx, sb, &run, em, router, &frameState, &replayCursor)
+			if err != nil {
+				b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
+				return
+			}
 		}
 
 		if !res.SeenBegin {
@@ -355,12 +374,20 @@ func (b *Bot) recoverAgentRunReady(ctx context.Context, run runstore.Run, ready 
 						b.finalizeRecoveredRun(ctx, sb, run, router, em, code, live)
 						return
 					}
-					b.finishRecoveredFailure(ctx, run, live, "Agent failed", "The recovered command log did not contain the expected frame.", errMissingHetchyFrame(run.ID))
+					b.finishRecoveredFailure(ctx, run, live, "Agent interrupted", unrecoverableCommandLogBody, errMissingHetchyFrame(run.ID))
 					return
 				}
 			}
-			b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, errMissingHetchyFrame(run.ID).Error(), b.workerID)
-			return
+			b.log.Debug("agent run recovery waiting for Hetchy frame",
+				"run_id", run.ID,
+				"org", run.OrgID,
+				"thread", run.ThreadID,
+				"sandbox", run.SandboxID,
+				"session", run.SessionID,
+				"command", run.CommandID,
+			)
+			<-poll.C
+			continue
 		}
 
 		status, err := sb.Process.GetSessionCommand(ctx, run.SessionID, run.CommandID)
@@ -375,7 +402,7 @@ func (b *Bot) recoverAgentRunReady(ctx context.Context, run runstore.Run, ready 
 				return
 			}
 			if !finalRes.SeenBegin {
-				b.finishRecoveredFailure(ctx, run, live, "Agent failed", "The recovered command log did not contain the expected frame.", errMissingHetchyFrame(run.ID))
+				b.finishRecoveredFailure(ctx, run, live, "Agent interrupted", unrecoverableCommandLogBody, errMissingHetchyFrame(run.ID))
 				return
 			}
 			b.finalizeRecoveredRun(ctx, sb, run, router, em, code, live)
@@ -409,6 +436,18 @@ func (b *Bot) replayRecoveredLogTail(ctx context.Context, sb *daytona.Sandbox, r
 	run.LogCursor = max(run.LogCursor, res.Cursor)
 	*replayCursor = res.Cursor
 	return res, nil
+}
+
+func initialRecoveryFrameState(run runstore.Run, events []runstore.Event) replayFrameState {
+	if run.LogCursor <= 0 || run.CommandStartSeq <= 0 {
+		return replayFrameState{}
+	}
+	for _, ev := range events {
+		if ev.Seq >= run.CommandStartSeq {
+			return replayFrameState{inFrame: true, seenBegin: true}
+		}
+	}
+	return replayFrameState{}
 }
 
 func (b *Bot) handleRecoverySetupError(ctx context.Context, run runstore.Run, live *liveRun, title, body string, err error) {

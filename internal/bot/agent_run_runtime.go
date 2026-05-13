@@ -178,8 +178,9 @@ type agentRunEmitter struct {
 	buffering  bool
 	buffer     []durableRunEvent
 
-	replayStartIDs []string
-	replayStart    int
+	replayStartIDs       []string
+	replayStart          int
+	replaySuppressEvents int
 }
 
 type durableRunEvent struct {
@@ -203,6 +204,7 @@ func newRecoveredAgentRunEmitter(store *runstore.Store, run runstore.Run, worker
 	maxID, replayIDs := recoveredAgentRunEmitterIDs(events, run.CommandStartSeq)
 	em.idGen.Store(maxID)
 	em.replayStartIDs = replayIDs
+	em.replaySuppressEvents = replayableCommandEventCount(events, run.CommandStartSeq)
 	return em
 }
 
@@ -227,11 +229,51 @@ func recoveredAgentRunEmitterIDs(events []runstore.Event, commandStartSeq int64)
 		if n, ok := parseAgentRunEmitterID(payload.ID); ok && n > maxID {
 			maxID = n
 		}
-		if commandStartSeq > 0 && ev.Seq >= commandStartSeq {
+		if commandStartSeq > 0 && ev.Seq >= commandStartSeq && !isTerminalRunBlockStart(ev) {
 			replayIDs = append(replayIDs, payload.ID)
 		}
 	}
 	return maxID, replayIDs
+}
+
+func replayableCommandEventCount(events []runstore.Event, commandStartSeq int64) int {
+	if commandStartSeq <= 0 {
+		return 0
+	}
+	count := 0
+	for _, ev := range events {
+		if ev.Seq < commandStartSeq {
+			continue
+		}
+		if isTerminalRunBlockStart(ev) {
+			break
+		}
+		if !isReplayableCommandEvent(ev.Event) {
+			continue
+		}
+		count++
+	}
+	return count
+}
+
+func isReplayableCommandEvent(event string) bool {
+	switch event {
+	case "block_start", "block_append", "block_done":
+		return true
+	default:
+		return false
+	}
+}
+
+func isTerminalRunBlockStart(ev runstore.Event) bool {
+	if ev.Event != "block_start" {
+		return false
+	}
+	var payload sseEvent
+	if err := json.Unmarshal(ev.Data, &payload); err != nil {
+		return false
+	}
+	return payload.Kind == blocks.KindError || payload.Kind == blocks.KindResult
 }
 
 func cancelledAgentRunEvents(events []runstore.Event) []runstore.PendingEvent {
@@ -466,6 +508,11 @@ func (e *agentRunEmitter) emit(name string, data sseEvent) {
 	}
 	e.mu.Lock()
 	hasErr := e.err != nil
+	if !hasErr && e.replaySuppressEvents > 0 {
+		e.replaySuppressEvents--
+		e.mu.Unlock()
+		return
+	}
 	suppressed := e.suppressed
 	buffering := e.buffering
 	if buffering && !suppressed && !hasErr {
