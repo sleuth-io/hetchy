@@ -44,6 +44,16 @@ type bootstrapRunFunc func(context.Context, bootstrap.Runner, bootstrap.LoopInpu
 
 type recoveryLaunchFunc func(context.Context, runstore.Run, bool)
 
+type recoveredPRValidationFunc func(context.Context, runstore.Run, string) (string, string, error)
+
+type sandboxCleanupFunc func(context.Context, *daytona.Sandbox, string)
+
+type sandboxStartCheckFunc func(context.Context, *daytona.Sandbox) error
+
+type commandLogSnapshotFunc func(context.Context, *daytona.Sandbox, string, string) (string, error)
+
+type sessionCommandStatusFunc func(context.Context, *daytona.Sandbox, string, string) (map[string]any, error)
+
 type orgStore interface {
 	Get(context.Context, string) (orgcfg.Config, error)
 	GetBySlackTeamID(context.Context, string) (orgcfg.Config, error)

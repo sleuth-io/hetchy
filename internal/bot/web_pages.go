@@ -215,13 +215,13 @@ func (b *Bot) passwordResetHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusForbidden)
 		return
 	}
-	url, err := b.auth.RequestPasswordReset(r.Context(), p.Email)
+	resetURL, err := b.auth.RequestPasswordReset(r.Context(), p.Email)
 	if err != nil {
 		b.log.Error("password reset failed", "error", err, "user", p.UserID)
 		http.Error(w, "password reset: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, url, http.StatusFound)
+	http.Redirect(w, r, resetURL, http.StatusFound)
 }
 
 // requireSameOrigin defends state-mutating POST handlers against CSRF.

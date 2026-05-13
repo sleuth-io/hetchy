@@ -120,10 +120,15 @@ type Bot struct {
 	detectViaSandboxFn       bootstrapDetectFunc
 	bootstrapRunFn           bootstrapRunFunc
 	recoverRunFn             recoveryLaunchFunc
+	validateRecoveredPRFn    recoveredPRValidationFunc
 	getSandboxFn             func(context.Context, string) (*daytona.Sandbox, error)
 	resumeSandboxFn          func(context.Context, *daytona.Sandbox, blocks.Emitter) error
 	deleteSandboxSessionFn   func(*daytona.Sandbox, string)
 	stopAndArchiveFn         func(context.Context, *daytona.Sandbox)
+	cleanupSandboxFn         sandboxCleanupFunc
+	ensureSandboxStartedFn   sandboxStartCheckFunc
+	commandLogSnapshotFn     commandLogSnapshotFunc
+	sessionCommandStatusFn   sessionCommandStatusFunc
 	lookupRepoFn             func(context.Context, string, string, string) (sqlc.GithubRepo, error)
 	// cleanupSandboxByIDFn is called by chatCancelHandler for opportunistic
 	// cleanup of a fresh-run sandbox; overridable in tests.
@@ -1485,6 +1490,10 @@ func (b *Bot) cleanupCancelledDurableRun(run runstore.Run) {
 
 func (b *Bot) cleanupSandbox(ctx context.Context, sb *daytona.Sandbox, reason string) {
 	if sb == nil {
+		return
+	}
+	if b.cleanupSandboxFn != nil {
+		b.cleanupSandboxFn(ctx, sb, reason)
 		return
 	}
 	b.log.Info("sandbox cleanup start", "sandbox", sb.ID, "reason", reason)

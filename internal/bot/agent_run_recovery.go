@@ -370,7 +370,7 @@ func (b *Bot) recoverAgentRunReady(ctx context.Context, run runstore.Run, ready 
 		}
 
 		if !res.SeenBegin {
-			status, err := sb.Process.GetSessionCommand(ctx, run.SessionID, run.CommandID)
+			status, err := b.sessionCommandStatus(ctx, sb, run.SessionID, run.CommandID)
 			if err == nil {
 				if code, done := sessionCommandExitCode(status); done {
 					finalRes, err := b.replayRecoveredLogTail(ctx, sb, &run, em, router, &frameState, &replayCursor)
@@ -398,7 +398,7 @@ func (b *Bot) recoverAgentRunReady(ctx context.Context, run runstore.Run, ready 
 			continue
 		}
 
-		status, err := sb.Process.GetSessionCommand(ctx, run.SessionID, run.CommandID)
+		status, err := b.sessionCommandStatus(ctx, sb, run.SessionID, run.CommandID)
 		if err != nil {
 			b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
 			return
@@ -697,6 +697,9 @@ func (b *Bot) recoveredTerminalEmitter(run runstore.Run, live *liveRun, events [
 }
 
 func (b *Bot) validateRecoveredPR(ctx context.Context, run runstore.Run, prURL string) (string, string, error) {
+	if b.validateRecoveredPRFn != nil {
+		return b.validateRecoveredPRFn(ctx, run, prURL)
+	}
 	rec, err := b.convs.Get(ctx, run.OrgID, run.ThreadID)
 	if err != nil {
 		return "", run.Branch, err
@@ -726,6 +729,9 @@ func recoveredRunHasTerminalBlock(events []runstore.Event, kind blocks.Kind) boo
 }
 
 func (b *Bot) ensureSandboxStarted(ctx context.Context, sb *daytona.Sandbox) error {
+	if b.ensureSandboxStartedFn != nil {
+		return b.ensureSandboxStartedFn(ctx, sb)
+	}
 	if sb == nil {
 		return errors.New("nil sandbox")
 	}
@@ -745,6 +751,9 @@ func (b *Bot) ensureSandboxStarted(ctx context.Context, sb *daytona.Sandbox) err
 }
 
 func (b *Bot) commandLogSnapshot(ctx context.Context, sb *daytona.Sandbox, sessionID, commandID string) (string, error) {
+	if b.commandLogSnapshotFn != nil {
+		return b.commandLogSnapshotFn(ctx, sb, sessionID, commandID)
+	}
 	logs, err := sb.Process.GetSessionCommandLogs(ctx, sessionID, commandID)
 	if err == nil && logs != nil {
 		switch {
@@ -764,6 +773,13 @@ func (b *Bot) commandLogSnapshot(ctx context.Context, sb *daytona.Sandbox, sessi
 		return "", rawErr
 	}
 	return raw, nil
+}
+
+func (b *Bot) sessionCommandStatus(ctx context.Context, sb *daytona.Sandbox, sessionID, commandID string) (map[string]any, error) {
+	if b.sessionCommandStatusFn != nil {
+		return b.sessionCommandStatusFn(ctx, sb, sessionID, commandID)
+	}
+	return sb.Process.GetSessionCommand(ctx, sessionID, commandID)
 }
 
 func rawDaytonaCommandLogs(ctx context.Context, sb *daytona.Sandbox, sessionID, commandID string) (string, error) {

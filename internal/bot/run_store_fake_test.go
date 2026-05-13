@@ -286,14 +286,31 @@ func (f *fakeRunStore) AppendEventsAndAdvanceCursor(_ context.Context, runID str
 	copied := append([]runstore.PendingEvent(nil), events...)
 	f.batches = append(f.batches, fakeRunEventBatch{runID: runID, events: copied, cursor: cursor, leaseOwner: leaseOwner})
 	if len(f.batchSeqs) >= len(events) {
-		return append([]int64(nil), f.batchSeqs[:len(events)]...), nil
+		seqs := append([]int64(nil), f.batchSeqs[:len(events)]...)
+		f.appendBatchEventsLocked(runID, events, seqs)
+		return seqs, nil
 	}
 	seqs := make([]int64, len(events))
 	for i := range seqs {
 		f.nextSeq++
 		seqs[i] = f.nextSeq
 	}
+	f.appendBatchEventsLocked(runID, events, seqs)
 	return seqs, nil
+}
+
+func (f *fakeRunStore) appendBatchEventsLocked(runID string, events []runstore.PendingEvent, seqs []int64) {
+	for i, ev := range events {
+		if seqs[i] > f.nextSeq {
+			f.nextSeq = seqs[i]
+		}
+		f.events = append(f.events, runstore.Event{
+			RunID: runID,
+			Seq:   seqs[i],
+			Event: ev.Event,
+			Data:  append([]byte(nil), ev.Data...),
+		})
+	}
 }
 
 func (f *fakeRunStore) EventsAfter(_ context.Context, runID string, afterSeq int64) ([]runstore.Event, error) {
