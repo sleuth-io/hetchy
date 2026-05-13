@@ -84,7 +84,7 @@ When you are done implementing the change:
 func conditionalTasksPrompt(opts chatTaskOptions) string {
 	var tasks []string
 	if opts.ReviewCodeBeforePush {
-		tasks = append(tasks, "- Review code before push: before pushing or opening the PR, launch a Claude Code sub-agent/task to review the branch diff against its base branch. Use the sub-agent for an independent code review focused on bugs, regressions, missing tests, security issues, and maintainability problems. Fix every issue it finds before continuing.")
+		tasks = append(tasks, "- Review code before push: before pushing or opening the PR, launch a Claude Code sub-agent/task to review the branch diff against its base branch. Use the sub-agent for an independent code review focused on bugs, regressions, missing tests, security issues, and maintainability problems. If the reviewer uses severity levels, fix every issue above LOW severity; otherwise fix every concrete actionable issue it reports. Commit and push only after those fixes are in place.")
 	}
 	if opts.ActionPRChecksForDone {
 		tasks = append(tasks, "- Action PR checks for done: after opening or updating the PR, you are not done. Use `gh` to inspect the PR's status checks and automated review activity, then wait for running checks to complete. If any check fails, fix it, commit, push, and wait again. If an automated AI review is running, wait for it to finish; if the reviewer uses severity levels, fix every issue above LOW severity, and if it does not use severity levels, fix every concrete actionable issue it reports. Commit, push, and check again. Only finish when all checks pass and automated AI reviews contain no issues above LOW severity or no remaining actionable findings.")
