@@ -1,0 +1,836 @@
+package bot
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
+	"strings"
+
+	"github.com/hetchyhq/hetchy/internal/agents"
+	"github.com/hetchyhq/hetchy/internal/auth"
+	"github.com/hetchyhq/hetchy/internal/db/sqlc"
+	"github.com/hetchyhq/hetchy/internal/orgcfg"
+	"github.com/hetchyhq/hetchy/internal/webui"
+)
+
+func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
+	p, _ := auth.FromContext(r.Context())
+
+	if r.Method == http.MethodGet {
+		current, err := b.orgs.Get(r.Context(), p.OrgID)
+		if err != nil && !errors.Is(err, orgcfg.ErrNotFound) {
+			http.Error(w, "load config: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		tab := r.URL.Query().Get("tab")
+		if tab == "" {
+			tab = "general"
+		}
+		// Non-admins clicking the (now-hidden) Members tab fall back to General.
+		if tab == "members" && !isAdmin(p) {
+			tab = "general"
+		}
+		defaultRepoSlug := ""
+		if current.DefaultGitHubOwner != "" && current.DefaultGitHubRepo != "" {
+			defaultRepoSlug = current.DefaultGitHubOwner + "/" + current.DefaultGitHubRepo
+		}
+		// Org name lives in WorkOS, not the session JWT. The fetch is
+		// best-effort: a transient WorkOS error falls back to the org id
+		// rather than failing the whole settings page.
+		orgName := p.OrgID
+		if name, err := b.auth.GetOrganizationName(r.Context(), p.OrgID); err == nil && name != "" {
+			orgName = name
+		} else if err != nil {
+			b.log.Warn("workos: org name lookup failed", "org", p.OrgID, "error", err)
+		}
+		data := map[string]any{
+			"OrgID":                       p.OrgID,
+			"OrgName":                     orgName,
+			"Email":                       p.Email,
+			"PrincipalUserID":             p.UserID,
+			"IsAdmin":                     isAdmin(p),
+			"Tab":                         tab,
+			"Saved":                       r.URL.Query().Get("saved") == "1",
+			"SavedMessage":                savedMessage(r.URL.Query().Get("saved")),
+			"AnthropicAPIKeyPreview":      previewSecret(current.AnthropicAPIKey),
+			"ClaudeCodeOAuthTokenPreview": previewSecret(current.ClaudeCodeOAuthToken),
+			"SlackBotTokenPreview":        previewSecret(current.SlackBotToken),
+			"SlackSocketTokenPreview":     previewSecret(current.SlackSocketToken),
+			"SlackTeamID":                 current.SlackTeamID,
+			"SlackOAuthEnabled":           b.slackOAuthConfigured(),
+			"IsDev":                       b.cfg.Env == "dev",
+			"SXKeyPreview":                previewSecret(current.SXKey),
+			"GitHubAppEnabled":            b.app != nil,
+			"DefaultRepoSlug":             defaultRepoSlug,
+		}
+		if err := b.populateSettingsTabData(r.Context(), p.OrgID, tab, data); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		b.renderTemplate(w, webui.Settings, data)
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !isAdmin(p) {
+		http.Error(w, "admin role required", http.StatusForbidden)
+		return
+	}
+	if err := requireSameOrigin(r); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	tab := r.URL.Query().Get("tab")
+	if tab == "" {
+		tab = "general"
+	}
+
+	// General tab posts only the org_name field. Pushing it through the
+	// integrations save below would null out default_repo and the API-key
+	// previews, so handle the rename inline and bounce.
+	if tab == "general" {
+		name := strings.TrimSpace(r.FormValue("org_name"))
+		if name == "" {
+			http.Error(w, "organization name is required", http.StatusBadRequest)
+			return
+		}
+		if err := b.auth.UpdateOrganizationName(r.Context(), p.OrgID, name); err != nil {
+			b.log.Error("update org name failed", "error", err, "org", p.OrgID)
+			http.Error(w, "rename: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		b.log.Info("org renamed", "org", p.OrgID, "actor", p.UserID)
+		http.Redirect(w, r, "/settings/org?tab=general&saved=1", http.StatusFound)
+		return
+	}
+
+	current, err := b.orgs.Get(r.Context(), p.OrgID)
+	if err != nil && !errors.Is(err, orgcfg.ErrNotFound) {
+		http.Error(w, "load config: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	current.OrgID = p.OrgID
+
+	if !b.applyDefaultRepoChange(w, r, p.OrgID, &current) {
+		return
+	}
+
+	current.SlackBotToken = applyTokenChange(r, "slack_bot_token", current.SlackBotToken)
+	current.SlackSocketToken = applyTokenChange(r, "slack_socket_token", current.SlackSocketToken)
+	// SlackTeamID is set by the OAuth callback, not the form — only the
+	// HTTP transport needs it, and OAuth is its source of truth.
+	current.SXKey = applyTokenChange(r, "sx_key", current.SXKey)
+	applyAnthropicCredsChange(r, &current)
+	// Anthropic is required at chat-launch time (HandleRequest enforces
+	// it), but no longer required at settings-save time: each
+	// integration on the new card-based UI is its own form, and saving
+	// (say) the SX key shouldn't refuse on the grounds that Anthropic
+	// hasn't been pasted yet. The bot still surfaces a clear error to
+	// the user the moment they try to chat without a key.
+
+	saved, err := b.orgs.Upsert(r.Context(), current)
+	if err != nil {
+		http.Error(w, "save: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	b.log.Info("org settings saved",
+		"org", saved.OrgID,
+		"default_repo_owner", saved.DefaultGitHubOwner,
+		"default_repo_name", saved.DefaultGitHubRepo,
+		"has_slack_bot", saved.SlackBotToken != "",
+		"has_slack_socket", saved.SlackSocketToken != "",
+		"has_slack_team_id", saved.SlackTeamID != "",
+		"has_sx", saved.SXKey != "",
+		"has_anthropic", saved.AnthropicAPIKey != "",
+		"has_claude_code_oauth", saved.ClaudeCodeOAuthToken != "",
+	)
+	// Slack creds may have changed; rebuild that org's connection.
+	b.slack.RestartOrg(r.Context(), p.OrgID)
+	http.Redirect(w, r, "/settings/org?tab="+tab+"&saved=1", http.StatusFound)
+}
+
+// integrationInstallation is the per-installation row passed to the
+// settings template. Each installation owns a list of repos, sourced
+// from the local cache (refreshed by webhook + on-demand sync).
+type integrationInstallation struct {
+	InstallationID int64
+	AccountLogin   string
+	AccountType    string
+	Suspended      bool
+	ManageURL      string
+	Repos          []integrationRepo
+}
+
+// integrationRepo is the slim view a settings template needs.
+type integrationRepo struct {
+	Owner         string
+	Name          string
+	DefaultBranch string
+	Private       bool
+	// OrgID is set on each repo before passing the slice into
+	// loadBootstrapStatus — we need it to scope the GitHub repo
+	// lookup back to this org's installations.
+	OrgID string
+}
+
+// repoBootstrapStatusView is the per-repo bootstrap status shown in
+// the Repositories tab. Slug is "owner/name"; the rest is a compact
+// summary the template renders without further joining.
+type repoBootstrapStatusView struct {
+	Slug   string
+	Status string
+	Kind   string
+	// Secrets is every declared secret on the spec (set + unset).
+	// AllFilled is the precomputed "every entry is filled" bool — the
+	// template uses it to decide whether to show the management UI or
+	// the "Fully bootstrapped" celebration. Computing it server-side
+	// keeps the template branch shape simple and avoids range-and-
+	// reduce gymnastics in html/template.
+	Secrets              []repoSecretView
+	AllFilled            bool
+	DeferredCapabilities []string
+}
+
+// repoSecretView is one declared secret row rendered on the
+// Repositories tab. Filled drives the visual treatment (set vs not
+// set) and which inline action the template offers (clear vs set).
+type repoSecretView struct {
+	Name   string
+	Filled bool
+}
+
+// loadBootstrapStatus returns a map keyed by "owner/name" so the
+// integrations template can decorate each cached repo card with its
+// bootstrap state in O(1). Repos without a spec produce no entry —
+// the template falls back to "Not bootstrapped yet" in that case.
+func (b *Bot) loadBootstrapStatus(ctx context.Context, repos []integrationRepo) (map[string]repoBootstrapStatusView, error) {
+	out := make(map[string]repoBootstrapStatusView, len(repos))
+	if len(repos) == 0 {
+		return out, nil
+	}
+	for _, repo := range repos {
+		// We only have (owner, name) here — look up the (installation,
+		// repo_id) once via the org repo lookup, then read the spec.
+		row, err := b.lookupRepoForOrg(ctx, repo.OrgID, repo.Owner, repo.Name)
+		if err != nil {
+			continue
+		}
+		spec, err := b.bootstrap.GetSpec(ctx, row.InstallationID, row.RepoID, "")
+		if err != nil {
+			continue
+		}
+		// Route through bootstrap.ListSecrets so the Filled vs unfilled
+		// flag computation lives in one place — repo_secrets.go uses the
+		// same helper for the Manage tab. Asymmetry between the two
+		// surfaces was how earlier iterations drifted on what counts as
+		// "filled" (e.g. empty-string vs nil-bytes).
+		summaries, err := b.bootstrap.ListSecrets(ctx, row.InstallationID, row.RepoID, "")
+		if err != nil {
+			continue
+		}
+		secretsView := make([]repoSecretView, 0, len(summaries))
+		allFilled := true
+		for _, s := range summaries {
+			secretsView = append(secretsView, repoSecretView{Name: s.Name, Filled: s.Filled})
+			if !s.Filled {
+				allFilled = false
+			}
+		}
+		out[repo.Owner+"/"+repo.Name] = repoBootstrapStatusView{
+			Slug:                 repo.Owner + "/" + repo.Name,
+			Status:               string(spec.ValidationStatus),
+			Kind:                 spec.Kind,
+			Secrets:              secretsView,
+			AllFilled:            allFilled,
+			DeferredCapabilities: spec.DeferredCapabilities,
+		}
+	}
+	return out, nil
+}
+
+type agentSettingsView struct {
+	Slug         string
+	DisplayName  string
+	Description  string
+	SXBot        string
+	PersonaAsset string
+	SlackAliases []string
+	Skills       []string
+	BuiltIn      bool
+	Default      bool
+}
+
+// populateSettingsTabData fetches the per-tab data the template needs
+// and writes it into data. Pulled out of settingsHandler so the GET
+// path stays under the gocyclo threshold as more tabs land — each new
+// tab just adds another switch case here. Errors are wrapped with the
+// fallback message that used to be inlined.
+func (b *Bot) populateSettingsTabData(ctx context.Context, orgID, tab string, data map[string]any) error {
+	switch tab {
+	case "integrations":
+		installs, repos, err := b.loadIntegrationsView(ctx, orgID)
+		if err != nil {
+			return fmt.Errorf("load integrations: %w", err)
+		}
+		data["GitHubInstallations"] = installs
+		data["GitHubRepos"] = repos
+
+	case "repositories":
+		// Repositories tab is the home for per-repo bootstrap state +
+		// admin actions (delete-bootstrap today; secrets management
+		// in the future). Reuses the cached repo list the integrations
+		// tab uses, but also computes the bootstrap-status map once
+		// up front rather than per-card inline.
+		_, repos, err := b.loadIntegrationsView(ctx, orgID)
+		if err != nil {
+			return fmt.Errorf("load integrations: %w", err)
+		}
+		for i := range repos {
+			repos[i].OrgID = orgID
+		}
+		// Bootstrap status is best-effort — if a repo's spec lookup
+		// fails we render it as "not bootstrapped" rather than 500
+		// the whole page. Errors are already logged inside.
+		bootstrapStatus, _ := b.loadBootstrapStatus(ctx, repos)
+		data["GitHubRepos"] = repos
+		data["BootstrapStatus"] = bootstrapStatus
+
+	case "agents":
+		store := b.agents
+		if store == nil {
+			store = agents.NewStore(nil)
+		}
+		profiles, err := store.List(ctx, orgID)
+		if err != nil {
+			return fmt.Errorf("load agents: %w", err)
+		}
+		out := make([]agentSettingsView, 0, len(profiles))
+		for _, a := range profiles {
+			if !a.Enabled {
+				continue
+			}
+			out = append(out, agentSettingsView{
+				Slug:         a.Slug,
+				DisplayName:  a.DisplayName,
+				Description:  a.Description,
+				SXBot:        a.SXBot,
+				PersonaAsset: a.PersonaAsset,
+				SlackAliases: a.SlackAliases,
+				Skills:       a.Skills,
+				BuiltIn:      a.BuiltIn,
+				Default:      a.Slug == agents.DefaultSlug,
+			})
+		}
+		data["Agents"] = out
+
+	case "members":
+		members, err := b.auth.ListMembers(ctx, orgID)
+		if err != nil {
+			return fmt.Errorf("load members: %w", err)
+		}
+		invites, err := b.auth.ListInvitations(ctx, orgID)
+		if err != nil {
+			return fmt.Errorf("load invitations: %w", err)
+		}
+		data["Members"] = members
+		data["Invitations"] = invites
+	}
+	return nil
+}
+
+// loadIntegrationsView pulls the org's GitHub App installations and the
+// repos cached for each. Used by the settings page Integrations tab to
+// render the list + Manage links + default-repo dropdown source.
+func (b *Bot) loadIntegrationsView(ctx context.Context, orgID string) ([]integrationInstallation, []integrationRepo, error) {
+	rows, err := b.store.Queries.ListGithubInstallationsByOrg(ctx, orgID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("list installations: %w", err)
+	}
+	out := make([]integrationInstallation, 0, len(rows))
+	allRepos := []integrationRepo{}
+	for _, row := range rows {
+		installRepos, err := b.store.Queries.ListGithubReposByInstallation(ctx, row.InstallationID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("list repos for install %d: %w", row.InstallationID, err)
+		}
+		view := integrationInstallation{
+			InstallationID: row.InstallationID,
+			AccountLogin:   row.AccountLogin,
+			AccountType:    row.AccountType,
+			Suspended:      row.SuspendedAt.Valid,
+			ManageURL:      githubInstallationManageURL(row.AccountType, row.AccountLogin, row.InstallationID),
+		}
+		for _, rr := range installRepos {
+			repo := integrationRepo{Owner: rr.Owner, Name: rr.Name, DefaultBranch: rr.DefaultBranch, Private: rr.Private}
+			view.Repos = append(view.Repos, repo)
+			allRepos = append(allRepos, repo)
+		}
+		out = append(out, view)
+	}
+	return out, allRepos, nil
+}
+
+// githubInstallationManageURL returns the GitHub-side deep link for the
+// installation: org installs land in the org settings page, user
+// installs in the personal settings page. Used to surface a "Manage on
+// GitHub" link from the Integrations tab.
+func githubInstallationManageURL(accountType, accountLogin string, installationID int64) string {
+	if accountType == "Organization" {
+		return fmt.Sprintf("https://github.com/organizations/%s/settings/installations/%d", accountLogin, installationID)
+	}
+	return fmt.Sprintf("https://github.com/settings/installations/%d", installationID)
+}
+
+// savedMessage maps the ?saved= sentinel to the green banner text shown
+// at the top of a tab after a successful POST. Empty string → no banner.
+func savedMessage(s string) string {
+	switch s {
+	case "1":
+		return "Settings saved."
+	case "invited":
+		return "Invitation sent."
+	case "revoked":
+		return "Invitation revoked."
+	case "removed":
+		return "Member removed."
+	case "role":
+		return "Role updated."
+	case "slack_installed":
+		return "Slack installed."
+	case "slack_install_cancelled":
+		return "Slack install cancelled."
+	case "slack_install_conflict":
+		return "That Slack workspace is already connected to another Hetchy organization. Have the existing org uninstall first."
+	case "github_installed":
+		return "GitHub App installed. Repos and teams have been synced."
+	case "github_synced":
+		return "Sync complete."
+	case "github_install_conflict":
+		return "That GitHub installation is already connected to another Hetchy organization. Have the existing org uninstall first (or pick a different account)."
+	case "github_disconnected":
+		return "GitHub installation removed. The Hetchy GitHub App has been uninstalled from that account."
+	case "slack_disconnected":
+		return "Slack disconnected. The Hetchy app has been removed from that workspace."
+	case "slack_already_disconnected":
+		return "Slack was already disconnected."
+	case "agent_saved":
+		return "Agent saved."
+	case "agent_deleted":
+		return "Agent deleted."
+	default:
+		return ""
+	}
+}
+
+func (b *Bot) agentSettingsActionHandler(w http.ResponseWriter, r *http.Request) {
+	p, _ := auth.FromContext(r.Context())
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !isAdmin(p) {
+		http.Error(w, "admin role required", http.StatusForbidden)
+		return
+	}
+	if err := requireSameOrigin(r); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	slug, action, ok := splitAgentAction(r.URL.Path)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	store := b.agents
+	if store == nil {
+		store = agents.NewStore(nil)
+	}
+	switch action {
+	case "":
+		name := strings.TrimSpace(r.FormValue("display_name"))
+		if name == "" {
+			http.Error(w, "agent name is required", http.StatusBadRequest)
+			return
+		}
+		if _, err := store.UpdateName(r.Context(), p.OrgID, slug, name); err != nil {
+			if errors.Is(err, agents.ErrNotFound) {
+				http.NotFound(w, r)
+				return
+			}
+			b.log.Error("update agent name", "error", err, "org", p.OrgID, "slug", slug)
+			http.Error(w, "save agent: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		http.Redirect(w, r, "/settings/org?tab=agents&saved=agent_saved", http.StatusFound)
+	case "delete":
+		if err := store.Delete(r.Context(), p.OrgID, slug); err != nil {
+			if errors.Is(err, agents.ErrNotFound) {
+				http.NotFound(w, r)
+				return
+			}
+			b.log.Error("delete agent", "error", err, "org", p.OrgID, "slug", slug)
+			http.Error(w, "delete agent: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		http.Redirect(w, r, "/settings/org?tab=agents&saved=agent_deleted", http.StatusFound)
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func splitAgentAction(path string) (slug, action string, ok bool) {
+	const prefix = "/settings/org/agents/"
+	rest := strings.TrimPrefix(path, prefix)
+	if rest == path || rest == "" {
+		return "", "", false
+	}
+	parts := strings.Split(rest, "/")
+	if len(parts) > 2 || parts[0] == "" {
+		return "", "", false
+	}
+	decoded, err := url.PathUnescape(parts[0])
+	if err != nil {
+		return "", "", false
+	}
+	slug = agents.NormalizeSlug(decoded)
+	if slug == "" || slug != decoded {
+		return "", "", false
+	}
+	if len(parts) == 2 {
+		action = strings.TrimSpace(parts[1])
+		if action == "" {
+			return "", "", false
+		}
+	}
+	return slug, action, true
+}
+
+// inviteHandler creates a pending WorkOS invitation. WorkOS sends the
+// email; once accepted the recipient gets a session bound to this org.
+func (b *Bot) inviteHandler(w http.ResponseWriter, r *http.Request) {
+	p, _ := auth.FromContext(r.Context())
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !isAdmin(p) {
+		http.Error(w, "admin role required", http.StatusForbidden)
+		return
+	}
+	if err := requireSameOrigin(r); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	email := strings.TrimSpace(r.FormValue("email"))
+	role := strings.TrimSpace(r.FormValue("role"))
+	if email == "" || !strings.Contains(email, "@") {
+		http.Error(w, "valid email required", http.StatusBadRequest)
+		return
+	}
+	if role == "" {
+		role = "member"
+	}
+	if !validRoleSlug(role) {
+		http.Error(w, "unknown role", http.StatusBadRequest)
+		return
+	}
+	if err := b.auth.SendInvitation(r.Context(), email, p.OrgID, role, p.UserID); err != nil {
+		b.log.Error("send invitation failed", "error", err, "org", p.OrgID, "email", email)
+		http.Error(w, "send invite: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	b.log.Info("invitation sent", "org", p.OrgID, "email", email, "role", role, "inviter", p.UserID)
+	http.Redirect(w, r, "/settings/org?tab=members&saved=invited", http.StatusFound)
+}
+
+// invitationActionHandler handles /settings/org/invitations/{id}/revoke.
+// The trailing slash on the route registration means we need to parse
+// the id and action out of the path ourselves.
+func (b *Bot) invitationActionHandler(w http.ResponseWriter, r *http.Request) {
+	p, _ := auth.FromContext(r.Context())
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !isAdmin(p) {
+		http.Error(w, "admin role required", http.StatusForbidden)
+		return
+	}
+	if err := requireSameOrigin(r); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	id, action, ok := splitIDAction(r.URL.Path, "/settings/org/invitations/")
+	if !ok || action != "revoke" {
+		http.Error(w, "unknown action", http.StatusNotFound)
+		return
+	}
+	if err := b.auth.RevokeInvitation(r.Context(), id, p.OrgID); err != nil {
+		if errors.Is(err, auth.ErrCrossOrg) {
+			http.NotFound(w, r)
+			return
+		}
+		b.log.Error("revoke invitation failed", "error", err, "org", p.OrgID, "id", id)
+		http.Error(w, "revoke: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	b.log.Info("invitation revoked", "org", p.OrgID, "id", id, "actor", p.UserID)
+	http.Redirect(w, r, "/settings/org?tab=members&saved=revoked", http.StatusFound)
+}
+
+// memberActionHandler handles /settings/org/members/{id}/{remove|role}.
+func (b *Bot) memberActionHandler(w http.ResponseWriter, r *http.Request) {
+	p, _ := auth.FromContext(r.Context())
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !isAdmin(p) {
+		http.Error(w, "admin role required", http.StatusForbidden)
+		return
+	}
+	if err := requireSameOrigin(r); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	id, action, ok := splitIDAction(r.URL.Path, "/settings/org/members/")
+	if !ok {
+		http.Error(w, "bad path", http.StatusNotFound)
+		return
+	}
+	switch action {
+	case "remove":
+		if err := b.auth.RemoveMember(r.Context(), id, p.OrgID, p.UserID); err != nil {
+			if errors.Is(err, auth.ErrCrossOrg) {
+				http.NotFound(w, r)
+				return
+			}
+			b.log.Warn("remove member rejected", "error", err, "org", p.OrgID, "id", id, "actor", p.UserID)
+			http.Error(w, "remove: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		b.log.Info("member removed", "org", p.OrgID, "id", id, "actor", p.UserID)
+		http.Redirect(w, r, "/settings/org?tab=members&saved=removed", http.StatusFound)
+	case "role":
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "bad form", http.StatusBadRequest)
+			return
+		}
+		role := strings.TrimSpace(r.FormValue("role"))
+		if role == "" {
+			http.Error(w, "role required", http.StatusBadRequest)
+			return
+		}
+		if !validRoleSlug(role) {
+			http.Error(w, "unknown role", http.StatusBadRequest)
+			return
+		}
+		if err := b.auth.UpdateMemberRole(r.Context(), id, p.OrgID, p.UserID, role); err != nil {
+			if errors.Is(err, auth.ErrCrossOrg) {
+				http.NotFound(w, r)
+				return
+			}
+			b.log.Warn("update role rejected", "error", err, "org", p.OrgID, "id", id, "actor", p.UserID)
+			http.Error(w, "update role: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		b.log.Info("member role updated", "org", p.OrgID, "id", id, "role", role, "actor", p.UserID)
+		http.Redirect(w, r, "/settings/org?tab=members&saved=role", http.StatusFound)
+	default:
+		http.Error(w, "unknown action", http.StatusNotFound)
+	}
+}
+
+// validRoleSlug guards POSTed role values against typos and arbitrary
+// strings. Hardcoded list mirrors the dropdown options; if the WorkOS
+// dashboard adds custom roles, extend this set.
+func validRoleSlug(s string) bool {
+	switch s {
+	case "admin", "member":
+		return true
+	}
+	return false
+}
+
+// splitIDAction parses paths shaped like prefix/{id}/{action}, returning
+// the id and action segments. Both must be non-empty for ok to be true.
+// id is restricted to a conservative WorkOS-id charset so a path
+// segment containing whitespace, slashes (already split), or special
+// characters can't be passed to upstream APIs.
+func splitIDAction(path, prefix string) (id, action string, ok bool) {
+	rest := strings.TrimPrefix(path, prefix)
+	if rest == path {
+		return "", "", false
+	}
+	parts := strings.SplitN(rest, "/", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", false
+	}
+	if !isSafeID(parts[0]) {
+		return "", "", false
+	}
+	return parts[0], parts[1], true
+}
+
+// isSafeID restricts WorkOS-style ids to ASCII letters, digits, and
+// underscores -- the actual id alphabet plus a defensive guard against
+// anything weirder slipping through to outbound API calls.
+func isSafeID(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case r == '_':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// previewSecret returns a masked rendering of a stored secret suitable
+// for displaying back in a readonly settings field. Empty input → empty
+// output (the template uses that to mean "not set"). Short secrets are
+// masked entirely so we never reveal a high-fraction of a low-entropy
+// value; longer ones expose a 6-char prefix and 4-char suffix, which is
+// enough to recognize the key at a glance without materially weakening
+// it (the prefix is usually a known scheme tag like "sk-ant-" or "ghp_").
+func previewSecret(s string) string {
+	if s == "" {
+		return ""
+	}
+	if len(s) < 14 {
+		return "••••••••"
+	}
+	return s[:6] + "••••••" + s[len(s)-4:]
+}
+
+// applyDefaultRepoChange mutates current.DefaultGitHub{Owner,Repo}
+// based on the `default_repo` form field, returning false (after
+// writing an HTTP error) if the value is malformed or unauthorized.
+//
+// Precondition: r.ParseForm() must have been called by the caller —
+// the helper reads r.PostForm directly to distinguish "field absent"
+// from "field present and blank", and PostForm is nil until ParseForm
+// runs.
+//
+// Each integration card on the settings page is its own <form>, so a
+// POST that doesn't include `default_repo` isn't making a claim about
+// it — we MUST leave the saved value alone in that case. The presence
+// check on r.PostForm distinguishes "field absent from this submission"
+// (Anthropic / SX / Slack card was saved) from "field present and
+// explicitly blank" (the GitHub form was saved with the dropdown set
+// to "no default").
+//
+// Returns true on success (handler should continue), false on error
+// (handler should return — error already written to w).
+func (b *Bot) applyDefaultRepoChange(w http.ResponseWriter, r *http.Request, orgID string, current *orgcfg.Config) bool {
+	if _, present := r.PostForm["default_repo"]; !present {
+		return true
+	}
+	defaultRepo := strings.TrimSpace(r.PostFormValue("default_repo"))
+	if defaultRepo == "" {
+		current.DefaultGitHubOwner = ""
+		current.DefaultGitHubRepo = ""
+		return true
+	}
+	owner, name, ok := parseOwnerRepo(defaultRepo)
+	if !ok {
+		http.Error(w, "default_repo must be in owner/name format", http.StatusBadRequest)
+		return false
+	}
+	if _, err := b.store.Queries.GetGithubRepoForOrg(r.Context(), sqlc.GetGithubRepoForOrgParams{
+		OrgID: orgID, Owner: owner, Name: name,
+	}); err != nil {
+		http.Error(w, fmt.Sprintf("default_repo %s/%s isn't in this org's GitHub App installations — install the App on it first.", owner, name), http.StatusBadRequest)
+		return false
+	}
+	current.DefaultGitHubOwner = owner
+	current.DefaultGitHubRepo = name
+	return true
+}
+
+// applyAnthropicCredsChange updates the API key + OAuth token fields
+// from the form, then enforces the mutually-exclusive contract: when
+// the user pastes a *new* value into one credential field, the other
+// is cleared. Without that, both end up stored, claudeAuthEnv silently
+// prefers OAuth at chat time, and the user thinks the API key they
+// just pasted is broken when actually the stale OAuth token is still
+// winning. A pure rotation (same value repasted) or a Remove (which
+// empties the field) doesn't trigger the clear; only a non-empty
+// value that differs from before does.
+//
+// If both fields receive new values in the same submit (pathological
+// — the tabbed UI doesn't allow it without JS-level shenanigans), we
+// pick OAuth because that's what claudeAuthEnv returns; storing the
+// API key alongside would mismatch the dispatch behavior.
+func applyAnthropicCredsChange(r *http.Request, current *orgcfg.Config) {
+	beforeAPI := current.AnthropicAPIKey
+	beforeOAuth := current.ClaudeCodeOAuthToken
+	current.AnthropicAPIKey = applyTokenChange(r, "anthropic_api_key", current.AnthropicAPIKey)
+	current.ClaudeCodeOAuthToken = applyTokenChange(r, "claude_code_oauth_token", current.ClaudeCodeOAuthToken)
+	apiNew := current.AnthropicAPIKey != "" && current.AnthropicAPIKey != beforeAPI
+	oauthNew := current.ClaudeCodeOAuthToken != "" && current.ClaudeCodeOAuthToken != beforeOAuth
+	switch {
+	case apiNew && oauthNew:
+		current.AnthropicAPIKey = ""
+	case apiNew:
+		current.ClaudeCodeOAuthToken = ""
+	case oauthNew:
+		current.AnthropicAPIKey = ""
+	}
+}
+
+// credLineBreakStripper drops CR and LF that sneak into pasted
+// credentials (terminal-wrapped `claude setup-token` output, in
+// particular). Hoisted to package scope so applyTokenChange doesn't
+// allocate a fresh Replacer per request.
+var credLineBreakStripper = strings.NewReplacer("\r", "", "\n", "")
+
+// applyTokenChange resolves the new value for a token field given an
+// explicit set/keep/remove signal from the settings form. The form posts
+// a hidden `<field>_action` of "remove" when the user ticks the
+// remove checkbox; otherwise a non-blank `<field>` rotates and a blank
+// `<field>` keeps the existing value. This avoids overloading a single
+// text input with destructive semantics ("type - to clear").
+//
+// Internal CR/LF are stripped because copy-pasted credentials commonly
+// carry a stray newline from a wrapped terminal output (e.g. the multi-
+// line `claude setup-token` output). HTML `<input>` strips them on
+// paste in some browsers but not all, and a token with an embedded
+// newline silently fails downstream — Anthropic returns "Invalid bearer
+// token" for the partial value, or claude rejects it locally as an
+// invalid HTTP header. None of the credentials we store have legitimate
+// internal whitespace, so stripping it is safe and saves the user a
+// confusing round of 401s.
+func applyTokenChange(r *http.Request, field, existing string) string {
+	if r.PostFormValue(field+"_action") == "remove" {
+		return ""
+	}
+	raw := r.PostFormValue(field)
+	val := strings.TrimSpace(credLineBreakStripper.Replace(raw))
+	if val == "" {
+		return existing
+	}
+	return val
+}

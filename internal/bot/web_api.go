@@ -1,0 +1,536 @@
+package bot
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+
+	"github.com/hetchyhq/hetchy/internal/agents"
+	"github.com/hetchyhq/hetchy/internal/auth"
+	"github.com/hetchyhq/hetchy/internal/blocks"
+	"github.com/hetchyhq/hetchy/internal/convstore"
+)
+
+// conversationSummary is the shape returned by GET /api/conversations.
+// `Title` is derived from the first user turn so the sidebar has a
+// human-readable label without us needing a dedicated DB column.
+type conversationSummary struct {
+	ThreadID  string `json:"thread_id"`
+	Title     string `json:"title"`
+	PRURL     string `json:"pr_url,omitempty"`
+	UpdatedAt string `json:"updated_at"`
+}
+
+// conversationDetail is the shape returned by GET /api/conversations/{id}.
+// History and ResponseBlocks are paired by index: history[i] is the
+// user turn and response_blocks[i] is the typed-block transcript the
+// user saw streamed back for it.
+//
+// Branch / GitHubOwner / GitHubRepo / SandboxID / CreatorID power the
+// chat-detail metadata sidebar. They're populated lazily during the
+// run (the sandbox is created before Claude has a branch name; the
+// PR URL only lands when Claude finishes the first turn) so any of
+// them may be empty mid-conversation.
+type conversationDetail struct {
+	ThreadID       string           `json:"thread_id"`
+	Title          string           `json:"title"`
+	PRURL          string           `json:"pr_url,omitempty"`
+	Branch         string           `json:"branch,omitempty"`
+	GitHubOwner    string           `json:"github_owner,omitempty"`
+	GitHubRepo     string           `json:"github_repo,omitempty"`
+	SandboxID      string           `json:"sandbox_id,omitempty"`
+	CreatorID      string           `json:"creator_id,omitempty"`
+	AgentSlug      string           `json:"agent_slug,omitempty"`
+	AgentName      string           `json:"agent_name,omitempty"`
+	Model          string           `json:"model,omitempty"`
+	TaskOptions    map[string]bool  `json:"task_options,omitempty"`
+	CreatedAt      string           `json:"created_at,omitempty"`
+	History        []string         `json:"history"`
+	ResponseBlocks [][]blocks.Block `json:"response_blocks"`
+	UpdatedAt      string           `json:"updated_at"`
+}
+
+type agentSummary struct {
+	Slug         string   `json:"slug"`
+	DisplayName  string   `json:"display_name"`
+	Description  string   `json:"description"`
+	SXBot        string   `json:"sx_bot,omitempty"`
+	PersonaAsset string   `json:"persona_asset,omitempty"`
+	SlackAliases []string `json:"slack_aliases,omitempty"`
+	Skills       []string `json:"skills,omitempty"`
+	BuiltIn      bool     `json:"built_in"`
+	Default      bool     `json:"default"`
+}
+
+func (b *Bot) agentsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	p, _ := auth.FromContext(r.Context())
+	store := b.agents
+	if store == nil {
+		store = agents.NewStore(nil)
+	}
+	if r.Method == http.MethodPost {
+		if !isAdmin(p) {
+			http.Error(w, "admin required", http.StatusForbidden)
+			return
+		}
+		if err := requireSameOrigin(r); err != nil {
+			http.Error(w, err.Error(), http.StatusForbidden)
+			return
+		}
+		var body struct {
+			Slug          string   `json:"slug"`
+			DisplayName   string   `json:"display_name"`
+			Description   string   `json:"description"`
+			SXBot         string   `json:"sx_bot"`
+			PersonaAsset  string   `json:"persona_asset"`
+			PersonaPrompt string   `json:"persona_prompt"`
+			SlackAliases  []string `json:"slack_aliases"`
+			Skills        []string `json:"skills"`
+			Enabled       *bool    `json:"enabled"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		enabled := true
+		if body.Enabled != nil {
+			enabled = *body.Enabled
+		}
+		profile, err := store.Upsert(r.Context(), p.OrgID, agents.Profile{
+			Slug:          body.Slug,
+			DisplayName:   body.DisplayName,
+			Description:   body.Description,
+			SXBot:         body.SXBot,
+			PersonaAsset:  body.PersonaAsset,
+			PersonaPrompt: body.PersonaPrompt,
+			SlackAliases:  body.SlackAliases,
+			Skills:        body.Skills,
+			Enabled:       enabled,
+		})
+		if err != nil {
+			b.log.Warn("upsert agent", "error", err, "org", p.OrgID)
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, agentSummary{
+			Slug:         profile.Slug,
+			DisplayName:  profile.DisplayName,
+			Description:  profile.Description,
+			SXBot:        profile.SXBot,
+			PersonaAsset: profile.PersonaAsset,
+			SlackAliases: profile.SlackAliases,
+			Skills:       profile.Skills,
+			BuiltIn:      profile.BuiltIn,
+			Default:      profile.Slug == agents.DefaultSlug,
+		})
+		return
+	}
+	profiles, err := store.List(r.Context(), p.OrgID)
+	if err != nil {
+		b.log.Error("list agents", "error", err, "org", p.OrgID)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+	out := make([]agentSummary, 0, len(profiles))
+	for _, a := range profiles {
+		if !a.Enabled {
+			continue
+		}
+		out = append(out, agentSummary{
+			Slug:         a.Slug,
+			DisplayName:  a.DisplayName,
+			Description:  a.Description,
+			SXBot:        a.SXBot,
+			PersonaAsset: a.PersonaAsset,
+			SlackAliases: a.SlackAliases,
+			Skills:       a.Skills,
+			BuiltIn:      a.BuiltIn,
+			Default:      a.Slug == agents.DefaultSlug,
+		})
+	}
+	writeJSON(w, out)
+}
+
+// conversationsListLimitDefault caps a single sidebar page to 20.
+// conversationsListLimitMax keeps a malicious caller from asking for
+// the entire table at once. The frontend's "Load more" walks the
+// pages by bumping ?offset, and conversationsListOffsetMax stops
+// that walk before Postgres is asked to scan-and-skip a pathological
+// number of rows (each ?offset=N is an O(N) scan ahead of LIMIT).
+// conversationsListQueryMax bounds the substring search input so an
+// attacker can't post a multi-megabyte ?q to make the ILIKE pattern
+// matching expensive (sequential scan over conversations, twice).
+const (
+	conversationsListLimitDefault = 20
+	conversationsListLimitMax     = 100
+	conversationsListOffsetMax    = 100_000
+	conversationsListQueryMax     = 256
+)
+
+func (b *Bot) conversationsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	p, _ := auth.FromContext(r.Context())
+
+	q := r.URL.Query()
+	limit := parseClampedInt(q.Get("limit"), conversationsListLimitDefault, 1, conversationsListLimitMax)
+	offset := parseClampedInt(q.Get("offset"), 0, 0, conversationsListOffsetMax)
+	// Truncate by rune so we never split a multi-byte UTF-8 codepoint
+	// down the middle and feed mojibake to ILIKE. The cap is a
+	// substring-search ceiling, not a meaningful query length —
+	// nobody types 256 characters into a chat-title search box, but
+	// a script could.
+	queryStr := strings.TrimSpace(q.Get("q"))
+	if runes := []rune(queryStr); len(runes) > conversationsListQueryMax {
+		queryStr = string(runes[:conversationsListQueryMax])
+	}
+
+	recs, err := b.convs.Search(r.Context(), p.OrgID, convstore.SearchOptions{
+		CreatorID: q.Get("user"),
+		Query:     queryStr,
+		Limit:     limit,
+		Offset:    offset,
+	})
+	if err != nil {
+		b.log.Error("search conversations", "error", err, "org", p.OrgID)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+	out := make([]conversationSummary, 0, len(recs))
+	for _, rec := range recs {
+		out = append(out, conversationSummary{
+			ThreadID:  rec.ThreadID,
+			Title:     conversationTitle(rec),
+			PRURL:     rec.PRURL,
+			UpdatedAt: rec.UpdatedAt.UTC().Format(time.RFC3339),
+		})
+	}
+	writeJSON(w, out)
+}
+
+// parseClampedInt parses s as an integer and clamps the result to
+// [min, max]. Returns def for empty / unparseable input. Used by
+// pagination handlers to avoid hand-rolling the same five-line dance.
+// Pass math.MaxInt for max when the caller wants no upper bound.
+func parseClampedInt(s string, def, min, max int) int {
+	if s == "" {
+		return def
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return def
+	}
+	if n < min {
+		return min
+	}
+	if n > max {
+		return max
+	}
+	return n
+}
+
+// memberSummary is the shape returned by GET /api/members.
+type memberSummary struct {
+	UserID      string `json:"user_id"`
+	DisplayName string `json:"display_name"`
+	Email       string `json:"email"`
+}
+
+func (b *Bot) membersHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	p, _ := auth.FromContext(r.Context())
+	members, err := b.auth.ListMembers(r.Context(), p.OrgID)
+	if err != nil {
+		b.log.Error("list members", "error", err, "org", p.OrgID)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+	out := make([]memberSummary, 0, len(members))
+	for _, m := range members {
+		// Inactive memberships (removed users) and pending ones
+		// (invited but not yet accepted) can never be the creator of a
+		// conversation, so they'd only appear in the dropdown to
+		// produce an empty list when chosen — and surfacing former
+		// teammates by name is mildly information-leaky.
+		if m.Status != "active" {
+			continue
+		}
+		out = append(out, memberSummary{
+			UserID:      m.UserID,
+			DisplayName: m.DisplayName(),
+			Email:       m.Email,
+		})
+	}
+	// Member lists change rarely (an admin invites or removes someone)
+	// but are fetched on every initial chat-page load. ListMembers does
+	// O(N) per-user GETs to WorkOS, so a short browser-side cache cuts
+	// most of those round-trips for repeat navigations within the
+	// 5-minute window without making membership changes feel stuck.
+	w.Header().Set("Cache-Control", "private, max-age=300")
+	writeJSON(w, out)
+}
+
+func (b *Bot) conversationDetailHandler(w http.ResponseWriter, r *http.Request) {
+	threadID := strings.TrimPrefix(r.URL.Path, "/api/conversations/")
+	if threadID == "" || strings.Contains(threadID, "/") {
+		http.NotFound(w, r)
+		return
+	}
+	if !isSafeThreadID(threadID) {
+		http.NotFound(w, r)
+		return
+	}
+	p, _ := auth.FromContext(r.Context())
+
+	switch r.Method {
+	case http.MethodGet:
+		rec, err := b.convs.Get(r.Context(), p.OrgID, threadID)
+		if err != nil {
+			if errors.Is(err, convstore.ErrNotFound) {
+				http.NotFound(w, r)
+				return
+			}
+			b.log.Error("get conversation", "error", err, "org", p.OrgID, "thread", threadID)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
+		var createdAt string
+		if !rec.CreatedAt.IsZero() {
+			createdAt = rec.CreatedAt.UTC().Format(time.RFC3339)
+		}
+		agentSlug, agentName := b.resolveAgent(r.Context(), p.OrgID, rec.AgentSlug)
+		writeJSON(w, conversationDetail{
+			ThreadID:       rec.ThreadID,
+			Title:          conversationTitle(rec),
+			PRURL:          rec.PRURL,
+			Branch:         rec.Branch,
+			GitHubOwner:    rec.GitHubOwner,
+			GitHubRepo:     rec.GitHubRepo,
+			SandboxID:      rec.SandboxID,
+			CreatorID:      rec.CreatorID,
+			AgentSlug:      agentSlug,
+			AgentName:      agentName,
+			Model:          string(normalizeClaudeModel(ClaudeModel(rec.Model))),
+			TaskOptions:    rec.TaskOptions,
+			CreatedAt:      createdAt,
+			History:        rec.History,
+			ResponseBlocks: rec.ResponseBlocks,
+			UpdatedAt:      rec.UpdatedAt.UTC().Format(time.RFC3339),
+		})
+
+	case http.MethodDelete:
+		if err := requireSameOrigin(r); err != nil {
+			http.Error(w, err.Error(), http.StatusForbidden)
+			return
+		}
+		// Refuse the delete if a run is currently in flight on
+		// this (org, thread). Otherwise the terminal Upsert that
+		// fires when the agent finishes — bot.go runFreshAgent /
+		// handleFollowUp at end-of-run — would silently re-INSERT
+		// the row we just dropped (UpsertConversation is a generic
+		// UPSERT). Same shape as the Delete-bootstrap race we
+		// already closed in applySpecImprovements via GetSpec
+		// re-check; here we close it from the other side because
+		// teaching every terminal Upsert site to re-fetch is more
+		// invasive than a single 409 here.
+		if run := b.live.Get(p.OrgID, threadID); run != nil {
+			http.Error(w, "this chat has a turn in flight; wait for it to finish before deleting", http.StatusConflict)
+			return
+		}
+		if b.runs != nil && b.runs.Enabled() {
+			if active, err := b.runs.ActiveForThread(r.Context(), p.OrgID, threadID); err == nil {
+				b.log.Info("conversation delete rejected due active durable run",
+					"org", p.OrgID, "thread", threadID, "run_id", active.ID, "state", active.State)
+				http.Error(w, "this chat has a turn in flight; wait for it to finish before deleting", http.StatusConflict)
+				return
+			} else if !errors.Is(err, pgx.ErrNoRows) {
+				b.log.Warn("active run lookup for conversation delete", "org", p.OrgID, "thread", threadID, "error", err)
+				http.Error(w, "internal server error", http.StatusInternalServerError)
+				return
+			}
+		}
+		if err := b.convs.Delete(r.Context(), p.OrgID, threadID); err != nil {
+			b.log.Error("delete conversation", "error", err, "org", p.OrgID, "thread", threadID)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+
+	case http.MethodPatch:
+		if err := requireSameOrigin(r); err != nil {
+			http.Error(w, err.Error(), http.StatusForbidden)
+			return
+		}
+		var body struct {
+			Title string `json:"title"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		title := strings.TrimSpace(body.Title)
+		if title == "" {
+			http.Error(w, "title is required", http.StatusBadRequest)
+			return
+		}
+		// Cap server-side at 200 runes — the chat.html input has the same
+		// maxlength, but a direct API client could otherwise persist an
+		// unbounded string into the DB.
+		if runes := []rune(title); len(runes) > 200 {
+			http.Error(w, "title must be 200 characters or fewer", http.StatusBadRequest)
+			return
+		}
+		if err := b.convs.Rename(r.Context(), p.OrgID, threadID, title); err != nil {
+			if errors.Is(err, convstore.ErrNotFound) {
+				http.Error(w, "conversation not found", http.StatusNotFound)
+				return
+			}
+			b.log.Error("rename conversation", "error", err, "org", p.OrgID, "thread", threadID)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (b *Bot) resolveAgent(ctx context.Context, orgID, slug string) (resolvedSlug, name string) {
+	store := b.agents
+	if store == nil {
+		store = agents.NewStore(nil)
+	}
+	resolvedSlug = slug
+	if slug != "" {
+		if agent, err := store.GetBySlug(ctx, orgID, slug); err == nil {
+			resolvedSlug = agent.Slug
+			name = agent.DisplayName
+		}
+	}
+	return
+}
+
+func (b *Bot) conversationDownloadHandler(w http.ResponseWriter, r *http.Request) {
+	threadID := strings.TrimPrefix(r.URL.Path, "/api/conversations/download/")
+	if threadID == "" || strings.Contains(threadID, "/") {
+		http.NotFound(w, r)
+		return
+	}
+	if !isSafeThreadID(threadID) {
+		http.NotFound(w, r)
+		return
+	}
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", "GET")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	p, _ := auth.FromContext(r.Context())
+
+	rec, err := b.convs.Get(r.Context(), p.OrgID, threadID)
+	if err != nil {
+		if errors.Is(err, convstore.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		b.log.Error("get conversation for download", "error", err, "org", p.OrgID, "thread", threadID)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	var createdAt string
+	if !rec.CreatedAt.IsZero() {
+		createdAt = rec.CreatedAt.UTC().Format(time.RFC3339)
+	}
+	agentSlug, agentName := b.resolveAgent(r.Context(), p.OrgID, rec.AgentSlug)
+
+	downloadData := conversationDetail{
+		ThreadID:       rec.ThreadID,
+		Title:          conversationTitle(rec),
+		PRURL:          rec.PRURL,
+		Branch:         rec.Branch,
+		GitHubOwner:    rec.GitHubOwner,
+		GitHubRepo:     rec.GitHubRepo,
+		SandboxID:      rec.SandboxID,
+		CreatorID:      rec.CreatorID,
+		AgentSlug:      agentSlug,
+		AgentName:      agentName,
+		Model:          string(normalizeClaudeModel(ClaudeModel(rec.Model))),
+		TaskOptions:    rec.TaskOptions,
+		CreatedAt:      createdAt,
+		History:        rec.History,
+		ResponseBlocks: rec.ResponseBlocks,
+		UpdatedAt:      rec.UpdatedAt.UTC().Format(time.RFC3339),
+	}
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	filename := "conversation-" + threadID + ".json"
+	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+
+	if err := json.NewEncoder(w).Encode(downloadData); err != nil {
+		b.log.Error("encode conversation for download", "error", err, "org", p.OrgID, "thread", threadID)
+	}
+}
+
+// conversationTitle derives a sidebar label. If the user has set a custom
+// title it is returned as-is. Otherwise the label is derived from the first
+// user turn, trimmed and capped. Falls back to a generic placeholder so a
+// record with empty history still renders something selectable. Truncation
+// is rune-aware so non-ASCII prompts don't get split mid-codepoint, and
+// CR/LF/CRLF are normalized to spaces so a multi-line first prompt renders
+// as a single sidebar line.
+func conversationTitle(rec convstore.Record) string {
+	if rec.CustomTitle != "" {
+		return rec.CustomTitle
+	}
+	if len(rec.History) == 0 {
+		return "New chat"
+	}
+	first := strings.TrimSpace(rec.History[0])
+	if first == "" {
+		return "New chat"
+	}
+	const maxRunes = 80
+	if runes := []rune(first); len(runes) > maxRunes {
+		first = string(runes[:maxRunes]) + "…"
+	}
+	first = strings.NewReplacer("\r\n", " ", "\r", " ", "\n", " ").Replace(first)
+	return first
+}
+
+// isSafeThreadID guards path segments used to look up conversations.
+// Browser-generated thread ids are UUIDs (hex + hyphens); Slack thread
+// timestamps look like "1700000000.123456". Both are covered by this
+// conservative charset.
+func isSafeThreadID(s string) bool {
+	if s == "" || len(s) > 128 {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case r == '-' || r == '_' || r == '.':
+		default:
+			return false
+		}
+	}
+	return true
+}

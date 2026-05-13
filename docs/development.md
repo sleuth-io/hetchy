@@ -15,13 +15,18 @@ make install       # Install to ~/.local/bin
 make test          # Run tests
 make lint          # Run linters
 make format        # Format code
+make coverage-bot  # Check internal/bot coverage against the committed floor
 ```
 
 ## Pre-push Checks
 
 ```bash
-make prepush       # Format, lint, test, build
+make prepush       # Format, lint, build, migration order
 ```
+
+The bot coverage floor is source-controlled in
+`.github/coverage/internal-bot.min`. CI reads this file, but does not update it;
+raise the value intentionally when a change increases coverage.
 
 ## Debugging
 

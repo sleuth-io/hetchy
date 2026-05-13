@@ -44,7 +44,7 @@ type incoming struct {
 // remove happens implicitly when an org's tokens go missing on reload.
 type slackManager struct {
 	log     *slog.Logger
-	orgs    *orgcfg.Store
+	orgs    orgStore
 	handler slackHandler
 
 	mu    sync.Mutex
@@ -59,7 +59,7 @@ type slackConn struct {
 	done   chan struct{}
 }
 
-func newSlackManager(log *slog.Logger, orgs *orgcfg.Store, h slackHandler) *slackManager {
+func newSlackManager(log *slog.Logger, orgs orgStore, h slackHandler) *slackManager {
 	return &slackManager{log: log, orgs: orgs, handler: h, conns: make(map[string]*slackConn)}
 }
 

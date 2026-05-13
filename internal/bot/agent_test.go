@@ -2,12 +2,20 @@ package bot
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
+	"maps"
 	"strings"
 	"testing"
 
+	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
+	"github.com/google/go-github/v66/github"
+
+	"github.com/hetchyhq/hetchy/internal/agents"
+	"github.com/hetchyhq/hetchy/internal/blocks"
 	"github.com/hetchyhq/hetchy/internal/bootstrap"
 	"github.com/hetchyhq/hetchy/internal/convstore"
+	"github.com/hetchyhq/hetchy/internal/orgcfg"
 )
 
 func TestAgentPromptTemplate_IncludesAllInputs(t *testing.T) {
@@ -117,6 +125,11 @@ func TestConditionalTasksPromptRespectsOptions(t *testing.T) {
 		"Review code before push",
 		"sub-agent",
 		"Action PR checks for done",
+		"Set `PR_URL`",
+		`gh pr checks "$PR_URL" --watch --interval 10`,
+		"Do not append `|| true`",
+		"GraphQL/API permission error",
+		`gh run list --branch "$BRANCH"`,
 		"automated AI review",
 		"LOW severity",
 	} {
@@ -241,4 +254,170 @@ func TestPRURLRegex(t *testing.T) {
 			t.Errorf("prURLRe.FindString(%q) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
+}
+
+func TestRunAgentBuildsScriptEnvironmentWithFakeRunner(t *testing.T) {
+	restore := stubPRLookup(t, "acme/repo", "feature/sf-req-1", "main", "https://github.com/acme/repo/pull/7")
+	defer restore()
+
+	var captured capturedScriptRun
+	b := &Bot{
+		log: discardLogger(),
+		cfg: Config{SXPublicVaultURL: "https://vault.example.test"},
+		runScriptFn: func(_ context.Context, sb *daytona.Sandbox, sessionID, label, scriptBody string, env map[string]string, _ blocks.Emitter) (string, error) {
+			captured = captureScriptRun(sb, sessionID, label, scriptBody, env)
+			return "https://github.com/acme/repo/pull/7", nil
+		},
+	}
+	agent := agents.Profile{
+		Slug:          "reviewer",
+		DisplayName:   "Reviewer",
+		SXBot:         "review-bot",
+		PersonaAsset:  "asset.md",
+		PersonaPrompt: "Review carefully.",
+	}
+	repo := repoCtx{Slug: "acme/repo", BaseBranch: "main", GitHubToken: "ghs_token"}
+	oc := orgcfg.Config{OrgID: "org_1", AnthropicAPIKey: "sk-ant", SXKey: "sx-key"}
+
+	prURL, err := b.runAgent(context.Background(), &daytona.Sandbox{ID: "sandbox-1"}, repo, oc, agent, "ship feature", "req-1", chatTaskOptions{
+		ValidateChanges:       false,
+		ReviewCodeBeforePush:  true,
+		ActionPRChecksForDone: false,
+	}, ClaudeModelHaiku, newCaptureEmitter())
+	if err != nil {
+		t.Fatalf("runAgent: %v", err)
+	}
+	if prURL != "https://github.com/acme/repo/pull/7" {
+		t.Fatalf("prURL = %q", prURL)
+	}
+	if captured.sandboxID != "sandbox-1" || captured.sessionID != "agent-req-1" || captured.label != "agent" || captured.scriptBody != agentScript {
+		t.Fatalf("captured script = %+v", captured)
+	}
+	wantEnv := map[string]string{
+		"SF_REPO":                    "acme/repo",
+		"SF_WORKDIR":                 workdir,
+		"SF_BASE_BRANCH":             "main",
+		"GITHUB_TOKEN":               "ghs_token",
+		"HETCHY_CLAUDE_MODEL":        string(ClaudeModelHaiku),
+		"HETCHY_AGENT_SLUG":          "reviewer",
+		"HETCHY_AGENT_NAME":          "Reviewer",
+		"HETCHY_AGENT_SX_BOT":        "review-bot",
+		"HETCHY_AGENT_PERSONA_ASSET": "asset.md",
+		"ANTHROPIC_API_KEY":          "sk-ant",
+		"SX_KEY":                     "sx-key",
+		"HETCHY_SX_PUBLIC_VAULT_URL": "https://vault.example.test",
+	}
+	for key, want := range wantEnv {
+		if got := captured.env[key]; got != want {
+			t.Fatalf("env[%s] = %q, want %q", key, got, want)
+		}
+	}
+	if _, ok := captured.env["SF_SPEC_SETUP_B64"]; ok {
+		t.Fatal("spec env should not be set when validation is disabled")
+	}
+	prompt := mustDecodeBase64Env(t, captured.env, "SF_PROMPT_B64")
+	for _, want := range []string{"ship feature", "feature/sf-req-1", "Review code before push"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt missing %q:\n%s", want, prompt)
+		}
+	}
+	persona := mustDecodeBase64Env(t, captured.env, "HETCHY_AGENT_PROMPT_B64")
+	if persona != "Review carefully." {
+		t.Fatalf("persona = %q", persona)
+	}
+}
+
+func TestRunFollowUpBuildsScriptEnvironmentWithFakeRunner(t *testing.T) {
+	restore := stubPRLookup(t, "acme/repo", "feature/sf-req-1", "", "https://github.com/acme/repo/pull/8")
+	defer restore()
+
+	var captured capturedScriptRun
+	b := &Bot{
+		log: discardLogger(),
+		runScriptFn: func(_ context.Context, sb *daytona.Sandbox, sessionID, label, scriptBody string, env map[string]string, _ blocks.Emitter) (string, error) {
+			captured = captureScriptRun(sb, sessionID, label, scriptBody, env)
+			return "https://github.com/acme/repo/pull/8", nil
+		},
+	}
+	rec := convstore.Record{
+		ThreadID: "thread-1",
+		Branch:   "feature/sf-req-1",
+		PRURL:    "https://github.com/acme/repo/pull/7",
+		History:  []string{"first request"},
+	}
+	repo := repoCtx{Slug: "acme/repo", GitHubToken: "ghs_token"}
+	oc := orgcfg.Config{OrgID: "org_1", ClaudeCodeOAuthToken: "oauth-token"}
+
+	prURL, err := b.runFollowUp(context.Background(), &daytona.Sandbox{ID: "sandbox-1"}, repo, oc, rec, agents.Profile{Slug: "helper", DisplayName: "Helper"}, "tighten it", "req-2", chatTaskOptions{}, ClaudeModelSonnet, newCaptureEmitter())
+	if err != nil {
+		t.Fatalf("runFollowUp: %v", err)
+	}
+	if prURL != "https://github.com/acme/repo/pull/8" {
+		t.Fatalf("prURL = %q", prURL)
+	}
+	if captured.sessionID != "followup-req-2" || captured.label != "followup" || captured.scriptBody != followupScript {
+		t.Fatalf("captured script = %+v", captured)
+	}
+	if captured.env["SF_BRANCH"] != "feature/sf-req-1" || captured.env["GITHUB_TOKEN"] != "ghs_token" {
+		t.Fatalf("captured env = %#v", captured.env)
+	}
+	if captured.env["CLAUDE_CODE_OAUTH_TOKEN"] != "oauth-token" {
+		t.Fatalf("oauth token env = %q", captured.env["CLAUDE_CODE_OAUTH_TOKEN"])
+	}
+	prompt := mustDecodeBase64Env(t, captured.env, "SF_PROMPT_B64")
+	for _, want := range []string{"first request", "tighten it", "https://github.com/acme/repo/pull/7"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("follow-up prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
+type capturedScriptRun struct {
+	sandboxID  string
+	sessionID  string
+	label      string
+	scriptBody string
+	env        map[string]string
+}
+
+func captureScriptRun(sb *daytona.Sandbox, sessionID, label, scriptBody string, env map[string]string) capturedScriptRun {
+	copied := make(map[string]string, len(env))
+	maps.Copy(copied, env)
+	sandboxID := ""
+	if sb != nil {
+		sandboxID = sb.ID
+	}
+	return capturedScriptRun{sandboxID: sandboxID, sessionID: sessionID, label: label, scriptBody: scriptBody, env: copied}
+}
+
+func mustDecodeBase64Env(t *testing.T, env map[string]string, key string) string {
+	t.Helper()
+	raw := env[key]
+	if raw == "" {
+		t.Fatalf("env[%s] is empty", key)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(raw)
+	if err != nil {
+		t.Fatalf("decode %s: %v", key, err)
+	}
+	return string(decoded)
+}
+
+func stubPRLookup(t *testing.T, fullName, headBranch, baseBranch, htmlURL string) func() {
+	t.Helper()
+	old := lookupGitHubPullRequest
+	lookupGitHubPullRequest = func(context.Context, string, string, string, int) (*github.PullRequest, error) {
+		pr := &github.PullRequest{
+			HTMLURL: github.String(htmlURL),
+			Head: &github.PullRequestBranch{
+				Ref:  github.String(headBranch),
+				Repo: &github.Repository{FullName: github.String(fullName)},
+			},
+		}
+		if baseBranch != "" {
+			pr.Base = &github.PullRequestBranch{Ref: github.String(baseBranch)}
+		}
+		return pr, nil
+	}
+	return func() { lookupGitHubPullRequest = old }
 }

@@ -87,7 +87,7 @@ func conditionalTasksPrompt(opts chatTaskOptions) string {
 		tasks = append(tasks, "- Review code before push: before pushing or opening the PR, launch a Claude Code sub-agent/task to review the branch diff against its base branch. Use the sub-agent for an independent code review focused on bugs, regressions, missing tests, security issues, and maintainability problems. If the reviewer uses severity levels, fix every issue above LOW severity; otherwise fix every concrete actionable issue it reports. Commit and push only after those fixes are in place.")
 	}
 	if opts.ActionPRChecksForDone {
-		tasks = append(tasks, "- Action PR checks for done: after opening or updating the PR, you are not done. Use `gh` to inspect the PR's status checks and automated review activity, then wait for running checks to complete. If any check fails, fix it, commit, push, and wait again. If an automated AI review is running, wait for it to finish; if the reviewer uses severity levels, fix every issue above LOW severity, and if it does not use severity levels, fix every concrete actionable issue it reports. Commit, push, and check again. Only finish when all checks pass and automated AI reviews contain no issues above LOW severity or no remaining actionable findings.")
+		tasks = append(tasks, `- Action PR checks for done: after opening or updating the PR, you are not done. Set `+"`PR_URL`"+` to the returned PR URL and `+"`BRANCH`"+` to the pushed branch name, or substitute literal values. Run `+"`gh pr checks \"$PR_URL\" --watch --interval 10`"+`. Do not append `+"`|| true`"+`, `+"`|| echo`"+`, or otherwise swallow check failures; GraphQL/API permission errors are not success. If `+"`gh pr checks`"+` cannot read checks, try `+"`gh run list --branch \"$BRANCH\"`"+` and `+"`gh run watch <run-id>`"+`. If any check fails, fix it, commit, push, and wait again. If an automated AI review is running, wait for it to finish and fix every actionable issue above LOW severity. Only finish when checks and automated reviews are clean, or clearly say verification is blocked instead of claiming done.`)
 	}
 	if len(tasks) == 0 {
 		return ""
@@ -200,7 +200,7 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, o
 		env["SX_KEY"] = oc.SXKey
 	}
 	sessionID := "agent-" + requestID
-	prURL, err := b.runScript(ctx, sb, sessionID, "agent", agentScript, env, emit)
+	prURL, err := b.runScriptForRequest(ctx, sb, sessionID, "agent", agentScript, env, emit)
 	if err == nil {
 		b.markRunFinalizing(ctx)
 		prURL, err = b.validateReportedPR(ctx, repo, "feature/sf-"+requestID, repo.BaseBranch, prURL)
@@ -263,7 +263,7 @@ func (b *Bot) ensureBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo
 		fmt.Sprintf("`%s` is new to Hetchy — figuring out how to run it end-to-end. This one-time analysis uses Opus with high effort, so it adds a few minutes to the first task; subsequent tasks reuse the result.", repo.Slug))
 
 	sessionID := "bootstrap-" + requestID
-	if err := sb.Process.CreateSession(ctx, sessionID); err != nil {
+	if err := b.createBootstrapSession(ctx, sb, sessionID); err != nil {
 		return nil, fmt.Errorf("create bootstrap session: %w", err)
 	}
 	defer func() {
@@ -276,11 +276,11 @@ func (b *Bot) ensureBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo
 		"SF_BASE_BRANCH": repo.BaseBranch,
 		"GITHUB_TOKEN":   repo.GitHubToken,
 	}
-	if err := b.runInlineScript(ctx, sb, sessionID, "setup-clone", setupCloneScript, cloneEnv, emit); err != nil {
+	if err := b.runBootstrapInlineScript(ctx, sb, sessionID, "setup-clone", setupCloneScript, cloneEnv, emit); err != nil {
 		return nil, fmt.Errorf("setup-clone: %w", err)
 	}
 
-	hints, tempRoot, err := b.detectViaSandbox(ctx, sb, sessionID, workdir)
+	hints, tempRoot, err := b.detectBootstrapHints(ctx, sb, sessionID, workdir)
 	if err != nil {
 		return nil, fmt.Errorf("detect: %w", err)
 	}
@@ -305,7 +305,7 @@ func (b *Bot) ensureBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo
 			"HETCHY_CLAUDE_EFFORT": "high",
 		},
 	}
-	res, err := bootstrap.Run(ctx, runner, bootstrap.LoopInput{
+	res, err := b.runBootstrapLoop(ctx, runner, bootstrap.LoopInput{
 		OwnerRepo:       repo.Slug,
 		Hints:           hints,
 		SuppliedSecrets: suppliedSecrets,
@@ -345,6 +345,37 @@ func (b *Bot) ensureBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo
 		fmt.Sprintf("Saved a `%s` setup for `%s` (status: %s). The agent will now run with end-to-end validation.",
 			res.Spec.Kind, repo.Slug, res.Spec.ValidationStatus))
 	return res.Spec, nil
+}
+
+func (b *Bot) createBootstrapSession(ctx context.Context, sb *daytona.Sandbox, sessionID string) error {
+	if b.createBootstrapSessionFn != nil {
+		return b.createBootstrapSessionFn(ctx, sb, sessionID)
+	}
+	if sb == nil || sb.Process == nil {
+		return errors.New("sandbox process not configured")
+	}
+	return sb.Process.CreateSession(ctx, sessionID)
+}
+
+func (b *Bot) runBootstrapInlineScript(ctx context.Context, sb *daytona.Sandbox, sessionID, label, scriptBody string, env map[string]string, emit blocks.Emitter) error {
+	if b.runInlineScriptFn != nil {
+		return b.runInlineScriptFn(ctx, sb, sessionID, label, scriptBody, env, emit)
+	}
+	return b.runInlineScript(ctx, sb, sessionID, label, scriptBody, env, emit)
+}
+
+func (b *Bot) detectBootstrapHints(ctx context.Context, sb *daytona.Sandbox, sessionID, workdir string) (*bootstrap.Hints, string, error) {
+	if b.detectViaSandboxFn != nil {
+		return b.detectViaSandboxFn(ctx, sb, sessionID, workdir)
+	}
+	return b.detectViaSandbox(ctx, sb, sessionID, workdir)
+}
+
+func (b *Bot) runBootstrapLoop(ctx context.Context, runner bootstrap.Runner, in bootstrap.LoopInput) (*bootstrap.LoopResult, error) {
+	if b.bootstrapRunFn != nil {
+		return b.bootstrapRunFn(ctx, runner, in)
+	}
+	return bootstrap.Run(ctx, runner, in)
 }
 
 // persistFailingBootstrap saves a StatusFailing spec row from a
@@ -543,7 +574,7 @@ func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx
 		env["SF_SPEC_START_B64"] = base64.StdEncoding.EncodeToString([]byte(spec.StartScript))
 		env["SF_SPEC_HEALTH_B64"] = base64.StdEncoding.EncodeToString([]byte(spec.HealthCheck))
 	}
-	prURL, err := b.runScript(ctx, sb, "followup-"+requestID, "followup", followupScript, env, emit)
+	prURL, err := b.runScriptForRequest(ctx, sb, "followup-"+requestID, "followup", followupScript, env, emit)
 	if err != nil {
 		return "", err
 	}
@@ -565,6 +596,13 @@ func buildFollowUpPrompt(ownerRepo string, rec convstore.Record, userRequest str
 		Branch:            rec.Branch,
 		ArtifactSlotCount: artifactSlotCount,
 	})
+}
+
+func (b *Bot) runScriptForRequest(ctx context.Context, sb *daytona.Sandbox, sessionID, label, scriptBody string, env map[string]string, emit blocks.Emitter) (string, error) {
+	if b.runScriptFn != nil {
+		return b.runScriptFn(ctx, sb, sessionID, label, scriptBody, env, emit)
+	}
+	return b.runScript(ctx, sb, sessionID, label, scriptBody, env, emit)
 }
 
 // runScript writes scriptBody to /tmp/sf-<label>.sh inside the sandbox

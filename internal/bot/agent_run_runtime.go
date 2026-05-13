@@ -165,7 +165,7 @@ func (b *Bot) markRunCursor(ctx context.Context, cursor int64) {
 type agentRunEmitter struct {
 	idGen atomic.Uint64
 
-	store       *runstore.Store
+	store       runStore
 	runID       string
 	workerID    string
 	live        *liveRun
@@ -188,7 +188,7 @@ type durableRunEvent struct {
 	data []byte
 }
 
-func newAgentRunEmitter(store *runstore.Store, runID, workerID string, live *liveRun) *agentRunEmitter {
+func newAgentRunEmitter(store runStore, runID, workerID string, live *liveRun) *agentRunEmitter {
 	return &agentRunEmitter{
 		store:       store,
 		runID:       runID,
@@ -199,7 +199,7 @@ func newAgentRunEmitter(store *runstore.Store, runID, workerID string, live *liv
 	}
 }
 
-func newRecoveredAgentRunEmitter(store *runstore.Store, run runstore.Run, workerID string, live *liveRun, events []runstore.Event) *agentRunEmitter {
+func newRecoveredAgentRunEmitter(store runStore, run runstore.Run, workerID string, live *liveRun, events []runstore.Event) *agentRunEmitter {
 	em := newAgentRunEmitter(store, run.ID, workerID, live)
 	maxID, replayIDs := recoveredAgentRunEmitterIDs(events, run.CommandStartSeq)
 	em.idGen.Store(maxID)
@@ -208,7 +208,7 @@ func newRecoveredAgentRunEmitter(store *runstore.Store, run runstore.Run, worker
 	return em
 }
 
-func newAgentRunEmitterAfterEvents(store *runstore.Store, runID, workerID string, live *liveRun, events []runstore.Event) *agentRunEmitter {
+func newAgentRunEmitterAfterEvents(store runStore, runID, workerID string, live *liveRun, events []runstore.Event) *agentRunEmitter {
 	em := newAgentRunEmitter(store, runID, workerID, live)
 	maxID, _ := recoveredAgentRunEmitterIDs(events, 0)
 	em.idGen.Store(maxID)

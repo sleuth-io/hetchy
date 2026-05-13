@@ -1,0 +1,180 @@
+const log = document.getElementById('log');
+const inp = document.getElementById('inp');
+const btn = document.getElementById('btn');
+const toastStack = document.getElementById('toast-stack');
+const toolsBtn = document.getElementById('tools-btn');
+const toolsPopover = document.getElementById('tools-popover');
+const agentSelectorBtn = document.getElementById('agent-selector-btn');
+const agentSelectorValueEl = document.getElementById('agent-selector-value');
+const agentPopover = document.getElementById('agent-popover');
+const agentOptionsEl = document.getElementById('agent-options');
+const modelBtn = document.getElementById('model-btn');
+const modelLabelEl = document.getElementById('model-label');
+const modelPopover = document.getElementById('model-popover');
+const modelOptionsEl = document.getElementById('model-options');
+const validateBox = document.getElementById('validate-checkbox');
+const reviewBeforePushBox = document.getElementById('review-before-push-checkbox');
+const actionPRChecksBox = document.getElementById('action-pr-checks-checkbox');
+const qualityOptionBoxes = [validateBox, reviewBeforePushBox, actionPRChecksBox].filter(Boolean);
+const qualityOptionRows = document.querySelectorAll('.tools-checkbox-row');
+const helpIcons = document.querySelectorAll('.tools-help');
+const taskOptionKeys = {
+  validate: 'validate',
+  reviewBeforePush: 'review_code_before_push',
+  actionPRChecks: 'action_pr_checks_for_done',
+};
+
+// Current user's WorkOS ID, injected by the server. Used to default the
+// sidebar filter to "my chats".
+const currentUserID = document.body.dataset.currentUserId || '';
+let agentOptions = [];
+let agentOptionsLoaded = false;
+const agentStorageKey = 'hetchy.agent.' + currentUserID;
+
+function readStoredAgentSlug() {
+  try {
+    const saved = localStorage.getItem(agentStorageKey);
+    return saved === null ? '' : saved.trim();
+  } catch (e) {
+    return '';
+  }
+}
+
+let selectedAgentSlug = readStoredAgentSlug();
+const modelOptions = [
+  { value: 'opus', label: 'Opus', description: 'Most capable' },
+  { value: 'sonnet', label: 'Sonnet', description: 'Balanced everyday work' },
+  { value: 'haiku', label: 'Haiku', description: 'Fastest' },
+];
+const modelStorageKey = 'hetchy.model';
+let selectedModel = (function () {
+  try {
+    const saved = localStorage.getItem(modelStorageKey);
+    if (modelOptions.some(model => model.value === saved)) return saved;
+  } catch (e) {}
+  return 'opus';
+})();
+let modelLocked = false;
+let isRunning = false;
+let isStopping = false;
+let stopRequested = false;
+
+function setRunState(running, stopping = false) {
+  isRunning = running;
+  isStopping = running && stopping;
+  btn.classList.toggle('is-stop', isRunning);
+  btn.disabled = isStopping;
+  btn.setAttribute('aria-label', isRunning ? (isStopping ? 'Stopping' : 'Stop') : 'Send');
+  btn.title = isRunning ? (isStopping ? 'Stopping…' : 'Stop') : 'Send';
+  inp.setAttribute('aria-disabled', isRunning ? 'true' : 'false');
+}
+
+const activeToasts = new Map();
+function showToast(key, message, kind = 'warn', timeoutMs = 0) {
+  if (!toastStack) return;
+  let entry = activeToasts.get(key);
+  if (!entry) {
+    const el = document.createElement('div');
+    el.className = 'toast';
+    el.setAttribute('role', 'status');
+    toastStack.appendChild(el);
+    entry = { el, timer: null };
+    activeToasts.set(key, entry);
+  }
+  entry.el.className = 'toast toast-' + kind;
+  entry.el.textContent = message;
+  if (entry.timer) {
+    clearTimeout(entry.timer);
+    entry.timer = null;
+  }
+  if (timeoutMs > 0) {
+    entry.timer = setTimeout(() => hideToast(key), timeoutMs);
+  }
+}
+
+function hideToast(key) {
+  const entry = activeToasts.get(key);
+  if (!entry) return;
+  if (entry.timer) clearTimeout(entry.timer);
+  entry.el.remove();
+  activeToasts.delete(key);
+}
+
+function handleComposerAction() {
+  if (isRunning) {
+    stopRun();
+    return;
+  }
+  send();
+}
+
+// Read session ID from URL (?session=...) so the page can be reloaded or
+// shared to reconnect to an existing sandbox. Generate a new one if absent.
+// crypto.randomUUID() is gated on secure contexts; on plain HTTP at a
+// non-localhost host (like dev.hetchy.ai) it isn't defined, so fall back
+// to RFC4122 v4 from getRandomValues (which is unrestricted).
+function newSessionId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  const b = new Uint8Array(16);
+  crypto.getRandomValues(b);
+  b[6] = (b[6] & 0x0f) | 0x40;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  const h = [...b].map(x => x.toString(16).padStart(2, '0')).join('');
+  return h.slice(0, 8) + '-' + h.slice(8, 12) + '-' + h.slice(12, 16) + '-' + h.slice(16, 20) + '-' + h.slice(20);
+}
+const params = new URLSearchParams(window.location.search);
+const isFreshChat = !params.has('session');
+const sessionId = params.get('session') || newSessionId();
+let conversationHasServerState = !isFreshChat;
+if (isFreshChat) {
+  const url = new URL(window.location);
+  url.searchParams.set('session', sessionId);
+  history.replaceState(null, '', url);
+}
+
+// Auto-grow the textarea to fit its content. Collapsing the height to 0
+// first sidesteps a Chromium quirk where an empty textarea's scrollHeight
+// reflects the user-agent default rows rather than the actual content
+// height. CSS min-height keeps the visible element at one line.
+function autosizeInput() {
+  inp.style.height = '0px';
+  inp.style.height = inp.scrollHeight + 'px';
+  // Once content exceeds the CSS max-height the element stops growing —
+  // switch overflow back on so the user can scroll within the composer.
+  inp.style.overflowY = inp.scrollHeight > inp.clientHeight ? 'auto' : 'hidden';
+}
+inp.addEventListener('input', autosizeInput);
+// Bare Enter sends; Shift+Enter and Ctrl/Cmd+Enter insert a newline.
+inp.addEventListener('keydown', e => {
+  if (e.key !== 'Enter' || e.isComposing) return;
+  if (e.shiftKey || e.ctrlKey || e.metaKey) {
+    if (e.ctrlKey || e.metaKey) {
+      // Browsers don't insert a newline for Ctrl/Cmd+Enter by default;
+      // do it manually so the modifier behaves the same as Shift+Enter.
+      e.preventDefault();
+      const start = inp.selectionStart, end = inp.selectionEnd;
+      inp.value = inp.value.slice(0, start) + '\n' + inp.value.slice(end);
+      inp.selectionStart = inp.selectionEnd = start + 1;
+      autosizeInput();
+    }
+    return;
+  }
+  e.preventDefault();
+  send();
+});
+
+function addUserMsg(text) {
+  // Replace the empty-state placeholder the first time we add a message
+  // so the welcome card disappears as the conversation begins.
+  const empty = document.getElementById('empty-state');
+  if (empty) empty.remove();
+  const d = document.createElement('div');
+  d.className = 'msg user';
+  d.textContent = text;
+  log.appendChild(d);
+  log.scrollTop = log.scrollHeight;
+  return d;
+}
+

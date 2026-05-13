@@ -1,11 +1,122 @@
 package bot
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
 
 	"github.com/hetchyhq/hetchy/internal/blocks"
 )
+
+type bootstrapRunnerSHCall struct {
+	step              string
+	cmd               string
+	timeout           time.Duration
+	idleTimeout       time.Duration
+	suppressInputEcho bool
+}
+
+func TestBotRunnerRunUsesShLinesAndMergesEnv(t *testing.T) {
+	var calls []bootstrapRunnerSHCall
+	b := &Bot{
+		log: discardLogger(),
+		shLinesFn: func(_ context.Context, sandboxID string, _ sandboxProcess, sessionID, step, cmd string, timeout, idleTimeout time.Duration, suppressInputEcho bool, onLine func(string)) (string, error) {
+			if sandboxID != "sandbox-1" || sessionID != "session-1" {
+				t.Fatalf("shLines sandbox/session = %q/%q", sandboxID, sessionID)
+			}
+			calls = append(calls, bootstrapRunnerSHCall{
+				step:              step,
+				cmd:               cmd,
+				timeout:           timeout,
+				idleTimeout:       idleTimeout,
+				suppressInputEcho: suppressInputEcho,
+			})
+			if strings.HasPrefix(step, "bootstrap-run-") {
+				onLine("[hetchy-bootstrap] verifying artifacts")
+				return "bootstrap output", nil
+			}
+			return "", nil
+		},
+	}
+	runner := &botRunner{
+		b:         b,
+		sb:        &daytona.Sandbox{ID: "sandbox-1"},
+		sessionID: "session-1",
+		emit:      newCaptureEmitter(),
+		baseEnv:   map[string]string{"BASE": "base", "OVERRIDE": "base-value"},
+	}
+
+	out, err := runner.Run(context.Background(), "unit", "echo hello", map[string]string{"A": "alpha", "OVERRIDE": "step-value"})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if out != "bootstrap output" {
+		t.Fatalf("output = %q", out)
+	}
+	if len(calls) != 2 {
+		t.Fatalf("shLines calls = %+v", calls)
+	}
+	write := calls[0]
+	if write.step != "bootstrap-write-unit" || write.timeout != 30*time.Second || !write.suppressInputEcho {
+		t.Fatalf("write call = %+v", write)
+	}
+	if !strings.Contains(write.cmd, "run_claude_with_watchdog") || !strings.Contains(write.cmd, "echo hello") {
+		t.Fatalf("write command missing script body/watchdog:\n%s", write.cmd)
+	}
+	run := calls[1]
+	if run.step != "bootstrap-run-unit" || run.timeout != 30*time.Minute || run.idleTimeout != 15*time.Minute || run.suppressInputEcho {
+		t.Fatalf("run call = %+v", run)
+	}
+	for _, want := range []string{"A='alpha'", "BASE='base'", "OVERRIDE='step-value'", "bash /tmp/sf-unit.sh"} {
+		if !strings.Contains(run.cmd, want) {
+			t.Fatalf("run command missing %q:\n%s", want, run.cmd)
+		}
+	}
+}
+
+func TestBotRunnerReadAndWriteFileUseShLines(t *testing.T) {
+	var calls []bootstrapRunnerSHCall
+	b := &Bot{
+		log: discardLogger(),
+		shLinesFn: func(_ context.Context, _ string, _ sandboxProcess, _, step, cmd string, timeout, idleTimeout time.Duration, suppressInputEcho bool, _ func(string)) (string, error) {
+			calls = append(calls, bootstrapRunnerSHCall{
+				step:              step,
+				cmd:               cmd,
+				timeout:           timeout,
+				idleTimeout:       idleTimeout,
+				suppressInputEcho: suppressInputEcho,
+			})
+			if step == "bootstrap-read" {
+				return "file contents", nil
+			}
+			return "", nil
+		},
+	}
+	runner := &botRunner{b: b, sb: &daytona.Sandbox{ID: "sandbox-1"}, sessionID: "session-1"}
+
+	if err := runner.WriteFile(context.Background(), "/tmp/prompt.txt", []byte("prompt body\n")); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	got, err := runner.ReadFile(context.Background(), "/tmp/prompt.txt")
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if string(got) != "file contents" {
+		t.Fatalf("read file = %q", got)
+	}
+	if len(calls) != 2 {
+		t.Fatalf("shLines calls = %+v", calls)
+	}
+	if calls[0].step != "bootstrap-write" || calls[0].timeout != 30*time.Second || !calls[0].suppressInputEcho || !strings.Contains(calls[0].cmd, "prompt body") {
+		t.Fatalf("write call = %+v", calls[0])
+	}
+	if calls[1].step != "bootstrap-read" || calls[1].timeout != 5*time.Minute || calls[1].suppressInputEcho || calls[1].cmd != "cat '/tmp/prompt.txt'" {
+		t.Fatalf("read call = %+v", calls[1])
+	}
+}
 
 // TestBootstrapLineRouter_ThreePhaseRouting walks the router through
 // the same shape the bootstrap script produces in practice: pre-claude

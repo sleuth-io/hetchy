@@ -1,18 +1,17 @@
-# Live-reload config for `make bot`. Watches Go sources, embedded HTML,
-# and SQL queries; rebuilds and restarts the binary on save. Generated
-# files (sqlc output, migrations) are excluded so a regen doesn't trigger
-# a useless second rebuild.
+# Live-reload config for `make bot`. Watches Go sources, embedded web UI
+# templates/assets, and SQL queries; rebuilds and restarts the binary on
+# save. Generated files (sqlc output, migrations) are excluded so a regen
+# doesn't trigger a useless second rebuild.
 root = "."
 tmp_dir = ".air-tmp"
 
 [build]
   cmd = "go build -o ./.air-tmp/hetchy ./cmd/hetchy"
   bin = "./.air-tmp/hetchy"
-  # `sh` is here so the //go:embed at internal/bot/scripts/ picks up
-  # edits to agent.sh / followup.sh on save — without it, the binary
-  # keeps running with whatever scripts were embedded at last `.go`
-  # rebuild, and you can chase a "fixed" bug for hours wondering why.
-  include_ext = ["go", "html", "sql", "sh"]
+  # `html`, `css`, `js`, and `sh` are embedded by the Go binary, so Air
+  # must rebuild on those changes too. Otherwise the running server keeps
+  # serving whatever assets were embedded at the last `.go` rebuild.
+  include_ext = ["go", "html", "css", "js", "sql", "sh"]
   exclude_dir = [
     "dist",
     ".air-tmp",
