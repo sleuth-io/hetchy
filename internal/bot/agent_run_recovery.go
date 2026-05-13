@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
+	sdkerrors "github.com/daytonaio/daytona/libs/sdk-go/pkg/errors"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/hetchyhq/hetchy/internal/blocks"
@@ -80,11 +81,11 @@ func (b *Bot) recoverAgentRun(ctx context.Context, run runstore.Run) {
 
 	sb, err := b.daytona.Get(ctx, run.SandboxID)
 	if err != nil {
-		b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
+		b.handleRecoverySetupError(ctx, run, live, "Agent failed", "The interrupted sandbox no longer exists, so this run cannot be recovered.", err)
 		return
 	}
 	if err := b.ensureSandboxStarted(ctx, sb); err != nil {
-		b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
+		b.handleRecoverySetupError(ctx, run, live, "Agent failed", "The interrupted sandbox could not be restarted because it no longer exists.", err)
 		return
 	}
 
@@ -146,6 +147,27 @@ func (b *Bot) recoverAgentRun(ctx context.Context, run runstore.Run) {
 	}
 }
 
+func (b *Bot) handleRecoverySetupError(ctx context.Context, run runstore.Run, live *liveRun, title, body string, err error) {
+	if isPermanentRecoverySandboxError(err) {
+		b.finishRecoveredFailure(ctx, run, live, title, body, err)
+		return
+	}
+	b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
+}
+
+func isPermanentRecoverySandboxError(err error) bool {
+	var notFound *sdkerrors.DaytonaNotFoundError
+	if errors.As(err, &notFound) {
+		return true
+	}
+	var daytonaErr *sdkerrors.DaytonaError
+	if errors.As(err, &daytonaErr) {
+		return daytonaErr.StatusCode == http.StatusNotFound ||
+			(daytonaErr.StatusCode == 0 && strings.Contains(daytonaErr.Message, "Sandbox failed to start"))
+	}
+	return false
+}
+
 func (b *Bot) finalizeRecoveredRun(ctx context.Context, sb *daytona.Sandbox, run runstore.Run, router *agentLineRouter, replayEm *agentRunEmitter, exitCode int64, live *liveRun) {
 	if exitCode != 0 {
 		router.Abort()
@@ -198,8 +220,13 @@ func (b *Bot) finalizeRecoveredRun(ctx context.Context, sb *daytona.Sandbox, run
 			b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
 			return
 		}
+		events, err = b.runs.EventsAfter(ctx, run.ID, 0)
+		if err != nil {
+			b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
+			return
+		}
 	}
-	if err := b.projectRecoveredConversation(ctx, run, prURL); err != nil {
+	if err := b.projectRecoveredConversation(ctx, run, prURL, events); err != nil {
 		b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
 		return
 	}
@@ -221,8 +248,13 @@ func (b *Bot) finishRecoveredFailure(ctx context.Context, run runstore.Run, live
 			b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
 			return
 		}
+		events, err = b.runs.EventsAfter(ctx, run.ID, 0)
+		if err != nil {
+			b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
+			return
+		}
 	}
-	if err := b.projectRecoveredConversation(ctx, run, ""); err != nil {
+	if err := b.projectRecoveredConversation(ctx, run, "", events); err != nil {
 		b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
 		return
 	}
@@ -270,7 +302,9 @@ func (b *Bot) ensureSandboxStarted(ctx context.Context, sb *daytona.Sandbox) err
 	if sb == nil {
 		return errors.New("nil sandbox")
 	}
-	_ = sb.RefreshData(ctx)
+	if err := sb.RefreshData(ctx); err != nil {
+		b.log.Debug("sandbox refresh failed, proceeding with stale state", "sandbox", sb.ID, "error", err)
+	}
 	if strings.EqualFold(string(sb.State), "started") {
 		return nil
 	}
@@ -387,7 +421,7 @@ func sessionCommandExitCode(status map[string]any) (int64, bool) {
 	}
 }
 
-func (b *Bot) projectRecoveredConversation(ctx context.Context, run runstore.Run, prURL string) error {
+func (b *Bot) projectRecoveredConversation(ctx context.Context, run runstore.Run, prURL string, events []runstore.Event) error {
 	rec, err := b.convs.Get(ctx, run.OrgID, run.ThreadID)
 	if errors.Is(err, convstore.ErrNotFound) {
 		rec = convstore.Record{
@@ -396,10 +430,6 @@ func (b *Bot) projectRecoveredConversation(ctx context.Context, run runstore.Run
 			History:  []string{run.UserRequest},
 		}
 	} else if err != nil {
-		return err
-	}
-	events, err := b.runs.EventsAfter(ctx, run.ID, 0)
-	if err != nil {
 		return err
 	}
 	turnBlocks := blocksFromRunEvents(events)
