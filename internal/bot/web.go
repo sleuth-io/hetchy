@@ -1233,12 +1233,13 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 		SessionID string  `json:"session_id"`
 		AgentSlug *string `json:"agent_slug,omitempty"`
 		Model     string  `json:"model,omitempty"`
-		// Validate is the "Validate changes with end-to-end testing"
-		// checkbox state from the new-chat UI. Pointer so missing
-		// field (e.g. follow-up turns, Slack callers, older clients)
-		// is distinguishable from explicit false. Missing = treat as
-		// true so opting out is always an explicit user action.
-		Validate *bool `json:"validate,omitempty"`
+		// Task option fields are pointers so missing (older clients,
+		// non-web callers) is distinguishable from explicit false.
+		// Missing request fields leave saved per-chat values alone;
+		// missing saved keys default on in HandleRequest.
+		Validate              *bool `json:"validate,omitempty"`
+		ReviewCodeBeforePush  *bool `json:"review_code_before_push,omitempty"`
+		ActionPRChecksForDone *bool `json:"action_pr_checks_for_done,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
@@ -1250,7 +1251,16 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 		return
 	}
 	sessionID := strings.TrimSpace(body.SessionID)
-	validate := body.Validate == nil || *body.Validate
+	optionPatch := chatTaskOptionPatch{}
+	if body.Validate != nil {
+		optionPatch[chatTaskValidateKey] = *body.Validate
+	}
+	if body.ReviewCodeBeforePush != nil {
+		optionPatch[chatTaskReviewCodeBeforePushKey] = *body.ReviewCodeBeforePush
+	}
+	if body.ActionPRChecksForDone != nil {
+		optionPatch[chatTaskActionPRChecksForDoneKey] = *body.ActionPRChecksForDone
+	}
 	model, ok := parseClaudeModel(body.Model)
 	if !ok {
 		http.Error(w, "invalid model: choose opus, sonnet, or haiku", http.StatusBadRequest)
@@ -1294,7 +1304,7 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 	go func() {
 		defer b.live.Done(p.OrgID, sessionID, run)
 		runCtx := contextWithLiveRun(run.Context(), run)
-		b.HandleRequest(runCtx, oc, text, requestID, sessionID, p.UserID, validate, body.AgentSlug, model, emitter)
+		b.HandleRequest(runCtx, oc, text, requestID, sessionID, p.UserID, optionPatch, body.AgentSlug, model, emitter)
 	}()
 
 	sub := run.Subscribe()
@@ -1466,6 +1476,7 @@ type conversationDetail struct {
 	AgentSlug      string           `json:"agent_slug,omitempty"`
 	AgentName      string           `json:"agent_name,omitempty"`
 	Model          string           `json:"model,omitempty"`
+	TaskOptions    map[string]bool  `json:"task_options,omitempty"`
 	CreatedAt      string           `json:"created_at,omitempty"`
 	History        []string         `json:"history"`
 	ResponseBlocks [][]blocks.Block `json:"response_blocks"`
@@ -1742,6 +1753,7 @@ func (b *Bot) conversationDetailHandler(w http.ResponseWriter, r *http.Request) 
 			AgentSlug:      agentSlug,
 			AgentName:      agentName,
 			Model:          string(normalizeClaudeModel(ClaudeModel(rec.Model))),
+			TaskOptions:    rec.TaskOptions,
 			CreatedAt:      createdAt,
 			History:        rec.History,
 			ResponseBlocks: rec.ResponseBlocks,
@@ -1875,6 +1887,7 @@ func (b *Bot) conversationDownloadHandler(w http.ResponseWriter, r *http.Request
 		AgentSlug:      agentSlug,
 		AgentName:      agentName,
 		Model:          string(normalizeClaudeModel(ClaudeModel(rec.Model))),
+		TaskOptions:    rec.TaskOptions,
 		CreatedAt:      createdAt,
 		History:        rec.History,
 		ResponseBlocks: rec.ResponseBlocks,

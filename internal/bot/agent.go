@@ -53,7 +53,7 @@ const agentPromptTemplate = `You are working inside a fresh sandbox. The repo %s
 to %s and %s is checked out. Your task is the user request below.
 
 USER REQUEST:
-%s
+%s%s
 
 When you are done implementing the change:
   1. Create a new branch named feature/sf-%s.
@@ -70,7 +70,7 @@ Conversation so far:
 %s
 
 USER REQUEST:
-%s
+%s%s
 
 When you are done implementing the change:
   1. Run ` + "`make format`" + ` to format the code.
@@ -80,6 +80,20 @@ When you are done implementing the change:
      user request shown in "Conversation so far" above, not this latest change.
   5. If you edit the PR body (e.g. to add a Validation section), write each paragraph or bullet as one long line — do NOT insert hard line breaks; let GitHub reflow the text for the reader's viewport.
   6. The very last line of your output MUST be just the PR URL — no other text on that line.`
+
+func conditionalTasksPrompt(opts chatTaskOptions) string {
+	var tasks []string
+	if opts.ReviewCodeBeforePush {
+		tasks = append(tasks, "- Review code before push: before pushing or opening the PR, launch a Claude Code sub-agent/task to review the branch diff against its base branch. Use the sub-agent for an independent code review focused on bugs, regressions, missing tests, security issues, and maintainability problems. If the reviewer uses severity levels, fix every issue above LOW severity; otherwise fix every concrete actionable issue it reports. Commit and push only after those fixes are in place.")
+	}
+	if opts.ActionPRChecksForDone {
+		tasks = append(tasks, "- Action PR checks for done: after opening or updating the PR, you are not done. Use `gh` to inspect the PR's status checks and automated review activity, then wait for running checks to complete. If any check fails, fix it, commit, push, and wait again. If an automated AI review is running, wait for it to finish; if the reviewer uses severity levels, fix every issue above LOW severity, and if it does not use severity levels, fix every concrete actionable issue it reports. Commit, push, and check again. Only finish when all checks pass and automated AI reviews contain no issues above LOW severity or no remaining actionable findings.")
+	}
+	if len(tasks) == 0 {
+		return ""
+	}
+	return "\n\nADDITIONAL CHAT TASKS ENABLED FOR THIS RUN:\n" + strings.Join(tasks, "\n")
+}
 
 // repoCtx carries the resolved per-request repository details into the
 // sandbox: the slug "owner/name", the default branch the agent should
@@ -96,16 +110,14 @@ type repoCtx struct {
 	TokenExpires time.Time
 }
 
-func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, agent agents.Profile, userRequest, requestID string, validate bool, model ClaudeModel, emit blocks.Emitter) (string, error) {
+func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, agent agents.Profile, userRequest, requestID string, opts chatTaskOptions, model ClaudeModel, emit blocks.Emitter) (string, error) {
 	model = normalizeClaudeModel(model)
 	var spec *bootstrap.Spec
-	// validate=false is the user's explicit "skip end-to-end testing"
-	// opt-out from the new-chat UI. We honour it by not running
-	// bootstrap (which can take minutes on a fresh repo) and not
-	// merging the validation prompt — the agent then behaves the
-	// way it did before this pipeline existed: make the change,
-	// open the PR, done. Slack and follow-ups always pass true.
-	if validate && b.bootstrap != nil && repo.InstallID != 0 && repo.RepoID != 0 {
+	// ValidateChanges=false is the user's explicit "skip end-to-end
+	// testing" opt-out from the new-chat UI. We honour it by not
+	// running bootstrap (which can take minutes on a fresh repo) and
+	// not merging the validation prompt.
+	if opts.ValidateChanges && b.bootstrap != nil && repo.InstallID != 0 && repo.RepoID != 0 {
 		s, err := b.ensureBootstrapSpec(ctx, sb, repo, oc, requestID, emit)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -139,7 +151,7 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, o
 	// when the S3 path is actually available. The run-scoped token lets
 	// the sandbox request more slots up to artifacts.MaxSlots.
 	var slotsManifest []artifacts.Slot
-	if validate && spec != nil {
+	if opts.ValidateChanges && spec != nil {
 		prefix := fmt.Sprintf("%s/%d/%s", oc.OrgID, repo.RepoID, requestID)
 		s, err := b.addArtifactRunEnv(ctx, prefix, env)
 		switch {
@@ -157,7 +169,7 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, o
 
 	originalPrompt := fmt.Sprintf(agentPromptTemplate,
 		repo.Slug, workdir, repo.BaseBranch,
-		userRequest, requestID, repo.BaseBranch,
+		userRequest, conditionalTasksPrompt(opts), requestID, repo.BaseBranch,
 	)
 	finalPrompt := originalPrompt
 	if spec != nil {
@@ -467,10 +479,10 @@ func addAgentEnv(env map[string]string, cfg Config, agent agents.Profile) {
 // token is freshly minted and passed per-run (not just at sandbox-create
 // time) so a token rotation or a re-installed App takes effect on the
 // very next follow-up rather than only on a freshly-created sandbox.
-func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, userRequest, requestID string, validate bool, model ClaudeModel, emit blocks.Emitter) (string, error) {
+func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, userRequest, requestID string, opts chatTaskOptions, model ClaudeModel, emit blocks.Emitter) (string, error) {
 	model = normalizeClaudeModel(model)
 	var spec *bootstrap.Spec
-	if validate && b.bootstrap != nil && repo.InstallID != 0 && repo.RepoID != 0 {
+	if opts.ValidateChanges && b.bootstrap != nil && repo.InstallID != 0 && repo.RepoID != 0 {
 		s, err := b.bootstrap.GetSpec(ctx, repo.InstallID, repo.RepoID, "")
 		switch {
 		case err == nil:
@@ -492,7 +504,7 @@ func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx
 	addAgentEnv(env, b.cfg, agent)
 
 	var slotsManifest []artifacts.Slot
-	if validate && spec != nil {
+	if opts.ValidateChanges && spec != nil {
 		// Follow-ups can still need fresh proof links. Issue a new
 		// run-scoped batch under a follow-up prefix so keys don't
 		// collide with the initial request.
@@ -509,7 +521,7 @@ func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx
 				"request_id", requestID, "error", err)
 		}
 	}
-	prompt := buildFollowUpPrompt(repo.Slug, rec, userRequest, spec, len(slotsManifest))
+	prompt := buildFollowUpPrompt(repo.Slug, rec, userRequest, spec, len(slotsManifest), opts)
 	env["SF_PROMPT_B64"] = base64.StdEncoding.EncodeToString([]byte(prompt))
 	authKey, authVal := claudeAuthEnv(oc)
 	b.log.Info("claude auth", "method", authKey, "token", maskToken(authVal), "request_id", requestID)
@@ -537,11 +549,11 @@ func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx
 	return b.validateReportedPR(ctx, repo, rec.Branch, "", prURL)
 }
 
-func buildFollowUpPrompt(ownerRepo string, rec convstore.Record, userRequest string, spec *bootstrap.Spec, artifactSlotCount int) string {
+func buildFollowUpPrompt(ownerRepo string, rec convstore.Record, userRequest string, spec *bootstrap.Spec, artifactSlotCount int, opts chatTaskOptions) string {
 	history := strings.Join(rec.History, "\n---\n")
 	prompt := fmt.Sprintf(agentFollowUpPromptTemplate,
 		workdir, rec.Branch, rec.PRURL,
-		history, userRequest,
+		history, userRequest, conditionalTasksPrompt(opts),
 	)
 	if spec == nil {
 		return prompt

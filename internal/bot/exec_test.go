@@ -15,6 +15,7 @@ type fakeProcess struct {
 	chunkGap          time.Duration // pause between chunks (0 = no pause)
 	hangBeforeExec    time.Duration // simulate slow ExecuteSessionCommand (0 = immediate)
 	hangAfter         bool          // block after sending all chunks until ctx done
+	leaveStreamsOpen  bool          // simulate SDK returning without closing log channels
 	exitCode          float64       // command exit code (0 = success)
 	suppressInputEcho bool
 	commands          []string
@@ -38,8 +39,10 @@ func (f *fakeProcess) GetSessionCommand(_ context.Context, _, _ string) (map[str
 }
 
 func (f *fakeProcess) GetSessionCommandLogsStream(ctx context.Context, _, _ string, stdout, stderr chan<- string) error {
-	defer close(stdout)
-	defer close(stderr)
+	if !f.leaveStreamsOpen {
+		defer close(stdout)
+		defer close(stderr)
+	}
 	for _, chunk := range f.chunks {
 		select {
 		case <-ctx.Done():
@@ -89,6 +92,14 @@ func TestShLines(t *testing.T) {
 		{
 			name:        "idle timeout fires when process goes silent",
 			proc:        &fakeProcess{hangAfter: true},
+			cmd:         "echo hi",
+			timeout:     5 * time.Second,
+			idleTimeout: 100 * time.Millisecond,
+			wantErr:     ErrStepIdleTimeout,
+		},
+		{
+			name:        "stream return without channel close does not hang",
+			proc:        &fakeProcess{hangAfter: true, leaveStreamsOpen: true},
 			cmd:         "echo hi",
 			timeout:     5 * time.Second,
 			idleTimeout: 100 * time.Millisecond,

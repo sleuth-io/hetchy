@@ -241,7 +241,7 @@
                       border-radius: .6rem; box-shadow: 0 10px 28px rgba(0,0,0,.14);
                       z-index: 70; }
   .composer-popover[hidden] { display: none; }
-  #tools-popover { left: 0; width: min(17rem, calc(100vw - 2rem)); }
+  #tools-popover { left: 0; width: min(21rem, calc(100vw - 2rem)); }
   #model-popover { right: 0; width: min(16rem, calc(100vw - 2rem)); }
   .model-popover-title { padding: .45rem .55rem .35rem;
                          font-size: .72rem; font-weight: 600;
@@ -273,6 +273,19 @@
   .tools-checkbox-row input { position: absolute; opacity: 0; pointer-events: none; }
   .tools-checkbox-row .tools-menu-icon,
   .tools-checkbox-row .tools-menu-label { color: inherit; }
+  .tools-help { width: 1rem; height: 1rem; flex-shrink: 0; display: inline-flex;
+                align-items: center; justify-content: center; position: relative;
+                color: #8a8a92; cursor: help; }
+  .tools-help svg { width: .92rem; height: .92rem; display: block; stroke-width: 2; }
+  .tools-help-tooltip { position: absolute; right: 0; bottom: calc(100% + .45rem);
+                        width: min(16.5rem, calc(100vw - 3rem)); padding: .55rem .65rem;
+                        border-radius: .5rem; background: #1f2328; color: #fff;
+                        font-size: .76rem; line-height: 1.35; font-weight: 400;
+                        box-shadow: 0 8px 24px rgba(0,0,0,.2); opacity: 0;
+                        transform: translateY(.15rem); pointer-events: none;
+                        transition: opacity .12s ease, transform .12s ease; z-index: 90; }
+  .tools-help:hover .tools-help-tooltip,
+  .tools-help:focus .tools-help-tooltip { opacity: 1; transform: translateY(0); }
   .tools-checkmark { width: 1rem; flex-shrink: 0; color: #0b93f6;
                      font-size: .95rem; line-height: 1; text-align: center;
                      opacity: 0; }
@@ -604,6 +617,9 @@
   html.is-dark .tools-checkbox-row { color: #e7e7e9; }
   html.is-dark .tools-checkbox-row.is-checked { color: #7dc4ff; }
   html.is-dark .tools-checkbox-row.is-checked .tools-menu-icon { color: #7dc4ff; }
+  html.is-dark .tools-help { color: #9a9aa0; }
+  html.is-dark .tools-help-tooltip { background: #f3f3f5; color: #1d1d20;
+                                     box-shadow: 0 8px 24px rgba(0,0,0,.55); }
   html.is-dark .tools-checkbox-row .tools-checkmark { color: #7dc4ff; }
   html.is-dark .agent-choice { color: #e7e7e9; }
   html.is-dark .agent-choice:hover,
@@ -921,6 +937,50 @@
               <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
             </svg>
             <span class="tools-menu-label">Validate changes</span>
+            <span class="tools-help" tabindex="0" aria-label="Validate changes help">
+              <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"/>
+                <path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 2.2-3 4"/>
+                <path d="M12 17h.01"/>
+              </svg>
+              <span class="tools-help-tooltip" role="tooltip">Runs repository setup and post-change validation so the agent proves the change before opening a PR. Disabling it is faster but reduces quality.</span>
+            </span>
+            <span class="tools-checkmark" aria-hidden="true">✓</span>
+          </label>
+          <label class="tools-menu-item tools-checkbox-row">
+            <input type="checkbox" id="review-before-push-checkbox" checked>
+            <svg class="tools-menu-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <path d="M14 2v6h6"/>
+              <path d="m9 15 2 2 4-4"/>
+            </svg>
+            <span class="tools-menu-label">Review code before push</span>
+            <span class="tools-help" tabindex="0" aria-label="Review code before push help">
+              <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"/>
+                <path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 2.2-3 4"/>
+                <path d="M12 17h.01"/>
+              </svg>
+              <span class="tools-help-tooltip" role="tooltip">Requires the agent to launch a sub-agent to review the changed branch and fix issues before pushing or opening a PR. Disabling it is faster but reduces quality.</span>
+            </span>
+            <span class="tools-checkmark" aria-hidden="true">✓</span>
+          </label>
+          <label class="tools-menu-item tools-checkbox-row">
+            <input type="checkbox" id="action-pr-checks-checkbox" checked>
+            <svg class="tools-menu-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 12a9 9 0 1 1-3-6.7"/>
+              <path d="M21 3v6h-6"/>
+              <path d="m9 12 2 2 4-4"/>
+            </svg>
+            <span class="tools-menu-label">Action PR checks for done</span>
+            <span class="tools-help" tabindex="0" aria-label="Action PR checks for done help">
+              <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"/>
+                <path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 2.2-3 4"/>
+                <path d="M12 17h.01"/>
+              </svg>
+              <span class="tools-help-tooltip" role="tooltip">Requires the agent to wait on PR checks and automated AI reviews, fix failures or non-LOW findings, push again, and only finish when clean. Disabling it is faster but reduces quality.</span>
+            </span>
             <span class="tools-checkmark" aria-hidden="true">✓</span>
           </label>
         </div>
@@ -974,7 +1034,16 @@ const modelLabelEl = document.getElementById('model-label');
 const modelPopover = document.getElementById('model-popover');
 const modelOptionsEl = document.getElementById('model-options');
 const validateBox = document.getElementById('validate-checkbox');
-const validateRow = document.querySelector('.tools-checkbox-row');
+const reviewBeforePushBox = document.getElementById('review-before-push-checkbox');
+const actionPRChecksBox = document.getElementById('action-pr-checks-checkbox');
+const qualityOptionBoxes = [validateBox, reviewBeforePushBox, actionPRChecksBox].filter(Boolean);
+const qualityOptionRows = document.querySelectorAll('.tools-checkbox-row');
+const helpIcons = document.querySelectorAll('.tools-help');
+const taskOptionKeys = {
+  validate: 'validate',
+  reviewBeforePush: 'review_code_before_push',
+  actionPRChecks: 'action_pr_checks_for_done',
+};
 
 // Current user's WorkOS ID, injected by the server. Used to default the
 // sidebar filter to "my chats".
@@ -1136,14 +1205,41 @@ function selectedAgentName() {
 function updateToolsButton() {
   const agentLabel = selectedAgentName();
   const validates = validateBox ? validateBox.checked : true;
+  const reviewsBeforePush = reviewBeforePushBox ? reviewBeforePushBox.checked : true;
+  const actionsPRChecks = actionPRChecksBox ? actionPRChecksBox.checked : true;
   agentSelectorValueEl.textContent = agentLabel === 'none' ? 'No agent' : agentLabel;
-  toolsBtn.title = 'Agent: ' + agentLabel + '; validation ' + (validates ? 'on' : 'off');
-  toolsBtn.setAttribute('aria-label', 'Composer options. Agent: ' + agentLabel + '. Validation ' + (validates ? 'on' : 'off') + '.');
+  toolsBtn.title = 'Agent: ' + agentLabel + '; validation ' + (validates ? 'on' : 'off') + '; code review ' + (reviewsBeforePush ? 'on' : 'off') + '; PR checks ' + (actionsPRChecks ? 'on' : 'off');
+  toolsBtn.setAttribute('aria-label', 'Composer options. Agent: ' + agentLabel + '. Validation ' + (validates ? 'on' : 'off') + '. Code review ' + (reviewsBeforePush ? 'on' : 'off') + '. PR checks ' + (actionsPRChecks ? 'on' : 'off') + '.');
   toolsBtn.classList.toggle('has-agent', !!selectedAgentSlug);
-  if (validateRow) {
-    validateRow.classList.toggle('is-checked', validates);
-    validateRow.setAttribute('aria-checked', String(validates));
+  qualityOptionRows.forEach(row => {
+    const box = row.querySelector('input[type="checkbox"]');
+    const checked = box ? box.checked : false;
+    row.classList.toggle('is-checked', checked);
+    row.setAttribute('aria-checked', String(checked));
+  });
+}
+
+function taskOptionValue(detail, key) {
+  const opts = detail && detail.task_options;
+  if (opts && Object.prototype.hasOwnProperty.call(opts, key) && typeof opts[key] === 'boolean') {
+    return opts[key];
   }
+  return true;
+}
+
+function currentTaskOptions() {
+  return {
+    [taskOptionKeys.validate]: validateBox ? validateBox.checked : true,
+    [taskOptionKeys.reviewBeforePush]: reviewBeforePushBox ? reviewBeforePushBox.checked : true,
+    [taskOptionKeys.actionPRChecks]: actionPRChecksBox ? actionPRChecksBox.checked : true,
+  };
+}
+
+function applyConversationTaskOptions(detail) {
+  if (validateBox) validateBox.checked = taskOptionValue(detail, taskOptionKeys.validate);
+  if (reviewBeforePushBox) reviewBeforePushBox.checked = taskOptionValue(detail, taskOptionKeys.reviewBeforePush);
+  if (actionPRChecksBox) actionPRChecksBox.checked = taskOptionValue(detail, taskOptionKeys.actionPRChecks);
+  updateToolsButton();
 }
 
 function chooseAgent(slug) {
@@ -1317,12 +1413,14 @@ agentSelectorBtn.addEventListener('click', e => {
   else closeAgentPopover();
 });
 document.getElementById('agent-flyout-root').addEventListener('mouseenter', openAgentPopover);
-if (validateBox) {
-  validateBox.addEventListener('change', updateToolsButton);
-}
-if (validateRow) {
-  validateRow.addEventListener('mouseenter', closeAgentPopover);
-}
+qualityOptionBoxes.forEach(box => box.addEventListener('change', updateToolsButton));
+qualityOptionRows.forEach(row => row.addEventListener('mouseenter', closeAgentPopover));
+helpIcons.forEach(icon => {
+  icon.addEventListener('click', e => {
+    e.preventDefault();
+    e.stopPropagation();
+  });
+});
 modelBtn.addEventListener('click', e => {
   e.stopPropagation();
   if (modelPopover.hidden) openModelPopover();
@@ -2127,12 +2225,14 @@ function renderMetadata(detail) {
   if (!detail) {
     applyConversationModel(null);
     applyConversationAgent(null);
+    applyConversationTaskOptions(null);
     host.innerHTML = '<div class="meta-empty">No chat details yet.</div>';
     setDocTitle('');
     return;
   }
   applyConversationModel(detail);
   applyConversationAgent(detail);
+  applyConversationTaskOptions(detail);
   setDocTitle(detail.title);
   const owner = detail.github_owner || '';
   const repo = detail.github_repo || '';
@@ -2280,6 +2380,7 @@ function renderPendingMetadata(text) {
     agent_slug: selectedAgentSlug || '',
     agent_name: selectedAgentSlug ? selectedAgentName() : '',
     model: selectedModel,
+    task_options: currentTaskOptions(),
     creator_id: existing.creator_id || currentUserID,
     created_at: existing.created_at || now,
     updated_at: now,
@@ -2649,20 +2750,21 @@ async function send() {
   autosizeInput();
   setRunState(true);
 
-  const validateChoice = validateBox ? validateBox.checked : null;
+  const taskOptions = currentTaskOptions();
 
   const agentChoiceApplies = conversationAgentIsMutable();
   const isFirstTurn = log.querySelectorAll('.msg').length === 0;
   addUserMsg(text);
+  if (lastDetail) lastDetail.task_options = taskOptions;
   if (isFirstTurn || agentChoiceApplies) {
     setModelPickerLocked(true);
     renderPendingMetadata(text);
   }
 
   const payload = { text, session_id: sessionId, model: selectedModel };
-  if (validateChoice !== null) {
-    payload.validate = validateChoice;
-  }
+  payload.validate = taskOptions[taskOptionKeys.validate];
+  payload.review_code_before_push = taskOptions[taskOptionKeys.reviewBeforePush];
+  payload.action_pr_checks_for_done = taskOptions[taskOptionKeys.actionPRChecks];
   if (agentChoiceApplies) {
     payload.agent_slug = selectedAgentSlug;
   }
