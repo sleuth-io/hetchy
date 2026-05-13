@@ -32,6 +32,18 @@ type followUpRunFunc func(context.Context, *daytona.Sandbox, repoCtx, orgcfg.Con
 
 type scriptRunFunc func(context.Context, *daytona.Sandbox, string, string, string, map[string]string, blocks.Emitter) (string, error)
 
+type shLinesFunc func(context.Context, string, sandboxProcess, string, string, string, time.Duration, time.Duration, bool, func(string)) (string, error)
+
+type bootstrapSessionFunc func(context.Context, *daytona.Sandbox, string) error
+
+type inlineScriptFunc func(context.Context, *daytona.Sandbox, string, string, string, map[string]string, blocks.Emitter) error
+
+type bootstrapDetectFunc func(context.Context, *daytona.Sandbox, string, string) (*bootstrap.Hints, string, error)
+
+type bootstrapRunFunc func(context.Context, bootstrap.Runner, bootstrap.LoopInput) (*bootstrap.LoopResult, error)
+
+type recoveryLaunchFunc func(context.Context, runstore.Run, bool)
+
 type orgStore interface {
 	Get(context.Context, string) (orgcfg.Config, error)
 	GetBySlackTeamID(context.Context, string) (orgcfg.Config, error)

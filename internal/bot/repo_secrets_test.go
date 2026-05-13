@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -22,16 +23,28 @@ type fakeBootstrapStore struct {
 	summaries []bootstrap.SecretSummary
 	spec      *bootstrap.Spec
 
-	specErr       error
-	listErr       error
-	setErr        error
-	deleteErr     error
-	deleteSpecErr error
+	specErr        error
+	saveErr        error
+	saveFailingErr error
+	markAppliedErr error
+	getSecretsErr  error
+	listErr        error
+	setErr         error
+	deleteErr      error
+	deleteSpecErr  error
+	declareErr     error
 
-	listCalls       []secretListCall
-	setCalls        []secretSetCall
-	deleteCalls     []secretDeleteCall
-	deleteSpecCalls []secretDeleteSpecCall
+	secrets bootstrap.SecretValues
+
+	listCalls        []secretListCall
+	setCalls         []secretSetCall
+	deleteCalls      []secretDeleteCall
+	deleteSpecCalls  []secretDeleteSpecCall
+	getSecretCalls   []secretListCall
+	declareCalls     []secretDeclareCall
+	savedSpecs       []*bootstrap.Spec
+	failingSpecs     []*bootstrap.Spec
+	markAppliedCalls []markAppliedCall
 }
 
 type secretListCall struct {
@@ -61,6 +74,22 @@ type secretDeleteSpecCall struct {
 	path           string
 }
 
+type secretDeclareCall struct {
+	installationID int64
+	repoID         int64
+	path           string
+	name           string
+}
+
+type markAppliedCall struct {
+	installationID int64
+	repoID         int64
+	path           string
+	status         bootstrap.ValidationStatus
+	successCount   int32
+	failureCount   int32
+}
+
 func (f *fakeBootstrapStore) GetSpec(context.Context, int64, int64, string) (*bootstrap.Spec, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -70,26 +99,65 @@ func (f *fakeBootstrapStore) GetSpec(context.Context, int64, int64, string) (*bo
 	if f.spec == nil {
 		return nil, bootstrap.ErrNotFound
 	}
-	out := *f.spec
-	out.Services = append([]bootstrap.Service(nil), f.spec.Services...)
-	out.RequiredSecrets = append([]bootstrap.Secret(nil), f.spec.RequiredSecrets...)
-	out.DeferredCapabilities = append([]string(nil), f.spec.DeferredCapabilities...)
-	out.SuggestedRepoChanges = append([]string(nil), f.spec.SuggestedRepoChanges...)
-	return &out, nil
+	return cloneBootstrapSpec(f.spec), nil
 }
 
-func (f *fakeBootstrapStore) SaveSpec(context.Context, *bootstrap.Spec) error { return nil }
+func cloneBootstrapSpec(spec *bootstrap.Spec) *bootstrap.Spec {
+	if spec == nil {
+		return nil
+	}
+	out := *spec
+	out.Services = append([]bootstrap.Service(nil), spec.Services...)
+	out.RequiredSecrets = append([]bootstrap.Secret(nil), spec.RequiredSecrets...)
+	out.DeferredCapabilities = append([]string(nil), spec.DeferredCapabilities...)
+	out.SuggestedRepoChanges = append([]string(nil), spec.SuggestedRepoChanges...)
+	return &out
+}
 
-func (f *fakeBootstrapStore) SaveFailingSpec(context.Context, *bootstrap.Spec) error {
+func (f *fakeBootstrapStore) SaveSpec(_ context.Context, spec *bootstrap.Spec) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.saveErr != nil {
+		return f.saveErr
+	}
+	f.savedSpecs = append(f.savedSpecs, cloneBootstrapSpec(spec))
 	return nil
 }
 
-func (f *fakeBootstrapStore) MarkApplied(context.Context, int64, int64, string, bootstrap.ValidationStatus, int32, int32) error {
+func (f *fakeBootstrapStore) SaveFailingSpec(_ context.Context, spec *bootstrap.Spec) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.saveFailingErr != nil {
+		return f.saveFailingErr
+	}
+	f.failingSpecs = append(f.failingSpecs, cloneBootstrapSpec(spec))
 	return nil
 }
 
-func (f *fakeBootstrapStore) GetSecrets(context.Context, int64, int64, string) (bootstrap.SecretValues, error) {
-	return bootstrap.SecretValues{}, nil
+func (f *fakeBootstrapStore) MarkApplied(_ context.Context, installationID, repoID int64, path string, status bootstrap.ValidationStatus, successCount, failureCount int32) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.markAppliedCalls = append(f.markAppliedCalls, markAppliedCall{
+		installationID: installationID,
+		repoID:         repoID,
+		path:           path,
+		status:         status,
+		successCount:   successCount,
+		failureCount:   failureCount,
+	})
+	return f.markAppliedErr
+}
+
+func (f *fakeBootstrapStore) GetSecrets(_ context.Context, installationID, repoID int64, path string) (bootstrap.SecretValues, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.getSecretCalls = append(f.getSecretCalls, secretListCall{installationID: installationID, repoID: repoID, path: path})
+	if f.getSecretsErr != nil {
+		return nil, f.getSecretsErr
+	}
+	out := make(bootstrap.SecretValues, len(f.secrets))
+	maps.Copy(out, f.secrets)
+	return out, nil
 }
 
 func (f *fakeBootstrapStore) ListSecrets(_ context.Context, installationID, repoID int64, path string) ([]bootstrap.SecretSummary, error) {
@@ -139,8 +207,11 @@ func (f *fakeBootstrapStore) DeleteSpec(_ context.Context, installationID, repoI
 	return f.deleteSpecErr
 }
 
-func (f *fakeBootstrapStore) DeclareRequiredSecret(context.Context, int64, int64, string, string) error {
-	return nil
+func (f *fakeBootstrapStore) DeclareRequiredSecret(_ context.Context, installationID, repoID int64, path, name string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.declareCalls = append(f.declareCalls, secretDeclareCall{installationID: installationID, repoID: repoID, path: path, name: name})
+	return f.declareErr
 }
 
 func newRepoSecretTestBot(t *testing.T, boot *fakeBootstrapStore) *Bot {

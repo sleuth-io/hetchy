@@ -26,17 +26,21 @@ type fakeRunStore struct {
 	activeRun runstore.Run
 	activeErr error
 
-	expiredRuns []runstore.Run
-	expiredErr  error
+	expiredRuns  []runstore.Run
+	expiredErr   error
+	expiredCalls []int32
 
-	activePrefixRuns []runstore.Run
-	activePrefixErr  error
+	activePrefixRuns  []runstore.Run
+	activePrefixErr   error
+	activePrefixCalls []fakeRunActivePrefixCall
 
-	claimRun runstore.Run
-	claimErr error
+	claimRun   runstore.Run
+	claimErr   error
+	claimCalls []fakeRunClaim
 
-	claimFromOwnerRun runstore.Run
-	claimFromOwnerErr error
+	claimFromOwnerRun   runstore.Run
+	claimFromOwnerErr   error
+	claimFromOwnerCalls []fakeRunClaimFromOwner
 
 	cancelRun     runstore.Run
 	cancelErr     error
@@ -63,6 +67,7 @@ type fakeRunStore struct {
 
 type fakeRunEventAppend struct {
 	runID      string
+	seq        int64
 	event      string
 	data       []byte
 	leaseOwner string
@@ -79,6 +84,24 @@ type fakeRunTouch struct {
 	runID      string
 	leaseOwner string
 	duration   time.Duration
+}
+
+type fakeRunActivePrefixCall struct {
+	prefix string
+	limit  int32
+}
+
+type fakeRunClaim struct {
+	runID      string
+	leaseOwner string
+	duration   time.Duration
+}
+
+type fakeRunClaimFromOwner struct {
+	runID         string
+	leaseOwner    string
+	previousOwner string
+	duration      time.Duration
 }
 
 type fakeRunCommandUpdate struct {
@@ -176,28 +199,52 @@ func (f *fakeRunStore) UpdateLogCursor(_ context.Context, _ string, cursor int64
 	f.updateCursors = append(f.updateCursors, cursor)
 }
 
-func (f *fakeRunStore) ListExpired(context.Context, int32) ([]runstore.Run, error) {
+func (f *fakeRunStore) ListExpired(_ context.Context, limit int32) ([]runstore.Run, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.expiredCalls = append(f.expiredCalls, limit)
 	return append([]runstore.Run(nil), f.expiredRuns...), f.expiredErr
 }
 
-func (f *fakeRunStore) ListActiveForLeaseOwnerPrefix(context.Context, string, int32) ([]runstore.Run, error) {
+func (f *fakeRunStore) ListActiveForLeaseOwnerPrefix(_ context.Context, prefix string, limit int32) ([]runstore.Run, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.activePrefixCalls = append(f.activePrefixCalls, fakeRunActivePrefixCall{prefix: prefix, limit: limit})
 	return append([]runstore.Run(nil), f.activePrefixRuns...), f.activePrefixErr
 }
 
-func (f *fakeRunStore) Claim(context.Context, string, string, time.Duration) (runstore.Run, error) {
+func (f *fakeRunStore) Claim(_ context.Context, id, leaseOwner string, d time.Duration) (runstore.Run, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.claimRun, f.claimErr
+	f.claimCalls = append(f.claimCalls, fakeRunClaim{runID: id, leaseOwner: leaseOwner, duration: d})
+	if f.claimErr != nil {
+		return runstore.Run{}, f.claimErr
+	}
+	out := f.claimRun
+	if out.ID == "" {
+		out.ID = id
+	}
+	if out.LeaseOwner == "" {
+		out.LeaseOwner = leaseOwner
+	}
+	return out, nil
 }
 
-func (f *fakeRunStore) ClaimFromOwner(context.Context, string, string, string, time.Duration) (runstore.Run, error) {
+func (f *fakeRunStore) ClaimFromOwner(_ context.Context, id, leaseOwner, previousOwner string, d time.Duration) (runstore.Run, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.claimFromOwnerRun, f.claimFromOwnerErr
+	f.claimFromOwnerCalls = append(f.claimFromOwnerCalls, fakeRunClaimFromOwner{runID: id, leaseOwner: leaseOwner, previousOwner: previousOwner, duration: d})
+	if f.claimFromOwnerErr != nil {
+		return runstore.Run{}, f.claimFromOwnerErr
+	}
+	out := f.claimFromOwnerRun
+	if out.ID == "" {
+		out.ID = id
+	}
+	if out.LeaseOwner == "" {
+		out.LeaseOwner = leaseOwner
+	}
+	return out, nil
 }
 
 func (f *fakeRunStore) Cancel(_ context.Context, id, lastErr, leaseOwner string, _ time.Duration, events []runstore.PendingEvent) (runstore.Run, error) {
@@ -222,6 +269,7 @@ func (f *fakeRunStore) AppendEvent(_ context.Context, runID, event string, data 
 	f.nextSeq++
 	f.appended = append(f.appended, fakeRunEventAppend{
 		runID:      runID,
+		seq:        f.nextSeq,
 		event:      event,
 		data:       append([]byte(nil), data...),
 		leaseOwner: leaseOwner,
@@ -248,8 +296,27 @@ func (f *fakeRunStore) AppendEventsAndAdvanceCursor(_ context.Context, runID str
 	return seqs, nil
 }
 
-func (f *fakeRunStore) EventsAfter(context.Context, string, int64) ([]runstore.Event, error) {
+func (f *fakeRunStore) EventsAfter(_ context.Context, runID string, afterSeq int64) ([]runstore.Event, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return append([]runstore.Event(nil), f.events...), f.eventsErr
+	if f.eventsErr != nil {
+		return nil, f.eventsErr
+	}
+	out := make([]runstore.Event, 0, len(f.events)+len(f.appended))
+	for _, ev := range f.events {
+		if ev.Seq > afterSeq && (ev.RunID == "" || ev.RunID == runID) {
+			out = append(out, ev)
+		}
+	}
+	for _, ev := range f.appended {
+		if ev.seq > afterSeq && ev.runID == runID {
+			out = append(out, runstore.Event{
+				RunID: ev.runID,
+				Seq:   ev.seq,
+				Event: ev.event,
+				Data:  append([]byte(nil), ev.data...),
+			})
+		}
+	}
+	return out, nil
 }

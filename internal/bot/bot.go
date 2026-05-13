@@ -110,15 +110,21 @@ type Bot struct {
 	// are narrow seams around external systems used by the chat state machine.
 	// Tests install hand-written fakes here so core request logic can be
 	// exercised without GitHub, Daytona, or shell execution.
-	resolveRepoFn          repoResolveFunc
-	runAgentFn             agentRunFunc
-	runFollowUpFn          followUpRunFunc
-	runScriptFn            scriptRunFunc
-	getSandboxFn           func(context.Context, string) (*daytona.Sandbox, error)
-	resumeSandboxFn        func(context.Context, *daytona.Sandbox, blocks.Emitter) error
-	deleteSandboxSessionFn func(*daytona.Sandbox, string)
-	stopAndArchiveFn       func(context.Context, *daytona.Sandbox)
-	lookupRepoFn           func(context.Context, string, string, string) (sqlc.GithubRepo, error)
+	resolveRepoFn            repoResolveFunc
+	runAgentFn               agentRunFunc
+	runFollowUpFn            followUpRunFunc
+	runScriptFn              scriptRunFunc
+	shLinesFn                shLinesFunc
+	createBootstrapSessionFn bootstrapSessionFunc
+	runInlineScriptFn        inlineScriptFunc
+	detectViaSandboxFn       bootstrapDetectFunc
+	bootstrapRunFn           bootstrapRunFunc
+	recoverRunFn             recoveryLaunchFunc
+	getSandboxFn             func(context.Context, string) (*daytona.Sandbox, error)
+	resumeSandboxFn          func(context.Context, *daytona.Sandbox, blocks.Emitter) error
+	deleteSandboxSessionFn   func(*daytona.Sandbox, string)
+	stopAndArchiveFn         func(context.Context, *daytona.Sandbox)
+	lookupRepoFn             func(context.Context, string, string, string) (sqlc.GithubRepo, error)
 	// cleanupSandboxByIDFn is called by chatCancelHandler for opportunistic
 	// cleanup of a fresh-run sandbox; overridable in tests.
 	cleanupSandboxByIDFn func(string, string)

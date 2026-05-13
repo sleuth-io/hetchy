@@ -42,6 +42,9 @@ type sandboxProcess interface {
 // a healthy long run keeps producing output and resets the idle clock,
 // while a stuck process goes silent and trips the idle limit early.
 func (b *Bot) shLines(ctx context.Context, sandboxID string, proc sandboxProcess, sessionID, step, cmd string, timeout, idleTimeout time.Duration, suppressInputEcho bool, onLine func(string)) (string, error) {
+	if b.shLinesFn != nil {
+		return b.shLinesFn(ctx, sandboxID, proc, sessionID, step, cmd, timeout, idleTimeout, suppressInputEcho, onLine)
+	}
 	suppressInputEcho = effectiveSuppressInputEcho(suppressInputEcho, cmd)
 	b.log.Info("sandbox step start",
 		"sandbox", sandboxID,

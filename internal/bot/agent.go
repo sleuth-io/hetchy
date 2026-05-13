@@ -263,7 +263,7 @@ func (b *Bot) ensureBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo
 		fmt.Sprintf("`%s` is new to Hetchy — figuring out how to run it end-to-end. This one-time analysis uses Opus with high effort, so it adds a few minutes to the first task; subsequent tasks reuse the result.", repo.Slug))
 
 	sessionID := "bootstrap-" + requestID
-	if err := sb.Process.CreateSession(ctx, sessionID); err != nil {
+	if err := b.createBootstrapSession(ctx, sb, sessionID); err != nil {
 		return nil, fmt.Errorf("create bootstrap session: %w", err)
 	}
 	defer func() {
@@ -276,11 +276,11 @@ func (b *Bot) ensureBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo
 		"SF_BASE_BRANCH": repo.BaseBranch,
 		"GITHUB_TOKEN":   repo.GitHubToken,
 	}
-	if err := b.runInlineScript(ctx, sb, sessionID, "setup-clone", setupCloneScript, cloneEnv, emit); err != nil {
+	if err := b.runBootstrapInlineScript(ctx, sb, sessionID, "setup-clone", setupCloneScript, cloneEnv, emit); err != nil {
 		return nil, fmt.Errorf("setup-clone: %w", err)
 	}
 
-	hints, tempRoot, err := b.detectViaSandbox(ctx, sb, sessionID, workdir)
+	hints, tempRoot, err := b.detectBootstrapHints(ctx, sb, sessionID, workdir)
 	if err != nil {
 		return nil, fmt.Errorf("detect: %w", err)
 	}
@@ -305,7 +305,7 @@ func (b *Bot) ensureBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo
 			"HETCHY_CLAUDE_EFFORT": "high",
 		},
 	}
-	res, err := bootstrap.Run(ctx, runner, bootstrap.LoopInput{
+	res, err := b.runBootstrapLoop(ctx, runner, bootstrap.LoopInput{
 		OwnerRepo:       repo.Slug,
 		Hints:           hints,
 		SuppliedSecrets: suppliedSecrets,
@@ -345,6 +345,37 @@ func (b *Bot) ensureBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo
 		fmt.Sprintf("Saved a `%s` setup for `%s` (status: %s). The agent will now run with end-to-end validation.",
 			res.Spec.Kind, repo.Slug, res.Spec.ValidationStatus))
 	return res.Spec, nil
+}
+
+func (b *Bot) createBootstrapSession(ctx context.Context, sb *daytona.Sandbox, sessionID string) error {
+	if b.createBootstrapSessionFn != nil {
+		return b.createBootstrapSessionFn(ctx, sb, sessionID)
+	}
+	if sb == nil || sb.Process == nil {
+		return errors.New("sandbox process not configured")
+	}
+	return sb.Process.CreateSession(ctx, sessionID)
+}
+
+func (b *Bot) runBootstrapInlineScript(ctx context.Context, sb *daytona.Sandbox, sessionID, label, scriptBody string, env map[string]string, emit blocks.Emitter) error {
+	if b.runInlineScriptFn != nil {
+		return b.runInlineScriptFn(ctx, sb, sessionID, label, scriptBody, env, emit)
+	}
+	return b.runInlineScript(ctx, sb, sessionID, label, scriptBody, env, emit)
+}
+
+func (b *Bot) detectBootstrapHints(ctx context.Context, sb *daytona.Sandbox, sessionID, workdir string) (*bootstrap.Hints, string, error) {
+	if b.detectViaSandboxFn != nil {
+		return b.detectViaSandboxFn(ctx, sb, sessionID, workdir)
+	}
+	return b.detectViaSandbox(ctx, sb, sessionID, workdir)
+}
+
+func (b *Bot) runBootstrapLoop(ctx context.Context, runner bootstrap.Runner, in bootstrap.LoopInput) (*bootstrap.LoopResult, error) {
+	if b.bootstrapRunFn != nil {
+		return b.bootstrapRunFn(ctx, runner, in)
+	}
+	return bootstrap.Run(ctx, runner, in)
 }
 
 // persistFailingBootstrap saves a StatusFailing spec row from a

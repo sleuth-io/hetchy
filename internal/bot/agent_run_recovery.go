@@ -159,6 +159,10 @@ func (b *Bot) recoverExpiredRuns(ctx context.Context) {
 }
 
 func (b *Bot) launchRecoverAgentRun(ctx context.Context, run runstore.Run, waitForLive bool) {
+	if b.recoverRunFn != nil {
+		b.recoverRunFn(ctx, run, waitForLive)
+		return
+	}
 	if !waitForLive {
 		go b.recoverAgentRun(ctx, run)
 		return
@@ -304,7 +308,7 @@ func (b *Bot) recoverAgentRunReady(ctx context.Context, run runstore.Run, ready 
 		return
 	}
 
-	sb, err := b.daytona.Get(ctx, run.SandboxID)
+	sb, err := b.getSandbox(ctx, run.SandboxID)
 	if err != nil {
 		b.handleRecoverySetupError(ctx, run, live, "Agent failed", "The interrupted sandbox no longer exists, so this run cannot be recovered.", err)
 		return
@@ -492,8 +496,10 @@ func sameHostWorkerLikelyDead(currentWorkerID, previousWorkerID string) bool {
 	if !ok || currentHost != previousHost || previousPID <= 0 {
 		return false
 	}
-	return !processExists(previousPID)
+	return !processExistsForRecovery(previousPID)
 }
+
+var processExistsForRecovery = processExists
 
 func parseWorkerID(workerID string) (string, int, bool) {
 	lastDash := strings.LastIndex(workerID, "-")
