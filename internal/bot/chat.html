@@ -2379,7 +2379,7 @@ function renderMetadata(detail) {
     +     '<div class="meta-more-wrap">'
     +       '<button id="meta-more-btn" type="button" aria-label="More options"'
     +       ' aria-haspopup="menu" aria-expanded="false">&#x2026;</button>'
-    +       '<div id="meta-dropdown" role="menu" hidden>'
+    +       '<div id="meta-dropdown" role="menu" aria-label="More options" hidden>'
     +         '<button id="download-btn" type="button" role="menuitem" class="meta-dropdown-item">'
     +           'Download</button>'
     +       '</div>'
@@ -2404,6 +2404,14 @@ function setupMetaMenu() {
     const opening = dropdown.hidden;
     dropdown.hidden = !opening;
     moreBtn.setAttribute('aria-expanded', String(opening));
+    if (opening) dropdown.querySelector('[role="menuitem"]')?.focus();
+  });
+
+  dropdown.addEventListener('keydown', e => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      dropdown.querySelector('[role="menuitem"]')?.focus();
+    }
   });
 
   if (downloadBtn) downloadBtn.addEventListener('click', downloadConversation);
@@ -2416,7 +2424,11 @@ function closeMetaDropdown() {
   if (moreBtn) moreBtn.setAttribute('aria-expanded', 'false');
 }
 
+let isDownloading = false;
+
 async function downloadConversation() {
+  if (isDownloading) return;
+  isDownloading = true;
   closeMetaDropdown();
 
   try {
@@ -2439,6 +2451,8 @@ async function downloadConversation() {
   } catch (e) {
     console.error('Download failed:', e);
     alert('Failed to download conversation');
+  } finally {
+    isDownloading = false;
   }
 }
 
