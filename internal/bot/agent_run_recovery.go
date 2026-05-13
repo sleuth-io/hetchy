@@ -55,7 +55,7 @@ func (b *Bot) recoverExpiredRuns(ctx context.Context) {
 			}
 			continue
 		}
-		go b.recoverAgentRun(context.WithoutCancel(ctx), claimed)
+		go b.recoverAgentRun(ctx, claimed)
 	}
 }
 
@@ -88,6 +88,16 @@ func (b *Bot) recoverAgentRun(ctx context.Context, run runstore.Run) {
 		return
 	}
 
+	existingEvents, err := b.runs.EventsAfter(ctx, run.ID, 0)
+	if err != nil {
+		b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
+		return
+	}
+	em := newRecoveredAgentRunEmitter(b.runs, run, b.workerID, live, existingEvents)
+	router := newAgentLineRouter(em)
+	frameState := replayFrameState{}
+	replayCursor := int64(0)
+
 	poll := time.NewTicker(5 * time.Second)
 	defer poll.Stop()
 	for {
@@ -99,19 +109,18 @@ func (b *Bot) recoverAgentRun(ctx context.Context, run runstore.Run) {
 			return
 		}
 
-		existingEvents, err := b.runs.EventsAfter(ctx, run.ID, 0)
-		if err != nil {
-			b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
-			return
+		if int64(len(logText)) < replayCursor {
+			frameState = replayFrameState{}
+			replayCursor = 0
 		}
-		em := newRecoveredAgentRunEmitter(b.runs, run, b.workerID, live, existingEvents)
-		router := newAgentLineRouter(em)
-		res := replayHetchyFramedLog(run.ID, logText, run.LogCursor, em, func(line string) {
+		replayText := logText[replayCursor:]
+		res, nextFrameState := replayHetchyFramedLogState(run.ID, replayText, replayCursor, run.LogCursor, frameState, em, func(line string) {
 			em.BeginBatch()
 			router.Line(line)
 		}, func(cursor int64) {
 			_ = em.FlushBatch(cursor)
 		})
+		frameState = nextFrameState
 		if err := em.Err(); err != nil {
 			b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
 			return
@@ -121,6 +130,7 @@ func (b *Bot) recoverAgentRun(ctx context.Context, run runstore.Run) {
 			return
 		}
 		run.LogCursor = max(run.LogCursor, res.Cursor)
+		replayCursor = res.Cursor
 
 		status, err := sb.Process.GetSessionCommand(ctx, run.SessionID, run.CommandID)
 		if err != nil {
@@ -132,11 +142,7 @@ func (b *Bot) recoverAgentRun(ctx context.Context, run runstore.Run) {
 			return
 		}
 
-		select {
-		case <-ctx.Done():
-			return
-		case <-poll.C:
-		}
+		<-poll.C
 	}
 }
 
@@ -180,12 +186,13 @@ func (b *Bot) finalizeRecoveredRun(ctx context.Context, sb *daytona.Sandbox, run
 	if run.RunKind != "followup" {
 		body += "\n\nReply here to make further changes to this PR."
 	}
-	if !b.recoveredRunHasTerminalBlock(ctx, run.ID, blocks.KindResult) {
-		em, err := b.recoveredTerminalEmitter(ctx, run, live)
-		if err != nil {
-			b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
-			return
-		}
+	events, err := b.runs.EventsAfter(ctx, run.ID, 0)
+	if err != nil {
+		b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
+		return
+	}
+	if !recoveredRunHasTerminalBlock(events, blocks.KindResult) {
+		em := b.recoveredTerminalEmitter(run, live, events)
 		em.Result("Done!", body)
 		if err := em.Err(); err != nil {
 			b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
@@ -202,12 +209,13 @@ func (b *Bot) finalizeRecoveredRun(ctx context.Context, sb *daytona.Sandbox, run
 }
 
 func (b *Bot) finishRecoveredFailure(ctx context.Context, run runstore.Run, live *liveRun, title, body string, cause error) {
-	if !b.recoveredRunHasTerminalBlock(ctx, run.ID, blocks.KindError) {
-		em, err := b.recoveredTerminalEmitter(ctx, run, live)
-		if err != nil {
-			b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
-			return
-		}
+	events, err := b.runs.EventsAfter(ctx, run.ID, 0)
+	if err != nil {
+		b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
+		return
+	}
+	if !recoveredRunHasTerminalBlock(events, blocks.KindError) {
+		em := b.recoveredTerminalEmitter(run, live, events)
 		em.Error(title, body)
 		if err := em.Err(); err != nil {
 			b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
@@ -225,12 +233,8 @@ func (b *Bot) finishRecoveredFailure(ctx context.Context, run runstore.Run, live
 	b.runs.UpdateState(context.Background(), run.ID, runstore.StateFailed, lastErr, b.workerID)
 }
 
-func (b *Bot) recoveredTerminalEmitter(ctx context.Context, run runstore.Run, live *liveRun) (*agentRunEmitter, error) {
-	events, err := b.runs.EventsAfter(ctx, run.ID, 0)
-	if err != nil {
-		return nil, err
-	}
-	return newAgentRunEmitterAfterEvents(b.runs, run.ID, b.workerID, live, events), nil
+func (b *Bot) recoveredTerminalEmitter(run runstore.Run, live *liveRun, events []runstore.Event) *agentRunEmitter {
+	return newAgentRunEmitterAfterEvents(b.runs, run.ID, b.workerID, live, events)
 }
 
 func (b *Bot) validateRecoveredPR(ctx context.Context, run runstore.Run, prURL string) (string, string, error) {
@@ -253,12 +257,7 @@ func (b *Bot) validateRecoveredPR(ctx context.Context, run runstore.Run, prURL s
 	return validated, branch, err
 }
 
-func (b *Bot) recoveredRunHasTerminalBlock(ctx context.Context, runID string, kind blocks.Kind) bool {
-	events, err := b.runs.EventsAfter(ctx, runID, 0)
-	if err != nil {
-		b.log.Warn("list recovered run events", "run", runID, "error", err)
-		return false
-	}
+func recoveredRunHasTerminalBlock(events []runstore.Event, kind blocks.Kind) bool {
 	for _, block := range blocksFromRunEvents(events) {
 		if block.Kind == kind && block.Status != blocks.StatusStreaming {
 			return true

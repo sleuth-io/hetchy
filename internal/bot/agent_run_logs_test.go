@@ -104,6 +104,36 @@ func TestReplayHetchyFramedLogCursorBoundaryDoesNotDoubleEmit(t *testing.T) {
 	}
 }
 
+func TestReplayHetchyFramedLogStateContinuesFromSuffix(t *testing.T) {
+	const runID = "run_abc"
+	prefix := "__HETCHY_RUN_BEGIN run_abc__\n" +
+		"[hetchy] first\n"
+	suffix := "[hetchy] second\n"
+
+	gate := &testSuppressionGate{}
+	var got []string
+	res, state := replayHetchyFramedLogState(runID, prefix, 0, 0, replayFrameState{}, gate, func(line string) {
+		if !gate.suppressed {
+			got = append(got, line)
+		}
+	}, nil)
+	if !res.SeenBegin || !state.inFrame {
+		t.Fatalf("first pass state = result:%+v state:%+v, want seen begin and in frame", res, state)
+	}
+
+	res, state = replayHetchyFramedLogState(runID, suffix, int64(len(prefix)), int64(len(prefix)), state, gate, func(line string) {
+		if !gate.suppressed {
+			got = append(got, line)
+		}
+	}, nil)
+	if !res.SeenBegin || !state.inFrame {
+		t.Fatalf("second pass state = result:%+v state:%+v, want frame preserved", res, state)
+	}
+	if want := []string{"[hetchy] first", "[hetchy] second"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("replayed lines = %#v, want %#v", got, want)
+	}
+}
+
 func TestReplayHetchyFramedLogAdvancesCursorForSuppressedLines(t *testing.T) {
 	const runID = "run_abc"
 	logText := "__HETCHY_RUN_BEGIN run_abc__\n" +

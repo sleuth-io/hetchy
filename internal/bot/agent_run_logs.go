@@ -97,10 +97,27 @@ type replayFrameResult struct {
 	Cursor    int64
 }
 
+type replayFrameState struct {
+	inFrame   bool
+	seenBegin bool
+	seenEnd   bool
+	exitCode  int
+}
+
 func replayHetchyFramedLog(runID, logText string, suppressThrough int64, gate interface{ SetSuppressed(bool) }, onLine func(string), onCursor func(int64)) replayFrameResult {
-	result := replayFrameResult{}
-	inFrame := false
-	cursor := int64(0)
+	result, _ := replayHetchyFramedLogState(runID, logText, 0, suppressThrough, replayFrameState{}, gate, onLine, onCursor)
+	return result
+}
+
+func replayHetchyFramedLogState(runID, logText string, startCursor, suppressThrough int64, state replayFrameState, gate interface{ SetSuppressed(bool) }, onLine func(string), onCursor func(int64)) (replayFrameResult, replayFrameState) {
+	result := replayFrameResult{
+		SeenBegin: state.seenBegin,
+		SeenEnd:   state.seenEnd,
+		ExitCode:  state.exitCode,
+		Cursor:    startCursor,
+	}
+	inFrame := state.inFrame
+	cursor := startCursor
 	for len(logText) > 0 {
 		next := strings.IndexByte(logText, '\n')
 		var raw string
@@ -122,6 +139,7 @@ func replayHetchyFramedLog(runID, logText string, suppressThrough int64, gate in
 		if raw == hetchyRunBeginSentinel(runID) {
 			inFrame = true
 			result.SeenBegin = true
+			state.seenBegin = true
 			if onCursor != nil {
 				onCursor(cursor)
 			}
@@ -131,6 +149,8 @@ func replayHetchyFramedLog(runID, logText string, suppressThrough int64, gate in
 			inFrame = false
 			result.SeenEnd = true
 			result.ExitCode, _ = parseHetchyRunExitCode(runID, raw)
+			state.seenEnd = true
+			state.exitCode = result.ExitCode
 			if onCursor != nil {
 				onCursor(cursor)
 			}
@@ -153,7 +173,8 @@ func replayHetchyFramedLog(runID, logText string, suppressThrough int64, gate in
 	if gate != nil {
 		gate.SetSuppressed(false)
 	}
-	return result
+	state.inFrame = inFrame
+	return result, state
 }
 
 func errMissingHetchyFrame(runID string) error {
