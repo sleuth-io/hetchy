@@ -231,6 +231,24 @@ func (s *Store) ListExpired(ctx context.Context, limit int32) ([]Run, error) {
 	return out, nil
 }
 
+func (s *Store) ListActiveForLeaseOwnerPrefix(ctx context.Context, prefix string, limit int32) ([]Run, error) {
+	if !s.Enabled() || prefix == "" {
+		return nil, nil
+	}
+	rows, err := s.db.Queries.ListActiveAgentRunsForLeaseOwnerPrefix(ctx, sqlc.ListActiveAgentRunsForLeaseOwnerPrefixParams{
+		LeaseOwnerPrefix: prefix,
+		LimitCount:       limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Run, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, fromRunRow(row))
+	}
+	return out, nil
+}
+
 func (s *Store) Claim(ctx context.Context, id, leaseOwner string, leaseDuration time.Duration) (Run, error) {
 	if !s.Enabled() {
 		return Run{}, pgx.ErrNoRows
@@ -239,6 +257,22 @@ func (s *Store) Claim(ctx context.Context, id, leaseOwner string, leaseDuration 
 		ID:            id,
 		LeaseOwner:    leaseOwner,
 		LeaseDuration: interval(leaseDuration),
+	})
+	if err != nil {
+		return Run{}, err
+	}
+	return fromRunRow(row), nil
+}
+
+func (s *Store) ClaimFromOwner(ctx context.Context, id, leaseOwner, previousLeaseOwner string, leaseDuration time.Duration) (Run, error) {
+	if !s.Enabled() {
+		return Run{}, pgx.ErrNoRows
+	}
+	row, err := s.db.Queries.ClaimAgentRunLeaseFromOwner(ctx, sqlc.ClaimAgentRunLeaseFromOwnerParams{
+		ID:                 id,
+		LeaseOwner:         leaseOwner,
+		PreviousLeaseOwner: previousLeaseOwner,
+		LeaseDuration:      interval(leaseDuration),
 	})
 	if err != nil {
 		return Run{}, err

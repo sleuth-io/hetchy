@@ -1425,6 +1425,9 @@ func (b *Bot) chatStreamHandler(w http.ResponseWriter, r *http.Request) {
 	if b.runs != nil && b.runs.Enabled() {
 		latest, err := b.runs.LatestForThread(r.Context(), p.OrgID, sessionID)
 		if err == nil && (!isTerminalRunState(latest.State) || run != nil) {
+			if run == nil && !isTerminalRunState(latest.State) {
+				run = b.recoverRunForReattach(r.Context(), latest)
+			}
 			events, err := b.runs.EventsAfter(r.Context(), latest.ID, 0)
 			if err != nil {
 				b.log.Warn("list run events for stream", "org", p.OrgID, "thread", sessionID, "run", latest.ID, "error", err)
@@ -1434,12 +1437,21 @@ func (b *Bot) chatStreamHandler(w http.ResponseWriter, r *http.Request) {
 					replay = append(replay, liveEvent{Event: ev.Event, Data: ev.Data, Seq: ev.Seq})
 					lastSeq = ev.Seq
 				}
+				b.log.Info("chat stream replayed durable run events",
+					"org", p.OrgID,
+					"thread", sessionID,
+					"run_id", latest.ID,
+					"state", latest.State,
+					"events", len(events),
+					"live_attached", run != nil,
+				)
 			}
 		} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			b.log.Warn("latest run lookup for stream", "org", p.OrgID, "thread", sessionID, "error", err)
 		}
 	}
 	if run == nil && len(replay) == 0 {
+		b.log.Info("chat stream reattach found no live or durable run", "org", p.OrgID, "thread", sessionID)
 		http.Error(w, "no live run", http.StatusNotFound)
 		return
 	}

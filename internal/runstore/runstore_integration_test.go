@@ -106,3 +106,57 @@ func TestCancelClaimsRunAppendsEventsAndMarksCancelled(t *testing.T) {
 		t.Fatalf("second cancel err = %v, want pgx.ErrNoRows", err)
 	}
 }
+
+func TestClaimFromOwnerReclaimsUnexpiredLease(t *testing.T) {
+	store, pool := newRunstoreTestStore(t)
+	ctx := context.Background()
+
+	orgID := "test-runstore-owner-claim"
+	threadID := "thread-" + time.Now().UTC().Format("20060102150405.000000000")
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM agent_runs WHERE org_id = $1`, orgID)
+	})
+
+	oldOwner := "test-host-111-a1b2c3"
+	run, inserted, err := store.Create(ctx, runstore.Run{
+		ID:          "run_" + threadID,
+		OrgID:       orgID,
+		ThreadID:    threadID,
+		RunKind:     "fresh",
+		RequestID:   "request-" + threadID,
+		UserRequest: "make a change",
+	}, oldOwner, time.Hour)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if !inserted {
+		t.Fatal("expected test run to be inserted")
+	}
+
+	runs, err := store.ListActiveForLeaseOwnerPrefix(ctx, "test-host-", 10)
+	if err != nil {
+		t.Fatalf("list active prefix: %v", err)
+	}
+	found := false
+	for _, candidate := range runs {
+		if candidate.ID == run.ID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("new run %q not returned for lease owner prefix", run.ID)
+	}
+
+	if _, err := store.Claim(ctx, run.ID, "worker-b", time.Minute); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("ordinary claim on unexpired lease err = %v, want pgx.ErrNoRows", err)
+	}
+
+	claimed, err := store.ClaimFromOwner(ctx, run.ID, "worker-b", oldOwner, time.Minute)
+	if err != nil {
+		t.Fatalf("claim from owner: %v", err)
+	}
+	if claimed.LeaseOwner != "worker-b" || claimed.State != runstore.StateRecovering {
+		t.Fatalf("claimed run = lease:%q state:%q, want worker-b/%s", claimed.LeaseOwner, claimed.State, runstore.StateRecovering)
+	}
+}

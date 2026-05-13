@@ -3,6 +3,8 @@ package bot
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -64,6 +66,34 @@ func TestDaytonaLogTarget(t *testing.T) {
 				t.Fatalf("daytonaLogTarget(%q) = (%q, %q), want (%q, %q)", tc.apiURL, gotMode, gotURL, tc.wantMode, tc.wantURL)
 			}
 		})
+	}
+}
+
+func TestWorkerIDParsing(t *testing.T) {
+	host, pid, ok := parseWorkerID("dev-host-name-12345-a1b2c3")
+	if !ok {
+		t.Fatal("parseWorkerID returned !ok")
+	}
+	if host != "dev-host-name" || pid != 12345 {
+		t.Fatalf("parseWorkerID = (%q, %d), want (dev-host-name, 12345)", host, pid)
+	}
+	if got := workerIDLeaseOwnerPrefix("dev-host-name-12345-a1b2c3"); got != "dev-host-name-" {
+		t.Fatalf("workerIDLeaseOwnerPrefix = %q, want dev-host-name-", got)
+	}
+	for _, invalid := range []string{"", "host", "host-pid-rand", "-123-rand", "host-0-rand"} {
+		if _, _, ok := parseWorkerID(invalid); ok {
+			t.Fatalf("parseWorkerID(%q) returned ok", invalid)
+		}
+	}
+}
+
+func TestSameHostWorkerLikelyDeadDoesNotStealLivePID(t *testing.T) {
+	workerID := fmt.Sprintf("test-host-%d-a1b2c3", os.Getpid())
+	if sameHostWorkerLikelyDead(workerID, workerID) {
+		t.Fatal("current process worker should not be considered dead")
+	}
+	if sameHostWorkerLikelyDead(workerID, fmt.Sprintf("other-host-%d-a1b2c3", os.Getpid())) {
+		t.Fatal("different host worker should not be considered locally dead")
 	}
 }
 

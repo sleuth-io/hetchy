@@ -100,13 +100,13 @@ func (q *Queries) ClaimAgentRunForCancel(ctx context.Context, arg ClaimAgentRunF
 const claimAgentRunLease = `-- name: ClaimAgentRunLease :one
 UPDATE agent_runs
    SET state = 'recovering',
-       lease_owner = $2,
-       lease_expires_at = NOW() + $3::interval,
+       lease_owner = $1,
+       lease_expires_at = NOW() + $2::interval,
        heartbeat_at = NOW(),
        updated_at = NOW()
-WHERE id = $1
+WHERE id = $3
   AND state IN ('preparing', 'running', 'recovering', 'finalizing')
-  AND (lease_expires_at IS NULL OR lease_expires_at < NOW() OR lease_owner = $2)
+  AND (lease_expires_at IS NULL OR lease_expires_at < NOW() OR lease_owner = $1)
 RETURNING id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
           user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
           lease_owner, lease_expires_at, heartbeat_at, last_error,
@@ -114,13 +114,69 @@ RETURNING id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
 `
 
 type ClaimAgentRunLeaseParams struct {
-	ID            string          `json:"id"`
 	LeaseOwner    string          `json:"lease_owner"`
 	LeaseDuration pgtype.Interval `json:"lease_duration"`
+	ID            string          `json:"id"`
 }
 
 func (q *Queries) ClaimAgentRunLease(ctx context.Context, arg ClaimAgentRunLeaseParams) (AgentRun, error) {
-	row := q.db.QueryRow(ctx, claimAgentRunLease, arg.ID, arg.LeaseOwner, arg.LeaseDuration)
+	row := q.db.QueryRow(ctx, claimAgentRunLease, arg.LeaseOwner, arg.LeaseDuration, arg.ID)
+	var i AgentRun
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ThreadID,
+		&i.RunKind,
+		&i.RequestID,
+		&i.SandboxID,
+		&i.Branch,
+		&i.UserRequest,
+		&i.SessionID,
+		&i.CommandID,
+		&i.CommandStartSeq,
+		&i.State,
+		&i.LogCursor,
+		&i.NextEventSeq,
+		&i.LeaseOwner,
+		&i.LeaseExpiresAt,
+		&i.HeartbeatAt,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const claimAgentRunLeaseFromOwner = `-- name: ClaimAgentRunLeaseFromOwner :one
+UPDATE agent_runs
+   SET state = 'recovering',
+       lease_owner = $1,
+       lease_expires_at = NOW() + $2::interval,
+       heartbeat_at = NOW(),
+       updated_at = NOW()
+WHERE id = $3
+  AND lease_owner = $4
+  AND state IN ('preparing', 'running', 'recovering', 'finalizing')
+RETURNING id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
+          user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
+          lease_owner, lease_expires_at, heartbeat_at, last_error,
+          created_at, updated_at
+`
+
+type ClaimAgentRunLeaseFromOwnerParams struct {
+	LeaseOwner         string          `json:"lease_owner"`
+	LeaseDuration      pgtype.Interval `json:"lease_duration"`
+	ID                 string          `json:"id"`
+	PreviousLeaseOwner string          `json:"previous_lease_owner"`
+}
+
+func (q *Queries) ClaimAgentRunLeaseFromOwner(ctx context.Context, arg ClaimAgentRunLeaseFromOwnerParams) (AgentRun, error) {
+	row := q.db.QueryRow(ctx, claimAgentRunLeaseFromOwner,
+		arg.LeaseOwner,
+		arg.LeaseDuration,
+		arg.ID,
+		arg.PreviousLeaseOwner,
+	)
 	var i AgentRun
 	err := row.Scan(
 		&i.ID,
@@ -377,6 +433,64 @@ func (q *Queries) GetLatestAgentRunForThread(ctx context.Context, arg GetLatestA
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const listActiveAgentRunsForLeaseOwnerPrefix = `-- name: ListActiveAgentRunsForLeaseOwnerPrefix :many
+SELECT id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
+       user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
+       lease_owner, lease_expires_at, heartbeat_at, last_error,
+       created_at, updated_at
+FROM agent_runs
+WHERE state IN ('preparing', 'running', 'recovering', 'finalizing')
+  AND LEFT(lease_owner, LENGTH($1::text)) = $1::text
+ORDER BY updated_at ASC
+LIMIT $2
+`
+
+type ListActiveAgentRunsForLeaseOwnerPrefixParams struct {
+	LeaseOwnerPrefix string `json:"lease_owner_prefix"`
+	LimitCount       int32  `json:"limit_count"`
+}
+
+func (q *Queries) ListActiveAgentRunsForLeaseOwnerPrefix(ctx context.Context, arg ListActiveAgentRunsForLeaseOwnerPrefixParams) ([]AgentRun, error) {
+	rows, err := q.db.Query(ctx, listActiveAgentRunsForLeaseOwnerPrefix, arg.LeaseOwnerPrefix, arg.LimitCount)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AgentRun
+	for rows.Next() {
+		var i AgentRun
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.ThreadID,
+			&i.RunKind,
+			&i.RequestID,
+			&i.SandboxID,
+			&i.Branch,
+			&i.UserRequest,
+			&i.SessionID,
+			&i.CommandID,
+			&i.CommandStartSeq,
+			&i.State,
+			&i.LogCursor,
+			&i.NextEventSeq,
+			&i.LeaseOwner,
+			&i.LeaseExpiresAt,
+			&i.HeartbeatAt,
+			&i.LastError,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listAgentRunEventsFromSeq = `-- name: ListAgentRunEventsFromSeq :many
