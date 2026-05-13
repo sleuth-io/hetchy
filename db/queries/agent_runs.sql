@@ -150,6 +150,19 @@ RETURNING id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
           lease_owner, lease_expires_at, heartbeat_at, last_error,
           created_at, updated_at;
 
+-- name: ClaimAgentRunForCancel :one
+UPDATE agent_runs
+   SET lease_owner = $2,
+       lease_expires_at = NOW() + sqlc.arg(lease_duration)::interval,
+       heartbeat_at = NOW(),
+       updated_at = NOW()
+WHERE id = $1
+  AND state IN ('preparing', 'running', 'recovering', 'finalizing')
+RETURNING id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
+          user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
+          lease_owner, lease_expires_at, heartbeat_at, last_error,
+          created_at, updated_at;
+
 -- name: AppendAgentRunEvent :one
 WITH next_event AS (
     UPDATE agent_runs

@@ -10,6 +10,7 @@ import (
 
 type Querier interface {
 	AppendAgentRunEvent(ctx context.Context, arg AppendAgentRunEventParams) (int64, error)
+	ClaimAgentRunForCancel(ctx context.Context, arg ClaimAgentRunForCancelParams) (AgentRun, error)
 	ClaimAgentRunLease(ctx context.Context, arg ClaimAgentRunLeaseParams) (AgentRun, error)
 	CountAgentProfilesByOrg(ctx context.Context, orgID string) (int64, error)
 	CreateAgentRun(ctx context.Context, arg CreateAgentRunParams) (AgentRun, error)

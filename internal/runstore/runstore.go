@@ -241,6 +241,49 @@ func (s *Store) Claim(ctx context.Context, id, leaseOwner string, leaseDuration 
 	return fromRunRow(row), nil
 }
 
+func (s *Store) Cancel(ctx context.Context, id, lastErr, leaseOwner string, leaseDuration time.Duration, events []PendingEvent) (Run, error) {
+	if !s.Enabled() || id == "" {
+		return Run{}, pgx.ErrNoRows
+	}
+	var run Run
+	err := s.db.WithTx(ctx, func(q *sqlc.Queries) error {
+		row, err := q.ClaimAgentRunForCancel(ctx, sqlc.ClaimAgentRunForCancelParams{
+			ID:            id,
+			LeaseOwner:    leaseOwner,
+			LeaseDuration: interval(leaseDuration),
+		})
+		if err != nil {
+			return err
+		}
+		run = fromRunRow(row)
+		for _, ev := range events {
+			if _, err := q.AppendAgentRunEvent(ctx, sqlc.AppendAgentRunEventParams{
+				RunID:      id,
+				Event:      ev.Event,
+				Data:       ev.Data,
+				LeaseOwner: leaseOwner,
+			}); err != nil {
+				return fmt.Errorf("append cancel event: %w", err)
+			}
+		}
+		if err := q.UpdateAgentRunState(ctx, sqlc.UpdateAgentRunStateParams{
+			ID:         id,
+			State:      StateCancelled,
+			LastError:  lastErr,
+			LeaseOwner: leaseOwner,
+		}); err != nil {
+			return err
+		}
+		run.State = StateCancelled
+		run.LastError = lastErr
+		return nil
+	})
+	if err != nil {
+		return Run{}, err
+	}
+	return run, nil
+}
+
 func (s *Store) AppendEvent(ctx context.Context, runID, event string, data []byte, leaseOwner string) (int64, error) {
 	if !s.Enabled() || runID == "" {
 		return 0, nil

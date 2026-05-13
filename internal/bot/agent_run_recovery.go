@@ -14,6 +14,7 @@ import (
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
 
 	"github.com/hetchyhq/hetchy/internal/blocks"
+	"github.com/hetchyhq/hetchy/internal/convstore"
 	"github.com/hetchyhq/hetchy/internal/runstore"
 )
 
@@ -251,7 +252,7 @@ func (b *Bot) recoveredRunHasTerminalBlock(ctx context.Context, runID string, ki
 		return false
 	}
 	for _, block := range blocksFromRunEvents(events) {
-		if block.Kind == kind {
+		if block.Kind == kind && block.Status != blocks.StatusStreaming {
 			return true
 		}
 	}
@@ -290,7 +291,7 @@ func (b *Bot) commandLogSnapshot(ctx context.Context, sb *daytona.Sandbox, sessi
 	raw, rawErr := rawDaytonaCommandLogs(ctx, sb, sessionID, commandID)
 	if rawErr != nil {
 		if err != nil {
-			return "", fmt.Errorf("get command logs: %v; raw fallback: %w", err, rawErr)
+			return "", fmt.Errorf("get command logs: %w; raw fallback: %w", err, rawErr)
 		}
 		return "", rawErr
 	}
@@ -366,7 +367,13 @@ func sessionCommandExitCode(status map[string]any) (int64, bool) {
 
 func (b *Bot) projectRecoveredConversation(ctx context.Context, run runstore.Run, prURL string) error {
 	rec, err := b.convs.Get(ctx, run.OrgID, run.ThreadID)
-	if err != nil {
+	if errors.Is(err, convstore.ErrNotFound) {
+		rec = convstore.Record{
+			OrgID:    run.OrgID,
+			ThreadID: run.ThreadID,
+			History:  []string{run.UserRequest},
+		}
+	} else if err != nil {
 		return err
 	}
 	events, err := b.runs.EventsAfter(ctx, run.ID, 0)

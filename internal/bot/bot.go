@@ -401,6 +401,27 @@ func chatTaskOptionEnabled(values map[string]bool, key string) bool {
 // keys default on. Follow-ups also receive the resolved options; when
 // validation is true and a saved spec exists, they rerun the validation
 // handoff without re-bootstrap.
+func (b *Bot) prepareAgentRun(ctx context.Context, orgID, threadID, requestID, text string, out blocks.Emitter) (context.Context, runstore.Run, bool) {
+	run, runOK, runErr := b.createAgentRun(ctx, orgID, threadID, requestID, text)
+	if runErr != nil {
+		b.log.Error("agent run create failed", "org", orgID, "thread", threadID, "request_id", requestID, "error", runErr)
+		emitPreRunError(ctx, out, "Run could not start", "Hetchy could not create a durable run record for this turn. Try again.")
+		return ctx, runstore.Run{}, false
+	}
+	if !runOK {
+		b.log.Info("duplicate in-flight agent run ignored",
+			"org", orgID, "thread", threadID, "request_id", requestID, "run_id", run.ID, "state", run.State)
+		if run.RequestID != "" && run.RequestID != requestID {
+			emitPreRunError(ctx, out, "Run already in flight", "This chat already has a turn in flight. Reload to reattach before sending another message.")
+		}
+		return ctx, run, false
+	}
+	if run.ID != "" {
+		ctx = contextWithAgentRun(ctx, run)
+	}
+	return ctx, run, true
+}
+
 func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, requestID, threadID, userID string, optionPatch chatTaskOptionPatch, requestedAgent *string, model ClaudeModel, out blocks.Emitter) {
 	model = normalizeClaudeModel(model)
 	b.log.Info("request received",
@@ -414,20 +435,10 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 	)
 
 	recorder := blocks.NewRecorder(maxBlocksPerTurn)
-	run, runOK, runErr := b.createAgentRun(ctx, oc.OrgID, threadID, requestID, text)
-	if runErr != nil {
-		b.log.Error("agent run create failed", "org", oc.OrgID, "thread", threadID, "request_id", requestID, "error", runErr)
-	}
-	if !runOK {
-		b.log.Info("duplicate in-flight agent run ignored",
-			"org", oc.OrgID, "thread", threadID, "request_id", requestID, "run_id", run.ID, "state", run.State)
-		if run.RequestID != "" && run.RequestID != requestID {
-			out.Error("Run already in flight", "This chat already has a turn in flight. Reload to reattach before sending another message.")
-		}
+	var run runstore.Run
+	var ok bool
+	if ctx, run, ok = b.prepareAgentRun(ctx, oc.OrgID, threadID, requestID, text, out); !ok {
 		return
-	}
-	if run.ID != "" {
-		ctx = contextWithAgentRun(ctx, run)
 	}
 
 	// Wrap the transport emitter with a Recorder so every block streamed
@@ -1289,6 +1300,65 @@ func (b *Bot) cleanupSandboxByID(sandboxID, reason string) {
 		return
 	}
 	b.cleanupSandbox(ctx, sb, reason)
+}
+
+func (b *Bot) cancelDurableRun(ctx context.Context, run runstore.Run, actor string) error {
+	if b.runs == nil || !b.runs.Enabled() || run.ID == "" {
+		return nil
+	}
+	events, err := b.runs.EventsAfter(ctx, run.ID, 0)
+	if err != nil {
+		return fmt.Errorf("list cancel events: %w", err)
+	}
+	cancelled, err := b.runs.Cancel(ctx, run.ID, "cancel requested", b.workerID, agentRunLeaseDuration, cancelledAgentRunEvents(events))
+	if err != nil {
+		return fmt.Errorf("cancel run: %w", err)
+	}
+	cleanupOnCancel := cancelled.RunKind != "followup"
+	b.log.Info("durable chat cancel requested",
+		"org", cancelled.OrgID,
+		"thread", cancelled.ThreadID,
+		"run_id", cancelled.ID,
+		"user", actor,
+		"sandbox", cancelled.SandboxID,
+		"session", cancelled.SessionID,
+		"cleanup_on_cancel", cleanupOnCancel,
+	)
+	b.cleanupCancelledDurableRun(cancelled)
+	return nil
+}
+
+func (b *Bot) cleanupCancelledDurableRun(run runstore.Run) {
+	sandboxID := strings.TrimSpace(run.SandboxID)
+	if sandboxID == "" {
+		return
+	}
+	cleanupOnCancel := run.RunKind != "followup"
+	if b.daytona == nil {
+		if cleanupOnCancel {
+			cleanup := b.cleanupSandboxByID
+			if b.cleanupSandboxByIDFn != nil {
+				cleanup = b.cleanupSandboxByIDFn
+			}
+			go cleanup(sandboxID, "cancel requested")
+		}
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		sb, err := b.daytona.Get(ctx, sandboxID)
+		if err != nil {
+			b.log.Warn("cancelled run sandbox lookup failed", "sandbox", sandboxID, "run_id", run.ID, "error", err)
+			return
+		}
+		if run.SessionID != "" {
+			b.deleteSandboxSession(sb, run.SessionID)
+		}
+		if cleanupOnCancel {
+			b.cleanupSandbox(ctx, sb, "cancel requested")
+		}
+	}()
 }
 
 func (b *Bot) cleanupSandbox(ctx context.Context, sb *daytona.Sandbox, reason string) {

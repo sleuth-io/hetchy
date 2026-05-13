@@ -642,7 +642,7 @@ func (b *Bot) runScript(ctx context.Context, sb *daytona.Sandbox, sessionID, lab
 	if durable != nil {
 		if err := durable.Err(); err != nil {
 			router.Abort()
-			return "", fmt.Errorf("%w: persist agent run events: %v", errAgentRunDurability, err)
+			return "", fmt.Errorf("%w: persist agent run events: %w", errAgentRunDurability, err)
 		}
 	}
 	if !framed.SeenBegin() {
@@ -653,7 +653,7 @@ func (b *Bot) runScript(ctx context.Context, sb *daytona.Sandbox, sessionID, lab
 	if durable != nil {
 		if err := durable.Err(); err != nil {
 			router.Abort()
-			return "", fmt.Errorf("%w: persist agent run events: %v", errAgentRunDurability, err)
+			return "", fmt.Errorf("%w: persist agent run events: %w", errAgentRunDurability, err)
 		}
 	}
 	if prURL == "" {

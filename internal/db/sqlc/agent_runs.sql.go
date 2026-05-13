@@ -47,6 +47,54 @@ func (q *Queries) AppendAgentRunEvent(ctx context.Context, arg AppendAgentRunEve
 	return seq, err
 }
 
+const claimAgentRunForCancel = `-- name: ClaimAgentRunForCancel :one
+UPDATE agent_runs
+   SET lease_owner = $2,
+       lease_expires_at = NOW() + $3::interval,
+       heartbeat_at = NOW(),
+       updated_at = NOW()
+WHERE id = $1
+  AND state IN ('preparing', 'running', 'recovering', 'finalizing')
+RETURNING id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
+          user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
+          lease_owner, lease_expires_at, heartbeat_at, last_error,
+          created_at, updated_at
+`
+
+type ClaimAgentRunForCancelParams struct {
+	ID            string          `json:"id"`
+	LeaseOwner    string          `json:"lease_owner"`
+	LeaseDuration pgtype.Interval `json:"lease_duration"`
+}
+
+func (q *Queries) ClaimAgentRunForCancel(ctx context.Context, arg ClaimAgentRunForCancelParams) (AgentRun, error) {
+	row := q.db.QueryRow(ctx, claimAgentRunForCancel, arg.ID, arg.LeaseOwner, arg.LeaseDuration)
+	var i AgentRun
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ThreadID,
+		&i.RunKind,
+		&i.RequestID,
+		&i.SandboxID,
+		&i.Branch,
+		&i.UserRequest,
+		&i.SessionID,
+		&i.CommandID,
+		&i.CommandStartSeq,
+		&i.State,
+		&i.LogCursor,
+		&i.NextEventSeq,
+		&i.LeaseOwner,
+		&i.LeaseExpiresAt,
+		&i.HeartbeatAt,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const claimAgentRunLease = `-- name: ClaimAgentRunLease :one
 UPDATE agent_runs
    SET state = 'recovering',

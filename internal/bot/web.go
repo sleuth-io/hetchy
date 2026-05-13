@@ -1350,6 +1350,23 @@ func (b *Bot) chatCancelHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	run := b.live.Get(p.OrgID, sessionID)
 	if run == nil {
+		if b.runs != nil && b.runs.Enabled() {
+			active, err := b.runs.ActiveForThread(r.Context(), p.OrgID, sessionID)
+			if err == nil {
+				if err := b.cancelDurableRun(r.Context(), active, p.UserID); err != nil {
+					b.log.Warn("durable chat cancel failed", "org", p.OrgID, "thread", sessionID, "user", p.UserID, "run_id", active.ID, "error", err)
+					http.Error(w, "could not cancel live run", http.StatusInternalServerError)
+					return
+				}
+				w.WriteHeader(http.StatusAccepted)
+				return
+			}
+			if !errors.Is(err, pgx.ErrNoRows) {
+				b.log.Warn("active run lookup for chat cancel", "org", p.OrgID, "thread", sessionID, "user", p.UserID, "error", err)
+				http.Error(w, "could not check active chat run", http.StatusInternalServerError)
+				return
+			}
+		}
 		http.Error(w, "no live run", http.StatusNotFound)
 		return
 	}

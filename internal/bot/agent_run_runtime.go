@@ -230,6 +230,51 @@ func recoveredAgentRunEmitterIDs(events []runstore.Event, commandStartSeq int64)
 	return maxID, replayIDs
 }
 
+func cancelledAgentRunEvents(events []runstore.Event) []runstore.PendingEvent {
+	maxID, _ := recoveredAgentRunEmitterIDs(events, 0)
+	id := "p" + strconv.FormatUint(maxID+1, 10)
+	now := time.Now().UTC()
+	payloads := []durableRunEvent{
+		{
+			name: "block_start",
+			data: mustMarshalSSEEvent(sseEvent{
+				ID:        id,
+				Kind:      blocks.KindResult,
+				Title:     "Stopped",
+				StartedAt: now,
+			}),
+		},
+		{
+			name: "block_append",
+			data: mustMarshalSSEEvent(sseEvent{
+				ID:    id,
+				Delta: "Stopped by request.",
+			}),
+		},
+		{
+			name: "block_done",
+			data: mustMarshalSSEEvent(sseEvent{
+				ID:      id,
+				Status:  blocks.StatusDone,
+				EndedAt: now,
+			}),
+		},
+	}
+	out := make([]runstore.PendingEvent, 0, len(payloads))
+	for _, ev := range payloads {
+		out = append(out, runstore.PendingEvent{Event: ev.name, Data: ev.data})
+	}
+	return out
+}
+
+func mustMarshalSSEEvent(ev sseEvent) []byte {
+	payload, err := json.Marshal(ev)
+	if err != nil {
+		return nil
+	}
+	return payload
+}
+
 func parseAgentRunEmitterID(id string) (uint64, bool) {
 	raw, ok := strings.CutPrefix(id, "p")
 	if !ok || raw == "" {
@@ -449,3 +494,13 @@ func (noopEmitter) Fail(string, string)                              {}
 func (noopEmitter) Notify(string, string)                            {}
 func (noopEmitter) Result(string, string)                            {}
 func (noopEmitter) Error(string, string)                             {}
+
+func emitPreRunError(ctx context.Context, out blocks.Emitter, title, body string) {
+	out.Error(title, body)
+	if _, ok := out.(noopEmitter); !ok {
+		return
+	}
+	if live := liveRunFromContext(ctx); live != nil {
+		newLiveEmitter(live).Error(title, body)
+	}
+}
