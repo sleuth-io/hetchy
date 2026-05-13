@@ -35,6 +35,8 @@ type AppendAgentRunEventParams struct {
 	LeaseOwner string `json:"lease_owner"`
 }
 
+// Appends intentionally serialize per run on the agent_runs row lock so
+// next_event_seq stays monotonic and replay order is deterministic.
 func (q *Queries) AppendAgentRunEvent(ctx context.Context, arg AppendAgentRunEventParams) (int64, error) {
 	row := q.db.QueryRow(ctx, appendAgentRunEvent,
 		arg.RunID,

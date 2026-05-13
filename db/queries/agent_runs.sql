@@ -163,6 +163,8 @@ RETURNING id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
           lease_owner, lease_expires_at, heartbeat_at, last_error,
           created_at, updated_at;
 
+-- Appends intentionally serialize per run on the agent_runs row lock so
+-- next_event_seq stays monotonic and replay order is deterministic.
 -- name: AppendAgentRunEvent :one
 WITH next_event AS (
     UPDATE agent_runs

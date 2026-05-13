@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/hetchyhq/hetchy/internal/blocks"
 	"github.com/hetchyhq/hetchy/internal/convstore"
@@ -19,6 +20,7 @@ import (
 )
 
 const recoverySweepInterval = 30 * time.Second
+const rawDaytonaCommandLogTimeout = 30 * time.Second
 
 func (b *Bot) runRecoveryLoop(ctx context.Context) {
 	if b.runs == nil || !b.runs.Enabled() || b.daytona == nil {
@@ -46,13 +48,19 @@ func (b *Bot) recoverExpiredRuns(ctx context.Context) {
 	for _, run := range runs {
 		claimed, err := b.runs.Claim(ctx, run.ID, b.workerID, agentRunLeaseDuration)
 		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				b.log.Debug("agent run recovery claim lost race", "run_id", run.ID, "org", run.OrgID, "thread", run.ThreadID)
+			} else {
+				b.log.Warn("agent run recovery claim failed", "run_id", run.ID, "org", run.OrgID, "thread", run.ThreadID, "error", err)
+			}
 			continue
 		}
-		go b.recoverAgentRun(ctx, claimed)
+		go b.recoverAgentRun(context.WithoutCancel(ctx), claimed)
 	}
 }
 
 func (b *Bot) recoverAgentRun(ctx context.Context, run runstore.Run) {
+	ctx = context.WithoutCancel(ctx)
 	var live *liveRun
 	var registeredLive bool
 	if b.live != nil {
@@ -285,7 +293,7 @@ func (b *Bot) commandLogSnapshot(ctx context.Context, sb *daytona.Sandbox, sessi
 		case logs.Stdout != "" && logs.Stderr == "":
 			return logs.Stdout, nil
 		default:
-			return logs.Stdout + logs.Stderr, nil
+			return combineCommandOutput(logs.Stdout, logs.Stderr), nil
 		}
 	}
 	raw, rawErr := rawDaytonaCommandLogs(ctx, sb, sessionID, commandID)
@@ -308,7 +316,9 @@ func rawDaytonaCommandLogs(ctx context.Context, sb *daytona.Sandbox, sessionID, 
 	}
 	base := strings.TrimRight(cfg.Servers[0].URL, "/")
 	u := base + "/process/session/" + url.PathEscape(sessionID) + "/command/" + url.PathEscape(commandID) + "/logs"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	fetchCtx, cancel := context.WithTimeout(ctx, rawDaytonaCommandLogTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(fetchCtx, http.MethodGet, u, nil)
 	if err != nil {
 		return "", err
 	}
@@ -338,10 +348,23 @@ func rawDaytonaCommandLogs(ctx context.Context, sb *daytona.Sandbox, sessionID, 
 			if decoded.Output != "" {
 				return decoded.Output, nil
 			}
-			return decoded.Stdout + decoded.Stderr, nil
+			return combineCommandOutput(decoded.Stdout, decoded.Stderr), nil
 		}
 	}
 	return string(body), nil
+}
+
+func combineCommandOutput(stdout, stderr string) string {
+	switch {
+	case stdout == "":
+		return stderr
+	case stderr == "":
+		return stdout
+	case strings.HasSuffix(stdout, "\n"):
+		return stdout + stderr
+	default:
+		return stdout + "\n" + stderr
+	}
 }
 
 func sessionCommandExitCode(status map[string]any) (int64, bool) {

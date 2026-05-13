@@ -2,6 +2,7 @@ package bot
 
 import (
 	"encoding/json"
+	"errors"
 	"reflect"
 	"testing"
 
@@ -81,6 +82,28 @@ func TestReplayHetchyFramedLogSuppressesConsumedPrefix(t *testing.T) {
 	}
 }
 
+func TestReplayHetchyFramedLogCursorBoundaryDoesNotDoubleEmit(t *testing.T) {
+	const runID = "run_abc"
+	logText := "__HETCHY_RUN_BEGIN run_abc__\n" +
+		"[hetchy] persisted\n" +
+		"[hetchy] new\n" +
+		"__HETCHY_RUN_END run_abc 0__\n"
+	cursorAfterPersistedLine := int64(len("__HETCHY_RUN_BEGIN run_abc__\n" +
+		"[hetchy] persisted\n"))
+
+	gate := &testSuppressionGate{}
+	var got []string
+	replayHetchyFramedLog(runID, logText, cursorAfterPersistedLine, gate, func(line string) {
+		if !gate.suppressed {
+			got = append(got, line)
+		}
+	}, nil)
+
+	if want := []string{"[hetchy] new"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("replayed lines = %#v, want %#v", got, want)
+	}
+}
+
 func TestReplayHetchyFramedLogAdvancesCursorForSuppressedLines(t *testing.T) {
 	const runID = "run_abc"
 	logText := "__HETCHY_RUN_BEGIN run_abc__\n" +
@@ -151,6 +174,20 @@ func TestRecoveredTerminalEmitterStartsAfterExistingBlockIDs(t *testing.T) {
 	})
 	if got := em.Start(blocks.KindError, "Agent failed", nil); got != "p3" {
 		t.Fatalf("terminal block id = %q, want p3", got)
+	}
+}
+
+func TestAgentRunEmitterBeginBatchDetectsUnflushedBatch(t *testing.T) {
+	em := newAgentRunEmitter(nil, "run_abc", "worker", nil)
+	em.BeginBatch()
+	em.Notify("Starting", "first batch")
+	em.BeginBatch()
+
+	if err := em.Err(); !errors.Is(err, errAgentRunDurability) {
+		t.Fatalf("err = %v, want errAgentRunDurability", err)
+	}
+	if err := em.FlushBatch(1); !errors.Is(err, errAgentRunDurability) {
+		t.Fatalf("flush err = %v, want errAgentRunDurability", err)
 	}
 }
 

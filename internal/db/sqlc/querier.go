@@ -9,6 +9,8 @@ import (
 )
 
 type Querier interface {
+	// Appends intentionally serialize per run on the agent_runs row lock so
+	// next_event_seq stays monotonic and replay order is deterministic.
 	AppendAgentRunEvent(ctx context.Context, arg AppendAgentRunEventParams) (int64, error)
 	ClaimAgentRunForCancel(ctx context.Context, arg ClaimAgentRunForCancelParams) (AgentRun, error)
 	ClaimAgentRunLease(ctx context.Context, arg ClaimAgentRunLeaseParams) (AgentRun, error)

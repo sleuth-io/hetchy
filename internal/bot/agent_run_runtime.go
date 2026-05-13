@@ -313,6 +313,10 @@ func (e *agentRunEmitter) BeginBatch() {
 	if e.err != nil {
 		return
 	}
+	if e.buffering && len(e.buffer) > 0 {
+		e.err = fmt.Errorf("%w: begin batch called before previous batch was flushed", errAgentRunDurability)
+		return
+	}
 	e.buffering = true
 	e.buffer = e.buffer[:0]
 }
