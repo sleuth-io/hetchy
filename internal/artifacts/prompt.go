@@ -43,6 +43,18 @@ Then link the matching get_url in the PR body:
   # image proof: ![Validation proof]($GET_URL)
   # video proof: [Validation recording]($GET_URL)
 
+The PR body must contain the expanded https:// S3 get_url, not literal
+text like "$GET_URL". Do not put markdown containing $GET_URL inside a
+single-quoted heredoc such as <<'EOF'. Use an unquoted heredoc (<<EOF)
+or substitute the URL into a temporary body file before calling gh.
+
+After editing the PR body, verify it without printing signed URLs:
+
+  # Set PR_URL to the opened PR URL, or substitute the literal PR URL.
+  BODY=$(gh pr view "$PR_URL" --json body --jq .body)
+  printf '%%s' "$BODY" | grep -q '\$GET_URL' && { echo "PR body still contains literal GET_URL"; exit 1; }
+  printf '%%s' "$BODY" | grep -q 'https://' || { echo "PR body is missing expanded artifact URL"; exit 1; }
+
 For recordings, use whole-screen MP4 files encoded as H.264 for widest
 browser compatibility. GitHub inline playback is not guaranteed for
 external S3 video URLs, so include a clear markdown link even if the

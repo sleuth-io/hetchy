@@ -125,6 +125,11 @@ func TestConditionalTasksPromptRespectsOptions(t *testing.T) {
 		"Review code before push",
 		"sub-agent",
 		"Action PR checks for done",
+		"Set `PR_URL`",
+		`gh pr checks "$PR_URL" --watch --interval 10`,
+		"Do not append `|| true`",
+		"GraphQL/API permission error",
+		`gh run list --branch "$BRANCH"`,
 		"automated AI review",
 		"LOW severity",
 	} {
