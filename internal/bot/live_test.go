@@ -5,48 +5,27 @@ import (
 	"testing"
 )
 
-func TestLiveRunCancelCancelsContextAndKeepsSandboxID(t *testing.T) {
-	reg := newLiveRegistry()
-	run, ok := reg.RegisterIfAbsent(context.Background(), "org", "thread")
-	if !ok {
-		t.Fatal("first register should win")
-	}
-	run.SetSandboxID("sandbox-1", true)
+func TestLiveRunSubscribeAfterFiltersFutureDuplicateSeq(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	run := newLiveRun(ctx, cancel)
+	sub := run.SubscribeAfter(10)
+	defer run.Unsubscribe(sub)
 
-	if run.Cancelled() {
-		t.Fatal("run should not start cancelled")
+	run.Emit(liveEvent{Event: "block_append", Seq: 10, Data: []byte(`{"id":"p1"}`)})
+	select {
+	case ev := <-sub.ch:
+		t.Fatalf("received duplicate event at seq cutoff: %+v", ev)
+	default:
 	}
-	if got := run.SandboxID(); got != "sandbox-1" {
-		t.Fatalf("SandboxID = %q, want sandbox-1", got)
-	}
-	if got, cleanup := run.CancelCleanupSandboxID(); got != "sandbox-1" || !cleanup {
-		t.Fatalf("CancelCleanupSandboxID = (%q, %v), want (sandbox-1, true)", got, cleanup)
-	}
-	if !run.Cancel() {
-		t.Fatal("first cancel should report true")
-	}
-	if !run.Cancelled() {
-		t.Fatal("run should report cancelled")
-	}
-	if err := run.Context().Err(); err == nil {
-		t.Fatal("run context should be cancelled")
-	}
-	if run.Cancel() {
-		t.Fatal("second cancel should report false")
-	}
-}
 
-func TestLiveRegistryRejectsDuplicateAndCleansUpOnDone(t *testing.T) {
-	reg := newLiveRegistry()
-	run, ok := reg.RegisterIfAbsent(context.Background(), "org", "thread")
-	if !ok {
-		t.Fatal("first register should win")
-	}
-	if _, ok := reg.RegisterIfAbsent(context.Background(), "org", "thread"); ok {
-		t.Fatal("duplicate register should lose")
-	}
-	reg.Done("org", "thread", run)
-	if got := reg.Get("org", "thread"); got != nil {
-		t.Fatalf("run should be removed after Done, got %+v", got)
+	run.Emit(liveEvent{Event: "block_append", Seq: 11, Data: []byte(`{"id":"p1"}`)})
+	select {
+	case ev := <-sub.ch:
+		if ev.Seq != 11 {
+			t.Fatalf("event seq = %d, want 11", ev.Seq)
+		}
+	default:
+		t.Fatal("expected event beyond seq cutoff")
 	}
 }

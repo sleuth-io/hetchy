@@ -15,6 +15,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/hetchyhq/hetchy/internal/agents"
 	"github.com/hetchyhq/hetchy/internal/auth"
 	"github.com/hetchyhq/hetchy/internal/blocks"
@@ -1282,6 +1284,19 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 		sessionID = requestID
 	}
 
+	if b.runs != nil && b.runs.Enabled() {
+		if active, err := b.runs.ActiveForThread(r.Context(), p.OrgID, sessionID); err == nil {
+			b.log.Info("chat post rejected due active durable run",
+				"org", p.OrgID, "thread", sessionID, "run_id", active.ID, "state", active.State)
+			http.Error(w, "this chat already has a turn in flight; reload to reattach", http.StatusConflict)
+			return
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			b.log.Warn("active run lookup for chat post", "org", p.OrgID, "thread", sessionID, "error", err)
+			http.Error(w, "could not check active chat run", http.StatusInternalServerError)
+			return
+		}
+	}
+
 	// Atomically claim the in-flight slot. RegisterIfAbsent collapses
 	// the prior Get-then-Register TOCTOU where two concurrent POSTs
 	// could each observe an empty slot, both call Register, and the
@@ -1299,7 +1314,10 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
 
-	emitter := newLiveEmitter(run)
+	var emitter blocks.Emitter = newLiveEmitter(run)
+	if b.runs != nil && b.runs.Enabled() {
+		emitter = noopEmitter{}
+	}
 
 	go func() {
 		defer b.live.Done(p.OrgID, sessionID, run)
@@ -1332,6 +1350,27 @@ func (b *Bot) chatCancelHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	run := b.live.Get(p.OrgID, sessionID)
 	if run == nil {
+		if b.runs != nil && b.runs.Enabled() {
+			active, err := b.runs.ActiveForThread(r.Context(), p.OrgID, sessionID)
+			if err == nil {
+				if err := b.cancelDurableRun(r.Context(), active, p.UserID); err != nil {
+					if errors.Is(err, pgx.ErrNoRows) {
+						http.Error(w, "no live run", http.StatusNotFound)
+						return
+					}
+					b.log.Warn("durable chat cancel failed", "org", p.OrgID, "thread", sessionID, "user", p.UserID, "run_id", active.ID, "error", err)
+					http.Error(w, "could not cancel live run", http.StatusInternalServerError)
+					return
+				}
+				w.WriteHeader(http.StatusAccepted)
+				return
+			}
+			if !errors.Is(err, pgx.ErrNoRows) {
+				b.log.Warn("active run lookup for chat cancel", "org", p.OrgID, "thread", sessionID, "user", p.UserID, "error", err)
+				http.Error(w, "could not check active chat run", http.StatusInternalServerError)
+				return
+			}
+		}
 		http.Error(w, "no live run", http.StatusNotFound)
 		return
 	}
@@ -1349,11 +1388,37 @@ func (b *Bot) chatCancelHandler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusAccepted)
 		return
 	}
+	durableCancelled := false
+	if b.runs != nil && b.runs.Enabled() {
+		active, err := b.runs.ActiveForThread(r.Context(), p.OrgID, sessionID)
+		if err == nil {
+			if err := b.cancelDurableRun(r.Context(), active, p.UserID); err != nil {
+				if !errors.Is(err, pgx.ErrNoRows) {
+					b.log.Warn("durable chat cancel failed",
+						"org", p.OrgID,
+						"thread", sessionID,
+						"user", p.UserID,
+						"run_id", active.ID,
+						"error", err,
+					)
+				}
+			} else {
+				durableCancelled = true
+			}
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			b.log.Warn("active run lookup for live chat cancel",
+				"org", p.OrgID,
+				"thread", sessionID,
+				"user", p.UserID,
+				"error", err,
+			)
+		}
+	}
 	// Any org member may stop a runaway in-flight turn. We log the actor
 	// above for auditability. Only fresh-run sandboxes are cleaned up from
 	// this handler; follow-up runs reuse the conversation sandbox and must
 	// remain available for the next message.
-	if sandboxID != "" && cleanupOnCancel {
+	if sandboxID != "" && cleanupOnCancel && !durableCancelled {
 		cleanup := b.cleanupSandboxByID
 		if b.cleanupSandboxByIDFn != nil {
 			cleanup = b.cleanupSandboxByIDFn
@@ -1381,7 +1446,40 @@ func (b *Bot) chatStreamHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	run := b.live.Get(p.OrgID, sessionID)
-	if run == nil {
+	var replay []liveEvent
+	afterSeq := parseSSEAfterSeq(r.URL.Query().Get("after_seq"))
+	lastSeq := afterSeq
+	if b.runs != nil && b.runs.Enabled() {
+		latest, err := b.runs.LatestForThread(r.Context(), p.OrgID, sessionID)
+		if err == nil && (!isTerminalRunState(latest.State) || run != nil || afterSeq > 0) {
+			if run == nil && !isTerminalRunState(latest.State) {
+				run = b.recoverRunForReattach(r.Context(), latest)
+			}
+			events, err := b.runs.EventsAfter(r.Context(), latest.ID, afterSeq)
+			if err != nil {
+				b.log.Warn("list run events for stream", "org", p.OrgID, "thread", sessionID, "run", latest.ID, "error", err)
+			} else {
+				replay = make([]liveEvent, 0, len(events))
+				for _, ev := range events {
+					replay = append(replay, liveEvent{Event: ev.Event, Data: ev.Data, Seq: ev.Seq})
+					lastSeq = ev.Seq
+				}
+				b.log.Info("chat stream replayed durable run events",
+					"org", p.OrgID,
+					"thread", sessionID,
+					"run_id", latest.ID,
+					"state", latest.State,
+					"after_seq", afterSeq,
+					"events", len(events),
+					"live_attached", run != nil,
+				)
+			}
+		} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			b.log.Warn("latest run lookup for stream", "org", p.OrgID, "thread", sessionID, "error", err)
+		}
+	}
+	if run == nil && len(replay) == 0 {
+		b.log.Info("chat stream reattach found no live or durable run", "org", p.OrgID, "thread", sessionID)
 		http.Error(w, "no live run", http.StatusNotFound)
 		return
 	}
@@ -1395,9 +1493,39 @@ func (b *Bot) chatStreamHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
 
-	sub := run.Subscribe()
+	for _, ev := range replay {
+		if err := writeLiveEvent(w, ev); err != nil {
+			return
+		}
+		flusher.Flush()
+	}
+	if run == nil {
+		return
+	}
+	sub := run.SubscribeAfter(lastSeq)
 	defer run.Unsubscribe(sub)
 	b.streamLiveSubscription(w, flusher, r.Context(), sub)
+}
+
+func parseSSEAfterSeq(raw string) int64 {
+	if raw == "" {
+		return 0
+	}
+	n, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
+}
+
+func writeLiveEvent(w http.ResponseWriter, ev liveEvent) error {
+	if ev.Seq > 0 {
+		if _, err := fmt.Fprintf(w, "id: %d\n", ev.Seq); err != nil {
+			return err
+		}
+	}
+	_, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", ev.Event, ev.Data)
+	return err
 }
 
 // streamLiveSubscription drains a liveSubscription to the SSE
@@ -1406,7 +1534,7 @@ func (b *Bot) chatStreamHandler(w http.ResponseWriter, r *http.Request) {
 // beats every keepaliveLiveInterval to beat proxy idle timeouts.
 func (b *Bot) streamLiveSubscription(w http.ResponseWriter, flusher http.Flusher, ctx context.Context, sub *liveSubscription) {
 	write := func(ev liveEvent) error {
-		if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", ev.Event, ev.Data); err != nil {
+		if err := writeLiveEvent(w, ev); err != nil {
 			return err
 		}
 		flusher.Flush()
@@ -1778,6 +1906,18 @@ func (b *Bot) conversationDetailHandler(w http.ResponseWriter, r *http.Request) 
 		if run := b.live.Get(p.OrgID, threadID); run != nil {
 			http.Error(w, "this chat has a turn in flight; wait for it to finish before deleting", http.StatusConflict)
 			return
+		}
+		if b.runs != nil && b.runs.Enabled() {
+			if active, err := b.runs.ActiveForThread(r.Context(), p.OrgID, threadID); err == nil {
+				b.log.Info("conversation delete rejected due active durable run",
+					"org", p.OrgID, "thread", threadID, "run_id", active.ID, "state", active.State)
+				http.Error(w, "this chat has a turn in flight; wait for it to finish before deleting", http.StatusConflict)
+				return
+			} else if !errors.Is(err, pgx.ErrNoRows) {
+				b.log.Warn("active run lookup for conversation delete", "org", p.OrgID, "thread", threadID, "error", err)
+				http.Error(w, "internal server error", http.StatusInternalServerError)
+				return
+			}
 		}
 		if err := b.convs.Delete(r.Context(), p.OrgID, threadID); err != nil {
 			b.log.Error("delete conversation", "error", err, "org", p.OrgID, "thread", threadID)

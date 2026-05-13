@@ -523,6 +523,16 @@
   .blk-awaiting-next > summary .blk-icon > * { display: none; }
   @keyframes blk-spin { to { transform: rotate(360deg); } }
 
+  #toast-stack { position: fixed; right: 1rem; bottom: calc(1rem + env(safe-area-inset-bottom));
+                 z-index: 500; display: flex; flex-direction: column; gap: .5rem;
+                 align-items: flex-end; pointer-events: none; }
+  .toast { max-width: min(24rem, calc(100vw - 2rem)); padding: .7rem .85rem;
+           border-radius: .5rem; background: #fff; color: #222;
+           border: 1px solid #e5e5e5; box-shadow: 0 12px 36px rgba(0,0,0,.14);
+           font-size: .9rem; line-height: 1.35; pointer-events: auto; }
+  .toast-warn { border-color: #f5c26b; background: #fff8e8; color: #5f3f04; }
+  .toast-success { border-color: #8fd19e; background: #f0fbf2; color: #20592b; }
+
   /* Dark theme — applied via html.is-dark by the bootstrap script. Kept
      as overrides on top of the light defaults so the light path stays
      untouched and either rule set is easy to find when tweaking colors. */
@@ -664,6 +674,10 @@
   html.is-dark .user-menu-dropdown a.item:hover { background: #2a2a2e; }
   html.is-dark .user-menu-dropdown a.item .ico { color: #9a9aa0; }
   html.is-dark .user-menu-dropdown .divider { border-top-color: #2a2a2d; }
+  html.is-dark .toast { background: #232327; border-color: #2e2e33; color: #e7e7e9;
+                         box-shadow: 0 12px 36px rgba(0,0,0,.45); }
+  html.is-dark .toast-warn { background: #332713; border-color: #805f1d; color: #ffd991; }
+  html.is-dark .toast-success { background: #17301e; border-color: #2d7040; color: #9ee6ad; }
 
   /* Sidebar toggle — hidden on desktop, visible on mobile to slide
      #sidebar in. The button styling mirrors #meta-toggle so the two
@@ -771,6 +785,8 @@
 </style>
 </head>
 <body>
+
+<div id="toast-stack" aria-live="polite" aria-atomic="true"></div>
 
 <aside id="sidebar">
   <div id="sidebar-head">
@@ -1023,6 +1039,7 @@
 const log = document.getElementById('log');
 const inp = document.getElementById('inp');
 const btn = document.getElementById('btn');
+const toastStack = document.getElementById('toast-stack');
 const toolsBtn = document.getElementById('tools-btn');
 const toolsPopover = document.getElementById('tools-popover');
 const agentSelectorBtn = document.getElementById('agent-selector-btn');
@@ -1078,6 +1095,7 @@ let selectedModel = (function () {
 let modelLocked = false;
 let isRunning = false;
 let isStopping = false;
+let stopRequested = false;
 
 function setRunState(running, stopping = false) {
   isRunning = running;
@@ -1087,6 +1105,37 @@ function setRunState(running, stopping = false) {
   btn.setAttribute('aria-label', isRunning ? (isStopping ? 'Stopping' : 'Stop') : 'Send');
   btn.title = isRunning ? (isStopping ? 'Stopping…' : 'Stop') : 'Send';
   inp.setAttribute('aria-disabled', isRunning ? 'true' : 'false');
+}
+
+const activeToasts = new Map();
+function showToast(key, message, kind = 'warn', timeoutMs = 0) {
+  if (!toastStack) return;
+  let entry = activeToasts.get(key);
+  if (!entry) {
+    const el = document.createElement('div');
+    el.className = 'toast';
+    el.setAttribute('role', 'status');
+    toastStack.appendChild(el);
+    entry = { el, timer: null };
+    activeToasts.set(key, entry);
+  }
+  entry.el.className = 'toast toast-' + kind;
+  entry.el.textContent = message;
+  if (entry.timer) {
+    clearTimeout(entry.timer);
+    entry.timer = null;
+  }
+  if (timeoutMs > 0) {
+    entry.timer = setTimeout(() => hideToast(key), timeoutMs);
+  }
+}
+
+function hideToast(key) {
+  const entry = activeToasts.get(key);
+  if (!entry) return;
+  if (entry.timer) clearTimeout(entry.timer);
+  entry.el.remove();
+  activeToasts.delete(key);
 }
 
 function handleComposerAction() {
@@ -2552,8 +2601,91 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
+function newStreamRenderState() {
+  return {
+    turn: startBotTurn(),
+    blockRefs: new Map(),
+    currentPhase: null,
+    phaseLastEndedAt: '',
+    lastStandaloneEl: null,
+    sawTurnEnd: false,
+    lastSeq: 0,
+  };
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function openChatStream(afterSeq = 0) {
+  const params = new URLSearchParams({ session: sessionId });
+  if (afterSeq > 0) params.set('after_seq', String(afterSeq));
+  return fetch('/chat/stream?' + params.toString(), {
+    headers: { 'Accept': 'text/event-stream' },
+  });
+}
+
+async function streamTurnWithReconnect(initialRes, options = {}) {
+  const state = newStreamRenderState();
+  let res = initialRes;
+  let attempts = 0;
+  let onFirstEvent = options.onFirstEvent || null;
+  let firstStreamEventSeen = false;
+  let sawDisconnect = false;
+
+  const finishStopped = async () => {
+    hideToast('stream-disconnected');
+    await loadHistory();
+    return { terminal: true, state };
+  };
+
+  while (true) {
+    try {
+      if (stopRequested) return await finishStopped();
+      if (!res) res = await openChatStream(state.lastSeq);
+      if (!res.ok) {
+        if (res.body) {
+          try { await res.body.cancel(); } catch (e) {}
+        }
+        if (res.status === 404) {
+          hideToast('stream-disconnected');
+          await loadHistory();
+          return { terminal: true, state };
+        }
+        throw new Error('chat stream failed: ' + res.status);
+      }
+
+      if (sawDisconnect) {
+        hideToast('stream-disconnected');
+        showToast('stream-reconnected', 'Reconnected. Streaming has resumed.', 'success', 2500);
+        sawDisconnect = false;
+      }
+
+      const result = await consumeSSEResponse(res, onFirstEvent ? () => {
+        if (firstStreamEventSeen) return;
+        firstStreamEventSeen = true;
+        onFirstEvent();
+      } : null, state);
+      if (result.terminal) {
+        hideToast('stream-disconnected');
+        return result;
+      }
+      if (stopRequested) return await finishStopped();
+      throw new Error('chat stream closed before the turn finished');
+    } catch (e) {
+      if (stopRequested) return await finishStopped();
+      sawDisconnect = true;
+      showToast('stream-disconnected', 'Connection lost. Retrying…', 'warn');
+      attempts += 1;
+      const delay = Math.min(10000, 1000 * Math.pow(2, Math.min(attempts - 1, 4)));
+      await sleep(delay);
+      res = null;
+    }
+  }
+}
+
 // consumeSSEResponse reads a server-sent-event stream from `res` and
-// renders blocks into a fresh bot turn. Used by both the original
+// renders blocks into a bot turn render state. Used by both the original
 // POST-/chat send() flow and the GET-/chat/stream reload reattach
 // flow — the event shape is identical, only the source URL differs.
 //
@@ -2562,9 +2694,10 @@ document.addEventListener('visibilitychange', () => {
 // the moment the server confirms work has begun — by then the
 // conversation row has been Upserted and the LHN can render the new
 // chat without an optimistic placeholder.
-async function consumeSSEResponse(res, onFirstEvent) {
+async function consumeSSEResponse(res, onFirstEvent, state = null) {
+  if (!state) state = newStreamRenderState();
   let firstEventFired = false;
-  const turn = startBotTurn();
+  const turn = state.turn;
   // blockRefs is the per-id map of "what to do on append/done". Each
   // ref is a tagged shape:
   //   { kind: 'phase-prose', phase }      — claude_text inside a phase
@@ -2573,12 +2706,12 @@ async function consumeSSEResponse(res, onFirstEvent) {
   // Phase-prose appends update the phase body; tool appends are
   // dropped (the live emitter never fires them); standalone appends
   // go through the original appendToBlock path.
-  const blockRefs = new Map();
+  const blockRefs = state.blockRefs;
   // currentPhase is the open phase box accepting new tool_uses. Set
   // when claude_text or the first tool_use opens one; cleared when a
   // standalone block (setup/notify/result/error) starts and closes
   // it.
-  let currentPhase = null;
+  let currentPhase = state.currentPhase;
   // phaseLastEndedAt mirrors the replay-path field: the server-
   // stamped ended_at of the trailing tool/prose block in the
   // currently-open phase, used as the phase's closing instant so the
@@ -2586,19 +2719,26 @@ async function consumeSSEResponse(res, onFirstEvent) {
   // explicit "phase_done" frame. Reset whenever currentPhase resets.
   // Server-stamped only — never use the browser clock here (see
   // SERVER_CLOCK_NOTE in this file).
-  let phaseLastEndedAt = '';
+  let phaseLastEndedAt = state.phaseLastEndedAt;
   // lastStandaloneEl is the most recently rendered standalone block
   // (setup, notify, result, error). When the *next* block of any
   // kind starts, we collapse this one so the user always sees the
   // freshest activity expanded — e.g. the long Sandbox setup body
   // tucks itself away when Claude starts streaming its first phase.
-  let lastStandaloneEl = null;
+  let lastStandaloneEl = state.lastStandaloneEl;
   // Set to true once a terminal standalone block (result/error) is
   // observed on the wire. Used to gate signalTurnDone() so a network
   // blip or premature stream close doesn't leave a misleading "ready"
   // badge on a hidden tab when the turn is actually still running or
   // disconnected.
-  let sawTurnEnd = false;
+  let sawTurnEnd = state.sawTurnEnd;
+
+  const syncState = () => {
+    state.currentPhase = currentPhase;
+    state.phaseLastEndedAt = phaseLastEndedAt;
+    state.lastStandaloneEl = lastStandaloneEl;
+    state.sawTurnEnd = sawTurnEnd;
+  };
 
   const reader = res.body.getReader();
   const dec = new TextDecoder();
@@ -2606,24 +2746,31 @@ async function consumeSSEResponse(res, onFirstEvent) {
 
   // SSE parser — each event is `event: <name>\n data: <json>\n\n`. We
   // accumulate bytes in `buf` and consume whole frames as they arrive.
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += dec.decode(value, { stream: true });
-    const parts = buf.split('\n\n');
-    buf = parts.pop();
-    for (const part of parts) {
-      // SSE comment frames (`: keepalive`) — ignore.
-      if (part.startsWith(':')) continue;
-      let event = 'message';
-      let data = '';
-      for (const line of part.split('\n')) {
-        if (line.startsWith('event: ')) event = line.slice(7).trim();
-        else if (line.startsWith('data: ')) data += (data ? '\n' : '') + line.slice(6);
-      }
-      if (!data) continue;
-      let payload;
-      try { payload = JSON.parse(data); } catch (e) { continue; }
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const parts = buf.split('\n\n');
+      buf = parts.pop();
+      for (const part of parts) {
+        // SSE comment frames (`: keepalive`) — ignore.
+        if (part.startsWith(':')) continue;
+        let event = 'message';
+        let data = '';
+        let id = '';
+        for (const line of part.split('\n')) {
+          if (line.startsWith('event: ')) event = line.slice(7).trim();
+          else if (line.startsWith('data: ')) data += (data ? '\n' : '') + line.slice(6);
+          else if (line.startsWith('id: ')) id = line.slice(4).trim();
+        }
+        if (id) {
+          const seq = Number.parseInt(id, 10);
+          if (Number.isFinite(seq) && seq > state.lastSeq) state.lastSeq = seq;
+        }
+        if (!data) continue;
+        let payload;
+        try { payload = JSON.parse(data); } catch (e) { continue; }
       if (!firstEventFired) {
         firstEventFired = true;
         conversationHasServerState = true;
@@ -2723,15 +2870,22 @@ async function consumeSSEResponse(res, onFirstEvent) {
         applyHeartbeatToActiveBlock(currentPhase, lastStandaloneEl, payload);
       }
     }
+    }
+  } finally {
+    syncState();
   }
-  // The SSE stream closed. Idempotent close for any phase that
-  // didn't receive a terminal block to push it closed (defensive —
-  // a dropped connection should still produce a clean final state).
-  // We pass phaseLastEndedAt (server-stamped, possibly empty) so the
-  // duration chip stays empty rather than synthesising one from the
-  // browser clock (see SERVER_CLOCK_NOTE).
-  if (currentPhase) closePhase(currentPhase, phaseLastEndedAt);
-  clearBlockActivity(lastStandaloneEl);
+  // Only close activity once the terminal block has arrived. If the
+  // connection drops mid-turn, the reconnect loop keeps the same render
+  // state alive and asks the server for events after the last SSE id.
+  if (sawTurnEnd) {
+    if (currentPhase) {
+      closePhase(currentPhase, phaseLastEndedAt);
+      currentPhase = null;
+      phaseLastEndedAt = '';
+    }
+    clearBlockActivity(lastStandaloneEl);
+    syncState();
+  }
   // GitHub-style tab indicator: if the user navigated away while
   // Hetchy was working, badge the favicon so the just-finished turn
   // is visible in their tab bar. We only paint the badge when the
@@ -2740,12 +2894,14 @@ async function consumeSSEResponse(res, onFirstEvent) {
   // be noise. Gated on sawTurnEnd so a dropped/aborted stream doesn't
   // produce a misleading "ready" indicator on a still-running turn.
   if (sawTurnEnd) signalTurnDone();
+  return { terminal: sawTurnEnd, state, lastSeq: state.lastSeq };
 }
 
 async function send() {
   if (isRunning) return;
   const text = inp.value.trim();
   if (!text) return;
+  stopRequested = false;
   inp.value = '';
   autosizeInput();
   setRunState(true);
@@ -2774,13 +2930,20 @@ async function send() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(body || ('chat request failed: ' + res.status));
+    }
     // The server persists the conversation row at HandleRequest entry —
     // before sandbox creation begins. By the time the first SSE event
     // reaches us the row is committed, so triggering a sidebar refresh on
     // first event surfaces the new chat immediately rather than waiting
     // for the agent to finish (which can take minutes).
-    await consumeSSEResponse(res, isFirstTurn ? () => { loadSidebar(); refreshMetadata(); } : null);
+    await streamTurnWithReconnect(res, {
+      onFirstEvent: isFirstTurn ? () => { loadSidebar(); refreshMetadata(); } : null
+    });
   } finally {
+    stopRequested = false;
     setRunState(false);
     inp.focus();
     // Refresh the sidebar after every turn so the row's title (derived
@@ -2796,6 +2959,7 @@ async function send() {
 
 async function stopRun() {
   if (!isRunning || isStopping) return;
+  stopRequested = true;
   setRunState(true, true);
   try {
     const res = await fetch('/chat/cancel', {
@@ -2804,9 +2968,14 @@ async function stopRun() {
       body: JSON.stringify({ session_id: sessionId })
     });
     if (!res.ok) {
+      stopRequested = false;
       setRunState(res.status !== 404, false);
+      return;
     }
+    hideToast('stream-disconnected');
+    await loadHistory();
   } catch (e) {
+    stopRequested = false;
     setRunState(true, false);
   }
 }
@@ -3065,9 +3234,7 @@ async function init() {
 
   let liveRes = null;
   try {
-    const r = await fetch('/chat/stream?session=' + encodeURIComponent(sessionId), {
-      headers: { 'Accept': 'text/event-stream' },
-    });
+    const r = await openChatStream();
     if (r.ok) {
       liveRes = r;
     } else if (r.body) {
@@ -3082,8 +3249,9 @@ async function init() {
   if (liveRes) {
     setRunState(true);
     try {
-      await consumeSSEResponse(liveRes);
+      await streamTurnWithReconnect(liveRes);
     } finally {
+      stopRequested = false;
       setRunState(false);
       inp.focus();
       // Refresh the sidebar so the just-completed turn's metadata

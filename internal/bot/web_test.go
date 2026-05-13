@@ -128,6 +128,11 @@ func TestChatTemplate_ComposerControls(t *testing.T) {
 		`function stopRun()`,
 		`/chat/cancel`,
 		`setRunState(true)`,
+		`streamTurnWithReconnect`,
+		`after_seq`,
+		`Connection lost. Retrying`,
+		`id="toast-stack"`,
+		`stopRequested`,
 		`conversationHasServerState`,
 		`renderPendingMetadata(text)`,
 		`conversationAgentIsMutable()`,
@@ -155,6 +160,22 @@ func TestChatTemplate_ComposerControls(t *testing.T) {
 	}
 	if strings.Contains(body, `id="agent-btn"`) {
 		t.Errorf("chat template should not render the old standalone agent button")
+	}
+}
+
+func TestWriteLiveEventIncludesSequenceID(t *testing.T) {
+	rec := httptest.NewRecorder()
+	err := writeLiveEvent(rec, liveEvent{
+		Event: "block_start",
+		Data:  []byte(`{"id":"blk_1"}`),
+		Seq:   42,
+	})
+	if err != nil {
+		t.Fatalf("writeLiveEvent: %v", err)
+	}
+	want := "id: 42\nevent: block_start\ndata: {\"id\":\"blk_1\"}\n\n"
+	if got := rec.Body.String(); got != want {
+		t.Fatalf("body = %q, want %q", got, want)
 	}
 }
 
