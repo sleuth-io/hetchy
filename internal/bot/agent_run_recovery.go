@@ -104,34 +104,32 @@ func (b *Bot) recoverAgentRun(ctx context.Context, run runstore.Run) {
 	for {
 		b.runs.TouchLease(context.Background(), run.ID, b.workerID, agentRunLeaseDuration)
 
-		logText, err := b.commandLogSnapshot(ctx, sb, run.SessionID, run.CommandID)
+		res, err := b.replayRecoveredLogTail(ctx, sb, &run, em, router, &frameState, &replayCursor)
 		if err != nil {
 			b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
 			return
 		}
 
-		if int64(len(logText)) < replayCursor {
-			frameState = replayFrameState{}
-			replayCursor = 0
-		}
-		replayText := logText[replayCursor:]
-		res, nextFrameState := replayHetchyFramedLogState(run.ID, replayText, replayCursor, run.LogCursor, frameState, em, func(line string) {
-			em.BeginBatch()
-			router.Line(line)
-		}, func(cursor int64) {
-			_ = em.FlushBatch(cursor)
-		})
-		frameState = nextFrameState
-		if err := em.Err(); err != nil {
-			b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
-			return
-		}
 		if !res.SeenBegin {
+			status, err := sb.Process.GetSessionCommand(ctx, run.SessionID, run.CommandID)
+			if err == nil {
+				if code, done := sessionCommandExitCode(status); done {
+					finalRes, err := b.replayRecoveredLogTail(ctx, sb, &run, em, router, &frameState, &replayCursor)
+					if err != nil {
+						b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
+						return
+					}
+					if finalRes.SeenBegin {
+						b.finalizeRecoveredRun(ctx, sb, run, router, em, code, live)
+						return
+					}
+					b.finishRecoveredFailure(ctx, run, live, "Agent failed", "The recovered command log did not contain the expected frame.", errMissingHetchyFrame(run.ID))
+					return
+				}
+			}
 			b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, errMissingHetchyFrame(run.ID).Error(), b.workerID)
 			return
 		}
-		run.LogCursor = max(run.LogCursor, res.Cursor)
-		replayCursor = res.Cursor
 
 		status, err := sb.Process.GetSessionCommand(ctx, run.SessionID, run.CommandID)
 		if err != nil {
@@ -139,12 +137,46 @@ func (b *Bot) recoverAgentRun(ctx context.Context, run runstore.Run) {
 			return
 		}
 		if code, ok := sessionCommandExitCode(status); ok {
+			finalRes, err := b.replayRecoveredLogTail(ctx, sb, &run, em, router, &frameState, &replayCursor)
+			if err != nil {
+				b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
+				return
+			}
+			if !finalRes.SeenBegin {
+				b.finishRecoveredFailure(ctx, run, live, "Agent failed", "The recovered command log did not contain the expected frame.", errMissingHetchyFrame(run.ID))
+				return
+			}
 			b.finalizeRecoveredRun(ctx, sb, run, router, em, code, live)
 			return
 		}
 
 		<-poll.C
 	}
+}
+
+func (b *Bot) replayRecoveredLogTail(ctx context.Context, sb *daytona.Sandbox, run *runstore.Run, em *agentRunEmitter, router *agentLineRouter, frameState *replayFrameState, replayCursor *int64) (replayFrameResult, error) {
+	logText, err := b.commandLogSnapshot(ctx, sb, run.SessionID, run.CommandID)
+	if err != nil {
+		return replayFrameResult{}, err
+	}
+	if int64(len(logText)) < *replayCursor {
+		*frameState = replayFrameState{}
+		*replayCursor = 0
+	}
+	replayText := logText[*replayCursor:]
+	res, nextFrameState := replayHetchyFramedLogState(run.ID, replayText, *replayCursor, run.LogCursor, *frameState, em, func(line string) {
+		em.BeginBatch()
+		router.Line(line)
+	}, func(cursor int64) {
+		_ = em.FlushBatch(cursor)
+	})
+	*frameState = nextFrameState
+	if err := em.Err(); err != nil {
+		return res, err
+	}
+	run.LogCursor = max(run.LogCursor, res.Cursor)
+	*replayCursor = res.Cursor
+	return res, nil
 }
 
 func (b *Bot) handleRecoverySetupError(ctx context.Context, run runstore.Run, live *liveRun, title, body string, err error) {

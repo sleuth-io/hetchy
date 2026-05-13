@@ -875,7 +875,7 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 		return
 	}
 	b.markRunState(ctx, runstore.StateSucceeded, nil)
-	b.deleteSandboxSession(sb, "agent-"+requestID)
+	b.deleteSandboxSession(sb, b.currentAgentRunSessionID(ctx, "agent-"+requestID))
 
 	if err := sb.Stop(ctx); err != nil {
 		b.log.Error("sandbox stop failed", "sandbox", sb.ID, "error", err)
@@ -1033,7 +1033,7 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 		return
 	}
 	b.markRunState(ctx, runstore.StateSucceeded, nil)
-	b.deleteSandboxSession(sb, "followup-"+requestID)
+	b.deleteSandboxSession(sb, b.currentAgentRunSessionID(ctx, "followup-"+requestID))
 
 	if err := sb.Stop(ctx); err != nil {
 		b.log.Error("sandbox stop failed", "sandbox", sb.ID, "error", err)
@@ -1300,6 +1300,28 @@ func (b *Bot) cleanupSandboxByID(sandboxID, reason string) {
 		return
 	}
 	b.cleanupSandbox(ctx, sb, reason)
+}
+
+func (b *Bot) currentAgentRunSessionID(ctx context.Context, fallback string) string {
+	run, ok := agentRunFromContext(ctx)
+	if !ok {
+		return fallback
+	}
+	if run.SessionID != "" {
+		return run.SessionID
+	}
+	if b.runs == nil || !b.runs.Enabled() {
+		return fallback
+	}
+	latest, err := b.runs.Get(context.Background(), run.ID)
+	if err != nil {
+		b.log.Warn("agent run session lookup failed", "run_id", run.ID, "error", err)
+		return fallback
+	}
+	if latest.SessionID == "" {
+		return fallback
+	}
+	return latest.SessionID
 }
 
 func (b *Bot) cancelDurableRun(ctx context.Context, run runstore.Run, actor string) error {
