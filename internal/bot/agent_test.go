@@ -164,11 +164,17 @@ func TestAgentScript_EmbeddedAndWellFormed(t *testing.T) {
 		"sx install",
 		"run_saved_setup",
 		"setup.sh still running",
+		"setup.sh output is being written to /tmp/hetchy-spec/setup.log",
 		"configure_hetchy_cache",
-		`export GOCACHE="${cache_dir}/go-build"`,
+		"cache_supports_basic_write",
+		"restore_hetchy_cache_archive",
+		"save_hetchy_cache_archive",
+		`local archive="${volume_cache_dir}/cache.tar"`,
+		`export HETCHY_CACHE_DIR="$local_cache_dir"`,
+		`export GOCACHE="${local_cache_dir}/go-build"`,
 		`export PATH="${CARGO_HOME}/bin:${PATH}"`,
-		`find "$cache_dir" -xdev -mindepth 1 -type f -mtime "+${prune_days}" -delete`,
-		`[[ -z "$cache_dir" || ! -d "$cache_dir" ]]`,
+		`find "$local_cache_dir" -xdev -mindepth 1 -type f -mtime "+${prune_days}" -delete`,
+		`[[ -z "$volume_cache_dir" || ! -d "$volume_cache_dir" ]]`,
 	}
 	for _, line := range requiredLines {
 		if !strings.Contains(agentScript, line) {
@@ -193,11 +199,17 @@ func TestFollowupScript_EmbeddedAndWellFormed(t *testing.T) {
 		`claude_args+=(--model "$HETCHY_CLAUDE_MODEL")`,
 		"run_saved_setup",
 		"setup.sh still running",
+		"setup.sh output is being written to /tmp/hetchy-spec/setup.log",
 		"configure_hetchy_cache",
-		`export GOCACHE="${cache_dir}/go-build"`,
+		"cache_supports_basic_write",
+		"restore_hetchy_cache_archive",
+		"save_hetchy_cache_archive",
+		`local archive="${volume_cache_dir}/cache.tar"`,
+		`export HETCHY_CACHE_DIR="$local_cache_dir"`,
+		`export GOCACHE="${local_cache_dir}/go-build"`,
 		`export PATH="${CARGO_HOME}/bin:${PATH}"`,
-		`find "$cache_dir" -xdev -mindepth 1 -type f -mtime "+${prune_days}" -delete`,
-		`[[ -z "$cache_dir" || ! -d "$cache_dir" ]]`,
+		`find "$local_cache_dir" -xdev -mindepth 1 -type f -mtime "+${prune_days}" -delete`,
+		`[[ -z "$volume_cache_dir" || ! -d "$volume_cache_dir" ]]`,
 	}
 	for _, line := range requiredLines {
 		if !strings.Contains(followupScript, line) {

@@ -27,8 +27,8 @@
 #   HETCHY_ARTIFACT_SLOTS      JSON proof-artifact upload slots
 #   HETCHY_ARTIFACT_SLOT_URL   endpoint for requesting more upload slots
 #   HETCHY_ARTIFACT_SLOT_TOKEN bearer token for that endpoint
-#   HETCHY_CACHE_DIR           mounted dependency cache subpath
-#   HETCHY_CACHE_PRUNE_DAYS    best-effort cache file pruning threshold
+#   HETCHY_CACHE_DIR           mounted dependency cache archive subpath
+#   HETCHY_CACHE_PRUNE_DAYS    best-effort local cache file pruning threshold
 # When all three are set, agent.sh runs setup → starts the app in the
 # background → polls health.sh BEFORE invoking claude, so the validation
 # prompt's claim that "the app is running" is actually true.

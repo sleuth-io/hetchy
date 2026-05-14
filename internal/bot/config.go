@@ -31,8 +31,9 @@ type Config struct {
 	// volume names. Orgs are hashed into fixed dev/stg/prod pools so one
 	// shared Daytona org stays within the 100-volume limit.
 	DaytonaCacheVolumePrefix string
-	// DaytonaCachePruneDays controls best-effort in-sandbox pruning of
-	// old dependency cache files within the mounted repo subpath.
+	// DaytonaCachePruneDays controls best-effort pruning of old
+	// dependency cache files inside the local staging cache before it is
+	// archived back to the mounted repo subpath.
 	DaytonaCachePruneDays int
 	DatabaseURL           string
 	// DatabaseMaxConns caps the pgx connection pool. Zero leaves the

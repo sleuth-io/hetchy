@@ -20,8 +20,8 @@
 #   HETCHY_ARTIFACT_SLOTS        JSON proof-artifact upload slots
 #   HETCHY_ARTIFACT_SLOT_URL     endpoint for requesting more upload slots
 #   HETCHY_ARTIFACT_SLOT_TOKEN   bearer token for that endpoint
-#   HETCHY_CACHE_DIR             mounted dependency cache subpath
-#   HETCHY_CACHE_PRUNE_DAYS      best-effort cache file pruning threshold
+#   HETCHY_CACHE_DIR             mounted dependency cache archive subpath
+#   HETCHY_CACHE_PRUNE_DAYS      best-effort local cache file pruning threshold
 
 set -euo pipefail
 
