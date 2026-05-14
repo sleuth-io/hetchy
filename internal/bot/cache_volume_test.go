@@ -3,6 +3,7 @@ package bot
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -18,43 +19,60 @@ import (
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
 )
 
-func TestDaytonaCacheVolumeNameStableSafeAndPerOrg(t *testing.T) {
-	got := daytonaCacheVolumeName("Hetchy Cache!!", "Dev_Env", "org_1")
-	if got != daytonaCacheVolumeName("Hetchy Cache!!", "Dev_Env", "org_1") {
-		t.Fatal("volume name should be stable for identical inputs")
+func TestDaytonaCacheVolumeRouteStableSafeAndPooled(t *testing.T) {
+	got := daytonaCacheRoute("Hetchy Cache!!", "dev", "org_1")
+	if got != daytonaCacheRoute("Hetchy Cache!!", "dev", "org_1") {
+		t.Fatal("volume route should be stable for identical inputs")
 	}
-	if got == daytonaCacheVolumeName("Hetchy Cache!!", "Dev_Env", "org_2") {
-		t.Fatal("volume name should differ across orgs")
+	if got.Env != "dev" || got.SlotCount != daytonaCacheDevVolumeCount || got.Slot < 0 || got.Slot >= got.SlotCount {
+		t.Fatalf("unexpected dev route: %+v", got)
 	}
-	if !strings.HasPrefix(got, "hetchy-cache-dev-env-") {
-		t.Fatalf("volume name prefix/env were not sanitized as expected: %q", got)
+	if !strings.HasPrefix(got.Name, "hetchy-cache-dev-") {
+		t.Fatalf("volume name prefix/env were not sanitized as expected: %q", got.Name)
 	}
-	if len(got) > daytonaCacheVolumeNameMax {
-		t.Fatalf("volume name length = %d, want <= %d", len(got), daytonaCacheVolumeNameMax)
+	if len(got.Name) > daytonaCacheVolumeNameMax {
+		t.Fatalf("volume name length = %d, want <= %d", len(got.Name), daytonaCacheVolumeNameMax)
 	}
-	if long := daytonaCacheVolumeName(strings.Repeat("p", 100), strings.Repeat("e", 100), "org_1"); len(long) > daytonaCacheVolumeNameMax {
+	if long := daytonaCacheVolumeName(strings.Repeat("p", 100), "production", 79); len(long) > daytonaCacheVolumeNameMax {
 		t.Fatalf("long volume name length = %d, want <= %d: %q", len(long), daytonaCacheVolumeNameMax, long)
 	}
-	for _, r := range got {
+	for _, r := range got.Name {
 		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' {
-			t.Fatalf("volume name contains unsafe rune %q: %q", r, got)
+			t.Fatalf("volume name contains unsafe rune %q: %q", r, got.Name)
 		}
+	}
+	for env, want := range map[string]int{"dev": 10, "staging": 10, "prod": 80} {
+		seen := map[string]bool{}
+		for i := range 200 {
+			seen[daytonaCacheRoute("cache", env, fmt.Sprintf("org_%d", i)).Name] = true
+		}
+		if len(seen) > want {
+			t.Fatalf("%s used %d volume names, want <= %d", env, len(seen), want)
+		}
+	}
+	if daytonaCacheVolumeCount("dev")+daytonaCacheVolumeCount("stg")+daytonaCacheVolumeCount("prod") != 100 {
+		t.Fatal("cache volume pool must stay within Daytona's 100-volume org limit")
 	}
 }
 
 func TestDaytonaCacheSubpathIsPerRepoAndPath(t *testing.T) {
-	base := daytonaCacheSubpath(repoCtx{InstallID: 10, RepoID: 20})
-	if base != "repos/10/20/default" {
+	oc := orgcfg.Config{OrgID: "org_1"}
+	orgPrefix := "orgs/" + daytonaCacheOrgHash(oc.OrgID) + "/"
+	base := daytonaCacheSubpath(oc, repoCtx{InstallID: 10, RepoID: 20})
+	if base != orgPrefix+"repos/10/20/default" {
 		t.Fatalf("default subpath = %q", base)
 	}
-	if base == daytonaCacheSubpath(repoCtx{InstallID: 10, RepoID: 21}) {
+	if base == daytonaCacheSubpath(oc, repoCtx{InstallID: 10, RepoID: 21}) {
 		t.Fatal("subpath should differ across repo ids")
 	}
-	pathSubpath := daytonaCacheSubpath(repoCtx{InstallID: 10, RepoID: 20, Path: "frontend"})
+	if base == daytonaCacheSubpath(orgcfg.Config{OrgID: "org_2"}, repoCtx{InstallID: 10, RepoID: 20}) {
+		t.Fatal("subpath should differ across org ids")
+	}
+	pathSubpath := daytonaCacheSubpath(oc, repoCtx{InstallID: 10, RepoID: 20, Path: "frontend"})
 	if base == pathSubpath {
 		t.Fatal("subpath should differ across repo paths")
 	}
-	if !strings.HasPrefix(pathSubpath, "repos/10/20/path-") {
+	if !strings.HasPrefix(pathSubpath, orgPrefix+"repos/10/20/path-") {
 		t.Fatalf("path-hash subpath = %q", pathSubpath)
 	}
 }
@@ -83,7 +101,7 @@ func TestResolveDaytonaCacheMountCreatesMissingVolume(t *testing.T) {
 	if !ok {
 		t.Fatal("expected cache mount")
 	}
-	if mount.VolumeID != "vol-1" || mount.MountPath != daytonaCacheMountPath || mount.Subpath == nil || *mount.Subpath != "repos/11/22/default" {
+	if mount.VolumeID != "vol-1" || mount.MountPath != daytonaCacheMountPath || mount.Subpath == nil || *mount.Subpath != "orgs/"+daytonaCacheOrgHash("org_1")+"/repos/11/22/default" {
 		t.Fatalf("unexpected mount: %+v", mount)
 	}
 	if strings.Join(vols.calls, ",") != "get,create,wait" {
@@ -91,6 +109,9 @@ func TestResolveDaytonaCacheMountCreatesMissingVolume(t *testing.T) {
 	}
 	if got := vols.waitTimeouts[0]; got != daytonaCacheVolumeTimeout {
 		t.Fatalf("wait timeout = %s, want %s", got, daytonaCacheVolumeTimeout)
+	}
+	if got, want := vols.getNames[0], daytonaCacheRoute("cache", "dev", "org_1").Name; got != want {
+		t.Fatalf("volume get name = %q, want %q", got, want)
 	}
 }
 
@@ -192,7 +213,7 @@ func TestHandleRequestFreshRunAttachesCacheVolumeAndEnv(t *testing.T) {
 	if len(params.Volumes) != 1 {
 		t.Fatalf("SnapshotParams.Volumes len = %d, want 1 (%+v)", len(params.Volumes), params.Volumes)
 	}
-	if got := params.Volumes[0]; got.VolumeID != "vol-1" || got.MountPath != daytonaCacheMountPath || got.Subpath == nil || *got.Subpath != "repos/11/22/default" {
+	if got := params.Volumes[0]; got.VolumeID != "vol-1" || got.MountPath != daytonaCacheMountPath || got.Subpath == nil || *got.Subpath != "orgs/"+daytonaCacheOrgHash("org_test")+"/repos/11/22/default" {
 		t.Fatalf("cache volume mount = %+v", got)
 	}
 	if params.EnvVars["HETCHY_CACHE_DIR"] != daytonaCacheMountPath {
@@ -203,6 +224,15 @@ func TestHandleRequestFreshRunAttachesCacheVolumeAndEnv(t *testing.T) {
 	}
 	if params.EnvVars["HETCHY_CACHE_PRUNE_DAYS"] != "14" {
 		t.Fatalf("HETCHY_CACHE_PRUNE_DAYS = %q", params.EnvVars["HETCHY_CACHE_PRUNE_DAYS"])
+	}
+	if params.Labels[daytonaSandboxLabelEnv] != "dev" {
+		t.Fatalf("env label = %q", params.Labels[daytonaSandboxLabelEnv])
+	}
+	if params.Labels[daytonaSandboxLabelOrgID] != "org_test" {
+		t.Fatalf("org label = %q", params.Labels[daytonaSandboxLabelOrgID])
+	}
+	if params.Labels[daytonaSandboxLabelCacheVolumeID] != "vol-1" {
+		t.Fatalf("cache volume label = %q", params.Labels[daytonaSandboxLabelCacheVolumeID])
 	}
 }
 
@@ -243,6 +273,9 @@ func TestHandleRequestFreshRunMarksCacheUnavailableWhenVolumeResolveFails(t *tes
 	}
 	if params.EnvVars["HETCHY_CACHE_STATUS"] != "unavailable" {
 		t.Fatalf("HETCHY_CACHE_STATUS = %q", params.EnvVars["HETCHY_CACHE_STATUS"])
+	}
+	if _, ok := params.Labels[daytonaSandboxLabelCacheVolumeID]; ok {
+		t.Fatalf("cache volume label should not be set when no volume is mounted: %+v", params.Labels)
 	}
 }
 
@@ -326,20 +359,24 @@ type fakeCacheVolumeService struct {
 	create       []fakeCacheVolumeResult
 	wait         []fakeCacheVolumeResult
 	calls        []string
+	getNames     []string
+	createNames  []string
 	waitTimeouts []time.Duration
 	unexpected   bool
 }
 
-func (f *fakeCacheVolumeService) Get(context.Context, string) (*types.Volume, error) {
+func (f *fakeCacheVolumeService) Get(_ context.Context, name string) (*types.Volume, error) {
 	f.calls = append(f.calls, "get")
+	f.getNames = append(f.getNames, name)
 	if f.unexpected {
 		return nil, errors.New("unexpected get")
 	}
 	return f.next(&f.get)
 }
 
-func (f *fakeCacheVolumeService) Create(context.Context, string) (*types.Volume, error) {
+func (f *fakeCacheVolumeService) Create(_ context.Context, name string) (*types.Volume, error) {
 	f.calls = append(f.calls, "create")
+	f.createNames = append(f.createNames, name)
 	if f.unexpected {
 		return nil, errors.New("unexpected create")
 	}

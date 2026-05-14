@@ -27,7 +27,9 @@ type Config struct {
 	// DaytonaCacheVolumesDisabled disables dependency cache volume
 	// mounting when DAYTONA_CACHE_VOLUMES_DISABLED=1.
 	DaytonaCacheVolumesDisabled bool
-	// DaytonaCacheVolumePrefix is used in physical Daytona volume names.
+	// DaytonaCacheVolumePrefix is used in physical Daytona cache pool
+	// volume names. Orgs are hashed into fixed dev/stg/prod pools so one
+	// shared Daytona org stays within the 100-volume limit.
 	DaytonaCacheVolumePrefix string
 	// DaytonaCachePruneDays controls best-effort in-sandbox pruning of
 	// old dependency cache files within the mounted repo subpath.

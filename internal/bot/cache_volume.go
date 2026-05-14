@@ -3,6 +3,7 @@ package bot
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -24,6 +25,14 @@ const (
 	defaultCachePruneDays     = 30
 	daytonaCacheVolumeTimeout = 60 * time.Second
 	daytonaCacheVolumeNameMax = 63
+
+	daytonaCacheDevVolumeCount  = 10
+	daytonaCacheStgVolumeCount  = 10
+	daytonaCacheProdVolumeCount = 80
+
+	daytonaSandboxLabelEnv           = "hetchy_env"
+	daytonaSandboxLabelOrgID         = "hetchy_org_id"
+	daytonaSandboxLabelCacheVolumeID = "hetchy_cache_volume_id"
 )
 
 type daytonaCacheVolumeService interface {
@@ -50,11 +59,14 @@ func (b *Bot) resolveDaytonaCacheMount(ctx context.Context, oc orgcfg.Config, re
 		return types.VolumeMount{}, false
 	}
 
-	name := daytonaCacheVolumeName(b.cfg.DaytonaCacheVolumePrefix, b.cfg.Env, oc.OrgID)
+	route := daytonaCacheRoute(b.cfg.DaytonaCacheVolumePrefix, b.cfg.Env, oc.OrgID)
+	name := route.Name
 	volume, err := b.getOrCreateDaytonaCacheVolume(ctx, name)
 	if err != nil {
 		if b.log != nil {
-			b.log.Warn("daytona cache volume unavailable", "org", oc.OrgID, "repo", repo.Slug, "volume", name, "error", err)
+			b.log.Warn("daytona cache volume unavailable",
+				"org", oc.OrgID, "repo", repo.Slug, "volume", name,
+				"cache_env", route.Env, "cache_slot", route.Slot, "error", err)
 		}
 		return types.VolumeMount{}, false
 	}
@@ -71,7 +83,7 @@ func (b *Bot) resolveDaytonaCacheMount(ctx context.Context, oc orgcfg.Config, re
 		return types.VolumeMount{}, false
 	}
 
-	subpath := daytonaCacheSubpath(repo)
+	subpath := daytonaCacheSubpath(oc, repo)
 	return types.VolumeMount{
 		VolumeID:  volume.ID,
 		MountPath: daytonaCacheMountPath,
@@ -143,42 +155,105 @@ func cachePruneDays(cfg Config) int {
 	return defaultCachePruneDays
 }
 
-func daytonaCacheVolumeName(prefix, env, orgID string) string {
-	hash := sha256.Sum256([]byte(orgID))
-	suffix := hex.EncodeToString(hash[:])[:16]
+type daytonaCacheVolumeRoute struct {
+	Name      string
+	Env       string
+	Slot      int
+	SlotCount int
+}
+
+// daytonaCacheRoute maps each Hetchy org into a fixed per-environment
+// volume pool. The pool size totals 100 volumes across dev/stg/prod so a
+// single shared Daytona org stays inside Daytona's hard volume limit.
+func daytonaCacheRoute(prefix, env, orgID string) daytonaCacheVolumeRoute {
+	cacheEnv := daytonaSandboxEnv(env)
+	slotCount := daytonaCacheVolumeCount(cacheEnv)
+	slot := daytonaCacheVolumeSlot(orgID, slotCount)
+	return daytonaCacheVolumeRoute{
+		Name:      daytonaCacheVolumeName(prefix, cacheEnv, slot),
+		Env:       cacheEnv,
+		Slot:      slot,
+		SlotCount: slotCount,
+	}
+}
+
+func daytonaCacheVolumeName(prefix, env string, slot int) string {
+	env = daytonaSandboxEnv(env)
+	slotSuffix := fmt.Sprintf("%02d", max(slot, 0))
 
 	prefix = sanitizeDaytonaNamePart(prefix)
 	if prefix == "" {
 		prefix = defaultCacheVolumePrefix
 	}
-	env = sanitizeDaytonaNamePart(env)
-	if env == "" {
-		env = "prod"
-	}
-	maxEnvLen := daytonaCacheVolumeNameMax - len(suffix) - 1 - 2
-	if len(env) > maxEnvLen {
-		env = strings.Trim(env[:maxEnvLen], "-")
-		if env == "" {
-			env = "env"
-		}
-	}
-	maxPrefixLen := max(daytonaCacheVolumeNameMax-len(env)-len(suffix)-2, 1)
+	maxPrefixLen := max(daytonaCacheVolumeNameMax-len(env)-len(slotSuffix)-2, 1)
 	if len(prefix) > maxPrefixLen {
 		prefix = strings.Trim(prefix[:maxPrefixLen], "-")
 		if prefix == "" {
 			prefix = "cache"
 		}
 	}
-	return prefix + "-" + env + "-" + suffix
+	return prefix + "-" + env + "-" + slotSuffix
 }
 
-func daytonaCacheSubpath(repo repoCtx) string {
+func daytonaSandboxEnv(env string) string {
+	switch strings.ToLower(strings.TrimSpace(env)) {
+	case "dev", "development":
+		return "dev"
+	case "stg", "stage", "staging":
+		return "stg"
+	default:
+		return "prod"
+	}
+}
+
+func daytonaCacheVolumeCount(env string) int {
+	switch daytonaSandboxEnv(env) {
+	case "dev":
+		return daytonaCacheDevVolumeCount
+	case "stg":
+		return daytonaCacheStgVolumeCount
+	default:
+		return daytonaCacheProdVolumeCount
+	}
+}
+
+func daytonaCacheVolumeSlot(orgID string, slotCount int) int {
+	if slotCount <= 1 {
+		return 0
+	}
+	hash := sha256.Sum256([]byte(orgID))
+	n := binary.BigEndian.Uint64(hash[:8])
+	return int(n % uint64(slotCount))
+}
+
+// daytonaCacheSubpath is the tenant boundary inside a pooled Daytona
+// volume. The org hash must stay first so two Hetchy orgs can never see
+// each other's repo caches even if they route to the same physical volume.
+func daytonaCacheSubpath(oc orgcfg.Config, repo repoCtx) string {
 	pathPart := "default"
 	if p := normalizeRepoCachePath(repo.Path); p != "" {
 		hash := sha256.Sum256([]byte(p))
 		pathPart = "path-" + hex.EncodeToString(hash[:])[:16]
 	}
-	return fmt.Sprintf("repos/%d/%d/%s", repo.InstallID, repo.RepoID, pathPart)
+	return fmt.Sprintf("orgs/%s/repos/%d/%d/%s", daytonaCacheOrgHash(oc.OrgID), repo.InstallID, repo.RepoID, pathPart)
+}
+
+func daytonaCacheOrgHash(orgID string) string {
+	hash := sha256.Sum256([]byte(orgID))
+	return hex.EncodeToString(hash[:])[:16]
+}
+
+func daytonaSandboxLabels(cfg Config, oc orgcfg.Config, cacheVolumeID string) map[string]string {
+	labels := map[string]string{
+		daytonaSandboxLabelEnv: daytonaSandboxEnv(cfg.Env),
+	}
+	if strings.TrimSpace(oc.OrgID) != "" {
+		labels[daytonaSandboxLabelOrgID] = oc.OrgID
+	}
+	if strings.TrimSpace(cacheVolumeID) != "" {
+		labels[daytonaSandboxLabelCacheVolumeID] = cacheVolumeID
+	}
+	return labels
 }
 
 func normalizeRepoCachePath(p string) string {
