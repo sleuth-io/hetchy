@@ -55,7 +55,7 @@ func TestDaytonaCacheVolumeRouteStableSafeAndPooled(t *testing.T) {
 	}
 }
 
-func TestDaytonaCacheSubpathIsPerRepoAndPath(t *testing.T) {
+func TestDaytonaCacheSubpathIsPerOrgAndRepo(t *testing.T) {
 	oc := orgcfg.Config{OrgID: "org_1"}
 	orgPrefix := "orgs/" + daytonaCacheOrgHash(oc.OrgID) + "/"
 	base := daytonaCacheSubpath(oc, repoCtx{InstallID: 10, RepoID: 20})
@@ -67,13 +67,6 @@ func TestDaytonaCacheSubpathIsPerRepoAndPath(t *testing.T) {
 	}
 	if base == daytonaCacheSubpath(orgcfg.Config{OrgID: "org_2"}, repoCtx{InstallID: 10, RepoID: 20}) {
 		t.Fatal("subpath should differ across org ids")
-	}
-	pathSubpath := daytonaCacheSubpath(oc, repoCtx{InstallID: 10, RepoID: 20, Path: "frontend"})
-	if base == pathSubpath {
-		t.Fatal("subpath should differ across repo paths")
-	}
-	if !strings.HasPrefix(pathSubpath, orgPrefix+"repos/10/20/path-") {
-		t.Fatalf("path-hash subpath = %q", pathSubpath)
 	}
 }
 

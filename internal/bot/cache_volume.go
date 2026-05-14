@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	pathpkg "path"
 	"strconv"
 	"strings"
 	"time"
@@ -230,12 +229,7 @@ func daytonaCacheVolumeSlot(orgID string, slotCount int) int {
 // volume. The org hash must stay first so two Hetchy orgs can never see
 // each other's repo caches even if they route to the same physical volume.
 func daytonaCacheSubpath(oc orgcfg.Config, repo repoCtx) string {
-	pathPart := "default"
-	if p := normalizeRepoCachePath(repo.Path); p != "" {
-		hash := sha256.Sum256([]byte(p))
-		pathPart = "path-" + hex.EncodeToString(hash[:])[:16]
-	}
-	return fmt.Sprintf("orgs/%s/repos/%d/%d/%s", daytonaCacheOrgHash(oc.OrgID), repo.InstallID, repo.RepoID, pathPart)
+	return fmt.Sprintf("orgs/%s/repos/%d/%d/default", daytonaCacheOrgHash(oc.OrgID), repo.InstallID, repo.RepoID)
 }
 
 func daytonaCacheOrgHash(orgID string) string {
@@ -254,18 +248,6 @@ func daytonaSandboxLabels(cfg Config, oc orgcfg.Config, cacheVolumeID string) ma
 		labels[daytonaSandboxLabelCacheVolumeID] = cacheVolumeID
 	}
 	return labels
-}
-
-func normalizeRepoCachePath(p string) string {
-	p = strings.TrimSpace(p)
-	if p == "" {
-		return ""
-	}
-	p = strings.TrimPrefix(pathpkg.Clean("/"+p), "/")
-	if p == "." {
-		return ""
-	}
-	return p
 }
 
 func sanitizeDaytonaNamePart(s string) string {

@@ -110,7 +110,6 @@ type repoCtx struct {
 	GitHubToken  string
 	InstallID    int64
 	RepoID       int64
-	Path         string
 	CacheMounted bool
 	TokenExpires time.Time
 }
