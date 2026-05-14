@@ -1,65 +1,80 @@
 graph TB
-    subgraph Users["👤 Users"]
-        Browser["Browser\n(Web UI)"]
-        SlackUser["Slack\n(Workspace)"]
+    subgraph Clients["Clients"]
+        Browser["Browser web UI"]
+        SlackUser["Slack workspace"]
     end
 
-    subgraph HetchyServer["Hetchy Server (single binary)"]
-        direction TB
-        WebUI["HTTP / Web Handler\n/chat, /api/*\nSSE streaming"]
-        SlackMgr["Slack Manager\nSocket Mode\nper-org connections"]
-        BotCore["Bot Core\nHandleRequest\norchestrates everything"]
-        Auth["Auth Service\nWorkOS AuthKit\ncookie sessions"]
-        OrgCfg["OrgCfg Store\nper-org settings\n(encrypted at rest)"]
-        ConvStore["Conversation Store\nthread state\nblock history"]
-        Bootstrap["Bootstrap Store\nrepo specs\nsetup/start/health scripts"]
-        LiveReg["Live Registry\nin-flight SSE\nstream re-attach"]
+    subgraph Hetchy["Hetchy Go process"]
+        HTTP["HTTP router\npages, /chat, /api/*, webhooks"]
+        WebUI["internal/webui\nHTML, CSS, JS assets"]
+        Auth["auth.Service\nWorkOS sessions + org membership"]
+        SlackTransport["Slack transports\nSocket Mode dev\nHTTP Events API staging/prod"]
+        BotCore["bot.HandleRequest\nconversation state machine\nsandbox/run orchestration"]
+        Live["liveRegistry\nin-process SSE reattach"]
+        Runs["runstore + agentRunEmitter\ndurable run state\nSSE event log + recovery"]
+        Agents["agents.Store\norg-scoped personas\nsx bot/profile selection"]
+        OrgCfg["orgcfg.Store\nencrypted org settings"]
+        Bootstrap["bootstrap.Store + runner\nrepo setup specs\nrepo secrets"]
+        GitHubApp["githubapp.App + handlers\ninstall sync, webhooks\ntoken minting"]
+        Artifacts["artifact slot broker\n/api/artifact-slots"]
     end
 
-    subgraph ExternalServices["External Services"]
-        WorkOS["WorkOS\nAuthentication\nOrg management"]
-        Daytona["Daytona Cloud\nSandbox orchestration\nIsolated VMs"]
-        Anthropic["Anthropic API\nClaude Code\nAI agent"]
-        GitHub["GitHub\nGitHub App\nInstallation tokens\nPull Requests"]
-        Slack["Slack API\nEvent delivery\nThread replies"]
-        S3["AWS S3\nScreenshot upload\n(optional)"]
+    subgraph Data["PostgreSQL"]
+        OrgConfigs["org_configs\nClaude, Slack, SX tokens\ndefault repo"]
+        Conversations["conversations\nthread state, history\nsandbox, branch, PR"]
+        AgentRuns["agent_runs\nagent_run_events\nleases, replayable SSE"]
+        AgentProfiles["agent_profiles\npersonas and aliases"]
+        GitHubTables["github_app_installations\ngithub_repos, teams, members"]
+        RepoSpecs["repo_setup_specs\nrepo_secret_values"]
     end
 
-    subgraph Database["PostgreSQL"]
-        Conversations["conversations\nthread_id → sandbox+branch+PR\nblock history"]
-        OrgConfigs["org_configs\nSlack/Anthropic tokens\ndefault repo"]
-        GithubApp["github_app_installations\ninstall_id → repos\naccess grants"]
-        RepoBootstrap["repo_bootstrap\nsetup/start/health scripts\nper-repo spec"]
+    subgraph External["External services"]
+        WorkOS["WorkOS AuthKit"]
+        SlackAPI["Slack API"]
+        GitHub["GitHub App + API"]
+        Daytona["Daytona Cloud\nsnapshots, sandboxes\npooled cache volumes"]
+        Claude["Claude Code in sandbox\nAnthropic API"]
+        S3["AWS S3\nproof artifacts"]
     end
 
-    Browser -->|"HTTPS POST /chat"| WebUI
-    Browser -->|"GET /chat/stream SSE"| WebUI
-    SlackUser -->|"Socket Mode events"| SlackMgr
+    Browser -->|"GET pages/assets"| HTTP
+    Browser -->|"POST /chat"| HTTP
+    Browser -->|"GET /chat/stream SSE"| HTTP
+    SlackUser -->|"events, mentions, DMs"| SlackTransport
 
-    WebUI --> Auth
-    WebUI --> BotCore
-    SlackMgr --> BotCore
+    HTTP --> WebUI
+    HTTP --> Auth
+    HTTP --> BotCore
+    SlackTransport --> BotCore
 
     BotCore --> OrgCfg
-    BotCore --> ConvStore
+    BotCore --> Agents
     BotCore --> Bootstrap
-    BotCore --> LiveReg
+    BotCore --> Runs
+    BotCore --> Live
+    BotCore --> GitHubApp
+    BotCore --> Artifacts
 
-    Auth -->|"OAuth / session"| WorkOS
-    OrgCfg --> Database
-    ConvStore --> Database
-    Bootstrap --> Database
+    Auth --> WorkOS
+    SlackTransport --> SlackAPI
+    GitHubApp --> GitHub
+    BotCore -->|"create/start/stop/archive"| Daytona
+    Daytona -->|"command logs"| BotCore
+    Daytona --> Claude
+    Claude -->|"push branch, gh pr create"| GitHub
+    BotCore -->|"verify reported PR"| GitHub
+    Artifacts -->|"presign PUT/GET"| S3
+    Claude -->|"request/upload proof slots"| Artifacts
+    BotCore -->|"thread replies"| SlackAPI
 
-    BotCore -->|"create/resume/archive"| Daytona
-    Daytona -->|"stdout/stderr stream"| BotCore
-    BotCore -->|"ANTHROPIC_API_KEY or\nCLAUDE_CODE_OAUTH_TOKEN"| Anthropic
+    OrgCfg --> OrgConfigs
+    BotCore --> Conversations
+    Runs --> AgentRuns
+    Agents --> AgentProfiles
+    Bootstrap --> RepoSpecs
+    GitHubApp --> GitHubTables
 
-    BotCore -->|"mint installation token"| GitHub
-    BotCore -->|"thread reply / message"| Slack
-
-    BotCore -->|"presign PUT URL"| S3
-
-    style Users fill:#e8f4fd,stroke:#2196F3
-    style HetchyServer fill:#f3e5f5,stroke:#9C27B0
-    style ExternalServices fill:#e8f5e9,stroke:#4CAF50
-    style Database fill:#fff3e0,stroke:#FF9800
+    style Clients fill:#e3f2fd,stroke:#1976D2
+    style Hetchy fill:#f3e5f5,stroke:#7B1FA2
+    style Data fill:#fff3e0,stroke:#E65100
+    style External fill:#e8f5e9,stroke:#388E3C

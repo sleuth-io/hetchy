@@ -1,46 +1,56 @@
 flowchart TD
-    Start([Task arrives\nfor new repo]) --> CheckSpec{Spec exists\nin DB?}
+    Start([Agent turn starts]) --> ValidateOpt{Validate changes\nenabled?}
 
-    CheckSpec -->|Yes\nStatusValidated| UseSpec[Use cached spec\nSkip bootstrap]
-    CheckSpec -->|ErrNotFound| RunBootstrap[Run bootstrap pipeline]
-    CheckSpec -->|StatusFailing| AutoHeal[AutoHeal mode\nPreamble with prior scripts]
-    AutoHeal --> RunBootstrap
+    ValidateOpt -->|No| PlainPrompt[Skip bootstrap and\nvalidation prompt]
+    ValidateOpt -->|Yes| RepoIDs{Repo resolved through\nGitHub App with install_id\nand repo_id?}
+    RepoIDs -->|No| PlainPrompt
+    RepoIDs -->|Yes| GetSpec[Get repo_setup_spec\nby installation_id, repo_id, path='']
 
-    RunBootstrap --> Clone[setup-clone.sh\ngit clone repo into sandbox]
-    Clone --> Detect[detect.go\nRead files to fingerprint repo:\nDockerfile, package.json,\ngo.mod, Makefile…]
-    Detect --> Hints[Hints struct:\nLanguage, Framework,\nHasDocker, HasMakefile…]
-    Hints --> PromptBuild[Build bootstrap prompt:\nHints + AutoHeal preamble\nif prior spec exists]
+    GetSpec -->|Spec exists| UseSpec[Use saved spec as-is\nany current status]
+    GetSpec -->|Not found| CreateSession[Create bootstrap session\ninside the fresh sandbox]
+    GetSpec -->|DB error| BootstrapSkipped[Log warning and\nrun without validation spec]
 
-    PromptBuild --> ClaudeLoop{Bootstrap loop\nmax N iterations}
+    CreateSession --> Clone[Run setup-clone.sh\nclone repo into SF_WORKDIR]
+    Clone --> Detect[detectViaSandbox\ncopy detection files locally\nbootstrap.Detect]
+    Detect --> Secrets[Load repo_secret_values\nand decrypt supplied secrets]
+    Secrets --> Prompt[Build bootstrap prompt\nhints + supplied secret names]
+    Prompt --> Loop[bootstrap.Run\nClaude Code Opus/high]
 
-    ClaudeLoop --> RunClaude[Run Claude Code\nwith bootstrap prompt]
-    RunClaude --> AgentWrites[Agent writes to /tmp/hetchy-spec/:\nmanifest.json\nsetup.sh\nstart.sh\nhealth.sh]
+    Loop --> Artifacts[Agent writes\n/tmp/hetchy-spec/manifest.json\nsetup.sh, start.sh, health.sh]
+    Artifacts --> Verify[Bootstrap harness runs\nsetup.sh, start.sh, health.sh]
 
-    AgentWrites --> RunSetup[Run setup.sh\ninstall deps, build…]
-    RunSetup --> RunStart[Run start.sh &\nlaunch app in background]
-    RunStart --> PollHealth{Poll health.sh\ntimeout 60s}
+    Verify -->|validated or partial| SaveSpec[Save repo_setup_spec\nstatus validated/partial\nsource fingerprint]
+    Verify -->|loop failed with partial output| SaveFailing[Persist StatusFailing\npartial scripts + log]
+    Verify -->|fatal error| BootstrapSkipped
 
-    PollHealth -->|health check passes| Bootstrap_OK[Bootstrap SUCCESS]
-    PollHealth -->|timeout / error| IterBudget{Iterations\nexhausted?}
+    SaveSpec --> DeclareSecrets[Declare required secrets\nin repo_secret_values]
+    DeclareSecrets --> UseSpec
+    SaveFailing --> BootstrapSkipped
 
-    IterBudget -->|No| DiagnosePrompt[Diagnose prompt:\nfailure output + prior scripts\nask Claude to fix]
-    DiagnosePrompt --> ClaudeLoop
+    UseSpec --> MintSlots[Mint default artifact slots\nif S3 is configured]
+    MintSlots --> MergePrompt[Merge validation prompt\ninto agent prompt]
+    MergePrompt --> ApplySpec[agent.sh/followup.sh decodes\nsetup/start/health scripts]
+    ApplySpec --> StartApp[Run setup.sh,\nstart.sh in background,\npoll health.sh for 90s]
+    StartApp --> AgentWork[Claude implements change\nand validates with proof]
+    PlainPrompt --> AgentWork
+    BootstrapSkipped --> AgentWork
 
-    IterBudget -->|Yes| Bootstrap_Fail[Bootstrap FAILED\nErrLoopFailed]
+    AgentWork --> Reflection{Fresh run succeeded\nand spec was used?}
+    Reflection -->|Yes| ReadImprovements[Read /tmp/hetchy-spec/improved\nsetup/start/health/reason or none.txt]
+    Reflection -->|No| Done([Done])
 
-    Bootstrap_Fail --> PersistFailing[Persist StatusFailing spec\nwith partial scripts\nfor future AutoHeal]
+    ReadImprovements -->|none.txt| MarkApplied[Mark spec applied\nstatus validated\nincrement success_count]
+    ReadImprovements -->|scripts changed| SaveImproved[Save spec_version+1\nstatus stale\npatched scripts]
+    ReadImprovements -->|no marker| MarkApplied
+    SaveImproved --> MarkApplied
+    MarkApplied --> Done
 
-    Bootstrap_OK --> SaveSpec[Save Spec to DB\nStatusValidated\nInstallID + RepoID keyed]
-    SaveSpec --> MergePrompt[MergeIntoAgentPrompt\nAppend validation instructions\nto main agent prompt]
+    Note1["Today, drift detection and AutoHeal helpers exist in internal/bootstrap,\nbut ensureBootstrapSpec does not call them. The launch path only\nbootstraps when no spec row exists; saved specs are reused directly.\nSpec-improvement readback is wired after fresh run success, not follow-up success."]
 
-    UseSpec --> MergePrompt
-    MergePrompt --> SendToAgent[Send to agent.sh\nWith SF_SPEC_SETUP_B64\nSF_SPEC_START_B64\nSF_SPEC_HEALTH_B64]
+    GetSpec -.-> Note1
 
-    SendToAgent --> AgentRuns[Agent runs:\n1. Decode + run setup.sh\n2. Start app\n3. Poll health\n4. Make changes\n5. Validate via screenshots\n6. Open PR]
-
-    AgentRuns --> PostSuccess[Post-success:\nRead /tmp/hetchy-spec/improved/\nApply any script improvements\nMarkApplied → StatusValidated]
-
-    style Bootstrap_OK fill:#c8e6c9,stroke:#2E7D32
-    style Bootstrap_Fail fill:#ffcdd2,stroke:#B71C1C
-    style UseSpec fill:#c8e6c9,stroke:#2E7D32
-    style AutoHeal fill:#fff9c4,stroke:#F57F17
+    style PlainPrompt fill:#eeeeee,stroke:#757575
+    style BootstrapSkipped fill:#fff9c4,stroke:#F57F17
+    style SaveSpec fill:#c8e6c9,stroke:#2E7D32
+    style SaveFailing fill:#ffcdd2,stroke:#B71C1C
+    style SaveImproved fill:#bbdefb,stroke:#1565C0

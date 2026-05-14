@@ -1,50 +1,66 @@
 sequenceDiagram
-    actor User as User (Web / Slack)
-    participant Bot as Bot Core
+    actor User as User (Web or Slack)
+    participant Transport as Web/Slack transport
+    participant Bot as Bot core
     participant DB as PostgreSQL
-    participant Daytona as Daytona Sandbox
-    participant Claude as Claude Code (in sandbox)
-    participant GH as GitHub
+    participant GH as GitHub App/API
+    participant Daytona as Daytona sandbox
+    participant Claude as Claude Code
+    participant S3 as S3 artifact slots
 
-    User->>Bot: "Add a health check endpoint"
-    Bot->>DB: Look up conversation (org, thread_id)
-    DB-->>Bot: ErrNotFound → new conversation
+    User->>Transport: Send request
+    Transport->>DB: Load org config / principal
+    Transport->>Bot: HandleRequest(org, text, thread, user, options, agent, model)
 
-    Bot->>DB: Look up org config (default repo, Anthropic key)
-    DB-->>Bot: org config
+    Bot->>DB: Create durable agent_run and claim active thread slot
+    Bot->>DB: Load conversation, saved task options, model, agent slug
 
-    alt No default repo set
-        Bot-->>User: "Which repo? Reply with owner/name"
-        Bot->>DB: Save partial conversation (awaiting repo)
-        User->>Bot: "acme/website"
+    alt No conversation and no default repo
+        Bot-->>Transport: Notify "Which repository?"
+        Bot->>DB: Save partial conversation (history[0], agent/model/options)
+        Bot->>DB: Mark agent_run succeeded
+        Transport-->>User: Ask for owner/name
+    else Repo selected or default repo exists
+        Bot->>DB: Resolve agent profile and task options
+        Bot->>GH: Look up cached repo and mint repo-scoped installation token
+        GH-->>Bot: owner/repo, base branch, short-lived token
+
+        Bot-->>User: Starting / sandbox status block
+        Bot->>Daytona: Create sandbox from snapshot with labels/cache volume
+        Daytona-->>Bot: Sandbox ID
+        Bot->>DB: Upsert conversation with repo, sandbox_id, branch
+
+        alt Validate changes is enabled
+            Bot->>DB: Get repo_setup_spec
+            alt Spec not found
+                Bot->>Daytona: Bootstrap session: clone, detect hints, run bootstrap loop
+                Daytona->>Claude: Opus/high bootstrap prompt
+                Claude-->>Daytona: manifest.json, setup.sh, start.sh, health.sh
+                Bot->>DB: Save validated/partial spec or failing partial spec
+            else Spec exists
+                Bot->>Bot: Reuse saved spec as-is
+            end
+            Bot->>S3: Mint proof artifact upload slots (if configured)
+        end
+
+        Bot->>Daytona: Write and run agent.sh or followup.sh
+        loop Agent output
+            Daytona-->>Bot: Hetchy-framed stdout/stderr lines
+            Bot->>DB: Append agent_run_events
+            Bot-->>Transport: Fan out block_start/append/done
+            Transport-->>User: SSE blocks or Slack thread updates
+        end
+
+        Claude->>GH: Push branch and create/update pull request
+        Claude-->>Daytona: Final text contains PR URL
+        Daytona-->>Bot: Command completed
+        Bot->>GH: Verify PR URL, repo, head branch, base branch when fresh
+        GH-->>Bot: Verified PR
+        Bot->>DB: Persist conversation turn and response_blocks
+        Bot->>DB: Mark agent_run succeeded
+        Bot->>Daytona: Delete session, stop sandbox, archive sandbox
+        Bot-->>Transport: Done block with PR URL
+        Transport-->>User: Final result
     end
 
-    Bot->>GH: Get installation token (scoped to repo)
-    GH-->>Bot: Short-lived installation token
-
-    Bot->>DB: Upsert conversation row (repo set, no sandbox yet)
-    Bot-->>User: "Spinning up sandbox for acme/website…"
-
-    Bot->>Daytona: Create sandbox (from snapshot)
-    Daytona-->>Bot: Sandbox ID
-
-    Bot-->>User: "Sandbox ready — cloning repo"
-
-    Bot->>Daytona: Write agent.sh to sandbox
-    Bot->>Daytona: Run agent.sh (with ANTHROPIC_API_KEY, GITHUB_TOKEN, prompt)
-
-    loop Claude Code stream (NDJSON)
-        Daytona-->>Bot: stdout line (setup echo / Claude JSON event)
-        Bot-->>User: SSE block update (setup / tool_use / claude_text)
-    end
-
-    Claude->>GH: git push + gh pr create
-    GH-->>Claude: PR URL
-
-    Claude-->>Daytona: Last line = PR URL
-    Daytona-->>Bot: PR URL extracted
-
-    Bot->>Daytona: Stop + archive sandbox
-
-    Bot-->>User: "Done! https://github.com/acme/website/pull/42"
-    Bot->>DB: Upsert conversation (sandbox_id, branch, pr_url, blocks)
+    Note over Bot,DB: For follow-ups, the existing conversation has sandbox_id + pr_url. Hetchy starts the archived sandbox, mints a fresh GitHub token, runs followup.sh on the same branch, appends a new turn, then archives again on success.

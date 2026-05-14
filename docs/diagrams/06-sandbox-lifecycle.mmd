@@ -1,49 +1,73 @@
 stateDiagram-v2
-    [*] --> Creating : Bot calls Daytona.Create(snapshot)
+    [*] --> ResolvingRepo : HandleRequest creates agent_run
 
-    Creating --> Running : Sandbox ready\n(agent.sh / followup.sh starts)
-    Creating --> CreateFailed : Daytona error\n(retried up to 3x with backoff)
+    ResolvingRepo --> Creating : GitHub repo resolved\ninstallation token minted
+    ResolvingRepo --> FailedNoSandbox : repo inaccessible\nor GitHub App missing
 
-    CreateFailed --> [*] : Bot emits error to user\nConveration row saved for retry
+    Creating --> RunningFresh : Daytona.Create(snapshot)\nlabels + optional cache volume
+    Creating --> FailedNoSandbox : create failed after transient retries
 
-    state Running {
-        [*] --> SetupClone
-        SetupClone --> ClaudeRunning : git clone success\nClaude Code invoked
-        SetupClone --> SetupFailed : clone / auth error
-        ClaudeRunning --> PRCreated : Last line = PR URL
-        ClaudeRunning --> AgentFailed : Wall/idle timeout\nor non-zero exit
+    state RunningFresh {
+        [*] --> SessionCreated
+        SessionCreated --> BootstrapOptional : write/run agent.sh
+        BootstrapOptional --> ClaudeRunning : setup complete\n[hetchy] running claude
+        ClaudeRunning --> PRVerified : PR URL parsed\nGitHub validates repo/branch/base
+        ClaudeRunning --> AgentFailed : non-zero exit,\nwall timeout, idle timeout,\nor PR not verified
     }
 
-    Running --> Stopping : Bot calls sb.Stop()
-    Stopping --> Archived : Bot calls sb.Archive()
-    Archived --> Resuming : Follow-up request arrives\nBot calls sb.StartWithTimeout()
+    PRVerified --> Archiving : delete Daytona session
+    Archiving --> Archived : Stop + Archive
 
-    Resuming --> Running : Sandbox warm again\n(≈ seconds from archive)
-    Resuming --> ResumeFailed : DaytonaTimeoutError\nor 5xx
+    Archived --> Resuming : follow-up arrives
+    Resuming --> RunningFollowUp : StartWithTimeout(5m)\nfresh installation token
+    Resuming --> ResumeFailed : timeout or Daytona error
 
-    ResumeFailed --> [*] : Bot emits "Sandbox slow to start"\nUser told to retry or open new chat
+    state RunningFollowUp {
+        [*] --> FollowupSession
+        FollowupSession --> FollowupClaude : write/run followup.sh\ncheckout existing branch
+        FollowupClaude --> FollowupVerified : PR URL parsed\nGitHub validates head branch
+        FollowupClaude --> FollowupFailed : command or validation failed
+    }
 
-    Archived --> Archived : No follow-up\n(cost-efficient idle state)
+    FollowupVerified --> Archiving
 
-    note right of Archived
-        Archived sandboxes persist all files
-        (repo checkout, git history).
-        Follow-ups resume in seconds
-        without re-cloning.
-    end note
+    AgentFailed --> DebugRunning : fresh-run sandbox left\nfor debugging
+    DebugRunning --> Creating : next message archives orphan\nthen creates a new sandbox
+
+    FollowupFailed --> FollowupDebug : conversation still has PRURL\nsandbox left available
+    FollowupDebug --> Resuming : next follow-up retries\nsame PR conversation
+
+    FailedNoSandbox --> [*] : user can retry in same chat
+    ResumeFailed --> [*] : user can retry or start fresh
+    Archived --> Archived : no follow-up\nfilesystem preserved
+
+    RunningFresh --> CancelFresh : user cancels
+    CancelFresh --> Archived : cleanup stop/archive
+    RunningFollowUp --> CancelFollowUp : user cancels
+    CancelFollowUp --> FollowupDebug : session stops\nsandbox kept for next turn
 
     note right of Creating
-        Snapshot image pre-baked with:
-        - Claude Code CLI
-        - gh CLI (authenticated)
-        - Go toolchain
-        - Node.js / Python / etc.
-        Env vars: SX_KEY (if set)
+        Fresh sandboxes use the configured Daytona snapshot.
+        Hetchy may mount a pooled dependency cache volume
+        under /home/daytona/.hetchy-cache.
     end note
 
     note right of ClaudeRunning
-        Timeout limits:
-        - Wall clock: 45 min
-        - Idle (no output): 15 min
-        Heartbeat every 5 min to user
+        run-script timeout limits:
+        wall clock = 45 minutes
+        idle output = 15 minutes
+        user heartbeat = every minute
+    end note
+
+    note right of Archived
+        Archived sandboxes keep the checkout,
+        branch, git history, caches, and generated files.
+        Follow-ups resume from this filesystem.
+    end note
+
+    note left of RunningFresh
+        If the bot process dies mid-command, agent_run
+        recovery claims the lease, replays Daytona command
+        logs through the same line router, projects the
+        conversation, and archives on recovered success.
     end note

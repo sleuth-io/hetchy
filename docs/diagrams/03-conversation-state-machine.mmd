@@ -1,49 +1,63 @@
 stateDiagram-v2
-    [*] --> New : User sends first message
+    [*] --> NoRow : first message
 
-    state New {
-        [*] --> CheckDefaultRepo
-        CheckDefaultRepo --> HasDefaultRepo : org has default_github_repo
-        CheckDefaultRepo --> NoDefaultRepo : no default repo
-    }
+    NoRow --> AwaitingRepo : no org default repo\nsave partial conversation
+    NoRow --> FreshPreparing : default repo exists
 
-    NoDefaultRepo --> AwaitingRepo : Bot asks "which repo?\nReply with owner/name"
-    HasDefaultRepo --> AgentRunning : runFreshAgent()
+    AwaitingRepo --> AwaitingRepo : owner/name parse failed\nsave bot nudge
+    AwaitingRepo --> FreshPreparing : owner/name parsed\nuse original History[0]
 
-    AwaitingRepo --> AgentRunning : User replies "owner/name"\nparsed successfully
-    AwaitingRepo --> AwaitingRepo : Parse failed\nBot nudges user to retry
+    FreshPreparing --> RepoResolveFailed : GitHub App cannot access repo
+    RepoResolveFailed --> AwaitingRepo : repo fields cleared\nnext message picks repo
 
-    AgentRunning --> SandboxFailed : Daytona create fails\nor agent crashes
-    AgentRunning --> PRCreated : Claude posts PR URL\nsandbox archived
+    FreshPreparing --> SandboxCreating : repo resolved\ntoken minted\nbranch chosen
+    SandboxCreating --> RetryReady : sandbox create failed\nrepo kept, no sandbox_id
+    RetryReady --> FreshPreparing : next message retries\nsame repo as new request
 
-    SandboxFailed --> AgentRunning : User sends any message\norphan sandbox archived\nnew sandbox spun up
+    SandboxCreating --> FreshAgentRunning : sandbox_id saved
+    FreshAgentRunning --> FailedWithSandbox : setup/agent timeout,\nagent error, or PR not verified
+    FailedWithSandbox --> FreshPreparing : next message archives\norphan sandbox first
 
-    PRCreated --> FollowUpRunning : User sends follow-up\nmessage in thread
-    FollowUpRunning --> PRCreated : Follow-up complete\nnew commit pushed\nsandbox archived
+    FreshAgentRunning --> PRReady : PR verified\nconversation saved\nsandbox archived
 
-    FollowUpRunning --> FollowUpFailed : Agent crashes
-    FollowUpFailed --> FollowUpRunning : User retries
+    PRReady --> FollowUpRunning : user sends follow-up\nsame thread/session
+    FollowUpRunning --> PRReady : follow-up PR verified\nnew turn saved\nsandbox archived
+    FollowUpRunning --> FollowUpFailed : resume, agent, or PR validation failed
+    FollowUpFailed --> FollowUpRunning : next message continues\nsame PR conversation
 
-    PRCreated --> [*] : Conversation abandoned
-    SandboxFailed --> [*] : Conversation abandoned
+    FreshPreparing --> Cancelled : stop before/while creating sandbox
+    FreshAgentRunning --> Cancelled : fresh run cancelled\nsandbox archived
+    FollowUpRunning --> Cancelled : follow-up cancelled\nsandbox left available
+
+    PRReady --> [*] : abandoned
+    Cancelled --> [*]
 
     note right of AwaitingRepo
-        Stored state:
+        Stored conversation:
         History[0] = original request
-        GitHubOwner = ""
+        GitHubOwner/GitHubRepo = ""
         SandboxID = ""
+        PRURL = ""
+        AgentSlug, Model, TaskOptions are saved
     end note
 
-    note right of SandboxFailed
-        Stored state:
-        SandboxID set (if agent started)
-        PRURL = "" (distinguishes from PRCreated)
-        Next message triggers archive + retry
+    note right of FailedWithSandbox
+        Fresh-run failure:
+        SandboxID is saved and PRURL is empty.
+        The sandbox is left for debugging until
+        the next message archives it and starts over.
     end note
 
-    note right of PRCreated
-        Stored state:
-        SandboxID, Branch, PRURL all set
-        Sandbox is ARCHIVED (cost-efficient)
-        Follow-up resumes from archive
+    note right of PRReady
+        Successful conversation:
+        SandboxID, Branch, PRURL are set.
+        The Daytona sandbox is archived, not destroyed,
+        so follow-ups resume the same filesystem.
+    end note
+
+    note left of FreshAgentRunning
+        Each turn also has an agent_runs row:
+        preparing -> running -> finalizing ->
+        succeeded / failed / cancelled.
+        recoverable interruptions move through recovering.
     end note
