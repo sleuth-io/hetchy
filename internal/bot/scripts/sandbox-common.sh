@@ -74,7 +74,7 @@ save_hetchy_cache_archive() {
   hetchy_cache_has_entries "$local_cache_dir" || return 0
   mkdir -p "$volume_cache_dir" || return 1
 
-  local archive_tmp="${archive}.tmp.$$"
+  local archive_tmp="${archive}.tmp"
   rm -f "$archive_tmp" 2>/dev/null || true
 
   if ! tar -C "$local_cache_dir" \

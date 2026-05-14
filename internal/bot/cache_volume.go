@@ -287,6 +287,7 @@ func isDaytonaConflict(err error) bool {
 	if daytonaErr.StatusCode == http.StatusConflict {
 		return true
 	}
+	// Daytona returns 400, not 409, for duplicate volume names.
 	msg := strings.ToLower(daytonaErr.Message)
 	return daytonaErr.StatusCode == http.StatusBadRequest &&
 		strings.Contains(msg, "volume") &&
