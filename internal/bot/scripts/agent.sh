@@ -192,6 +192,7 @@ configure_hetchy_cache() {
   export UV_CACHE_DIR="${cache_dir}/uv"
   export BUNDLE_PATH="${cache_dir}/bundle"
   export CARGO_HOME="${cache_dir}/cargo"
+  export PATH="${CARGO_HOME}/bin:${PATH}"
 
   if [[ "$prune_days" =~ ^[0-9]+$ && "$prune_days" -gt 0 ]]; then
     echo "[hetchy] pruning dependency cache files older than ${prune_days} days"

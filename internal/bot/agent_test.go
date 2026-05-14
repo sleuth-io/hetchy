@@ -166,6 +166,7 @@ func TestAgentScript_EmbeddedAndWellFormed(t *testing.T) {
 		"setup.sh still running",
 		"configure_hetchy_cache",
 		`export GOCACHE="${cache_dir}/go-build"`,
+		`export PATH="${CARGO_HOME}/bin:${PATH}"`,
 		`find "$cache_dir" -xdev -mindepth 1 -type f -mtime "+${prune_days}" -delete`,
 		`[[ -z "$cache_dir" || ! -d "$cache_dir" ]]`,
 	}
@@ -194,6 +195,7 @@ func TestFollowupScript_EmbeddedAndWellFormed(t *testing.T) {
 		"setup.sh still running",
 		"configure_hetchy_cache",
 		`export GOCACHE="${cache_dir}/go-build"`,
+		`export PATH="${CARGO_HOME}/bin:${PATH}"`,
 		`find "$cache_dir" -xdev -mindepth 1 -type f -mtime "+${prune_days}" -delete`,
 		`[[ -z "$cache_dir" || ! -d "$cache_dir" ]]`,
 	}
