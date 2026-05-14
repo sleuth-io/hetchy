@@ -779,11 +779,12 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 	if oc.SXKey != "" {
 		envVars["SX_KEY"] = oc.SXKey
 	}
-	addDaytonaCacheEnv(envVars, b.cfg, oc, repo)
 	volumes := []types.VolumeMount(nil)
-	if mount, ok := b.resolveDaytonaCacheMount(ctx, oc, repo); ok {
+	if mount, mounted := b.resolveDaytonaCacheMount(ctx, oc, repo); mounted {
 		volumes = append(volumes, mount)
+		repo.CacheMounted = true
 	}
+	addDaytonaCacheEnv(envVars, b.cfg, oc, repo, repo.CacheMounted)
 	sb, err := b.createSandboxWithRetry(ctx, types.SnapshotParams{
 		SandboxBaseParams: types.SandboxBaseParams{EnvVars: envVars, Volumes: volumes},
 		Snapshot:          b.cfg.Snapshot,

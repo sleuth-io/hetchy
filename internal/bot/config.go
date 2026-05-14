@@ -174,13 +174,17 @@ func LoadConfig() (Config, error) {
 		}
 		cachePruneDays = n
 	}
+	cacheVolumePrefix := strings.TrimSpace(os.Getenv("DAYTONA_CACHE_VOLUME_PREFIX"))
+	if cacheVolumePrefix == "" {
+		cacheVolumePrefix = defaultCacheVolumePrefix
+	}
 
 	return Config{
 		Env:                         getenvDefault("HETCHY_ENV", "prod"),
 		DaytonaAPIURL:               strings.TrimSpace(os.Getenv("DAYTONA_API_URL")),
 		Snapshot:                    os.Getenv("DAYTONA_SNAPSHOT"),
 		DaytonaCacheVolumesDisabled: strings.TrimSpace(os.Getenv("DAYTONA_CACHE_VOLUMES_DISABLED")) == "1",
-		DaytonaCacheVolumePrefix:    getenvDefaultTrim("DAYTONA_CACHE_VOLUME_PREFIX", defaultCacheVolumePrefix),
+		DaytonaCacheVolumePrefix:    cacheVolumePrefix,
 		DaytonaCachePruneDays:       cachePruneDays,
 		DatabaseURL:                 os.Getenv("DATABASE_URL"),
 		DatabaseMaxConns:            dbMaxConns,
@@ -216,13 +220,6 @@ func LoadConfig() (Config, error) {
 
 func getenvDefault(key, def string) string {
 	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
-}
-
-func getenvDefaultTrim(key, def string) string {
-	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
 		return v
 	}
 	return def

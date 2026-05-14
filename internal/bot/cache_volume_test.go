@@ -119,6 +119,15 @@ func TestResolveDaytonaCacheMountCreateConflictRetriesGet(t *testing.T) {
 	}
 }
 
+func TestIsDaytonaConflictRequiresStatusCode(t *testing.T) {
+	if !isDaytonaConflict(sdkerrors.NewDaytonaError("already exists", http.StatusConflict, nil)) {
+		t.Fatal("expected Daytona 409 to be treated as conflict")
+	}
+	if isDaytonaConflict(errors.New("repo already exists")) {
+		t.Fatal("plain error text should not be treated as Daytona conflict")
+	}
+}
+
 func TestResolveDaytonaCacheMountErrorsFallBackToNoMount(t *testing.T) {
 	vols := &fakeCacheVolumeService{
 		get: []fakeCacheVolumeResult{{err: sdkerrors.NewDaytonaError("boom", http.StatusInternalServerError, nil)}},
@@ -189,8 +198,51 @@ func TestHandleRequestFreshRunAttachesCacheVolumeAndEnv(t *testing.T) {
 	if params.EnvVars["HETCHY_CACHE_DIR"] != daytonaCacheMountPath {
 		t.Fatalf("HETCHY_CACHE_DIR = %q", params.EnvVars["HETCHY_CACHE_DIR"])
 	}
+	if params.EnvVars["HETCHY_CACHE_STATUS"] != "mounted" {
+		t.Fatalf("HETCHY_CACHE_STATUS = %q", params.EnvVars["HETCHY_CACHE_STATUS"])
+	}
 	if params.EnvVars["HETCHY_CACHE_PRUNE_DAYS"] != "14" {
 		t.Fatalf("HETCHY_CACHE_PRUNE_DAYS = %q", params.EnvVars["HETCHY_CACHE_PRUNE_DAYS"])
+	}
+}
+
+func TestHandleRequestFreshRunMarksCacheUnavailableWhenVolumeResolveFails(t *testing.T) {
+	convs := &fakeConversationStore{getErr: convstore.ErrNotFound}
+	b := testCoreBot(convs)
+	b.cfg = Config{Env: "dev", Snapshot: "snap"}
+	b.cacheVols = &fakeCacheVolumeService{
+		get: []fakeCacheVolumeResult{{err: sdkerrors.NewDaytonaError("boom", http.StatusInternalServerError, nil)}},
+	}
+	b.resolveRepoFn = func(context.Context, string, string, string) (repoCtx, error) {
+		return repoCtx{Slug: "hetchyhq/hetchy", BaseBranch: "main", GitHubToken: "token", InstallID: 11, RepoID: 22}, nil
+	}
+	var params types.SnapshotParams
+	b.createFn = func(_ context.Context, raw any) (*daytona.Sandbox, error) {
+		params = raw.(types.SnapshotParams)
+		return &daytona.Sandbox{ID: "sandbox-1"}, nil
+	}
+	b.runAgentFn = func(_ context.Context, _ *daytona.Sandbox, repo repoCtx, _ orgcfg.Config, _ agents.Profile, _ string, _ string, _ chatTaskOptions, _ ClaudeModel, _ blocks.Emitter) (string, error) {
+		if repo.CacheMounted {
+			t.Fatal("repo.CacheMounted should be false when volume resolution fails")
+		}
+		return "https://github.com/hetchyhq/hetchy/pull/2", nil
+	}
+	b.deleteSandboxSessionFn = func(*daytona.Sandbox, string) {}
+	b.stopAndArchiveFn = func(context.Context, *daytona.Sandbox) {}
+
+	b.HandleRequest(context.Background(),
+		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant", DefaultGitHubOwner: "hetchyhq", DefaultGitHubRepo: "hetchy"},
+		"ship it", "req-1", "thread-1", "user-1",
+		chatTaskOptionPatch{}, nil, ClaudeModelOpus, newCaptureEmitter())
+
+	if len(params.Volumes) != 0 {
+		t.Fatalf("expected no cache volumes, got %+v", params.Volumes)
+	}
+	if _, ok := params.EnvVars["HETCHY_CACHE_DIR"]; ok {
+		t.Fatalf("HETCHY_CACHE_DIR should not be set after resolve failure: %+v", params.EnvVars)
+	}
+	if params.EnvVars["HETCHY_CACHE_STATUS"] != "unavailable" {
+		t.Fatalf("HETCHY_CACHE_STATUS = %q", params.EnvVars["HETCHY_CACHE_STATUS"])
 	}
 }
 
@@ -229,7 +281,7 @@ func TestHandleRequestFreshRunSkipsCacheMountWithoutRepoIdentity(t *testing.T) {
 	}
 }
 
-func TestRunAgentAndFollowUpPassCacheEnv(t *testing.T) {
+func TestRunAgentPassesCacheEnvAndFollowUpDoesNotOverride(t *testing.T) {
 	restoreAgent := stubPRLookup(t, "acme/repo", "feature/sf-req-1", "main", "https://github.com/acme/repo/pull/7")
 	defer restoreAgent()
 
@@ -242,12 +294,12 @@ func TestRunAgentAndFollowUpPassCacheEnv(t *testing.T) {
 			return "https://github.com/acme/repo/pull/7", nil
 		},
 	}
-	repo := repoCtx{Slug: "acme/repo", BaseBranch: "main", GitHubToken: "token", InstallID: 11, RepoID: 22}
+	repo := repoCtx{Slug: "acme/repo", BaseBranch: "main", GitHubToken: "token", InstallID: 11, RepoID: 22, CacheMounted: true}
 	oc := orgcfg.Config{OrgID: "org_1", AnthropicAPIKey: "sk-ant"}
 	if _, err := b.runAgent(context.Background(), &daytona.Sandbox{ID: "sandbox-1"}, repo, oc, agents.Profile{}, "ship", "req-1", chatTaskOptions{ValidateChanges: false}, ClaudeModelSonnet, newCaptureEmitter()); err != nil {
 		t.Fatalf("runAgent: %v", err)
 	}
-	if captured.env["HETCHY_CACHE_DIR"] != daytonaCacheMountPath || captured.env["HETCHY_CACHE_PRUNE_DAYS"] != "9" {
+	if captured.env["HETCHY_CACHE_DIR"] != daytonaCacheMountPath || captured.env["HETCHY_CACHE_STATUS"] != "mounted" || captured.env["HETCHY_CACHE_PRUNE_DAYS"] != "9" {
 		t.Fatalf("agent cache env = %+v", captured.env)
 	}
 
@@ -256,8 +308,11 @@ func TestRunAgentAndFollowUpPassCacheEnv(t *testing.T) {
 	if _, err := b.runFollowUp(context.Background(), &daytona.Sandbox{ID: "sandbox-1"}, repo, oc, convstore.Record{Branch: "feature/sf-req-1", PRURL: "https://github.com/acme/repo/pull/7"}, agents.Profile{}, "tighten", "req-2", chatTaskOptions{}, ClaudeModelSonnet, newCaptureEmitter()); err != nil {
 		t.Fatalf("runFollowUp: %v", err)
 	}
-	if captured.env["HETCHY_CACHE_DIR"] != daytonaCacheMountPath || captured.env["HETCHY_CACHE_PRUNE_DAYS"] != "9" {
-		t.Fatalf("follow-up cache env = %+v", captured.env)
+	if _, ok := captured.env["HETCHY_CACHE_DIR"]; ok {
+		t.Fatalf("follow-up should inherit sandbox cache env instead of overriding it: %+v", captured.env)
+	}
+	if _, ok := captured.env["HETCHY_CACHE_STATUS"]; ok {
+		t.Fatalf("follow-up should inherit sandbox cache status instead of overriding it: %+v", captured.env)
 	}
 }
 

@@ -111,7 +111,7 @@ func (b *Bot) getOrCreateDaytonaCacheVolume(ctx context.Context, name string) (*
 	return volume, nil
 }
 
-func addDaytonaCacheEnv(env map[string]string, cfg Config, oc orgcfg.Config, repo repoCtx) {
+func addDaytonaCacheEnv(env map[string]string, cfg Config, oc orgcfg.Config, repo repoCtx, mounted bool) {
 	if env == nil {
 		return
 	}
@@ -124,8 +124,12 @@ func addDaytonaCacheEnv(env map[string]string, cfg Config, oc orgcfg.Config, rep
 		env["HETCHY_CACHE_STATUS"] = "unavailable"
 		return
 	}
-	env["HETCHY_CACHE_STATUS"] = "enabled"
-	env["HETCHY_CACHE_DIR"] = daytonaCacheMountPath
+	if mounted {
+		env["HETCHY_CACHE_STATUS"] = "mounted"
+		env["HETCHY_CACHE_DIR"] = daytonaCacheMountPath
+		return
+	}
+	env["HETCHY_CACHE_STATUS"] = "unavailable"
 }
 
 func repoCacheIdentityAvailable(oc orgcfg.Config, repo repoCtx) bool {
@@ -220,9 +224,5 @@ func isDaytonaNotFound(err error) bool {
 
 func isDaytonaConflict(err error) bool {
 	var daytonaErr *sdkerrors.DaytonaError
-	if errors.As(err, &daytonaErr) && daytonaErr.StatusCode == http.StatusConflict {
-		return true
-	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "already exists") || strings.Contains(msg, "conflict")
+	return errors.As(err, &daytonaErr) && daytonaErr.StatusCode == http.StatusConflict
 }

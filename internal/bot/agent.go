@@ -35,16 +35,19 @@ var setupCloneScript string
 //go:embed scripts/claude-watchdog.sh
 var claudeWatchdogScript string
 
-// agentScript and followupScript are the on-the-wire script bodies the
-// bot writes to the sandbox. They are claude-watchdog.sh prepended to
-// the user-visible scripts/agent.sh and scripts/followup.sh — the
-// prepend wires the run_claude_with_watchdog function into the same
-// shell scope. We do the join here (vs. having each script `source` a
-// separately-deployed file) so runScript only has to push one file per
-// invocation and there's no chance of a half-deployed pair.
-var agentScript = claudeWatchdogScript + "\n" + agentScriptBody
+//go:embed scripts/sandbox-common.sh
+var sandboxCommonScript string
 
-var followupScript = claudeWatchdogScript + "\n" + followupScriptBody
+// agentScript and followupScript are the on-the-wire script bodies the
+// bot writes to the sandbox. Shared helper scripts are prepended to
+// the user-visible scripts/agent.sh and scripts/followup.sh so their
+// functions live in the same shell scope. We do the join here (vs.
+// having each script `source` a separately-deployed file) so runScript
+// only has to push one file per invocation and there's no chance of a
+// half-deployed set.
+var agentScript = claudeWatchdogScript + "\n" + sandboxCommonScript + "\n" + agentScriptBody
+
+var followupScript = claudeWatchdogScript + "\n" + sandboxCommonScript + "\n" + followupScriptBody
 
 // The no-hard-wrap rule on bullet 5 also covers the Validation section
 // appended by bootstrap.MergeIntoAgentPrompt — see the matching note at
@@ -108,6 +111,7 @@ type repoCtx struct {
 	InstallID    int64
 	RepoID       int64
 	Path         string
+	CacheMounted bool
 	TokenExpires time.Time
 }
 
@@ -146,7 +150,7 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, o
 		"HETCHY_CLAUDE_MODEL": string(model),
 	}
 	addAgentEnv(env, b.cfg, agent)
-	addDaytonaCacheEnv(env, b.cfg, oc, repo)
+	addDaytonaCacheEnv(env, b.cfg, oc, repo, repo.CacheMounted)
 
 	// Mint the default proof-artifact batch before constructing the
 	// prompt, so validation instructions can mention upload slots only
@@ -301,7 +305,7 @@ func (b *Bot) ensureBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo
 		"HETCHY_CLAUDE_MODEL":  string(ClaudeModelOpus),
 		"HETCHY_CLAUDE_EFFORT": "high",
 	}
-	addDaytonaCacheEnv(baseEnv, b.cfg, oc, repo)
+	addDaytonaCacheEnv(baseEnv, b.cfg, oc, repo, repo.CacheMounted)
 	runner := &botRunner{
 		b:         b,
 		sb:        sb,
@@ -538,7 +542,6 @@ func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx
 		"HETCHY_CLAUDE_MODEL": string(model),
 	}
 	addAgentEnv(env, b.cfg, agent)
-	addDaytonaCacheEnv(env, b.cfg, oc, repo)
 
 	var slotsManifest []artifacts.Slot
 	if opts.ValidateChanges && spec != nil {
