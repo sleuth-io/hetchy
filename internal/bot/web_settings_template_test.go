@@ -68,10 +68,13 @@ func TestSettingsTemplate_IntegrationsTab(t *testing.T) {
 				"SlackBotTokenPreview":        "",
 				"SlackSocketTokenPreview":     "",
 				"SXKeyPreview":                "",
+				"ErrorMessage":                "Anthropic rejected that API key.",
 				"AnthropicAPIKeyPreview":      "",
 				"ClaudeCodeOAuthTokenPreview": "",
 			},
 			want: []string{
+				`class="error-banner"`,
+				`Anthropic rejected that API key.`,
 				// GitHub Enable button is a real link (OAuth flow)
 				`href="/integrations/github/install"`,
 				// Slack Enable is a real link too

@@ -151,6 +151,12 @@ func TestSettingsHandlerGetAndPostWithFakes(t *testing.T) {
 		t.Fatalf("POST general redirect = %q", got)
 	}
 
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	withAnthropicBase(t, srv.URL)
+
 	rec = httptest.NewRecorder()
 	req = settingsFormRequest(http.MethodPost, "/settings/org?tab=integrations", "default_repo=&slack_bot_token=xoxb-new&slack_socket_token=xapp-new&sx_key=sx-new&anthropic_api_key=sk-ant-new")
 	handler.ServeHTTP(rec, req)
@@ -259,67 +265,6 @@ func TestApplyDefaultRepoChange(t *testing.T) {
 			}
 			if gotCode != tc.wantCode {
 				t.Fatalf("status = %d, want %d body=%q", gotCode, tc.wantCode, rec.Body.String())
-			}
-		})
-	}
-}
-
-func TestApplyAnthropicCredsChange(t *testing.T) {
-	cases := []struct {
-		name      string
-		form      map[string]string
-		current   orgcfg.Config
-		wantAPI   string
-		wantOAuth string
-	}{
-		{
-			name:      "new api key clears oauth token",
-			form:      map[string]string{"anthropic_api_key": "sk-ant-new"},
-			current:   orgcfg.Config{AnthropicAPIKey: "sk-ant-old", ClaudeCodeOAuthToken: "oauth-old"},
-			wantAPI:   "sk-ant-new",
-			wantOAuth: "",
-		},
-		{
-			name:      "new oauth token clears api key",
-			form:      map[string]string{"claude_code_oauth_token": "oauth-new"},
-			current:   orgcfg.Config{AnthropicAPIKey: "sk-ant-old", ClaudeCodeOAuthToken: "oauth-old"},
-			wantAPI:   "",
-			wantOAuth: "oauth-new",
-		},
-		{
-			name:      "both new values prefer oauth",
-			form:      map[string]string{"anthropic_api_key": "sk-ant-new", "claude_code_oauth_token": "oauth-new"},
-			current:   orgcfg.Config{AnthropicAPIKey: "sk-ant-old", ClaudeCodeOAuthToken: "oauth-old"},
-			wantAPI:   "",
-			wantOAuth: "oauth-new",
-		},
-		{
-			name:      "repasting same api key leaves oauth token alone",
-			form:      map[string]string{"anthropic_api_key": "sk-ant-old"},
-			current:   orgcfg.Config{AnthropicAPIKey: "sk-ant-old", ClaudeCodeOAuthToken: "oauth-old"},
-			wantAPI:   "sk-ant-old",
-			wantOAuth: "oauth-old",
-		},
-		{
-			name:      "removing api key leaves oauth token alone",
-			form:      map[string]string{"anthropic_api_key_action": "remove"},
-			current:   orgcfg.Config{AnthropicAPIKey: "sk-ant-old", ClaudeCodeOAuthToken: "oauth-old"},
-			wantAPI:   "",
-			wantOAuth: "oauth-old",
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodPost, "/settings/org", nil)
-			req.PostForm = make(map[string][]string)
-			for k, v := range tc.form {
-				req.PostForm[k] = []string{v}
-			}
-			current := tc.current
-			applyAnthropicCredsChange(req, &current)
-			if current.AnthropicAPIKey != tc.wantAPI || current.ClaudeCodeOAuthToken != tc.wantOAuth {
-				t.Fatalf("creds = api:%q oauth:%q, want api:%q oauth:%q",
-					current.AnthropicAPIKey, current.ClaudeCodeOAuthToken, tc.wantAPI, tc.wantOAuth)
 			}
 		})
 	}

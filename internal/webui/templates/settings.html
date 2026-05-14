@@ -110,6 +110,7 @@
   <p/>
   <p class="desc">Connect Hetchy to GitHub for repo access, Slack for chat, Claude for the agent, and SX for skills.</p>
 
+  {{if .ErrorMessage}}<div class="error-banner">{{.ErrorMessage}}</div>{{end}}
   {{if .SavedMessage}}<div class="saved-banner">{{.SavedMessage}}</div>{{end}}
   {{if not .IsAdmin}}<p class="hint">Only administrators can change integration settings.</p>{{end}}
 
