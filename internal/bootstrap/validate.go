@@ -53,7 +53,8 @@ WHETHER IT SUCCEEDED before assuming you can hit a live URL:
 
   - If /tmp/hetchy-spec/UNHEALTHY exists, the spec ran but the health
     check never passed within the 90s budget. The app is NOT running.
-    Look at /tmp/hetchy-spec/start.log for stderr/stdout from start.sh
+    Look at /tmp/hetchy-spec/setup.log for stderr/stdout from setup.sh
+    and /tmp/hetchy-spec/start.log for stderr/stdout from start.sh
     (timeouts, port conflicts, missing deps), record what you see in
     summary.md as "Validation: incomplete - <specific reason>", and skip the
     end-to-end probing below. Do NOT spend tool calls poking dead

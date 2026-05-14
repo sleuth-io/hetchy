@@ -56,6 +56,7 @@ func TestBuildValidationPromptCoversThreeFlows(t *testing.T) {
 		// dead port or claim a change is validated when nothing
 		// was actually exercised.
 		"/tmp/hetchy-spec/UNHEALTHY",
+		"/tmp/hetchy-spec/setup.log",
 		"/tmp/hetchy-spec/start.log",
 		"Validation: incomplete",
 		"Silently omitting proof is overall task failure",

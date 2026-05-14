@@ -27,6 +27,8 @@
 #   HETCHY_ARTIFACT_SLOTS      JSON proof-artifact upload slots
 #   HETCHY_ARTIFACT_SLOT_URL   endpoint for requesting more upload slots
 #   HETCHY_ARTIFACT_SLOT_TOKEN bearer token for that endpoint
+#   HETCHY_CACHE_DIR           mounted dependency cache archive subpath
+#   HETCHY_CACHE_PRUNE_DAYS    best-effort local cache file pruning threshold
 # When all three are set, agent.sh runs setup → starts the app in the
 # background → polls health.sh BEFORE invoking claude, so the validation
 # prompt's claim that "the app is running" is actually true.
@@ -153,6 +155,8 @@ mkdir -p "${SF_WORKDIR}/.playwright-mcp"
 # write doesn't have to mkdir the path itself.
 mkdir -p /tmp/hetchy-spec/improved
 
+configure_hetchy_cache
+
 ensure_sx() {
   export PATH="$HOME/.local/bin:$PATH"
   if command -v sx >/dev/null 2>&1; then
@@ -257,12 +261,7 @@ if has_b64_input SF_SPEC_SETUP_B64 && has_b64_input SF_SPEC_START_B64 && has_b64
   # health poll below is the authoritative signal of "is the app
   # actually up", and the agent still has a working repo to work in
   # even when bootstrap is broken.
-  echo "[hetchy] running setup.sh"
-  if /tmp/hetchy-spec/setup.sh; then
-    echo "[hetchy] setup.sh succeeded"
-  else
-    echo "[hetchy] WARNING: setup.sh exited non-zero ($?); continuing anyway"
-  fi
+  run_saved_setup
 
   echo "[hetchy] starting app via start.sh (background)"
   # Redirect to a captured log instead of inheriting agent.sh's

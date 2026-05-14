@@ -20,6 +20,8 @@
 #   HETCHY_ARTIFACT_SLOTS        JSON proof-artifact upload slots
 #   HETCHY_ARTIFACT_SLOT_URL     endpoint for requesting more upload slots
 #   HETCHY_ARTIFACT_SLOT_TOKEN   bearer token for that endpoint
+#   HETCHY_CACHE_DIR             mounted dependency cache archive subpath
+#   HETCHY_CACHE_PRUNE_DAYS      best-effort local cache file pruning threshold
 
 set -euo pipefail
 
@@ -110,6 +112,8 @@ mkdir -p "${SF_WORKDIR}/.playwright-mcp"
 # And the spec-improvements drop-zone so post-success reflection can
 # patch the saved spec without an extra mkdir round-trip.
 mkdir -p /tmp/hetchy-spec/improved
+
+configure_hetchy_cache
 
 ensure_sx() {
   export PATH="$HOME/.local/bin:$PATH"
@@ -207,12 +211,7 @@ if has_b64_input SF_SPEC_SETUP_B64 && has_b64_input SF_SPEC_START_B64 && has_b64
   echo "[hetchy] making saved setup scripts executable"
   chmod +x /tmp/hetchy-spec/setup.sh /tmp/hetchy-spec/start.sh /tmp/hetchy-spec/health.sh
 
-  echo "[hetchy] running setup.sh"
-  if /tmp/hetchy-spec/setup.sh; then
-    echo "[hetchy] setup.sh succeeded"
-  else
-    echo "[hetchy] WARNING: setup.sh exited non-zero ($?); continuing anyway"
-  fi
+  run_saved_setup
 
   echo "[hetchy] starting app via start.sh (background)"
   # See agent.sh for the rationale: keep start.sh's noise out of the
