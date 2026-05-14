@@ -1,0 +1,67 @@
+graph LR
+    subgraph Sandbox["Daytona sandbox"]
+        Script["agent.sh / followup.sh\nsetup, sx install, spec apply"]
+        Claude["Claude Code\n--output-format stream-json"]
+        Frame["Hetchy frame wrapper\nbegin/end sentinels\nlog cursor support"]
+        Script --> Claude
+        Script --> Frame
+        Claude --> Frame
+    end
+
+    subgraph Bot["Bot process"]
+        ShLines["shLines\nDaytona log stream\nwhole-line buffering"]
+        FrameRouter["Hetchy frame router\nrecovery-safe replay"]
+        AgentRouter["agentLineRouter\nsetup/cleanup blocks\nClaude handoff"]
+        ClaudeParser["claudeStreamParser\nNDJSON envelopes\ntool/result mapping"]
+        Blocks["typed Blocks\nsetup, notify, claude_text\ntool_use, result, error"]
+
+        ShLines --> FrameRouter
+        FrameRouter --> AgentRouter
+        AgentRouter --> ClaudeParser
+        AgentRouter --> Blocks
+        ClaudeParser --> Blocks
+    end
+
+    subgraph Fanout["Emitter fan-out"]
+        Tee["blocks.Tee"]
+        RunEmitter["agentRunEmitter\nappend agent_run_events\nfan out to liveRun"]
+        Recorder["Recorder\nbounded per-turn snapshot"]
+        Transport["Transport emitter\nSlack direct\nweb noop when durable runs enabled"]
+        LiveRun["liveRun subscribers\n/chat/stream SSE"]
+        Persister["chatPersister\n2-second progress save"]
+    end
+
+    subgraph Persistence["PostgreSQL"]
+        Events["agent_run_events\nblock_start, block_append,\nblock_done, heartbeat"]
+        Conversations["conversations.response_blocks\nlegacy replay snapshot"]
+    end
+
+    subgraph Recovery["Recovery path"]
+        RecoveryLoop["runRecoveryLoop\nexpired lease scanner"]
+        DaytonaLogs["Daytona command log snapshot"]
+        Projector["projectRecoveredConversation"]
+    end
+
+    Frame -->|stdout/stderr| ShLines
+    Blocks --> Tee
+    Tee --> RunEmitter
+    Tee --> Recorder
+    Tee --> Transport
+
+    RunEmitter --> Events
+    RunEmitter --> LiveRun
+    LiveRun --> Browser["Browser SSE\ncollapsible blocks\nreattach by seq"]
+    Transport --> Slack["Slack thread\nsummaries + terminal reply"]
+    Recorder --> Persister
+    Persister --> Conversations
+
+    RecoveryLoop --> DaytonaLogs
+    DaytonaLogs --> FrameRouter
+    Events --> Projector
+    Projector --> Conversations
+
+    style Sandbox fill:#e8f5e9,stroke:#388E3C
+    style Bot fill:#f3e5f5,stroke:#7B1FA2
+    style Fanout fill:#e3f2fd,stroke:#1976D2
+    style Persistence fill:#fff3e0,stroke:#E65100
+    style Recovery fill:#fff8e1,stroke:#F57F17

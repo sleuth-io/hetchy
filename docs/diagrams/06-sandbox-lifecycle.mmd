@@ -1,0 +1,73 @@
+stateDiagram-v2
+    [*] --> ResolvingRepo : HandleRequest creates agent_run
+
+    ResolvingRepo --> Creating : GitHub repo resolved\ninstallation token minted
+    ResolvingRepo --> FailedNoSandbox : repo inaccessible\nor GitHub App missing
+
+    Creating --> RunningFresh : Daytona.Create(snapshot)\nlabels + optional cache volume
+    Creating --> FailedNoSandbox : create failed after transient retries
+
+    state RunningFresh {
+        [*] --> SessionCreated
+        SessionCreated --> BootstrapOptional : write/run agent.sh
+        BootstrapOptional --> ClaudeRunning : setup complete\n[hetchy] running claude
+        ClaudeRunning --> PRVerified : PR URL parsed\nGitHub validates repo/branch/base
+        ClaudeRunning --> AgentFailed : non-zero exit,\nwall timeout, idle timeout,\nor PR not verified
+    }
+
+    PRVerified --> Archiving : delete Daytona session
+    Archiving --> Archived : Stop + Archive
+
+    Archived --> Resuming : follow-up arrives
+    Resuming --> RunningFollowUp : StartWithTimeout(5m)\nfresh installation token
+    Resuming --> ResumeFailed : timeout or Daytona error
+
+    state RunningFollowUp {
+        [*] --> FollowupSession
+        FollowupSession --> FollowupClaude : write/run followup.sh\ncheckout existing branch
+        FollowupClaude --> FollowupVerified : PR URL parsed\nGitHub validates head branch
+        FollowupClaude --> FollowupFailed : command or validation failed
+    }
+
+    FollowupVerified --> Archiving
+
+    AgentFailed --> DebugRunning : fresh-run sandbox left\nfor debugging
+    DebugRunning --> Creating : next message archives orphan\nthen creates a new sandbox
+
+    FollowupFailed --> FollowupDebug : conversation still has PRURL\nsandbox left available
+    FollowupDebug --> Resuming : next follow-up retries\nsame PR conversation
+
+    FailedNoSandbox --> [*] : user can retry in same chat
+    ResumeFailed --> [*] : user can retry or start fresh
+    Archived --> Archived : no follow-up\nfilesystem preserved
+
+    RunningFresh --> CancelFresh : user cancels
+    CancelFresh --> Archived : cleanup stop/archive
+    RunningFollowUp --> CancelFollowUp : user cancels
+    CancelFollowUp --> FollowupDebug : session stops\nsandbox kept for next turn
+
+    note right of Creating
+        Fresh sandboxes use the configured Daytona snapshot.
+        Hetchy may mount a pooled dependency cache volume
+        under /home/daytona/.hetchy-cache.
+    end note
+
+    note right of ClaudeRunning
+        run-script timeout limits:
+        wall clock = 45 minutes
+        idle output = 15 minutes
+        user heartbeat = every minute
+    end note
+
+    note right of Archived
+        Archived sandboxes keep the checkout,
+        branch, git history, caches, and generated files.
+        Follow-ups resume from this filesystem.
+    end note
+
+    note left of RunningFresh
+        If the bot process dies mid-command, agent_run
+        recovery claims the lease, replays Daytona command
+        logs through the same line router, projects the
+        conversation, and archives on recovered success.
+    end note

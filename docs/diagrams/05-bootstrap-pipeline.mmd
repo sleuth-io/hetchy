@@ -1,0 +1,56 @@
+flowchart TD
+    Start([Agent turn starts]) --> ValidateOpt{Validate changes\nenabled?}
+
+    ValidateOpt -->|No| PlainPrompt[Skip bootstrap and\nvalidation prompt]
+    ValidateOpt -->|Yes| RepoIDs{Repo resolved through\nGitHub App with install_id\nand repo_id?}
+    RepoIDs -->|No| PlainPrompt
+    RepoIDs -->|Yes| GetSpec[Get repo_setup_spec\nby installation_id, repo_id, path='']
+
+    GetSpec -->|Spec exists| UseSpec[Use saved spec as-is\nany current status]
+    GetSpec -->|Not found| CreateSession[Create bootstrap session\ninside the fresh sandbox]
+    GetSpec -->|DB error| BootstrapSkipped[Log warning and\nrun without validation spec]
+
+    CreateSession --> Clone[Run setup-clone.sh\nclone repo into SF_WORKDIR]
+    Clone --> Detect[detectViaSandbox\ncopy detection files locally\nbootstrap.Detect]
+    Detect --> Secrets[Load repo_secret_values\nand decrypt supplied secrets]
+    Secrets --> Prompt[Build bootstrap prompt\nhints + supplied secret names]
+    Prompt --> Loop[bootstrap.Run\nClaude Code Opus/high]
+
+    Loop --> Artifacts[Agent writes\n/tmp/hetchy-spec/manifest.json\nsetup.sh, start.sh, health.sh]
+    Artifacts --> Verify[Bootstrap harness runs\nsetup.sh, start.sh, health.sh]
+
+    Verify -->|validated or partial| SaveSpec[Save repo_setup_spec\nstatus validated/partial\nsource fingerprint]
+    Verify -->|loop failed with partial output| SaveFailing[Persist StatusFailing\npartial scripts + log]
+    Verify -->|fatal error| BootstrapSkipped
+
+    SaveSpec --> DeclareSecrets[Declare required secrets\nin repo_secret_values]
+    DeclareSecrets --> UseSpec
+    SaveFailing --> BootstrapSkipped
+
+    UseSpec --> MintSlots[Mint default artifact slots\nif S3 is configured]
+    MintSlots --> MergePrompt[Merge validation prompt\ninto agent prompt]
+    MergePrompt --> ApplySpec[agent.sh/followup.sh decodes\nsetup/start/health scripts]
+    ApplySpec --> StartApp[Run setup.sh,\nstart.sh in background,\npoll health.sh for 90s]
+    StartApp --> AgentWork[Claude implements change\nand validates with proof]
+    PlainPrompt --> AgentWork
+    BootstrapSkipped --> AgentWork
+
+    AgentWork --> Reflection{Fresh run succeeded\nand spec was used?}
+    Reflection -->|Yes| ReadImprovements[Read /tmp/hetchy-spec/improved\nsetup/start/health/reason or none.txt]
+    Reflection -->|No| Done([Done])
+
+    ReadImprovements -->|none.txt| MarkApplied[Mark spec applied\nstatus validated\nincrement success_count]
+    ReadImprovements -->|scripts changed| SaveImproved[Save spec_version+1\nstatus stale\npatched scripts]
+    ReadImprovements -->|no marker| MarkApplied
+    SaveImproved --> MarkApplied
+    MarkApplied --> Done
+
+    Note1["Today, drift detection and AutoHeal helpers exist in internal/bootstrap,\nbut ensureBootstrapSpec does not call them. The launch path only\nbootstraps when no spec row exists; saved specs are reused directly.\nSpec-improvement readback is wired after fresh run success, not follow-up success."]
+
+    GetSpec -.-> Note1
+
+    style PlainPrompt fill:#eeeeee,stroke:#757575
+    style BootstrapSkipped fill:#fff9c4,stroke:#F57F17
+    style SaveSpec fill:#c8e6c9,stroke:#2E7D32
+    style SaveFailing fill:#ffcdd2,stroke:#B71C1C
+    style SaveImproved fill:#bbdefb,stroke:#1565C0

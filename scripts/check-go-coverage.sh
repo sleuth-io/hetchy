@@ -3,6 +3,7 @@ set -euo pipefail
 
 pkg="${1:-./internal/bot}"
 min_file="${2:-.github/coverage/internal-bot.min}"
+compare_ignore_re="${COVERAGE_COMPARE_IGNORE_REGEX:-^docs/}"
 
 if [[ ! -f "$min_file" ]]; then
   echo "coverage baseline file not found: $min_file" >&2
@@ -18,6 +19,32 @@ fi
 tmp_dir="${RUNNER_TEMP:-/tmp}"
 profile="${tmp_dir}/hetchy-coverage.out"
 report="${tmp_dir}/hetchy-coverage.txt"
+
+coverage_source_re() {
+  local pkg_path="$pkg"
+  pkg_path="${pkg_path#./}"
+  pkg_path="${pkg_path%/...}"
+  printf '^%s/.*[.]go$' "$pkg_path"
+}
+
+has_coverage_relevant_changes() {
+  local dir="$1"
+  local base_ref="$2"
+  local source_re="${COVERAGE_COMPARE_SOURCE_REGEX:-$(coverage_source_re)}"
+  local changed_files
+  if ! changed_files="$(
+    cd "$dir"
+    git diff --name-only "${base_ref}...HEAD"
+  )"; then
+    echo "could not list changed files relative to ${base_ref}" >&2
+    return 2
+  fi
+  awk -v ignore_re="$compare_ignore_re" -v source_re="$source_re" '
+    ignore_re != "" && $0 ~ ignore_re { next }
+    $0 ~ source_re { found = 1 }
+    END { exit !found }
+  ' <<< "$changed_files"
+}
 
 coverage_for_dir() {
   local dir="$1"
@@ -42,21 +69,35 @@ required="$min"
 base_coverage=""
 base_ref="${COVERAGE_COMPARE_REF:-}"
 if [[ -n "$base_ref" ]]; then
-  base_dir="$(mktemp -d "${tmp_dir}/hetchy-base-worktree.XXXXXX")"
-  rm -rf "$base_dir"
-  cleanup() {
-    git worktree remove --force "$base_dir" >/dev/null 2>&1 || true
-  }
-  trap cleanup EXIT
-  git worktree add --detach "$base_dir" "$base_ref" >/dev/null
-  base_profile="${tmp_dir}/hetchy-base-coverage.out"
-  base_report="${tmp_dir}/hetchy-base-coverage.txt"
-  base_coverage="$(coverage_for_dir "$base_dir" "$base_profile" "$base_report")"
-  if [[ -z "$base_coverage" ]]; then
-    echo "could not parse base coverage from $base_report" >&2
-    exit 1
+  relevant_changes=0
+  if has_coverage_relevant_changes "$PWD" "$base_ref"; then
+    relevant_changes=1
+  else
+    change_check_status=$?
+    if [[ "$change_check_status" -gt 1 ]]; then
+      exit 1
+    fi
   fi
-  required="$(awk -v floor="$min" -v base="$base_coverage" 'BEGIN { if (base + 0 > floor + 0) print base; else print floor }')"
+
+  if [[ "$relevant_changes" -eq 1 ]]; then
+    base_dir="$(mktemp -d "${tmp_dir}/hetchy-base-worktree.XXXXXX")"
+    rm -rf "$base_dir"
+    cleanup() {
+      git worktree remove --force "$base_dir" >/dev/null 2>&1 || true
+    }
+    trap cleanup EXIT
+    git worktree add --detach "$base_dir" "$base_ref" >/dev/null
+    base_profile="${tmp_dir}/hetchy-base-coverage.out"
+    base_report="${tmp_dir}/hetchy-base-coverage.txt"
+    base_coverage="$(coverage_for_dir "$base_dir" "$base_profile" "$base_report")"
+    if [[ -z "$base_coverage" ]]; then
+      echo "could not parse base coverage from $base_report" >&2
+      exit 1
+    fi
+    required="$(awk -v floor="$min" -v base="$base_coverage" 'BEGIN { if (base + 0 > floor + 0) print base; else print floor }')"
+  else
+    echo "No changes matched ${COVERAGE_COMPARE_SOURCE_REGEX:-$(coverage_source_re)} after ignoring ${compare_ignore_re}; using coverage floor ${min}%."
+  fi
 fi
 
 if ! awk -v got="$coverage" -v min="$required" 'BEGIN { exit !(got + 0 >= min + 0) }'; then

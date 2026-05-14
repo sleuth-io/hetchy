@@ -1,0 +1,104 @@
+graph LR
+    subgraph cmd["cmd/"]
+        Main["hetchy/main.go\nconfig, migrations flags\nBot.New + Bot.Run"]
+        DetectCmd["hetchy-detect/main.go\nbootstrap hint debugger"]
+    end
+
+    subgraph bot["internal/bot/"]
+        Core["bot.go\nHandleRequest\nconversation state machine"]
+        Web["web*.go\nroutes, chat API\nsettings/pages"]
+        Slack["slack*.go\nSocket Mode, HTTP events\nOAuth, Slack emitter"]
+        GitHubHandlers["github_*.go\ninstall/setup/webhook handlers"]
+        Agent["agent.go + scripts/\nprompt/env assembly\nagent.sh/followup.sh"]
+        Exec["exec.go\nDaytona sessions\nline streaming\ntimeouts"]
+        Stream["agent_router.go\nclaude_stream.go\nNDJSON to Blocks"]
+        Live["live*.go\nin-process SSE registry"]
+        Durable["agent_run_*.go\nrun events, leases\ncrash recovery"]
+        BootstrapBridge["bootstrap_*.go\nsandbox detection\nbootstrap runner"]
+        ArtifactSlots["artifact_slots.go\nrun-scoped proof slots"]
+        Cache["cache_volume.go\nDaytona dependency cache"]
+        Config["config.go\nenvironment config"]
+    end
+
+    subgraph webui["internal/webui/"]
+        UI["webui.go\nembedded templates/assets\nchat/settings JS + CSS"]
+    end
+
+    subgraph domain["Domain packages"]
+        Blocks["blocks\nBlock model\nEmitter, Recorder, Tee"]
+        Bootstrap["bootstrap\nDetect, prompt, Run\nSpec/store/validation"]
+        Agents["agents\norg profiles\naliases and personas"]
+        Artifacts["artifacts\nS3 presigned slots"]
+    end
+
+    subgraph stores["Stores and integrations"]
+        Auth["auth\nWorkOS sessions\nmembers/invites"]
+        OrgCfg["orgcfg\nencrypted org config"]
+        ConvStore["convstore\nconversation CRUD/search"]
+        RunStore["runstore\nagent_runs/events CRUD"]
+        GitHubApp["githubapp\nJWT, webhooks\ntoken cache, sync"]
+        Secrets["secrets\nAES-GCM helper"]
+        DB["db + db/sqlc\npgxpool + generated queries"]
+    end
+
+    subgraph support["Support"]
+        BuildInfo["buildinfo\nversion metadata"]
+        Migrations["db/migrations\nembedded SQL migrations"]
+    end
+
+    Main --> Core
+    Main --> Migrations
+    Main --> BuildInfo
+    DetectCmd --> Bootstrap
+
+    Core --> Web
+    Core --> Slack
+    Core --> GitHubHandlers
+    Core --> Agent
+    Core --> Live
+    Core --> Durable
+    Core --> BootstrapBridge
+    Core --> ArtifactSlots
+    Core --> Cache
+    Core --> Config
+
+    Web --> UI
+    Web --> Auth
+    Web --> Blocks
+    Slack --> Blocks
+    Agent --> Exec
+    Agent --> Stream
+    Agent --> Bootstrap
+    Agent --> Agents
+    Agent --> Artifacts
+    Stream --> Blocks
+    Durable --> RunStore
+    Durable --> Live
+    BootstrapBridge --> Bootstrap
+    ArtifactSlots --> Artifacts
+
+    Core --> OrgCfg
+    Core --> ConvStore
+    Core --> RunStore
+    Core --> Agents
+    Core --> GitHubApp
+    Core --> Auth
+    Core --> Blocks
+
+    OrgCfg --> DB
+    OrgCfg --> Secrets
+    ConvStore --> DB
+    RunStore --> DB
+    Agents --> DB
+    Bootstrap --> DB
+    Bootstrap --> Secrets
+    GitHubApp --> DB
+    Auth --> DB
+    Artifacts --> S3SDK["AWS S3 SDK"]
+
+    style cmd fill:#e3f2fd,stroke:#1976D2
+    style bot fill:#f3e5f5,stroke:#7B1FA2
+    style webui fill:#e8f5e9,stroke:#388E3C
+    style domain fill:#fff8e1,stroke:#F57F17
+    style stores fill:#fff3e0,stroke:#E65100
+    style support fill:#f5f5f5,stroke:#616161

@@ -1,0 +1,63 @@
+stateDiagram-v2
+    [*] --> NoRow : first message
+
+    NoRow --> AwaitingRepo : no org default repo\nsave partial conversation
+    NoRow --> FreshPreparing : default repo exists
+
+    AwaitingRepo --> AwaitingRepo : owner/name parse failed\nsave bot nudge
+    AwaitingRepo --> FreshPreparing : owner/name parsed\nuse original History[0]
+
+    FreshPreparing --> RepoResolveFailed : GitHub App cannot access repo
+    RepoResolveFailed --> AwaitingRepo : repo fields cleared\nnext message picks repo
+
+    FreshPreparing --> SandboxCreating : repo resolved\ntoken minted\nbranch chosen
+    SandboxCreating --> RetryReady : sandbox create failed\nrepo kept, no sandbox_id
+    RetryReady --> FreshPreparing : next message retries\nsame repo as new request
+
+    SandboxCreating --> FreshAgentRunning : sandbox_id saved
+    FreshAgentRunning --> FailedWithSandbox : setup/agent timeout,\nagent error, or PR not verified
+    FailedWithSandbox --> FreshPreparing : next message archives\norphan sandbox first
+
+    FreshAgentRunning --> PRReady : PR verified\nconversation saved\nsandbox archived
+
+    PRReady --> FollowUpRunning : user sends follow-up\nsame thread/session
+    FollowUpRunning --> PRReady : follow-up PR verified\nnew turn saved\nsandbox archived
+    FollowUpRunning --> FollowUpFailed : resume, agent, or PR validation failed
+    FollowUpFailed --> FollowUpRunning : next message continues\nsame PR conversation
+
+    FreshPreparing --> Cancelled : stop before/while creating sandbox
+    FreshAgentRunning --> Cancelled : fresh run cancelled\nsandbox archived
+    FollowUpRunning --> Cancelled : follow-up cancelled\nsandbox left available
+
+    PRReady --> [*] : abandoned
+    Cancelled --> [*]
+
+    note right of AwaitingRepo
+        Stored conversation:
+        History[0] = original request
+        GitHubOwner/GitHubRepo = ""
+        SandboxID = ""
+        PRURL = ""
+        AgentSlug, Model, TaskOptions are saved
+    end note
+
+    note right of FailedWithSandbox
+        Fresh-run failure:
+        SandboxID is saved and PRURL is empty.
+        The sandbox is left for debugging until
+        the next message archives it and starts over.
+    end note
+
+    note right of PRReady
+        Successful conversation:
+        SandboxID, Branch, PRURL are set.
+        The Daytona sandbox is archived, not destroyed,
+        so follow-ups resume the same filesystem.
+    end note
+
+    note left of FreshAgentRunning
+        Each turn also has an agent_runs row:
+        preparing -> running -> finalizing ->
+        succeeded / failed / cancelled.
+        recoverable interruptions move through recovering.
+    end note
