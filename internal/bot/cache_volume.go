@@ -281,5 +281,15 @@ func isDaytonaNotFound(err error) bool {
 
 func isDaytonaConflict(err error) bool {
 	var daytonaErr *sdkerrors.DaytonaError
-	return errors.As(err, &daytonaErr) && daytonaErr.StatusCode == http.StatusConflict
+	if !errors.As(err, &daytonaErr) {
+		return false
+	}
+	if daytonaErr.StatusCode == http.StatusConflict {
+		return true
+	}
+	msg := strings.ToLower(daytonaErr.Message)
+	return daytonaErr.StatusCode == http.StatusBadRequest &&
+		strings.Contains(msg, "volume") &&
+		strings.Contains(msg, "name") &&
+		strings.Contains(msg, "already exists")
 }

@@ -133,9 +133,40 @@ func TestResolveDaytonaCacheMountCreateConflictRetriesGet(t *testing.T) {
 	}
 }
 
+func TestResolveDaytonaCacheMountCreateDuplicateNameRetriesGet(t *testing.T) {
+	vols := &fakeCacheVolumeService{
+		get: []fakeCacheVolumeResult{
+			{err: sdkerrors.NewDaytonaNotFoundError("missing", nil)},
+			{vol: &types.Volume{ID: "vol-1", Name: "cache", State: "ready"}},
+		},
+		create: []fakeCacheVolumeResult{
+			{err: sdkerrors.NewDaytonaError("Volume with name cache-dev-00 already exists", http.StatusBadRequest, nil)},
+		},
+		wait: []fakeCacheVolumeResult{
+			{vol: &types.Volume{ID: "vol-1", Name: "cache", State: "ready"}},
+		},
+	}
+	b := &Bot{log: discardLogger(), cfg: Config{Env: "dev"}, cacheVols: vols}
+
+	if _, ok := b.resolveDaytonaCacheMount(context.Background(),
+		orgcfg.Config{OrgID: "org_1"},
+		repoCtx{Slug: "owner/repo", InstallID: 11, RepoID: 22}); !ok {
+		t.Fatal("expected cache mount after duplicate-name get retry")
+	}
+	if strings.Join(vols.calls, ",") != "get,create,get,wait" {
+		t.Fatalf("calls = %v", vols.calls)
+	}
+}
+
 func TestIsDaytonaConflictRequiresStatusCode(t *testing.T) {
 	if !isDaytonaConflict(sdkerrors.NewDaytonaError("already exists", http.StatusConflict, nil)) {
 		t.Fatal("expected Daytona 409 to be treated as conflict")
+	}
+	if !isDaytonaConflict(sdkerrors.NewDaytonaError("Volume with name cache-dev-00 already exists", http.StatusBadRequest, nil)) {
+		t.Fatal("expected Daytona duplicate volume 400 to be treated as conflict")
+	}
+	if isDaytonaConflict(sdkerrors.NewDaytonaError("bad request", http.StatusBadRequest, nil)) {
+		t.Fatal("unrelated Daytona 400 should not be treated as conflict")
 	}
 	if isDaytonaConflict(errors.New("repo already exists")) {
 		t.Fatal("plain error text should not be treated as Daytona conflict")

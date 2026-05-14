@@ -133,3 +133,21 @@ func TestAgentLineRouter_AbortFailsOpenBlocks(t *testing.T) {
 		t.Errorf("setup should be failed after Abort, got %s", emit.Blocks[0].Status)
 	}
 }
+
+func TestAgentLineRouter_AbortPreservesSuppressedSetupTail(t *testing.T) {
+	emit := newCaptureEmitter()
+	r := newAgentLineRouter(emit)
+	r.Line("[hetchy] installing sx")
+	r.Line("curl: (22) The requested URL returned error: 404")
+	r.Line("sx: install failed")
+	r.Abort()
+
+	body := emit.Blocks[0].Body.String()
+	if !strings.Contains(body, "Suppressed 2 setup output lines") {
+		t.Errorf("setup failure should include suppressed line count, got %q", body)
+	}
+	if !strings.Contains(body, "curl: (22) The requested URL returned error: 404") ||
+		!strings.Contains(body, "sx: install failed") {
+		t.Errorf("setup failure should include raw error tail, got %q", body)
+	}
+}

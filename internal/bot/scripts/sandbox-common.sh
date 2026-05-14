@@ -54,7 +54,14 @@ restore_hetchy_cache_archive() {
 
   [[ -f "$archive" ]] || return 2
   mkdir -p "$local_cache_dir" || return 1
-  tar -C "$local_cache_dir" -xf "$archive" >/dev/null 2>&1
+  case "$archive" in
+    *.tar.gz|*.tgz)
+      tar -C "$local_cache_dir" -xzf "$archive" >/dev/null 2>&1
+      ;;
+    *)
+      tar -C "$local_cache_dir" -xf "$archive" >/dev/null 2>&1
+      ;;
+  esac
 }
 
 save_hetchy_cache_archive() {
@@ -67,14 +74,27 @@ save_hetchy_cache_archive() {
   hetchy_cache_has_entries "$local_cache_dir" || return 0
   mkdir -p "$volume_cache_dir" || return 1
 
-  tar -C "$local_cache_dir" \
+  local archive_tmp="${archive}.tmp.$$"
+  rm -f "$archive_tmp" 2>/dev/null || true
+
+  if ! tar -C "$local_cache_dir" \
     --exclude=./.git \
     --exclude=./.env \
     --exclude=./.npmrc \
     --exclude=./.hetchy-probe \
     --exclude=./cargo/credentials \
     --exclude=./cargo/credentials.toml \
-    -cf "$archive" . >/dev/null 2>&1
+    -czf "$archive_tmp" . >/dev/null 2>&1; then
+    rm -f "$archive_tmp" 2>/dev/null || true
+    return 1
+  fi
+  if ! mv -f "$archive_tmp" "$archive" >/dev/null 2>&1; then
+    rm -f "$archive_tmp" 2>/dev/null || true
+    return 1
+  fi
+  if [[ "$archive" == *.gz ]]; then
+    rm -f "${archive%.gz}" 2>/dev/null || true
+  fi
 }
 
 sync_hetchy_cache_on_exit() {
@@ -113,18 +133,25 @@ configure_hetchy_cache() {
     return 0
   fi
 
-  local archive="${volume_cache_dir}/cache.tar"
+  local archive="${volume_cache_dir}/cache.tar.gz"
+  local legacy_archive="${volume_cache_dir}/cache.tar"
   echo "[hetchy] dependency cache using local staging at ${local_cache_dir}"
   if ! mkdir -p "$local_cache_dir"; then
     echo "[hetchy] WARNING: dependency cache local staging setup failed; continuing without cache exports"
     return 0
   fi
   if ! hetchy_cache_has_entries "$local_cache_dir"; then
+    local restore_archive=""
     if [[ -f "$archive" ]]; then
+      restore_archive="$archive"
+    elif [[ -f "$legacy_archive" ]]; then
+      restore_archive="$legacy_archive"
+    fi
+    if [[ -n "$restore_archive" ]]; then
       local restore_started
       restore_started="$(hetchy_now_seconds)"
-      echo "[hetchy] restoring dependency cache archive from volume ($(hetchy_file_size_bytes "$archive")B)"
-      if restore_hetchy_cache_archive "$archive" "$local_cache_dir"; then
+      echo "[hetchy] restoring dependency cache archive from volume ($(hetchy_file_size_bytes "$restore_archive")B)"
+      if restore_hetchy_cache_archive "$restore_archive" "$local_cache_dir"; then
         echo "[hetchy] dependency cache archive restored in $(hetchy_elapsed_seconds "$restore_started")"
       else
         echo "[hetchy] WARNING: dependency cache archive restore failed after $(hetchy_elapsed_seconds "$restore_started"); continuing with empty local cache"
@@ -159,6 +186,7 @@ configure_hetchy_cache() {
   export GOMODCACHE="${local_cache_dir}/go-mod"
   export npm_config_cache="${local_cache_dir}/npm"
   export PNPM_STORE_DIR="${local_cache_dir}/pnpm"
+  export npm_config_store_dir="${local_cache_dir}/pnpm"
   export YARN_CACHE_FOLDER="${local_cache_dir}/yarn"
   export PIP_CACHE_DIR="${local_cache_dir}/pip"
   export UV_CACHE_DIR="${local_cache_dir}/uv"

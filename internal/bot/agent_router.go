@@ -30,6 +30,7 @@ type agentLineRouter struct {
 	setupOpen            bool
 	setupSteps           int
 	suppressedSetupLines int
+	suppressedSetupTail  []string
 	cleanupID            string
 	cleanupOpen          bool
 
@@ -45,6 +46,8 @@ type agentLineRouter struct {
 // happens to overlap can't accidentally flip the router and start
 // dropping setup lines as malformed JSON.
 const setupSwitchMarker = "[hetchy] running claude"
+
+const maxSuppressedSetupTailLines = 20
 
 func newAgentLineRouter(emit blocks.Emitter) *agentLineRouter {
 	return &agentLineRouter{emit: emit}
@@ -108,6 +111,7 @@ func (r *agentLineRouter) ReachedAgent() bool { return r.inAgent }
 func (r *agentLineRouter) Abort() {
 	if r.setupOpen {
 		r.appendSuppressedSetupSummary()
+		r.appendSuppressedSetupTail()
 		r.emit.Fail(r.setupID, "Setup failed")
 		r.setupOpen = false
 	}
@@ -141,6 +145,10 @@ func (r *agentLineRouter) suppressSetupLine(line string) {
 		r.setupOpen = true
 	}
 	r.suppressedSetupLines++
+	r.suppressedSetupTail = append(r.suppressedSetupTail, line)
+	if len(r.suppressedSetupTail) > maxSuppressedSetupTailLines {
+		r.suppressedSetupTail = r.suppressedSetupTail[1:]
+	}
 }
 
 func (r *agentLineRouter) appendSuppressedSetupSummary() {
@@ -149,6 +157,17 @@ func (r *agentLineRouter) appendSuppressedSetupSummary() {
 	}
 	r.emit.Append(r.setupID, fmt.Sprintf("Suppressed %d setup output lines from tools and dependency installers.\n", r.suppressedSetupLines))
 	r.suppressedSetupLines = 0
+}
+
+func (r *agentLineRouter) appendSuppressedSetupTail() {
+	if len(r.suppressedSetupTail) == 0 {
+		return
+	}
+	r.emit.Append(r.setupID, "Last suppressed setup output lines:\n")
+	for _, line := range r.suppressedSetupTail {
+		r.emit.Append(r.setupID, line+"\n")
+	}
+	r.suppressedSetupTail = nil
 }
 
 func (r *agentLineRouter) finishAgentParser() {
