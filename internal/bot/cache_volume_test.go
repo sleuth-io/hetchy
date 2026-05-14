@@ -36,7 +36,7 @@ func TestDaytonaCacheVolumeNameStableSafeAndPerOrg(t *testing.T) {
 		t.Fatalf("long volume name length = %d, want <= %d: %q", len(long), daytonaCacheVolumeNameMax, long)
 	}
 	for _, r := range got {
-		if !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-') {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' {
 			t.Fatalf("volume name contains unsafe rune %q: %q", r, got)
 		}
 	}

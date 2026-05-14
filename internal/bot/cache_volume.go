@@ -158,10 +158,7 @@ func daytonaCacheVolumeName(prefix, env, orgID string) string {
 			env = "env"
 		}
 	}
-	maxPrefixLen := daytonaCacheVolumeNameMax - len(env) - len(suffix) - 2
-	if maxPrefixLen < 1 {
-		maxPrefixLen = 1
-	}
+	maxPrefixLen := max(daytonaCacheVolumeNameMax-len(env)-len(suffix)-2, 1)
 	if len(prefix) > maxPrefixLen {
 		prefix = strings.Trim(prefix[:maxPrefixLen], "-")
 		if prefix == "" {
