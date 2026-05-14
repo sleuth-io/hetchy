@@ -1,0 +1,207 @@
+package bot
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/hetchyhq/hetchy/internal/artifacts"
+)
+
+type fakeArtifactMinter struct {
+	mu       sync.Mutex
+	requests []fakeArtifactRequest
+	fail     error
+}
+
+type fakeArtifactRequest struct {
+	prefix string
+	req    artifacts.MintRequest
+}
+
+func (f *fakeArtifactMinter) MintSlots(_ context.Context, prefix string, req artifacts.MintRequest) ([]artifacts.Slot, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.requests = append(f.requests, fakeArtifactRequest{prefix: prefix, req: req})
+	if f.fail != nil {
+		return nil, f.fail
+	}
+	slots := make([]artifacts.Slot, 0, req.Count)
+	for i := range req.Count {
+		index := req.StartIndex + i
+		slots = append(slots, artifacts.Slot{
+			Kind:        req.Kind,
+			ContentType: req.ContentType,
+			PutURL:      fmt.Sprintf("https://example.test/put/%s/%s/%d", prefix, req.Kind, index),
+			GetURL:      fmt.Sprintf("https://example.test/get/%s/%s/%d", prefix, req.Kind, index),
+		})
+	}
+	return slots, nil
+}
+
+func TestArtifactSlotBrokerRejectsAndPrunesExpiredToken(t *testing.T) {
+	fake := &fakeArtifactMinter{}
+	br := newArtifactSlotBroker(fake)
+	now := time.Unix(1_700_000_000, 0)
+	br.now = func() time.Time { return now }
+
+	_, token, err := br.Start(context.Background(), "org_abc/42/req_1", defaultArtifactSlotRequests)
+	if err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+	if token == "" {
+		t.Fatal("token is empty")
+	}
+	if got := len(br.runs); got != 1 {
+		t.Fatalf("runs before expiry = %d, want 1", got)
+	}
+
+	now = now.Add(artifacts.PutExpiry + time.Second)
+	_, err = br.Mint(context.Background(), token, artifacts.MintRequest{
+		Kind:        artifacts.KindScreenshot,
+		ContentType: artifacts.ContentTypePNG,
+		Count:       1,
+	})
+	if !errors.Is(err, errArtifactTokenInvalid) {
+		t.Fatalf("Mint expired token error = %v, want %v", err, errArtifactTokenInvalid)
+	}
+	if got := len(br.runs); got != 0 {
+		t.Fatalf("runs after expiry prune = %d, want 0", got)
+	}
+}
+
+func TestAddArtifactRunEnvInitialAndFollowup(t *testing.T) {
+	fake := &fakeArtifactMinter{}
+	b := &Bot{
+		cfg:           Config{LogoutReturnTo: "https://app.example.test/"},
+		artifacts:     fake,
+		artifactSlots: newArtifactSlotBroker(fake),
+	}
+
+	initialEnv := map[string]string{}
+	initialSlots, err := b.addArtifactRunEnv(context.Background(), "org_abc/42/req_1", initialEnv)
+	if err != nil {
+		t.Fatalf("initial add env: %v", err)
+	}
+	followupEnv := map[string]string{}
+	followupSlots, err := b.addArtifactRunEnv(context.Background(), "org_abc/42/thread_1/followup-req_2", followupEnv)
+	if err != nil {
+		t.Fatalf("followup add env: %v", err)
+	}
+
+	for label, env := range map[string]map[string]string{"initial": initialEnv, "followup": followupEnv} {
+		if env[artifacts.EnvSlots] == "" {
+			t.Fatalf("%s env missing %s", label, artifacts.EnvSlots)
+		}
+		if got, want := env[artifacts.EnvSlotURL], "https://app.example.test"+artifactSlotPath; got != want {
+			t.Fatalf("%s %s = %q, want %q", label, artifacts.EnvSlotURL, got, want)
+		}
+		if env[artifacts.EnvSlotToken] == "" {
+			t.Fatalf("%s env missing %s", label, artifacts.EnvSlotToken)
+		}
+		if _, ok := env["HETCHY_SCREENSHOT_SLOTS"]; ok {
+			t.Fatalf("%s env should not include legacy screenshot slots", label)
+		}
+	}
+
+	if len(initialSlots) != len(defaultArtifactSlotRequests) || len(followupSlots) != len(defaultArtifactSlotRequests) {
+		t.Fatalf("default slot count mismatch: initial=%d followup=%d", len(initialSlots), len(followupSlots))
+	}
+	if !strings.Contains(initialEnv[artifacts.EnvSlots], `"kind":"screenshot"`) {
+		t.Fatalf("initial manifest missing screenshot slot: %s", initialEnv[artifacts.EnvSlots])
+	}
+	if !strings.Contains(initialEnv[artifacts.EnvSlots], `"content_type":"video/mp4"`) {
+		t.Fatalf("initial manifest missing recording slot: %s", initialEnv[artifacts.EnvSlots])
+	}
+
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if got := len(fake.requests); got != 6 {
+		t.Fatalf("mint requests = %d, want 6", got)
+	}
+	if got := fake.requests[0].prefix; got != "org_abc/42/req_1" {
+		t.Fatalf("initial prefix = %q", got)
+	}
+	if got := fake.requests[3].prefix; got != "org_abc/42/thread_1/followup-req_2" {
+		t.Fatalf("followup prefix = %q", got)
+	}
+}
+
+func TestArtifactSlotsHandlerMintsMoreSlots(t *testing.T) {
+	fake := &fakeArtifactMinter{}
+	b := &Bot{
+		log:           discardLogger(),
+		cfg:           Config{LogoutReturnTo: "https://app.example.test/"},
+		artifacts:     fake,
+		artifactSlots: newArtifactSlotBroker(fake),
+	}
+	env := map[string]string{}
+	if _, err := b.addArtifactRunEnv(context.Background(), "org_abc/42/req_1", env); err != nil {
+		t.Fatalf("add env: %v", err)
+	}
+
+	body := bytes.NewBufferString(`{"kind":"recording","content_type":"video/mp4","count":1}`)
+	req := httptest.NewRequest(http.MethodPost, artifactSlotPath, body)
+	req.Header.Set("Authorization", "Bearer "+env[artifacts.EnvSlotToken])
+	rec := httptest.NewRecorder()
+	b.artifactSlotsHandler(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%q", rec.Code, rec.Body.String())
+	}
+
+	var slots []artifacts.Slot
+	if err := json.Unmarshal(rec.Body.Bytes(), &slots); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(slots) != 1 {
+		t.Fatalf("slots = %d, want 1", len(slots))
+	}
+	if slots[0].Kind != artifacts.KindRecording || slots[0].ContentType != artifacts.ContentTypeMP4 {
+		t.Fatalf("slot = %+v, want recording/mp4", slots[0])
+	}
+
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	last := fake.requests[len(fake.requests)-1]
+	if last.req.StartIndex != 1 {
+		t.Fatalf("follow-on recording start index = %d, want 1", last.req.StartIndex)
+	}
+}
+
+func TestArtifactSlotsHandlerRejectsBadTokenAndLimit(t *testing.T) {
+	fake := &fakeArtifactMinter{}
+	b := &Bot{
+		log:           discardLogger(),
+		artifacts:     fake,
+		artifactSlots: newArtifactSlotBroker(fake),
+	}
+	env := map[string]string{}
+	if _, err := b.addArtifactRunEnv(context.Background(), "org_abc/42/req_1", env); err != nil {
+		t.Fatalf("add env: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, artifactSlotPath, strings.NewReader(`{"kind":"screenshot","content_type":"image/png","count":1}`))
+	req.Header.Set("Authorization", "Bearer wrong")
+	rec := httptest.NewRecorder()
+	b.artifactSlotsHandler(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("bad token status = %d, want 401", rec.Code)
+	}
+
+	tooMany := fmt.Sprintf(`{"kind":"screenshot","content_type":"image/png","count":%d}`, artifacts.MaxSlots)
+	req = httptest.NewRequest(http.MethodPost, artifactSlotPath, strings.NewReader(tooMany))
+	req.Header.Set("Authorization", "Bearer "+env[artifacts.EnvSlotToken])
+	rec = httptest.NewRecorder()
+	b.artifactSlotsHandler(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("over limit status = %d, want 400; body=%q", rec.Code, rec.Body.String())
+	}
+}

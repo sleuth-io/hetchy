@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -55,8 +56,19 @@ type Record struct {
 	// conversation. Empty for conversations initiated via Slack or before
 	// this field was introduced.
 	CreatorID string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	// AgentSlug pins the Hetchy agent selected on the first turn. Empty
+	// means the conversation runs as plain Hetchy without a specialized
+	// persona.
+	AgentSlug string
+	// Model pins the Claude model selected on the first turn so follow-ups
+	// keep the same cost/performance profile after reloads or on another
+	// browser.
+	Model string
+	// TaskOptions is a generic per-chat bag for composer task toggles.
+	// Missing keys are meaningful: callers decide their own defaults.
+	TaskOptions map[string]bool
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 // Store wraps the sqlc queries with the loose Record shape used elsewhere.
@@ -199,9 +211,28 @@ func (s *Store) Upsert(ctx context.Context, r Record) error {
 		GithubOwner:    r.GitHubOwner,
 		GithubRepo:     r.GitHubRepo,
 		CreatorID:      r.CreatorID,
+		AgentSlug:      r.AgentSlug,
+		Model:          r.Model,
+		TaskOptions:    encodeTaskOptions(r.TaskOptions),
 	})
 	if err != nil {
 		return fmt.Errorf("upsert conversation: %w", err)
+	}
+	return nil
+}
+
+// SaveTaskOptions updates the generic per-chat task option bag without
+// touching transcript or terminal run state. No-op when the store is nil.
+func (s *Store) SaveTaskOptions(ctx context.Context, orgID, threadID string, opts map[string]bool) error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+	if err := s.db.Queries.SaveConversationTaskOptions(ctx, sqlc.SaveConversationTaskOptionsParams{
+		OrgID:       orgID,
+		ThreadID:    threadID,
+		TaskOptions: encodeTaskOptions(opts),
+	}); err != nil {
+		return fmt.Errorf("save task options: %w", err)
 	}
 	return nil
 }
@@ -281,6 +312,31 @@ func decodeBlocks(raw [][]byte) ([][]blocks.Block, error) {
 	return out, nil
 }
 
+func encodeTaskOptions(opts map[string]bool) []byte {
+	if len(opts) == 0 {
+		return []byte("{}")
+	}
+	raw, err := json.Marshal(opts)
+	if err != nil {
+		// map[string]bool cannot fail to marshal; keep the fallback to
+		// avoid ever writing invalid JSON if that type changes later.
+		slog.Error("encode task_options", "error", err)
+		return []byte("{}")
+	}
+	return raw
+}
+
+func decodeTaskOptions(raw []byte) (map[string]bool, error) {
+	if len(raw) == 0 {
+		return map[string]bool{}, nil
+	}
+	var opts map[string]bool
+	if err := json.Unmarshal(raw, &opts); err != nil {
+		return nil, err
+	}
+	return opts, nil
+}
+
 // rowFields is the scalar projection shared by every conversations
 // query (Get / ListByOrg / ListByOrgAndUser). The sqlc-generated row
 // types are distinct (one per query), so a helper keyed on this value
@@ -293,6 +349,8 @@ type rowFields struct {
 	ResponseBlocks                            [][]byte
 	GithubOwner, GithubRepo, CustomTitle      string
 	CreatorID                                 string
+	AgentSlug, Model                          string
+	TaskOptions                               []byte
 	CreatedAt, UpdatedAt                      pgtype.Timestamptz
 }
 
@@ -300,6 +358,11 @@ func recordFromFields(f rowFields) (Record, error) {
 	bs, err := decodeBlocks(f.ResponseBlocks)
 	if err != nil {
 		return Record{}, err
+	}
+	taskOptions, err := decodeTaskOptions(f.TaskOptions)
+	if err != nil {
+		slog.Warn("decode task_options", "error", err, "raw", string(f.TaskOptions))
+		taskOptions = map[string]bool{}
 	}
 	return Record{
 		OrgID:          f.OrgID,
@@ -313,6 +376,9 @@ func recordFromFields(f rowFields) (Record, error) {
 		GitHubRepo:     f.GithubRepo,
 		CustomTitle:    f.CustomTitle,
 		CreatorID:      f.CreatorID,
+		AgentSlug:      f.AgentSlug,
+		Model:          f.Model,
+		TaskOptions:    taskOptions,
 		CreatedAt:      f.CreatedAt.Time,
 		UpdatedAt:      f.UpdatedAt.Time,
 	}, nil
@@ -324,8 +390,9 @@ func recordFromGetRow(row sqlc.GetConversationRow) (Record, error) {
 		Branch: row.Branch, PrUrl: row.PrUrl, History: row.History,
 		ResponseBlocks: row.ResponseBlocks,
 		GithubOwner:    row.GithubOwner, GithubRepo: row.GithubRepo,
-		CustomTitle: row.CustomTitle, CreatorID: row.CreatorID,
-		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+		CustomTitle: row.CustomTitle, CreatorID: row.CreatorID, AgentSlug: row.AgentSlug, Model: row.Model,
+		TaskOptions: row.TaskOptions,
+		CreatedAt:   row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	})
 }
 
@@ -335,7 +402,8 @@ func recordFromSearchRow(row sqlc.SearchConversationsRow) (Record, error) {
 		Branch: row.Branch, PrUrl: row.PrUrl, History: row.History,
 		ResponseBlocks: row.ResponseBlocks,
 		GithubOwner:    row.GithubOwner, GithubRepo: row.GithubRepo,
-		CustomTitle: row.CustomTitle, CreatorID: row.CreatorID,
-		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+		CustomTitle: row.CustomTitle, CreatorID: row.CreatorID, AgentSlug: row.AgentSlug, Model: row.Model,
+		TaskOptions: row.TaskOptions,
+		CreatedAt:   row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	})
 }

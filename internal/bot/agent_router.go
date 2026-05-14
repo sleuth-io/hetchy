@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"fmt"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -11,8 +12,10 @@ import (
 // agentLineRouter consumes the line-by-line output of agent.sh /
 // followup.sh, opens a single "Sandbox setup" block for the bash
 // echoes, and switches to a Claude NDJSON parser once the script
-// reaches `[hetchy] running claude` (after which every line is a
-// stream-json event from `claude --output-format stream-json`).
+// reaches `[hetchy] running claude` (after which most lines are
+// stream-json events from `claude --output-format stream-json`;
+// trailing `[hetchy]` lines are sandbox cleanup logs emitted after
+// Claude exits).
 //
 // The router owns the lifetime of both blocks: the setup block closes
 // when the agent stream begins (or when the run ends, whichever comes
@@ -22,13 +25,19 @@ import (
 // text (empty string if not found — the caller errors out in that
 // case).
 type agentLineRouter struct {
-	emit       blocks.Emitter
-	setupID    string
-	setupOpen  bool
-	setupSteps int
+	emit                 blocks.Emitter
+	setupID              string
+	setupOpen            bool
+	setupSteps           int
+	suppressedSetupLines int
+	suppressedSetupTail  []string
+	cleanupID            string
+	cleanupOpen          bool
 
-	parser  *claudeStreamParser
-	inAgent bool
+	parser      *claudeStreamParser
+	inAgent     bool
+	agentClosed bool
+	prURL       string
 }
 
 // setupSwitchMarker is the exact echo line in agent.sh / followup.sh
@@ -38,6 +47,8 @@ type agentLineRouter struct {
 // dropping setup lines as malformed JSON.
 const setupSwitchMarker = "[hetchy] running claude"
 
+const maxSuppressedSetupTailLines = 20
+
 func newAgentLineRouter(emit blocks.Emitter) *agentLineRouter {
 	return &agentLineRouter{emit: emit}
 }
@@ -45,6 +56,14 @@ func newAgentLineRouter(emit blocks.Emitter) *agentLineRouter {
 // Line routes one whole line (no trailing newline) from the sandbox.
 func (r *agentLineRouter) Line(line string) {
 	if r.inAgent {
+		if _, ok := strings.CutPrefix(line, "[hetchy] "); ok {
+			r.finishAgentParser()
+			r.appendCleanup(line)
+			return
+		}
+		if r.agentClosed {
+			return
+		}
 		r.parser.Line(line)
 		return
 	}
@@ -55,6 +74,10 @@ func (r *agentLineRouter) Line(line string) {
 		r.closeSetup("Sandbox ready, starting agent")
 		r.parser = newClaudeStreamParser(r.emit)
 		r.inAgent = true
+		return
+	}
+	if _, ok := strings.CutPrefix(line, "[hetchy] "); !ok {
+		r.suppressSetupLine(line)
 		return
 	}
 	r.appendSetup(line)
@@ -69,10 +92,11 @@ func (r *agentLineRouter) Finish() string {
 	if r.setupOpen {
 		r.closeSetup("Sandbox setup complete")
 	}
-	if r.parser != nil {
-		return r.parser.Finish()
+	r.finishAgentParser()
+	if r.cleanupOpen {
+		r.closeCleanup("Sandbox cleanup complete")
 	}
-	return ""
+	return r.prURL
 }
 
 // ReachedAgent reports whether the line stream crossed the
@@ -86,11 +110,17 @@ func (r *agentLineRouter) ReachedAgent() bool { return r.inAgent }
 // level error so the UI shows the failure rather than a stuck spinner).
 func (r *agentLineRouter) Abort() {
 	if r.setupOpen {
+		r.appendSuppressedSetupSummary()
+		r.appendSuppressedSetupTail()
 		r.emit.Fail(r.setupID, "Setup failed")
 		r.setupOpen = false
 	}
-	if r.parser != nil {
+	if r.parser != nil && !r.agentClosed {
 		r.parser.Abort()
+	}
+	if r.cleanupOpen {
+		r.emit.Fail(r.cleanupID, "Cleanup failed")
+		r.cleanupOpen = false
 	}
 }
 
@@ -104,6 +134,56 @@ func (r *agentLineRouter) appendSetup(line string) {
 	// sandbox logs, but the bucket already says "Sandbox setup" — so
 	// strip the prefix and capitalise the message for display.
 	r.emit.Append(r.setupID, prettySetupLine(line)+"\n")
+}
+
+func (r *agentLineRouter) suppressSetupLine(line string) {
+	if line == "" {
+		return
+	}
+	if !r.setupOpen {
+		r.setupID = r.emit.Start(blocks.KindSetup, "Sandbox setup", nil)
+		r.setupOpen = true
+	}
+	r.suppressedSetupLines++
+	r.suppressedSetupTail = append(r.suppressedSetupTail, line)
+	if len(r.suppressedSetupTail) > maxSuppressedSetupTailLines {
+		r.suppressedSetupTail = r.suppressedSetupTail[1:]
+	}
+}
+
+func (r *agentLineRouter) appendSuppressedSetupSummary() {
+	if r.suppressedSetupLines == 0 {
+		return
+	}
+	r.emit.Append(r.setupID, fmt.Sprintf("Suppressed %d setup output lines from tools and dependency installers.\n", r.suppressedSetupLines))
+	r.suppressedSetupLines = 0
+}
+
+func (r *agentLineRouter) appendSuppressedSetupTail() {
+	if len(r.suppressedSetupTail) == 0 {
+		return
+	}
+	r.emit.Append(r.setupID, "Last suppressed setup output lines:\n")
+	for _, line := range r.suppressedSetupTail {
+		r.emit.Append(r.setupID, line+"\n")
+	}
+	r.suppressedSetupTail = nil
+}
+
+func (r *agentLineRouter) finishAgentParser() {
+	if r.parser == nil || r.agentClosed {
+		return
+	}
+	r.prURL = r.parser.Finish()
+	r.agentClosed = true
+}
+
+func (r *agentLineRouter) appendCleanup(line string) {
+	if !r.cleanupOpen {
+		r.cleanupID = r.emit.Start(blocks.KindSetup, "Sandbox cleanup", nil)
+		r.cleanupOpen = true
+	}
+	r.emit.Append(r.cleanupID, prettySetupLine(line)+"\n")
 }
 
 func prettySetupLine(line string) string {
@@ -122,6 +202,15 @@ func (r *agentLineRouter) closeSetup(summary string) {
 	if !r.setupOpen {
 		return
 	}
+	r.appendSuppressedSetupSummary()
 	r.emit.Done(r.setupID, summary)
 	r.setupOpen = false
+}
+
+func (r *agentLineRouter) closeCleanup(summary string) {
+	if !r.cleanupOpen {
+		return
+	}
+	r.emit.Done(r.cleanupID, summary)
+	r.cleanupOpen = false
 }

@@ -9,6 +9,14 @@ import (
 )
 
 type Querier interface {
+	// Appends intentionally serialize per run on the agent_runs row lock so
+	// next_event_seq stays monotonic and replay order is deterministic.
+	AppendAgentRunEvent(ctx context.Context, arg AppendAgentRunEventParams) (int64, error)
+	ClaimAgentRunForCancel(ctx context.Context, arg ClaimAgentRunForCancelParams) (AgentRun, error)
+	ClaimAgentRunLease(ctx context.Context, arg ClaimAgentRunLeaseParams) (AgentRun, error)
+	ClaimAgentRunLeaseFromOwner(ctx context.Context, arg ClaimAgentRunLeaseFromOwnerParams) (AgentRun, error)
+	CountAgentProfilesByOrg(ctx context.Context, orgID string) (int64, error)
+	CreateAgentRun(ctx context.Context, arg CreateAgentRunParams) (AgentRun, error)
 	DeleteConversation(ctx context.Context, arg DeleteConversationParams) error
 	DeleteGithubInstallation(ctx context.Context, installationID int64) error
 	DeleteGithubReposByInstallation(ctx context.Context, installationID int64) error
@@ -19,6 +27,11 @@ type Querier interface {
 	DeleteGithubTeamsByInstallationExcept(ctx context.Context, arg DeleteGithubTeamsByInstallationExceptParams) error
 	DeleteRepoSecretValue(ctx context.Context, arg DeleteRepoSecretValueParams) error
 	DeleteRepoSetupSpec(ctx context.Context, arg DeleteRepoSetupSpecParams) error
+	DisableAgentProfile(ctx context.Context, arg DisableAgentProfileParams) (int64, error)
+	GetActiveAgentRunForThread(ctx context.Context, arg GetActiveAgentRunForThreadParams) (AgentRun, error)
+	GetAgentProfileBySlug(ctx context.Context, arg GetAgentProfileBySlugParams) (GetAgentProfileBySlugRow, error)
+	GetAgentRun(ctx context.Context, id string) (AgentRun, error)
+	GetAgentRunByRequest(ctx context.Context, arg GetAgentRunByRequestParams) (AgentRun, error)
 	GetConversation(ctx context.Context, arg GetConversationParams) (GetConversationRow, error)
 	GetGithubInstallation(ctx context.Context, installationID int64) (GithubAppInstallation, error)
 	// Resolves an (owner, name) the user typed in chat to a concrete
@@ -28,6 +41,7 @@ type Querier interface {
 	// repeat calls return the same row (and the caller's cached token
 	// stays warm).
 	GetGithubRepoForOrg(ctx context.Context, arg GetGithubRepoForOrgParams) (GithubRepo, error)
+	GetLatestAgentRunForThread(ctx context.Context, arg GetLatestAgentRunForThreadParams) (AgentRun, error)
 	GetOrgConfig(ctx context.Context, orgID string) (OrgConfig, error)
 	GetOrgConfigBySlackTeamID(ctx context.Context, slackTeamID *string) (OrgConfig, error)
 	GetRepoSecretValue(ctx context.Context, arg GetRepoSecretValueParams) (RepoSecretValue, error)
@@ -40,6 +54,10 @@ type Querier interface {
 	// whose race window allowed the user's value to be overwritten with
 	// NULL when the user filled it in between the two statements.
 	InsertRepoSecretValueIfAbsent(ctx context.Context, arg InsertRepoSecretValueIfAbsentParams) error
+	ListActiveAgentRunsForLeaseOwnerPrefix(ctx context.Context, arg ListActiveAgentRunsForLeaseOwnerPrefixParams) ([]AgentRun, error)
+	ListAgentProfilesByOrg(ctx context.Context, orgID string) ([]ListAgentProfilesByOrgRow, error)
+	ListAgentRunEventsFromSeq(ctx context.Context, arg ListAgentRunEventsFromSeqParams) ([]AgentRunEvent, error)
+	ListExpiredAgentRuns(ctx context.Context, limit int32) ([]AgentRun, error)
 	ListGithubInstallationsByOrg(ctx context.Context, orgID string) ([]GithubAppInstallation, error)
 	ListGithubReposByInstallation(ctx context.Context, installationID int64) ([]GithubRepo, error)
 	// Every repo accessible to the given Hetchy org, across all of its
@@ -84,6 +102,7 @@ type Querier interface {
 	// neither is desirable, and the persister has no business creating
 	// rows on its own.
 	SaveConversationProgress(ctx context.Context, arg SaveConversationProgressParams) error
+	SaveConversationTaskOptions(ctx context.Context, arg SaveConversationTaskOptionsParams) error
 	// Backs the sidebar list. Filters by optional creator_id and an
 	// optional case-insensitive substring match against either the
 	// custom_title or the first user message (history[1] — Postgres
@@ -97,6 +116,22 @@ type Querier interface {
 	// '%', '_' and '\' in the user-typed query so they read as
 	// literals instead of pattern metacharacters.
 	//
+	// Ordering is by created_at descending (newest first) so a chat's
+	// position in the sidebar stays stable as new turns land — replying
+	// to an old chat never reshuffles the list, and a brand-new chat
+	// lands on page 0 where the sidebar's offset=0 reload will see it.
+	// thread_id breaks ties when two rows share the same created_at (common
+	// for inserts within the same transaction, since NOW() returns
+	// transaction-start time) so pagination stays deterministic.
+	//
+	// Caveat: LIMIT/OFFSET pagination is not snapshot-isolated. A new chat
+	// inserted between a user's page-0 fetch and their "Load more" click
+	// shifts every existing row down by one, so the OFFSET N request may
+	// re-fetch the last row of the previous page or skip a row. Acceptable
+	// at current per-org scale (tens to low hundreds). Future fix: keyset
+	// pagination on (created_at, thread_id) — pass the last row's pair as
+	// a cursor instead of an offset.
+	//
 	// Performance note: ILIKE '%foo%' is sequential scan territory
 	// because no B-tree index can cover a leading-wildcard pattern.
 	// Fine for the current per-org chat counts (tens to low hundreds);
@@ -104,11 +139,22 @@ type Querier interface {
 	// + a GIN index on custom_title (and a generated column for
 	// history[1]).
 	SearchConversations(ctx context.Context, arg SearchConversationsParams) ([]SearchConversationsRow, error)
+	SeedDefaultAgentProfilesForOrg(ctx context.Context, orgID string) error
+	TouchAgentRunLease(ctx context.Context, arg TouchAgentRunLeaseParams) error
+	UpdateAgentProfileName(ctx context.Context, arg UpdateAgentProfileNameParams) (UpdateAgentProfileNameRow, error)
+	UpdateAgentRunBranch(ctx context.Context, arg UpdateAgentRunBranchParams) error
+	UpdateAgentRunCommand(ctx context.Context, arg UpdateAgentRunCommandParams) error
+	UpdateAgentRunKind(ctx context.Context, arg UpdateAgentRunKindParams) error
+	UpdateAgentRunLogCursor(ctx context.Context, arg UpdateAgentRunLogCursorParams) error
+	UpdateAgentRunSandbox(ctx context.Context, arg UpdateAgentRunSandboxParams) error
+	UpdateAgentRunSession(ctx context.Context, arg UpdateAgentRunSessionParams) error
+	UpdateAgentRunState(ctx context.Context, arg UpdateAgentRunStateParams) error
 	// Lightweight status update used by the runtime apply path: bumps
 	// success/failure counters and the validation_status without
 	// rewriting the whole spec. Avoids re-encoding all the JSONB blobs on
 	// every successful task.
 	UpdateRepoSetupSpecStatus(ctx context.Context, arg UpdateRepoSetupSpecStatusParams) error
+	UpsertAgentProfile(ctx context.Context, arg UpsertAgentProfileParams) (UpsertAgentProfileRow, error)
 	UpsertConversation(ctx context.Context, arg UpsertConversationParams) (UpsertConversationRow, error)
 	// Failing-bootstrap upsert. Diverges from UpsertRepoSetupSpec in two
 	// ways: success_count is left untouched (we only ever write a failing

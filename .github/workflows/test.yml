@@ -45,5 +45,12 @@ jobs:
           go vet ./...
           go test -v -race -cover ./...
 
+      - name: Bot coverage
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            export COVERAGE_COMPARE_REF="origin/${{ github.base_ref }}"
+          fi
+          bash scripts/check-go-coverage.sh ./internal/bot .github/coverage/internal-bot.min
+
       - name: Build
         run: make build

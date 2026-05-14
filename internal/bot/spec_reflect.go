@@ -35,15 +35,14 @@ func (b *Bot) applySpecImprovements(ctx context.Context, sb *daytona.Sandbox, se
 		return
 	}
 
-	// One-shot read session — the agent's session is gone by the time
-	// we get here (runScript deletes it), so we open a fresh one and
-	// tear it down in a defer. Cheap; sessions are stateless.
+	// One-shot read session — uses a distinct session ID so it does not
+	// interfere with the agent's session, which the caller cleans up on success.
 	readSessionID := sessionID + "-improvements"
 	if err := sb.Process.CreateSession(ctx, readSessionID); err != nil {
 		b.log.Warn("spec-improvements: create session", "error", err, "repo", repo.Slug)
 		return
 	}
-	defer func() { _ = sb.Process.DeleteSession(ctx, readSessionID) }()
+	defer func() { b.deleteSandboxSession(sb, readSessionID) }()
 
 	read := func(path string) (string, bool) {
 		// `[ -f path ] && head -c 65536 path || true` — exit-0 on
@@ -57,7 +56,7 @@ func (b *Bot) applySpecImprovements(ctx context.Context, sb *daytona.Sandbox, se
 		// suspicious by the reflection log so we know the value
 		// was truncated.
 		cmd := fmt.Sprintf("if [ -f %s ]; then head -c 65536 %s; fi", shellQuote(path), shellQuote(path))
-		out, err := b.shLines(ctx, sb.ID, sb.Process, readSessionID, "spec-read", cmd, 30*time.Second, 0, func(string) {})
+		out, err := b.shLines(ctx, sb.ID, sb.Process, readSessionID, "spec-read", cmd, 30*time.Second, 0, false, func(string) {})
 		if err != nil {
 			b.log.Warn("spec-improvements: read", "error", err, "path", path, "repo", repo.Slug)
 			return "", false

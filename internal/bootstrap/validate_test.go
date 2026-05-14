@@ -26,7 +26,15 @@ func TestBuildValidationPromptCoversThreeFlows(t *testing.T) {
 	// these silently changes which evidence type the agent produces.
 	mustContain := []string{
 		"Playwright MCP",
-		"For API/backend changes",
+		"Static UI change",
+		"whole screen as MP4",
+		"H.264",
+		"hetchy-record-screen 20 /tmp/hetchy-validate/recording-001.mp4 -- node",
+		"headless: false",
+		"Playwright recordVideo +",
+		"Backend architecture change",
+		"testing matrix",
+		"API/backend endpoint change",
 		"For CLI tools",
 		"http://localhost:8080",
 		"AUTH_BYPASS",
@@ -48,8 +56,10 @@ func TestBuildValidationPromptCoversThreeFlows(t *testing.T) {
 		// dead port or claim a change is validated when nothing
 		// was actually exercised.
 		"/tmp/hetchy-spec/UNHEALTHY",
+		"/tmp/hetchy-spec/setup.log",
 		"/tmp/hetchy-spec/start.log",
 		"Validation: incomplete",
+		"Silently omitting proof is overall task failure",
 	}
 	for _, want := range mustContain {
 		if !strings.Contains(prompt, want) {
@@ -68,59 +78,59 @@ func TestValidationPromptCLIPath(t *testing.T) {
 	}
 }
 
-func TestBuildValidationPrompt_ScreenshotSlotsEnabled(t *testing.T) {
+func TestBuildValidationPrompt_ArtifactSlotsEnabled(t *testing.T) {
 	// When the bot has minted upload slots, the prompt must teach the
-	// agent the correct PUT/GET pattern AND must NOT instruct it to
-	// reference local filenames in markdown (which would render as
-	// broken images in GitHub).
+	// agent the correct PUT/GET pattern, how to request more slots, and
+	// must not mention the legacy screenshot-only env var.
 	spec := &Spec{
 		Services: []Service{{Name: "web", Port: 8080, URL: "http://localhost:8080", Kind: "ui"}},
 	}
 	args := ValidationArgs{
-		OwnerRepo:           "x/y",
-		Branch:              "feature/sf-1",
-		ScreenshotSlotCount: 3,
+		OwnerRepo:         "x/y",
+		Branch:            "feature/sf-1",
+		ArtifactSlotCount: 3,
 	}
 	prompt := BuildValidationPrompt(spec, args)
 
 	for _, want := range []string{
-		"HETCHY_SCREENSHOT_SLOTS",
+		"HETCHY_ARTIFACT_SLOTS",
+		"HETCHY_ARTIFACT_SLOT_URL",
+		"HETCHY_ARTIFACT_SLOT_TOKEN",
 		"put_url",
 		"get_url",
+		"content_type",
+		"video/mp4",
+		"H.264",
 		"curl -fSs -X PUT",
-		"jq",
+		"Authorization: Bearer",
+		"GitHub inline playback is not guaranteed",
 	} {
 		if !strings.Contains(prompt, want) {
-			t.Errorf("screenshots-on prompt missing %q\n%s", want, prompt)
+			t.Errorf("artifacts-on prompt missing %q\n%s", want, prompt)
 		}
 	}
-	// The legacy ![alt](filename.png) markdown pattern must not be
-	// presented as a how-to. It's fine to mention "screenshot-001.png"
-	// as a counter-example ("DO NOT reference local filenames…"), but
-	// the markdown reference shape leads to broken images and
-	// shouldn't appear in the prompt at all.
-	if strings.Contains(prompt, "(screenshot-001.png)") {
-		t.Errorf("screenshots-on prompt still presents the legacy markdown pattern\n%s", prompt)
+	if strings.Contains(prompt, "HETCHY_SCREENSHOT_SLOTS") {
+		t.Errorf("artifacts-on prompt should not mention legacy screenshot slots\n%s", prompt)
 	}
 }
 
-func TestBuildValidationPrompt_ScreenshotSlotsDisabled(t *testing.T) {
-	// When the bot has no S3 wiring (slots=0) the prompt must
-	// explicitly tell the agent NOT to embed screenshots — otherwise
-	// it'll write broken-link markdown by reflex.
+func TestBuildValidationPrompt_ArtifactSlotsDisabled(t *testing.T) {
+	// When the bot has no S3 wiring (slots=0), the prompt must
+	// explicitly tell the agent to mark proof incomplete rather than
+	// embed broken local-file references.
 	spec := &Spec{
 		Services: []Service{{Name: "web", Port: 8080, URL: "http://localhost:8080", Kind: "ui"}},
 	}
 	prompt := BuildValidationPrompt(spec, ValidationArgs{
-		OwnerRepo:           "x/y",
-		Branch:              "feature/sf-1",
-		ScreenshotSlotCount: 0,
+		OwnerRepo:         "x/y",
+		Branch:            "feature/sf-1",
+		ArtifactSlotCount: 0,
 	})
-	if strings.Contains(prompt, "HETCHY_SCREENSHOT_SLOTS") {
-		t.Errorf("screenshots-off prompt should not mention the env var\n%s", prompt)
+	if strings.Contains(prompt, "HETCHY_ARTIFACT_SLOTS") || strings.Contains(prompt, "HETCHY_SCREENSHOT_SLOTS") {
+		t.Errorf("artifacts-off prompt should not mention upload env vars\n%s", prompt)
 	}
-	if !strings.Contains(prompt, "DO NOT") {
-		t.Errorf("screenshots-off prompt should explicitly forbid screenshot embedding\n%s", prompt)
+	if !strings.Contains(prompt, "Validation: incomplete - <specific reason>") {
+		t.Errorf("artifacts-off prompt should require explicit incomplete validation\n%s", prompt)
 	}
 }
 

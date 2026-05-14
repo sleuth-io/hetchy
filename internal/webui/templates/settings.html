@@ -1,0 +1,795 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Organization settings · Hetchy</title>
+<link rel="icon" type="image/svg+xml" href="{{faviconHref}}">
+<script src="{{assetPath "theme_bootstrap.js"}}"></script>
+<link rel="stylesheet" href="{{assetPath "settings.css"}}">
+</head>
+<body>
+
+<div class="modal-page">
+  <aside class="sidebar">
+    <h2 title="{{.OrgName}}">{{.OrgName}}</h2>
+    <p class="subhead">Organization settings</p>
+    <nav>
+      <a href="/settings/org?tab=general"{{if eq .Tab "general"}} class="active"{{end}}>
+        <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="8" cy="8" r="2"/>
+          <path d="M13 8a5 5 0 0 0-.1-1l1.3-1-1-1.7-1.5.5a5 5 0 0 0-1.7-1L9.7 2H6.3l-.3 1.6a5 5 0 0 0-1.7 1l-1.5-.5-1 1.7 1.3 1A5 5 0 0 0 3 8a5 5 0 0 0 .1 1l-1.3 1 1 1.7 1.5-.5a5 5 0 0 0 1.7 1l.3 1.6h3.4l.3-1.6a5 5 0 0 0 1.7-1l1.5.5 1-1.7-1.3-1A5 5 0 0 0 13 8z"/>
+        </svg>
+        General
+      </a>
+      <a href="/settings/org?tab=integrations"{{if eq .Tab "integrations"}} class="active"{{end}}>
+        <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="2" y="3" width="5" height="5" rx="1"/>
+          <rect x="9" y="8" width="5" height="5" rx="1"/>
+          <path d="M7 5.5h2v2.5"/>
+        </svg>
+        Integrations
+      </a>
+      <a href="/settings/org?tab=agents"{{if eq .Tab "agents"}} class="active"{{end}}>
+        <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="8" cy="4.5" r="2.5"/>
+          <path d="M3.5 14c.4-2.4 2-4 4.5-4s4.1 1.6 4.5 4"/>
+          <path d="M4.5 8.2 3 9.5M11.5 8.2 13 9.5"/>
+        </svg>
+        Agents
+      </a>
+      <a href="/settings/org?tab=repositories"{{if eq .Tab "repositories"}} class="active"{{end}}>
+        <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M2 3.5A1.5 1.5 0 0 1 3.5 2h6L13 5.5v7A1.5 1.5 0 0 1 11.5 14h-8A1.5 1.5 0 0 1 2 12.5v-9z"/>
+          <path d="M9 2v3h4"/>
+          <path d="M5 8h5M5 10h5"/>
+        </svg>
+        Repositories
+      </a>
+      {{if .IsAdmin}}
+      <a href="/settings/org?tab=members"{{if eq .Tab "members"}} class="active"{{end}}>
+        <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="6" cy="5.5" r="2"/>
+          <circle cx="11.5" cy="6.5" r="1.5"/>
+          <path d="M2 13c0-2 1.8-3.5 4-3.5s4 1.5 4 3.5"/>
+          <path d="M11 10c1.8 0 3 1.2 3 2.8"/>
+        </svg>
+        Members
+      </a>
+      {{end}}
+    </nav>
+  </aside>
+
+  <section class="content">
+    <a class="close" href="/" title="Close">✕</a>
+
+    {{if eq .Tab "members"}}
+      {{template "members" .}}
+    {{else if eq .Tab "integrations"}}
+      {{template "integrations" .}}
+    {{else if eq .Tab "agents"}}
+      {{template "agents" .}}
+    {{else if eq .Tab "repositories"}}
+      {{template "repositories" .}}
+    {{else}}
+      {{template "general" .}}
+    {{end}}
+
+    <p class="meta">Org ID: <code>{{.OrgID}}</code> · {{.Email}} · <a href="/logout" style="color:#888">Log out</a></p>
+  </section>
+</div>
+
+{{define "general"}}
+  <h1>General</h1>
+  <p class="desc"></p>
+
+  {{if .SavedMessage}}<div class="saved-banner">{{.SavedMessage}}</div>{{end}}
+
+  {{if .IsAdmin}}
+  <form method="POST" action="/settings/org?tab=general">
+    <fieldset>
+      <legend>Organization</legend>
+      <label for="org_name">Name</label>
+      <input id="org_name" type="text" name="org_name" value="{{.OrgName}}" required maxlength="120">
+      <p class="hint">Shown to your team in the sidebar and on invites.</p>
+    </fieldset>
+    <button class="primary" type="submit">Save</button>
+  </form>
+  {{else}}
+  <fieldset>
+    <legend>Organization</legend>
+    <label for="org_name">Name</label>
+    <input id="org_name" type="text" value="{{.OrgName}}" readonly>
+    <p class="hint">Only administrators can change organization settings.</p>
+  </fieldset>
+  {{end}}
+{{end}}
+
+{{define "integrations"}}
+  <h1>Integrations</h1>
+  <p/>
+  <p class="desc">Connect Hetchy to GitHub for repo access, Slack for chat, Claude for the agent, and SX for skills.</p>
+
+  {{if .ErrorMessage}}<div class="error-banner">{{.ErrorMessage}}</div>{{end}}
+  {{if .SavedMessage}}<div class="saved-banner">{{.SavedMessage}}</div>{{end}}
+  {{if not .IsAdmin}}<p class="hint">Only administrators can change integration settings.</p>{{end}}
+
+  <div class="integration-list">
+    {{/* Anthropic first because it's required for any chat to work;
+         the others are optional and ordered by visibility/usefulness. */}}
+    {{template "integration_anthropic" .}}
+    {{template "integration_github" .}}
+    {{template "integration_slack" .}}
+    {{template "integration_sx" .}}
+  </div>
+
+  <dialog class="app-dialog" id="integration-disconnect-dialog" aria-labelledby="integration-disconnect-title">
+    <div class="dlg-body">
+      <h3 id="integration-disconnect-title">Disconnect integration?</h3>
+      <p id="integration-disconnect-message">This integration will be disconnected.</p>
+    </div>
+    <div class="dlg-actions">
+      <button type="button" class="dlg-cancel" id="integration-disconnect-cancel">Cancel</button>
+      <button type="button" class="dlg-delete" id="integration-disconnect-confirm">Disconnect</button>
+    </div>
+  </dialog>
+
+  {{template "modal_sx" .}}
+{{end}}
+
+{{define "integration_github"}}
+  {{$enabled := and .GitHubAppEnabled .GitHubInstallations}}
+  <article class="integration{{if $enabled}} enabled{{end}}{{if not .GitHubAppEnabled}} disabled-env{{end}}" data-integration="github">
+    <div class="integration-head">
+      <div class="integration-icon">
+        <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+          <path fill-rule="evenodd" d="M8 0C3.58 0 0 3.58 0 8a8 8 0 0 0 5.47 7.59c.4.07.55-.17.55-.38v-1.32c-2.22.48-2.69-1.07-2.69-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.06-.49.06-.49.81.06 1.23.83 1.23.83.72 1.23 1.88.88 2.34.67.07-.52.28-.88.51-1.08-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.03 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 16 8c0-4.42-3.58-8-8-8z"/>
+        </svg>
+      </div>
+      <div class="integration-title">
+        <strong>GitHub</strong>
+        <span class="tag">Code</span>
+        <span class="tag">Repos</span>
+        <span class="tag">Teams</span>
+        <p>Install the Hetchy GitHub App on your org or personal account so the agent can read and push to your repos.</p>
+      </div>
+      <div class="integration-status">
+        {{if not .GitHubAppEnabled}}
+          <span class="btn-not-configured">Not configured for this env</span>
+        {{else if $enabled}}
+          <span class="btn-enabled">✓ Enabled</span>
+        {{else if .IsAdmin}}
+          <a class="btn-enable" href="/integrations/github/install">Enable</a>
+        {{end}}
+        <button class="caret" type="button" aria-label="Toggle details">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><polyline points="4,6 8,10 12,6"/></svg>
+        </button>
+      </div>
+    </div>
+    {{if .GitHubAppEnabled}}
+    <div class="integration-body">
+      {{if $enabled}}
+        <div class="body-section">
+          <legend>Connections</legend>
+          {{range .GitHubInstallations}}
+            <div class="connection">
+              <div class="who">
+                <strong>{{.AccountLogin}}</strong>
+                <span class="hint">{{.AccountType}} · {{len .Repos}} repo{{if ne (len .Repos) 1}}s{{end}}</span>
+                {{if .Repos}}
+                <div class="repos">
+                  {{range $i, $r := .Repos}}{{if lt $i 5}}{{if gt $i 0}}, {{end}}{{$r.Owner}}/{{$r.Name}}{{end}}{{end}}{{if gt (len .Repos) 5}} …{{end}}
+                </div>
+                {{end}}
+              </div>
+              <div class="actions">
+                <a href="{{.ManageURL}}" target="_blank" rel="noopener">Manage on GitHub ↗</a>
+                {{if $.IsAdmin}}
+                <form method="POST" action="/integrations/github/sync">
+                  <input type="hidden" name="installation_id" value="{{.InstallationID}}">
+                  <button type="submit" class="link-btn" style="color:#0b93f6">Sync</button>
+                </form>
+                <form method="POST" action="/integrations/github/disconnect"
+                      data-confirm-title="Disconnect {{.AccountLogin}}?"
+                      data-confirm-message="The Hetchy GitHub App will be uninstalled from that account, dropping access to all {{len .Repos}} repo{{if ne (len .Repos) 1}}s{{end}}. You can reinstall later from this page.">
+                  <input type="hidden" name="installation_id" value="{{.InstallationID}}">
+                  <button type="submit" class="danger-btn">Disconnect</button>
+                </form>
+                {{end}}
+              </div>
+            </div>
+          {{end}}
+          {{if .IsAdmin}}<a class="add-link" href="/integrations/github/install">+ Install on another account</a>{{end}}
+        </div>
+
+        <div class="body-section">
+          <legend>Default repository</legend>
+          {{if .IsAdmin}}
+          <form method="POST" action="/settings/org?tab=integrations">
+            {{if .GitHubRepos}}
+              <select name="default_repo">
+                <option value=""{{if eq .DefaultRepoSlug ""}} selected{{end}}>(none — ask me each time)</option>
+                {{range .GitHubRepos}}
+                  {{$slug := printf "%s/%s" .Owner .Name}}
+                  <option value="{{$slug}}"{{if eq $.DefaultRepoSlug $slug}} selected{{end}}>{{$slug}}</option>
+                {{end}}
+              </select>
+            {{else}}
+              <input type="text" name="default_repo" value="{{.DefaultRepoSlug}}" placeholder="acme/website">
+            {{end}}
+            <p class="hint">Used when a chat isn't explicit about which repo to work in. Leave empty to require a selection every time.</p>
+            <button class="primary" type="submit">Save default</button>
+          </form>
+          {{else}}
+          <p class="hint">{{if .DefaultRepoSlug}}{{.DefaultRepoSlug}}{{else}}(none — ask me each time){{end}}</p>
+          {{end}}
+        </div>
+      {{else}}
+        <div class="body-section">
+          <p class="hint">Click <strong>Enable</strong> above to install the Hetchy GitHub App. You'll be redirected to GitHub to choose which repos to grant access to, then sent back here.</p>
+        </div>
+      {{end}}
+
+    </div>
+    {{end}}
+  </article>
+{{end}}
+
+{{define "integration_slack"}}
+  {{$envOk := or .SlackOAuthEnabled .IsDev}}
+  {{/* OAuth is "enabled" when we've stamped a workspace team_id from
+       the install callback. Dev's manual-paste path doesn't get a
+       team_id (Socket Mode identifies the workspace via the open
+       socket itself), so we treat both bot+socket tokens being set as
+       the dev-equivalent of "connected". */}}
+  {{$oauthEnabled := ne .SlackTeamID ""}}
+  {{$devEnabled := and .IsDev (and (ne .SlackBotTokenPreview "") (ne .SlackSocketTokenPreview ""))}}
+  {{$enabled := or $oauthEnabled $devEnabled}}
+  <article class="integration{{if $enabled}} enabled{{end}}{{if not $envOk}} disabled-env{{end}}" data-integration="slack">
+    <div class="integration-head">
+      <div class="integration-icon">
+        <svg viewBox="0 0 16 16" aria-hidden="true">
+          <path fill="#36C5F0" d="M3.4 10c0 .9-.7 1.6-1.6 1.6s-1.6-.7-1.6-1.6.7-1.6 1.6-1.6h1.6V10z"/>
+          <path fill="#36C5F0" d="M4.2 10c0-.9.7-1.6 1.6-1.6s1.6.7 1.6 1.6v4c0 .9-.7 1.6-1.6 1.6S4.2 14.9 4.2 14v-4z"/>
+          <path fill="#2EB67D" d="M5.8 3.4c-.9 0-1.6-.7-1.6-1.6S4.9.2 5.8.2 7.4.9 7.4 1.8v1.6H5.8z"/>
+          <path fill="#2EB67D" d="M5.8 4.2c.9 0 1.6.7 1.6 1.6s-.7 1.6-1.6 1.6H1.8c-.9 0-1.6-.7-1.6-1.6S.9 4.2 1.8 4.2h4z"/>
+          <path fill="#ECB22E" d="M12.4 5.8c0-.9.7-1.6 1.6-1.6s1.6.7 1.6 1.6-.7 1.6-1.6 1.6h-1.6V5.8z"/>
+          <path fill="#ECB22E" d="M11.6 5.8c0 .9-.7 1.6-1.6 1.6s-1.6-.7-1.6-1.6V1.8c0-.9.7-1.6 1.6-1.6s1.6.7 1.6 1.6v4z"/>
+          <path fill="#E01E5A" d="M10 12.4c.9 0 1.6.7 1.6 1.6s-.7 1.6-1.6 1.6S8.4 14.9 8.4 14v-1.6H10z"/>
+          <path fill="#E01E5A" d="M10 11.6c-.9 0-1.6-.7-1.6-1.6s.7-1.6 1.6-1.6h4c.9 0 1.6.7 1.6 1.6s-.7 1.6-1.6 1.6h-4z"/>
+        </svg>
+      </div>
+      <div class="integration-title">
+        <strong>Slack</strong>
+        <span class="tag">Chat</span>
+        <p>Talk to Hetchy from any channel by mentioning the bot, or DM it directly. Replies thread back to your conversation here.</p>
+      </div>
+      <div class="integration-status">
+        {{if not $envOk}}
+          <span class="btn-not-configured">Not configured for this env</span>
+        {{else if $enabled}}
+          <span class="btn-enabled">✓ Enabled</span>
+        {{else if .IsAdmin}}
+          {{if .SlackOAuthEnabled}}
+            <a class="btn-enable" href="/slack/install">Enable</a>
+          {{else}}
+            {{/* Dev-only: clicking Enable expands the card and focuses
+                 the first paste field; the body below carries the form. */}}
+            <button class="btn-enable" type="button" data-toggle-card="slack" data-focus-field="slack_bot_token">Enable</button>
+          {{end}}
+        {{end}}
+        <button class="caret" type="button" aria-label="Toggle details">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><polyline points="4,6 8,10 12,6"/></svg>
+        </button>
+      </div>
+    </div>
+    {{/* Body always rendered when env supports Slack so dev users can
+         expand and paste/rotate tokens regardless of current state. */}}
+    {{if $envOk}}
+    <div class="integration-body">
+      {{if $oauthEnabled}}
+      <div class="body-section">
+        <p class="hint">Connected workspace: <code>{{.SlackTeamID}}</code></p>
+        {{if and .SlackOAuthEnabled .IsAdmin}}
+          <div class="integration-actions">
+            <a class="btn-enable" href="/slack/install">Reinstall</a>
+            <form method="POST" action="/slack/disconnect" class="integration-disconnect-form"
+                  data-confirm-title="Disconnect Slack?"
+                  data-confirm-message="The Hetchy app will be removed from the workspace and you will need to reinstall to re-enable.">
+              <button type="submit" class="danger-btn">Disconnect</button>
+            </form>
+          </div>
+        {{end}}
+      </div>
+      {{end}}
+      {{if and .IsDev .IsAdmin}}
+      <div class="body-section">
+        <legend>Dev: paste tokens manually</legend>
+        <form id="slack-dev-token-form" method="POST" action="/settings/org?tab=integrations">
+          {{template "secret" dict "Field" "slack_bot_token" "Label" "Bot token" "Preview" .SlackBotTokenPreview "Placeholder" "xoxb-…" "Required" false}}
+          {{template "secret" dict "Field" "slack_socket_token" "Label" "Socket token" "Preview" .SlackSocketTokenPreview "Placeholder" "xapp-…" "Required" false}}
+          <p class="hint">Run <code>make slack-app NAME=…</code> to create a personal Socket Mode app, then paste its bot + socket tokens here. Both must be set for the integration to show as Enabled.</p>
+        </form>
+        {{/* Dev's manual-paste flow has no OAuth row to disconnect from, but
+             admins still want a single click to wipe the pasted tokens. */}}
+        <div class="integration-actions">
+          <button class="primary" type="submit" form="slack-dev-token-form">Save</button>
+          {{if $devEnabled}}
+          <form method="POST" action="/slack/disconnect" class="integration-disconnect-form"
+                data-confirm-title="Disconnect Slack?"
+                data-confirm-message="The pasted bot and socket tokens will be cleared and the bot will stop responding in Slack.">
+            <button type="submit" class="danger-btn">Disconnect</button>
+          </form>
+          {{end}}
+        </div>
+      </div>
+      {{end}}
+    </div>
+    {{end}}
+  </article>
+{{end}}
+
+{{define "integration_anthropic"}}
+  {{$hasKey := ne .AnthropicAPIKeyPreview ""}}
+  {{$hasSub := ne .ClaudeCodeOAuthTokenPreview ""}}
+  {{$enabled := or $hasKey $hasSub}}
+  {{/* Default tab: subscription if that's the only one set; else API key.
+       Lets a user who's already on subscription auth land on their own
+       credential rather than the empty API-key tab on every page load. */}}
+  {{$activeTab := "api-key"}}
+  {{if and (not $hasKey) $hasSub}}{{$activeTab = "subscription"}}{{end}}
+  <article class="integration required{{if $enabled}} enabled{{end}}" data-integration="anthropic">
+    <div class="integration-head">
+      <div class="integration-icon">
+        <svg viewBox="0 0 16 16" fill="#cc785c" aria-hidden="true">
+          <path d="M5.4 2.6h2.2L11.4 13.4h-2.2L8.45 11h-3.7L4 13.4H1.8L5.4 2.6zm.1 6.6h2.4l-1.2-3.4-1.2 3.4z"/>
+          <path d="M11.5 2.6h2.7v10.8h-2.7V2.6z"/>
+        </svg>
+      </div>
+      <div class="integration-title">
+        <strong>Claude (Anthropic)</strong>
+        <span class="tag required">Required</span>
+        <span class="tag">AI</span>
+        <p>Powers the Claude Code agent that reads your repo, plans the change, and writes the diff inside the sandbox. Authenticate with an Anthropic API key or a Claude Pro/Max subscription token.</p>
+      </div>
+      <div class="integration-status">
+        {{if $enabled}}
+          <span class="btn-enabled">✓ Enabled</span>
+        {{else if .IsAdmin}}
+          <button class="btn-enable" type="button" data-toggle-card data-focus-field="anthropic_api_key">Enable</button>
+        {{end}}
+        <button class="caret" type="button" aria-label="Toggle details">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><polyline points="4,6 8,10 12,6"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="integration-body">
+      <div class="body-section">
+        <legend>Credentials</legend>
+        {{if .IsAdmin}}
+        <form method="POST" action="/settings/org?tab=integrations">
+          <div class="cred-tabs" role="tablist">
+            <button type="button" class="cred-tab{{if eq $activeTab "api-key"}} active{{end}}" data-cred-tab="api-key" role="tab" aria-selected="{{if eq $activeTab "api-key"}}true{{else}}false{{end}}">API key</button>
+            <button type="button" class="cred-tab{{if eq $activeTab "subscription"}} active{{end}}" data-cred-tab="subscription" role="tab" aria-selected="{{if eq $activeTab "subscription"}}true{{else}}false{{end}}">Subscription key</button>
+          </div>
+          <div class="cred-panel{{if eq $activeTab "api-key"}} active{{end}}" data-cred-panel="api-key">
+            <p class="cred-help">Generate at <a href="https://console.anthropic.com/" target="_blank" rel="noopener">console.anthropic.com</a> — billed per usage.</p>
+            {{template "secret" dict "Field" "anthropic_api_key" "Label" "Claude API key" "Preview" .AnthropicAPIKeyPreview "Placeholder" "sk-ant-…" "Required" false}}
+          </div>
+          <div class="cred-panel{{if eq $activeTab "subscription"}} active{{end}}" data-cred-panel="subscription">
+            <p class="cred-help">Run <code>claude setup-token</code> on your machine, complete the browser login, and paste the long-lived token here.</p>
+            {{template "secret" dict "Field" "claude_code_oauth_token" "Label" "Subscription token" "Preview" .ClaudeCodeOAuthTokenPreview "Placeholder" "sk-ant-oat01-…" "Required" false}}
+          </div>
+          <button class="primary" type="submit">Save</button>
+        </form>
+        {{else if $enabled}}
+          <p class="hint">{{if $hasKey}}API key{{else}}Subscription key{{end}} configured.</p>
+        {{end}}
+      </div>
+    </div>
+  </article>
+{{end}}
+
+{{define "integration_sx"}}
+  {{$enabled := ne .SXKeyPreview ""}}
+  <article class="integration{{if $enabled}} enabled{{end}}" data-integration="sx">
+    <div class="integration-head">
+      <div class="integration-icon">
+        <svg viewBox="0 0 16 16" fill="none" stroke="#5a4ad9" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="8" cy="8" r="6"/>
+          <path d="M5 9c.5 1 1.5 1.5 3 1.5s2.5-.5 3-1.5"/>
+          <circle cx="6" cy="6.5" r=".5" fill="#5a4ad9"/>
+          <circle cx="10" cy="6.5" r=".5" fill="#5a4ad9"/>
+        </svg>
+      </div>
+      <div class="integration-title">
+        <strong>SX</strong>
+        <span class="tag">Skills</span>
+        <p>Sleuth-managed bot skills. Install <code>sx</code> in the sandbox so the agent can run skill-based workflows.</p>
+      </div>
+      <div class="integration-status">
+        {{if $enabled}}
+          <span class="btn-enabled">✓ Enabled</span>
+        {{else if .IsAdmin}}
+          <button class="btn-enable" type="button" data-open-modal="modal-sx">Enable</button>
+        {{end}}
+        <button class="caret" type="button" aria-label="Toggle details">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><polyline points="4,6 8,10 12,6"/></svg>
+        </button>
+      </div>
+    </div>
+    {{if $enabled}}
+    <div class="integration-body">
+      <div class="body-section">
+        <legend>SX bot key</legend>
+        {{if .IsAdmin}}
+        <form method="POST" action="/settings/org?tab=integrations">
+          {{template "secret" dict "Field" "sx_key" "Label" "Bot key" "Preview" .SXKeyPreview "Placeholder" "sx-…" "Required" false}}
+          <button class="primary" type="submit">Save</button>
+        </form>
+        {{else}}
+          <p class="hint">Bot key configured.</p>
+        {{end}}
+      </div>
+    </div>
+    {{end}}
+  </article>
+{{end}}
+
+
+{{define "modal_sx"}}
+{{if .IsAdmin}}
+<dialog class="api-modal" id="modal-sx">
+  <form method="POST" action="/settings/org?tab=integrations">
+    <div class="body">
+      <h2>SX bot key</h2>
+      <label for="modal-sx-input">Bot key</label>
+      <input id="modal-sx-input" type="password" name="sx_key" placeholder="sx-…" autocomplete="off" required>
+      <p>Issued by your SX admin. Optional — leave SX disabled if you're not using skills.</p>
+    </div>
+    <div class="actions">
+      <button type="button" class="cancel" data-close-modal>Cancel</button>
+      <button type="submit" class="save">Save</button>
+    </div>
+  </form>
+</dialog>
+{{end}}
+{{end}}
+
+{{define "agents"}}
+  <h1>Agents</h1>
+  <p/>
+  <p class="desc">Each profile selects a bot identity and the skills installed for that identity before Claude runs.</p>
+
+  {{if .SavedMessage}}<div class="saved-banner">{{.SavedMessage}}</div>{{end}}
+  {{if not .IsAdmin}}<p class="hint">Only administrators can change agents.</p>{{end}}
+
+  {{if .Agents}}
+    <div class="agent-list">
+      {{range .Agents}}
+      <article class="agent-card">
+        <div class="agent-card-head">
+          <div class="agent-title">
+            <h3>{{.DisplayName}}</h3>
+            <code>{{.Slug}}</code>
+          </div>
+          {{if $.IsAdmin}}
+          <form method="POST" action="/settings/org/agents/{{.Slug}}/delete" class="agent-delete-form"
+                onsubmit="return confirm('Delete agent {{.DisplayName}}? Existing conversations that used this agent will keep their history, but new turns cannot select it.');">
+            <button type="submit" class="danger-btn">Delete</button>
+          </form>
+          {{end}}
+        </div>
+
+        <p>{{.Description}}</p>
+
+        {{if $.IsAdmin}}
+        <form method="POST" action="/settings/org/agents/{{.Slug}}" class="agent-edit-form">
+          <div>
+            <label for="agent-name-{{.Slug}}">Name</label>
+            <input id="agent-name-{{.Slug}}" type="text" name="display_name" value="{{.DisplayName}}" required maxlength="80">
+          </div>
+          <button class="primary" type="submit">Save</button>
+        </form>
+        {{end}}
+
+        <div class="agent-skills">
+          <div class="agent-skills-label">Installed skills</div>
+          {{if .Skills}}
+            <div class="skill-chip-list">
+              {{range .Skills}}<span class="skill-chip">{{.}}</span>{{end}}
+            </div>
+          {{else}}
+            <p class="hint">No skills listed.</p>
+          {{end}}
+        </div>
+
+        <div class="agent-meta">
+          {{if .SXBot}}<span>sx bot: <code>{{.SXBot}}</code></span>{{end}}
+          {{if .PersonaAsset}}<span>persona: <code>{{.PersonaAsset}}</code></span>{{end}}
+          {{if .SlackAliases}}<span>aliases: {{range $i, $a := .SlackAliases}}{{if gt $i 0}}, {{end}}@{{$a}}{{end}}</span>{{end}}
+        </div>
+      </article>
+      {{end}}
+    </div>
+  {{else}}
+    <p class="empty">No enabled agents.</p>
+  {{end}}
+{{end}}
+
+{{define "members"}}
+  <h1>Members</h1>
+  <p/>
+  <p class="desc">Manage who can use this organization.</p>
+
+  {{if .SavedMessage}}<div class="saved-banner">{{.SavedMessage}}</div>{{end}}
+
+  <p class="section-title">Invite by email</p>
+  <form method="POST" action="/settings/org/invite" class="invite-form">
+    <div>
+      <label for="invite_email" style="margin-top:0">Email address</label>
+      <input id="invite_email" type="email" name="email" placeholder="teammate@example.com" required>
+    </div>
+    <div>
+      <label for="invite_role" style="margin-top:0">Role</label>
+      <select id="invite_role" name="role">
+        <option value="member" selected>member</option>
+        <option value="admin">admin</option>
+      </select>
+    </div>
+    <button type="submit">Send invite</button>
+  </form>
+
+  <p class="section-title">Members</p>
+  {{if .Members}}
+    <table class="members">
+      <thead><tr><th>Name</th><th>Role</th><th>Status</th><th></th></tr></thead>
+      <tbody>
+        {{range .Members}}
+        <tr>
+          <td>
+            <div class="name">{{.DisplayName}}</div>
+            <div class="email">{{.Email}}</div>
+          </td>
+          <td class="role">
+            {{if eq $.PrincipalUserID .UserID}}
+              <span class="pill">{{.RoleSlug}}</span>
+            {{else}}
+              <form method="POST" action="/settings/org/members/{{.MembershipID}}/role" class="role-form" style="margin:0">
+                <select name="role" data-original="{{.RoleSlug}}">
+                  <option value="member"{{if eq .RoleSlug "member"}} selected{{end}}>member</option>
+                  <option value="admin"{{if eq .RoleSlug "admin"}} selected{{end}}>admin</option>
+                </select>
+                <button type="submit" class="link-btn role-save" hidden>Save</button>
+              </form>
+            {{end}}
+          </td>
+          <td><span class="pill {{if eq .Status "pending"}}pending{{end}}">{{.Status}}</span></td>
+          <td class="row-actions">
+            {{if ne $.PrincipalUserID .UserID}}
+              <form method="POST" action="/settings/org/members/{{.MembershipID}}/remove" class="remove-form" data-email="{{.Email}}" style="margin:0; display:inline">
+                <button type="submit" class="link-btn">Remove</button>
+              </form>
+            {{end}}
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  {{else}}
+    <p class="empty">No members yet — invite someone above.</p>
+  {{end}}
+
+  <p class="section-title">Pending invitations</p>
+  {{if .Invitations}}
+    <table class="members">
+      <thead><tr><th>Email</th><th>Role</th><th>Expires</th><th></th></tr></thead>
+      <tbody>
+        {{range .Invitations}}
+        <tr>
+          <td>{{.Email}}</td>
+          <td><span class="pill">{{.RoleSlug}}</span></td>
+          <td class="email">{{.ExpiresAt}}</td>
+          <td class="row-actions">
+            <form method="POST" action="/settings/org/invitations/{{.ID}}/revoke" class="revoke-form" data-email="{{.Email}}" style="margin:0; display:inline">
+              <button type="submit" class="link-btn">Revoke</button>
+            </form>
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  {{else}}
+    <p class="empty">No pending invitations.</p>
+  {{end}}
+{{end}}
+
+{{define "repositories"}}
+  <h1>Repositories</h1>
+  <p/>
+  <p class="desc">The first task Hetchy runs on a repo spends a few minutes characterizing it; that work is cached as a "bootstrap spec" and reused on every subsequent task.</p>
+
+  {{if not .GitHubRepos}}
+    <div class="body-section">
+      <p class="hint">No repositories cached yet. Connect the GitHub App on the <a href="/settings/org?tab=integrations">Integrations</a> tab and choose which repos to grant access to — they'll show up here.</p>
+    </div>
+  {{else}}
+    <div class="repo-card-grid">
+      {{range .GitHubRepos}}
+        {{$slug := printf "%s/%s" .Owner .Name}}
+        {{$bs := index $.BootstrapStatus $slug}}
+        <article class="repo-card">
+          <header class="repo-card-head">
+            <h3 class="repo-card-title">{{$slug}}</h3>
+            {{if $bs.Slug}}
+              <span class="tag tag-{{$bs.Status}}" title="{{statusExplain $bs.Status}}">{{$bs.Status}}</span>
+              {{if $bs.Kind}}<span class="repo-card-kind" title="App archetype detected during bootstrap.">{{$bs.Kind}}</span>{{end}}
+            {{else}}
+              <span class="tag tag-pending" title="No bootstrap spec saved for this repo yet — the first task on it will run the bootstrap loop.">not bootstrapped</span>
+            {{end}}
+          </header>
+
+          {{if $bs.Slug}}
+            {{/* "Fully bootstrapped" celebration shows when there's
+                 nothing left for the user to act on: no deferred
+                 capabilities AND either no declared secrets at all or
+                 every declared secret has a value. AllFilled is
+                 precomputed in loadBootstrapStatus so the template
+                 stays out of the range-and-reduce business. */}}
+            {{if and (not $bs.DeferredCapabilities) (or (not $bs.Secrets) $bs.AllFilled)}}
+              <p class="repo-card-allset">Fully bootstrapped — every task on this repo gets end-to-end validation.</p>
+              {{if $bs.Secrets}}
+                <details class="repo-card-secrets-collapsed">
+                  <summary>Manage saved secret values ({{len $bs.Secrets}})</summary>
+                  <ul class="repo-secret-edit-list">
+                    {{$repo := .}}
+                    {{range $bs.Secrets}}
+                      <li>
+                        <details class="repo-secret-edit is-filled">
+                          <summary>
+                            <code>{{.Name}}</code>
+                            <span class="repo-secret-state is-set">set</span>
+                          </summary>
+                          <form class="repo-secret-form" data-owner="{{$repo.Owner}}" data-name="{{$repo.Name}}" data-secret="{{.Name}}" data-filled="1">
+                            <input type="password" name="value" placeholder="Paste a new value to replace…" autocomplete="off" required>
+                            <div class="repo-secret-form-actions">
+                              <button type="button" class="link-btn repo-secret-clear danger-link">Clear value</button>
+                              <span class="repo-secret-spacer"></span>
+                              <button type="button" class="link-btn repo-secret-cancel">Cancel</button>
+                              <button type="submit" class="primary repo-secret-save">Replace</button>
+                            </div>
+                            <p class="repo-secret-status hint" hidden></p>
+                          </form>
+                        </details>
+                      </li>
+                    {{end}}
+                  </ul>
+                </details>
+              {{end}}
+            {{else}}
+              <div class="repo-card-cols">
+                {{if $bs.Secrets}}
+                  <section class="repo-card-col">
+                    <h4 class="repo-card-col-title">Secrets</h4>
+                    <p class="hint">Click a name to set, replace, or clear its value. Tasks that need an unset secret can't run end-to-end until you set it.</p>
+                    <ul class="repo-secret-edit-list">
+                      {{$repo := .}}
+                      {{range $bs.Secrets}}
+                        <li>
+                          <details class="repo-secret-edit{{if .Filled}} is-filled{{end}}">
+                            <summary>
+                              <code>{{.Name}}</code>
+                              <span class="repo-secret-state {{if .Filled}}is-set{{else}}is-unset{{end}}">{{if .Filled}}set{{else}}not set{{end}}</span>
+                            </summary>
+                            <form class="repo-secret-form" data-owner="{{$repo.Owner}}" data-name="{{$repo.Name}}" data-secret="{{.Name}}" data-filled="{{if .Filled}}1{{else}}0{{end}}">
+                              <input type="password" name="value" placeholder="{{if .Filled}}Paste a new value to replace…{{else}}Paste value…{{end}}" autocomplete="off" required>
+                              <div class="repo-secret-form-actions">
+                                {{/* Always rendered, hidden initially when the row is unset.
+                                     flipSecretRow() toggles `hidden` based on the new state,
+                                     so a row filled in-session can be cleared without a reload. */}}
+                                <button type="button" class="link-btn repo-secret-clear danger-link"{{if not .Filled}} hidden{{end}}>Clear value</button>
+                                <span class="repo-secret-spacer"></span>
+                                <button type="button" class="link-btn repo-secret-cancel">Cancel</button>
+                                <button type="submit" class="primary repo-secret-save">{{if .Filled}}Replace{{else}}Save{{end}}</button>
+                              </div>
+                              <p class="repo-secret-status hint" hidden></p>
+                            </form>
+                          </details>
+                        </li>
+                      {{end}}
+                    </ul>
+                  </section>
+                {{end}}
+                {{if $bs.DeferredCapabilities}}
+                  <section class="repo-card-col">
+                    <h4 class="repo-card-col-title">Deferred capabilities</h4>
+                    <p class="hint">Bootstrap couldn't fully wire these up — tasks that touch them can't be end-to-end validated until the matching secret is filled in or the bypass is removed.</p>
+                    <ul class="repo-deferred-list">
+                      {{range $bs.DeferredCapabilities}}<li>{{.}}</li>{{end}}
+                    </ul>
+                  </section>
+                {{end}}
+              </div>
+            {{end}}
+          {{else}}
+            <p class="repo-card-empty">The first task you start against this repo will trigger an automatic bootstrap. Expect a few extra minutes on that first run; subsequent tasks reuse the cached spec.</p>
+          {{end}}
+
+          <footer class="repo-card-foot">
+            {{if $bs.Slug}}
+              <button type="button" class="danger-btn delete-bootstrap-btn"
+                      data-owner="{{.Owner}}" data-name="{{.Name}}" data-slug="{{$slug}}"
+                      title="Discard the saved bootstrap spec. The next task on this repo will re-run bootstrap from scratch and pick up any prompt or detection improvements.">
+                Delete bootstrap
+              </button>
+            {{end}}
+          </footer>
+        </article>
+      {{end}}
+    </div>
+    <div id="repo-toast" class="repo-toast" role="status" aria-live="polite" hidden></div>
+
+    <!-- Shared confirm dialog for the Delete bootstrap action. The
+         click handler stamps data-owner / data-name on the dialog
+         right before showModal() so we keep one dialog instance for
+         the whole tab regardless of repo count. -->
+    <dialog class="app-dialog" id="delete-bootstrap-dialog" aria-labelledby="delete-bootstrap-title">
+      <div class="dlg-body">
+        <h3 id="delete-bootstrap-title">Delete bootstrap spec?</h3>
+        <p>Discard the saved bootstrap spec for <code id="delete-bootstrap-slug">repo</code>?</p>
+        <p>This does <strong>not</strong> run anything right now. The next task you start on this repo will re-run the bootstrap loop from scratch (adding several minutes to that one task) so it picks up the latest detection logic and prompt updates.</p>
+        <p>Per-repo secrets are preserved.</p>
+      </div>
+      <div class="dlg-actions">
+        <button type="button" class="dlg-cancel" id="delete-bootstrap-cancel">Cancel</button>
+        <button type="button" class="dlg-delete" id="delete-bootstrap-confirm">Delete bootstrap</button>
+      </div>
+    </dialog>
+
+    <!-- Confirm dialog for clearing a previously-set secret value.
+         Shared across all secret rows; the click handler stamps owner
+         / name / secret + a back-pointer to the originating <li> on
+         the dialog dataset before showModal(). -->
+    <dialog class="app-dialog" id="clear-secret-dialog" aria-labelledby="clear-secret-title">
+      <div class="dlg-body">
+        <h3 id="clear-secret-title">Clear secret value?</h3>
+        <p>Clear the saved value for <code id="clear-secret-name">SECRET</code> on <code id="clear-secret-slug">repo</code>?</p>
+        <p>The secret is still <strong>declared</strong> by the bootstrap spec — it'll come back as "not set" so you can paste a fresh value. Tasks that need this secret can't run end-to-end until you do.</p>
+      </div>
+      <div class="dlg-actions">
+        <button type="button" class="dlg-cancel" id="clear-secret-cancel">Cancel</button>
+        <button type="button" class="dlg-delete" id="clear-secret-confirm">Clear value</button>
+      </div>
+    </dialog>
+    <script src="{{assetPath "settings_repositories.js"}}"></script>
+  {{end}}
+{{end}}
+
+{{define "secret"}}
+  <label for="{{.Field}}">{{.Label}}</label>
+  {{if .Preview}}
+    <div id="{{.Field}}-saved" class="secret-saved">
+      <input id="{{.Field}}-preview" class="secret-preview" type="text" value="{{.Preview}}" readonly tabindex="-1" aria-label="{{.Label}} (saved value, fingerprint only)">
+      <div class="secret-actions-overlay">
+        <button type="button" class="link-btn" data-rotate="{{.Field}}">Rotate</button>
+        {{if not .Required}}
+        <span class="sep">·</span>
+        <button type="button" class="link-btn" data-remove="{{.Field}}">Remove</button>
+        {{end}}
+      </div>
+    </div>
+    <div id="{{.Field}}-rotate" style="display:none">
+      <input id="{{.Field}}" type="password" name="{{.Field}}" placeholder="{{.Placeholder}}" autocomplete="off">
+      <div class="secret-actions">
+        <button type="button" class="link-btn" data-cancel="{{.Field}}">Cancel</button>
+      </div>
+    </div>
+    <input type="hidden" name="{{.Field}}_action" id="{{.Field}}-action" value="">
+  {{else}}
+    <input id="{{.Field}}" type="password" name="{{.Field}}" placeholder="{{.Placeholder}}" autocomplete="off"{{if .Required}} required{{end}}>
+  {{end}}
+{{end}}
+
+<script src="{{assetPath "settings.js"}}"></script>
+</body>
+</html>

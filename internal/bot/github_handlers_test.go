@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/rsa"
@@ -197,6 +198,34 @@ func TestGithubSyncHandler_RejectsGet(t *testing.T) {
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("status = %d, want 405", rec.Code)
 	}
+}
+
+func TestWebhookErrLoggerSuppressesRepeatedKeys(t *testing.T) {
+	var l webhookErrLogger
+	if !l.allow("installation") {
+		t.Fatal("first log for key should be allowed")
+	}
+	if l.allow("installation") {
+		t.Fatal("second log inside suppression window should be blocked")
+	}
+	if !l.allow("repositories") {
+		t.Fatal("different key should be allowed")
+	}
+	l.mu.Lock()
+	l.last["installation"] = time.Now().Add(-webhookLogSuppressWindow - time.Second)
+	l.mu.Unlock()
+	if !l.allow("installation") {
+		t.Fatal("old key should be allowed after suppression window")
+	}
+}
+
+func TestDispatchGithubEventIgnoresNilPingAndUnknown(t *testing.T) {
+	b := &Bot{log: discardLogger()}
+	b.dispatchGithubEvent(context.Background(), "installation", []byte(`{`))
+
+	b.app = freshGithubAppForTest(t, "wh-secret")
+	b.dispatchGithubEvent(context.Background(), "ping", []byte(`{"zen":"ok"}`))
+	b.dispatchGithubEvent(context.Background(), "unknown", []byte(`{"ignored":true}`))
 }
 
 func TestGithubSyncHandler_RejectsCrossOriginPost(t *testing.T) {

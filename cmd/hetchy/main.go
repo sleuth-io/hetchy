@@ -66,6 +66,9 @@ func main() {
 		log.Error("config load failed", "error", err)
 		os.Exit(1)
 	}
+	if cfg.AuthBypass {
+		log.Warn("auth bypass mode enabled — WorkOS authentication is disabled")
+	}
 
 	b, err := bot.New(cfg, log)
 	if err != nil {

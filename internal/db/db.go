@@ -30,13 +30,22 @@ type Store struct {
 // disable prepared statements via the connection string, e.g. append
 // `?default_query_exec_mode=exec`. Direct (5432) and session pooler connections
 // support prepared statements normally.
-func Open(ctx context.Context, url string) (*Store, error) {
+//
+// maxConns sets pgxpool's MaxConns. Zero leaves the pgx default in place
+// (max(4, runtime.NumCPU())), which is fine for tests and for boxes
+// where the connection string already pins pool_max_conns. Production
+// callers should pass an explicit value tuned to Postgres
+// max_connections / number of replicas.
+func Open(ctx context.Context, url string, maxConns int32) (*Store, error) {
 	if url == "" {
 		return nil, errEmptyURL
 	}
 	cfg, err := pgxpool.ParseConfig(url)
 	if err != nil {
 		return nil, fmt.Errorf("parse database url: %w", err)
+	}
+	if maxConns > 0 {
+		cfg.MaxConns = maxConns
 	}
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {

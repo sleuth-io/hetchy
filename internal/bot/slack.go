@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -14,11 +15,14 @@ import (
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
 
+	"github.com/hetchyhq/hetchy/internal/agents"
 	"github.com/hetchyhq/hetchy/internal/blocks"
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
 )
 
 var mentionPrefix = regexp.MustCompile(`^<@[A-Z0-9]+>\s*`)
+var leadingSlackMention = regexp.MustCompile(`^<@([A-Z0-9]+)>\s*`)
+var leadingAgentToken = regexp.MustCompile(`^@?([A-Za-z][A-Za-z0-9_-]*)(?::|,)?(?:\s+|$)`)
 
 // slackHandler is the per-org dispatch target. The Bot supplies one of
 // these to slackManager, capturing both the inbound event and the org's
@@ -40,7 +44,7 @@ type incoming struct {
 // remove happens implicitly when an org's tokens go missing on reload.
 type slackManager struct {
 	log     *slog.Logger
-	orgs    *orgcfg.Store
+	orgs    orgStore
 	handler slackHandler
 
 	mu    sync.Mutex
@@ -55,7 +59,7 @@ type slackConn struct {
 	done   chan struct{}
 }
 
-func newSlackManager(log *slog.Logger, orgs *orgcfg.Store, h slackHandler) *slackManager {
+func newSlackManager(log *slog.Logger, orgs orgStore, h slackHandler) *slackManager {
 	return &slackManager{log: log, orgs: orgs, handler: h, conns: make(map[string]*slackConn)}
 }
 
@@ -243,14 +247,16 @@ func (m *slackManager) dispatchCallback(ctx context.Context, oc orgcfg.Config, e
 }
 
 // clearInstall wipes the Slack-related fields on an org's config and
-// tears down any Socket Mode connection. Called from the lifecycle
-// event handlers (app_uninstalled, tokens_revoked).
+// schedules any Socket Mode connection for teardown. Called from the
+// lifecycle event handlers (app_uninstalled, tokens_revoked).
 //
-// Runs on a fresh detached context — never the caller's, since the
-// caller's context (in the Socket Mode dispatch path) is the
+// The wipe itself runs on a fresh detached context — never the caller's,
+// since the caller's context (in the Socket Mode dispatch path) is the
 // per-connection context that RestartOrg cancels as part of teardown.
 // Using the caller's context would race the upsert against its own
-// cancellation and silently no-op the reload.
+// cancellation and silently no-op the reload. RestartOrg runs
+// asynchronously after the wipe persists so HTTP disconnects can redirect
+// without waiting for a websocket drain.
 func (m *slackManager) clearInstall(oc orgcfg.Config, reason string) {
 	prevTeamID := oc.SlackTeamID
 	m.log.Info("slack: clearing install",
@@ -269,7 +275,13 @@ func (m *slackManager) clearInstall(oc orgcfg.Config, reason string) {
 	}
 	// Tear down the socket if one is open. RestartOrg reloads the org
 	// config, sees the empty tokens, and stays disconnected.
-	m.RestartOrg(ctx, oc.OrgID)
+	go m.restartOrgDetached(oc.OrgID)
+}
+
+func (m *slackManager) restartOrgDetached(orgID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	m.RestartOrg(ctx, orgID)
 }
 
 // handleSlackEvent is the Bot-side dispatcher passed to slackManager. It
@@ -285,6 +297,11 @@ func (b *Bot) handleSlackEvent(ctx context.Context, oc orgcfg.Config, ev incomin
 		return
 	}
 	text = strings.TrimSpace(mentionPrefix.ReplaceAllString(text, ""))
+	if text == "" {
+		return
+	}
+	requestedAgent, cleanedText := b.extractSlackAgent(ctx, oc.OrgID, text, cli)
+	text = strings.TrimSpace(cleanedText)
 	if text == "" {
 		return
 	}
@@ -320,11 +337,13 @@ func (b *Bot) handleSlackEvent(ctx context.Context, oc orgcfg.Config, ev incomin
 	// the chat appears under their LHN filter. Empty string when the
 	// author has no matching org member; HandleRequest tolerates that.
 	creatorID := b.slackUsers.Resolve(ctx, cli, oc.OrgID, ev.user)
-	// Slack always validates — there's no UI surface to opt out (and
-	// users routing through Slack typically aren't iterating on
-	// trivial changes). If we add a Slack-side toggle later, plumb
-	// it here.
-	b.HandleRequest(ctx, oc, text, requestID, threadID, creatorID, true, emit)
+	// Slack has no UI surface for task toggles. Pass an empty patch so
+	// saved values are reused and missing keys default on.
+	var requestedAgentPtr *string
+	if strings.TrimSpace(requestedAgent) != "" {
+		requestedAgentPtr = &requestedAgent
+	}
+	b.HandleRequest(ctx, oc, text, requestID, threadID, creatorID, chatTaskOptionPatch{}, requestedAgentPtr, ClaudeModelOpus, emit)
 	// Reaction bookkeeping: only swap the eyes/recycle that signalled
 	// "working on it" for a final ✓/✗ when the run actually reached a
 	// terminal state. Bot-driven question turns ("Which repository?"
@@ -339,6 +358,70 @@ func (b *Bot) handleSlackEvent(ctx context.Context, oc orgcfg.Config, ev incomin
 			addReaction(b.log, cli, ev.channel, threadID, "white_check_mark")
 		}
 	}
+}
+
+func (b *Bot) extractSlackAgent(ctx context.Context, orgID, text string, cli *slack.Client) (agentSlug, cleaned string) {
+	store := b.agents
+	if store == nil {
+		store = agents.NewStore(nil)
+	}
+
+	if m := leadingSlackMention.FindStringSubmatch(text); len(m) == 2 {
+		rest := strings.TrimSpace(text[len(m[0]):])
+		for _, name := range slackMentionCandidateNames(b.log, cli, m[1]) {
+			if agent, err := store.Resolve(ctx, orgID, name); err == nil {
+				return agent.Slug, rest
+			}
+		}
+		// A leading Slack user mention often means "loop this teammate in",
+		// not "route to a Hetchy agent". If the mentioned user's Slack names
+		// do not resolve to an agent, leave the message as prose instead of
+		// surfacing an opaque U... id as an unknown agent.
+		return "", text
+	}
+
+	if m := leadingAgentToken.FindStringSubmatch(text); len(m) == 2 {
+		token := m[1]
+		rest := strings.TrimSpace(text[len(m[0]):])
+		// Only treat leading words as agent requests when the user made
+		// routing explicit with @ or ':' / ','; otherwise names like
+		// "Bob will..." stay prose.
+		prefix := m[0]
+		explicit := strings.HasPrefix(strings.TrimSpace(prefix), "@") ||
+			strings.Contains(prefix, ":") ||
+			strings.Contains(prefix, ",")
+		if explicit {
+			if agent, err := store.Resolve(ctx, orgID, token); err == nil {
+				return agent.Slug, rest
+			}
+			return token, rest
+		}
+	}
+	return "", text
+}
+
+func slackMentionCandidateNames(log *slog.Logger, cli *slack.Client, userID string) []string {
+	if cli == nil {
+		return nil
+	}
+	u, err := cli.GetUserInfo(userID)
+	if err != nil {
+		log.Warn("slack user lookup for agent mention failed", "user", userID, "error", err)
+		return nil
+	}
+	var out []string
+	for _, s := range []string{
+		u.Name,
+		u.RealName,
+		u.Profile.DisplayName,
+		u.Profile.RealName,
+	} {
+		s = strings.TrimSpace(s)
+		if s != "" && !slices.Contains(out, s) {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func replyInThread(log *slog.Logger, cli *slack.Client, channel, threadTS, msg string) {

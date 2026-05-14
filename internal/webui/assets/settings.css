@@ -1,0 +1,581 @@
+  body { font-family: system-ui, sans-serif; background: #4a4d52; margin: 0; padding: 2rem;
+         min-height: 100vh; box-sizing: border-box; }
+  .modal-page { background: #fff; border-radius: 1rem; box-shadow: 0 12px 40px rgba(0,0,0,.25);
+                max-width: 64rem; min-height: 36rem; margin: 0 auto;
+                display: grid; grid-template-columns: 14rem 1fr; overflow: hidden; }
+
+  /* Sidebar */
+  .sidebar { background: #fafafa; border-right: 1px solid #e8e8e8;
+             padding: 1.25rem 1rem; min-width: 0; }
+  .sidebar h2 { font-size: .95rem; margin: 0 0 .15rem; color: #222;
+                white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sidebar .subhead { font-size: .75rem; color: #888; margin: 0 0 1rem; }
+  .sidebar nav { display: flex; flex-direction: column; gap: .15rem; }
+  .sidebar nav a { display: flex; align-items: center; gap: .55rem;
+                   padding: .45rem .6rem; border-radius: .4rem;
+                   font-size: .85rem; color: #444; text-decoration: none; }
+  .sidebar nav a:hover { background: #f0f0f0; }
+  .sidebar nav a.active { background: #e9eef5; color: #1a1a1a; font-weight: 500; }
+  .sidebar nav .ico { width: 1rem; height: 1rem; opacity: .65;
+                      flex-shrink: 0; color: #555; }
+
+  /* Content pane */
+  .content { padding: 1.5rem 2rem 2rem; position: relative; overflow-y: auto; }
+  .content .close { position: absolute; top: 1.25rem; right: 1.5rem;
+                    color: #aaa; text-decoration: none; font-size: 1.25rem; }
+  .content .close:hover { color: #555; }
+  .content h1 { margin: 0 0 .15rem; font-size: 1.25rem; }
+  .content .desc { margin: 0 0 1.5rem; color: #777; font-size: .85rem; }
+
+  /* Form bits */
+  fieldset { border: none; padding: 0; margin: 0 0 1.5rem; }
+  legend { font-weight: 600; font-size: .9rem; padding: 0 0 .5rem; }
+  label { display: block; font-size: .85rem; color: #555; margin: .5rem 0 .25rem; }
+  input[type="text"], input[type="password"], input[type="email"], select {
+          width: 100%; padding: .55rem .75rem; border: 1px solid #ccc;
+          border-radius: .4rem; font-size: .95rem; box-sizing: border-box;
+          font-family: ui-monospace, monospace; background: #fff; }
+  input:focus, select:focus { outline: none; border-color: #0b93f6; }
+  input[readonly] { background: #fafafa; color: #555; cursor: default; }
+  input[readonly]:focus { border-color: #ccc; }
+  input.removing { background: #fdecec; color: #b03030; text-decoration: line-through; }
+  .hint { font-size: .75rem; color: #999; margin-top: .25rem; }
+  .secret-saved { position: relative; }
+  .secret-preview { padding-right: 9rem; }
+  .secret-actions-overlay { position: absolute; right: .65rem; top: 50%;
+                            transform: translateY(-50%); font-size: .75rem;
+                            color: #999; background: #fafafa; padding-left: .4rem;
+                            display: flex; align-items: center; gap: .35rem; }
+  .secret-actions { font-size: .75rem; color: #999; margin-top: .25rem; }
+  .sep { color: #ccc; }
+  .link-btn { background: none; border: none; padding: 0;
+              font-size: inherit; font-family: inherit;
+              color: #888; cursor: pointer; }
+  .link-btn:hover { color: #555; text-decoration: underline; }
+  .link-btn[disabled] { color: #b03030; cursor: default; text-decoration: none; }
+  button.primary { margin-top: 1rem; padding: .6rem 1.25rem; background: #0b93f6;
+                   color: #fff; border: none; border-radius: .4rem; font-size: .95rem;
+                   cursor: pointer; }
+  .saved-banner { background: #efe; color: #060; padding: .5rem .75rem;
+                  border-radius: .4rem; margin-bottom: 1rem; font-size: .85rem; }
+  .error-banner { background: #fee; color: #a02020; padding: .5rem .75rem;
+                  border: 1px solid #f4cccc; border-radius: .4rem;
+                  margin-bottom: 1rem; font-size: .85rem; }
+  .meta { color: #999; font-size: .72rem; margin-top: 1.5rem; }
+
+  /* Repositories tab — per-repo bootstrap cards */
+  /* Single column at any width: each card fills the available content
+     area so the inner two-column body (secrets / deferred caps) gets
+     room to breathe. A 2-col card grid sounds nice on paper but with
+     a typical 1-3 repos it leaves the right half empty, and with the
+     repo bootstrap copy it crammed both side panels into too little
+     horizontal space. Better to scroll vertically through wider
+     cards than to truncate every column. */
+  .repo-card-grid { display: flex; flex-direction: column; gap: 1rem; }
+  .repo-card { background: #fff; border: 1px solid #e6e6e6; border-radius: .5rem;
+               padding: 1rem 1.25rem; display: flex; flex-direction: column;
+               gap: .75rem; }
+  .repo-card-head { display: flex; align-items: center; gap: .5rem;
+                    flex-wrap: wrap; }
+  .repo-card-title { margin: 0; font-size: 1rem; color: #222;
+                     font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .repo-card-kind { font-size: .7rem; color: #666; padding: .1rem .45rem;
+                    border-radius: .8rem; background: #f0f2f5; }
+  /* Two-column body — secrets on the left, capabilities on the right.
+     Each column scrolls independently when content overruns the
+     bounded height, so a repo with 30 deferred capabilities doesn't
+     turn the card into a wall of text. */
+  .repo-card-cols { display: grid; grid-template-columns: 1fr;
+                    gap: 1rem; }
+  @media (min-width: 768px) {
+    .repo-card-cols { grid-template-columns: 1fr 1fr; }
+  }
+  .repo-card-col { min-width: 0; }
+  .repo-card-col-title { margin: 0 0 .25rem; color: #888;
+                         font-size: .75rem; text-transform: uppercase;
+                         letter-spacing: .03em; font-weight: 600; }
+  .repo-card-col .hint { margin: 0 0 .5rem; }
+  .repo-card-col ul { max-height: 14rem; overflow-y: auto;
+                      padding-right: .25rem; }
+  .repo-deferred-list { list-style: disc; padding-left: 1.1rem; margin: 0;
+                        color: #555; }
+  .repo-deferred-list li { margin: .15rem 0; font-size: .82rem;
+                           line-height: 1.4; }
+  .repo-card-empty { margin: 0; color: #777; font-size: .85rem;
+                     line-height: 1.5; }
+  .repo-card-allset { margin: 0; color: #1a7a3c; font-size: .85rem; }
+  .repo-card-foot { display: flex; justify-content: flex-end;
+                    border-top: 1px solid #f0f0f0; padding-top: .75rem;
+                    min-height: 1rem; }
+
+  /* Inline secret-edit list — each unfilled secret is a <details>
+     that expands into a small password form. Click-to-edit keeps the
+     card compact while remaining a single click away from setting
+     the value. */
+  .repo-secret-edit-list { list-style: none; padding: 0; margin: 0;
+                           display: flex; flex-direction: column;
+                           gap: .3rem; }
+  .repo-secret-edit { background: #fff8eb; border: 1px solid #f4dba0;
+                      border-radius: .35rem; }
+  /* Filled rows get a calmer green palette to make the "set" status
+     scannable at a glance — "this one's done" reads visually before
+     you read the label. Unfilled stays warm-yellow as a soft prompt. */
+  .repo-secret-edit.is-filled { background: #ecf7ee; border-color: #b9e0c2; }
+  .repo-secret-edit summary { display: flex; align-items: center;
+                              justify-content: space-between;
+                              padding: .25rem .55rem; cursor: pointer;
+                              list-style: none; font-size: .78rem; gap: .5rem; }
+  .repo-secret-edit summary::-webkit-details-marker { display: none; }
+  .repo-secret-edit summary code { background: transparent; padding: 0;
+                                   color: #8a4b00; font-size: .78rem;
+                                   overflow: hidden; text-overflow: ellipsis;
+                                   white-space: nowrap; min-width: 0; flex: 1; }
+  .repo-secret-edit.is-filled summary code { color: #1a5a30; }
+  .repo-secret-state { font-size: .68rem; text-transform: uppercase;
+                       letter-spacing: .04em; padding: .1rem .4rem;
+                       border-radius: .8rem; flex-shrink: 0; }
+  .repo-secret-state.is-set { background: #c9e9d2; color: #1a5a30; }
+  .repo-secret-state.is-unset { background: #f4dba0; color: #8a4b00; }
+  .repo-secret-edit[open] { background: #fff; }
+  .repo-secret-edit[open] summary { border-bottom: 1px solid #f4dba0; }
+  .repo-secret-edit.is-filled[open] summary { border-bottom-color: #b9e0c2; }
+  .repo-secret-form { padding: .5rem .55rem; display: flex;
+                      flex-direction: column; gap: .35rem; }
+  .repo-secret-form input { font-size: .82rem; padding: .35rem .5rem; }
+  .repo-secret-form-actions { display: flex; justify-content: flex-end;
+                              gap: .5rem; align-items: center; }
+  .repo-secret-form-actions .primary { margin-top: 0; padding: .35rem .9rem;
+                                       font-size: .82rem; }
+  .repo-secret-spacer { flex: 1; }
+  .danger-link { color: #b03030; }
+  .danger-link:hover { color: #8a2020; }
+  .repo-secret-form .repo-secret-status { margin: 0; font-size: .75rem; }
+  .repo-secret-form .repo-secret-status.is-error { color: #a02020; }
+  .repo-secret-saved { color: #1a7a3c; font-size: .78rem; padding: .25rem .55rem; }
+  .danger-btn { background: transparent; color: #b03030;
+                border: 1px solid #e6c4c4; padding: .35rem .75rem;
+                border-radius: .35rem; font-size: .82rem; cursor: pointer; }
+  .danger-btn:hover { background: #fff5f5; border-color: #d9a0a0; }
+  .danger-btn:disabled { opacity: .55; cursor: default; }
+
+  /* Agents tab */
+  .agent-list { display: flex; flex-direction: column; gap: .85rem; }
+  .agent-card { background: #fff; border: 1px solid #e6e6e6;
+                border-radius: .5rem; padding: 1rem 1.25rem; }
+  .agent-card-head { display: flex; justify-content: space-between;
+                     gap: 1rem; align-items: flex-start; margin-bottom: .75rem; }
+  .agent-title { min-width: 0; }
+  .agent-title h3 { margin: 0 .35rem .2rem 0; font-size: 1rem; color: #222;
+                    display: inline-block; }
+  .agent-title code { background: #f0f2f5; color: #555; padding: .12rem .4rem;
+                      border-radius: .3rem; font-size: .75rem; }
+  .agent-card p { margin: 0; color: #666; font-size: .85rem; line-height: 1.45; }
+  .agent-edit-form { display: grid; grid-template-columns: 1fr auto;
+                     gap: .55rem; align-items: end; margin: .75rem 0; }
+  .agent-edit-form label { margin-top: 0; }
+  .agent-edit-form input { font-family: inherit; }
+  .agent-edit-form .primary { margin: 0; padding: .55rem 1rem; }
+  .agent-delete-form { margin: 0; }
+  .agent-skills { margin-top: .75rem; }
+  .agent-skills-label { color: #888; font-size: .72rem; text-transform: uppercase;
+                        letter-spacing: .03em; font-weight: 600; margin-bottom: .35rem; }
+  .skill-chip-list { display: flex; flex-wrap: wrap; gap: .35rem; }
+  .skill-chip { background: #f0f2f5; color: #444; border-radius: 1rem;
+                padding: .22rem .55rem; font-size: .76rem;
+                font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .agent-meta { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: .75rem; }
+  .agent-meta span { color: #777; background: #fafafa; border: 1px solid #eee;
+                     border-radius: .35rem; padding: .2rem .45rem; font-size: .75rem; }
+
+  /* Status tags shared across all bootstrap UI */
+  .tag { display: inline-block; font-size: .72rem; padding: .15rem .55rem;
+         border-radius: .8rem; font-weight: 500; text-transform: lowercase;
+         letter-spacing: .02em; }
+  .tag-validated { background: #d8f0e2; color: #1a7a3c; }
+  .tag-partial   { background: #fff1cc; color: #8a5a00; }
+  .tag-stale     { background: #e6e6e6; color: #555; }
+  .tag-failing   { background: #f7d6d6; color: #a02020; }
+  .tag-pending   { background: #f0f2f5; color: #666; font-style: italic; }
+
+  /* App dialogs — same pattern as chat.html's rename/delete modals.
+     Drop-in: <dialog class="app-dialog"> with .dlg-body / .dlg-actions
+     / .dlg-cancel / .dlg-save | .dlg-delete buttons. */
+  dialog.app-dialog { border: none; border-radius: .55rem; padding: 0;
+                       margin: auto; box-shadow: 0 16px 48px rgba(0,0,0,.22);
+                       max-width: 28rem; width: 90vw; background: #fff;
+                       color: #1a1a1a; }
+  dialog.app-dialog::backdrop { background: rgba(0,0,0,.35); }
+  dialog.app-dialog .dlg-body { padding: 1.25rem 1.25rem 1rem; }
+  dialog.app-dialog h3 { margin: 0 0 .75rem; font-size: 1rem; font-weight: 600; }
+  dialog.app-dialog p { margin: 0 0 .75rem; font-size: .875rem; color: #555;
+                         line-height: 1.45; }
+  dialog.app-dialog code { background: #f0f2f5; padding: .05rem .35rem;
+                            border-radius: .25rem; font-size: .8rem; }
+  dialog.app-dialog .dlg-actions { display: flex; justify-content: flex-end;
+                                    gap: .5rem; padding: .85rem 1.25rem; }
+  dialog.app-dialog .dlg-cancel { padding: .5rem 1rem; background: #f3f3f3;
+    color: #333; border: 1px solid #d8d8d8; border-radius: .4rem; cursor: pointer;
+    font-size: .875rem; font-family: inherit; }
+  dialog.app-dialog .dlg-cancel:hover { background: #ebebeb; }
+  dialog.app-dialog .dlg-delete { padding: .5rem 1rem; background: #c0392b;
+    color: #fff; border: 0; border-radius: .4rem; cursor: pointer;
+    font-size: .875rem; font-family: inherit; }
+  dialog.app-dialog .dlg-delete:hover { background: #a93226; }
+  dialog.app-dialog .dlg-delete[disabled] { opacity: .6; cursor: default; }
+
+  /* Toast for in-place actions (delete bootstrap, etc.) */
+  .repo-toast { position: fixed; bottom: 1.5rem; left: 50%;
+                transform: translateX(-50%); background: #2a2a2e;
+                color: #fff; padding: .65rem 1.25rem;
+                border-radius: .5rem; font-size: .85rem;
+                box-shadow: 0 4px 16px rgba(0,0,0,.18);
+                max-width: 32rem; z-index: 100; }
+  .repo-toast-err { background: #a02020; }
+
+  /* Integration cards */
+  .integration-list { display: flex; flex-direction: column; gap: .75rem; }
+  .integration { background: #fff; border: 1px solid #e6e6e6; border-radius: .5rem;
+                 border-left-width: 4px; border-left-color: #e6e6e6;
+                 overflow: hidden; }
+  .integration.enabled { border-left-color: #2dab66; }
+  .integration.required:not(.enabled) { border-left-color: #f5a623; }
+  .integration.disabled-env { opacity: .6; }
+  .integration-head { display: grid;
+                      grid-template-columns: 3rem 1fr auto;
+                      align-items: center; gap: 1rem; padding: 1rem 1.25rem; }
+  .integration-icon { width: 2.5rem; height: 2.5rem; display: flex;
+                      align-items: center; justify-content: center;
+                      color: #444; }
+  .integration-icon svg { width: 100%; height: 100%; }
+  .integration-title strong { display: inline-block; font-size: 1rem; color: #222;
+                              vertical-align: middle; margin-right: .5rem; }
+  .integration-title .tag { display: inline-block; font-size: .7rem;
+                            padding: .1rem .45rem; border-radius: .8rem;
+                            background: #f0f2f5; color: #666;
+                            margin-right: .25rem; vertical-align: middle;
+                            font-weight: 500; letter-spacing: .02em; }
+  .integration-title .tag.required { background: #fff3e0; color: #b06d00; }
+  .integration-title p { margin: .25rem 0 0; color: #777; font-size: .85rem;
+                         line-height: 1.4;
+                         /* Floor at ~2 lines so all collapsed cards have
+                            the same height regardless of how short the
+                            individual description text is. */
+                         min-height: 2.4em; }
+  .integration-status { display: flex; align-items: center; gap: .5rem;
+                        white-space: nowrap; }
+  .btn-enable, .btn-enabled { display: inline-flex; align-items: center; gap: .3rem;
+                              padding: .45rem .9rem; border-radius: .4rem;
+                              font-size: .85rem; font-weight: 500;
+                              text-decoration: none; border: 0; cursor: pointer;
+                              font-family: inherit; }
+  .btn-enable { background: #0b93f6; color: #fff; }
+  .btn-enable:hover { background: #0a83d8; }
+  .btn-enabled { background: #2dab66; color: #fff; }
+  .btn-enabled[disabled] { cursor: default; }
+  .btn-not-configured { font-size: .8rem; color: #888;
+                        padding: .35rem .8rem; background: #f0f0f0;
+                        border-radius: .4rem; }
+  .caret { background: none; border: none; color: #888;
+           cursor: pointer; padding: .25rem .4rem; font-size: 1rem; }
+  .caret:hover { color: #444; }
+  .caret svg { width: .9rem; height: .9rem; transition: transform .15s; }
+  .integration[open] .caret svg { transform: rotate(180deg); }
+  .integration-body { display: none; padding: 0 1.25rem 1.25rem;
+                      border-top: 1px solid #f0f0f0; }
+  .integration[open] .integration-body { display: block; }
+
+  .connection { display: grid; grid-template-columns: 1fr auto;
+                gap: .5rem; padding: .5rem 0;
+                border-bottom: 1px solid #f3f3f3; align-items: center; }
+  .connection:last-child { border-bottom: none; }
+  .connection .who strong { color: #222; font-size: .9rem; }
+  .connection .who .hint { display: inline; margin-left: .35rem; }
+  .connection .repos { font-family: ui-monospace, monospace; font-size: .75rem;
+                       color: #888; margin-top: .15rem;
+                       overflow: hidden; text-overflow: ellipsis;
+                       white-space: nowrap; max-width: 30rem; }
+  .connection .actions { display: flex; gap: .5rem; align-items: center;
+                         justify-content: flex-end; flex-wrap: wrap;
+                         font-size: .8rem; }
+  .connection .actions a { color: #0b93f6; text-decoration: none; }
+  .connection .actions a:hover { text-decoration: underline; }
+  .connection .actions form { margin: 0; }
+  .add-link { display: inline-block; margin-top: .75rem;
+              font-size: .85rem; color: #0b93f6; text-decoration: none; }
+  .add-link:hover { text-decoration: underline; }
+
+  .body-section { margin-top: 1rem; padding-top: 1rem;
+                  border-top: 1px dashed #eee; }
+  .body-section:first-child { border-top: 0; padding-top: .75rem; margin-top: .25rem; }
+  .body-section legend { padding-top: 0; }
+  /* Reinstall + Disconnect controls live together below a connected
+     integration's "Connected workspace: …" line. Flex so the two
+     buttons sit side-by-side with consistent spacing, regardless of
+     the disconnect form's wrapper. */
+  .integration-actions { display: flex; gap: .5rem; align-items: center;
+                         margin-top: .5rem; flex-wrap: wrap; }
+  .integration-actions form { margin: 0; }
+  .integration-actions .primary { margin-top: 0; }
+  .integration-disconnect-form { margin: 0; }
+
+  /* Credential tabs (Anthropic integration: API key vs subscription token).
+     Two mutually exclusive panels share one form so a single Save covers
+     either. The non-active panel is display:none so its hidden inputs
+     still post (and applyTokenChange treats blank as "keep existing"). */
+  .cred-tabs { display: flex; gap: 0; border-bottom: 1px solid #e6e6e6;
+               margin: 0 0 1rem; }
+  .cred-tab { background: none; border: none; padding: .55rem .9rem;
+              font-size: .85rem; color: #666; cursor: pointer;
+              border-bottom: 2px solid transparent; margin-bottom: -1px;
+              font-family: inherit; }
+  .cred-tab:hover { color: #222; }
+  .cred-tab.active { color: #0b93f6; border-bottom-color: #0b93f6;
+                     font-weight: 500; }
+  .cred-panel { display: none; }
+  .cred-panel.active { display: block; }
+  .cred-help { font-size: .8rem; color: #777; margin: 0 0 .75rem;
+               line-height: 1.4; }
+  .cred-help code { background: #f3f3f5; padding: .05rem .3rem;
+                    border-radius: .25rem; font-size: .85em;
+                    font-family: ui-monospace, monospace; }
+
+  /* Modal dialogs (used by API-key integrations) */
+  dialog.api-modal { border: none; border-radius: .5rem; padding: 0;
+                     box-shadow: 0 24px 64px rgba(0,0,0,.35);
+                     max-width: 28rem; width: 100%; }
+  dialog.api-modal::backdrop { background: rgba(0,0,0,.4); }
+  dialog.api-modal .body { padding: 1.5rem 1.5rem 1.25rem; }
+  dialog.api-modal h2 { margin: 0 0 .25rem; font-size: 1.05rem; }
+  dialog.api-modal h2 a { color: #0b93f6; text-decoration: none;
+                          font-weight: 400; font-size: .9rem; }
+  dialog.api-modal h2 a:hover { text-decoration: underline; }
+  dialog.api-modal p { color: #777; font-size: .8rem; margin: .35rem 0 0; }
+  dialog.api-modal .actions { display: flex; justify-content: flex-end;
+                              gap: .5rem; padding: 0 1.5rem 1.25rem; }
+  dialog.api-modal button { padding: .5rem 1rem; border-radius: .4rem;
+                            font-size: .85rem; cursor: pointer;
+                            font-family: inherit; }
+  dialog.api-modal .save { background: #0b93f6; color: #fff; border: 0; }
+  dialog.api-modal .save:hover { background: #0a83d8; }
+  dialog.api-modal .cancel { background: #fff; color: #555;
+                             border: 1px solid #ddd; }
+  dialog.api-modal .cancel:hover { background: #fafafa; }
+
+  /* Members table */
+  table.members { width: 100%; border-collapse: collapse; font-size: .85rem; }
+  table.members th { text-align: left; padding: .5rem .6rem; color: #888;
+                     font-weight: 500; font-size: .75rem; text-transform: uppercase;
+                     letter-spacing: .03em; border-bottom: 1px solid #eee; }
+  table.members td { padding: .65rem .6rem; border-bottom: 1px solid #f3f3f3;
+                     vertical-align: middle; }
+  table.members tr:last-child td { border-bottom: none; }
+  table.members .name { font-weight: 500; color: #222; }
+  table.members .email { color: #666; font-size: .8rem; }
+  table.members .role select { width: auto; padding: .25rem .4rem; font-size: .8rem;
+                               font-family: inherit; }
+  table.members .pill { display: inline-block; padding: .12rem .5rem; border-radius: 1rem;
+                        font-size: .7rem; background: #f3f3f3; color: #777;
+                        text-transform: uppercase; letter-spacing: .03em; }
+  table.members .pill.pending { background: #fff4d6; color: #8a6500; }
+  table.members .row-actions { text-align: right; }
+  .invite-form { display: grid; grid-template-columns: 1fr 8rem auto;
+                 gap: .5rem; align-items: end; margin-top: .25rem; }
+  .invite-form button { padding: .55rem .9rem; background: #0b93f6;
+                        color: #fff; border: none; border-radius: .4rem;
+                        font-size: .85rem; cursor: pointer; }
+  .section-title { font-weight: 600; font-size: .9rem; margin: 1.5rem 0 .25rem; }
+  .empty { color: #999; font-size: .85rem; padding: .75rem 0; }
+
+  /* Dark theme — applied via html.is-dark by the bootstrap script. */
+  html { color-scheme: light; }
+  html.is-dark { color-scheme: dark; }
+  html.is-dark body { background: #0f0f10; }
+  html.is-dark .modal-page { background: #1c1c1f;
+                             box-shadow: 0 12px 40px rgba(0,0,0,.5); }
+  html.is-dark .sidebar { background: #18181b; border-right-color: #2a2a2d; }
+  html.is-dark .sidebar h2 { color: #f5f5f7; }
+  html.is-dark .sidebar .subhead { color: #6e6e72; }
+  html.is-dark .sidebar nav a { color: #c4c4c8; }
+  html.is-dark .sidebar nav a:hover { background: #232327; }
+  html.is-dark .sidebar nav a.active { background: #1f3a5c; color: #f5f5f7; }
+  html.is-dark .sidebar nav .ico { color: #b8b8bc; }
+  html.is-dark .content .close { color: #6e6e72; }
+  html.is-dark .content .close:hover { color: #c4c4c8; }
+  html.is-dark .content h1 { color: #f5f5f7; }
+  html.is-dark .content .desc { color: #9a9aa0; }
+  html.is-dark legend { color: #e7e7e9; }
+  html.is-dark label { color: #b8b8bc; }
+  html.is-dark input[type="text"],
+  html.is-dark input[type="password"],
+  html.is-dark input[type="email"],
+  html.is-dark select { background: #232327; color: #e7e7e9; border-color: #2e2e33; }
+  html.is-dark input[readonly] { background: #1a1a1d; color: #9a9aa0; }
+  html.is-dark input.removing { background: #3a1818; color: #ff8888; }
+  html.is-dark .hint { color: #6e6e72; }
+  html.is-dark .secret-actions-overlay { background: #1a1a1d; color: #6e6e72; }
+  html.is-dark .secret-actions { color: #6e6e72; }
+  html.is-dark .cred-tabs { border-bottom-color: #2a2a2d; }
+  html.is-dark .cred-tab { color: #9a9aa0; }
+  html.is-dark .cred-tab:hover { color: #e7e7e9; }
+  html.is-dark .cred-tab.active { color: #4da6ff; border-bottom-color: #4da6ff; }
+  html.is-dark .cred-help { color: #9a9aa0; }
+  html.is-dark .cred-help code { background: #2a2a2e; }
+  html.is-dark .sep { color: #3a3a40; }
+  html.is-dark .link-btn { color: #9a9aa0; }
+  html.is-dark .link-btn:hover { color: #e7e7e9; }
+  html.is-dark .link-btn[disabled] { color: #ff8888; }
+  html.is-dark .saved-banner { background: #173b1e; color: #5cd06b; }
+  html.is-dark .error-banner { background: #3b1717; color: #ff8888; border-color: #5a2a2a; }
+  html.is-dark .meta { color: #6e6e72; }
+
+  html.is-dark .repo-card { background: #232327; border-color: #2e2e33; }
+  html.is-dark .repo-card-title { color: #f5f5f7; }
+  html.is-dark .repo-card-kind { background: #2e2e33; color: #b8b8bc; }
+  html.is-dark .repo-card-col-title { color: #8a8a90; }
+  html.is-dark .repo-deferred-list { color: #c4c4c8; }
+  html.is-dark .repo-card-empty { color: #9a9aa0; }
+  html.is-dark .repo-card-allset { color: #6cd084; }
+  html.is-dark .repo-card-foot { border-top-color: #2e2e33; }
+  html.is-dark .repo-secret-edit { background: #3a2e1c; border-color: #5a4a2a; }
+  html.is-dark .repo-secret-edit.is-filled { background: #1f3a2a; border-color: #2e5a3e; }
+  html.is-dark .repo-secret-edit[open] { background: #2a2a2e; }
+  html.is-dark .repo-secret-edit[open] summary { border-bottom-color: #5a4a2a; }
+  html.is-dark .repo-secret-edit.is-filled[open] summary { border-bottom-color: #2e5a3e; }
+  html.is-dark .repo-secret-edit summary code { color: #f0b674; }
+  html.is-dark .repo-secret-edit.is-filled summary code { color: #6cd084; }
+  html.is-dark .repo-secret-state.is-set { background: #2e5a3e; color: #6cd084; }
+  html.is-dark .repo-secret-state.is-unset { background: #5a4a2a; color: #f0b674; }
+  html.is-dark .repo-secret-form input { background: #1c1c1f; color: #f5f5f7;
+                                         border-color: #3a3a3f; }
+  html.is-dark .repo-secret-saved { color: #6cd084; }
+  html.is-dark .danger-link { color: #f0a0a0; }
+  html.is-dark .danger-link:hover { color: #ffb8b8; }
+  html.is-dark .danger-btn { color: #f0a0a0; border-color: #5a3232; }
+  html.is-dark .danger-btn:hover { background: #2c1f1f; border-color: #7a3838; }
+  html.is-dark .agent-card { background: #232327; border-color: #2e2e33; }
+  html.is-dark .agent-title h3 { color: #f5f5f7; }
+  html.is-dark .agent-title code,
+  html.is-dark .skill-chip { background: #2e2e33; color: #d4d4d8; }
+  html.is-dark .agent-card p { color: #9a9aa0; }
+  html.is-dark .agent-skills-label { color: #8a8a90; }
+  html.is-dark .agent-meta span { background: #1c1c1f; border-color: #2e2e33; color: #9a9aa0; }
+
+  html.is-dark .tag-validated { background: #1a3a26; color: #6cd084; }
+  html.is-dark .tag-partial   { background: #3a2e0c; color: #f0b674; }
+  html.is-dark .tag-stale     { background: #2e2e33; color: #9a9aa0; }
+  html.is-dark .tag-failing   { background: #3a1c1c; color: #f0a0a0; }
+  html.is-dark .tag-pending   { background: #2e2e33; color: #9a9aa0; }
+
+  html.is-dark .repo-toast { background: #f5f5f7; color: #1a1a1a;
+                             box-shadow: 0 4px 16px rgba(0,0,0,.5); }
+  html.is-dark .repo-toast-err { background: #f0a0a0; color: #2c0000; }
+
+  html.is-dark dialog.app-dialog { background: #1c1c1f; color: #e7e7e9; }
+  html.is-dark dialog.app-dialog::backdrop { background: rgba(0,0,0,.6); }
+  html.is-dark dialog.app-dialog p { color: #9a9aa0; }
+  html.is-dark dialog.app-dialog code { background: #2e2e33; color: #d4d4d8; }
+  html.is-dark dialog.app-dialog .dlg-cancel { background: #232327; color: #c4c4c8;
+    border-color: #2e2e33; }
+  html.is-dark dialog.app-dialog .dlg-cancel:hover { background: #2a2a2e; }
+
+  /* Integration cards */
+  html.is-dark .integration { background: #232327; border-color: #2e2e33;
+                              border-left-color: #2e2e33; }
+  html.is-dark .integration.enabled { border-left-color: #2dab66; }
+  html.is-dark .integration.required:not(.enabled) { border-left-color: #f5a623; }
+  html.is-dark .integration-icon { color: #c4c4c8; }
+  html.is-dark .integration-title strong { color: #f5f5f7; }
+  html.is-dark .integration-title .tag { background: #2e2e33; color: #b8b8bc; }
+  html.is-dark .integration-title .tag.required { background: #3a2c1c; color: #f0b674; }
+  html.is-dark .integration-title p { color: #9a9aa0; }
+  html.is-dark .btn-not-configured { background: #2a2a2e; color: #9a9aa0; }
+  html.is-dark .caret { color: #9a9aa0; }
+  html.is-dark .caret:hover { color: #e7e7e9; }
+  html.is-dark .integration-body { border-top-color: #2a2a2d; }
+  html.is-dark .connection { border-bottom-color: #2a2a2d; }
+  html.is-dark .connection .who strong { color: #f5f5f7; }
+  html.is-dark .connection .repos { color: #9a9aa0; }
+  html.is-dark .body-section { border-top-color: #2a2a2d; }
+
+  /* Modal dialogs */
+  html.is-dark dialog.api-modal { background: #1c1c1f; color: #e7e7e9;
+                                  box-shadow: 0 24px 64px rgba(0,0,0,.6); }
+  html.is-dark dialog.api-modal::backdrop { background: rgba(0,0,0,.6); }
+  html.is-dark dialog.api-modal h2 { color: #f5f5f7; }
+  html.is-dark dialog.api-modal p { color: #9a9aa0; }
+  html.is-dark dialog.api-modal .cancel { background: #232327; color: #c4c4c8;
+                                          border-color: #2e2e33; }
+  html.is-dark dialog.api-modal .cancel:hover { background: #2a2a2e; }
+
+  /* Members table */
+  html.is-dark table.members th { color: #6e6e72; border-bottom-color: #2a2a2d; }
+  html.is-dark table.members td { border-bottom-color: #232327; }
+  html.is-dark table.members .name { color: #f5f5f7; }
+  html.is-dark table.members .email { color: #9a9aa0; }
+  html.is-dark table.members .pill { background: #2e2e33; color: #b8b8bc; }
+  html.is-dark table.members .pill.pending { background: #3a3220; color: #f0c674; }
+  html.is-dark .empty { color: #6e6e72; }
+
+  /* Mobile — stack the settings sidebar above the content as a
+     horizontal nav row, collapse multi-column form grids, and let the
+     integration cards breathe. The 768px breakpoint matches the
+     repo-card-cols rule above; below that the desktop two-pane shell
+     starts cramping. */
+  @media (max-width: 768px) {
+    body { padding: 0; }
+    .modal-page { grid-template-columns: 1fr;
+                  grid-template-rows: auto 1fr;
+                  border-radius: 0;
+                  min-height: 100vh; box-shadow: none; }
+    .sidebar { border-right: 0; border-bottom: 1px solid #e8e8e8;
+               padding: .85rem 1rem .65rem; }
+    .sidebar h2 { font-size: 1rem; }
+    .sidebar .subhead { margin-bottom: .65rem; }
+    .sidebar nav { flex-direction: row; flex-wrap: nowrap;
+                   gap: .25rem; overflow-x: auto;
+                   -webkit-overflow-scrolling: touch;
+                   margin: 0 -1rem; padding: 0 1rem .15rem; }
+    .sidebar nav a { flex-shrink: 0; white-space: nowrap;
+                     padding: .45rem .75rem; }
+    .content { padding: 1.25rem 1rem 1.5rem; }
+    .content .close { top: .85rem; right: 1rem; }
+    .invite-form { grid-template-columns: 1fr; }
+    .invite-form button { width: 100%; }
+    .agent-edit-form { grid-template-columns: 1fr; }
+    .agent-edit-form .primary { width: 100%; }
+    .connection { grid-template-columns: 1fr; }
+    .connection .actions { justify-content: flex-start;
+                           margin-top: .35rem; }
+    .connection .repos { max-width: 100%; white-space: normal;
+                         overflow-wrap: anywhere; }
+    .integration-head { grid-template-columns: 2rem 1fr;
+                        grid-template-areas: "icon title" "status status";
+                        gap: .75rem; padding: .85rem 1rem; }
+    .integration-icon { grid-area: icon; width: 2rem; height: 2rem; }
+    .integration-title { grid-area: title; min-width: 0; }
+    .integration-title p { min-height: 0; }
+    .integration-status { grid-area: status; justify-content: space-between; }
+    .integration-body { padding: 0 1rem 1rem; }
+    .repo-card { padding: .85rem 1rem; }
+    .repo-card-foot { flex-wrap: wrap; gap: .5rem; }
+    table.members { display: block; }
+    table.members thead { display: none; }
+    table.members tbody, table.members tr,
+    table.members td { display: block; width: 100%;
+                       box-sizing: border-box; }
+    table.members tr { padding: .65rem 0;
+                       border-bottom: 1px solid #f3f3f3; }
+    table.members tr:last-child { border-bottom: none; }
+    table.members td { padding: .2rem 0; border-bottom: none; }
+    table.members .role select { width: 100%; }
+    table.members .row-actions { text-align: left; }
+    dialog.api-modal, dialog.app-dialog { width: calc(100vw - 1.5rem);
+                                          max-width: calc(100vw - 1.5rem); }
+    html.is-dark .sidebar { border-bottom-color: #2a2a2d; }
+  }
+
+  @media (max-width: 480px) {
+    button.primary, .btn-enable, .btn-enabled { width: 100%;
+                                                 justify-content: center; }
+    .cred-tabs { flex-wrap: wrap; }
+  }

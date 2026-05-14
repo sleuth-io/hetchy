@@ -3,6 +3,8 @@ package bot
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -64,6 +66,34 @@ func TestDaytonaLogTarget(t *testing.T) {
 				t.Fatalf("daytonaLogTarget(%q) = (%q, %q), want (%q, %q)", tc.apiURL, gotMode, gotURL, tc.wantMode, tc.wantURL)
 			}
 		})
+	}
+}
+
+func TestWorkerIDParsing(t *testing.T) {
+	host, pid, ok := parseWorkerID("dev-host-name-12345-a1b2c3")
+	if !ok {
+		t.Fatal("parseWorkerID returned !ok")
+	}
+	if host != "dev-host-name" || pid != 12345 {
+		t.Fatalf("parseWorkerID = (%q, %d), want (dev-host-name, 12345)", host, pid)
+	}
+	if got := workerIDLeaseOwnerPrefix("dev-host-name-12345-a1b2c3"); got != "dev-host-name-" {
+		t.Fatalf("workerIDLeaseOwnerPrefix = %q, want dev-host-name-", got)
+	}
+	for _, invalid := range []string{"", "host", "host-pid-rand", "-123-rand", "host-0-rand"} {
+		if _, _, ok := parseWorkerID(invalid); ok {
+			t.Fatalf("parseWorkerID(%q) returned ok", invalid)
+		}
+	}
+}
+
+func TestSameHostWorkerLikelyDeadDoesNotStealLivePID(t *testing.T) {
+	workerID := fmt.Sprintf("test-host-%d-a1b2c3", os.Getpid())
+	if sameHostWorkerLikelyDead(workerID, workerID) {
+		t.Fatal("current process worker should not be considered dead")
+	}
+	if sameHostWorkerLikelyDead(workerID, fmt.Sprintf("other-host-%d-a1b2c3", os.Getpid())) {
+		t.Fatal("different host worker should not be considered locally dead")
 	}
 }
 
@@ -140,7 +170,7 @@ func TestHandleRequest_AskForRepo(t *testing.T) {
 	oc := orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "ant"}
 
 	emit := newCaptureEmitter()
-	b.HandleRequest(context.Background(), oc, "do something", "req-1", "thread-1", "", true, emit)
+	b.HandleRequest(context.Background(), oc, "do something", "req-1", "thread-1", "", chatTaskOptionPatch{}, nil, ClaudeModelOpus, emit)
 
 	if !emit.hasCall("notify", "Which repository") {
 		t.Errorf("expected a Notify with 'Which repository', got Calls=%v", emit.Calls)
@@ -160,7 +190,7 @@ func TestHandleRequest_MissingAnthropic(t *testing.T) {
 		return nil, errors.New("unreachable")
 	}
 	emit := newCaptureEmitter()
-	b.HandleRequest(context.Background(), orgcfg.Config{OrgID: "o"}, "do something", "req", "thread", "", true, emit)
+	b.HandleRequest(context.Background(), orgcfg.Config{OrgID: "o"}, "do something", "req", "thread", "", chatTaskOptionPatch{}, nil, ClaudeModelOpus, emit)
 	if !emit.hasCall("error", "Missing Claude credentials") {
 		t.Errorf("expected Error call with 'Missing Claude credentials', got Calls=%v", emit.Calls)
 	}
@@ -179,12 +209,78 @@ func TestHandleRequest_SubscriptionTokenSatisfiesCredCheck(t *testing.T) {
 		return nil, errors.New("unreachable")
 	}
 	emit := newCaptureEmitter()
-	b.HandleRequest(context.Background(), orgcfg.Config{OrgID: "o", ClaudeCodeOAuthToken: "sk-ant-oat01-…"}, "do something", "req", "thread", "", true, emit)
+	b.HandleRequest(context.Background(), orgcfg.Config{OrgID: "o", ClaudeCodeOAuthToken: "sk-ant-oat01-…"}, "do something", "req", "thread", "", chatTaskOptionPatch{}, nil, ClaudeModelOpus, emit)
 	if emit.hasCall("error", "Missing Claude credentials") {
 		t.Errorf("subscription token alone should satisfy cred check, got Calls=%v", emit.Calls)
 	}
 	if !emit.hasCall("notify", "Which repository") {
 		t.Errorf("expected to advance to repo prompt, got Calls=%v", emit.Calls)
+	}
+}
+
+func TestHandleRequest_UnknownAgent(t *testing.T) {
+	b := &Bot{log: discardLogger(), convs: convstore.New(nil), retryBackoff: 0}
+	b.createFn = func(context.Context, any) (*daytona.Sandbox, error) {
+		t.Fatal("sandbox should not be created when agent is unknown")
+		return nil, errors.New("unreachable")
+	}
+	emit := newCaptureEmitter()
+	requestedAgent := "sally"
+	b.HandleRequest(context.Background(), orgcfg.Config{OrgID: "o", ClaudeCodeOAuthToken: "sk-ant-oat01-token"}, "do something", "req", "thread", "", chatTaskOptionPatch{}, &requestedAgent, ClaudeModelOpus, emit)
+	if !emit.hasCall("error", "Unknown agent") {
+		t.Errorf("expected Unknown agent error, got Calls=%v", emit.Calls)
+	}
+}
+
+func TestResolveChatTaskOptionsMergesPatchAndDefaultsMissingOn(t *testing.T) {
+	opts, saved := resolveChatTaskOptions(
+		map[string]bool{
+			chatTaskValidateKey: false,
+			"future_option":     false,
+		},
+		chatTaskOptionPatch{
+			chatTaskReviewCodeBeforePushKey: false,
+		},
+	)
+
+	if opts.ValidateChanges {
+		t.Fatal("saved validate=false should be respected")
+	}
+	if opts.ReviewCodeBeforePush {
+		t.Fatal("incoming review_code_before_push=false should be respected")
+	}
+	if !opts.ActionPRChecksForDone {
+		t.Fatal("missing action_pr_checks_for_done should default on")
+	}
+	if got, ok := saved["future_option"]; !ok || got {
+		t.Fatalf("future option should be preserved as false, got %v present=%v", got, ok)
+	}
+	if got, ok := saved[chatTaskReviewCodeBeforePushKey]; !ok || got {
+		t.Fatalf("patch value should be saved as false, got %v present=%v", got, ok)
+	}
+}
+
+func TestMutableConversationAgentSlug(t *testing.T) {
+	requestedBob := "bob"
+	requestedNone := ""
+	requestedSpaced := "  alice  "
+
+	for _, tc := range []struct {
+		name      string
+		pinned    string
+		requested *string
+		want      string
+	}{
+		{name: "keeps pinned without request", pinned: "bob", requested: nil, want: "bob"},
+		{name: "request overrides pinned", pinned: "bob", requested: &requestedSpaced, want: "alice"},
+		{name: "explicit no agent clears pinned", pinned: "bob", requested: &requestedNone, want: ""},
+		{name: "uses requested when no pinned", pinned: "", requested: &requestedBob, want: "bob"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := mutableConversationAgentSlug(tc.pinned, tc.requested); got != tc.want {
+				t.Fatalf("mutableConversationAgentSlug() = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 

@@ -63,6 +63,8 @@ func TestAgentLineRouter_GroupsSetupThenSwitchesToParser(t *testing.T) {
 	r := newAgentLineRouter(emit)
 	r.Line("[hetchy] setting up git auth")
 	r.Line("[hetchy] cloning owner/repo")
+	r.Line("Downloading 9 assets... done")
+	r.Line("go: writing go.mod cache: rename /cache/tmp /cache/mod: function not implemented")
 	r.Line("[hetchy] running claude")
 	r.Line(`{"type":"assistant","message":{"content":[{"type":"text","text":"Hi"}]}}`)
 	r.Line(`{"type":"result","subtype":"success","result":"PR: https://github.com/o/r/pull/9"}`)
@@ -84,9 +86,41 @@ func TestAgentLineRouter_GroupsSetupThenSwitchesToParser(t *testing.T) {
 	if strings.Contains(setup.Body.String(), "[hetchy] ") {
 		t.Errorf("setup body should not retain the [hetchy] prefix, got %q", setup.Body.String())
 	}
+	if strings.Contains(setup.Body.String(), "function not implemented") || strings.Contains(setup.Body.String(), "Downloading 9 assets") {
+		t.Errorf("setup body should suppress raw tool output, got %q", setup.Body.String())
+	}
+	if !strings.Contains(setup.Body.String(), "Suppressed 2 setup output lines") {
+		t.Errorf("setup body should summarize suppressed tool output, got %q", setup.Body.String())
+	}
 	text := emit.Blocks[1]
 	if text.Kind != blocks.KindClaudeText || text.Body.String() != "Hi" {
 		t.Errorf("claude_text block wrong: %+v", text)
+	}
+}
+
+func TestAgentLineRouter_SurfacesPostAgentHetchyCleanup(t *testing.T) {
+	emit := newCaptureEmitter()
+	r := newAgentLineRouter(emit)
+	r.Line("[hetchy] setting up git auth")
+	r.Line("[hetchy] running claude")
+	r.Line(`{"type":"assistant","message":{"content":[{"type":"text","text":"Done: https://github.com/o/r/pull/9"}]}}`)
+	r.Line(`{"type":"result","subtype":"success","result":"https://github.com/o/r/pull/9"}`)
+	r.Line("[hetchy] saving dependency cache archive to volume")
+	r.Line("[hetchy] dependency cache archive saved in 3s (123B)")
+
+	prURL := r.Finish()
+	if prURL != "https://github.com/o/r/pull/9" {
+		t.Errorf("want PR URL extracted, got %q", prURL)
+	}
+	if len(emit.Blocks) != 3 {
+		t.Fatalf("want 3 blocks (setup + claude_text + cleanup), got %d", len(emit.Blocks))
+	}
+	cleanup := emit.Blocks[2]
+	if cleanup.Kind != blocks.KindSetup || cleanup.Title != "Sandbox cleanup" || cleanup.Status != blocks.StatusDone {
+		t.Fatalf("cleanup block wrong: %+v", cleanup)
+	}
+	if !strings.Contains(cleanup.Body.String(), "Dependency cache archive saved in 3s (123B)") {
+		t.Errorf("cleanup body should include cache timing, got %q", cleanup.Body.String())
 	}
 }
 
@@ -97,5 +131,23 @@ func TestAgentLineRouter_AbortFailsOpenBlocks(t *testing.T) {
 	r.Abort()
 	if emit.Blocks[0].Status != blocks.StatusError {
 		t.Errorf("setup should be failed after Abort, got %s", emit.Blocks[0].Status)
+	}
+}
+
+func TestAgentLineRouter_AbortPreservesSuppressedSetupTail(t *testing.T) {
+	emit := newCaptureEmitter()
+	r := newAgentLineRouter(emit)
+	r.Line("[hetchy] installing sx")
+	r.Line("curl: (22) The requested URL returned error: 404")
+	r.Line("sx: install failed")
+	r.Abort()
+
+	body := emit.Blocks[0].Body.String()
+	if !strings.Contains(body, "Suppressed 2 setup output lines") {
+		t.Errorf("setup failure should include suppressed line count, got %q", body)
+	}
+	if !strings.Contains(body, "curl: (22) The requested URL returned error: 404") ||
+		!strings.Contains(body, "sx: install failed") {
+		t.Errorf("setup failure should include raw error tail, got %q", body)
 	}
 }

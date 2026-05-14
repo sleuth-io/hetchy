@@ -48,7 +48,7 @@ const (
 // empty sandbox_id would clobber the terminal save's real value.
 type chatPersister struct {
 	log      *slog.Logger
-	convs    *convstore.Store
+	convs    conversationStore
 	recorder *blocks.Recorder
 
 	// orgID, threadID, history, creatorID are all immutable for the
@@ -78,7 +78,7 @@ type chatPersister struct {
 // appendBlocksToFirstTurn → appendToFirstTurn, appendBlocksAsNewTurn
 // → appendAsNewTurn. A mismatch causes a late tick to overwrite the
 // terminal save with a different shape, dropping turns from the UI.
-func newChatPersister(log *slog.Logger, convs *convstore.Store, recorder *blocks.Recorder, rec convstore.Record, mode appendMode, tick time.Duration) *chatPersister {
+func newChatPersister(log *slog.Logger, convs conversationStore, recorder *blocks.Recorder, rec convstore.Record, mode appendMode, tick time.Duration) *chatPersister {
 	prior := make([][]blocks.Block, len(rec.ResponseBlocks))
 	for i, t := range rec.ResponseBlocks {
 		prior[i] = append([]blocks.Block(nil), t...)

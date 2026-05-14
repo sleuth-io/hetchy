@@ -11,14 +11,19 @@ import (
 // fakeProcess implements sandboxProcess for unit tests. It sends chunks
 // to stdout then optionally blocks until the context is done.
 type fakeProcess struct {
-	chunks         []string      // sent to stdout in order
-	chunkGap       time.Duration // pause between chunks (0 = no pause)
-	hangBeforeExec time.Duration // simulate slow ExecuteSessionCommand (0 = immediate)
-	hangAfter      bool          // block after sending all chunks until ctx done
-	exitCode       float64       // command exit code (0 = success)
+	chunks            []string      // sent to stdout in order
+	chunkGap          time.Duration // pause between chunks (0 = no pause)
+	hangBeforeExec    time.Duration // simulate slow ExecuteSessionCommand (0 = immediate)
+	hangAfter         bool          // block after sending all chunks until ctx done
+	leaveStreamsOpen  bool          // simulate SDK returning without closing log channels
+	exitCode          float64       // command exit code (0 = success)
+	suppressInputEcho bool
+	commands          []string
 }
 
-func (f *fakeProcess) ExecuteSessionCommand(ctx context.Context, _, _ string, _, _ bool) (map[string]any, error) {
+func (f *fakeProcess) ExecuteSessionCommand(ctx context.Context, _, command string, _, suppressInputEcho bool) (map[string]any, error) {
+	f.suppressInputEcho = suppressInputEcho
+	f.commands = append(f.commands, command)
 	if f.hangBeforeExec > 0 {
 		select {
 		case <-ctx.Done():
@@ -34,8 +39,10 @@ func (f *fakeProcess) GetSessionCommand(_ context.Context, _, _ string) (map[str
 }
 
 func (f *fakeProcess) GetSessionCommandLogsStream(ctx context.Context, _, _ string, stdout, stderr chan<- string) error {
-	defer close(stdout)
-	defer close(stderr)
+	if !f.leaveStreamsOpen {
+		defer close(stdout)
+		defer close(stderr)
+	}
 	for _, chunk := range f.chunks {
 		select {
 		case <-ctx.Done():
@@ -64,15 +71,19 @@ func TestShLines(t *testing.T) {
 	cases := []struct {
 		name             string
 		proc             *fakeProcess
+		cmd              string
 		timeout          time.Duration
 		idleTimeout      time.Duration
 		wantOut          string
 		wantErr          error
 		wantErrSubstring string // narrows which error branch fired, not just which sentinel
+		suppressInput    bool
+		wantSuppress     bool
 	}{
 		{
 			name:        "success",
 			proc:        &fakeProcess{chunks: []string{"hello\n", "world\n"}},
+			cmd:         "echo hi",
 			timeout:     5 * time.Second,
 			idleTimeout: 0,
 			wantOut:     "hello\nworld\n",
@@ -81,6 +92,15 @@ func TestShLines(t *testing.T) {
 		{
 			name:        "idle timeout fires when process goes silent",
 			proc:        &fakeProcess{hangAfter: true},
+			cmd:         "echo hi",
+			timeout:     5 * time.Second,
+			idleTimeout: 100 * time.Millisecond,
+			wantErr:     ErrStepIdleTimeout,
+		},
+		{
+			name:        "stream return without channel close does not hang",
+			proc:        &fakeProcess{hangAfter: true, leaveStreamsOpen: true},
+			cmd:         "echo hi",
 			timeout:     5 * time.Second,
 			idleTimeout: 100 * time.Millisecond,
 			wantErr:     ErrStepIdleTimeout,
@@ -88,6 +108,7 @@ func TestShLines(t *testing.T) {
 		{
 			name:             "wall timeout fires when process takes too long",
 			proc:             &fakeProcess{chunks: []string{"alive\n"}, hangAfter: true},
+			cmd:              "echo hi",
 			timeout:          100 * time.Millisecond,
 			idleTimeout:      0, // disabled so only wall fires
 			wantErr:          ErrStepWallTimeout,
@@ -99,6 +120,7 @@ func TestShLines(t *testing.T) {
 			// ErrStepWallTimeout rather than a generic exec error.
 			name:             "wall timeout fires during ExecuteSessionCommand",
 			proc:             &fakeProcess{hangBeforeExec: 5 * time.Second},
+			cmd:              "echo hi",
 			timeout:          50 * time.Millisecond,
 			idleTimeout:      0,
 			wantErr:          ErrStepWallTimeout,
@@ -113,17 +135,38 @@ func TestShLines(t *testing.T) {
 			// succeeds — proving the idle clock actually resets.
 			name:        "incoming output resets idle clock",
 			proc:        &fakeProcess{chunks: []string{"line1\n", "line2\n", "line3\n", "line4\n"}, chunkGap: 100 * time.Millisecond},
+			cmd:         "echo hi",
 			timeout:     5 * time.Second,
 			idleTimeout: 250 * time.Millisecond,
 			wantOut:     "line1\nline2\nline3\nline4\n",
 			wantErr:     nil,
+		},
+		{
+			name:         "large command suppresses input echo",
+			proc:         &fakeProcess{chunks: []string{"ok\n"}},
+			cmd:          strings.Repeat("x", 9*1024),
+			timeout:      5 * time.Second,
+			wantOut:      "ok\n",
+			wantSuppress: true,
+		},
+		{
+			name:          "explicit suppress input echo",
+			proc:          &fakeProcess{chunks: []string{"ok\n"}},
+			cmd:           "echo hi",
+			timeout:       5 * time.Second,
+			wantOut:       "ok\n",
+			suppressInput: true,
+			wantSuppress:  true,
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			out, err := b.shLines(context.Background(), "test-sandbox", tc.proc, "sess-1", "test-step", "echo hi", tc.timeout, tc.idleTimeout, func(string) {})
+			out, err := b.shLines(context.Background(), "test-sandbox", tc.proc, "sess-1", "test-step", tc.cmd, tc.timeout, tc.idleTimeout, tc.suppressInput, func(string) {})
+			if tc.proc.suppressInputEcho != tc.wantSuppress {
+				t.Errorf("suppressInputEcho = %v, want %v", tc.proc.suppressInputEcho, tc.wantSuppress)
+			}
 			if tc.wantErr != nil {
 				if !errors.Is(err, tc.wantErr) {
 					t.Errorf("shLines error = %v, want errors.Is(%v)", err, tc.wantErr)

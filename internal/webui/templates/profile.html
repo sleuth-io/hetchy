@@ -1,0 +1,218 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>My profile · Hetchy</title>
+<link rel="icon" type="image/svg+xml" href="{{faviconHref}}">
+<script>
+// Theme bootstrap — see chat.html for the rationale. Inlined per-page so
+// the page paints in the chosen theme on first frame.
+(function(){
+  var mq = window.matchMedia('(prefers-color-scheme: dark)');
+  function apply(){
+    var pref;
+    try { pref = localStorage.getItem('theme') || 'system'; } catch(e) { pref = 'system'; }
+    var dark = pref === 'dark' || (pref === 'system' && mq.matches);
+    document.documentElement.classList.toggle('is-dark', dark);
+  }
+  apply();
+  mq.addEventListener('change', apply);
+  window.addEventListener('storage', function(e){ if (e.key === 'theme') apply(); });
+})();
+</script>
+<style>
+  body { font-family: system-ui, sans-serif; background: #4a4d52; margin: 0; padding: 2rem;
+         min-height: 100vh; box-sizing: border-box; }
+  .modal { background: #fff; border-radius: 1rem; box-shadow: 0 12px 40px rgba(0,0,0,.25);
+           max-width: 32rem; margin: 0 auto; padding: 1.75rem 2rem; position: relative; }
+  h1 { margin: 0 0 .15rem; font-size: 1.25rem; }
+  .desc { margin: 0 0 1.5rem; color: #777; font-size: .85rem; }
+  .close { position: absolute; top: 1.25rem; right: 1.5rem;
+           color: #aaa; text-decoration: none; font-size: 1.25rem; }
+  .close:hover { color: #555; }
+  fieldset { border: none; padding: 0; margin: 0 0 1.25rem; }
+  label { display: block; font-size: .85rem; color: #555; margin: .5rem 0 .25rem; }
+  input { width: 100%; padding: .55rem .75rem; border: 1px solid #ccc;
+          border-radius: .4rem; font-size: .95rem; box-sizing: border-box;
+          font-family: ui-monospace, monospace; background: #fff; }
+  input:focus { outline: none; border-color: #0b93f6; }
+  input[readonly] { background: #fafafa; color: #555; cursor: default; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; }
+  .hint { font-size: .75rem; color: #999; margin-top: .35rem; }
+  button.primary { padding: .55rem 1.1rem; background: #0b93f6;
+                   color: #fff; border: none; border-radius: .4rem;
+                   font-size: .9rem; cursor: pointer; }
+  .saved-banner { background: #efe; color: #060; padding: .5rem .75rem;
+                  border-radius: .4rem; margin-bottom: 1rem; font-size: .85rem; }
+  .meta { color: #999; font-size: .72rem; margin-top: 1.5rem; }
+  hr { border: none; border-top: 1px solid #eee; margin: 1.5rem 0; }
+  .actions-row { display: flex; align-items: center; gap: 1rem; }
+  .password-form { margin: 0; }
+  .password-form button { background: none; border: 1px solid #ccc; border-radius: .4rem;
+                          padding: .5rem .9rem; font-size: .85rem; color: #444;
+                          cursor: pointer; font-family: inherit; }
+  .password-form button:hover { background: #f5f5f5; }
+
+  /* Appearance segmented control */
+  .theme-toggle { display: inline-flex; gap: .25rem; padding: .25rem;
+                  background: #f0f0f0; border-radius: .5rem; }
+  .theme-opt { display: inline-flex; align-items: center; gap: .35rem;
+               padding: .4rem .75rem; background: none; border: 0;
+               border-radius: .35rem; font-family: inherit; font-size: .85rem;
+               color: #555; cursor: pointer; }
+  .theme-opt:hover { color: #1a1a1a; }
+  .theme-opt.selected { background: #fff; color: #1a1a1a;
+                        box-shadow: 0 1px 2px rgba(0,0,0,.08); font-weight: 500; }
+  .theme-opt .ico { width: .95rem; height: .95rem; }
+  .theme-section { margin: 0 0 1.25rem; }
+  .theme-section legend { font-weight: 500; font-size: .9rem;
+                          padding: 0 0 .15rem; color: #1a1a1a; }
+
+  /* Dark theme — applied via html.is-dark by the bootstrap script. */
+  html { color-scheme: light; }
+  html.is-dark { color-scheme: dark; }
+  html.is-dark body { background: #0f0f10; }
+  html.is-dark .modal { background: #1c1c1f; color: #e7e7e9;
+                        box-shadow: 0 12px 40px rgba(0,0,0,.5); }
+  html.is-dark h1 { color: #f5f5f7; }
+  html.is-dark .desc { color: #9a9aa0; }
+  html.is-dark .close { color: #6e6e72; }
+  html.is-dark .close:hover { color: #c4c4c8; }
+  html.is-dark label { color: #b8b8bc; }
+  html.is-dark input { background: #232327; color: #e7e7e9; border-color: #2e2e33; }
+  html.is-dark input[readonly] { background: #1a1a1d; color: #9a9aa0; }
+  html.is-dark .hint { color: #6e6e72; }
+  html.is-dark .saved-banner { background: #173b1e; color: #5cd06b; }
+  html.is-dark .meta { color: #6e6e72; }
+  html.is-dark hr { border-top-color: #2a2a2d; }
+  html.is-dark .password-form button { border-color: #2e2e33; color: #c4c4c8; background: none; }
+  html.is-dark .password-form button:hover { background: #232327; }
+  html.is-dark .theme-toggle { background: #232327; }
+  html.is-dark .theme-opt { color: #9a9aa0; }
+  html.is-dark .theme-opt:hover { color: #e7e7e9; }
+  html.is-dark .theme-opt.selected { background: #2e2e33; color: #f5f5f7;
+                                     box-shadow: 0 1px 2px rgba(0,0,0,.3); }
+  html.is-dark .theme-section legend { color: #f5f5f7; }
+
+  /* Mobile — single-column form, looser modal padding, stacked actions. */
+  @media (max-width: 768px) {
+    body { padding: 1rem; }
+    .modal { padding: 1.25rem 1.25rem; border-radius: .75rem; }
+    .close { top: .9rem; right: 1.1rem; }
+    .row { grid-template-columns: 1fr; gap: .25rem; }
+    .actions-row { flex-direction: column; align-items: stretch; gap: .75rem; }
+    .password-form button { width: 100%; }
+    .theme-toggle { flex-wrap: wrap; }
+    .theme-opt { flex: 1; min-width: 5rem; justify-content: center; }
+  }
+</style>
+</head>
+<body>
+
+<div class="modal">
+  <a class="close" href="/" title="Close">✕</a>
+  <h1>My profile</h1>
+  <p class="desc">Your account details across all organizations.</p>
+
+  {{if .Saved}}<div class="saved-banner">Profile saved.</div>{{end}}
+
+  <form method="POST" action="/settings/profile">
+    <fieldset>
+      <div class="row">
+        <div>
+          <label for="first_name">First name</label>
+          <input id="first_name" type="text" name="first_name" value="{{.FirstName}}" placeholder="Ada">
+        </div>
+        <div>
+          <label for="last_name">Last name</label>
+          <input id="last_name" type="text" name="last_name" value="{{.LastName}}" placeholder="Lovelace">
+        </div>
+      </div>
+      <label for="email">Email</label>
+      <input id="email" type="text" value="{{.Email}}" readonly tabindex="-1">
+      <p class="hint">Email changes go through AuthKit's verification flow — coming soon.</p>
+    </fieldset>
+
+    <button class="primary" type="submit">Save</button>
+  </form>
+
+  <hr>
+
+  <div class="theme-section" id="appearance">
+    <p style="margin:0 0 .15rem; font-weight:500; font-size:.9rem">Appearance</p>
+    <p class="hint" style="margin:0 0 .55rem">Choose how Hetchy looks. System follows your device setting.</p>
+    <div class="theme-toggle" role="radiogroup" aria-label="Theme preference">
+      <button type="button" class="theme-opt" data-theme="system" aria-pressed="false">
+        <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="2" y="3" width="12" height="9" rx="1.5"/>
+          <path d="M5.5 14h5"/><path d="M8 12v2"/>
+        </svg>
+        System
+      </button>
+      <button type="button" class="theme-opt" data-theme="light" aria-pressed="false">
+        <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="8" cy="8" r="3"/>
+          <path d="M8 1v1.5M8 13.5V15M1 8h1.5M13.5 8H15M3 3l1 1M12 12l1 1M3 13l1-1M12 4l1-1"/>
+        </svg>
+        Light
+      </button>
+      <button type="button" class="theme-opt" data-theme="dark" aria-pressed="false">
+        <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M13 9.5A5.5 5.5 0 1 1 6.5 3a4.5 4.5 0 0 0 6.5 6.5z"/>
+        </svg>
+        Dark
+      </button>
+    </div>
+  </div>
+
+  <hr>
+
+  <div class="actions-row">
+    <div>
+      <p style="margin:0; font-weight:500; font-size:.9rem">Password</p>
+      <p class="hint" style="margin-top:.15rem">Reset via AuthKit's hosted page.</p>
+    </div>
+    <form method="POST" action="/settings/profile/password-reset" class="password-form"
+          onsubmit="return confirm('Send yourself to AuthKit to reset your password? You will be redirected immediately.')">
+      <button type="submit">Reset password…</button>
+    </form>
+  </div>
+
+  <p class="meta">User ID: <code>{{.UserID}}</code> · <a href="/settings/org" style="color:#888">Org settings</a> · <a href="/logout" style="color:#888">Log out</a></p>
+</div>
+
+<script>
+// Appearance toggle: writes the chosen value to localStorage and applies
+// it immediately. The bootstrap script in <head> picks the same key up on
+// future page loads and listens for storage events so other tabs update
+// in real time.
+(function(){
+  var current;
+  try { current = localStorage.getItem('theme') || 'system'; } catch(e) { current = 'system'; }
+  var mq = window.matchMedia('(prefers-color-scheme: dark)');
+  function paintSelection(pref){
+    document.querySelectorAll('.theme-opt').forEach(function(b){
+      var on = b.dataset.theme === pref;
+      b.classList.toggle('selected', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+  }
+  function applyTheme(pref){
+    var dark = pref === 'dark' || (pref === 'system' && mq.matches);
+    document.documentElement.classList.toggle('is-dark', dark);
+  }
+  paintSelection(current);
+  document.querySelectorAll('.theme-opt').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var pref = btn.dataset.theme;
+      try { localStorage.setItem('theme', pref); } catch(e) {}
+      paintSelection(pref);
+      applyTheme(pref);
+    });
+  });
+})();
+</script>
+
+</body>
+</html>

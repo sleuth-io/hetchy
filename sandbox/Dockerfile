@@ -20,14 +20,15 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # ---------------------------------------------------------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl gnupg lsb-release \
-        git wget jq tmux vim nano ripgrep unzip xz-utils \
+        git wget jq tmux vim nano ripgrep unzip xz-utils file \
         build-essential gcc g++ clang make cmake ninja-build pkg-config \
         openjdk-21-jdk maven gradle \
         ruby ruby-dev rbenv ruby-build \
         zlib1g-dev libssl-dev libffi-dev libreadline-dev libsqlite3-dev \
         libyaml-dev libxml2-dev libxslt1-dev \
         redis-server \
- && rm -rf /var/lib/apt/lists/*
+ && apt-get clean \
+ && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb /var/cache/apt/archives/partial/*
 
 # ---------------------------------------------------------------------------
 # PHP 8.4 from sury.org (Debian's default PHP is older) + Composer.
@@ -40,7 +41,8 @@ RUN curl -sSL https://packages.sury.org/php/apt.gpg \
         php8.4 php8.4-cli php8.4-curl php8.4-mbstring php8.4-xml php8.4-zip \
  && curl -sS https://getcomposer.org/installer \
         | php -- --install-dir=/usr/local/bin --filename=composer \
- && rm -rf /var/lib/apt/lists/*
+ && apt-get clean \
+ && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb /var/cache/apt/archives/partial/*
 
 # ---------------------------------------------------------------------------
 # PostgreSQL 16 from the official PGDG apt repo.
@@ -52,7 +54,8 @@ RUN install -d /usr/share/postgresql-common/pgdg \
         > /etc/apt/sources.list.d/pgdg.list \
  && apt-get update && apt-get install -y --no-install-recommends \
         postgresql-16 postgresql-client-16 \
- && rm -rf /var/lib/apt/lists/*
+ && apt-get clean \
+ && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb /var/cache/apt/archives/partial/*
 
 # ---------------------------------------------------------------------------
 # Docker engine + CLI + compose plugin (Docker-in-Docker).
@@ -77,7 +80,8 @@ RUN install -m 0755 -d /etc/apt/keyrings \
         docker-buildx-plugin docker-compose-plugin \
         docker-ce-rootless-extras \
         fuse-overlayfs slirp4netns uidmap iproute2 dbus-user-session \
- && rm -rf /var/lib/apt/lists/*
+ && apt-get clean \
+ && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb /var/cache/apt/archives/partial/*
 
 # Rootless-docker support packages (docker-ce-rootless-extras,
 # slirp4netns, uidmap, iproute2, dbus-user-session) are installed
@@ -95,7 +99,25 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
  && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
         > /etc/apt/sources.list.d/github-cli.list \
  && apt-get update && apt-get install -y --no-install-recommends gh \
- && rm -rf /var/lib/apt/lists/*
+ && apt-get clean \
+ && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb /var/cache/apt/archives/partial/*
+
+# ---------------------------------------------------------------------------
+# Browser + screen-recording runtime dependencies. Keep this separate from
+# the broad language-toolchain apt layer so apt's archive cache peak stays
+# small enough for Docker builders with tight layer scratch space.
+# ---------------------------------------------------------------------------
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ffmpeg xvfb xauth x11-utils \
+        fonts-dejavu-core fonts-liberation \
+        libasound2t64 libatk-bridge2.0-0t64 libatk1.0-0t64 \
+        libatspi2.0-0t64 libcairo2 libcups2t64 libdbus-1-3 \
+        libdrm2 libgbm1 libgtk-3-0t64 libnspr4 libnss3 \
+        libpango-1.0-0 libx11-6 libx11-xcb1 libxcb1 \
+        libxcomposite1 libxdamage1 libxext6 libxfixes3 \
+        libxkbcommon0 libxrandr2 \
+ && apt-get clean \
+ && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb /var/cache/apt/archives/partial/*
 
 # ---------------------------------------------------------------------------
 # yq (jq is in apt above). Pinned so two image rebuilds on different days
@@ -142,6 +164,7 @@ RUN for pkg in poetry uv ruff black mypy pytest conan; do \
 # bin into /usr/local/bin so the daytona user (login shell with reset PATH)
 # can find every tool.
 # ---------------------------------------------------------------------------
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
 RUN npm install -g \
         pnpm yarn bun \
         eslint prettier chromedriver \
@@ -149,17 +172,21 @@ RUN npm install -g \
         @openai/codex \
         @google/gemini-cli \
         playwright \
- && npx --yes playwright install --with-deps chromium chrome \
+ && npx --yes playwright install chromium \
+ && CHROMIUM_BIN="$(find "$PLAYWRIGHT_BROWSERS_PATH" \( -path '*/chrome-linux/chrome' -o -path '*/chrome-linux64/chrome' \) -type f | sort | tail -1)" \
+ && test -x "$CHROMIUM_BIN" \
+ && mkdir -p /opt/google/chrome \
+ && ln -sf "$CHROMIUM_BIN" /opt/google/chrome/chrome \
+ && chmod -R a+rX "$PLAYWRIGHT_BROWSERS_PATH" /opt/google/chrome \
  && NODE_BIN=$(dirname "$(readlink -f "$(command -v node)")") \
  && for f in "$NODE_BIN"/*; do ln -sf "$f" "/usr/local/bin/$(basename "$f")"; done
 
-# Note: `playwright install` defaults to chromium only; the Playwright
-# MCP server we ship in the agent expects Google Chrome at
-# /opt/google/chrome/chrome and errors out on chromium-only sandboxes.
-# Installing both keeps `playwright.devices['Desktop Chrome']`
-# (chromium-channel) and the MCP's chrome-channel both working out of
-# the box, so the in-sandbox agent never has to run `playwright install
-# chrome` itself — the ~1 minute that costs on every fresh task.
+# Note: the Playwright MCP server we ship in the agent expects a
+# Chrome-channel executable at /opt/google/chrome/chrome. Installing
+# Google's chrome .deb through Playwright runs apt inside the npm layer
+# and is brittle on constrained builders, so we install Playwright
+# Chromium under /opt/ms-playwright and expose the expected Chrome path
+# as a symlink to that binary.
 
 # ---------------------------------------------------------------------------
 # Add daytona to the docker group so the user can talk to dockerd via the
@@ -179,7 +206,8 @@ RUN usermod -aG docker daytona
 # bootstrap loop captures any docker-unusability as a deferred capability.
 # ---------------------------------------------------------------------------
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
+COPY hetchy-record-screen /usr/local/bin/hetchy-record-screen
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/hetchy-record-screen
 
 USER daytona
 WORKDIR /home/daytona

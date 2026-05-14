@@ -61,6 +61,21 @@ func TestIsTransientError_NetworkFailureIsTransient(t *testing.T) {
 	}
 }
 
+func TestIsPermanentRecoverySandboxError_NotFoundOnly(t *testing.T) {
+	if !isPermanentRecoverySandboxError(sdkerrors.NewDaytonaNotFoundError("missing sandbox", nil)) {
+		t.Error("404 should be permanent for recovery")
+	}
+	if isPermanentRecoverySandboxError(sdkerrors.NewDaytonaTimeoutError("slow sandbox")) {
+		t.Error("timeout should remain retryable for recovery")
+	}
+	if isPermanentRecoverySandboxError(sdkerrors.NewDaytonaError("service unavailable", 503, nil)) {
+		t.Error("5xx should remain retryable for recovery")
+	}
+	if !isPermanentRecoverySandboxError(sdkerrors.NewDaytonaError("Sandbox failed to start", 0, nil)) {
+		t.Error("terminal sandbox start failure should be permanent for recovery")
+	}
+}
+
 // ---- resumeSandbox ----------------------------------------------------------
 
 func TestResumeSandbox_SuccessEmitsSetupBlock(t *testing.T) {

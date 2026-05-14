@@ -32,13 +32,20 @@ hetchy/
 ├── cmd/
 │   └── hetchy/             # main.go — binary entry point
 ├── internal/
-│   ├── bot/                # Core package: all runtime logic lives here
+│   ├── bot/                # Runtime orchestration and transports
 │   │   ├── bot.go          # Bot struct, sandbox lifecycle, Claude Code invocation
 │   │   ├── config.go       # Environment variable loading and validation
 │   │   ├── slack.go        # Slack socket-mode event dispatcher
-│   │   ├── web.go          # HTTP server: REST endpoints and SSE streaming
+│   │   ├── web.go          # HTTP server wiring
+│   │   ├── web_chat.go     # Chat POST/cancel/SSE handlers
+│   │   ├── web_pages.go    # Page handlers (index, onboarding, profile, welcome)
+│   │   ├── web_settings.go # Organization settings handlers and view models
+│   │   ├── web_api.go      # JSON API handlers
 │   │   ├── web_test.go     # Tests for web server behaviour
-│   │   └── chat.html       # Embedded single-page web UI (served from web.go)
+│   ├── webui/              # Embedded templates and static browser assets
+│   │   ├── chat.html       # Chat page HTML shell
+│   │   ├── templates/      # Other page templates
+│   │   └── assets/         # CSS and JavaScript served under /assets/
 │   ├── db/                 # Database connection and generated queries
 │   │   ├── db.go           # pgxpool connection helper (Open / Close)
 │   │   └── sqlc/           # sqlc-generated type-safe queries (DO NOT EDIT)
@@ -64,7 +71,8 @@ hetchy/
 | Package | Responsibility |
 |---------|---------------|
 | `cmd/hetchy` | Wires together config, logging, and the bot; handles OS signals for graceful shutdown |
-| `internal/bot` | All runtime logic: receives requests from Slack or HTTP, manages Daytona sandbox lifecycle, streams Claude Code output, extracts the PR URL, and persists conversation state for follow-up turns |
+| `internal/bot` | Runtime orchestration: receives requests from Slack or HTTP, manages Daytona sandbox lifecycle, streams Claude Code output, extracts the PR URL, and persists conversation state for follow-up turns |
+| `internal/webui` | Embedded page templates plus CSS/JavaScript assets served by the bot |
 | `internal/db` | pgxpool connection helper and sqlc-generated type-safe queries for conversation persistence |
 | `internal/buildinfo` | Exposes `Version`, `Commit`, and `Date` constants injected at link time via `ldflags` |
 

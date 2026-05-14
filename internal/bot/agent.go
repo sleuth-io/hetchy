@@ -4,7 +4,6 @@ import (
 	"context"
 	_ "embed"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -16,18 +15,13 @@ import (
 
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
 
+	"github.com/hetchyhq/hetchy/internal/agents"
+	"github.com/hetchyhq/hetchy/internal/artifacts"
 	"github.com/hetchyhq/hetchy/internal/blocks"
 	"github.com/hetchyhq/hetchy/internal/bootstrap"
 	"github.com/hetchyhq/hetchy/internal/convstore"
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
-	"github.com/hetchyhq/hetchy/internal/screenshots"
 )
-
-// screenshotSlotsPerRequest caps how many upload slots the bot mints
-// per task. Three is plenty — most validations need 1-2 screenshots
-// (one light + one dark, or one before + one after) and the cap
-// prevents a runaway prompt from issuing dozens of presigns.
-const screenshotSlotsPerRequest = 3
 
 //go:embed scripts/agent.sh
 var agentScriptBody string
@@ -41,16 +35,19 @@ var setupCloneScript string
 //go:embed scripts/claude-watchdog.sh
 var claudeWatchdogScript string
 
-// agentScript and followupScript are the on-the-wire script bodies the
-// bot writes to the sandbox. They are claude-watchdog.sh prepended to
-// the user-visible scripts/agent.sh and scripts/followup.sh — the
-// prepend wires the run_claude_with_watchdog function into the same
-// shell scope. We do the join here (vs. having each script `source` a
-// separately-deployed file) so runScript only has to push one file per
-// invocation and there's no chance of a half-deployed pair.
-var agentScript = claudeWatchdogScript + "\n" + agentScriptBody
+//go:embed scripts/sandbox-common.sh
+var sandboxCommonScript string
 
-var followupScript = claudeWatchdogScript + "\n" + followupScriptBody
+// agentScript and followupScript are the on-the-wire script bodies the
+// bot writes to the sandbox. Shared helper scripts are prepended to
+// the user-visible scripts/agent.sh and scripts/followup.sh so their
+// functions live in the same shell scope. We do the join here (vs.
+// having each script `source` a separately-deployed file) so runScript
+// only has to push one file per invocation and there's no chance of a
+// half-deployed set.
+var agentScript = claudeWatchdogScript + "\n" + sandboxCommonScript + "\n" + agentScriptBody
+
+var followupScript = claudeWatchdogScript + "\n" + sandboxCommonScript + "\n" + followupScriptBody
 
 // The no-hard-wrap rule on bullet 5 also covers the Validation section
 // appended by bootstrap.MergeIntoAgentPrompt — see the matching note at
@@ -59,7 +56,7 @@ const agentPromptTemplate = `You are working inside a fresh sandbox. The repo %s
 to %s and %s is checked out. Your task is the user request below.
 
 USER REQUEST:
-%s
+%s%s
 
 When you are done implementing the change:
   1. Create a new branch named feature/sf-%s.
@@ -76,7 +73,7 @@ Conversation so far:
 %s
 
 USER REQUEST:
-%s
+%s%s
 
 When you are done implementing the change:
   1. Run ` + "`make format`" + ` to format the code.
@@ -86,6 +83,20 @@ When you are done implementing the change:
      user request shown in "Conversation so far" above, not this latest change.
   5. If you edit the PR body (e.g. to add a Validation section), write each paragraph or bullet as one long line — do NOT insert hard line breaks; let GitHub reflow the text for the reader's viewport.
   6. The very last line of your output MUST be just the PR URL — no other text on that line.`
+
+func conditionalTasksPrompt(opts chatTaskOptions) string {
+	var tasks []string
+	if opts.ReviewCodeBeforePush {
+		tasks = append(tasks, "- Review code before push: before pushing or opening the PR, launch a Claude Code sub-agent/task to review the branch diff against its base branch. Use the sub-agent for an independent code review focused on bugs, regressions, missing tests, security issues, and maintainability problems. If the reviewer uses severity levels, fix every issue above LOW severity; otherwise fix every concrete actionable issue it reports. Commit and push only after those fixes are in place.")
+	}
+	if opts.ActionPRChecksForDone {
+		tasks = append(tasks, `- Action PR checks for done: after opening or updating the PR, you are not done. Set `+"`PR_URL`"+` to the returned PR URL and `+"`BRANCH`"+` to the pushed branch name, or substitute literal values. Run `+"`gh pr checks \"$PR_URL\" --watch --interval 10`"+`. Do not append `+"`|| true`"+`, `+"`|| echo`"+`, or otherwise swallow check failures; GraphQL/API permission errors are not success. If `+"`gh pr checks`"+` cannot read checks, try `+"`gh run list --branch \"$BRANCH\"`"+` and `+"`gh run watch <run-id>`"+`. If any check fails, fix it, commit, push, and wait again. If an automated AI review is running, wait for it to finish and fix every actionable issue above LOW severity. Only finish when checks and automated reviews are clean, or clearly say verification is blocked instead of claiming done.`)
+	}
+	if len(tasks) == 0 {
+		return ""
+	}
+	return "\n\nADDITIONAL CHAT TASKS ENABLED FOR THIS RUN:\n" + strings.Join(tasks, "\n")
+}
 
 // repoCtx carries the resolved per-request repository details into the
 // sandbox: the slug "owner/name", the default branch the agent should
@@ -99,20 +110,23 @@ type repoCtx struct {
 	GitHubToken  string
 	InstallID    int64
 	RepoID       int64
+	CacheMounted bool
 	TokenExpires time.Time
 }
 
-func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, userRequest, requestID string, validate bool, emit blocks.Emitter) (string, error) {
+func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, agent agents.Profile, userRequest, requestID string, opts chatTaskOptions, model ClaudeModel, emit blocks.Emitter) (string, error) {
+	model = normalizeClaudeModel(model)
 	var spec *bootstrap.Spec
-	// validate=false is the user's explicit "skip end-to-end testing"
-	// opt-out from the new-chat UI. We honour it by not running
-	// bootstrap (which can take minutes on a fresh repo) and not
-	// merging the validation prompt — the agent then behaves the
-	// way it did before this pipeline existed: make the change,
-	// open the PR, done. Slack and follow-ups always pass true.
-	if validate && b.bootstrap != nil && repo.InstallID != 0 && repo.RepoID != 0 {
+	// ValidateChanges=false is the user's explicit "skip end-to-end
+	// testing" opt-out from the new-chat UI. We honour it by not
+	// running bootstrap (which can take minutes on a fresh repo) and
+	// not merging the validation prompt.
+	if opts.ValidateChanges && b.bootstrap != nil && repo.InstallID != 0 && repo.RepoID != 0 {
 		s, err := b.ensureBootstrapSpec(ctx, sb, repo, oc, requestID, emit)
 		if err != nil {
+			if ctx.Err() != nil {
+				return "", err
+			}
 			// Bootstrap is best-effort: a failure here logs + continues
 			// with the unmodified prompt. Future tasks against this repo
 			// will retry. Hard-failing would block users on every repo
@@ -127,43 +141,51 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, o
 		}
 	}
 
-	// Mint screenshot upload slots before constructing the prompt, so
-	// the validation prompt can include the slot count + matching
-	// instructions only when we actually have a place for the agent
-	// to PUT. Errors here downgrade to "no screenshot pipeline" — the
-	// run still produces a PR, just without embedded screenshots.
-	var slotsManifest []screenshots.Slot
-	if validate && spec != nil && b.screenshots != nil {
+	env := map[string]string{
+		"SF_REPO":             repo.Slug,
+		"SF_WORKDIR":          workdir,
+		"SF_BASE_BRANCH":      repo.BaseBranch,
+		"GITHUB_TOKEN":        repo.GitHubToken,
+		"HETCHY_CLAUDE_MODEL": string(model),
+	}
+	addAgentEnv(env, b.cfg, agent)
+	addDaytonaCacheEnv(env, b.cfg, oc, repo, repo.CacheMounted)
+
+	// Mint the default proof-artifact batch before constructing the
+	// prompt, so validation instructions can mention upload slots only
+	// when the S3 path is actually available. The run-scoped token lets
+	// the sandbox request more slots up to artifacts.MaxSlots.
+	var slotsManifest []artifacts.Slot
+	if opts.ValidateChanges && spec != nil {
 		prefix := fmt.Sprintf("%s/%d/%s", oc.OrgID, repo.RepoID, requestID)
-		s, err := b.screenshots.MintSlots(ctx, prefix, screenshotSlotsPerRequest)
-		if err != nil {
-			b.log.Warn("screenshot slot minting failed",
-				"request_id", requestID, "error", err)
-		} else {
+		s, err := b.addArtifactRunEnv(ctx, prefix, env)
+		switch {
+		case err == nil:
 			slotsManifest = s
+		case errors.Is(err, errArtifactSlotsDisabled):
+			// No S3 upload path configured; BuildValidationPrompt will
+			// tell the agent to mark artifact proof incomplete rather
+			// than write broken local-file links.
+		default:
+			b.log.Warn("artifact slot minting failed",
+				"request_id", requestID, "error", err)
 		}
 	}
 
 	originalPrompt := fmt.Sprintf(agentPromptTemplate,
 		repo.Slug, workdir, repo.BaseBranch,
-		userRequest, requestID, repo.BaseBranch,
+		userRequest, conditionalTasksPrompt(opts), requestID, repo.BaseBranch,
 	)
 	finalPrompt := originalPrompt
 	if spec != nil {
 		finalPrompt = bootstrap.MergeIntoAgentPrompt(originalPrompt, spec, bootstrap.ValidationArgs{
-			OwnerRepo:           repo.Slug,
-			Branch:              "feature/sf-" + requestID,
-			ScreenshotSlotCount: len(slotsManifest),
+			OwnerRepo:         repo.Slug,
+			Branch:            "feature/sf-" + requestID,
+			ArtifactSlotCount: len(slotsManifest),
 		})
 	}
 
-	env := map[string]string{
-		"SF_REPO":        repo.Slug,
-		"SF_WORKDIR":     workdir,
-		"SF_BASE_BRANCH": repo.BaseBranch,
-		"SF_PROMPT_B64":  base64.StdEncoding.EncodeToString([]byte(finalPrompt)),
-		"GITHUB_TOKEN":   repo.GitHubToken,
-	}
+	env["SF_PROMPT_B64"] = base64.StdEncoding.EncodeToString([]byte(finalPrompt))
 	// When we have a saved spec, ship its setup/start/health scripts
 	// to agent.sh as base64 env vars. agent.sh decodes them before
 	// invoking claude and runs setup → start (bg) → poll health, so
@@ -176,27 +198,18 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, o
 		env["SF_SPEC_START_B64"] = base64.StdEncoding.EncodeToString([]byte(spec.StartScript))
 		env["SF_SPEC_HEALTH_B64"] = base64.StdEncoding.EncodeToString([]byte(spec.HealthCheck))
 	}
-	if len(slotsManifest) > 0 {
-		// JSON-encode the slot manifest as a single env var. The
-		// agent parses it with `jq` (already in the sandbox) per the
-		// instructions in the validation prompt.
-		raw, err := json.Marshal(slotsManifest)
-		if err != nil {
-			// Marshalling a fixed-shape struct can't realistically
-			// fail; log and proceed without slots rather than
-			// aborting the whole task on this corner.
-			b.log.Warn("screenshot slot marshal failed", "request_id", requestID, "error", err)
-		} else {
-			env["HETCHY_SCREENSHOT_SLOTS"] = string(raw)
-		}
-	}
 	authKey, authVal := claudeAuthEnv(oc)
+	b.log.Info("claude auth", "method", authKey, "token", maskToken(authVal), "request_id", requestID)
 	env[authKey] = authVal
 	if oc.SXKey != "" {
 		env["SX_KEY"] = oc.SXKey
 	}
 	sessionID := "agent-" + requestID
-	prURL, err := b.runScript(ctx, sb, sessionID, "agent", agentScript, env, emit)
+	prURL, err := b.runScriptForRequest(ctx, sb, sessionID, "agent", agentScript, env, emit)
+	if err == nil {
+		b.markRunFinalizing(ctx)
+		prURL, err = b.validateReportedPR(ctx, repo, "feature/sf-"+requestID, repo.BaseBranch, prURL)
+	}
 	if err == nil && spec != nil {
 		// Post-success reflection: read /tmp/hetchy-spec/improved/ to
 		// see if the agent flagged any setup/start/health changes that
@@ -252,14 +265,14 @@ func (b *Bot) ensureBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo
 	}
 
 	emit.Notify("First-time bootstrap",
-		fmt.Sprintf("`%s` is new to Hetchy — figuring out how to run it end-to-end. This adds a few minutes to the first task; subsequent tasks reuse the result.", repo.Slug))
+		fmt.Sprintf("`%s` is new to Hetchy — figuring out how to run it end-to-end. This one-time analysis uses Opus with high effort, so it adds a few minutes to the first task; subsequent tasks reuse the result.", repo.Slug))
 
 	sessionID := "bootstrap-" + requestID
-	if err := sb.Process.CreateSession(ctx, sessionID); err != nil {
+	if err := b.createBootstrapSession(ctx, sb, sessionID); err != nil {
 		return nil, fmt.Errorf("create bootstrap session: %w", err)
 	}
 	defer func() {
-		_ = sb.Process.DeleteSession(ctx, sessionID)
+		b.deleteSandboxSession(sb, sessionID)
 	}()
 
 	cloneEnv := map[string]string{
@@ -268,11 +281,11 @@ func (b *Bot) ensureBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo
 		"SF_BASE_BRANCH": repo.BaseBranch,
 		"GITHUB_TOKEN":   repo.GitHubToken,
 	}
-	if err := b.runInlineScript(ctx, sb, sessionID, "setup-clone", setupCloneScript, cloneEnv, emit); err != nil {
+	if err := b.runBootstrapInlineScript(ctx, sb, sessionID, "setup-clone", setupCloneScript, cloneEnv, emit); err != nil {
 		return nil, fmt.Errorf("setup-clone: %w", err)
 	}
 
-	hints, tempRoot, err := b.detectViaSandbox(ctx, sb, sessionID, workdir)
+	hints, tempRoot, err := b.detectBootstrapHints(ctx, sb, sessionID, workdir)
 	if err != nil {
 		return nil, fmt.Errorf("detect: %w", err)
 	}
@@ -284,17 +297,22 @@ func (b *Bot) ensureBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo
 	}
 
 	authKey, authVal := claudeAuthEnv(oc)
+	b.log.Info("claude auth", "method", authKey, "token", maskToken(authVal), "request_id", sessionID)
+	baseEnv := map[string]string{
+		authKey:                authVal,
+		"GITHUB_TOKEN":         repo.GitHubToken,
+		"HETCHY_CLAUDE_MODEL":  string(ClaudeModelOpus),
+		"HETCHY_CLAUDE_EFFORT": "high",
+	}
+	addDaytonaCacheEnv(baseEnv, b.cfg, oc, repo, repo.CacheMounted)
 	runner := &botRunner{
 		b:         b,
 		sb:        sb,
 		sessionID: sessionID,
 		emit:      emit,
-		baseEnv: map[string]string{
-			authKey:        authVal,
-			"GITHUB_TOKEN": repo.GitHubToken,
-		},
+		baseEnv:   baseEnv,
 	}
-	res, err := bootstrap.Run(ctx, runner, bootstrap.LoopInput{
+	res, err := b.runBootstrapLoop(ctx, runner, bootstrap.LoopInput{
 		OwnerRepo:       repo.Slug,
 		Hints:           hints,
 		SuppliedSecrets: suppliedSecrets,
@@ -334,6 +352,37 @@ func (b *Bot) ensureBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo
 		fmt.Sprintf("Saved a `%s` setup for `%s` (status: %s). The agent will now run with end-to-end validation.",
 			res.Spec.Kind, repo.Slug, res.Spec.ValidationStatus))
 	return res.Spec, nil
+}
+
+func (b *Bot) createBootstrapSession(ctx context.Context, sb *daytona.Sandbox, sessionID string) error {
+	if b.createBootstrapSessionFn != nil {
+		return b.createBootstrapSessionFn(ctx, sb, sessionID)
+	}
+	if sb == nil || sb.Process == nil {
+		return errors.New("sandbox process not configured")
+	}
+	return sb.Process.CreateSession(ctx, sessionID)
+}
+
+func (b *Bot) runBootstrapInlineScript(ctx context.Context, sb *daytona.Sandbox, sessionID, label, scriptBody string, env map[string]string, emit blocks.Emitter) error {
+	if b.runInlineScriptFn != nil {
+		return b.runInlineScriptFn(ctx, sb, sessionID, label, scriptBody, env, emit)
+	}
+	return b.runInlineScript(ctx, sb, sessionID, label, scriptBody, env, emit)
+}
+
+func (b *Bot) detectBootstrapHints(ctx context.Context, sb *daytona.Sandbox, sessionID, workdir string) (*bootstrap.Hints, string, error) {
+	if b.detectViaSandboxFn != nil {
+		return b.detectViaSandboxFn(ctx, sb, sessionID, workdir)
+	}
+	return b.detectViaSandbox(ctx, sb, sessionID, workdir)
+}
+
+func (b *Bot) runBootstrapLoop(ctx context.Context, runner bootstrap.Runner, in bootstrap.LoopInput) (*bootstrap.LoopResult, error) {
+	if b.bootstrapRunFn != nil {
+		return b.bootstrapRunFn(ctx, runner, in)
+	}
+	return bootstrap.Run(ctx, runner, in)
 }
 
 // persistFailingBootstrap saves a StatusFailing spec row from a
@@ -405,7 +454,7 @@ func (b *Bot) runInlineScript(ctx context.Context, sb *daytona.Sandbox, sessionI
 	scriptPath := "/tmp/sf-" + label + ".sh"
 	body := strings.TrimRight(scriptBody, "\n")
 	writeCmd := heredocWriteCmd(scriptPath, body, true)
-	if _, err := b.shLines(ctx, sb.ID, sb.Process, sessionID, label+"-write", writeCmd, 30*time.Second, 0, func(string) {}); err != nil {
+	if _, err := b.shLines(ctx, sb.ID, sb.Process, sessionID, label+"-write", writeCmd, 30*time.Second, 0, true, func(string) {}); err != nil {
 		return fmt.Errorf("write %s: %w", label, err)
 	}
 
@@ -421,7 +470,7 @@ func (b *Bot) runInlineScript(ctx context.Context, sb *daytona.Sandbox, sessionI
 	runCmd := prefix.String() + "bash " + scriptPath
 
 	router := newBootstrapLineRouter(emit)
-	if _, err := b.shLines(ctx, sb.ID, sb.Process, sessionID, label+"-run", runCmd, 5*time.Minute, 0, router.Line); err != nil {
+	if _, err := b.shLines(ctx, sb.ID, sb.Process, sessionID, label+"-run", runCmd, 5*time.Minute, 0, false, router.Line); err != nil {
 		router.Fail(label + " failed")
 		return fmt.Errorf("run %s: %w", label, err)
 	}
@@ -444,54 +493,81 @@ func claudeAuthEnv(oc orgcfg.Config) (name, value string) {
 	return "ANTHROPIC_API_KEY", oc.AnthropicAPIKey
 }
 
+// maskToken returns exactly 8 asterisks so logs confirm a token is set without
+// revealing any characters or length information. Returns "(empty)" when s is
+// empty so callers can distinguish a missing token from a present one.
+func maskToken(s string) string {
+	if len(s) == 0 {
+		return "(empty)"
+	}
+	return "********"
+}
+
+func addAgentEnv(env map[string]string, cfg Config, agent agents.Profile) {
+	env["HETCHY_AGENT_SLUG"] = agent.Slug
+	env["HETCHY_AGENT_NAME"] = agent.DisplayName
+	env["HETCHY_AGENT_SX_BOT"] = agent.SXBot
+	env["HETCHY_AGENT_PERSONA_ASSET"] = agent.PersonaAsset
+	env["HETCHY_AGENT_PROMPT_B64"] = base64.StdEncoding.EncodeToString([]byte(agent.PersonaPrompt))
+	if cfg.SXPublicVaultURL != "" {
+		env["HETCHY_SX_PUBLIC_VAULT_URL"] = cfg.SXPublicVaultURL
+	}
+}
+
 // runFollowUp resumes work in an existing sandbox. The installation
 // token is freshly minted and passed per-run (not just at sandbox-create
 // time) so a token rotation or a re-installed App takes effect on the
 // very next follow-up rather than only on a freshly-created sandbox.
-func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, rec convstore.Record, userRequest, requestID string, emit blocks.Emitter) (string, error) {
-	history := strings.Join(rec.History, "\n---\n")
-	prompt := fmt.Sprintf(agentFollowUpPromptTemplate,
-		workdir, rec.Branch, rec.PRURL,
-		history, userRequest,
-	)
-
-	// Mint a fresh batch of screenshot slots for the follow-up. The
-	// initial run's slots have a 30-minute PUT expiry and the keys
-	// (screenshot-NNN.png) would collide anyway, so we always issue a
-	// new batch under a `/followup-<requestID>` suffix. Without this
-	// step a follow-up that needs to attach a screenshot has no upload
-	// path, and the agent falls back to embedding broken local-file
-	// markdown that GitHub renders as a non-rendering hyperlink.
-	var slotsManifest []screenshots.Slot
-	if b.screenshots != nil {
-		prefix := fmt.Sprintf("%s/%d/%s/followup-%s", oc.OrgID, repo.RepoID, rec.ThreadID, requestID)
-		s, err := b.screenshots.MintSlots(ctx, prefix, screenshotSlotsPerRequest)
-		if err != nil {
-			b.log.Warn("screenshot slot minting failed (followup)",
-				"request_id", requestID, "error", err)
-		} else {
-			slotsManifest = s
-			prompt += "\n" + screenshots.UploadInstructions(len(slotsManifest))
+func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, userRequest, requestID string, opts chatTaskOptions, model ClaudeModel, emit blocks.Emitter) (string, error) {
+	model = normalizeClaudeModel(model)
+	var spec *bootstrap.Spec
+	if opts.ValidateChanges && b.bootstrap != nil && repo.InstallID != 0 && repo.RepoID != 0 {
+		s, err := b.bootstrap.GetSpec(ctx, repo.InstallID, repo.RepoID, "")
+		switch {
+		case err == nil:
+			spec = s
+		case errors.Is(err, bootstrap.ErrNotFound):
+			// No saved spec yet; follow-up remains a normal PR update.
+		default:
+			b.log.Warn("get bootstrap spec for follow-up failed",
+				"request_id", requestID, "repo", repo.Slug, "error", err)
 		}
 	}
 
 	env := map[string]string{
-		"SF_WORKDIR":    workdir,
-		"SF_BRANCH":     rec.Branch,
-		"SF_PROMPT_B64": base64.StdEncoding.EncodeToString([]byte(prompt)),
-		"GITHUB_TOKEN":  repo.GitHubToken,
+		"SF_WORKDIR":          workdir,
+		"SF_BRANCH":           rec.Branch,
+		"GITHUB_TOKEN":        repo.GitHubToken,
+		"HETCHY_CLAUDE_MODEL": string(model),
 	}
-	if len(slotsManifest) > 0 {
-		raw, err := json.Marshal(slotsManifest)
-		if err != nil {
-			b.log.Warn("screenshot slot marshal failed (followup)",
+	addAgentEnv(env, b.cfg, agent)
+
+	var slotsManifest []artifacts.Slot
+	if opts.ValidateChanges && spec != nil {
+		// Follow-ups can still need fresh proof links. Issue a new
+		// run-scoped batch under a follow-up prefix so keys don't
+		// collide with the initial request.
+		prefix := fmt.Sprintf("%s/%d/%s/followup-%s", oc.OrgID, repo.RepoID, rec.ThreadID, requestID)
+		s, err := b.addArtifactRunEnv(ctx, prefix, env)
+		switch {
+		case err == nil:
+			slotsManifest = s
+		case errors.Is(err, errArtifactSlotsDisabled):
+			// No S3 upload path configured; validation prompt will
+			// require an explicit incomplete-artifact note.
+		default:
+			b.log.Warn("artifact slot minting failed (followup)",
 				"request_id", requestID, "error", err)
-		} else {
-			env["HETCHY_SCREENSHOT_SLOTS"] = string(raw)
 		}
 	}
+	prompt := buildFollowUpPrompt(repo.Slug, rec, userRequest, spec, len(slotsManifest), opts)
+	env["SF_PROMPT_B64"] = base64.StdEncoding.EncodeToString([]byte(prompt))
 	authKey, authVal := claudeAuthEnv(oc)
+	b.log.Info("claude auth", "method", authKey, "token", maskToken(authVal), "request_id", requestID)
 	env[authKey] = authVal
+	if oc.SXKey != "" {
+		env["SX_KEY"] = oc.SXKey
+	}
 	// A follow-up lands in an unarchived sandbox where any background
 	// processes from the original run are gone — including the
 	// `start.sh &` invocation that brought the app up. Without this
@@ -500,15 +576,40 @@ func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx
 	// re-run setup → start → poll health, mirroring agent.sh. Errors
 	// here are best-effort: a missing spec just means the follow-up
 	// runs without a live app, same as before.
-	if b.bootstrap != nil && repo.InstallID != 0 && repo.RepoID != 0 {
-		spec, err := b.bootstrap.GetSpec(ctx, repo.InstallID, repo.RepoID, "")
-		if err == nil && spec.SetupScript != "" && spec.StartScript != "" && spec.HealthCheck != "" {
-			env["SF_SPEC_SETUP_B64"] = base64.StdEncoding.EncodeToString([]byte(spec.SetupScript))
-			env["SF_SPEC_START_B64"] = base64.StdEncoding.EncodeToString([]byte(spec.StartScript))
-			env["SF_SPEC_HEALTH_B64"] = base64.StdEncoding.EncodeToString([]byte(spec.HealthCheck))
-		}
+	if spec != nil && spec.SetupScript != "" && spec.StartScript != "" && spec.HealthCheck != "" {
+		env["SF_SPEC_SETUP_B64"] = base64.StdEncoding.EncodeToString([]byte(spec.SetupScript))
+		env["SF_SPEC_START_B64"] = base64.StdEncoding.EncodeToString([]byte(spec.StartScript))
+		env["SF_SPEC_HEALTH_B64"] = base64.StdEncoding.EncodeToString([]byte(spec.HealthCheck))
 	}
-	return b.runScript(ctx, sb, "followup-"+requestID, "followup", followupScript, env, emit)
+	prURL, err := b.runScriptForRequest(ctx, sb, "followup-"+requestID, "followup", followupScript, env, emit)
+	if err != nil {
+		return "", err
+	}
+	b.markRunFinalizing(ctx)
+	return b.validateReportedPR(ctx, repo, rec.Branch, "", prURL)
+}
+
+func buildFollowUpPrompt(ownerRepo string, rec convstore.Record, userRequest string, spec *bootstrap.Spec, artifactSlotCount int, opts chatTaskOptions) string {
+	history := strings.Join(rec.History, "\n---\n")
+	prompt := fmt.Sprintf(agentFollowUpPromptTemplate,
+		workdir, rec.Branch, rec.PRURL,
+		history, userRequest, conditionalTasksPrompt(opts),
+	)
+	if spec == nil {
+		return prompt
+	}
+	return bootstrap.MergeIntoAgentPrompt(prompt, spec, bootstrap.ValidationArgs{
+		OwnerRepo:         ownerRepo,
+		Branch:            rec.Branch,
+		ArtifactSlotCount: artifactSlotCount,
+	})
+}
+
+func (b *Bot) runScriptForRequest(ctx context.Context, sb *daytona.Sandbox, sessionID, label, scriptBody string, env map[string]string, emit blocks.Emitter) (string, error) {
+	if b.runScriptFn != nil {
+		return b.runScriptFn(ctx, sb, sessionID, label, scriptBody, env, emit)
+	}
+	return b.runScript(ctx, sb, sessionID, label, scriptBody, env, emit)
 }
 
 // runScript writes scriptBody to /tmp/sf-<label>.sh inside the sandbox
@@ -521,11 +622,7 @@ func (b *Bot) runScript(ctx context.Context, sb *daytona.Sandbox, sessionID, lab
 	if err := sb.Process.CreateSession(ctx, sessionID); err != nil {
 		return "", fmt.Errorf("create session: %w", err)
 	}
-	defer func() {
-		_ = b.retryWithBackoff(ctx, "delete session", func() error {
-			return sb.Process.DeleteSession(ctx, sessionID)
-		})
-	}()
+	b.markRunSession(ctx, sessionID)
 
 	// Writing the script generates no user-visible output; pass a noop
 	// line handler so it doesn't open a stray block.
@@ -541,7 +638,12 @@ func (b *Bot) runScript(ctx context.Context, sb *daytona.Sandbox, sessionID, lab
 	scriptPath := "/tmp/sf-" + label + ".sh"
 	body := strings.TrimRight(scriptBody, "\n")
 	writeCmd := heredocWriteCmd(scriptPath, body, true)
-	if _, err := b.shLines(ctx, sb.ID, sb.Process, sessionID, "write-script", writeCmd, 15*time.Second, 0, func(string) {}); err != nil {
+	if _, err := b.shLines(ctx, sb.ID, sb.Process, sessionID, "write-script", writeCmd, 15*time.Second, 0, true, func(string) {}); err != nil {
+		return "", err
+	}
+
+	env = maps.Clone(env)
+	if err := b.materializeLargeRunEnv(ctx, sb.ID, sb.Process, sessionID, label, env); err != nil {
 		return "", err
 	}
 
@@ -555,19 +657,52 @@ func (b *Bot) runScript(ctx context.Context, sb *daytona.Sandbox, sessionID, lab
 		prefix.WriteString(shellQuote(env[k]))
 		prefix.WriteByte(' ')
 	}
-	runCmd := prefix.String() + "bash " + scriptPath
+	runID := currentAgentRunID(ctx)
+	if runID == "" {
+		runID = stableAgentRunID(sb.ID, sessionID, label)
+	}
+	runCmd := prefix.String() + framedAgentCommand(runID, scriptPath)
 
-	// Heartbeat: emit a "still working" block every 5 minutes so the
+	// Heartbeat: emit a "still working" update every minute so the
 	// user knows the agent is alive during long runs.
 	stop := startHeartbeat(ctx, emit, "Still working", "Agent has been running for %v — still in progress.")
 	defer stop()
 
 	router := newAgentLineRouter(emit)
-	if _, err := b.shLines(ctx, sb.ID, sb.Process, sessionID, "run-script", runCmd, 45*time.Minute, 15*time.Minute, router.Line); err != nil {
+	durable := agentRunEmitterFromContext(ctx)
+	framed := newHetchyFrameRouter(runID, func(line string) {
+		if durable != nil {
+			durable.BeginBatch()
+		}
+		router.Line(line)
+	}, func(cursor int64) {
+		if durable != nil {
+			_ = durable.FlushBatch(cursor)
+		} else {
+			b.markRunCursor(ctx, cursor)
+		}
+	})
+	if _, err := b.shLines(ctx, sb.ID, sb.Process, sessionID, "run-script", runCmd, 45*time.Minute, 15*time.Minute, true, framed.Line); err != nil {
 		router.Abort()
 		return "", err
 	}
+	if durable != nil {
+		if err := durable.Err(); err != nil {
+			router.Abort()
+			return "", fmt.Errorf("%w: persist agent run events: %w", errAgentRunDurability, err)
+		}
+	}
+	if !framed.SeenBegin() {
+		router.Abort()
+		return "", fmt.Errorf("agent run %s produced no Hetchy begin sentinel", runID)
+	}
 	prURL := router.Finish()
+	if durable != nil {
+		if err := durable.Err(); err != nil {
+			router.Abort()
+			return "", fmt.Errorf("%w: persist agent run events: %w", errAgentRunDurability, err)
+		}
+	}
 	if prURL == "" {
 		// Distinguish "setup never reached claude" from "claude ran
 		// but didn't post a URL". Both surface here but they need
@@ -579,4 +714,60 @@ func (b *Bot) runScript(ctx context.Context, sb *daytona.Sandbox, sessionID, lab
 		return "", fmt.Errorf("claude finished the %s run without posting a PR URL — check the agent transcript blocks", label)
 	}
 	return prURL, nil
+}
+
+const sandboxEnvFileThreshold = 8 * 1024
+
+var sandboxEnvFileKeys = map[string]string{
+	"HETCHY_AGENT_PROMPT_B64": "HETCHY_AGENT_PROMPT_B64_FILE",
+	"SF_PROMPT_B64":           "SF_PROMPT_B64_FILE",
+	"SF_SPEC_HEALTH_B64":      "SF_SPEC_HEALTH_B64_FILE",
+	"SF_SPEC_SETUP_B64":       "SF_SPEC_SETUP_B64_FILE",
+	"SF_SPEC_START_B64":       "SF_SPEC_START_B64_FILE",
+}
+
+func (b *Bot) materializeLargeRunEnv(ctx context.Context, sandboxID string, proc sandboxProcess, sessionID, label string, env map[string]string) error {
+	var keys []string
+	for key := range sandboxEnvFileKeys {
+		if val, ok := env[key]; ok && len(val) > sandboxEnvFileThreshold {
+			keys = append(keys, key)
+		}
+	}
+	slices.Sort(keys)
+	if len(keys) == 0 {
+		return nil
+	}
+
+	dir := "/tmp/hetchy-env/" + label
+	var cmd strings.Builder
+	cmd.WriteString("rm -rf -- ")
+	cmd.WriteString(shellQuote(dir))
+	cmd.WriteByte('\n')
+	cmd.WriteString("mkdir -p -- ")
+	cmd.WriteString(shellQuote(dir))
+
+	fileVars := make(map[string]string, len(keys))
+	for _, key := range keys {
+		val := env[key]
+		path := dir + "/" + strings.ToLower(key) + ".b64"
+		fileVars[key] = path
+		cmd.WriteByte('\n')
+		cmd.WriteString(heredocWriteCmd(path, val, false))
+		b.log.Info("sandbox env file write",
+			"sandbox", sandboxID,
+			"session", sessionID,
+			"label", label,
+			"key", key,
+			"bytes", len(val),
+		)
+	}
+	if _, err := b.shLines(ctx, sandboxID, proc, sessionID, "write-env", cmd.String(), 60*time.Second, 0, true, func(string) {}); err != nil {
+		return fmt.Errorf("write env files: %w", err)
+	}
+	for _, key := range keys {
+		fileKey := sandboxEnvFileKeys[key]
+		delete(env, key)
+		env[fileKey] = fileVars[key]
+	}
+	return nil
 }

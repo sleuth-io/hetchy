@@ -2,6 +2,7 @@ package bot
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -23,8 +24,24 @@ type Config struct {
 
 	DaytonaAPIURL string
 	Snapshot      string
-	DatabaseURL   string
-	WebPort       string
+	// DaytonaCacheVolumesDisabled disables dependency cache volume
+	// mounting when DAYTONA_CACHE_VOLUMES_DISABLED=1.
+	DaytonaCacheVolumesDisabled bool
+	// DaytonaCacheVolumePrefix is used in physical Daytona cache pool
+	// volume names. Orgs are hashed into fixed dev/stg/prod pools so one
+	// shared Daytona org stays within the 100-volume limit.
+	DaytonaCacheVolumePrefix string
+	// DaytonaCachePruneDays controls best-effort pruning of old
+	// dependency cache files inside the local staging cache before it is
+	// archived back to the mounted repo subpath.
+	DaytonaCachePruneDays int
+	DatabaseURL           string
+	// DatabaseMaxConns caps the pgx connection pool. Zero leaves the
+	// pgx default (max(4, NumCPU)) — fine for `make bot`, but in
+	// staging/prod set DATABASE_MAX_CONNS so the pool doesn't starve
+	// under SSE + recovery-loop concurrency.
+	DatabaseMaxConns int32
+	WebPort          string
 
 	WorkOSAPIKey         string
 	WorkOSClientID       string
@@ -73,15 +90,22 @@ type Config struct {
 	AuthBypassRole  string
 	AuthBypassEmail string
 
-	// S3Bucket and S3Region pin the screenshot-attachment bucket the bot
-	// presigns into. Both empty disables the screenshot upload path —
-	// callers fall back to the legacy /tmp/hetchy-validate filename
-	// references that the agent puts in PR markdown. AWS credentials
+	// S3Bucket and S3Region pin the proof-artifact bucket the bot
+	// presigns into. Both empty disables the artifact upload path.
+	// AWS credentials
 	// come from the standard SDK chain (env vars, ~/.aws/credentials,
 	// IAM role) — we don't read them here.
 	S3Bucket string
 	S3Region string
+
+	// SXPublicVaultURL is the git sx vault containing Hetchy's built-in
+	// agent personas and role skills. Each sandbox installs it with
+	// SX_BOT=<selected agent> before running Claude. The org's skills.new
+	// vault, when configured, is installed separately.
+	SXPublicVaultURL string
 }
+
+const DefaultSXPublicVaultURL = "https://github.com/hetchyhq/hetchy-sx-vault.git"
 
 // LoadConfig reads required and optional env vars. Set AUTH_BYPASS=1 to
 // skip the WorkOS round-trip for tests/CI.
@@ -113,7 +137,19 @@ func LoadConfig() (Config, error) {
 
 	port := getenvDefault("WEB_PORT", "8080")
 	logout := getenvDefault("LOGOUT_RETURN_TO", "http://localhost:"+port+"/")
+	// CookieSecure defaults to true (required for production HTTPS). It is
+	// forced to false when COOKIE_INSECURE=1 is set OR when WORKOS_REDIRECT_URI
+	// starts with http:// — that scheme indicates the server is running over
+	// plain HTTP (local dev), where browsers refuse Secure cookies. Relying
+	// solely on COOKIE_INSECURE=1 breaks when Doppler (or any secret manager)
+	// overwrites the Makefile-exported value with an empty string from its own
+	// config; deriving from the URI removes that dependency.
 	cookieSecure := os.Getenv("COOKIE_INSECURE") == ""
+	if cookieSecure {
+		if u, err := url.Parse(strings.TrimSpace(os.Getenv("WORKOS_REDIRECT_URI"))); err == nil && u.Scheme == "http" {
+			cookieSecure = false
+		}
+	}
 
 	var ghAppID int64
 	if v := os.Getenv("GITHUB_APP_ID"); v != "" {
@@ -124,26 +160,52 @@ func LoadConfig() (Config, error) {
 		ghAppID = n
 	}
 
+	var dbMaxConns int32
+	if v := strings.TrimSpace(os.Getenv("DATABASE_MAX_CONNS")); v != "" {
+		n, err := strconv.ParseInt(v, 10, 32)
+		if err != nil || n < 1 {
+			return Config{}, fmt.Errorf("DATABASE_MAX_CONNS must be a positive integer (got %q)", v)
+		}
+		dbMaxConns = int32(n)
+	}
+
+	cachePruneDays := defaultCachePruneDays
+	if v := strings.TrimSpace(os.Getenv("DAYTONA_CACHE_PRUNE_DAYS")); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			return Config{}, fmt.Errorf("DAYTONA_CACHE_PRUNE_DAYS must be a positive integer (got %q)", v)
+		}
+		cachePruneDays = n
+	}
+	cacheVolumePrefix := strings.TrimSpace(os.Getenv("DAYTONA_CACHE_VOLUME_PREFIX"))
+	if cacheVolumePrefix == "" {
+		cacheVolumePrefix = defaultCacheVolumePrefix
+	}
+
 	return Config{
-		Env:                   getenvDefault("HETCHY_ENV", "prod"),
-		DaytonaAPIURL:         strings.TrimSpace(os.Getenv("DAYTONA_API_URL")),
-		Snapshot:              os.Getenv("DAYTONA_SNAPSHOT"),
-		DatabaseURL:           os.Getenv("DATABASE_URL"),
-		WebPort:               port,
-		WorkOSAPIKey:          strings.TrimSpace(os.Getenv("WORKOS_API_KEY")),
-		WorkOSClientID:        strings.TrimSpace(os.Getenv("WORKOS_CLIENT_ID")),
-		WorkOSCookiePassword:  strings.TrimSpace(os.Getenv("WORKOS_COOKIE_PASSWORD")),
-		WorkOSRedirectURI:     strings.TrimSpace(os.Getenv("WORKOS_REDIRECT_URI")),
-		LogoutReturnTo:        logout,
-		CookieSecure:          cookieSecure,
-		SecretsEncryptionKey:  strings.TrimSpace(os.Getenv("SECRETS_ENCRYPTION_KEY")),
-		SlackSigningSecret:    strings.TrimSpace(os.Getenv("SLACK_SIGNING_SECRET")),
-		SlackClientID:         strings.TrimSpace(os.Getenv("SLACK_CLIENT_ID")),
-		SlackClientSecret:     strings.TrimSpace(os.Getenv("SLACK_CLIENT_SECRET")),
-		SlackOAuthRedirectURI: strings.TrimSpace(os.Getenv("SLACK_OAUTH_REDIRECT_URI")),
-		GitHubAppID:           ghAppID,
-		GitHubAppSlug:         strings.TrimSpace(os.Getenv("GITHUB_APP_SLUG")),
-		GitHubAppClientID:     strings.TrimSpace(os.Getenv("GITHUB_APP_CLIENT_ID")),
+		Env:                         getenvDefault("HETCHY_ENV", "prod"),
+		DaytonaAPIURL:               strings.TrimSpace(os.Getenv("DAYTONA_API_URL")),
+		Snapshot:                    os.Getenv("DAYTONA_SNAPSHOT"),
+		DaytonaCacheVolumesDisabled: strings.TrimSpace(os.Getenv("DAYTONA_CACHE_VOLUMES_DISABLED")) == "1",
+		DaytonaCacheVolumePrefix:    cacheVolumePrefix,
+		DaytonaCachePruneDays:       cachePruneDays,
+		DatabaseURL:                 os.Getenv("DATABASE_URL"),
+		DatabaseMaxConns:            dbMaxConns,
+		WebPort:                     port,
+		WorkOSAPIKey:                strings.TrimSpace(os.Getenv("WORKOS_API_KEY")),
+		WorkOSClientID:              strings.TrimSpace(os.Getenv("WORKOS_CLIENT_ID")),
+		WorkOSCookiePassword:        strings.TrimSpace(os.Getenv("WORKOS_COOKIE_PASSWORD")),
+		WorkOSRedirectURI:           strings.TrimSpace(os.Getenv("WORKOS_REDIRECT_URI")),
+		LogoutReturnTo:              logout,
+		CookieSecure:                cookieSecure,
+		SecretsEncryptionKey:        strings.TrimSpace(os.Getenv("SECRETS_ENCRYPTION_KEY")),
+		SlackSigningSecret:          strings.TrimSpace(os.Getenv("SLACK_SIGNING_SECRET")),
+		SlackClientID:               strings.TrimSpace(os.Getenv("SLACK_CLIENT_ID")),
+		SlackClientSecret:           strings.TrimSpace(os.Getenv("SLACK_CLIENT_SECRET")),
+		SlackOAuthRedirectURI:       strings.TrimSpace(os.Getenv("SLACK_OAUTH_REDIRECT_URI")),
+		GitHubAppID:                 ghAppID,
+		GitHubAppSlug:               strings.TrimSpace(os.Getenv("GITHUB_APP_SLUG")),
+		GitHubAppClientID:           strings.TrimSpace(os.Getenv("GITHUB_APP_CLIENT_ID")),
 		// Not trimmed: PEM contents are multi-line and the parser relies on
 		// embedded newlines; trimming risks corrupting the key.
 		GitHubAppPrivateKey:    os.Getenv("GITHUB_APP_PRIVATE_KEY"),
@@ -155,6 +217,7 @@ func LoadConfig() (Config, error) {
 		AuthBypassEmail:        getenvDefault("AUTH_BYPASS_EMAIL", "bypass@hetchy.local"),
 		S3Bucket:               strings.TrimSpace(os.Getenv("HETCHY_S3_BUCKET")),
 		S3Region:               strings.TrimSpace(os.Getenv("HETCHY_S3_REGION")),
+		SXPublicVaultURL:       getenvDefaultTrimAllowDisabled("HETCHY_SX_PUBLIC_VAULT_URL", DefaultSXPublicVaultURL),
 	}, nil
 }
 
@@ -165,13 +228,25 @@ func getenvDefault(key, def string) string {
 	return def
 }
 
+func getenvDefaultTrimAllowDisabled(key, def string) string {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return def
+	}
+	switch strings.ToLower(v) {
+	case "disabled", "off", "none", "-":
+		return ""
+	default:
+		return v
+	}
+}
+
 // PublicBaseURL returns the externally-reachable base URL for the web
-// app (no trailing slash). Doppler sets LOGOUT_RETURN_TO per-env (it's
-// the canonical "public app root" — required by WorkOS for the logout
-// redirect), so we reuse it here for any link that needs to point back
-// into our running instance from elsewhere (e.g. Slack deep links).
-// Falls back to the local bind URL when LOGOUT_RETURN_TO is unset, so
-// dev without Doppler still works.
+// app (no trailing slash). LOGOUT_RETURN_TO is the canonical "public app
+// root" used for external link generation (e.g. Slack deep links) — it no
+// longer controls the post-logout redirect, which is derived from
+// WORKOS_REDIRECT_URI in auth.New(). Falls back to the local bind URL when
+// LOGOUT_RETURN_TO is unset.
 func (c Config) PublicBaseURL() string {
 	if base := strings.TrimSuffix(c.LogoutReturnTo, "/"); base != "" {
 		return base

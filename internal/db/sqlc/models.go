@@ -8,6 +8,68 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type AgentProfile struct {
+	ID            pgtype.UUID        `json:"id"`
+	OrgID         string             `json:"org_id"`
+	Slug          string             `json:"slug"`
+	DisplayName   string             `json:"display_name"`
+	Description   string             `json:"description"`
+	SxBot         string             `json:"sx_bot"`
+	PersonaAsset  string             `json:"persona_asset"`
+	PersonaPrompt string             `json:"persona_prompt"`
+	SlackAliases  []string           `json:"slack_aliases"`
+	Enabled       bool               `json:"enabled"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+	Skills        []string           `json:"skills"`
+	BuiltIn       bool               `json:"built_in"`
+}
+
+type AgentProfileTemplate struct {
+	Slug          string             `json:"slug"`
+	DisplayName   string             `json:"display_name"`
+	Description   string             `json:"description"`
+	SxBot         string             `json:"sx_bot"`
+	PersonaAsset  string             `json:"persona_asset"`
+	PersonaPrompt string             `json:"persona_prompt"`
+	SlackAliases  []string           `json:"slack_aliases"`
+	Skills        []string           `json:"skills"`
+	Enabled       bool               `json:"enabled"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+}
+
+type AgentRun struct {
+	ID              string             `json:"id"`
+	OrgID           string             `json:"org_id"`
+	ThreadID        string             `json:"thread_id"`
+	RunKind         string             `json:"run_kind"`
+	RequestID       string             `json:"request_id"`
+	SandboxID       string             `json:"sandbox_id"`
+	Branch          string             `json:"branch"`
+	UserRequest     string             `json:"user_request"`
+	SessionID       string             `json:"session_id"`
+	CommandID       string             `json:"command_id"`
+	CommandStartSeq int64              `json:"command_start_seq"`
+	State           string             `json:"state"`
+	LogCursor       int64              `json:"log_cursor"`
+	NextEventSeq    int64              `json:"next_event_seq"`
+	LeaseOwner      string             `json:"lease_owner"`
+	LeaseExpiresAt  pgtype.Timestamptz `json:"lease_expires_at"`
+	HeartbeatAt     pgtype.Timestamptz `json:"heartbeat_at"`
+	LastError       string             `json:"last_error"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
+type AgentRunEvent struct {
+	RunID     string             `json:"run_id"`
+	Seq       int64              `json:"seq"`
+	Event     string             `json:"event"`
+	Data      []byte             `json:"data"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
 type Conversation struct {
 	OrgID          string             `json:"org_id"`
 	ThreadID       string             `json:"thread_id"`
@@ -22,6 +84,9 @@ type Conversation struct {
 	ResponseBlocks [][]byte           `json:"response_blocks"`
 	CustomTitle    string             `json:"custom_title"`
 	CreatorID      string             `json:"creator_id"`
+	AgentSlug      string             `json:"agent_slug"`
+	Model          string             `json:"model"`
+	TaskOptions    []byte             `json:"task_options"`
 }
 
 type GithubAppInstallation struct {
