@@ -133,6 +133,9 @@ func TestConditionalTasksPromptRespectsOptions(t *testing.T) {
 		"Do not append `|| true`",
 		"GraphQL/API permission error",
 		`gh run list --branch "$BRANCH"`,
+		`gh pr view "$PR_URL" --json reviewDecision,latestReviews,statusCheckRollup`,
+		"correct gh field is `statusCheckRollup`",
+		"NOT `statusCheckRollupState`",
 		"automated AI review",
 		"LOW severity",
 	} {
