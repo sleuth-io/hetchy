@@ -28,10 +28,6 @@ const (
 	daytonaCacheDevVolumeCount  = 10
 	daytonaCacheStgVolumeCount  = 10
 	daytonaCacheProdVolumeCount = 80
-
-	daytonaSandboxLabelEnv           = "hetchy_env"
-	daytonaSandboxLabelOrgID         = "hetchy_org_id"
-	daytonaSandboxLabelCacheVolumeID = "hetchy_cache_volume_id"
 )
 
 type daytonaCacheVolumeService interface {
@@ -235,19 +231,6 @@ func daytonaCacheSubpath(oc orgcfg.Config, repo repoCtx) string {
 func daytonaCacheOrgHash(orgID string) string {
 	hash := sha256.Sum256([]byte(orgID))
 	return hex.EncodeToString(hash[:])[:16]
-}
-
-func daytonaSandboxLabels(cfg Config, oc orgcfg.Config, cacheVolumeID string) map[string]string {
-	labels := map[string]string{
-		daytonaSandboxLabelEnv: daytonaSandboxEnv(cfg.Env),
-	}
-	if strings.TrimSpace(oc.OrgID) != "" {
-		labels[daytonaSandboxLabelOrgID] = oc.OrgID
-	}
-	if strings.TrimSpace(cacheVolumeID) != "" {
-		labels[daytonaSandboxLabelCacheVolumeID] = cacheVolumeID
-	}
-	return labels
 }
 
 func sanitizeDaytonaNamePart(s string) string {
