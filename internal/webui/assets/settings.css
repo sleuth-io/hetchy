@@ -58,6 +58,9 @@
                    cursor: pointer; }
   .saved-banner { background: #efe; color: #060; padding: .5rem .75rem;
                   border-radius: .4rem; margin-bottom: 1rem; font-size: .85rem; }
+  .error-banner { background: #fee; color: #a02020; padding: .5rem .75rem;
+                  border: 1px solid #f4cccc; border-radius: .4rem;
+                  margin-bottom: 1rem; font-size: .85rem; }
   .meta { color: #999; font-size: .72rem; margin-top: 1.5rem; }
 
   /* Repositories tab — per-repo bootstrap cards */
@@ -422,6 +425,7 @@
   html.is-dark .link-btn:hover { color: #e7e7e9; }
   html.is-dark .link-btn[disabled] { color: #ff8888; }
   html.is-dark .saved-banner { background: #173b1e; color: #5cd06b; }
+  html.is-dark .error-banner { background: #3b1717; color: #ff8888; border-color: #5a2a2a; }
   html.is-dark .meta { color: #6e6e72; }
 
   html.is-dark .repo-card { background: #232327; border-color: #2e2e33; }
