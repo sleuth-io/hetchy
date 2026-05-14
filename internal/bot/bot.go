@@ -58,6 +58,7 @@ type Bot struct {
 	cfg       Config
 	log       *slog.Logger
 	daytona   *daytona.Client
+	cacheVols daytonaCacheVolumeService
 	store     *db.Store
 	orgs      orgStore
 	convs     conversationStore
@@ -206,6 +207,7 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 		cfg:              cfg,
 		log:              log,
 		daytona:          dc,
+		cacheVols:        dc.Volume,
 		store:            store,
 		orgs:             orgcfg.New(store, cipher),
 		convs:            convstore.New(store),
@@ -777,8 +779,13 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 	if oc.SXKey != "" {
 		envVars["SX_KEY"] = oc.SXKey
 	}
+	addDaytonaCacheEnv(envVars, b.cfg, oc, repo)
+	volumes := []types.VolumeMount(nil)
+	if mount, ok := b.resolveDaytonaCacheMount(ctx, oc, repo); ok {
+		volumes = append(volumes, mount)
+	}
 	sb, err := b.createSandboxWithRetry(ctx, types.SnapshotParams{
-		SandboxBaseParams: types.SandboxBaseParams{EnvVars: envVars},
+		SandboxBaseParams: types.SandboxBaseParams{EnvVars: envVars, Volumes: volumes},
 		Snapshot:          b.cfg.Snapshot,
 	})
 	if err != nil {

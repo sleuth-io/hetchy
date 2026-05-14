@@ -112,6 +112,9 @@ database, not in Doppler. Doppler only holds the *process-level* config:
 | `DAYTONA_API_URL` | Daytona API endpoint |
 | `DAYTONA_API_KEY` | Daytona API key |
 | `DAYTONA_SNAPSHOT` | Sandbox snapshot image |
+| `DAYTONA_CACHE_VOLUMES_DISABLED` | Set to `1` to disable per-org dependency cache volume mounts |
+| `DAYTONA_CACHE_VOLUME_PREFIX` | Prefix for Daytona dependency cache volumes (default: `hetchy-cache`) |
+| `DAYTONA_CACHE_PRUNE_DAYS` | Best-effort in-sandbox dependency cache pruning age in days (default: `30`) |
 | `HETCHY_SX_PUBLIC_VAULT_URL` | Public git sx vault containing Hetchy's seeded agent personas and scoped role skills; defaults to `https://github.com/hetchyhq/hetchy-sx-vault.git`; set to `disabled`, `off`, `none`, or `-` to skip the public vault install |
 | `WEB_PORT` | Web UI port (default: 8080) |
 | `GITHUB_APP_ID` | Numeric ID of this env's GitHub App |

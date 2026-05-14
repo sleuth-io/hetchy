@@ -24,7 +24,15 @@ type Config struct {
 
 	DaytonaAPIURL string
 	Snapshot      string
-	DatabaseURL   string
+	// DaytonaCacheVolumesDisabled disables dependency cache volume
+	// mounting when DAYTONA_CACHE_VOLUMES_DISABLED=1.
+	DaytonaCacheVolumesDisabled bool
+	// DaytonaCacheVolumePrefix is used in physical Daytona volume names.
+	DaytonaCacheVolumePrefix string
+	// DaytonaCachePruneDays controls best-effort in-sandbox pruning of
+	// old dependency cache files within the mounted repo subpath.
+	DaytonaCachePruneDays int
+	DatabaseURL           string
 	// DatabaseMaxConns caps the pgx connection pool. Zero leaves the
 	// pgx default (max(4, NumCPU)) — fine for `make bot`, but in
 	// staging/prod set DATABASE_MAX_CONNS so the pool doesn't starve
@@ -158,27 +166,39 @@ func LoadConfig() (Config, error) {
 		dbMaxConns = int32(n)
 	}
 
+	cachePruneDays := defaultCachePruneDays
+	if v := strings.TrimSpace(os.Getenv("DAYTONA_CACHE_PRUNE_DAYS")); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			return Config{}, fmt.Errorf("DAYTONA_CACHE_PRUNE_DAYS must be a positive integer (got %q)", v)
+		}
+		cachePruneDays = n
+	}
+
 	return Config{
-		Env:                   getenvDefault("HETCHY_ENV", "prod"),
-		DaytonaAPIURL:         strings.TrimSpace(os.Getenv("DAYTONA_API_URL")),
-		Snapshot:              os.Getenv("DAYTONA_SNAPSHOT"),
-		DatabaseURL:           os.Getenv("DATABASE_URL"),
-		DatabaseMaxConns:      dbMaxConns,
-		WebPort:               port,
-		WorkOSAPIKey:          strings.TrimSpace(os.Getenv("WORKOS_API_KEY")),
-		WorkOSClientID:        strings.TrimSpace(os.Getenv("WORKOS_CLIENT_ID")),
-		WorkOSCookiePassword:  strings.TrimSpace(os.Getenv("WORKOS_COOKIE_PASSWORD")),
-		WorkOSRedirectURI:     strings.TrimSpace(os.Getenv("WORKOS_REDIRECT_URI")),
-		LogoutReturnTo:        logout,
-		CookieSecure:          cookieSecure,
-		SecretsEncryptionKey:  strings.TrimSpace(os.Getenv("SECRETS_ENCRYPTION_KEY")),
-		SlackSigningSecret:    strings.TrimSpace(os.Getenv("SLACK_SIGNING_SECRET")),
-		SlackClientID:         strings.TrimSpace(os.Getenv("SLACK_CLIENT_ID")),
-		SlackClientSecret:     strings.TrimSpace(os.Getenv("SLACK_CLIENT_SECRET")),
-		SlackOAuthRedirectURI: strings.TrimSpace(os.Getenv("SLACK_OAUTH_REDIRECT_URI")),
-		GitHubAppID:           ghAppID,
-		GitHubAppSlug:         strings.TrimSpace(os.Getenv("GITHUB_APP_SLUG")),
-		GitHubAppClientID:     strings.TrimSpace(os.Getenv("GITHUB_APP_CLIENT_ID")),
+		Env:                         getenvDefault("HETCHY_ENV", "prod"),
+		DaytonaAPIURL:               strings.TrimSpace(os.Getenv("DAYTONA_API_URL")),
+		Snapshot:                    os.Getenv("DAYTONA_SNAPSHOT"),
+		DaytonaCacheVolumesDisabled: strings.TrimSpace(os.Getenv("DAYTONA_CACHE_VOLUMES_DISABLED")) == "1",
+		DaytonaCacheVolumePrefix:    getenvDefaultTrim("DAYTONA_CACHE_VOLUME_PREFIX", defaultCacheVolumePrefix),
+		DaytonaCachePruneDays:       cachePruneDays,
+		DatabaseURL:                 os.Getenv("DATABASE_URL"),
+		DatabaseMaxConns:            dbMaxConns,
+		WebPort:                     port,
+		WorkOSAPIKey:                strings.TrimSpace(os.Getenv("WORKOS_API_KEY")),
+		WorkOSClientID:              strings.TrimSpace(os.Getenv("WORKOS_CLIENT_ID")),
+		WorkOSCookiePassword:        strings.TrimSpace(os.Getenv("WORKOS_COOKIE_PASSWORD")),
+		WorkOSRedirectURI:           strings.TrimSpace(os.Getenv("WORKOS_REDIRECT_URI")),
+		LogoutReturnTo:              logout,
+		CookieSecure:                cookieSecure,
+		SecretsEncryptionKey:        strings.TrimSpace(os.Getenv("SECRETS_ENCRYPTION_KEY")),
+		SlackSigningSecret:          strings.TrimSpace(os.Getenv("SLACK_SIGNING_SECRET")),
+		SlackClientID:               strings.TrimSpace(os.Getenv("SLACK_CLIENT_ID")),
+		SlackClientSecret:           strings.TrimSpace(os.Getenv("SLACK_CLIENT_SECRET")),
+		SlackOAuthRedirectURI:       strings.TrimSpace(os.Getenv("SLACK_OAUTH_REDIRECT_URI")),
+		GitHubAppID:                 ghAppID,
+		GitHubAppSlug:               strings.TrimSpace(os.Getenv("GITHUB_APP_SLUG")),
+		GitHubAppClientID:           strings.TrimSpace(os.Getenv("GITHUB_APP_CLIENT_ID")),
 		// Not trimmed: PEM contents are multi-line and the parser relies on
 		// embedded newlines; trimming risks corrupting the key.
 		GitHubAppPrivateKey:    os.Getenv("GITHUB_APP_PRIVATE_KEY"),
@@ -196,6 +216,13 @@ func LoadConfig() (Config, error) {
 
 func getenvDefault(key, def string) string {
 	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
+
+func getenvDefaultTrim(key, def string) string {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
 		return v
 	}
 	return def

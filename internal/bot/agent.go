@@ -107,6 +107,7 @@ type repoCtx struct {
 	GitHubToken  string
 	InstallID    int64
 	RepoID       int64
+	Path         string
 	TokenExpires time.Time
 }
 
@@ -145,6 +146,7 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, o
 		"HETCHY_CLAUDE_MODEL": string(model),
 	}
 	addAgentEnv(env, b.cfg, agent)
+	addDaytonaCacheEnv(env, b.cfg, oc, repo)
 
 	// Mint the default proof-artifact batch before constructing the
 	// prompt, so validation instructions can mention upload slots only
@@ -293,17 +295,19 @@ func (b *Bot) ensureBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo
 
 	authKey, authVal := claudeAuthEnv(oc)
 	b.log.Info("claude auth", "method", authKey, "token", maskToken(authVal), "request_id", sessionID)
+	baseEnv := map[string]string{
+		authKey:                authVal,
+		"GITHUB_TOKEN":         repo.GitHubToken,
+		"HETCHY_CLAUDE_MODEL":  string(ClaudeModelOpus),
+		"HETCHY_CLAUDE_EFFORT": "high",
+	}
+	addDaytonaCacheEnv(baseEnv, b.cfg, oc, repo)
 	runner := &botRunner{
 		b:         b,
 		sb:        sb,
 		sessionID: sessionID,
 		emit:      emit,
-		baseEnv: map[string]string{
-			authKey:                authVal,
-			"GITHUB_TOKEN":         repo.GitHubToken,
-			"HETCHY_CLAUDE_MODEL":  string(ClaudeModelOpus),
-			"HETCHY_CLAUDE_EFFORT": "high",
-		},
+		baseEnv:   baseEnv,
 	}
 	res, err := b.runBootstrapLoop(ctx, runner, bootstrap.LoopInput{
 		OwnerRepo:       repo.Slug,
@@ -534,6 +538,7 @@ func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx
 		"HETCHY_CLAUDE_MODEL": string(model),
 	}
 	addAgentEnv(env, b.cfg, agent)
+	addDaytonaCacheEnv(env, b.cfg, oc, repo)
 
 	var slotsManifest []artifacts.Slot
 	if opts.ValidateChanges && spec != nil {

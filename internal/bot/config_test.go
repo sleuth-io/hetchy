@@ -52,7 +52,8 @@ func TestLoadConfig_AllRequiredSet(t *testing.T) {
 }
 
 func TestLoadConfig_AppliesDefaults(t *testing.T) {
-	clearEnv(t, "AUTH_BYPASS", "WEB_PORT", "DAYTONA_API_URL", "LOGOUT_RETURN_TO", "HETCHY_SX_PUBLIC_VAULT_URL")
+	clearEnv(t, "AUTH_BYPASS", "WEB_PORT", "DAYTONA_API_URL", "LOGOUT_RETURN_TO", "HETCHY_SX_PUBLIC_VAULT_URL",
+		"DAYTONA_CACHE_VOLUMES_DISABLED", "DAYTONA_CACHE_VOLUME_PREFIX", "DAYTONA_CACHE_PRUNE_DAYS")
 	setEnv(t, requiredEnv())
 
 	cfg, err := LoadConfig()
@@ -67,6 +68,50 @@ func TestLoadConfig_AppliesDefaults(t *testing.T) {
 	}
 	if cfg.SXPublicVaultURL != DefaultSXPublicVaultURL {
 		t.Errorf("SXPublicVaultURL default = %q", cfg.SXPublicVaultURL)
+	}
+	if cfg.DaytonaCacheVolumesDisabled {
+		t.Error("DaytonaCacheVolumesDisabled should default false")
+	}
+	if cfg.DaytonaCacheVolumePrefix != "hetchy-cache" {
+		t.Errorf("DaytonaCacheVolumePrefix default = %q", cfg.DaytonaCacheVolumePrefix)
+	}
+	if cfg.DaytonaCachePruneDays != 30 {
+		t.Errorf("DaytonaCachePruneDays default = %d", cfg.DaytonaCachePruneDays)
+	}
+}
+
+func TestLoadConfig_DaytonaCacheOverrides(t *testing.T) {
+	clearEnv(t, "AUTH_BYPASS")
+	setEnv(t, requiredEnv())
+	t.Setenv("DAYTONA_CACHE_VOLUMES_DISABLED", "1")
+	t.Setenv("DAYTONA_CACHE_VOLUME_PREFIX", " cache-prefix ")
+	t.Setenv("DAYTONA_CACHE_PRUNE_DAYS", "14")
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if !cfg.DaytonaCacheVolumesDisabled {
+		t.Error("DaytonaCacheVolumesDisabled should be true")
+	}
+	if cfg.DaytonaCacheVolumePrefix != "cache-prefix" {
+		t.Errorf("DaytonaCacheVolumePrefix = %q", cfg.DaytonaCacheVolumePrefix)
+	}
+	if cfg.DaytonaCachePruneDays != 14 {
+		t.Errorf("DaytonaCachePruneDays = %d", cfg.DaytonaCachePruneDays)
+	}
+}
+
+func TestLoadConfig_DaytonaCachePruneDaysRejectsInvalid(t *testing.T) {
+	for _, value := range []string{"0", "-1", "abc"} {
+		t.Run(value, func(t *testing.T) {
+			clearEnv(t, "AUTH_BYPASS")
+			setEnv(t, requiredEnv())
+			t.Setenv("DAYTONA_CACHE_PRUNE_DAYS", value)
+			if _, err := LoadConfig(); err == nil {
+				t.Fatalf("expected DAYTONA_CACHE_PRUNE_DAYS=%q to fail", value)
+			}
+		})
 	}
 }
 
@@ -151,6 +196,9 @@ func TestComposeForwardsArtifactUploadEnv(t *testing.T) {
 		"AWS_SECRET_ACCESS_KEY",
 		"AWS_SESSION_TOKEN",
 		"DATABASE_MAX_CONNS",
+		"DAYTONA_CACHE_VOLUMES_DISABLED",
+		"DAYTONA_CACHE_VOLUME_PREFIX",
+		"DAYTONA_CACHE_PRUNE_DAYS",
 	} {
 		want := key + ": ${" + key + ":-}"
 		if !strings.Contains(compose, want) {

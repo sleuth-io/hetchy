@@ -5,6 +5,9 @@ import (
 	"encoding/base64"
 	"fmt"
 	"maps"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -159,12 +162,19 @@ func TestAgentScript_EmbeddedAndWellFormed(t *testing.T) {
 		`claude_args+=(--model "$HETCHY_CLAUDE_MODEL")`,
 		`if [[ -n "${SX_KEY:-}" ]]; then`,
 		"sx install",
+		"run_saved_setup",
+		"setup.sh still running",
+		"configure_hetchy_cache",
+		`export GOCACHE="${cache_dir}/go-build"`,
+		`find "$cache_dir" -xdev -mindepth 1 -type f -mtime "+${prune_days}" -delete`,
+		`[[ -z "$cache_dir" || ! -d "$cache_dir" ]]`,
 	}
 	for _, line := range requiredLines {
 		if !strings.Contains(agentScript, line) {
 			t.Errorf("agentScript missing %q", line)
 		}
 	}
+	assertBashSyntax(t, "agent.sh", agentScript)
 }
 
 func TestFollowupScript_EmbeddedAndWellFormed(t *testing.T) {
@@ -180,6 +190,12 @@ func TestFollowupScript_EmbeddedAndWellFormed(t *testing.T) {
 		"local -a claude_args=(",
 		"--dangerously-skip-permissions",
 		`claude_args+=(--model "$HETCHY_CLAUDE_MODEL")`,
+		"run_saved_setup",
+		"setup.sh still running",
+		"configure_hetchy_cache",
+		`export GOCACHE="${cache_dir}/go-build"`,
+		`find "$cache_dir" -xdev -mindepth 1 -type f -mtime "+${prune_days}" -delete`,
+		`[[ -z "$cache_dir" || ! -d "$cache_dir" ]]`,
 	}
 	for _, line := range requiredLines {
 		if !strings.Contains(followupScript, line) {
@@ -189,6 +205,22 @@ func TestFollowupScript_EmbeddedAndWellFormed(t *testing.T) {
 	// Follow-up should NOT contain initial-run setup steps.
 	if strings.Contains(followupScript, "git clone") {
 		t.Error("followupScript should not clone — it reuses an existing sandbox")
+	}
+	assertBashSyntax(t, "followup.sh", followupScript)
+}
+
+func assertBashSyntax(t *testing.T, name, script string) {
+	t.Helper()
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+	path := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("write %s: %v", name, err)
+	}
+	out, err := exec.Command("bash", "-n", path).CombinedOutput()
+	if err != nil {
+		t.Fatalf("bash -n %s: %v\n%s", name, err, out)
 	}
 }
 

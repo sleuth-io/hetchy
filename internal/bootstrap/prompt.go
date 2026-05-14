@@ -166,7 +166,9 @@ Process:
 
 Be concise in your shell scripts. No comments unless they explain a
 non-obvious choice. The scripts run on every future task — keep them
-fast and idempotent.
+fast and idempotent. Echo before long-running dependency or migration
+steps so future runs show useful progress while package managers are
+downloading quietly.
 
 `,
 		args.OwnerRepo, pathSuffix,
