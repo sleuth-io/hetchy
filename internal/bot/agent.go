@@ -90,7 +90,7 @@ func conditionalTasksPrompt(opts chatTaskOptions) string {
 		tasks = append(tasks, "- Review code before push: before pushing or opening the PR, launch a Claude Code sub-agent/task to review the branch diff against its base branch. Use the sub-agent for an independent code review focused on bugs, regressions, missing tests, security issues, and maintainability problems. If the reviewer uses severity levels, fix every issue above LOW severity; otherwise fix every concrete actionable issue it reports. Commit and push only after those fixes are in place.")
 	}
 	if opts.ActionPRChecksForDone {
-		tasks = append(tasks, `- Action PR checks for done: after opening or updating the PR, you are not done. Set `+"`PR_URL`"+` to the returned PR URL and `+"`BRANCH`"+` to the pushed branch name, or substitute literal values. Run `+"`gh pr checks \"$PR_URL\" --watch --interval 10`"+`. Do not append `+"`|| true`"+`, `+"`|| echo`"+`, or otherwise swallow check failures; GraphQL/API permission errors are not success. If `+"`gh pr checks`"+` cannot read checks, try `+"`gh run list --branch \"$BRANCH\"`"+` and `+"`gh run watch <run-id>`"+`. If any check fails, fix it, commit, push, and wait again. If an automated AI review is running, wait for it to finish and fix every actionable issue above LOW severity. Only finish when checks and automated reviews are clean, or clearly say verification is blocked instead of claiming done.`)
+		tasks = append(tasks, `- Action PR checks for done: after opening or updating the PR, you are not done. Set `+"`PR_URL`"+` to the returned PR URL and `+"`BRANCH`"+` to the pushed branch name, or substitute literal values. Run `+"`gh pr checks \"$PR_URL\" --watch --interval 10`"+`. Do not append `+"`|| true`"+`, `+"`|| echo`"+`, or otherwise swallow check failures; GraphQL/API permission errors are not success. If `+"`gh pr checks`"+` cannot read checks, try `+"`gh run list --branch \"$BRANCH\"`"+` and `+"`gh run watch <run-id>`"+`. If you need a structured snapshot of review or check state, use `+"`gh pr view \"$PR_URL\" --json reviewDecision,latestReviews,statusCheckRollup`"+` — the correct gh field is `+"`statusCheckRollup`"+` (NOT `+"`statusCheckRollupState`"+`, which gh rejects with `+"`Unknown JSON field`"+` and exit 1). If any check fails, fix it, commit, push, and wait again. If an automated AI review is running, wait for it to finish and fix every actionable issue above LOW severity. Only finish when checks and automated reviews are clean, or clearly say verification is blocked instead of claiming done.`)
 	}
 	if len(tasks) == 0 {
 		return ""
@@ -361,7 +361,14 @@ func (b *Bot) createBootstrapSession(ctx context.Context, sb *daytona.Sandbox, s
 	if sb == nil || sb.Process == nil {
 		return errors.New("sandbox process not configured")
 	}
-	return sb.Process.CreateSession(ctx, sessionID)
+	if err := sb.Process.CreateSession(ctx, sessionID); err != nil {
+		if b.log != nil {
+			b.log.Warn("daytona create session failed",
+				"sandbox", sb.ID, "session", sessionID, "purpose", "bootstrap", "error", err)
+		}
+		return err
+	}
+	return nil
 }
 
 func (b *Bot) runBootstrapInlineScript(ctx context.Context, sb *daytona.Sandbox, sessionID, label, scriptBody string, env map[string]string, emit blocks.Emitter) error {
@@ -620,6 +627,10 @@ func (b *Bot) runScriptForRequest(ctx context.Context, sb *daytona.Sandbox, sess
 // assistant message in the Claude stream.
 func (b *Bot) runScript(ctx context.Context, sb *daytona.Sandbox, sessionID, label, scriptBody string, env map[string]string, emit blocks.Emitter) (string, error) {
 	if err := sb.Process.CreateSession(ctx, sessionID); err != nil {
+		if b.log != nil {
+			b.log.Warn("daytona create session failed",
+				"sandbox", sb.ID, "session", sessionID, "label", label, "error", err)
+		}
 		return "", fmt.Errorf("create session: %w", err)
 	}
 	b.markRunSession(ctx, sessionID)

@@ -1143,6 +1143,9 @@ func (b *Bot) resolveRepo(ctx context.Context, orgID, owner, name string) (repoC
 	}
 	tok, exp, err := b.app.InstallationToken(ctx, row.InstallationID, []int64{row.RepoID})
 	if err != nil {
+		// IDs not visible in the caller's "resolve repo failed" log.
+		b.log.Warn("github installation token mint failed",
+			"installation_id", row.InstallationID, "repo_id", row.RepoID, "error", err)
 		return repoCtx{}, fmt.Errorf("mint installation token: %w", err)
 	}
 	return repoCtx{

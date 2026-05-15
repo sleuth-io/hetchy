@@ -42,6 +42,10 @@ func (b *Bot) validateReportedPR(ctx context.Context, repo repoCtx, expectedBran
 	}
 	pr, err := lookupGitHubPullRequest(ctx, token, parsed.Owner, parsed.Repo, parsed.Number)
 	if err != nil {
+		if b.log != nil {
+			b.log.Warn("github pull request lookup failed",
+				"owner", parsed.Owner, "repo", parsed.Repo, "number", parsed.Number, "url", rawURL, "error", err)
+		}
 		return "", fmt.Errorf("%w: verify reported PR %q: %w", errReportedPRNotVerified, rawURL, err)
 	}
 	if pr == nil {
