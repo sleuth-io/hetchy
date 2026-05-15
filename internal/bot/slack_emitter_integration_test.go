@@ -377,6 +377,17 @@ func TestSlackEmitter_ClaudeTextDoesNotLookTerminal(t *testing.T) {
 	}
 }
 
+func TestSlackEmitter_ClaudeTextFailDoesNotPostStepError(t *testing.T) {
+	e, fs := newTestSlackEmitter(t, "ship it")
+	textID := e.Start(blocks.KindClaudeText, "Done!", nil)
+
+	e.Fail(textID, "stream failed")
+
+	if calls := fs.Calls(); len(calls) != 0 {
+		t.Fatalf("failed claude text should not post a Slack step error, got %+v", calls)
+	}
+}
+
 // TestSlackEmitter_RequestEscapedInLiveHeader confirms a malicious or
 // accidental Slack control sequence in the user prompt cannot
 // broadcast on the very first PostMessage of the live message — the

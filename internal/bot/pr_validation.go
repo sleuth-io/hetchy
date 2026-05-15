@@ -42,7 +42,7 @@ func (b *Bot) validateReportedPR(ctx context.Context, repo repoCtx, expectedBran
 	}
 	pr, err := lookupGitHubPullRequest(ctx, token, parsed.Owner, parsed.Repo, parsed.Number)
 	if err != nil {
-		if b != nil && b.log != nil {
+		if b.log != nil {
 			b.log.Warn("github pull request lookup failed",
 				"owner", parsed.Owner, "repo", parsed.Repo, "number", parsed.Number, "url", rawURL, "error", err)
 		}

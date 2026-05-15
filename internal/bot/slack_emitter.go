@@ -230,6 +230,9 @@ func (e *slackEmitter) Fail(id, summary string) {
 		e.postNotifyLocked(b.title, b.body)
 		return
 	}
+	if b.kind == blocks.KindClaudeText {
+		return
+	}
 	title := "Step failed"
 	if b.title != "" {
 		title = b.title

@@ -362,8 +362,10 @@ func (b *Bot) createBootstrapSession(ctx context.Context, sb *daytona.Sandbox, s
 		return errors.New("sandbox process not configured")
 	}
 	if err := sb.Process.CreateSession(ctx, sessionID); err != nil {
-		b.log.Warn("daytona create session failed",
-			"sandbox", sb.ID, "session", sessionID, "purpose", "bootstrap", "error", err)
+		if b.log != nil {
+			b.log.Warn("daytona create session failed",
+				"sandbox", sb.ID, "session", sessionID, "purpose", "bootstrap", "error", err)
+		}
 		return err
 	}
 	return nil
@@ -625,8 +627,10 @@ func (b *Bot) runScriptForRequest(ctx context.Context, sb *daytona.Sandbox, sess
 // assistant message in the Claude stream.
 func (b *Bot) runScript(ctx context.Context, sb *daytona.Sandbox, sessionID, label, scriptBody string, env map[string]string, emit blocks.Emitter) (string, error) {
 	if err := sb.Process.CreateSession(ctx, sessionID); err != nil {
-		b.log.Warn("daytona create session failed",
-			"sandbox", sb.ID, "session", sessionID, "label", label, "error", err)
+		if b.log != nil {
+			b.log.Warn("daytona create session failed",
+				"sandbox", sb.ID, "session", sessionID, "label", label, "error", err)
+		}
 		return "", fmt.Errorf("create session: %w", err)
 	}
 	b.markRunSession(ctx, sessionID)
