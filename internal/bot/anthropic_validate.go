@@ -16,7 +16,7 @@ var anthropicAPIBase = "https://api.anthropic.com"
 
 const (
 	anthropicValidateTimeout = 8 * time.Second
-	anthropicValidateModel   = "claude-3-5-haiku-20241022"
+	anthropicValidateModel   = "claude-haiku-4-5-20251001"
 )
 
 type anthropicCredKind int
