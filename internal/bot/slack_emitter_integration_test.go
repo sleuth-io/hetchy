@@ -143,7 +143,7 @@ func TestSlackEmitter_NotifyPostsDirectly(t *testing.T) {
 func TestSlackEmitter_NotifyStartEscapesTitle(t *testing.T) {
 	e, fs := newTestSlackEmitter(t, "")
 	id := e.Start(blocks.KindNotify, "<!channel> hello", nil)
-	_ = id // KindNotify Start posts directly; no further calls needed.
+	e.Done(id, "")
 
 	calls := fs.Calls()
 	if len(calls) != 1 {
@@ -151,6 +151,24 @@ func TestSlackEmitter_NotifyStartEscapesTitle(t *testing.T) {
 	}
 	if !strings.Contains(calls[0].Text, "&lt;!channel&gt;") {
 		t.Errorf("expected escaped <!channel>, got %q", calls[0].Text)
+	}
+}
+
+func TestSlackEmitter_TeeNotifyBuffersBody(t *testing.T) {
+	e, fs := newTestSlackEmitter(t, "")
+	emit := blocks.Tee(blocks.NewRecorder(0), e)
+
+	emit.Notify("Bootstrap spec — no changes", "Agent reviewed the validation run and reported no spec improvements were warranted.")
+
+	calls := fs.Calls()
+	if len(calls) != 1 {
+		t.Fatalf("want 1 post, got %d: %+v", len(calls), calls)
+	}
+	if !strings.Contains(calls[0].Text, "Bootstrap spec") {
+		t.Errorf("expected notify title, got %q", calls[0].Text)
+	}
+	if !strings.Contains(calls[0].Text, "Agent reviewed the validation run") {
+		t.Errorf("expected buffered notify body, got %q", calls[0].Text)
 	}
 }
 
@@ -266,6 +284,96 @@ func TestSlackEmitter_LiveMessageLifecycle(t *testing.T) {
 	}
 	if !strings.Contains(lastLiveUpdate, ":white_check_mark: Done — trim the README") {
 		t.Errorf("terminal-state live header should include user request, got %q", lastLiveUpdate)
+	}
+}
+
+func TestSlackEmitter_TeeResultPostsTerminalMentionAndPR(t *testing.T) {
+	e, fs := newTestSlackEmitter(t, "fix slack notifications")
+	emit := blocks.Tee(blocks.NewRecorder(0), e)
+
+	id := emit.Start(blocks.KindToolUse, "Reading README.md", nil)
+	emit.Done(id, "287 lines")
+	emit.Notify("Bootstrap spec — no changes", "Agent reviewed the validation run and reported no spec improvements were warranted.")
+	emit.Result("Done!", "https://github.com/hetchyhq/hetchy/pull/183\n\nReply here to make further changes to this PR.")
+
+	calls := fs.Calls()
+	notifyIdx := -1
+	terminalIdx := -1
+	for i, c := range calls {
+		if c.Method == "postMessage" && strings.Contains(c.Text, "Bootstrap spec") {
+			notifyIdx = i
+		}
+		if c.Method == "postMessage" && strings.Contains(c.Text, ":tada: Done!") {
+			terminalIdx = i
+		}
+	}
+	if notifyIdx < 0 {
+		t.Fatalf("missing bootstrap notify post in calls: %+v", calls)
+	}
+	if terminalIdx < 0 {
+		t.Fatalf("missing terminal result post in calls: %+v", calls)
+	}
+	if terminalIdx <= notifyIdx {
+		t.Fatalf("terminal result should be posted after bootstrap notify; calls=%+v", calls)
+	}
+	terminal := calls[terminalIdx].Text
+	if !strings.Contains(terminal, "<@U1>") {
+		t.Errorf("terminal result should @mention the user, got %q", terminal)
+	}
+	if !strings.Contains(terminal, "https://github.com/hetchyhq/hetchy/pull/183") {
+		t.Errorf("terminal result should include PR URL, got %q", terminal)
+	}
+	if !strings.Contains(terminal, "View full details") {
+		t.Errorf("terminal result should include conversation link, got %q", terminal)
+	}
+	if !e.terminated || e.lastTerminalKind != blocks.KindResult {
+		t.Errorf("emitter terminal state = %v/%v, want result", e.terminated, e.lastTerminalKind)
+	}
+}
+
+func TestSlackEmitter_TeeErrorPostsTerminalMention(t *testing.T) {
+	e, fs := newTestSlackEmitter(t, "ship it")
+	emit := blocks.Tee(blocks.NewRecorder(0), e)
+
+	emit.Error("Agent failed", "Something went wrong while running the agent.")
+
+	calls := fs.Calls()
+	if len(calls) < 1 {
+		t.Fatalf("expected Slack calls, got none")
+	}
+	last := calls[len(calls)-1]
+	if last.Method != "postMessage" {
+		t.Fatalf("terminal error should be a post, got %s: %+v", last.Method, calls)
+	}
+	if !strings.Contains(last.Text, "<@U1>") {
+		t.Errorf("terminal error should @mention the user, got %q", last.Text)
+	}
+	if !strings.Contains(last.Text, ":x: Agent failed") {
+		t.Errorf("terminal error should include title, got %q", last.Text)
+	}
+	if !strings.Contains(last.Text, "Something went wrong") {
+		t.Errorf("terminal error should include body, got %q", last.Text)
+	}
+	if !e.terminated || e.lastTerminalKind != blocks.KindError {
+		t.Errorf("emitter terminal state = %v/%v, want error", e.terminated, e.lastTerminalKind)
+	}
+}
+
+func TestSlackEmitter_ClaudeTextDoesNotLookTerminal(t *testing.T) {
+	e, fs := newTestSlackEmitter(t, "ship it")
+
+	setupID := e.Start(blocks.KindSetup, "Sandbox setup", nil)
+	resetThrottle(e)
+	e.Done(setupID, "ready")
+	resetThrottle(e)
+	textID := e.Start(blocks.KindClaudeText, "Done!", nil)
+	e.Append(textID, "Done!")
+	e.Done(textID, "")
+
+	for _, c := range fs.Calls() {
+		if strings.Contains(c.Text, ":hourglass_flowing_sand: Done!") {
+			t.Fatalf("claude text should not make Slack look terminal before Hetchy finalizes; calls=%+v", fs.Calls())
+		}
 	}
 }
 

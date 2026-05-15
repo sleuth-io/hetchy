@@ -96,6 +96,7 @@ type slackEmitter struct {
 type openBlock struct {
 	kind  blocks.Kind
 	title string
+	body  string
 }
 
 const slackUpdateMinInterval = 800 * time.Millisecond
@@ -119,16 +120,18 @@ func (e *slackEmitter) Start(kind blocks.Kind, title string, _ map[string]any) s
 	defer e.mu.Unlock()
 	id := "s" + strconv.FormatUint(e.idGen.Add(1), 10)
 	e.open[id] = openBlock{kind: kind, title: title}
-	// Notify blocks are status messages — keep posting them as their
-	// own thread message. They no longer @mention the user: the
-	// user is already in the thread (they just sent a message), and
-	// pinging them on every status step is overkill. We reserve the
-	// mention for the terminal Result/Error post that tells them
-	// they need to come back and look. An icon prefix keeps the
-	// thread visually consistent — every status row starts with a
-	// glyph, matching the live message and the terminal post.
-	if kind == blocks.KindNotify {
-		e.post(notifyIcon(title) + " " + mrkdwnEscape(title))
+	// Notify/Result/Error blocks usually arrive through blocks.Tee as
+	// Start + optional Append + Done/Fail. Wait for the close so the
+	// posted Slack message includes the appended body. Terminal blocks
+	// also need to set e.terminated before the final live flush.
+	if kind == blocks.KindNotify || kind == blocks.KindResult || kind == blocks.KindError {
+		return id
+	}
+	// Claude text is useful in the full transcript but a poor live-status
+	// header: the assistant often says "Done!" before Hetchy has finished
+	// validating, reflecting on bootstrap specs, persisting, and archiving.
+	// Keep the live Slack slot focused on setup/tool/final states.
+	if kind == blocks.KindClaudeText {
 		return id
 	}
 	e.current = title
@@ -136,10 +139,23 @@ func (e *slackEmitter) Start(kind blocks.Kind, title string, _ map[string]any) s
 	return id
 }
 
-// Append is intentionally a no-op for Slack: we don't render streaming
-// body deltas (the live message is a one-line status, and per-token
-// edits would burn the rate limit anyway).
-func (e *slackEmitter) Append(string, string) {}
+// Append only buffers body text for one-shot Slack messages. Streaming
+// Claude/tool body deltas are intentionally not rendered on Slack: the
+// live message is a one-line status, and per-token edits would burn the
+// rate limit anyway.
+func (e *slackEmitter) Append(id, delta string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	b, ok := e.open[id]
+	if !ok {
+		return
+	}
+	if b.kind != blocks.KindNotify && b.kind != blocks.KindResult && b.kind != blocks.KindError {
+		return
+	}
+	b.body += delta
+	e.open[id] = b
+}
 
 func (e *slackEmitter) Done(id, _ string) {
 	e.mu.Lock()
@@ -152,7 +168,19 @@ func (e *slackEmitter) Done(id, _ string) {
 	// Notify, Result, and Error are posted via their dedicated
 	// helpers; closing the matching block doesn't need to update
 	// the live message.
-	if b.kind == blocks.KindNotify || b.kind == blocks.KindResult || b.kind == blocks.KindError {
+	if b.kind == blocks.KindNotify {
+		e.postNotifyLocked(b.title, b.body)
+		return
+	}
+	if b.kind == blocks.KindResult {
+		e.postResultLocked(b.title, b.body)
+		return
+	}
+	if b.kind == blocks.KindError {
+		e.postErrorLocked(b.title, b.body)
+		return
+	}
+	if b.kind == blocks.KindClaudeText {
 		return
 	}
 	if cat := categorise(b.kind, b.title); cat != "" {
@@ -174,6 +202,32 @@ func (e *slackEmitter) Fail(id, summary string) {
 		// terminate or after Abort() has cleared the map. Posting
 		// a `:x: Step failed` here would inject noise the rest of
 		// the design exists to avoid. Match the Done() guard.
+		return
+	}
+	if b.kind == blocks.KindError {
+		if summary != "" {
+			if b.body != "" {
+				b.body += "\n" + summary
+			} else {
+				b.body = summary
+			}
+		}
+		e.postErrorLocked(b.title, b.body)
+		return
+	}
+	if b.kind == blocks.KindResult {
+		if summary != "" {
+			if b.body != "" {
+				b.body += "\n" + summary
+			} else {
+				b.body = summary
+			}
+		}
+		e.postErrorLocked("Run failed", b.body)
+		return
+	}
+	if b.kind == blocks.KindNotify {
+		e.postNotifyLocked(b.title, b.body)
 		return
 	}
 	title := "Step failed"
@@ -204,6 +258,22 @@ func (e *slackEmitter) Fail(id, summary string) {
 func (e *slackEmitter) Notify(title, body string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.postNotifyLocked(title, body)
+}
+
+func (e *slackEmitter) Result(title, body string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.postResultLocked(title, body)
+}
+
+func (e *slackEmitter) Error(title, body string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.postErrorLocked(title, body)
+}
+
+func (e *slackEmitter) postNotifyLocked(title, body string) {
 	msg := notifyIcon(title) + " " + mrkdwnEscape(title)
 	if body != "" {
 		msg += "\n" + mrkdwnEscape(body)
@@ -211,9 +281,7 @@ func (e *slackEmitter) Notify(title, body string) {
 	e.post(msg)
 }
 
-func (e *slackEmitter) Result(title, body string) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+func (e *slackEmitter) postResultLocked(title, body string) {
 	e.terminated = true
 	e.lastTerminalKind = blocks.KindResult
 	// Force-flush the live message one last time so the final
@@ -231,9 +299,7 @@ func (e *slackEmitter) Result(title, body string) {
 	e.post(msg)
 }
 
-func (e *slackEmitter) Error(title, body string) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+func (e *slackEmitter) postErrorLocked(title, body string) {
 	e.terminated = true
 	e.lastTerminalKind = blocks.KindError
 	e.lastUpdate = time.Time{}
