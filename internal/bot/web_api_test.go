@@ -1,14 +1,141 @@
 package bot
 
 import (
+	"encoding/json"
 	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/hetchyhq/hetchy/internal/blocks"
 	"github.com/hetchyhq/hetchy/internal/convstore"
 )
+
+// TestExtractSXSkillsSurvivesPersistenceRoundTrip pins the contract
+// coerceStringSlice's []any branch exists for: when blocks are
+// persisted to JSONB (or downloaded via the conversation download
+// endpoint) and then deserialised back, `[]string` round-trips as
+// `[]any`. Without this case extractSXSkills would silently return
+// nil after a reload, making the right-hand details panel forget
+// the captured skills.
+func TestExtractSXSkillsSurvivesPersistenceRoundTrip(t *testing.T) {
+	original := [][]blocks.Block{{
+		{
+			Kind:  blocks.KindNotify,
+			Title: "3 skills installed",
+			Meta:  map[string]any{SXSkillsMetaKey: []string{"a", "b", "c"}},
+		},
+	}}
+	encoded, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var decoded [][]blocks.Block
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	// Sanity: confirm the json round-trip really does turn the inner
+	// slice into []any — otherwise this test isn't exercising the
+	// branch its title claims to cover.
+	if _, ok := decoded[0][0].Meta[SXSkillsMetaKey].([]any); !ok {
+		t.Fatalf("round-tripped meta value type = %T, want []any", decoded[0][0].Meta[SXSkillsMetaKey])
+	}
+	got := extractSXSkills(decoded)
+	want := []string{"a", "b", "c"}
+	if len(got) != len(want) {
+		t.Fatalf("len = %d, want %d (got: %+v)", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("got[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+// TestExtractSXSkillsWalksNewestTurnFirst pins the order: when a
+// follow-up turn re-runs sx install we want the panel to show that
+// turn's snapshot, not whatever the initial run captured. extractSXSkills
+// walks from the last turn backwards and returns the first block whose
+// Meta carries the SXSkillsMetaKey.
+func TestExtractSXSkillsWalksNewestTurnFirst(t *testing.T) {
+	turns := [][]blocks.Block{
+		{{Kind: blocks.KindNotify, Title: "1 skills installed", Meta: map[string]any{SXSkillsMetaKey: []string{"alpha"}}}},
+		{{Kind: blocks.KindNotify, Title: "2 skills installed", Meta: map[string]any{SXSkillsMetaKey: []string{"beta", "gamma"}}}},
+	}
+	got := extractSXSkills(turns)
+	want := []string{"beta", "gamma"}
+	if len(got) != len(want) {
+		t.Fatalf("len = %d, want %d (got: %+v)", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("got[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+// TestExtractSXSkillsDecodesAnySlice covers the post-DB-roundtrip
+// shape: JSONB decoding hands us a []any, not the []string the writer
+// stored. The helper should coerce both so the API doesn't return
+// nil after a server restart.
+func TestExtractSXSkillsDecodesAnySlice(t *testing.T) {
+	turns := [][]blocks.Block{{
+		{Kind: blocks.KindNotify, Meta: map[string]any{SXSkillsMetaKey: []any{"x", "y", " ", "z"}}},
+	}}
+	got := extractSXSkills(turns)
+	want := []string{"x", "y", "z"}
+	if len(got) != len(want) {
+		t.Fatalf("len = %d, want %d (got: %+v)", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("got[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+// TestExtractSXSkillsReturnsNilWithoutMarker reports nil when no turn
+// has emitted the skills block — the UI then renders an empty
+// Skills row with the standard "—" dash rather than misleading
+// content.
+func TestExtractSXSkillsReturnsNilWithoutMarker(t *testing.T) {
+	turns := [][]blocks.Block{
+		{{Kind: blocks.KindSetup, Title: "Sandbox setup"}},
+		{{Kind: blocks.KindResult, Title: "Done"}},
+	}
+	if got := extractSXSkills(turns); got != nil {
+		t.Errorf("extractSXSkills with no marker = %+v, want nil", got)
+	}
+}
+
+// TestRepoWorkdirAppendsRepoName pins the contract sx-install relies
+// on: the working directory's last segment matches the repository
+// name so sx can detect the right git context and pull repo-scoped
+// skills from skills.new. Edge cases (empty / odd slug) fall back to
+// "repo" so we never accidentally return the bare parent dir.
+func TestRepoWorkdirAppendsRepoName(t *testing.T) {
+	cases := []struct {
+		slug string
+		want string
+	}{
+		{"hetchyhq/hetchy", "/home/daytona/work/hetchy"},
+		{"sleuth-io/sx", "/home/daytona/work/sx"},
+		{"owner/Repo.Name-WithDots", "/home/daytona/work/Repo.Name-WithDots"},
+		{"single-segment", "/home/daytona/work/single-segment"},
+		{"  acme/repo  ", "/home/daytona/work/repo"},
+		{"", "/home/daytona/work/repo"},
+		{"/", "/home/daytona/work/repo"},
+		{".", "/home/daytona/work/repo"},
+		{"..", "/home/daytona/work/repo"},
+		{"owner/..", "/home/daytona/work/repo"},
+	}
+	for _, tc := range cases {
+		if got := repoWorkdir(tc.slug); got != tc.want {
+			t.Errorf("repoWorkdir(%q) = %q, want %q", tc.slug, got, tc.want)
+		}
+	}
+}
 
 func TestParseClampedInt(t *testing.T) {
 	cases := []struct {

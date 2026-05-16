@@ -141,9 +141,10 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, o
 		}
 	}
 
+	wd := repoWorkdir(repo.Slug)
 	env := map[string]string{
 		"SF_REPO":             repo.Slug,
-		"SF_WORKDIR":          workdir,
+		"SF_WORKDIR":          wd,
 		"SF_BASE_BRANCH":      repo.BaseBranch,
 		"GITHUB_TOKEN":        repo.GitHubToken,
 		"HETCHY_CLAUDE_MODEL": string(model),
@@ -173,7 +174,7 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, o
 	}
 
 	originalPrompt := fmt.Sprintf(agentPromptTemplate,
-		repo.Slug, workdir, repo.BaseBranch,
+		repo.Slug, wd, repo.BaseBranch,
 		userRequest, conditionalTasksPrompt(opts), requestID, repo.BaseBranch,
 	)
 	finalPrompt := originalPrompt
@@ -275,9 +276,10 @@ func (b *Bot) ensureBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo
 		b.deleteSandboxSession(sb, sessionID)
 	}()
 
+	wd := repoWorkdir(repo.Slug)
 	cloneEnv := map[string]string{
 		"SF_REPO":        repo.Slug,
-		"SF_WORKDIR":     workdir,
+		"SF_WORKDIR":     wd,
 		"SF_BASE_BRANCH": repo.BaseBranch,
 		"GITHUB_TOKEN":   repo.GitHubToken,
 	}
@@ -285,7 +287,7 @@ func (b *Bot) ensureBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo
 		return nil, fmt.Errorf("setup-clone: %w", err)
 	}
 
-	hints, tempRoot, err := b.detectBootstrapHints(ctx, sb, sessionID, workdir)
+	hints, tempRoot, err := b.detectBootstrapHints(ctx, sb, sessionID, wd)
 	if err != nil {
 		return nil, fmt.Errorf("detect: %w", err)
 	}
@@ -316,7 +318,7 @@ func (b *Bot) ensureBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo
 		OwnerRepo:       repo.Slug,
 		Hints:           hints,
 		SuppliedSecrets: suppliedSecrets,
-		RepoDir:         workdir,
+		RepoDir:         wd,
 	})
 	// On ErrLoopFailed, bootstrap.Run still returns a partial result
 	// (any artifacts the agent produced + the captured transcript).
@@ -541,8 +543,9 @@ func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx
 		}
 	}
 
+	wd := repoWorkdir(repo.Slug)
 	env := map[string]string{
-		"SF_WORKDIR":          workdir,
+		"SF_WORKDIR":          wd,
 		"SF_BRANCH":           rec.Branch,
 		"GITHUB_TOKEN":        repo.GitHubToken,
 		"HETCHY_CLAUDE_MODEL": string(model),
@@ -599,7 +602,7 @@ func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx
 func buildFollowUpPrompt(ownerRepo string, rec convstore.Record, userRequest string, spec *bootstrap.Spec, artifactSlotCount int, opts chatTaskOptions) string {
 	history := strings.Join(rec.History, "\n---\n")
 	prompt := fmt.Sprintf(agentFollowUpPromptTemplate,
-		workdir, rec.Branch, rec.PRURL,
+		repoWorkdir(ownerRepo), rec.Branch, rec.PRURL,
 		history, userRequest, conditionalTasksPrompt(opts),
 	)
 	if spec == nil {

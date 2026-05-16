@@ -287,6 +287,40 @@
   .meta-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
                font-size: .78rem; }
 
+  .meta-chip-row { display: inline-flex; flex-wrap: wrap; gap: .25rem; }
+  .meta-chip { display: inline-block; padding: .1rem .4rem;
+               background: #eef2f7; color: #1a1a1a; border-radius: .35rem;
+               font-size: .72rem; line-height: 1.25; overflow-wrap: anywhere; }
+  .meta-show-all { padding: 0; margin-left: .35rem; border: 0;
+                   background: none; color: #0b5ec0; font: inherit;
+                   font-size: .72rem; cursor: pointer; text-decoration: underline; }
+  .meta-show-all:hover { color: #084a99; }
+
+  /* Skills modal — opened from the "Show all" link in the Skills row.
+     Fixed overlay covers the chat behind it; the dialog itself caps
+     at ~70vh and scrolls so a huge skill set doesn't overflow off
+     screen. Built on demand by JS so the chat template stays light. */
+  .skills-modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.45);
+                          display: flex; align-items: center; justify-content: center;
+                          z-index: 200; padding: 1rem; }
+  .skills-modal { background: #fff; border-radius: .6rem;
+                  box-shadow: 0 12px 32px rgba(0,0,0,.18);
+                  max-width: 28rem; width: 100%; max-height: 70vh;
+                  display: flex; flex-direction: column; overflow: hidden; }
+  .skills-modal-head { display: flex; align-items: center;
+                       padding: .85rem 1rem; border-bottom: 1px solid #f0f0f0; }
+  .skills-modal-title { flex: 1; margin: 0; font-size: 1rem;
+                        font-weight: 600; color: #1a1a1a; }
+  .skills-modal-close { width: 2rem; height: 2rem; padding: 0; border: 0;
+                        background: none; cursor: pointer; font-size: 1.4rem;
+                        color: #888; line-height: 1; }
+  .skills-modal-close:hover { color: #333; }
+  .skills-modal-list { list-style: none; margin: 0; padding: .5rem 0;
+                       overflow-y: auto; }
+  .skills-modal-item { padding: .4rem 1rem; font-size: .85rem;
+                       color: #1a1a1a; }
+  .skills-modal-item + .skills-modal-item { border-top: 1px solid #f5f5f5; }
+
   .meta-header { display: flex; align-items: center; margin-bottom: .55rem; }
   .meta-header .meta-title { margin-bottom: 0; flex: 1; }
   .meta-more-wrap { position: relative; }
@@ -611,6 +645,17 @@
   html.is-dark .meta-row .meta-value a { color: #7dc4ff; }
   html.is-dark .meta-row.is-empty .meta-value { color: #555a60; }
   html.is-dark .meta-empty { color: #8a8a90; }
+  html.is-dark .meta-chip { background: #2a2f3a; color: #e7e7e9; }
+  html.is-dark .meta-show-all { color: #7dc4ff; }
+  html.is-dark .meta-show-all:hover { color: #a8d8ff; }
+  html.is-dark .skills-modal { background: #1c1c1f;
+                               box-shadow: 0 12px 32px rgba(0,0,0,.55); }
+  html.is-dark .skills-modal-head { border-bottom-color: #2a2a2d; }
+  html.is-dark .skills-modal-title { color: #e7e7e9; }
+  html.is-dark .skills-modal-close { color: #8a8a90; }
+  html.is-dark .skills-modal-close:hover { color: #e7e7e9; }
+  html.is-dark .skills-modal-item { color: #e7e7e9; }
+  html.is-dark .skills-modal-item + .skills-modal-item { border-top-color: #2a2a2d; }
   html.is-dark #meta-more-btn { color: #8a8a90; }
   html.is-dark #meta-more-btn:hover,
   html.is-dark #meta-more-btn[aria-expanded="true"] { background: #2a2a2e; color: #e7e7e9; }

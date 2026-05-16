@@ -203,11 +203,46 @@ run_sx_install() {
 
   echo "[hetchy] running sx install (${label})"
   mkdir -p "$cache_dir" "$HOME/.claude"
-  SX_CONFIG_DIR="$config_dir" \
-  SX_CACHE_DIR="$cache_dir" \
-  SX_BOT="$sx_bot" \
-  SX_BOT_KEY="$sx_bot_key" \
-    sx install --profile "$profile" --client=claude-code --target "$SF_WORKDIR"
+  # cd into the cloned repo so sx walks the right .git for repo
+  # detection. sx reads the target dir's git remote URL to scope
+  # skills, so without a real checkout under cwd or --target the
+  # install drops to global scope and skips every repo-level skill
+  # configured in skills.new. Belt-and-braces: also pass --target so
+  # any subshell weirdness can't shift cwd before sx invokes git.
+  (cd "$SF_WORKDIR" && \
+    SX_CONFIG_DIR="$config_dir" \
+    SX_CACHE_DIR="$cache_dir" \
+    SX_BOT="$sx_bot" \
+    SX_BOT_KEY="$sx_bot_key" \
+      sx install --profile "$profile" --client=claude-code --target "$SF_WORKDIR")
+}
+
+# emit_installed_skills lists the skill names sx materialised under
+# either the user-global Claude dir or the repo-scoped .claude dir and
+# prints a single comma-separated marker line for the bot's line
+# router to parse. We collect both scopes because sx writes repo-
+# scoped skills under <repo>/.claude/skills/<name>/ and global / org-
+# scoped ones under $HOME/.claude/skills/<name>/. De-duplicated so a
+# skill installed by both the public vault and the org vault doesn't
+# show up twice in the UI.
+emit_installed_skills() {
+  local -A seen=()
+  local -a names=()
+  local d entry name
+  for d in "$HOME/.claude/skills" "$SF_WORKDIR/.claude/skills"; do
+    if [[ -d "$d" ]]; then
+      while IFS= read -r -d '' entry; do
+        name="$(basename "$entry")"
+        if [[ -z "${seen[$name]:-}" ]]; then
+          seen[$name]=1
+          names+=("$name")
+        fi
+      done < <(find "$d" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null | LC_ALL=C sort -z)
+    fi
+  done
+  local joined
+  joined="$(IFS=,; printf '%s' "${names[*]:-}")"
+  echo "[hetchy:sx-skills] ${joined}"
 }
 
 if [[ -n "${HETCHY_SX_PUBLIC_VAULT_URL:-}" || -n "${SX_KEY:-}" ]]; then
@@ -231,6 +266,21 @@ if [[ -n "${SX_KEY:-}" ]]; then
   write_sx_config "$org_config" "$org_profile" "sleuth" "https://app.skills.new" "$SX_KEY"
   run_sx_install "org-skills" "$org_config" "$org_cache" "$org_profile" "${HETCHY_AGENT_SX_BOT:-}" "$SX_KEY"
 fi
+
+if [[ -n "${HETCHY_SX_PUBLIC_VAULT_URL:-}" || -n "${SX_KEY:-}" ]]; then
+  emit_installed_skills
+fi
+
+# Back-compat shim for saved bootstrap scripts that bake in the old
+# `/home/daytona/work` workdir. The bootstrap-loop-generated start.sh
+# template uses `REPO="${REPO:-/home/daytona/work}"`, which silently
+# pointed at the parent of every repo after the workdir moved under
+# this PR. Exporting REPO=$SF_WORKDIR for the saved-spec block lets
+# those older scripts find the actual checkout without a DB
+# migration. New specs generated from now on should reference
+# $SF_WORKDIR directly, but the env var keeps the older ones from
+# breaking on first follow-up.
+export REPO="$SF_WORKDIR"
 
 # Apply the saved bootstrap spec, if one was attached. We deploy the
 # four scripts to /tmp/hetchy-spec/, run setup.sh (idempotent), launch

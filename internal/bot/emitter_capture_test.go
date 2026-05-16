@@ -12,21 +12,27 @@ import (
 type captureEmitter struct {
 	mu    sync.Mutex
 	idGen int
-	// open maps id → index into Blocks. We store the index rather
-	// than a *captureBlock pointer because Blocks grows via append
-	// and reallocation invalidates pointers — tests would silently
-	// lose Append/Done writes once the slice resized.
-	open map[string]int
+	// open maps id → *captureBlock. Storing pointers (rather than
+	// indices into Blocks) keeps writes well-defined when Blocks is
+	// reallocated via append: copying a captureBlock copies its
+	// embedded strings.Builder, which panics with "illegal use of
+	// non-zero Builder copied by value" the next time something
+	// tries to WriteString through the moved copy. Pointers refer to
+	// heap-allocated captureBlock values whose Builder address is
+	// stable across slice growth.
+	open map[string]*captureBlock
 
 	// Calls records every Notify/Result/Error helper invocation as
 	// "<kind>:<title>|<body>" so tests can search them with simple
 	// substring checks.
 	Calls []string
 
-	// Blocks holds the finished + still-streaming blocks in emit
-	// order so tests can introspect the full sequence the same way
-	// the recorder snapshots them.
-	Blocks []captureBlock
+	// Blocks holds pointers to finished + still-streaming blocks in
+	// emit order. Pointer-valued for the same reason `open` is — the
+	// slice may grow under us, but each *captureBlock keeps pointing
+	// at the same heap object regardless of the backing array's
+	// realloc.
+	Blocks []*captureBlock
 }
 
 type captureBlock struct {
@@ -36,26 +42,28 @@ type captureBlock struct {
 	Body    strings.Builder
 	Status  blocks.Status
 	Summary string
+	Meta    map[string]any
 }
 
 func newCaptureEmitter() *captureEmitter {
-	return &captureEmitter{open: map[string]int{}}
+	return &captureEmitter{open: map[string]*captureBlock{}}
 }
 
-func (e *captureEmitter) Start(kind blocks.Kind, title string, _ map[string]any) string {
+func (e *captureEmitter) Start(kind blocks.Kind, title string, meta map[string]any) string {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.idGen++
 	id := "t" + ctoa(e.idGen)
-	e.Blocks = append(e.Blocks, captureBlock{ID: id, Kind: kind, Title: title, Status: blocks.StatusStreaming})
-	e.open[id] = len(e.Blocks) - 1
+	b := &captureBlock{ID: id, Kind: kind, Title: title, Status: blocks.StatusStreaming, Meta: meta}
+	e.Blocks = append(e.Blocks, b)
+	e.open[id] = b
 	return id
 }
 
 func (e *captureEmitter) Append(id, delta string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	idx, ok := e.open[id]
+	b, ok := e.open[id]
 	if !ok {
 		// Append after Done/Fail is a contract violation — the production
 		// teeEmitter would corrupt its idMap. Panic so tests that rely on
@@ -63,16 +71,16 @@ func (e *captureEmitter) Append(id, delta string) {
 		// deterministically without needing -race to trigger a data race.
 		panic("captureEmitter: Append after Done/Fail for id " + id)
 	}
-	e.Blocks[idx].Body.WriteString(delta)
+	b.Body.WriteString(delta)
 }
 
 func (e *captureEmitter) Done(id, summary string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if idx, ok := e.open[id]; ok {
-		e.Blocks[idx].Status = blocks.StatusDone
-		e.Blocks[idx].Summary = summary
-		e.recordOneShotLocked(idx)
+	if b, ok := e.open[id]; ok {
+		b.Status = blocks.StatusDone
+		b.Summary = summary
+		e.recordOneShotLocked(b)
 		delete(e.open, id)
 	}
 }
@@ -80,10 +88,10 @@ func (e *captureEmitter) Done(id, summary string) {
 func (e *captureEmitter) Fail(id, summary string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if idx, ok := e.open[id]; ok {
-		e.Blocks[idx].Status = blocks.StatusError
-		e.Blocks[idx].Summary = summary
-		e.recordOneShotLocked(idx)
+	if b, ok := e.open[id]; ok {
+		b.Status = blocks.StatusError
+		b.Summary = summary
+		e.recordOneShotLocked(b)
 		delete(e.open, id)
 	}
 }
@@ -92,8 +100,7 @@ func (e *captureEmitter) Fail(id, summary string) {
 // the Calls list so tests that grep on Calls keep working when the
 // tee dispatches via Start+Append+Done rather than the wrapped
 // emitter's own Notify/Result/Error helper. Caller holds e.mu.
-func (e *captureEmitter) recordOneShotLocked(idx int) {
-	b := &e.Blocks[idx]
+func (e *captureEmitter) recordOneShotLocked(b *captureBlock) {
 	if b.Kind != blocks.KindNotify && b.Kind != blocks.KindResult && b.Kind != blocks.KindError {
 		return
 	}

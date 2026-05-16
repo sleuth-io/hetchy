@@ -165,6 +165,9 @@ func TestAgentScript_EmbeddedAndWellFormed(t *testing.T) {
 		`claude_args+=(--model "$HETCHY_CLAUDE_MODEL")`,
 		`if [[ -n "${SX_KEY:-}" ]]; then`,
 		"sx install",
+		`(cd "$SF_WORKDIR" && \`,
+		"emit_installed_skills",
+		"[hetchy:sx-skills]",
 		"run_saved_setup",
 		"setup.sh still running",
 		"setup.sh output is being written to /tmp/hetchy-spec/setup.log",
@@ -204,6 +207,9 @@ func TestFollowupScript_EmbeddedAndWellFormed(t *testing.T) {
 		"local -a claude_args=(",
 		"--dangerously-skip-permissions",
 		`claude_args+=(--model "$HETCHY_CLAUDE_MODEL")`,
+		`(cd "$SF_WORKDIR" && \`,
+		"emit_installed_skills",
+		"[hetchy:sx-skills]",
 		"run_saved_setup",
 		"setup.sh still running",
 		"setup.sh output is being written to /tmp/hetchy-spec/setup.log",
@@ -232,6 +238,110 @@ func TestFollowupScript_EmbeddedAndWellFormed(t *testing.T) {
 		t.Error("followupScript should not clone — it reuses an existing sandbox")
 	}
 	assertBashSyntax(t, "followup.sh", followupScript)
+}
+
+// TestAgentScript_EmitInstalledSkillsCollectsBothScopes runs the
+// agent.sh-shipped emit_installed_skills function against a fake
+// filesystem layout where both $HOME/.claude/skills/ and
+// $SF_WORKDIR/.claude/skills/ contain skill subdirs, and asserts
+// the function prints a deduped, alphabetically-ordered
+// [hetchy:sx-skills] marker the bot's line router can parse. The
+// dedup behaviour matters because an org skill installed by both
+// the public vault and the org vault would otherwise surface twice
+// in the right-hand details panel.
+func TestAgentScript_EmitInstalledSkillsCollectsBothScopes(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skipf("bash not available: %v", err)
+	}
+	home := t.TempDir()
+	workdir := t.TempDir()
+	// Global scope skills.
+	for _, name := range []string{"writing-commit-messages", "review"} {
+		mustMkdir(t, filepath.Join(home, ".claude", "skills", name))
+	}
+	// Repo-scoped skills, with a duplicate of "review" to exercise
+	// the dedup path.
+	for _, name := range []string{"writing-commit-messages", "deploy-pipeline"} {
+		mustMkdir(t, filepath.Join(workdir, ".claude", "skills", name))
+	}
+
+	// Strip the embedded function out of agent.sh and run it under a
+	// minimal shell harness. We extract by anchor comment+function name
+	// rather than line numbers so the test survives unrelated edits to
+	// agent.sh.
+	const startAnchor = "emit_installed_skills() {"
+	const endAnchor = "\n}"
+	startIdx := strings.Index(agentScriptBody, startAnchor)
+	if startIdx < 0 {
+		t.Fatalf("emit_installed_skills function not found in agent.sh")
+	}
+	endIdx := strings.Index(agentScriptBody[startIdx:], endAnchor)
+	if endIdx < 0 {
+		t.Fatalf("emit_installed_skills function end-brace not found in agent.sh")
+	}
+	fn := agentScriptBody[startIdx : startIdx+endIdx+len(endAnchor)]
+
+	harness := "#!/bin/bash\nset -euo pipefail\n" + fn + "\nemit_installed_skills\n"
+	cmd := exec.Command("bash", "-c", harness)
+	cmd.Env = append(os.Environ(),
+		"HOME="+home,
+		"SF_WORKDIR="+workdir,
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("emit_installed_skills failed: %v\noutput:\n%s", err, string(out))
+	}
+	got := strings.TrimRight(string(out), "\n")
+	// Ordering: each scope's directory is sorted independently
+	// (LC_ALL=C sort -z inside the function), and the global scope
+	// (HOME) is walked before the repo scope (SF_WORKDIR). The
+	// dedup map then drops "writing-commit-messages" the second
+	// time it appears.
+	//   HOME → review, writing-commit-messages
+	//   SF_WORKDIR → deploy-pipeline (writing-commit-messages already seen)
+	want := "[hetchy:sx-skills] review,writing-commit-messages,deploy-pipeline"
+	if got != want {
+		t.Errorf("emit_installed_skills output = %q, want %q", got, want)
+	}
+}
+
+// TestAgentScript_EmitInstalledSkillsEmpty proves the empty-payload
+// path agent.sh relies on for "sx ran but installed nothing". The
+// bot's router emits a "0 skills installed" notify block in that
+// case (see agent_router_test.go); this test pins the shell side.
+func TestAgentScript_EmitInstalledSkillsEmpty(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skipf("bash not available: %v", err)
+	}
+	home := t.TempDir()
+	workdir := t.TempDir()
+	const startAnchor = "emit_installed_skills() {"
+	const endAnchor = "\n}"
+	startIdx := strings.Index(agentScriptBody, startAnchor)
+	endIdx := strings.Index(agentScriptBody[startIdx:], endAnchor)
+	fn := agentScriptBody[startIdx : startIdx+endIdx+len(endAnchor)]
+	harness := "#!/bin/bash\nset -euo pipefail\n" + fn + "\nemit_installed_skills\n"
+	cmd := exec.Command("bash", "-c", harness)
+	cmd.Env = append(os.Environ(),
+		"HOME="+home,
+		"SF_WORKDIR="+workdir,
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("emit_installed_skills failed: %v\noutput:\n%s", err, string(out))
+	}
+	got := strings.TrimRight(string(out), "\n")
+	want := "[hetchy:sx-skills] "
+	if got != want {
+		t.Errorf("emit_installed_skills empty output = %q, want %q", got, want)
+	}
+}
+
+func mustMkdir(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", dir, err)
+	}
 }
 
 func assertBashSyntax(t *testing.T, name, script string) {
@@ -352,7 +462,7 @@ func TestRunAgentBuildsScriptEnvironmentWithFakeRunner(t *testing.T) {
 	}
 	wantEnv := map[string]string{
 		"SF_REPO":                    "acme/repo",
-		"SF_WORKDIR":                 workdir,
+		"SF_WORKDIR":                 repoWorkdir("acme/repo"),
 		"SF_BASE_BRANCH":             "main",
 		"GITHUB_TOKEN":               "ghs_token",
 		"HETCHY_CLAUDE_MODEL":        string(ClaudeModelHaiku),
