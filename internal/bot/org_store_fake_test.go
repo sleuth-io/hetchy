@@ -21,6 +21,9 @@ type fakeOrgStore struct {
 
 	upserts   []orgcfg.Config
 	upsertErr error
+
+	deletes   []string
+	deleteErr error
 }
 
 func (f *fakeOrgStore) Get(context.Context, string) (orgcfg.Config, error) {
@@ -49,4 +52,14 @@ func (f *fakeOrgStore) Upsert(_ context.Context, cfg orgcfg.Config) (orgcfg.Conf
 	}
 	f.upserts = append(f.upserts, cfg)
 	return cfg, nil
+}
+
+func (f *fakeOrgStore) Delete(_ context.Context, orgID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.deleteErr != nil {
+		return f.deleteErr
+	}
+	f.deletes = append(f.deletes, orgID)
+	return nil
 }

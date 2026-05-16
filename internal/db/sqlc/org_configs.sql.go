@@ -9,6 +9,80 @@ import (
 	"context"
 )
 
+const deleteAgentProfilesByOrg = `-- name: DeleteAgentProfilesByOrg :exec
+DELETE FROM agent_profiles WHERE org_id = $1
+`
+
+func (q *Queries) DeleteAgentProfilesByOrg(ctx context.Context, orgID string) error {
+	_, err := q.db.Exec(ctx, deleteAgentProfilesByOrg, orgID)
+	return err
+}
+
+const deleteAgentRunsByOrg = `-- name: DeleteAgentRunsByOrg :exec
+DELETE FROM agent_runs WHERE org_id = $1
+`
+
+// agent_run_events cascade-deletes via FK ON DELETE CASCADE.
+func (q *Queries) DeleteAgentRunsByOrg(ctx context.Context, orgID string) error {
+	_, err := q.db.Exec(ctx, deleteAgentRunsByOrg, orgID)
+	return err
+}
+
+const deleteConversationsByOrg = `-- name: DeleteConversationsByOrg :exec
+DELETE FROM conversations WHERE org_id = $1
+`
+
+func (q *Queries) DeleteConversationsByOrg(ctx context.Context, orgID string) error {
+	_, err := q.db.Exec(ctx, deleteConversationsByOrg, orgID)
+	return err
+}
+
+const deleteGithubInstallationsByOrg = `-- name: DeleteGithubInstallationsByOrg :exec
+DELETE FROM github_app_installations WHERE org_id = $1
+`
+
+// github_repos / github_teams / github_team_members cascade via FK.
+func (q *Queries) DeleteGithubInstallationsByOrg(ctx context.Context, orgID string) error {
+	_, err := q.db.Exec(ctx, deleteGithubInstallationsByOrg, orgID)
+	return err
+}
+
+const deleteOrgConfig = `-- name: DeleteOrgConfig :exec
+DELETE FROM org_configs WHERE org_id = $1
+`
+
+func (q *Queries) DeleteOrgConfig(ctx context.Context, orgID string) error {
+	_, err := q.db.Exec(ctx, deleteOrgConfig, orgID)
+	return err
+}
+
+const deleteRepoSecretValuesByOrg = `-- name: DeleteRepoSecretValuesByOrg :exec
+DELETE FROM repo_secret_values
+WHERE installation_id IN (
+    SELECT installation_id FROM github_app_installations WHERE org_id = $1
+)
+`
+
+func (q *Queries) DeleteRepoSecretValuesByOrg(ctx context.Context, orgID string) error {
+	_, err := q.db.Exec(ctx, deleteRepoSecretValuesByOrg, orgID)
+	return err
+}
+
+const deleteRepoSetupSpecsByOrg = `-- name: DeleteRepoSetupSpecsByOrg :exec
+DELETE FROM repo_setup_specs
+WHERE installation_id IN (
+    SELECT installation_id FROM github_app_installations WHERE org_id = $1
+)
+`
+
+// repo_setup_specs are not FK-tied to github_app_installations (specs
+// are user-visible work that must survive cache invalidation), so an
+// org deletion has to clear them explicitly via the installation join.
+func (q *Queries) DeleteRepoSetupSpecsByOrg(ctx context.Context, orgID string) error {
+	_, err := q.db.Exec(ctx, deleteRepoSetupSpecsByOrg, orgID)
+	return err
+}
+
 const getOrgConfig = `-- name: GetOrgConfig :one
 SELECT
     org_id,

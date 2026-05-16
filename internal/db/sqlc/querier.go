@@ -17,16 +17,28 @@ type Querier interface {
 	ClaimAgentRunLeaseFromOwner(ctx context.Context, arg ClaimAgentRunLeaseFromOwnerParams) (AgentRun, error)
 	CountAgentProfilesByOrg(ctx context.Context, orgID string) (int64, error)
 	CreateAgentRun(ctx context.Context, arg CreateAgentRunParams) (AgentRun, error)
+	DeleteAgentProfilesByOrg(ctx context.Context, orgID string) error
+	// agent_run_events cascade-deletes via FK ON DELETE CASCADE.
+	DeleteAgentRunsByOrg(ctx context.Context, orgID string) error
 	DeleteConversation(ctx context.Context, arg DeleteConversationParams) error
+	DeleteConversationsByOrg(ctx context.Context, orgID string) error
 	DeleteGithubInstallation(ctx context.Context, installationID int64) error
+	// github_repos / github_teams / github_team_members cascade via FK.
+	DeleteGithubInstallationsByOrg(ctx context.Context, orgID string) error
 	DeleteGithubReposByInstallation(ctx context.Context, installationID int64) error
 	// Used by the sync routine: after upserting the current set of repos,
 	// delete anything that wasn't in the list (revoked access).
 	DeleteGithubReposByInstallationExcept(ctx context.Context, arg DeleteGithubReposByInstallationExceptParams) error
 	DeleteGithubTeamMembersForTeam(ctx context.Context, arg DeleteGithubTeamMembersForTeamParams) error
 	DeleteGithubTeamsByInstallationExcept(ctx context.Context, arg DeleteGithubTeamsByInstallationExceptParams) error
+	DeleteOrgConfig(ctx context.Context, orgID string) error
 	DeleteRepoSecretValue(ctx context.Context, arg DeleteRepoSecretValueParams) error
+	DeleteRepoSecretValuesByOrg(ctx context.Context, orgID string) error
 	DeleteRepoSetupSpec(ctx context.Context, arg DeleteRepoSetupSpecParams) error
+	// repo_setup_specs are not FK-tied to github_app_installations (specs
+	// are user-visible work that must survive cache invalidation), so an
+	// org deletion has to clear them explicitly via the installation join.
+	DeleteRepoSetupSpecsByOrg(ctx context.Context, orgID string) error
 	DisableAgentProfile(ctx context.Context, arg DisableAgentProfileParams) (int64, error)
 	GetActiveAgentRunForThread(ctx context.Context, arg GetActiveAgentRunForThreadParams) (AgentRun, error)
 	GetAgentProfileBySlug(ctx context.Context, arg GetAgentProfileBySlugParams) (GetAgentProfileBySlugRow, error)

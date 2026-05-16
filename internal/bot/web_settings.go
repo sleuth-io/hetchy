@@ -680,6 +680,76 @@ func (b *Bot) memberActionHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// orgDeleteHandler permanently destroys the caller's organization. It
+// tears down the org's Slack connection (so inbound events can't
+// resurrect the row mid-wipe), removes the WorkOS organization, wipes
+// every per-org row this app owns (org_configs, conversations, agent
+// profiles + runs, GitHub App installations, repo bootstrap specs and
+// secret values), and finally logs the user out — their session was
+// bound to an org that no longer exists.
+//
+// Slack teardown FIRST is intentional. The Slack dispatch goroutine
+// would otherwise be a live writer: an AppUninstalledEvent or
+// TokensRevokedEvent landing during the wipe re-Upserts the org
+// config, undoing the DELETE we just did. RestartOrg synchronously
+// cancels the connection and waits for the dispatch loop to drain
+// before returning, closing that race.
+//
+// The WorkOS deletion runs before the local wipe: if it fails we
+// abort before touching local data, so the user can retry without
+// ending up half-deleted. Local data is wiped in a single transaction
+// so a mid-flight DB failure rolls everything back. The remaining
+// risk window — WorkOS-deleted-but-DB-wipe-fails — is logged with
+// every ID needed for ops recovery; the user can no longer use this
+// org's UI to retry (the WorkOS org is gone), so this is the
+// failure mode we minimize by logging and surfacing a generic 500
+// rather than leaking pgx internals to the browser.
+func (b *Bot) orgDeleteHandler(w http.ResponseWriter, r *http.Request) {
+	p, _ := auth.FromContext(r.Context())
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !isAdmin(p) {
+		http.Error(w, "admin role required", http.StatusForbidden)
+		return
+	}
+	if err := requireSameOrigin(r); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	orgID := p.OrgID
+	// Tear down Slack before touching WorkOS or the DB. RestartOrg
+	// cancels the dispatch goroutine and blocks until it drains, so
+	// no Slack event can race the wipe by calling Upsert behind us.
+	// After the DB rows are gone, the post-cancel reload in
+	// RestartOrg's tail sees an empty org config and stays
+	// disconnected on its own.
+	if b.slack != nil {
+		b.slack.RestartOrg(r.Context(), orgID)
+	}
+	if err := b.auth.DeleteOrganization(r.Context(), orgID); err != nil {
+		b.log.Error("org delete: workos delete failed", "error", err, "org", orgID, "actor", p.UserID)
+		http.Error(w, "Could not delete the organization. Please try again or contact support.", http.StatusInternalServerError)
+		return
+	}
+	if err := b.orgs.Delete(r.Context(), orgID); err != nil {
+		// WorkOS org is gone by this point; the row set is rolled back
+		// by WithTx, so the org is functionally empty but the local
+		// shell row may still exist. Log enough for ops to clean up.
+		b.log.Error("org delete: local wipe failed after workos delete succeeded",
+			"error", err, "org", orgID, "actor", p.UserID)
+		http.Error(w, "Could not delete organization data. Please contact support.", http.StatusInternalServerError)
+		return
+	}
+	b.log.Info("org deleted", "org", orgID, "actor", p.UserID)
+	// Reuse LogoutHandler to revoke the session at WorkOS and clear
+	// the session cookie. It writes its own redirect to the app root,
+	// which renders the landing/login page for an unauthenticated
+	// request.
+	b.auth.LogoutHandler(w, r)
+}
+
 // validRoleSlug guards POSTed role values against typos and arbitrary
 // strings. Hardcoded list mirrors the dropdown options; if the WorkOS
 // dashboard adds custom roles, extend this set.

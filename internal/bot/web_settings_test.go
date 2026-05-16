@@ -532,6 +532,95 @@ func TestValidRoleSlug(t *testing.T) {
 	}
 }
 
+func TestOrgDeleteHandlerBypassAuth(t *testing.T) {
+	store := &fakeOrgStore{getConfig: orgcfg.Config{OrgID: "org_test"}}
+
+	t.Run("admin POST wipes local data and logs out", func(t *testing.T) {
+		b := newBypassOrgBot(t, "admin")
+		b.orgs = store
+		b.slack = newSlackManager(discardLogger(), store, nil)
+		handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.orgDeleteHandler)))
+
+		rec := httptest.NewRecorder()
+		req := settingsFormRequest(http.MethodPost, "/settings/org/delete", "")
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusFound {
+			t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+		}
+		// LogoutHandler redirects to scheme://publicHost (bypass mode
+		// short-circuits to "/?signed_out=1"). Either way, a session
+		// cookie clear should be in the response.
+		store.mu.Lock()
+		defer store.mu.Unlock()
+		if len(store.deletes) != 1 || store.deletes[0] != "org_test" {
+			t.Fatalf("deletes = %#v, want [org_test]", store.deletes)
+		}
+	})
+
+	t.Run("non-admin POST is rejected", func(t *testing.T) {
+		b := newBypassOrgBot(t, "member")
+		b.orgs = store
+		b.slack = newSlackManager(discardLogger(), store, nil)
+		handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.orgDeleteHandler)))
+
+		rec := httptest.NewRecorder()
+		req := settingsFormRequest(http.MethodPost, "/settings/org/delete", "")
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("non-admin status = %d body=%q", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("GET is rejected", func(t *testing.T) {
+		b := newBypassOrgBot(t, "admin")
+		b.orgs = store
+		b.slack = newSlackManager(discardLogger(), store, nil)
+		handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.orgDeleteHandler)))
+
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/settings/org/delete", nil)
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("GET status = %d body=%q", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("missing Origin header is rejected", func(t *testing.T) {
+		b := newBypassOrgBot(t, "admin")
+		b.orgs = store
+		b.slack = newSlackManager(discardLogger(), store, nil)
+		handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.orgDeleteHandler)))
+
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/settings/org/delete", strings.NewReader(""))
+		req.Host = "example.com"
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("cross-origin status = %d body=%q", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("local wipe failure surfaces 500", func(t *testing.T) {
+		// Reset deletes; install an error.
+		failing := &fakeOrgStore{
+			getConfig: orgcfg.Config{OrgID: "org_test"},
+			deleteErr: pgx.ErrTxClosed,
+		}
+		b := newBypassOrgBot(t, "admin")
+		b.orgs = failing
+		b.slack = newSlackManager(discardLogger(), failing, nil)
+		handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.orgDeleteHandler)))
+
+		rec := httptest.NewRecorder()
+		req := settingsFormRequest(http.MethodPost, "/settings/org/delete", "")
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusInternalServerError {
+			t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+		}
+	})
+}
+
 func TestSavedMessage(t *testing.T) {
 	cases := map[string]string{
 		"":                           "",

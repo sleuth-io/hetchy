@@ -158,6 +158,23 @@
   .danger-btn:hover { background: #fff5f5; border-color: #d9a0a0; }
   .danger-btn:disabled { opacity: .55; cursor: default; }
 
+  /* Danger zone block — used on the General tab for destructive
+     org-wide actions (delete org). Stays visually distinct from the
+     normal settings fieldset so the user can't miss what kind of
+     button they're about to click. */
+  .danger-zone { margin: 2rem 0 .5rem; padding: 1rem 1.25rem;
+                 border: 1px solid #f4cccc; border-radius: .5rem;
+                 background: #fdf4f4; }
+  .danger-zone legend { color: #a02020; }
+  .danger-zone .danger-zone-row { display: flex; align-items: center;
+                                  gap: 1rem; flex-wrap: wrap; }
+  .danger-zone .danger-zone-row .danger-zone-text { flex: 1;
+                                                    min-width: 16rem; }
+  .danger-zone .danger-zone-row .danger-zone-text h4 { margin: 0 0 .25rem;
+                                                       font-size: .9rem;
+                                                       color: #1a1a1a; }
+  .danger-zone .danger-zone-row .hint { margin-top: 0; }
+
   /* Agents tab */
   .agent-list { display: flex; flex-direction: column; gap: .85rem; }
   .agent-card { background: #fff; border: 1px solid #e6e6e6;
@@ -452,6 +469,10 @@
   html.is-dark .danger-link:hover { color: #ffb8b8; }
   html.is-dark .danger-btn { color: #f0a0a0; border-color: #5a3232; }
   html.is-dark .danger-btn:hover { background: #2c1f1f; border-color: #7a3838; }
+  html.is-dark .danger-zone { background: #2c1717; border-color: #5a2a2a; }
+  html.is-dark .danger-zone legend { color: #ff8888; }
+  html.is-dark .danger-zone .danger-zone-text h4 { color: #f5f5f7; }
+  html.is-dark .danger-zone .hint { color: #c0a0a0; }
   html.is-dark .agent-card { background: #232327; border-color: #2e2e33; }
   html.is-dark .agent-title h3 { color: #f5f5f7; }
   html.is-dark .agent-title code,
