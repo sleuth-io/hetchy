@@ -134,6 +134,90 @@ func TestAgentLineRouter_AbortFailsOpenBlocks(t *testing.T) {
 	}
 }
 
+// TestAgentLineRouter_CapturesSXSkillsMarker verifies that a
+// "[hetchy:sx-skills] a,b,c" line bypasses the setup-block append
+// path and instead emits a dedicated notify block whose Meta carries
+// the parsed list. extractSXSkills (the API helper) keys off that
+// meta, so a regression here would break the right-hand details
+// panel even if the bash side keeps emitting the marker.
+func TestAgentLineRouter_CapturesSXSkillsMarker(t *testing.T) {
+	emit := newCaptureEmitter()
+	r := newAgentLineRouter(emit)
+	r.Line("[hetchy] running sx install (org-skills)")
+	r.Line("[hetchy:sx-skills] writing-commit-messages,review,security-review,init,golang-pro")
+	r.Line("[hetchy] running claude")
+	r.Line(`{"type":"result","subtype":"success","result":"https://github.com/o/r/pull/1"}`)
+	_ = r.Finish()
+
+	var skillsBlock *captureBlock
+	for _, b := range emit.Blocks {
+		if b.Kind == blocks.KindNotify {
+			skillsBlock = b
+			break
+		}
+	}
+	if skillsBlock == nil {
+		t.Fatalf("expected a notify block from the sx-skills marker, got blocks: %+v", emit.Blocks)
+	}
+	if skillsBlock.Status != blocks.StatusDone {
+		t.Errorf("skills block status = %s, want done", skillsBlock.Status)
+	}
+	if !strings.Contains(skillsBlock.Title, "5 skills installed") {
+		t.Errorf("skills block title = %q, want count in title", skillsBlock.Title)
+	}
+	gotMeta, ok := skillsBlock.Meta[SXSkillsMetaKey].([]string)
+	if !ok {
+		t.Fatalf("skills block meta[%s] type = %T, want []string", SXSkillsMetaKey, skillsBlock.Meta[SXSkillsMetaKey])
+	}
+	wantSkills := []string{"writing-commit-messages", "review", "security-review", "init", "golang-pro"}
+	if len(gotMeta) != len(wantSkills) {
+		t.Fatalf("skills count = %d, want %d", len(gotMeta), len(wantSkills))
+	}
+	for i, s := range wantSkills {
+		if gotMeta[i] != s {
+			t.Errorf("skills[%d] = %q, want %q", i, gotMeta[i], s)
+		}
+	}
+
+	// The marker line must not leak into the setup block — keeping the
+	// payload structured in the meta blob (and out of the user-visible
+	// setup transcript) is the whole point of intercepting it.
+	for _, b := range emit.Blocks {
+		if b.Kind == blocks.KindSetup && strings.Contains(b.Body.String(), "[hetchy:sx-skills]") {
+			t.Errorf("setup block leaked the sx-skills marker: %q", b.Body.String())
+		}
+	}
+}
+
+// TestAgentLineRouter_EmitsEmptySkillsMarker covers the
+// "[hetchy:sx-skills] " (no payload) case agent.sh emits when sx
+// install ran but installed nothing — the persisted block lets the
+// UI distinguish "no skills installed" from "sx install never ran".
+func TestAgentLineRouter_EmitsEmptySkillsMarker(t *testing.T) {
+	emit := newCaptureEmitter()
+	r := newAgentLineRouter(emit)
+	r.Line("[hetchy:sx-skills] ")
+	_ = r.Finish()
+
+	var skillsBlock *captureBlock
+	for _, b := range emit.Blocks {
+		if b.Kind == blocks.KindNotify {
+			skillsBlock = b
+			break
+		}
+	}
+	if skillsBlock == nil {
+		t.Fatalf("expected a notify block for the empty sx-skills marker, got blocks: %+v", emit.Blocks)
+	}
+	if !strings.Contains(skillsBlock.Title, "0 skills installed") {
+		t.Errorf("empty-payload title = %q, want \"0 skills installed\"", skillsBlock.Title)
+	}
+	gotMeta, _ := skillsBlock.Meta[SXSkillsMetaKey].([]string)
+	if len(gotMeta) != 0 {
+		t.Errorf("empty-payload meta = %+v, want empty slice", gotMeta)
+	}
+}
+
 func TestAgentLineRouter_AbortPreservesSuppressedSetupTail(t *testing.T) {
 	emit := newCaptureEmitter()
 	r := newAgentLineRouter(emit)

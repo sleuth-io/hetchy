@@ -47,6 +47,20 @@ type agentLineRouter struct {
 // dropping setup lines as malformed JSON.
 const setupSwitchMarker = "[hetchy] running claude"
 
+// sxSkillsMarkerPrefix is the prefix agent.sh / followup.sh prints
+// after sx install completes. Body is a comma-separated list of
+// installed skill names (de-duplicated across the global and repo-
+// scoped Claude dirs). Empty list still prints the prefix so the
+// router can distinguish "sx ran and installed nothing" from "sx
+// never ran at all" — useful when triaging why a repo's skills
+// didn't load.
+const sxSkillsMarkerPrefix = "[hetchy:sx-skills] "
+
+// SXSkillsMetaKey is the Block.Meta key under which captured skill
+// names are stored. Exported so the persistence layer's tests and
+// the API rendering layer share a single source of truth.
+const SXSkillsMetaKey = "sx_skills"
+
 const maxSuppressedSetupTailLines = 20
 
 func newAgentLineRouter(emit blocks.Emitter) *agentLineRouter {
@@ -67,6 +81,17 @@ func (r *agentLineRouter) Line(line string) {
 		r.parser.Line(line)
 		return
 	}
+	// Capture the sx install skills marker before the generic
+	// "[hetchy] " prefix branch — the marker uses a "[hetchy:sx-
+	// skills] " prefix that intentionally does NOT match "[hetchy] "
+	// so the structured payload doesn't end up as a noisy line inside
+	// the Sandbox setup block. Emit a dedicated notify block whose
+	// Meta carries the parsed list; the API and UI consume that for
+	// the right-hand details panel.
+	if rest, ok := strings.CutPrefix(line, sxSkillsMarkerPrefix); ok {
+		r.emitSXSkills(rest)
+		return
+	}
 	// The marker line itself is logged as the last setup step, then
 	// the parser takes over. Exact-match — see setupSwitchMarker.
 	if line == setupSwitchMarker {
@@ -81,6 +106,33 @@ func (r *agentLineRouter) Line(line string) {
 		return
 	}
 	r.appendSetup(line)
+}
+
+// emitSXSkills parses the comma-separated payload from a "[hetchy:sx-
+// skills] " line into a clean slice of names and emits a one-shot
+// notify block whose Meta carries the list. We always emit the block
+// (even when the list is empty) so the persisted transcript records
+// that sx install ran — the UI can then show "no skills installed"
+// rather than silently rendering an empty Skills row.
+func (r *agentLineRouter) emitSXSkills(payload string) {
+	raw := strings.Split(payload, ",")
+	skills := make([]string, 0, len(raw))
+	for _, name := range raw {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		skills = append(skills, name)
+	}
+	title := fmt.Sprintf("%d skills installed", len(skills))
+	body := strings.Join(skills, ", ")
+	id := r.emit.Start(blocks.KindNotify, title, map[string]any{
+		SXSkillsMetaKey: skills,
+	})
+	if body != "" {
+		r.emit.Append(id, body)
+	}
+	r.emit.Done(id, "")
 }
 
 // Finish closes any still-open blocks and returns the PR URL parsed

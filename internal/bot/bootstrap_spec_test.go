@@ -57,7 +57,7 @@ func TestEnsureBootstrapSpecRunsFirstTimeBootstrapWithFakes(t *testing.T) {
 			return nil
 		},
 		detectViaSandboxFn: func(_ context.Context, _ *daytona.Sandbox, sessionID, workdir string) (*bootstrap.Hints, string, error) {
-			if sessionID != "bootstrap-req-1" || workdir != "/home/daytona/work" {
+			if sessionID != "bootstrap-req-1" || workdir != "/home/daytona/work/hetchy" {
 				t.Fatalf("detect args session=%q workdir=%q", sessionID, workdir)
 			}
 			return &bootstrap.Hints{Path: hintsRoot, GoMod: &bootstrap.GoMod{Path: "go.mod", Module: "example.com/app"}}, hintsRoot, nil
@@ -111,7 +111,7 @@ func TestEnsureBootstrapSpecRunsFirstTimeBootstrapWithFakes(t *testing.T) {
 	if env := inlineCalls[0].env; env["SF_REPO"] != "hetchyhq/hetchy" || env["SF_BASE_BRANCH"] != "main" || env["GITHUB_TOKEN"] != "ghs_test" {
 		t.Fatalf("clone env = %+v", env)
 	}
-	if runInput.OwnerRepo != "hetchyhq/hetchy" || runInput.RepoDir != "/home/daytona/work" || runInput.SuppliedSecrets["DATABASE_URL"] != "postgres://test" {
+	if runInput.OwnerRepo != "hetchyhq/hetchy" || runInput.RepoDir != "/home/daytona/work/hetchy" || runInput.SuppliedSecrets["DATABASE_URL"] != "postgres://test" {
 		t.Fatalf("bootstrap input = %+v", runInput)
 	}
 	if len(boot.savedSpecs) != 1 {
