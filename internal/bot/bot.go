@@ -130,6 +130,9 @@ type Bot struct {
 	ensureSandboxStartedFn   sandboxStartCheckFunc
 	commandLogSnapshotFn     commandLogSnapshotFunc
 	sessionCommandStatusFn   sessionCommandStatusFunc
+	usersOnlyInOrgFn         func(context.Context, string) ([]string, error)
+	deleteWorkOSOrgFn        func(context.Context, string) error
+	deleteWorkOSUsersFn      func(context.Context, []string) error
 	lookupRepoFn             func(context.Context, string, string, string) (sqlc.GithubRepo, error)
 	// cleanupSandboxByIDFn is called by chatCancelHandler for opportunistic
 	// cleanup of a fresh-run sandbox; overridable in tests.

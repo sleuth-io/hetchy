@@ -128,11 +128,10 @@
         form.submit();
       }
     });
-    // Reset the button on close so a Cancel + reopen cycle (or an Esc
-    // hit mid-submit) doesn't leave the user staring at a disabled
-    // "Deleting…" button next time around.
+    // Reset the button and confirmation flag on close so Cancel/Esc and
+    // network-level submit failures always require a fresh confirmation.
     dlg.addEventListener('close', () => {
-      if (confirmed) return;
+      confirmed = false;
       if (confirm) {
         confirm.disabled = false;
         confirm.textContent = 'Delete organization';

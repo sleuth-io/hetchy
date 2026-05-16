@@ -446,10 +446,10 @@ func (s *Service) UpdateOrganizationName(ctx context.Context, orgID, name string
 	return err
 }
 
-// DeleteOrganization is a best-effort rollback used by the onboarding
-// handler when org creation succeeded but a follow-up step (membership
-// creation) failed. Errors here are logged but not surfaced — the
-// triggering failure has already been reported to the user.
+// DeleteOrganization deletes the WorkOS organization shell. The onboarding
+// handler uses it as a best-effort rollback when org creation succeeded but a
+// follow-up step failed; the settings delete flow uses it as the primary
+// destructive WorkOS step and surfaces errors to the user.
 func (s *Service) DeleteOrganization(ctx context.Context, orgID string) error {
 	if s.cfg.Bypass {
 		return nil

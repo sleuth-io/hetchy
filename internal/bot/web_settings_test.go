@@ -2,8 +2,10 @@ package bot
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -617,6 +619,66 @@ func TestOrgDeleteHandlerBypassAuth(t *testing.T) {
 		handler.ServeHTTP(rec, req)
 		if rec.Code != http.StatusInternalServerError {
 			t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("workos org delete failure skips local wipe", func(t *testing.T) {
+		failing := &fakeOrgStore{getConfig: orgcfg.Config{OrgID: "org_test"}}
+		b := newBypassOrgBot(t, "admin")
+		b.orgs = failing
+		b.slack = newSlackManager(discardLogger(), failing, nil)
+		b.deleteWorkOSOrgFn = func(context.Context, string) error {
+			return errors.New("workos delete failed")
+		}
+		handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.orgDeleteHandler)))
+
+		rec := httptest.NewRecorder()
+		req := settingsFormRequest(http.MethodPost, "/settings/org/delete", "")
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusInternalServerError {
+			t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+		}
+		failing.mu.Lock()
+		defer failing.mu.Unlock()
+		if len(failing.deletes) != 0 {
+			t.Fatalf("local deletes = %#v, want none", failing.deletes)
+		}
+	})
+
+	t.Run("workos user delete failure skips local wipe", func(t *testing.T) {
+		failing := &fakeOrgStore{getConfig: orgcfg.Config{OrgID: "org_test"}}
+		b := newBypassOrgBot(t, "admin")
+		b.orgs = failing
+		b.slack = newSlackManager(discardLogger(), failing, nil)
+		b.usersOnlyInOrgFn = func(context.Context, string) ([]string, error) {
+			return []string{"user_a", "user_b"}, nil
+		}
+		deleteOrgCalled := false
+		b.deleteWorkOSOrgFn = func(context.Context, string) error {
+			deleteOrgCalled = true
+			return nil
+		}
+		b.deleteWorkOSUsersFn = func(_ context.Context, ids []string) error {
+			if !slices.Equal(ids, []string{"user_a", "user_b"}) {
+				t.Fatalf("delete user ids = %#v", ids)
+			}
+			return errors.New("workos user delete failed")
+		}
+		handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.orgDeleteHandler)))
+
+		rec := httptest.NewRecorder()
+		req := settingsFormRequest(http.MethodPost, "/settings/org/delete", "")
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusInternalServerError {
+			t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+		}
+		if !deleteOrgCalled {
+			t.Fatal("DeleteOrganization was not called before DeleteUsers")
+		}
+		failing.mu.Lock()
+		defer failing.mu.Unlock()
+		if len(failing.deletes) != 0 {
+			t.Fatalf("local deletes = %#v, want none", failing.deletes)
 		}
 	})
 }

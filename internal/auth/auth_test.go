@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -367,6 +368,32 @@ func TestUsersOnlyInOrganizationSkipsSharedUsers(t *testing.T) {
 	}
 	if len(deleted) != 1 || deleted[0] != "user_solo" {
 		t.Fatalf("deleted users = %#v, want [user_solo]", deleted)
+	}
+}
+
+func TestDeleteUsersStopsOnFirstWorkOSError(t *testing.T) {
+	var deleted []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete || !strings.HasPrefix(r.URL.Path, "/user_management/users/") {
+			t.Fatalf("unexpected WorkOS request: %s %s", r.Method, r.URL.String())
+		}
+		userID := strings.TrimPrefix(r.URL.Path, "/user_management/users/")
+		deleted = append(deleted, userID)
+		if userID == "user_b" {
+			http.Error(w, "delete failed", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	s := &Service{client: workos.NewClient("sk_test", workos.WithBaseURL(server.URL))}
+	err := s.DeleteUsers(context.Background(), []string{"user_a", "user_b", "user_c"})
+	if err == nil || !strings.Contains(err.Error(), "user_b") {
+		t.Fatalf("DeleteUsers error = %v, want user_b failure", err)
+	}
+	if len(deleted) < 2 || deleted[0] != "user_a" || !slices.Contains(deleted, "user_b") || slices.Contains(deleted, "user_c") {
+		t.Fatalf("deleted users = %#v, want user_a then user_b retries without user_c", deleted)
 	}
 }
 

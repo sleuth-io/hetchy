@@ -99,15 +99,7 @@ func (m *slackManager) Run(ctx context.Context) error {
 // a fresh one with whatever creds are now in the database. Called by the
 // settings handler after a save.
 func (m *slackManager) RestartOrg(ctx context.Context, orgID string) {
-	m.mu.Lock()
-	old := m.conns[orgID]
-	delete(m.conns, orgID)
-	parent := m.runCtx
-	m.mu.Unlock()
-	if old != nil {
-		old.cancel()
-		<-old.done
-	}
+	parent := m.stopOrgConn(orgID)
 	if parent == nil {
 		// Manager hasn't started yet — startup will pick up the new config.
 		return
@@ -122,6 +114,26 @@ func (m *slackManager) RestartOrg(ctx context.Context, orgID string) {
 		return
 	}
 	m.startConn(parent, oc)
+}
+
+// StopOrg tears down the org's existing connection without reloading it. The
+// organization delete flow uses this before destructive DB work so Slack cannot
+// write org rows while the wipe is in progress.
+func (m *slackManager) StopOrg(orgID string) {
+	m.stopOrgConn(orgID)
+}
+
+func (m *slackManager) stopOrgConn(orgID string) context.Context {
+	m.mu.Lock()
+	old := m.conns[orgID]
+	delete(m.conns, orgID)
+	parent := m.runCtx
+	m.mu.Unlock()
+	if old != nil {
+		old.cancel()
+		<-old.done
+	}
+	return parent
 }
 
 func (m *slackManager) startConn(ctx context.Context, oc orgcfg.Config) {
