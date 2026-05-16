@@ -222,31 +222,60 @@ function openSkillsModal(skills) {
   // re-open the modal cleanly rather than stacking duplicates.
   document.getElementById('skills-modal-overlay')?.remove();
 
+  // The backdrop holds no ARIA role itself — screen readers should
+  // announce the inner `.skills-modal` as the dialog. Putting
+  // role="dialog" on the full-viewport overlay would describe the
+  // whole page as a dialog and double up with the visible heading.
   const overlay = document.createElement('div');
   overlay.id = 'skills-modal-overlay';
   overlay.className = 'skills-modal-overlay';
-  overlay.setAttribute('role', 'dialog');
-  overlay.setAttribute('aria-modal', 'true');
-  overlay.setAttribute('aria-label', 'All installed skills');
 
+  const titleID = 'skills-modal-title';
   const items = skills.map(name =>
     '<li class="skills-modal-item">' + esc(name) + '</li>'
   ).join('');
   overlay.innerHTML =
-    '<div class="skills-modal">'
+    '<div class="skills-modal" role="dialog" aria-modal="true"'
+    +   ' aria-labelledby="' + titleID + '" tabindex="-1">'
     +   '<div class="skills-modal-head">'
-    +     '<h2 class="skills-modal-title">Installed skills (' + esc(String(skills.length)) + ')</h2>'
+    +     '<h2 class="skills-modal-title" id="' + titleID + '">'
+    +       'Installed skills (' + esc(String(skills.length)) + ')</h2>'
     +     '<button type="button" class="skills-modal-close"'
     +       ' aria-label="Close">&times;</button>'
     +   '</div>'
     +   '<ul class="skills-modal-list">' + items + '</ul>'
     + '</div>';
 
+  const dialog = overlay.querySelector('.skills-modal');
   const close = () => {
     document.removeEventListener('keydown', onKey);
     overlay.remove();
+    if (lastFocus && typeof lastFocus.focus === 'function') lastFocus.focus();
   };
-  const onKey = (e) => { if (e.key === 'Escape') close(); };
+  // Focus trap: Tab / Shift-Tab cycle within the dialog's focusable
+  // descendants instead of escaping to the chat behind the modal.
+  // Selector is the standard "focusable" set; refresh on each keydown
+  // so a future skill-row that grows interactive children still works.
+  const focusableSelector = [
+    'a[href]', 'button:not([disabled])', 'input:not([disabled])',
+    'select:not([disabled])', 'textarea:not([disabled])',
+    '[tabindex]:not([tabindex="-1"])',
+  ].join(',');
+  const onKey = (e) => {
+    if (e.key === 'Escape') { close(); return; }
+    if (e.key !== 'Tab') return;
+    const items = Array.from(dialog.querySelectorAll(focusableSelector));
+    if (items.length === 0) return;
+    const first = items[0];
+    const last = items[items.length - 1];
+    const active = document.activeElement;
+    if (e.shiftKey && (active === first || !dialog.contains(active))) {
+      e.preventDefault(); last.focus();
+    } else if (!e.shiftKey && (active === last || !dialog.contains(active))) {
+      e.preventDefault(); first.focus();
+    }
+  };
+  const lastFocus = document.activeElement;
   document.addEventListener('keydown', onKey);
   overlay.addEventListener('click', (e) => {
     if (e.target === overlay) close();

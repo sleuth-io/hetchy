@@ -305,6 +305,33 @@ func TestAgentScript_EmitInstalledSkillsCollectsBothScopes(t *testing.T) {
 	}
 }
 
+// TestEmitInstalledSkills_AgentAndFollowupBodiesMatch guards against
+// the two shell scripts' emit_installed_skills implementations
+// drifting. Both files carry the same function verbatim (followup.sh
+// even documents itself as a mirror); a byte-for-byte equality check
+// fails CI the moment a future change touches one copy and forgets
+// the other.
+func TestEmitInstalledSkills_AgentAndFollowupBodiesMatch(t *testing.T) {
+	extract := func(src, name string) string {
+		const startAnchor = "emit_installed_skills() {"
+		const endAnchor = "\n}"
+		startIdx := strings.Index(src, startAnchor)
+		if startIdx < 0 {
+			t.Fatalf("emit_installed_skills not found in %s", name)
+		}
+		endIdx := strings.Index(src[startIdx:], endAnchor)
+		if endIdx < 0 {
+			t.Fatalf("emit_installed_skills end-brace not found in %s", name)
+		}
+		return src[startIdx : startIdx+endIdx+len(endAnchor)]
+	}
+	a := extract(agentScriptBody, "agent.sh")
+	f := extract(followupScriptBody, "followup.sh")
+	if a != f {
+		t.Errorf("emit_installed_skills bodies have drifted between agent.sh and followup.sh:\n--- agent.sh ---\n%s\n--- followup.sh ---\n%s", a, f)
+	}
+}
+
 // TestAgentScript_EmitInstalledSkillsEmpty proves the empty-payload
 // path agent.sh relies on for "sx ran but installed nothing". The
 // bot's router emits a "0 skills installed" notify block in that
