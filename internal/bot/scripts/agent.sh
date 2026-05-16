@@ -267,9 +267,12 @@ if [[ -n "${SX_KEY:-}" ]]; then
   run_sx_install "org-skills" "$org_config" "$org_cache" "$org_profile" "${HETCHY_AGENT_SX_BOT:-}" "$SX_KEY"
 fi
 
-if [[ -n "${HETCHY_SX_PUBLIC_VAULT_URL:-}" || -n "${SX_KEY:-}" ]]; then
-  emit_installed_skills
-fi
+# Emit the marker unconditionally — even when neither sx vault was
+# configured this turn — so the chat metadata reflects the live state
+# of the sandbox's skills dirs rather than a stale snapshot persisted
+# from an earlier turn that did run sx. Empty payload (`[hetchy:sx-skills] `)
+# correctly resolves to a "—" cell in the UI.
+emit_installed_skills
 
 # Back-compat shim for saved bootstrap scripts that bake in the old
 # `/home/daytona/work` workdir. The bootstrap-loop-generated start.sh

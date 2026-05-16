@@ -218,9 +218,12 @@ if [[ -n "${SX_KEY:-}" ]]; then
   run_sx_install "org-skills" "$org_config" "$org_cache" "$org_profile" "${HETCHY_AGENT_SX_BOT:-}" "$SX_KEY"
 fi
 
-if [[ -n "${HETCHY_SX_PUBLIC_VAULT_URL:-}" || -n "${SX_KEY:-}" ]]; then
-  emit_installed_skills
-fi
+# Emit the marker unconditionally — see the matching note in agent.sh.
+# Without this, a follow-up that didn't re-run sx (e.g. SX_KEY was
+# unset between turns) would leave the metadata showing the previous
+# turn's skill list, contradicting the "latest turn wins" contract that
+# extractSXSkills documents.
+emit_installed_skills
 
 # See agent.sh — saved bootstrap scripts predating the per-repo
 # workdir change defaulted their REPO env var to /home/daytona/work,
