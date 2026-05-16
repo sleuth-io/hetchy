@@ -158,17 +158,28 @@ func TestSlackEmitter_TeeNotifyBuffersBody(t *testing.T) {
 	e, fs := newTestSlackEmitter(t, "")
 	emit := blocks.Tee(blocks.NewRecorder(0), e)
 
-	emit.Notify("Bootstrap spec — no changes", "Agent reviewed the validation run and reported no spec improvements were warranted.")
+	emit.Notify("Sandbox ready", "`sandbox-1` is up — cloning repo and starting Claude Code.")
 
 	calls := fs.Calls()
 	if len(calls) != 1 {
 		t.Fatalf("want 1 post, got %d: %+v", len(calls), calls)
 	}
-	if !strings.Contains(calls[0].Text, "Bootstrap spec") {
+	if !strings.Contains(calls[0].Text, "Sandbox ready") {
 		t.Errorf("expected notify title, got %q", calls[0].Text)
 	}
-	if !strings.Contains(calls[0].Text, "Agent reviewed the validation run") {
+	if !strings.Contains(calls[0].Text, "cloning repo") {
 		t.Errorf("expected buffered notify body, got %q", calls[0].Text)
+	}
+}
+
+func TestSlackEmitter_BootstrapSpecNotifyIsSilent(t *testing.T) {
+	e, fs := newTestSlackEmitter(t, "")
+	emit := blocks.Tee(blocks.NewRecorder(0), e)
+
+	emit.Notify("Bootstrap spec — no changes", "Agent reviewed the validation run and reported no spec improvements were warranted.")
+
+	if calls := fs.Calls(); len(calls) != 0 {
+		t.Fatalf("bootstrap-spec notify should stay out of Slack, got %+v", calls)
 	}
 }
 
@@ -184,28 +195,27 @@ func TestSlackEmitter_FailUnknownIDIsNoOp(t *testing.T) {
 	}
 }
 
-// TestSlackEmitter_FailKnownIDPostsErrorLine pairs with the unknown-id
-// test above so a future "guard too aggressive" regression doesn't
-// quietly suppress the legitimate failure post.
-func TestSlackEmitter_FailKnownIDPostsErrorLine(t *testing.T) {
+// TestSlackEmitter_ToolFailStaysInLiveStatus pins Slack's condensed
+// rendering policy: recoverable tool errors stay in the full transcript
+// and update the live counter line, but they do not create separate red
+// thread posts. Only terminal KindError blocks should post :x: messages.
+func TestSlackEmitter_ToolFailStaysInLiveStatus(t *testing.T) {
 	e, fs := newTestSlackEmitter(t, "")
 	id := e.Start(blocks.KindToolUse, "Running gh pr create", nil)
+	resetThrottle(e)
 	e.Fail(id, "exit 1")
 
-	posts := 0
+	var lastLiveUpdate string
 	for _, c := range fs.Calls() {
 		if c.Method == "postMessage" && strings.HasPrefix(c.Text, ":x: ") {
-			posts++
-			if !strings.Contains(c.Text, "Running gh pr create") {
-				t.Errorf("expected failure post to include the tool title, got %q", c.Text)
-			}
-			if !strings.Contains(c.Text, "exit 1") {
-				t.Errorf("expected failure post to include the summary, got %q", c.Text)
-			}
+			t.Fatalf("tool failure should not post a red Slack message, calls: %+v", fs.Calls())
+		}
+		if c.Method == "updateMessage" {
+			lastLiveUpdate = c.Text
 		}
 	}
-	if posts != 1 {
-		t.Errorf("want exactly 1 :x: failure post, got %d (calls: %+v)", posts, fs.Calls())
+	if !strings.Contains(lastLiveUpdate, "Bash 1") {
+		t.Errorf("live message should count the failed tool attempt, got %q (calls: %+v)", lastLiveUpdate, fs.Calls())
 	}
 }
 
@@ -253,7 +263,7 @@ func TestSlackEmitter_LiveMessageLifecycle(t *testing.T) {
 	}
 
 	// Every UpdateMessage in between must edit the live ts (we never
-	// edit anything else; the failure posts are PostMessages).
+	// edit anything else).
 	updates := 0
 	for _, c := range calls[1 : len(calls)-1] {
 		if c.Method == "updateMessage" {
@@ -297,24 +307,17 @@ func TestSlackEmitter_TeeResultPostsTerminalMentionAndPR(t *testing.T) {
 	emit.Result("Done!", "https://github.com/hetchyhq/hetchy/pull/183\n\nReply here to make further changes to this PR.")
 
 	calls := fs.Calls()
-	notifyIdx := -1
 	terminalIdx := -1
 	for i, c := range calls {
 		if c.Method == "postMessage" && strings.Contains(c.Text, "Bootstrap spec") {
-			notifyIdx = i
+			t.Fatalf("bootstrap-spec notify should not be posted to Slack; calls=%+v", calls)
 		}
 		if c.Method == "postMessage" && strings.Contains(c.Text, ":tada: Done!") {
 			terminalIdx = i
 		}
 	}
-	if notifyIdx < 0 {
-		t.Fatalf("missing bootstrap notify post in calls: %+v", calls)
-	}
 	if terminalIdx < 0 {
 		t.Fatalf("missing terminal result post in calls: %+v", calls)
-	}
-	if terminalIdx <= notifyIdx {
-		t.Fatalf("terminal result should be posted after bootstrap notify; calls=%+v", calls)
 	}
 	terminal := calls[terminalIdx].Text
 	if !strings.Contains(terminal, "<@U1>") {

@@ -233,26 +233,17 @@ func (e *slackEmitter) Fail(id, summary string) {
 	if b.kind == blocks.KindClaudeText {
 		return
 	}
-	title := "Step failed"
-	if b.title != "" {
-		title = b.title
+	// Non-terminal block failures are common while Claude explores:
+	// a missing file, a probing `ls`, a failed browser navigation, or
+	// a shell command whose non-zero exit is useful information rather
+	// than a run failure. Keep those details in the full transcript and
+	// the web UI, but do not post a red Slack thread message unless a
+	// terminal KindError arrives above. The live status still advances
+	// so the thread does not look stuck on the failed attempt.
+	if cat := categorise(b.kind, b.title); cat != "" {
+		e.counters[cat]++
 	}
-	// Failures are signal — surface them as their own thread message
-	// even though the happy path stays in the live message. Without
-	// this, a transient tool error (e.g. a flaky bash step Claude
-	// recovers from) would scroll past invisibly. The live message
-	// keeps moving forward.
-	//
-	// title and summary may carry Claude/sandbox-controlled text
-	// (tool titles include Bash command first lines, summary echoes
-	// stderr's first line). Escape both so a malicious or accidental
-	// `<!channel>` in the source can't broadcast on PostMessage.
-	line := ":x: " + mrkdwnEscape(title)
-	if summary != "" {
-		line += " — " + mrkdwnEscape(summary)
-	}
-	e.post(line)
-	if e.current == title {
+	if e.current == b.title {
 		e.current = ""
 	}
 	e.refreshLive()
@@ -277,6 +268,9 @@ func (e *slackEmitter) Error(title, body string) {
 }
 
 func (e *slackEmitter) postNotifyLocked(title, body string) {
+	if isSlackSilentNotify(title) {
+		return
+	}
 	msg := notifyIcon(title) + " " + mrkdwnEscape(title)
 	if body != "" {
 		msg += "\n" + mrkdwnEscape(body)
@@ -541,6 +535,14 @@ func notifyIcon(title string) string {
 		return ":speech_balloon:"
 	}
 	return ":white_check_mark:"
+}
+
+// isSlackSilentNotify filters transcript-only housekeeping notes out
+// of Slack. Bootstrap-spec reflection remains useful in the full chat
+// history, but posting it into the thread after validation and before
+// the terminal Done message adds noise without requiring user action.
+func isSlackSilentNotify(title string) bool {
+	return strings.HasPrefix(title, "Bootstrap spec")
 }
 
 // formatElapsed renders a duration in a Slack-thread-friendly form:
