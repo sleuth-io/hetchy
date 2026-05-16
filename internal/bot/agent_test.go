@@ -26,7 +26,7 @@ func TestAgentPromptTemplate_IncludesAllInputs(t *testing.T) {
 		"owner/repo", "/work", "main",
 		"Add a feature flag to gate the new login flow",
 		"",
-		"req-12345",
+		"feature/add-login-flag-3e2df2",
 		"main",
 	)
 
@@ -35,7 +35,7 @@ func TestAgentPromptTemplate_IncludesAllInputs(t *testing.T) {
 		"/work",
 		"main",
 		"Add a feature flag to gate the new login flow",
-		"feature/sf-req-12345",
+		"feature/add-login-flag-3e2df2",
 		"PR URL",
 		"gh pr create",
 		"do NOT insert hard line breaks",
@@ -336,7 +336,7 @@ func TestRunAgentBuildsScriptEnvironmentWithFakeRunner(t *testing.T) {
 	repo := repoCtx{Slug: "acme/repo", BaseBranch: "main", GitHubToken: "ghs_token"}
 	oc := orgcfg.Config{OrgID: "org_1", AnthropicAPIKey: "sk-ant", SXKey: "sx-key"}
 
-	prURL, err := b.runAgent(context.Background(), &daytona.Sandbox{ID: "sandbox-1"}, repo, oc, agent, "ship feature", "req-1", chatTaskOptions{
+	prURL, err := b.runAgent(context.Background(), &daytona.Sandbox{ID: "sandbox-1"}, repo, oc, agent, "ship feature", "req-1", "feature/sf-req-1", chatTaskOptions{
 		ValidateChanges:       false,
 		ReviewCodeBeforePush:  true,
 		ActionPRChecksForDone: false,

@@ -26,7 +26,7 @@ type conversationStore interface {
 
 type repoResolveFunc func(context.Context, string, string, string) (repoCtx, error)
 
-type agentRunFunc func(context.Context, *daytona.Sandbox, repoCtx, orgcfg.Config, agents.Profile, string, string, chatTaskOptions, ClaudeModel, blocks.Emitter) (string, error)
+type agentRunFunc func(context.Context, *daytona.Sandbox, repoCtx, orgcfg.Config, agents.Profile, string, string, string, chatTaskOptions, ClaudeModel, blocks.Emitter) (string, error)
 
 type followUpRunFunc func(context.Context, *daytona.Sandbox, repoCtx, orgcfg.Config, convstore.Record, agents.Profile, string, string, chatTaskOptions, ClaudeModel, blocks.Emitter) (string, error)
 

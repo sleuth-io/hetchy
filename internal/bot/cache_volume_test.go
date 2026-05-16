@@ -223,7 +223,7 @@ func TestHandleRequestFreshRunAttachesCacheVolumeAndEnv(t *testing.T) {
 		}
 		return &daytona.Sandbox{ID: "sandbox-1"}, nil
 	}
-	b.runAgentFn = func(_ context.Context, _ *daytona.Sandbox, _ repoCtx, _ orgcfg.Config, _ agents.Profile, _ string, _ string, _ chatTaskOptions, _ ClaudeModel, _ blocks.Emitter) (string, error) {
+	b.runAgentFn = func(_ context.Context, _ *daytona.Sandbox, _ repoCtx, _ orgcfg.Config, _ agents.Profile, _ string, _ string, _ string, _ chatTaskOptions, _ ClaudeModel, _ blocks.Emitter) (string, error) {
 		return "https://github.com/hetchyhq/hetchy/pull/2", nil
 	}
 	b.deleteSandboxSessionFn = func(*daytona.Sandbox, string) {}
@@ -275,7 +275,7 @@ func TestHandleRequestFreshRunMarksCacheUnavailableWhenVolumeResolveFails(t *tes
 		params = raw.(types.SnapshotParams)
 		return &daytona.Sandbox{ID: "sandbox-1"}, nil
 	}
-	b.runAgentFn = func(_ context.Context, _ *daytona.Sandbox, repo repoCtx, _ orgcfg.Config, _ agents.Profile, _ string, _ string, _ chatTaskOptions, _ ClaudeModel, _ blocks.Emitter) (string, error) {
+	b.runAgentFn = func(_ context.Context, _ *daytona.Sandbox, repo repoCtx, _ orgcfg.Config, _ agents.Profile, _ string, _ string, _ string, _ chatTaskOptions, _ ClaudeModel, _ blocks.Emitter) (string, error) {
 		if repo.CacheMounted {
 			t.Fatal("repo.CacheMounted should be false when volume resolution fails")
 		}
@@ -316,7 +316,7 @@ func TestHandleRequestFreshRunSkipsCacheMountWithoutRepoIdentity(t *testing.T) {
 		params = raw.(types.SnapshotParams)
 		return &daytona.Sandbox{ID: "sandbox-1"}, nil
 	}
-	b.runAgentFn = func(_ context.Context, _ *daytona.Sandbox, _ repoCtx, _ orgcfg.Config, _ agents.Profile, _ string, _ string, _ chatTaskOptions, _ ClaudeModel, _ blocks.Emitter) (string, error) {
+	b.runAgentFn = func(_ context.Context, _ *daytona.Sandbox, _ repoCtx, _ orgcfg.Config, _ agents.Profile, _ string, _ string, _ string, _ chatTaskOptions, _ ClaudeModel, _ blocks.Emitter) (string, error) {
 		return "https://github.com/hetchyhq/hetchy/pull/2", nil
 	}
 	b.deleteSandboxSessionFn = func(*daytona.Sandbox, string) {}
@@ -353,7 +353,7 @@ func TestRunAgentPassesCacheEnvAndFollowUpDoesNotOverride(t *testing.T) {
 	}
 	repo := repoCtx{Slug: "acme/repo", BaseBranch: "main", GitHubToken: "token", InstallID: 11, RepoID: 22, CacheMounted: true}
 	oc := orgcfg.Config{OrgID: "org_1", AnthropicAPIKey: "sk-ant"}
-	if _, err := b.runAgent(context.Background(), &daytona.Sandbox{ID: "sandbox-1"}, repo, oc, agents.Profile{}, "ship", "req-1", chatTaskOptions{ValidateChanges: false}, ClaudeModelSonnet, newCaptureEmitter()); err != nil {
+	if _, err := b.runAgent(context.Background(), &daytona.Sandbox{ID: "sandbox-1"}, repo, oc, agents.Profile{}, "ship", "req-1", "feature/sf-req-1", chatTaskOptions{ValidateChanges: false}, ClaudeModelSonnet, newCaptureEmitter()); err != nil {
 		t.Fatalf("runAgent: %v", err)
 	}
 	if captured.env["HETCHY_CACHE_DIR"] != daytonaCacheMountPath || captured.env["HETCHY_CACHE_STATUS"] != "mounted" || captured.env["HETCHY_CACHE_PRUNE_DAYS"] != "9" {
