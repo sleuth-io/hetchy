@@ -682,11 +682,13 @@ func (b *Bot) memberActionHandler(w http.ResponseWriter, r *http.Request) {
 
 // orgDeleteHandler permanently destroys the caller's organization. It
 // tears down the org's Slack connection (so inbound events can't
-// resurrect the row mid-wipe), removes the WorkOS organization, wipes
-// every per-org row this app owns (org_configs, conversations, agent
-// profiles + runs, GitHub App installations, repo bootstrap specs and
-// secret values), and finally logs the user out — their session was
-// bound to an org that no longer exists.
+// resurrect the row mid-wipe), finds the WorkOS users who belong only
+// to this org, removes the WorkOS organization, deletes only those
+// sole-org WorkOS users, wipes every per-org row this app owns
+// (org_configs, conversations, agent profiles + runs, GitHub App
+// installations, repo bootstrap specs and secret values), and finally
+// logs the user out — their session was bound to an org that no longer
+// exists.
 //
 // Slack teardown FIRST is intentional. The Slack dispatch goroutine
 // would otherwise be a live writer: an AppUninstalledEvent or
@@ -695,15 +697,19 @@ func (b *Bot) memberActionHandler(w http.ResponseWriter, r *http.Request) {
 // cancels the connection and waits for the dispatch loop to drain
 // before returning, closing that race.
 //
-// The WorkOS deletion runs before the local wipe: if it fails we
-// abort before touching local data, so the user can retry without
-// ending up half-deleted. Local data is wiped in a single transaction
-// so a mid-flight DB failure rolls everything back. The remaining
-// risk window — WorkOS-deleted-but-DB-wipe-fails — is logged with
-// every ID needed for ops recovery; the user can no longer use this
-// org's UI to retry (the WorkOS org is gone), so this is the
-// failure mode we minimize by logging and surfacing a generic 500
-// rather than leaking pgx internals to the browser.
+// The WorkOS membership scan runs before any destructive WorkOS call:
+// once the org is gone, we can no longer distinguish sole-org users
+// from users who should keep access elsewhere. The WorkOS deletions
+// then run before the local wipe: a membership-scan or org-delete
+// failure aborts while the org still exists, and a user-delete failure
+// aborts before local data is removed so ops can see exactly what
+// remains. Local data is wiped in a single transaction so a mid-flight
+// DB failure rolls everything back. The remaining risk window —
+// WorkOS-deleted-but-DB-wipe-fails — is logged with every ID needed
+// for ops recovery; the user can no longer use this org's UI to retry
+// (the WorkOS org is gone), so this is the failure mode we minimize by
+// logging and surfacing a generic 500 rather than leaking pgx internals
+// to the browser.
 func (b *Bot) orgDeleteHandler(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.FromContext(r.Context())
 	if r.Method != http.MethodPost {
@@ -728,9 +734,21 @@ func (b *Bot) orgDeleteHandler(w http.ResponseWriter, r *http.Request) {
 	if b.slack != nil {
 		b.slack.RestartOrg(r.Context(), orgID)
 	}
+	deletableUserIDs, err := b.auth.UsersOnlyInOrganization(r.Context(), orgID)
+	if err != nil {
+		b.log.Error("org delete: workos membership scan failed", "error", err, "org", orgID, "actor", p.UserID)
+		http.Error(w, "Could not inspect organization members. Please try again or contact support.", http.StatusInternalServerError)
+		return
+	}
 	if err := b.auth.DeleteOrganization(r.Context(), orgID); err != nil {
 		b.log.Error("org delete: workos delete failed", "error", err, "org", orgID, "actor", p.UserID)
 		http.Error(w, "Could not delete the organization. Please try again or contact support.", http.StatusInternalServerError)
+		return
+	}
+	if err := b.auth.DeleteUsers(r.Context(), deletableUserIDs); err != nil {
+		b.log.Error("org delete: workos user delete failed after org delete succeeded",
+			"error", err, "org", orgID, "actor", p.UserID, "user_count", len(deletableUserIDs))
+		http.Error(w, "Could not delete organization users. Please contact support.", http.StatusInternalServerError)
 		return
 	}
 	if err := b.orgs.Delete(r.Context(), orgID); err != nil {
@@ -742,7 +760,7 @@ func (b *Bot) orgDeleteHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Could not delete organization data. Please contact support.", http.StatusInternalServerError)
 		return
 	}
-	b.log.Info("org deleted", "org", orgID, "actor", p.UserID)
+	b.log.Info("org deleted", "org", orgID, "actor", p.UserID, "deleted_users", len(deletableUserIDs))
 	// Reuse LogoutHandler to revoke the session at WorkOS and clear
 	// the session cookie. It writes its own redirect to the app root,
 	// which renders the landing/login page for an unauthenticated

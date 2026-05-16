@@ -26,6 +26,7 @@ func TestSettingsTemplate_GeneralTab(t *testing.T) {
 		`name="org_name"`,
 		`value="Acme Inc."`,
 		`action="/settings/org?tab=general"`,
+		`user accounts that belong only to this organization`,
 	} {
 		if !strings.Contains(body, w) {
 			t.Errorf("general tab missing %q", w)

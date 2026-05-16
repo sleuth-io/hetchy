@@ -1,12 +1,16 @@
 package auth
 
 import (
+	"context"
 	"crypto/hkdf"
 	"crypto/sha256"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	workos "github.com/workos/workos-go/v7"
 )
 
 // newTestService builds a non-bypass Service with the OAuth-state machinery
@@ -292,6 +296,77 @@ func TestLogoutNonBypassMalformedCookieFallsThrough(t *testing.T) {
 	}
 	if !cleared {
 		t.Fatal("session cookie should be cleared on logout even with malformed cookie")
+	}
+}
+
+func TestUsersOnlyInOrganizationSkipsSharedUsers(t *testing.T) {
+	var deleted []string
+	writeMemberships := func(w http.ResponseWriter, rows []map[string]any) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": rows,
+			"list_metadata": map[string]any{
+				"before": nil,
+				"after":  nil,
+			},
+		})
+	}
+	membership := func(id, userID, orgID string) map[string]any {
+		return map[string]any{
+			"object":            "organization_membership",
+			"id":                id,
+			"user_id":           userID,
+			"organization_id":   orgID,
+			"status":            "active",
+			"directory_managed": false,
+			"created_at":        "2026-01-15T12:00:00.000Z",
+			"updated_at":        "2026-01-15T12:00:00.000Z",
+			"role":              map[string]any{"slug": "member"},
+		}
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/user_management/organization_memberships":
+			switch {
+			case r.URL.Query().Get("organization_id") == "org_delete":
+				writeMemberships(w, []map[string]any{
+					membership("om_solo", "user_solo", "org_delete"),
+					membership("om_shared_delete", "user_shared", "org_delete"),
+				})
+			case r.URL.Query().Get("user_id") == "user_solo":
+				writeMemberships(w, []map[string]any{
+					membership("om_solo", "user_solo", "org_delete"),
+				})
+			case r.URL.Query().Get("user_id") == "user_shared":
+				writeMemberships(w, []map[string]any{
+					membership("om_shared_delete", "user_shared", "org_delete"),
+					membership("om_shared_other", "user_shared", "org_other"),
+				})
+			default:
+				t.Fatalf("unexpected membership query: %s", r.URL.RawQuery)
+			}
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/user_management/users/"):
+			deleted = append(deleted, strings.TrimPrefix(r.URL.Path, "/user_management/users/"))
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected WorkOS request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer server.Close()
+
+	s := &Service{client: workos.NewClient("sk_test", workos.WithBaseURL(server.URL))}
+	ids, err := s.UsersOnlyInOrganization(context.Background(), "org_delete")
+	if err != nil {
+		t.Fatalf("UsersOnlyInOrganization: %v", err)
+	}
+	if len(ids) != 1 || ids[0] != "user_solo" {
+		t.Fatalf("deletable users = %#v, want [user_solo]", ids)
+	}
+	if err := s.DeleteUsers(context.Background(), ids); err != nil {
+		t.Fatalf("DeleteUsers: %v", err)
+	}
+	if len(deleted) != 1 || deleted[0] != "user_solo" {
+		t.Fatalf("deleted users = %#v, want [user_solo]", deleted)
 	}
 }
 

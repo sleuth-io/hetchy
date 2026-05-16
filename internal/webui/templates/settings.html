@@ -110,7 +110,7 @@
     <div class="danger-zone-row">
       <div class="danger-zone-text">
         <h4>Delete this organization</h4>
-        <p class="hint">Permanently deletes <strong>{{.OrgName}}</strong> from WorkOS and wipes every Hetchy record tied to it (members, conversations, agents, GitHub installations, bootstrap specs). This cannot be undone.</p>
+        <p class="hint">Permanently deletes <strong>{{.OrgName}}</strong> from WorkOS, deletes WorkOS user accounts that belong only to this organization, and wipes every Hetchy record tied to it (members, conversations, agents, GitHub installations, bootstrap specs). This cannot be undone.</p>
       </div>
       <form method="POST" action="/settings/org/delete" id="org-delete-form" class="org-delete-form">
         <button type="submit" class="danger-btn">Delete organization</button>
@@ -121,7 +121,7 @@
   <dialog class="app-dialog" id="org-delete-dialog" aria-labelledby="org-delete-title">
     <div class="dlg-body">
       <h3 id="org-delete-title">Delete organization?</h3>
-      <p>This permanently deletes <code>{{.OrgName}}</code> from WorkOS and removes every Hetchy record tied to it (members, conversations, agents, GitHub installations, bootstrap specs and secret values). Every member loses access immediately.</p>
+      <p>This permanently deletes <code>{{.OrgName}}</code> from WorkOS and removes every Hetchy record tied to it (members, conversations, agents, GitHub installations, bootstrap specs and secret values). WorkOS user accounts are deleted only for members who do not belong to another organization; every member loses access to this organization immediately.</p>
       <p>This action <strong>cannot be undone</strong>. You will be logged out once it completes.</p>
     </div>
     <div class="dlg-actions">
