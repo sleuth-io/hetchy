@@ -99,7 +99,7 @@ func (b *Bot) generateBranchSlug(ctx context.Context, oc orgcfg.Config, userRequ
 // an error when the org has no Anthropic credential configured, the
 // request fails, or the response is unparseable.
 func requestBranchSlug(ctx context.Context, oc orgcfg.Config, userRequest string) (string, error) {
-	authHeader, authValue, beta, ok := anthropicAuthHeader(oc)
+	kind, value, ok := resolveAnthropicCred(oc)
 	if !ok {
 		return "", errors.New("anthropic: no credential")
 	}
@@ -125,10 +125,7 @@ func requestBranchSlug(ctx context.Context, oc orgcfg.Config, userRequest string
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("anthropic-version", "2023-06-01")
-	req.Header.Set(authHeader, authValue)
-	if beta != "" {
-		req.Header.Set("anthropic-beta", beta)
-	}
+	applyAnthropicAuth(req, kind, value)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -175,20 +172,41 @@ Rules:
 
 Respond with the slug only, nothing else.`
 
-// anthropicAuthHeader returns the header name + value the Anthropic
-// API expects for the org's configured credential. Mirrors the
-// precedence in claudeAuthEnv: OAuth subscription token wins over an
-// API key when both are set. The third return is the anthropic-beta
-// header value (only set for OAuth), and the fourth indicates whether
-// any credential was found at all.
-func anthropicAuthHeader(oc orgcfg.Config) (header, value, beta string, ok bool) {
-	if strings.TrimSpace(oc.ClaudeCodeOAuthToken) != "" {
-		return "Authorization", "Bearer " + strings.TrimSpace(oc.ClaudeCodeOAuthToken), "oauth-2025-04-20", true
+// resolveAnthropicCred picks the credential to use for an outbound
+// Anthropic API call from an orgcfg.Config. Mirrors the precedence in
+// claudeAuthEnv: a subscription OAuth token wins over an API key when
+// both are set. Returns ok=false when neither is configured. The
+// returned (kind, value) feeds applyAnthropicAuth so the actual
+// header-setting code lives in one place.
+func resolveAnthropicCred(oc orgcfg.Config) (kind anthropicCredKind, value string, ok bool) {
+	if tok := strings.TrimSpace(oc.ClaudeCodeOAuthToken); tok != "" {
+		return anthropicCredOAuthToken, tok, true
 	}
-	if strings.TrimSpace(oc.AnthropicAPIKey) != "" {
-		return "x-api-key", strings.TrimSpace(oc.AnthropicAPIKey), "", true
+	if key := strings.TrimSpace(oc.AnthropicAPIKey); key != "" {
+		return anthropicCredAPIKey, key, true
 	}
-	return "", "", "", false
+	return 0, "", false
+}
+
+// applyAnthropicAuth sets the credential-specific headers on req for
+// the given (kind, value). Shared by validateAnthropicCredential and
+// requestBranchSlug so the OAuth-beta header and API-key header rules
+// live in one place — if Anthropic rolls a new oauth beta value or
+// adds a third credential kind, only this function changes. Returns
+// false when kind doesn't match a known credential so callers can
+// raise an "unknown credential kind" error.
+func applyAnthropicAuth(req *http.Request, kind anthropicCredKind, value string) bool {
+	switch kind {
+	case anthropicCredAPIKey:
+		req.Header.Set("x-api-key", value)
+		return true
+	case anthropicCredOAuthToken:
+		req.Header.Set("Authorization", "Bearer "+value)
+		req.Header.Set("anthropic-beta", "oauth-2025-04-20")
+		return true
+	default:
+		return false
+	}
 }
 
 // sanitizeBranchSlug normalises raw model output to the safe slug

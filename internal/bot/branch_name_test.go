@@ -73,38 +73,34 @@ func TestRandomBranchSuffix_FormatAndUniqueness(t *testing.T) {
 	}
 }
 
-func TestAnthropicAuthHeader(t *testing.T) {
+func TestResolveAnthropicCred(t *testing.T) {
 	cases := []struct {
-		name       string
-		oc         orgcfg.Config
-		wantHeader string
-		wantValue  string
-		wantBeta   string
-		wantOK     bool
+		name      string
+		oc        orgcfg.Config
+		wantKind  anthropicCredKind
+		wantValue string
+		wantOK    bool
 	}{
 		{
-			name:       "oauth wins over api key",
-			oc:         orgcfg.Config{AnthropicAPIKey: "sk-ant-key", ClaudeCodeOAuthToken: "sk-ant-oat01-abc"},
-			wantHeader: "Authorization",
-			wantValue:  "Bearer sk-ant-oat01-abc",
-			wantBeta:   "oauth-2025-04-20",
-			wantOK:     true,
+			name:      "oauth wins over api key",
+			oc:        orgcfg.Config{AnthropicAPIKey: "sk-ant-key", ClaudeCodeOAuthToken: "sk-ant-oat01-abc"},
+			wantKind:  anthropicCredOAuthToken,
+			wantValue: "sk-ant-oat01-abc",
+			wantOK:    true,
 		},
 		{
-			name:       "api key only",
-			oc:         orgcfg.Config{AnthropicAPIKey: "sk-ant-key"},
-			wantHeader: "x-api-key",
-			wantValue:  "sk-ant-key",
-			wantBeta:   "",
-			wantOK:     true,
+			name:      "api key only",
+			oc:        orgcfg.Config{AnthropicAPIKey: "sk-ant-key"},
+			wantKind:  anthropicCredAPIKey,
+			wantValue: "sk-ant-key",
+			wantOK:    true,
 		},
 		{
-			name:       "trims whitespace",
-			oc:         orgcfg.Config{AnthropicAPIKey: "  sk-ant-key  "},
-			wantHeader: "x-api-key",
-			wantValue:  "sk-ant-key",
-			wantBeta:   "",
-			wantOK:     true,
+			name:      "trims whitespace",
+			oc:        orgcfg.Config{AnthropicAPIKey: "  sk-ant-key  "},
+			wantKind:  anthropicCredAPIKey,
+			wantValue: "sk-ant-key",
+			wantOK:    true,
 		},
 		{
 			name:   "no credentials",
@@ -119,13 +115,59 @@ func TestAnthropicAuthHeader(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			gotH, gotV, gotB, gotOK := anthropicAuthHeader(tc.oc)
-			if gotOK != tc.wantOK || gotH != tc.wantHeader || gotV != tc.wantValue || gotB != tc.wantBeta {
-				t.Fatalf("anthropicAuthHeader = (%q,%q,%q,%v), want (%q,%q,%q,%v)",
-					gotH, gotV, gotB, gotOK, tc.wantHeader, tc.wantValue, tc.wantBeta, tc.wantOK)
+			gotK, gotV, gotOK := resolveAnthropicCred(tc.oc)
+			if gotOK != tc.wantOK || gotV != tc.wantValue || (tc.wantOK && gotK != tc.wantKind) {
+				t.Fatalf("resolveAnthropicCred = (%d,%q,%v), want (%d,%q,%v)",
+					gotK, gotV, gotOK, tc.wantKind, tc.wantValue, tc.wantOK)
 			}
 		})
 	}
+}
+
+func TestApplyAnthropicAuth(t *testing.T) {
+	t.Run("api key sets x-api-key", func(t *testing.T) {
+		req, _ := http.NewRequest(http.MethodPost, "http://example/", nil)
+		if !applyAnthropicAuth(req, anthropicCredAPIKey, "sk-ant-key") {
+			t.Fatal("applyAnthropicAuth returned false for valid api-key kind")
+		}
+		if got := req.Header.Get("x-api-key"); got != "sk-ant-key" {
+			t.Fatalf("x-api-key = %q", got)
+		}
+		if got := req.Header.Get("Authorization"); got != "" {
+			t.Fatalf("Authorization should be empty for api-key path, got %q", got)
+		}
+		if got := req.Header.Get("anthropic-beta"); got != "" {
+			t.Fatalf("anthropic-beta should be empty for api-key path, got %q", got)
+		}
+	})
+
+	t.Run("oauth sets bearer and beta header", func(t *testing.T) {
+		req, _ := http.NewRequest(http.MethodPost, "http://example/", nil)
+		if !applyAnthropicAuth(req, anthropicCredOAuthToken, "sk-ant-oat01-abc") {
+			t.Fatal("applyAnthropicAuth returned false for valid oauth kind")
+		}
+		if got := req.Header.Get("Authorization"); got != "Bearer sk-ant-oat01-abc" {
+			t.Fatalf("Authorization = %q", got)
+		}
+		if got := req.Header.Get("anthropic-beta"); got != "oauth-2025-04-20" {
+			t.Fatalf("anthropic-beta = %q", got)
+		}
+		if got := req.Header.Get("x-api-key"); got != "" {
+			t.Fatalf("x-api-key should be empty for oauth path, got %q", got)
+		}
+	})
+
+	t.Run("unknown kind returns false and sets nothing", func(t *testing.T) {
+		req, _ := http.NewRequest(http.MethodPost, "http://example/", nil)
+		if applyAnthropicAuth(req, anthropicCredKind(99), "value") {
+			t.Fatal("applyAnthropicAuth returned true for unknown kind")
+		}
+		for _, h := range []string{"x-api-key", "Authorization", "anthropic-beta"} {
+			if got := req.Header.Get(h); got != "" {
+				t.Fatalf("header %s should be empty for unknown kind, got %q", h, got)
+			}
+		}
+	})
 }
 
 // TestGenerateBranchSlug_HappyPath stubs the Anthropic API to return a
