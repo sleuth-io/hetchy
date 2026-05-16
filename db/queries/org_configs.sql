@@ -92,3 +92,35 @@ RETURNING
     default_github_owner,
     default_github_repo,
     claude_code_oauth_token_encrypted;
+
+-- name: DeleteOrgConfig :exec
+DELETE FROM org_configs WHERE org_id = $1;
+
+-- name: DeleteConversationsByOrg :exec
+DELETE FROM conversations WHERE org_id = $1;
+
+-- name: DeleteAgentProfilesByOrg :exec
+DELETE FROM agent_profiles WHERE org_id = $1;
+
+-- name: DeleteAgentRunsByOrg :exec
+-- agent_run_events cascade-deletes via FK ON DELETE CASCADE.
+DELETE FROM agent_runs WHERE org_id = $1;
+
+-- name: DeleteRepoSetupSpecsByOrg :exec
+-- repo_setup_specs are not FK-tied to github_app_installations (specs
+-- are user-visible work that must survive cache invalidation), so an
+-- org deletion has to clear them explicitly via the installation join.
+DELETE FROM repo_setup_specs
+WHERE installation_id IN (
+    SELECT installation_id FROM github_app_installations WHERE org_id = $1
+);
+
+-- name: DeleteRepoSecretValuesByOrg :exec
+DELETE FROM repo_secret_values
+WHERE installation_id IN (
+    SELECT installation_id FROM github_app_installations WHERE org_id = $1
+);
+
+-- name: DeleteGithubInstallationsByOrg :exec
+-- github_repos / github_teams / github_team_members cascade via FK.
+DELETE FROM github_app_installations WHERE org_id = $1;

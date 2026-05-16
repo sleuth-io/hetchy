@@ -59,6 +59,7 @@ type orgStore interface {
 	GetBySlackTeamID(context.Context, string) (orgcfg.Config, error)
 	ListWithSlack(context.Context) ([]orgcfg.Config, error)
 	Upsert(context.Context, orgcfg.Config) (orgcfg.Config, error)
+	Delete(context.Context, string) error
 }
 
 type runStore interface {

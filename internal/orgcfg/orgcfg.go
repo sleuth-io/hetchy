@@ -159,6 +159,50 @@ func (s *Store) Upsert(ctx context.Context, c Config) (Config, error) {
 	return s.decrypt(row)
 }
 
+// Delete wipes every per-org row this app owns: org_configs, the
+// org's conversations and agent runs (with cascaded run events), the
+// org's agent profiles, every GitHub App installation bound to the
+// org (with cascaded repos/teams/team members), and the
+// installation-scoped repo bootstrap specs and secret values. Runs
+// inside a single transaction so a mid-flight failure leaves the org
+// fully present rather than half-deleted.
+//
+// The WorkOS organization itself is NOT touched here — callers
+// (settings handler) call auth.DeleteOrganization separately because
+// orgcfg has no business depending on WorkOS. Order matters: the
+// bootstrap specs and secret values must be wiped BEFORE the
+// installations they join on, because they are not FK-linked and
+// would otherwise be left orphaned with no UI path back to them.
+func (s *Store) Delete(ctx context.Context, orgID string) error {
+	if orgID == "" {
+		return errors.New("orgcfg: empty orgID")
+	}
+	return s.db.WithTx(ctx, func(q *sqlc.Queries) error {
+		if err := q.DeleteRepoSecretValuesByOrg(ctx, orgID); err != nil {
+			return fmt.Errorf("delete repo secret values: %w", err)
+		}
+		if err := q.DeleteRepoSetupSpecsByOrg(ctx, orgID); err != nil {
+			return fmt.Errorf("delete repo setup specs: %w", err)
+		}
+		if err := q.DeleteGithubInstallationsByOrg(ctx, orgID); err != nil {
+			return fmt.Errorf("delete github installations: %w", err)
+		}
+		if err := q.DeleteAgentRunsByOrg(ctx, orgID); err != nil {
+			return fmt.Errorf("delete agent runs: %w", err)
+		}
+		if err := q.DeleteAgentProfilesByOrg(ctx, orgID); err != nil {
+			return fmt.Errorf("delete agent profiles: %w", err)
+		}
+		if err := q.DeleteConversationsByOrg(ctx, orgID); err != nil {
+			return fmt.Errorf("delete conversations: %w", err)
+		}
+		if err := q.DeleteOrgConfig(ctx, orgID); err != nil {
+			return fmt.Errorf("delete org config: %w", err)
+		}
+		return nil
+	})
+}
+
 func (s *Store) decrypt(row sqlc.OrgConfig) (Config, error) {
 	sb, err := s.cipher.Decrypt(row.SlackBotTokenEncrypted)
 	if err != nil {

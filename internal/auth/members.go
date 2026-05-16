@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	workos "github.com/workos/workos-go/v7"
@@ -189,6 +190,77 @@ func (s *Service) ListMembers(ctx context.Context, orgID string) ([]Member, erro
 		return nil, fmt.Errorf("list memberships: %w", err)
 	}
 	return out, nil
+}
+
+// UsersOnlyInOrganization returns the active WorkOS users whose active
+// organization memberships are all scoped to orgID. It is used by the
+// organization-delete flow: deleting the WorkOS organization removes the
+// org shell, but WorkOS users are environment-level records and must be
+// deleted separately. Users who also belong to another org are deliberately
+// skipped so deleting one org does not destroy access elsewhere.
+func (s *Service) UsersOnlyInOrganization(ctx context.Context, orgID string) ([]string, error) {
+	if s.cfg.Bypass {
+		if s.cfg.BypassUser != "" && s.cfg.BypassOrg == orgID {
+			return []string{s.cfg.BypassUser}, nil
+		}
+		return nil, nil
+	}
+
+	org := orgID
+	it := s.client.UserManagement().ListOrganizationMemberships(ctx, &workos.UserManagementListOrganizationMembershipsParams{
+		OrganizationID: &org,
+	})
+	userIDs := map[string]struct{}{}
+	for it.Next() {
+		m := it.Current()
+		if m.UserID != "" {
+			userIDs[m.UserID] = struct{}{}
+		}
+	}
+	if err := it.Err(); err != nil {
+		return nil, fmt.Errorf("list org memberships for deletion: %w", err)
+	}
+
+	var out []string
+	for userID := range userIDs {
+		user := userID
+		memberships := s.client.UserManagement().ListOrganizationMemberships(ctx, &workos.UserManagementListOrganizationMembershipsParams{
+			UserID: &user,
+		})
+		onlyThisOrg := true
+		for memberships.Next() {
+			m := memberships.Current()
+			if m.OrganizationID != orgID {
+				onlyThisOrg = false
+			}
+		}
+		if err := memberships.Err(); err != nil {
+			return nil, fmt.Errorf("list memberships for user %s: %w", userID, err)
+		}
+		if onlyThisOrg {
+			out = append(out, userID)
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// DeleteUsers permanently deletes WorkOS user accounts by ID. The caller
+// must decide which IDs are safe to delete; this helper intentionally does
+// no membership checks so those checks stay explicit at the call site.
+func (s *Service) DeleteUsers(ctx context.Context, userIDs []string) error {
+	if s.cfg.Bypass {
+		return nil
+	}
+	for _, userID := range userIDs {
+		if userID == "" {
+			continue
+		}
+		if err := s.client.UserManagement().Delete(ctx, userID); err != nil {
+			return fmt.Errorf("delete user %s: %w", userID, err)
+		}
+	}
+	return nil
 }
 
 // FindOrgUserByEmail returns the WorkOS user that belongs to orgID and

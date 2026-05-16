@@ -103,6 +103,33 @@
     <p class="hint">Only administrators can change organization settings.</p>
   </fieldset>
   {{end}}
+
+  {{if .IsAdmin}}
+  <fieldset class="danger-zone">
+    <legend>Danger zone</legend>
+    <div class="danger-zone-row">
+      <div class="danger-zone-text">
+        <h4>Delete this organization</h4>
+        <p class="hint">Permanently deletes <strong>{{.OrgName}}</strong> from WorkOS, deletes WorkOS user accounts that belong only to this organization, and wipes every Hetchy record tied to it (members, conversations, agents, GitHub installations, bootstrap specs). This cannot be undone.</p>
+      </div>
+      <form method="POST" action="/settings/org/delete" id="org-delete-form" class="org-delete-form">
+        <button type="submit" class="danger-btn">Delete organization</button>
+      </form>
+    </div>
+  </fieldset>
+
+  <dialog class="app-dialog" id="org-delete-dialog" aria-labelledby="org-delete-title">
+    <div class="dlg-body">
+      <h3 id="org-delete-title">Delete organization?</h3>
+      <p>This permanently deletes <code>{{.OrgName}}</code> from WorkOS and removes every Hetchy record tied to it (members, conversations, agents, GitHub installations, bootstrap specs and secret values). WorkOS user accounts are deleted only for members who do not belong to another organization; every member loses access to this organization immediately.</p>
+      <p>This action <strong>cannot be undone</strong>. You will be logged out once it completes.</p>
+    </div>
+    <div class="dlg-actions">
+      <button type="button" class="dlg-cancel" id="org-delete-cancel">Cancel</button>
+      <button type="button" class="dlg-delete" id="org-delete-confirm">Delete organization</button>
+    </div>
+  </dialog>
+  {{end}}
 {{end}}
 
 {{define "integrations"}}

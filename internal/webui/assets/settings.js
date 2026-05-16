@@ -93,6 +93,52 @@
     dlg.addEventListener('close', resetDialog);
   })();
 
+  // Org delete dialog (General tab → Danger zone). Same app-dialog
+  // pattern as the integration-disconnect flow: intercept the submit,
+  // open the dialog, only submit when the user confirms.
+  (function () {
+    const form = document.getElementById('org-delete-form');
+    const dlg = document.getElementById('org-delete-dialog');
+    if (!form || !dlg) return;
+    const cancel = document.getElementById('org-delete-cancel');
+    const confirm = document.getElementById('org-delete-confirm');
+    let confirmed = false;
+    form.addEventListener('submit', e => {
+      if (confirmed) return;
+      e.preventDefault();
+      if (confirm) {
+        confirm.disabled = false;
+        confirm.textContent = 'Delete organization';
+      }
+      if (typeof dlg.showModal === 'function') {
+        dlg.showModal();
+      } else {
+        confirmed = true;
+        form.submit();
+      }
+    });
+    if (cancel) cancel.addEventListener('click', () => dlg.close());
+    if (confirm) confirm.addEventListener('click', () => {
+      confirmed = true;
+      confirm.disabled = true;
+      confirm.textContent = 'Deleting…';
+      if (typeof form.requestSubmit === 'function') {
+        form.requestSubmit();
+      } else {
+        form.submit();
+      }
+    });
+    // Reset the button and confirmation flag on close so Cancel/Esc and
+    // network-level submit failures always require a fresh confirmation.
+    dlg.addEventListener('close', () => {
+      confirmed = false;
+      if (confirm) {
+        confirm.disabled = false;
+        confirm.textContent = 'Delete organization';
+      }
+    });
+  })();
+
   // Existing rotate/remove logic for the "secret" sub-template.
   document.querySelectorAll('[data-rotate]').forEach(btn => {
     btn.addEventListener('click', () => {
