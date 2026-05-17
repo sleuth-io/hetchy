@@ -340,10 +340,13 @@ func (b *Bot) handleSlackEvent(ctx context.Context, oc orgcfg.Config, ev incomin
 	// check matches the milestone-style icon the Notify posts use —
 	// "Working on it" is itself a *milestone* (we acknowledged the
 	// request), so it shouldn't read as still-pending.
-	replyInThread(b.log, cli, ev.channel, replyTo, ":white_check_mark: Working on it…")
-
 	requestID := strings.ReplaceAll(ev.ts, ".", "")
 	conversationURL := b.cfg.PublicBaseURL() + "/?session=" + threadID
+	workingMsg := ":white_check_mark: Working on it…"
+	if conversationURL != "" {
+		workingMsg += "\n_<" + conversationURL + "|View full details>_"
+	}
+	replyInThread(b.log, cli, ev.channel, replyTo, workingMsg)
 	emit := newSlackEmitter(b.log, cli, ev.channel, replyTo, ev.user, conversationURL, text)
 	// Best-effort attribution: map the Slack author to a hetchy user so
 	// the chat appears under their LHN filter. Empty string when the
