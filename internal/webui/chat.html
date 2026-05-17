@@ -162,6 +162,28 @@
           </svg>
         </button>
         <div id="tools-popover" class="composer-popover" hidden>
+          <div id="repo-flyout-root">
+            <button id="repo-selector-btn" class="tools-menu-item" type="button"
+                    aria-label="Choose repository" aria-haspopup="menu" aria-expanded="false">
+              <svg class="tools-menu-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M4 4h11a3 3 0 0 1 3 3v13"/>
+                <path d="M4 4v15a2 2 0 0 0 2 2h12"/>
+                <path d="M9 8h6"/>
+              </svg>
+              <span class="tools-menu-main">
+                <span class="tools-menu-label">Repository</span>
+                <span id="repo-selector-value" class="tools-menu-value">Default</span>
+              </span>
+              <span class="tools-chevron" aria-hidden="true">›</span>
+            </button>
+            <div id="repo-popover" class="composer-popover" hidden>
+              <div class="repo-search-wrap">
+                <input id="repo-search" type="search" autocomplete="off"
+                       placeholder="Search repositories…" aria-label="Search repositories">
+              </div>
+              <div id="repo-options"></div>
+            </div>
+          </div>
           <div id="agent-flyout-root">
             <button id="agent-selector-btn" class="tools-menu-item" type="button"
                     aria-label="Choose agent" aria-haspopup="menu" aria-expanded="false">

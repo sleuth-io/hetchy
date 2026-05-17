@@ -6,7 +6,9 @@
 // back to rendering the persisted snapshot.
 async function init() {
   populateModelPicker();
-  await loadAgents();
+  populateRepoPicker();
+  updateRepoButton();
+  await Promise.all([loadAgents(), loadRepos('')]);
   loadMembers();
   loadSidebar();
 

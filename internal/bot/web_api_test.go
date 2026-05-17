@@ -10,6 +10,7 @@ import (
 
 	"github.com/hetchyhq/hetchy/internal/blocks"
 	"github.com/hetchyhq/hetchy/internal/convstore"
+	"github.com/hetchyhq/hetchy/internal/db/sqlc"
 )
 
 // TestExtractSXSkillsSurvivesPersistenceRoundTrip pins the contract
@@ -236,6 +237,72 @@ func TestAgentsHandlerListsFallbackProfiles(t *testing.T) {
 
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodPut, "/api/agents", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("wrong method status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
+	}
+}
+
+func TestFilterRepositoriesForPicker(t *testing.T) {
+	rows := []sqlc.GithubRepo{
+		{Owner: "acme", Name: "ui", DefaultBranch: "main"},
+		{Owner: "acme", Name: "api", DefaultBranch: "main", Private: true},
+		{Owner: "bravo", Name: "service-x", DefaultBranch: "trunk"},
+		{Owner: "bravo", Name: "service-y", DefaultBranch: "trunk"},
+		{Owner: "charlie", Name: "tools", DefaultBranch: "main"},
+	}
+
+	cases := []struct {
+		name      string
+		query     string
+		limit     int
+		wantSlugs []string
+	}{
+		{name: "empty query returns first N", query: "", limit: 3, wantSlugs: []string{"acme/ui", "acme/api", "bravo/service-x"}},
+		{name: "substring filter is case-insensitive", query: "SERVICE", limit: 5, wantSlugs: []string{"bravo/service-x", "bravo/service-y"}},
+		{name: "owner segment match", query: "acme", limit: 5, wantSlugs: []string{"acme/ui", "acme/api"}},
+		{name: "no match returns empty slice", query: "missing", limit: 5, wantSlugs: []string{}},
+		{name: "zero limit returns empty", query: "", limit: 0, wantSlugs: []string{}},
+		{name: "limit caps matches", query: "", limit: 1, wantSlugs: []string{"acme/ui"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := filterRepositoriesForPicker(rows, tc.query, tc.limit)
+			if len(got) != len(tc.wantSlugs) {
+				t.Fatalf("len = %d, want %d (got: %+v)", len(got), len(tc.wantSlugs), got)
+			}
+			for i, want := range tc.wantSlugs {
+				slug := got[i].Owner + "/" + got[i].Name
+				if slug != want {
+					t.Errorf("entry[%d] = %q, want %q", i, slug, want)
+				}
+			}
+			// Private flag must round-trip on the acme/api row so the
+			// UI can later distinguish public/private repos if it
+			// chooses to. Covered implicitly by the first test case.
+			if tc.name == "empty query returns first N" && !got[1].Private {
+				t.Errorf("expected acme/api to carry Private=true through filter")
+			}
+		})
+	}
+}
+
+func TestRepositoriesHandlerNilStoreReturnsEmptyList(t *testing.T) {
+	b := newBypassOrgBot(t, "member")
+	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.repositoriesHandler)))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/repositories?limit=5&q=anything", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	if got := strings.TrimSpace(rec.Body.String()); got != "[]" {
+		t.Fatalf("body = %q, want []", got)
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/repositories", nil)
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("wrong method status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)

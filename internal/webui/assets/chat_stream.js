@@ -388,6 +388,7 @@ async function send() {
   const taskOptions = currentTaskOptions();
 
   const agentChoiceApplies = conversationAgentIsMutable();
+  const repoChoiceApplies = conversationRepoIsMutable();
   const isFirstTurn = log.querySelectorAll('.msg').length === 0;
   addUserMsg(text);
   if (lastDetail) lastDetail.task_options = taskOptions;
@@ -402,6 +403,14 @@ async function send() {
   payload.action_pr_checks_for_done = taskOptions[taskOptionKeys.actionPRChecks];
   if (agentChoiceApplies) {
     payload.agent_slug = selectedAgentSlug;
+  }
+  // Only send `repository` on turns where the conversation hasn't
+  // locked one in yet. Sending it on follow-ups would be a no-op
+  // server-side (HandleRequest pins the repo at sandbox creation), but
+  // the explicit guard keeps the wire payload honest about what the
+  // server will actually use.
+  if (repoChoiceApplies && selectedRepoSlug) {
+    payload.repository = selectedRepoSlug;
   }
   try {
     const res = await fetch('/chat', {

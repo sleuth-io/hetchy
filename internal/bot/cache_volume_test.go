@@ -232,7 +232,7 @@ func TestHandleRequestFreshRunAttachesCacheVolumeAndEnv(t *testing.T) {
 	b.HandleRequest(context.Background(),
 		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant", DefaultGitHubOwner: "hetchyhq", DefaultGitHubRepo: "hetchy"},
 		"ship it", "req-1", "thread-1", "user-1",
-		chatTaskOptionPatch{}, nil, ClaudeModelOpus, newCaptureEmitter())
+		chatTaskOptionPatch{}, nil, nil, ClaudeModelOpus, newCaptureEmitter())
 
 	if len(params.Volumes) != 1 {
 		t.Fatalf("SnapshotParams.Volumes len = %d, want 1 (%+v)", len(params.Volumes), params.Volumes)
@@ -287,7 +287,7 @@ func TestHandleRequestFreshRunMarksCacheUnavailableWhenVolumeResolveFails(t *tes
 	b.HandleRequest(context.Background(),
 		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant", DefaultGitHubOwner: "hetchyhq", DefaultGitHubRepo: "hetchy"},
 		"ship it", "req-1", "thread-1", "user-1",
-		chatTaskOptionPatch{}, nil, ClaudeModelOpus, newCaptureEmitter())
+		chatTaskOptionPatch{}, nil, nil, ClaudeModelOpus, newCaptureEmitter())
 
 	if len(params.Volumes) != 0 {
 		t.Fatalf("expected no cache volumes, got %+v", params.Volumes)
@@ -325,7 +325,7 @@ func TestHandleRequestFreshRunSkipsCacheMountWithoutRepoIdentity(t *testing.T) {
 	b.HandleRequest(context.Background(),
 		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant", DefaultGitHubOwner: "hetchyhq", DefaultGitHubRepo: "hetchy"},
 		"ship it", "req-1", "thread-1", "user-1",
-		chatTaskOptionPatch{}, nil, ClaudeModelOpus, newCaptureEmitter())
+		chatTaskOptionPatch{}, nil, nil, ClaudeModelOpus, newCaptureEmitter())
 
 	if len(params.Volumes) != 0 {
 		t.Fatalf("expected no cache volumes, got %+v", params.Volumes)
