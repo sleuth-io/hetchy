@@ -1,3 +1,160 @@
+// loadRepos fetches the first page of repositories the org's GitHub
+// App installations grant access to. The endpoint accepts an optional
+// `q=` substring so we re-fetch on each keystroke; orgs with thousands
+// of repos never need to be paged into the browser. A stale-response
+// guard via repoLoadToken means a slow earlier fetch can't clobber a
+// newer query the user just typed.
+async function loadRepos(query) {
+  const token = ++repoLoadToken;
+  const url = new URL('/api/repositories', window.location.origin);
+  if (query) url.searchParams.set('q', query);
+  try {
+    const res = await fetch(url.pathname + url.search, {
+      headers: { 'Accept': 'application/json' },
+    });
+    if (!res.ok) throw new Error('repositories fetch failed: ' + res.status);
+    const data = await res.json();
+    if (token !== repoLoadToken) return;
+    repoOptions = Array.isArray(data) ? data : [];
+    repoOptionsLoaded = true;
+  } catch (e) {
+    if (token !== repoLoadToken) return;
+    repoOptions = [];
+    repoOptionsLoaded = true;
+  }
+  populateRepoPicker();
+}
+
+function persistSelectedRepo() {
+  try { localStorage.setItem(repoStorageKey, selectedRepoSlug); } catch (e) {}
+}
+
+function parseRepoSlug(slug) {
+  const trimmed = (slug || '').trim();
+  if (!trimmed) return null;
+  const parts = trimmed.split('/');
+  if (parts.length !== 2 || !parts[0] || !parts[1]) return null;
+  return { owner: parts[0], name: parts[1] };
+}
+
+function selectedRepoLabel() {
+  return selectedRepoSlug || 'Default';
+}
+
+function updateRepoButton() {
+  if (!repoSelectorValueEl || !repoSelectorBtn) return;
+  const label = selectedRepoLabel();
+  repoSelectorValueEl.textContent = label;
+  repoSelectorBtn.title = 'Repository: ' + label;
+  repoSelectorBtn.setAttribute('aria-label', 'Choose repository. Current: ' + label);
+  repoSelectorBtn.classList.toggle('has-selection', !!selectedRepoSlug);
+}
+
+function chooseRepo(slug) {
+  selectedRepoSlug = (slug || '').trim();
+  persistSelectedRepo();
+  populateRepoPicker();
+  updateRepoButton();
+  updateMutablePendingRepoMetadata();
+  closeRepoPopover();
+  closeToolsPopover();
+  inp.focus();
+}
+
+// repoChoicesForPicker merges the most-recent server page with the
+// currently selected slug so the dropdown always shows that slug as
+// "selected" even when it isn't on the first 20 — important for an org
+// with thousands of repos where the chosen repo was found via search.
+// The currently selected repo always renders (even when filtered out
+// by the active search) so the picker never claims an empty state
+// while a selection is in effect.
+function repoChoicesForPicker() {
+  const choices = [];
+  const seen = new Set();
+  // The "default" / clear-selection row pins to the top and is the
+  // only way to revert to the org default without typing.
+  choices.push({ owner: '', name: '', label: 'Use org default', isDefault: true });
+  if (selectedRepoSlug) {
+    const parts = parseRepoSlug(selectedRepoSlug);
+    if (parts) {
+      const slug = parts.owner + '/' + parts.name;
+      seen.add(slug);
+      choices.push({ owner: parts.owner, name: parts.name, label: slug });
+    }
+  }
+  for (const repo of repoOptions) {
+    if (!repo || !repo.owner || !repo.name) continue;
+    const slug = repo.owner + '/' + repo.name;
+    if (seen.has(slug)) continue;
+    if (!matchesSearch(slug)) continue;
+    seen.add(slug);
+    choices.push({ owner: repo.owner, name: repo.name, label: slug });
+  }
+  return choices;
+}
+
+function matchesSearch(slug) {
+  const needle = repoSearchQuery.trim().toLowerCase();
+  if (!needle) return true;
+  return slug.toLowerCase().includes(needle);
+}
+
+function populateRepoPicker() {
+  if (!repoOptionsEl) return;
+  repoOptionsEl.innerHTML = '';
+  const choices = repoChoicesForPicker();
+  for (const choice of choices) {
+    const slug = choice.owner && choice.name ? choice.owner + '/' + choice.name : '';
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'repo-choice' + (slug === selectedRepoSlug ? ' is-selected' : '');
+    item.dataset.repoSlug = slug;
+    const name = document.createElement('span');
+    name.className = 'repo-choice-name';
+    name.textContent = choice.label;
+    item.appendChild(name);
+    item.addEventListener('click', () => chooseRepo(slug));
+    repoOptionsEl.appendChild(item);
+  }
+  // Loading / empty placeholder row appended after the choices so a
+  // user with a stored selection still sees it pinned to the top
+  // while the server response is in flight or the search has no
+  // matches. The "Use org default" row counts as a placeholder choice
+  // (length === 1) — only show the empty-state when no real repos
+  // surfaced.
+  if (!repoOptionsLoaded) {
+    const loading = document.createElement('div');
+    loading.className = 'repo-empty';
+    loading.textContent = 'Loading repositories…';
+    repoOptionsEl.appendChild(loading);
+  } else if (choices.length <= (selectedRepoSlug ? 2 : 1)) {
+    const empty = document.createElement('div');
+    empty.className = 'repo-empty';
+    empty.textContent = repoSearchQuery.trim()
+      ? 'No repositories match “' + repoSearchQuery + '”.'
+      : 'No repositories available. Install the GitHub App at /settings/org → Integrations.';
+    repoOptionsEl.appendChild(empty);
+  }
+  updateRepoButton();
+}
+
+function applyConversationRepo(detail) {
+  if (detail) {
+    const owner = (detail.github_owner || '').trim();
+    const name = (detail.github_repo || '').trim();
+    // Display the conversation's pinned repo (or empty when none yet)
+    // but don't update localStorage — the per-user "preferred default
+    // repo" should survive a sidebar click into a chat that targets a
+    // different repo, just like the Agent picker keeps its stored slug
+    // when viewing a conversation with a different agent.
+    selectedRepoSlug = owner && name ? owner + '/' + name : '';
+  } else {
+    selectedRepoSlug = readStoredRepoSlug();
+  }
+  populateRepoPicker();
+  updateRepoButton();
+}
+
 async function loadAgents() {
   agentOptionsLoaded = false;
   try {
@@ -208,6 +365,7 @@ function closeToolsPopover() {
   toolsPopover.hidden = true;
   toolsBtn.setAttribute('aria-expanded', 'false');
   closeAgentPopover();
+  closeRepoPopover();
 }
 
 function openAgentPopover() {
@@ -218,6 +376,28 @@ function openAgentPopover() {
 function closeAgentPopover() {
   agentPopover.hidden = true;
   agentSelectorBtn.setAttribute('aria-expanded', 'false');
+}
+
+function openRepoPopover() {
+  if (!repoPopover || !repoSelectorBtn) return;
+  repoPopover.hidden = false;
+  repoSelectorBtn.setAttribute('aria-expanded', 'true');
+  // Focusing the search box on open turns "open the menu and start
+  // typing" into one continuous action — matches what users expect of
+  // a command-palette style picker. Selecting any existing value lets
+  // a quick retype overwrite without a manual clear.
+  if (repoSearchEl) {
+    requestAnimationFrame(() => {
+      repoSearchEl.focus();
+      repoSearchEl.select();
+    });
+  }
+}
+
+function closeRepoPopover() {
+  if (!repoPopover || !repoSelectorBtn) return;
+  repoPopover.hidden = true;
+  repoSelectorBtn.setAttribute('aria-expanded', 'false');
 }
 
 function openModelPopover() {
@@ -243,9 +423,70 @@ agentSelectorBtn.addEventListener('click', e => {
   if (agentPopover.hidden) openAgentPopover();
   else closeAgentPopover();
 });
-document.getElementById('agent-flyout-root').addEventListener('mouseenter', openAgentPopover);
+document.getElementById('agent-flyout-root').addEventListener('mouseenter', () => {
+  closeRepoPopover();
+  openAgentPopover();
+});
+if (repoSelectorBtn) {
+  repoSelectorBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    if (repoPopover.hidden) openRepoPopover();
+    else closeRepoPopover();
+  });
+}
+const repoFlyoutRoot = document.getElementById('repo-flyout-root');
+if (repoFlyoutRoot) {
+  repoFlyoutRoot.addEventListener('mouseenter', () => {
+    closeAgentPopover();
+    openRepoPopover();
+  });
+}
+if (repoSearchEl) {
+  // Re-render the local list immediately so the UI feels responsive,
+  // then fire off the server query for terms outside the cached 20.
+  // Debounce the network call so each keystroke doesn't trigger its
+  // own ListGithubReposByOrg scan; the trailing edge fires once the
+  // user pauses typing.
+  let repoSearchDebounce = null;
+  let lastFetchedQuery = '';
+  repoSearchEl.addEventListener('input', () => {
+    repoSearchQuery = repoSearchEl.value;
+    populateRepoPicker();
+    if (repoSearchDebounce) clearTimeout(repoSearchDebounce);
+    repoSearchDebounce = setTimeout(() => {
+      const trimmed = repoSearchQuery.trim();
+      if (trimmed === lastFetchedQuery) return;
+      lastFetchedQuery = trimmed;
+      loadRepos(trimmed);
+    }, 180);
+  });
+  repoSearchEl.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closeRepoPopover();
+      closeToolsPopover();
+      return;
+    }
+    if (e.key === 'Enter') {
+      // Enter picks the top non-default match so a quick type-and-go
+      // doesn't require reaching for the mouse. The "Use org default"
+      // row sits at index 0 with empty owner; the first actual repo
+      // row is the first .repo-choice with a non-empty data-repo-slug.
+      e.preventDefault();
+      const first = repoOptionsEl.querySelector('.repo-choice[data-repo-slug]:not([data-repo-slug=""])');
+      if (first) chooseRepo(first.dataset.repoSlug);
+    }
+  });
+  repoSearchEl.addEventListener('click', e => e.stopPropagation());
+}
+if (repoPopover) {
+  repoPopover.addEventListener('click', e => e.stopPropagation());
+}
 qualityOptionBoxes.forEach(box => box.addEventListener('change', updateToolsButton));
-qualityOptionRows.forEach(row => row.addEventListener('mouseenter', closeAgentPopover));
+qualityOptionRows.forEach(row => row.addEventListener('mouseenter', () => {
+  closeAgentPopover();
+  closeRepoPopover();
+}));
 helpIcons.forEach(icon => {
   icon.addEventListener('click', e => {
     e.preventDefault();
@@ -262,6 +503,7 @@ document.addEventListener('click', () => {
   closeToolsPopover();
   closeModelPopover();
   closeAgentPopover();
+  closeRepoPopover();
   closeMetaDropdown();
 });
 document.addEventListener('keydown', e => {
@@ -269,6 +511,7 @@ document.addEventListener('keydown', e => {
     closeToolsPopover();
     closeModelPopover();
     closeAgentPopover();
+    closeRepoPopover();
     closeMetaDropdown();
   }
 });

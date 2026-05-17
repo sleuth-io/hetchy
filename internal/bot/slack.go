@@ -357,7 +357,7 @@ func (b *Bot) handleSlackEvent(ctx context.Context, oc orgcfg.Config, ev incomin
 	if strings.TrimSpace(requestedAgent) != "" {
 		requestedAgentPtr = &requestedAgent
 	}
-	b.HandleRequest(ctx, oc, text, requestID, threadID, creatorID, chatTaskOptionPatch{}, requestedAgentPtr, ClaudeModelOpus, emit)
+	b.HandleRequest(ctx, oc, text, requestID, threadID, creatorID, chatTaskOptionPatch{}, requestedAgentPtr, nil, ClaudeModelOpus, emit)
 	// Reaction bookkeeping: only swap the eyes/recycle that signalled
 	// "working on it" for a final ✓/✗ when the run actually reached a
 	// terminal state. Bot-driven question turns ("Which repository?"

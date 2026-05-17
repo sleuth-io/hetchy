@@ -483,13 +483,15 @@ func (b *Bot) prepareAgentRun(ctx context.Context, orgID, threadID, requestID, t
 	return ctx, run, true
 }
 
-func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, requestID, threadID, userID string, optionPatch chatTaskOptionPatch, requestedAgent *string, model ClaudeModel, out blocks.Emitter) {
+func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, requestID, threadID, userID string, optionPatch chatTaskOptionPatch, requestedAgent *string, requestedRepo *string, model ClaudeModel, out blocks.Emitter) {
 	model = normalizeClaudeModel(model)
+	requestedOwner, requestedName, requestedRepoOK := parseRequestedRepo(requestedRepo)
 	b.log.Info("request received",
 		"org", oc.OrgID,
 		"request_id", requestID,
 		"thread_id", threadID,
 		"requested_agent", requestedAgentSlug(requestedAgent),
+		"requested_repo", requestedRepoSlug(requestedOwner, requestedName),
 		"model", model,
 		"text_len", len(text),
 		"text_preview", truncate(text, 200),
@@ -567,15 +569,24 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		// No sandbox was ever created. Two sub-states distinguished by
 		// GitHubOwner:
 		//   1. GitHubOwner == "" → we asked for a repo and the user is
-		//      answering. handleAwaitingRepoReply parses owner/name.
+		//      answering. handleAwaitingRepoReply parses owner/name —
+		//      unless the composer's repo picker carried an explicit
+		//      selection on this turn, which takes precedence so the
+		//      user doesn't have to also type the repo into the body.
 		//   2. GitHubOwner != "" → resolveRepo+sandbox-create failed.
 		//      The repo isn't the problem; treat the new message as
-		//      the new request and re-run on the same repo.
+		//      the new request and re-run on the same repo — or on
+		//      the composer's new picker selection when the user has
+		//      explicitly chosen a different repo via the dropdown.
 		if rec.GitHubOwner != "" && rec.GitHubRepo != "" {
 			agent, ok := b.selectAgentForConversation(ctx, oc.OrgID, mutableConversationAgentSlug(rec.AgentSlug, requestedAgent), emit)
 			if !ok {
 				b.markRunState(ctx, runstore.StateFailed, errors.New("unknown agent"))
 				return
+			}
+			if requestedRepoOK {
+				rec.GitHubOwner = requestedOwner
+				rec.GitHubRepo = requestedName
 			}
 			b.handleRetryAfterFailure(ctx, oc, rec, agent, text, requestID, opts, model, recorder, emit)
 			return
@@ -583,6 +594,23 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		agent, ok := b.selectAgentForConversation(ctx, oc.OrgID, mutableConversationAgentSlug(rec.AgentSlug, requestedAgent), emit)
 		if !ok {
 			b.markRunState(ctx, runstore.StateFailed, errors.New("unknown agent"))
+			return
+		}
+		// On the awaiting-repo branch the composer picker can stand in
+		// for the typed `owner/name` answer. We launch against the
+		// original first-turn request (preserved in History[0]) rather
+		// than the new turn's text — the user already told us what to
+		// build, this turn is just the repo selection.
+		if requestedRepoOK {
+			rec.GitHubOwner = requestedOwner
+			rec.GitHubRepo = requestedName
+			rec.AgentSlug = agent.Slug
+			rec.Model = string(model)
+			originalRequest := text
+			if len(rec.History) > 0 && rec.History[0] != "" {
+				originalRequest = rec.History[0]
+			}
+			b.runFreshAgent(ctx, oc, rec, agent, originalRequest, requestID, opts, model, recorder, emit)
 			return
 		}
 		b.handleAwaitingRepoReply(ctx, oc, rec, agent, text, requestID, opts, model, recorder, emit)
@@ -596,14 +624,17 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		return
 	}
 
-	// New conversation. Use the org's default repo if set; otherwise
-	// stash the request and ask the user which repo to use.
+	// New conversation. Prefer an explicit per-turn picker selection
+	// (composer repo dropdown), fall back to the org default, and as
+	// a last resort stash the request and ask the user which repo to
+	// use.
 	agent, ok := b.selectAgentForConversation(ctx, oc.OrgID, requestedAgentSlug(requestedAgent), emit)
 	if !ok {
 		b.markRunState(ctx, runstore.StateFailed, errors.New("unknown agent"))
 		return
 	}
-	if oc.DefaultGitHubOwner == "" || oc.DefaultGitHubRepo == "" {
+	owner, name, ok := resolveRequestedOrDefaultRepo(requestedOwner, requestedName, requestedRepoOK, oc.DefaultGitHubOwner, oc.DefaultGitHubRepo)
+	if !ok {
 		emit.Notify("Which repository?", "Reply with `owner/name`.\n(You can save a default at /settings/org → Integrations.)")
 		partial := convstore.Record{
 			OrgID:          oc.OrgID,
@@ -626,8 +657,8 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		OrgID:       oc.OrgID,
 		ThreadID:    threadID,
 		History:     []string{text},
-		GitHubOwner: oc.DefaultGitHubOwner,
-		GitHubRepo:  oc.DefaultGitHubRepo,
+		GitHubOwner: owner,
+		GitHubRepo:  name,
 		CreatorID:   userID,
 		AgentSlug:   agent.Slug,
 		Model:       string(model),
@@ -649,6 +680,40 @@ func requestedAgentSlug(requested *string) string {
 		return ""
 	}
 	return strings.TrimSpace(*requested)
+}
+
+// parseRequestedRepo extracts an (owner, name) from the optional composer
+// repo picker selection. A nil or unparseable value is treated as "no
+// selection" — callers fall back to whatever the conversation/org already
+// has. We deliberately reuse parseOwnerRepo so a future API client
+// passing `https://github.com/owner/name` is handled the same way as the
+// chat-text reply path.
+func parseRequestedRepo(requested *string) (owner, name string, ok bool) {
+	if requested == nil {
+		return "", "", false
+	}
+	return parseOwnerRepo(*requested)
+}
+
+func requestedRepoSlug(owner, name string) string {
+	if owner == "" || name == "" {
+		return ""
+	}
+	return owner + "/" + name
+}
+
+// resolveRequestedOrDefaultRepo returns the repo to use for a new
+// conversation. An explicit composer-picker selection wins outright;
+// otherwise the org's saved default is used. Returns ok=false when
+// neither is available so the caller can fall back to asking the user.
+func resolveRequestedOrDefaultRepo(reqOwner, reqName string, hasReq bool, defOwner, defName string) (owner, name string, ok bool) {
+	if hasReq {
+		return reqOwner, reqName, true
+	}
+	if defOwner != "" && defName != "" {
+		return defOwner, defName, true
+	}
+	return "", "", false
 }
 
 func mutableConversationAgentSlug(pinnedSlug string, requested *string) string {
