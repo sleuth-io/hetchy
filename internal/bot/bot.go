@@ -706,9 +706,13 @@ func requestedRepoSlug(owner, name string) string {
 // resolveRequestedOrDefaultRepo returns the repo to use for a new
 // conversation. An explicit composer-picker selection wins outright;
 // otherwise the org's saved default is used. Returns ok=false when
-// neither is available so the caller can fall back to asking the user.
+// neither is available so the caller can fall back to asking the
+// user. The empty-string guard on each branch keeps the function
+// correct by construction: even if a future direct caller bypasses
+// parseRequestedRepo and passes hasReq=true with empty strings, we
+// don't write an empty owner/name into the conversation row.
 func resolveRequestedOrDefaultRepo(reqOwner, reqName string, hasReq bool, defOwner, defName string) (owner, name string, ok bool) {
-	if hasReq {
+	if hasReq && reqOwner != "" && reqName != "" {
 		return reqOwner, reqName, true
 	}
 	if defOwner != "" && defName != "" {
