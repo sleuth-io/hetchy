@@ -390,6 +390,19 @@ function updateMutablePendingAgentMetadata() {
   renderMetadata(lastDetail);
 }
 
+function updateLiveSXSkills(skills) {
+  if (!Array.isArray(skills)) return;
+  const existing = lastDetail || {};
+  lastDetail = {
+    ...existing,
+    thread_id: existing.thread_id || sessionId,
+    history: existing.history || [],
+    response_blocks: existing.response_blocks || [],
+    sx_skills: skills.slice(),
+  };
+  renderMetadata(lastDetail);
+}
+
 async function refreshMetadata() {
   if (!conversationHasServerState) {
     renderMetadata(null);
