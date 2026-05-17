@@ -20,6 +20,9 @@ func TestRenderChatTemplate(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
 	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-cache" {
+		t.Fatalf("Cache-Control = %q, want no-cache for HTML", got)
+	}
 	body := rec.Body.String()
 	for _, want := range []string{
 		`data-current-user-id="user_test"`,
@@ -36,6 +39,12 @@ func TestRenderChatTemplate(t *testing.T) {
 	if strings.Contains(body, `src="/assets/chat.js`) {
 		t.Fatalf("rendered chat template still references removed chat.js")
 	}
+	if !strings.Contains(body, `href="/assets/chat.css?v=`) {
+		t.Fatalf("rendered chat template missing fingerprinted chat.css asset")
+	}
+	if strings.Contains(body, `?v=dev`) {
+		t.Fatalf("rendered chat template should not use a deploy-wide dev asset version")
+	}
 }
 
 func TestAssetHandlerServesEmbeddedAssets(t *testing.T) {
@@ -45,8 +54,8 @@ func TestAssetHandlerServesEmbeddedAssets(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
 	}
-	if got := rec.Header().Get("Cache-Control"); got != "no-cache" {
-		t.Fatalf("Cache-Control = %q, want no-cache for dev asset version", got)
+	if got := rec.Header().Get("Cache-Control"); got != "public, max-age=31536000, immutable" {
+		t.Fatalf("Cache-Control = %q, want immutable for fingerprinted asset URLs", got)
 	}
 	if !strings.Contains(rec.Body.String(), "document.body.dataset.currentUserId") {
 		t.Fatalf("chat_core.js did not contain expected bootstrapped user-id read")
