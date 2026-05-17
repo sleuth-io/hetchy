@@ -1,5 +1,19 @@
 # Hetchy
 
+```
+    ╔═══════════════════════════════════════════════════════╗
+    ║                                                       ║
+    ║   🤖  H E T C H Y  🚀                                ║
+    ║                                                       ║
+    ║   Your AI Coding Agent                              ║
+    ║   Slack · Web · Automation                          ║
+    ║                                                       ║
+    ║   Natural Language → Pull Requests                  ║
+    ║   In Isolated Sandboxes                             ║
+    ║                                                       ║
+    ╚═══════════════════════════════════════════════════════╝
+```
+
 A Slack bot and web UI that converts natural language requests into pull requests by running [Claude Code](https://claude.com/claude-code) inside isolated [Daytona](https://daytona.io) sandboxes.
 
 ## Overview
