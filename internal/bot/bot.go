@@ -485,6 +485,24 @@ func (b *Bot) prepareAgentRun(ctx context.Context, orgID, threadID, requestID, t
 
 func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, requestID, threadID, userID string, optionPatch chatTaskOptionPatch, requestedAgent *string, requestedRepo *string, model ClaudeModel, out blocks.Emitter) {
 	model = normalizeClaudeModel(model)
+	// Belt-and-braces invariant: the chat HTTP handler already 400s on
+	// GPT model picks until the Codex runtime swap lands, but other
+	// entry points (Slack today, future webhook handlers tomorrow) all
+	// funnel through here. Refusing here keeps the "never silently
+	// downgrade GPT to Claude" promise honest no matter how the model
+	// arrived.
+	if modelProvider(model) == modelProviderOpenAI {
+		b.log.Warn("gpt model reached agent runtime",
+			"org", oc.OrgID,
+			"request_id", requestID,
+			"thread_id", threadID,
+			"model", model,
+		)
+		if out != nil {
+			out.Error("OpenAI Codex runtime not wired", "Picking a GPT model isn't supported by the agent runtime yet — pick Opus, Sonnet, or Haiku, or stay on the chat composer where the picker enforces the same rule.")
+		}
+		return
+	}
 	requestedOwner, requestedName, requestedRepoOK := parseRequestedRepo(requestedRepo)
 	b.log.Info("request received",
 		"org", oc.OrgID,

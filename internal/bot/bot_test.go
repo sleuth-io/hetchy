@@ -218,6 +218,24 @@ func TestHandleRequest_SubscriptionTokenSatisfiesCredCheck(t *testing.T) {
 	}
 }
 
+// TestHandleRequest_GPTModelRejected verifies the runtime-level guard
+// added so a GPT model arriving through any code path (Slack today,
+// future entry points tomorrow) refuses to advance instead of silently
+// running Claude in its place. The chat HTTP handler already 400s on
+// this, so this test asserts the back-stop.
+func TestHandleRequest_GPTModelRejected(t *testing.T) {
+	b := &Bot{log: discardLogger(), convs: convstore.New(nil), retryBackoff: 0}
+	b.createFn = func(context.Context, any) (*daytona.Sandbox, error) {
+		t.Fatal("sandbox should not be created when a GPT model reaches HandleRequest")
+		return nil, errors.New("unreachable")
+	}
+	emit := newCaptureEmitter()
+	b.HandleRequest(context.Background(), orgcfg.Config{OrgID: "o", AnthropicAPIKey: "sk-ant-…"}, "do something", "req", "thread", "", chatTaskOptionPatch{}, nil, nil, ModelGPTFrontier, emit)
+	if !emit.hasCall("error", "OpenAI Codex runtime not wired") {
+		t.Errorf("expected GPT-rejected error, got Calls=%v", emit.Calls)
+	}
+}
+
 func TestHandleRequest_UnknownAgent(t *testing.T) {
 	b := &Bot{log: discardLogger(), convs: convstore.New(nil), retryBackoff: 0}
 	b.createFn = func(context.Context, any) (*daytona.Sandbox, error) {
