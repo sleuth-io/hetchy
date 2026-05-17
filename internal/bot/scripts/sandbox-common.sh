@@ -227,3 +227,39 @@ run_saved_setup() {
     echo "[hetchy] WARNING: setup.sh exited non-zero (${setup_code}) after $(hetchy_elapsed_seconds "$setup_started"); continuing anyway; see /tmp/hetchy-spec/setup.log"
   fi
 }
+
+legacy_saved_spec_uses_workdir_root() {
+  local f="$1"
+  local legacy="/home/daytona/work"
+
+  grep -Eq "^[[:space:]]*(WORK|REPO)=['\"]?${legacy}['\"]?[[:space:]]*$" "$f" && return 0
+  grep -Eq "REPO:-${legacy}([}\"'])" "$f" && return 0
+  grep -Eq "(^|[[:space:]])cd[[:space:]]+['\"]?${legacy}['\"]?([[:space:]]|$)" "$f" && return 0
+  return 1
+}
+
+rewrite_legacy_saved_spec_workdir() {
+  local legacy="/home/daytona/work"
+  local spec_dir="${HETCHY_SPEC_DIR:-/tmp/hetchy-spec}"
+
+  if [[ -z "${SF_WORKDIR:-}" || "${SF_WORKDIR}" == "$legacy" ]]; then
+    return 0
+  fi
+
+  local f tmp
+  local changed=0
+  for f in "${spec_dir}/setup.sh" "${spec_dir}/start.sh" "${spec_dir}/health.sh"; do
+    [[ -f "$f" ]] || continue
+    if ! legacy_saved_spec_uses_workdir_root "$f"; then
+      continue
+    fi
+    tmp="${f}.workdir"
+    awk -v old="$legacy" -v new="${SF_WORKDIR}" '{ gsub(old, new); print }' "$f" > "$tmp"
+    mv "$tmp" "$f"
+    changed=1
+  done
+
+  if [[ "$changed" == "1" ]]; then
+    echo "[hetchy] rewrote legacy bootstrap workdir to ${SF_WORKDIR}"
+  fi
+}

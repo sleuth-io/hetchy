@@ -169,6 +169,7 @@ func TestAgentScript_EmbeddedAndWellFormed(t *testing.T) {
 		"emit_installed_skills",
 		"[hetchy:sx-skills]",
 		"run_saved_setup",
+		"rewrite_legacy_saved_spec_workdir",
 		"setup.sh still running",
 		"setup.sh output is being written to /tmp/hetchy-spec/setup.log",
 		"configure_hetchy_cache",
@@ -211,6 +212,7 @@ func TestFollowupScript_EmbeddedAndWellFormed(t *testing.T) {
 		"emit_installed_skills",
 		"[hetchy:sx-skills]",
 		"run_saved_setup",
+		"rewrite_legacy_saved_spec_workdir",
 		"setup.sh still running",
 		"setup.sh output is being written to /tmp/hetchy-spec/setup.log",
 		"configure_hetchy_cache",
@@ -238,6 +240,60 @@ func TestFollowupScript_EmbeddedAndWellFormed(t *testing.T) {
 		t.Error("followupScript should not clone — it reuses an existing sandbox")
 	}
 	assertBashSyntax(t, "followup.sh", followupScript)
+}
+
+func TestSandboxCommon_RewriteLegacySavedSpecWorkdir(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skipf("bash not available: %v", err)
+	}
+	specDir := filepath.Join(t.TempDir(), "hetchy-spec")
+	mustMkdir(t, specDir)
+	mustWriteFile(t, filepath.Join(specDir, "setup.sh"), strings.Join([]string{
+		"#!/usr/bin/env bash",
+		"set -euo pipefail",
+		"WORK=/home/daytona/work",
+		"cd \"$WORK\"",
+		"go mod download",
+	}, "\n"))
+	mustWriteFile(t, filepath.Join(specDir, "start.sh"), strings.Join([]string{
+		"#!/usr/bin/env bash",
+		"set -euo pipefail",
+		"WORK=/home/daytona/work",
+		"(cd \"$WORK\" && go build -o dist/hetchy ./cmd/hetchy)",
+		"nohup \"$WORK/dist/hetchy\" &",
+	}, "\n"))
+	mustWriteFile(t, filepath.Join(specDir, "health.sh"), strings.Join([]string{
+		"#!/usr/bin/env bash",
+		"set -euo pipefail",
+		"WORK=/home/daytona/work/hetchy",
+		"curl -fsS http://localhost:8080/",
+	}, "\n"))
+
+	harness := "#!/bin/bash\nset -euo pipefail\n" + sandboxCommonScript + "\nrewrite_legacy_saved_spec_workdir\n"
+	cmd := exec.Command("bash", "-c", harness)
+	cmd.Env = append(os.Environ(),
+		"HETCHY_SPEC_DIR="+specDir,
+		"SF_WORKDIR=/home/daytona/work/hetchy",
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("rewrite_legacy_saved_spec_workdir failed: %v\noutput:\n%s", err, string(out))
+	}
+	if !strings.Contains(string(out), "rewrote legacy bootstrap workdir to /home/daytona/work/hetchy") {
+		t.Fatalf("rewrite output = %q", string(out))
+	}
+
+	start := mustReadFile(t, filepath.Join(specDir, "start.sh"))
+	if !strings.Contains(start, "WORK=/home/daytona/work/hetchy") {
+		t.Fatalf("start.sh was not rewritten:\n%s", start)
+	}
+	if strings.Contains(start, "/home/daytona/work/hetchy/hetchy") {
+		t.Fatalf("start.sh double-rewritten:\n%s", start)
+	}
+	health := mustReadFile(t, filepath.Join(specDir, "health.sh"))
+	if strings.Contains(health, "/home/daytona/work/hetchy/hetchy") {
+		t.Fatalf("health.sh should not be double-rewritten:\n%s", health)
+	}
 }
 
 // TestAgentScript_EmitInstalledSkillsCollectsBothScopes runs the
@@ -369,6 +425,22 @@ func mustMkdir(t *testing.T, dir string) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir %s: %v", dir, err)
 	}
+}
+
+func mustWriteFile(t *testing.T, path string, body string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+func mustReadFile(t *testing.T, path string) string {
+	t.Helper()
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(body)
 }
 
 func assertBashSyntax(t *testing.T, name, script string) {
