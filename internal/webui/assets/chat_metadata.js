@@ -490,13 +490,16 @@ async function loadHistory(opts) {
       if (phase) closePhase(phase, phaseLastEndedAt);
     }
     // Honour #block-<id> deep links by expanding + scrolling to the
-    // referenced block.
+    // referenced block, otherwise scroll to the bottom so the user sees
+    // the end of the conversation rather than the top.
     if (window.location.hash && window.location.hash.startsWith('#block-')) {
       const target = document.getElementById(window.location.hash.slice(1));
       if (target) {
         target.open = true;
         target.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
+    } else {
+      log.scrollTop = log.scrollHeight;
     }
   } catch (e) {
     // Leave the log empty on error; the user can still type a message.
