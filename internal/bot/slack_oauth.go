@@ -146,7 +146,7 @@ func (b *Bot) slackOAuthCallbackHandler(w http.ResponseWriter, r *http.Request) 
 		// rejected the request. Surface a friendly message rather than
 		// raw error codes.
 		b.log.Info("slack install: aborted by user or rejected", "error", errParam)
-		http.Redirect(w, r, "/settings/org?saved=slack_install_cancelled", http.StatusFound)
+		http.Redirect(w, r, "/settings/org?tab=integrations&saved=slack_install_cancelled", http.StatusFound)
 		return
 	}
 
@@ -228,7 +228,7 @@ func (b *Bot) slackOAuthCallbackHandler(w http.ResponseWriter, r *http.Request) 
 				"org", state.OrgID,
 				"team_id", resp.Team.ID,
 			)
-			http.Redirect(w, r, "/settings/org?saved=slack_install_conflict", http.StatusFound)
+			http.Redirect(w, r, "/settings/org?tab=integrations&saved=slack_install_conflict", http.StatusFound)
 			return
 		}
 		b.log.Error("slack install: save org config", "org", state.OrgID, "error", err)
@@ -248,7 +248,7 @@ func (b *Bot) slackOAuthCallbackHandler(w http.ResponseWriter, r *http.Request) 
 	// install replaced its tokens and the socket is no longer correct.
 	b.slack.RestartOrg(r.Context(), state.OrgID)
 
-	http.Redirect(w, r, "/settings/org?saved=slack_installed", http.StatusFound)
+	http.Redirect(w, r, "/settings/org?tab=integrations&saved=slack_installed", http.StatusFound)
 }
 
 // slackDisconnectHandler removes the org's Slack connection. The org's
