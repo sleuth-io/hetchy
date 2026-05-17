@@ -342,10 +342,9 @@ func (b *Bot) handleSlackEvent(ctx context.Context, oc orgcfg.Config, ev incomin
 	// request), so it shouldn't read as still-pending.
 	requestID := strings.ReplaceAll(ev.ts, ".", "")
 	conversationURL := b.cfg.PublicBaseURL() + "/?session=" + threadID
-	workingMsg := ":white_check_mark: Working on it…"
-	if conversationURL != "" {
-		workingMsg += "\n_<" + conversationURL + "|View full details>_"
-	}
+	// Append the deep link immediately so the user can follow progress
+	// without waiting for the terminal post (which also includes the link).
+	workingMsg := ":white_check_mark: Working on it…\n_<" + conversationURL + "|View full details>_"
 	replyInThread(b.log, cli, ev.channel, replyTo, workingMsg)
 	emit := newSlackEmitter(b.log, cli, ev.channel, replyTo, ev.user, conversationURL, text)
 	// Best-effort attribution: map the Slack author to a hetchy user so
