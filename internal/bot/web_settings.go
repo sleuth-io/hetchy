@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/hetchyhq/hetchy/internal/agents"
 	"github.com/hetchyhq/hetchy/internal/auth"
+	"github.com/hetchyhq/hetchy/internal/billing"
 	"github.com/hetchyhq/hetchy/internal/db/sqlc"
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
 	"github.com/hetchyhq/hetchy/internal/webui"
@@ -307,8 +310,11 @@ func (b *Bot) populateSettingsTabData(ctx context.Context, orgID, tab string, da
 		// fails we render it as "not bootstrapped" rather than 500
 		// the whole page. Errors are already logged inside.
 		bootstrapStatus, _ := b.loadBootstrapStatus(ctx, repos)
+		repoBillingSettings, allowedFlavors := b.repoBillingViewData(ctx, orgID)
 		data["GitHubRepos"] = repos
 		data["BootstrapStatus"] = bootstrapStatus
+		data["RepoBillingSettings"] = repoBillingSettings
+		data["RepoBillingAllowedFlavors"] = allowedFlavors
 
 	case "agents":
 		store := b.agents
@@ -349,8 +355,155 @@ func (b *Bot) populateSettingsTabData(ctx context.Context, orgID, tab string, da
 		}
 		data["Members"] = members
 		data["Invitations"] = invites
+
+	case "billing":
+		overview, err := b.loadBillingOverview(ctx, orgID)
+		if err != nil {
+			return fmt.Errorf("load billing: %w", err)
+		}
+		data["Billing"] = overview
 	}
 	return nil
+}
+
+type billingOverviewView struct {
+	PlanCode          string
+	Status            string
+	PeriodStart       string
+	PeriodEnd         string
+	IncludedCredits   int
+	IncludedUsed      int
+	IncludedRemaining int
+	TopupCredits      int
+	Balance           int
+	MaxFlavor         string
+	PerRunMaxCredits  int
+	BillingExempt     bool
+	LastPaymentError  string
+	AutoTopupEnabled  bool
+	TriggerThreshold  int
+	TargetBalance     int
+	MonthlyMaxUnits   int
+	MonthlyUnitsUsed  int
+	StripeConfigured  bool
+	HasStripeCustomer bool
+	PlanOptions       []billingPlanOptionView
+	RecentMeters      []billingMeterView
+}
+
+type billingPlanOptionView struct {
+	Code             string
+	Label            string
+	Monthly          string
+	IncludedCredits  int
+	MaxFlavor        string
+	PerRunMaxCredits int
+	Configured       bool
+	Current          bool
+}
+
+type billingMeterView struct {
+	RunID           string
+	Flavor          string
+	BillableMinutes int
+	CapturedCredits int
+	TerminalState   string
+	StartedAt       string
+}
+
+func (b *Bot) loadBillingOverview(ctx context.Context, orgID string) (billingOverviewView, error) {
+	if b.billing == nil || !b.billing.Enabled() {
+		return billingOverviewView{
+			PlanCode: "free", Status: "free", MaxFlavor: billing.FlavorStandard,
+			IncludedCredits: 10, IncludedRemaining: 10, Balance: 10, PerRunMaxCredits: 4,
+		}, nil
+	}
+	overview, err := b.billing.Overview(ctx, orgID)
+	if err != nil {
+		return billingOverviewView{}, err
+	}
+	acct := overview.Account
+	settings := overview.TopupSettings
+	out := billingOverviewView{
+		PlanCode:          acct.PlanCode,
+		Status:            acct.Status,
+		PeriodStart:       formatSettingsTime(acct.CurrentPeriodStart),
+		PeriodEnd:         formatSettingsTime(acct.CurrentPeriodEnd),
+		IncludedCredits:   acct.IncludedCredits,
+		IncludedUsed:      acct.IncludedCreditsUsed,
+		IncludedRemaining: acct.IncludedRemaining(),
+		TopupCredits:      acct.TopupCredits,
+		Balance:           acct.Balance(),
+		MaxFlavor:         acct.MaxFlavor,
+		PerRunMaxCredits:  acct.PerRunMaxCredits,
+		BillingExempt:     acct.BillingExempt,
+		LastPaymentError:  acct.LastPaymentError,
+		AutoTopupEnabled:  settings.AutoTopupEnabled,
+		TriggerThreshold:  settings.TriggerThreshold,
+		TargetBalance:     settings.TargetBalance,
+		MonthlyMaxUnits:   settings.MonthlyMaxUnits,
+		MonthlyUnitsUsed:  settings.MonthlyUnitsUsed,
+		StripeConfigured:  b.stripeConfigured(),
+		HasStripeCustomer: acct.StripeCustomerID != "",
+		PlanOptions:       b.billingPlanOptions(acct.PlanCode),
+	}
+	for _, meter := range overview.RecentMeters {
+		out.RecentMeters = append(out.RecentMeters, billingMeterView{
+			RunID:           meter.RunID,
+			Flavor:          meter.Flavor,
+			BillableMinutes: meter.BillableMinutes,
+			CapturedCredits: meter.CapturedCredits,
+			TerminalState:   meter.TerminalState,
+			StartedAt:       formatSettingsTime(meter.StartedAt),
+		})
+	}
+	return out, nil
+}
+
+func (b *Bot) billingPlanOptions(currentPlan string) []billingPlanOptionView {
+	out := make([]billingPlanOptionView, 0, len(billing.PaidPlans()))
+	for _, plan := range billing.PaidPlans() {
+		out = append(out, billingPlanOptionView{
+			Code:             plan.Code,
+			Label:            plan.Label,
+			Monthly:          formatUSDCents(plan.MonthlyUSDCents),
+			IncludedCredits:  plan.IncludedCredits,
+			MaxFlavor:        plan.MaxFlavor,
+			PerRunMaxCredits: plan.PerRunMaxCredits,
+			Configured:       b.stripeSubscriptionPriceID(plan.Code) != "",
+			Current:          plan.Code == currentPlan,
+		})
+	}
+	return out
+}
+
+func formatUSDCents(cents int) string {
+	if cents%100 == 0 {
+		return fmt.Sprintf("$%d", cents/100)
+	}
+	return fmt.Sprintf("$%.2f", float64(cents)/100)
+}
+
+func (b *Bot) repoBillingViewData(ctx context.Context, orgID string) (map[string]billing.RepoSetting, []billing.Flavor) {
+	settings := map[string]billing.RepoSetting{}
+	allowed := []billing.Flavor{billing.MustFlavor(billing.FlavorStandard)}
+	if b.billing == nil || !b.billing.Enabled() {
+		return settings, allowed
+	}
+	if overview, err := b.billing.Overview(ctx, orgID); err == nil {
+		allowed = overview.AllowedFlavors
+	}
+	if rows, err := b.billing.ListRepoSettings(ctx, orgID); err == nil {
+		settings = rows
+	}
+	return settings, allowed
+}
+
+func formatSettingsTime(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.Local().Format("Jan 2, 2006")
 }
 
 // loadIntegrationsView pulls the org's GitHub App installations and the
@@ -448,9 +601,112 @@ func savedMessage(s string) string {
 		return "Agent saved."
 	case "agent_deleted":
 		return "Agent deleted."
+	case "repo_flavor_saved":
+		return "Repo flavor saved."
+	case "billing_saved":
+		return "Billing settings saved."
+	case "topup_started":
+		return "Stripe Checkout opened for top-up."
+	case "portal_return":
+		return "Returned from Stripe billing portal."
 	default:
 		return ""
 	}
+}
+
+func (b *Bot) repoFlavorSettingsHandler(w http.ResponseWriter, r *http.Request) {
+	p, _ := auth.FromContext(r.Context())
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !isAdmin(p) {
+		http.Error(w, "admin role required", http.StatusForbidden)
+		return
+	}
+	if err := requireSameOrigin(r); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	owner := strings.TrimSpace(r.FormValue("owner"))
+	name := strings.TrimSpace(r.FormValue("name"))
+	flavor := strings.TrimSpace(r.FormValue("flavor"))
+	if owner == "" || name == "" || flavor == "" {
+		http.Error(w, "owner, name, and flavor are required", http.StatusBadRequest)
+		return
+	}
+	if _, err := b.lookupRepoForOrg(r.Context(), p.OrgID, owner, name); err != nil {
+		writeRepoErr(w, err)
+		return
+	}
+	if b.billing == nil || !b.billing.Enabled() {
+		http.Error(w, "billing is not configured", http.StatusInternalServerError)
+		return
+	}
+	if _, err := b.billing.SetRepoFlavor(r.Context(), p.OrgID, owner, name, flavor); err != nil {
+		var flavorErr billing.FlavorNotAllowedError
+		if errors.Is(err, billing.ErrUnknownFlavor) || errors.As(err, &flavorErr) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		b.log.Error("set repo billing flavor", "error", err, "org", p.OrgID, "owner", owner, "repo", name)
+		http.Error(w, "save repo flavor: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	b.log.Info("repo billing flavor saved", "org", p.OrgID, "actor", p.UserID, "owner", owner, "repo", name, "flavor", flavor)
+	http.Redirect(w, r, "/settings/org?tab=repositories&saved=repo_flavor_saved", http.StatusFound)
+}
+
+func (b *Bot) billingTopupSettingsHandler(w http.ResponseWriter, r *http.Request) {
+	p, _ := auth.FromContext(r.Context())
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !isAdmin(p) {
+		http.Error(w, "admin role required", http.StatusForbidden)
+		return
+	}
+	if err := requireSameOrigin(r); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	settings := billing.TopupSettings{
+		AutoTopupEnabled: r.FormValue("auto_topup_enabled") == "1",
+		TriggerThreshold: parseBillingInt(r.FormValue("trigger_threshold"), 0),
+		TargetBalance:    parseBillingInt(r.FormValue("target_balance"), 0),
+		MonthlyMaxUnits:  parseBillingInt(r.FormValue("monthly_max_units"), 0),
+	}
+	if b.billing == nil || !b.billing.Enabled() {
+		http.Error(w, "billing is not configured", http.StatusInternalServerError)
+		return
+	}
+	if _, err := b.billing.UpdateTopupSettings(r.Context(), p.OrgID, settings); err != nil {
+		b.log.Error("update billing top-up settings", "error", err, "org", p.OrgID)
+		http.Error(w, "save billing settings: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/settings/org?tab=billing&saved=billing_saved", http.StatusFound)
+}
+
+func parseBillingInt(raw string, def int) int {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return def
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 {
+		return def
+	}
+	return n
 }
 
 func (b *Bot) agentSettingsActionHandler(w http.ResponseWriter, r *http.Request) {

@@ -32,6 +32,7 @@ type Querier interface {
 	DeleteGithubTeamMembersForTeam(ctx context.Context, arg DeleteGithubTeamMembersForTeamParams) error
 	DeleteGithubTeamsByInstallationExcept(ctx context.Context, arg DeleteGithubTeamsByInstallationExceptParams) error
 	DeleteOrgConfig(ctx context.Context, orgID string) error
+	DeleteRepoBillingSetting(ctx context.Context, arg DeleteRepoBillingSettingParams) error
 	DeleteRepoSecretValue(ctx context.Context, arg DeleteRepoSecretValueParams) error
 	DeleteRepoSecretValuesByOrg(ctx context.Context, orgID string) error
 	DeleteRepoSetupSpec(ctx context.Context, arg DeleteRepoSetupSpecParams) error
@@ -40,10 +41,19 @@ type Querier interface {
 	// org deletion has to clear them explicitly via the installation join.
 	DeleteRepoSetupSpecsByOrg(ctx context.Context, orgID string) error
 	DisableAgentProfile(ctx context.Context, arg DisableAgentProfileParams) (int64, error)
+	EnsureBillingAccount(ctx context.Context, orgID string) (BillingAccount, error)
+	EnsureBillingTopupSettings(ctx context.Context, orgID string) (BillingTopupSetting, error)
+	FinalizeBillingRunMeter(ctx context.Context, arg FinalizeBillingRunMeterParams) (BillingRunMeter, error)
 	GetActiveAgentRunForThread(ctx context.Context, arg GetActiveAgentRunForThreadParams) (AgentRun, error)
 	GetAgentProfileBySlug(ctx context.Context, arg GetAgentProfileBySlugParams) (GetAgentProfileBySlugRow, error)
 	GetAgentRun(ctx context.Context, id string) (AgentRun, error)
 	GetAgentRunByRequest(ctx context.Context, arg GetAgentRunByRequestParams) (AgentRun, error)
+	GetBillingAccount(ctx context.Context, orgID string) (BillingAccount, error)
+	GetBillingAccountByStripeCustomer(ctx context.Context, stripeCustomerID string) (BillingAccount, error)
+	GetBillingCreditReservation(ctx context.Context, runID string) (BillingCreditReservation, error)
+	GetBillingCreditReservationForUpdate(ctx context.Context, runID string) (BillingCreditReservation, error)
+	GetBillingRunMeterForUpdate(ctx context.Context, runID string) (BillingRunMeter, error)
+	GetBillingTopupSettings(ctx context.Context, orgID string) (BillingTopupSetting, error)
 	GetConversation(ctx context.Context, arg GetConversationParams) (GetConversationRow, error)
 	GetGithubInstallation(ctx context.Context, installationID int64) (GithubAppInstallation, error)
 	// Resolves an (owner, name) the user typed in chat to a concrete
@@ -56,8 +66,13 @@ type Querier interface {
 	GetLatestAgentRunForThread(ctx context.Context, arg GetLatestAgentRunForThreadParams) (AgentRun, error)
 	GetOrgConfig(ctx context.Context, orgID string) (OrgConfig, error)
 	GetOrgConfigBySlackTeamID(ctx context.Context, slackTeamID *string) (OrgConfig, error)
+	GetRepoBillingSetting(ctx context.Context, arg GetRepoBillingSettingParams) (RepoBillingSetting, error)
 	GetRepoSecretValue(ctx context.Context, arg GetRepoSecretValueParams) (RepoSecretValue, error)
 	GetRepoSetupSpec(ctx context.Context, arg GetRepoSetupSpecParams) (RepoSetupSpec, error)
+	GrantBillingTopupCredits(ctx context.Context, arg GrantBillingTopupCreditsParams) (BillingAccount, error)
+	IncrementBillingTopupMonthlyUnits(ctx context.Context, arg IncrementBillingTopupMonthlyUnitsParams) (BillingTopupSetting, error)
+	InsertBillingCreditReservation(ctx context.Context, arg InsertBillingCreditReservationParams) (BillingCreditReservation, error)
+	InsertBillingStripeEvent(ctx context.Context, arg InsertBillingStripeEventParams) (bool, error)
 	// Used by DeclareRequiredSecret to register a placeholder row for a
 	// secret the bootstrap manifest asked for. ON CONFLICT DO NOTHING is
 	// the key distinction from UpsertRepoSecretValue: re-declaring a
@@ -69,6 +84,7 @@ type Querier interface {
 	ListActiveAgentRunsForLeaseOwnerPrefix(ctx context.Context, arg ListActiveAgentRunsForLeaseOwnerPrefixParams) ([]AgentRun, error)
 	ListAgentProfilesByOrg(ctx context.Context, orgID string) ([]ListAgentProfilesByOrgRow, error)
 	ListAgentRunEventsFromSeq(ctx context.Context, arg ListAgentRunEventsFromSeqParams) ([]AgentRunEvent, error)
+	ListBillingRunMetersByOrg(ctx context.Context, arg ListBillingRunMetersByOrgParams) ([]BillingRunMeter, error)
 	ListExpiredAgentRuns(ctx context.Context, limit int32) ([]AgentRun, error)
 	ListGithubInstallationsByOrg(ctx context.Context, orgID string) ([]GithubAppInstallation, error)
 	ListGithubReposByInstallation(ctx context.Context, installationID int64) ([]GithubRepo, error)
@@ -88,6 +104,7 @@ type Querier interface {
 	// of Slack connection," write a different query — don't rename this
 	// one.
 	ListOrgConfigsWithSlack(ctx context.Context) ([]OrgConfig, error)
+	ListRepoBillingSettingsByOrg(ctx context.Context, orgID string) ([]RepoBillingSetting, error)
 	// Used by the bootstrap apply step to build the env block, and by the
 	// settings UI to show which keys are filled in vs. blank.
 	ListRepoSecretValues(ctx context.Context, arg ListRepoSecretValuesParams) ([]RepoSecretValue, error)
@@ -95,7 +112,10 @@ type Querier interface {
 	// where the user can see every target Hetchy has bootstrapped under
 	// one repository.
 	ListRepoSetupSpecs(ctx context.Context, arg ListRepoSetupSpecsParams) ([]RepoSetupSpec, error)
+	LockBillingAccountForUpdate(ctx context.Context, orgID string) (BillingAccount, error)
+	LockBillingTopupSettingsForUpdate(ctx context.Context, orgID string) (BillingTopupSetting, error)
 	RenameConversation(ctx context.Context, arg RenameConversationParams) (int64, error)
+	ResetBillingTopupMonthlyUsage(ctx context.Context, arg ResetBillingTopupMonthlyUsageParams) (BillingTopupSetting, error)
 	// Periodic mid-run snapshot used by chatPersister. Only writes the
 	// handful of fields that change progressively as the agent emits
 	// blocks (history + response_blocks + creator_id). The fields that
@@ -152,6 +172,7 @@ type Querier interface {
 	// history[1]).
 	SearchConversations(ctx context.Context, arg SearchConversationsParams) ([]SearchConversationsRow, error)
 	SeedDefaultAgentProfilesForOrg(ctx context.Context, orgID string) error
+	SetBillingLastPaymentError(ctx context.Context, arg SetBillingLastPaymentErrorParams) error
 	TouchAgentRunLease(ctx context.Context, arg TouchAgentRunLeaseParams) error
 	UpdateAgentProfileName(ctx context.Context, arg UpdateAgentProfileNameParams) (UpdateAgentProfileNameRow, error)
 	UpdateAgentRunBranch(ctx context.Context, arg UpdateAgentRunBranchParams) error
@@ -161,12 +182,19 @@ type Querier interface {
 	UpdateAgentRunSandbox(ctx context.Context, arg UpdateAgentRunSandboxParams) error
 	UpdateAgentRunSession(ctx context.Context, arg UpdateAgentRunSessionParams) error
 	UpdateAgentRunState(ctx context.Context, arg UpdateAgentRunStateParams) error
+	UpdateBillingCapturedBalances(ctx context.Context, arg UpdateBillingCapturedBalancesParams) (BillingAccount, error)
+	UpdateBillingCreditReservationCaptured(ctx context.Context, arg UpdateBillingCreditReservationCapturedParams) (BillingCreditReservation, error)
+	UpdateBillingReservedBalances(ctx context.Context, arg UpdateBillingReservedBalancesParams) (BillingAccount, error)
+	UpdateBillingStripeCustomer(ctx context.Context, arg UpdateBillingStripeCustomerParams) (BillingAccount, error)
+	UpdateBillingTopupSettings(ctx context.Context, arg UpdateBillingTopupSettingsParams) (BillingTopupSetting, error)
 	// Lightweight status update used by the runtime apply path: bumps
 	// success/failure counters and the validation_status without
 	// rewriting the whole spec. Avoids re-encoding all the JSONB blobs on
 	// every successful task.
 	UpdateRepoSetupSpecStatus(ctx context.Context, arg UpdateRepoSetupSpecStatusParams) error
 	UpsertAgentProfile(ctx context.Context, arg UpsertAgentProfileParams) (UpsertAgentProfileRow, error)
+	UpsertBillingAccountMirror(ctx context.Context, arg UpsertBillingAccountMirrorParams) (BillingAccount, error)
+	UpsertBillingRunMeterStart(ctx context.Context, arg UpsertBillingRunMeterStartParams) (BillingRunMeter, error)
 	UpsertConversation(ctx context.Context, arg UpsertConversationParams) (UpsertConversationRow, error)
 	// Failing-bootstrap upsert. Diverges from UpsertRepoSetupSpec in two
 	// ways: success_count is left untouched (we only ever write a failing
@@ -191,6 +219,7 @@ type Querier interface {
 	UpsertGithubTeam(ctx context.Context, arg UpsertGithubTeamParams) error
 	UpsertGithubTeamMember(ctx context.Context, arg UpsertGithubTeamMemberParams) error
 	UpsertOrgConfig(ctx context.Context, arg UpsertOrgConfigParams) (OrgConfig, error)
+	UpsertRepoBillingSetting(ctx context.Context, arg UpsertRepoBillingSettingParams) (RepoBillingSetting, error)
 	// Repo-scoped secrets ---------------------------------------------------
 	// Inserts a placeholder row (value_encrypted=NULL) when bootstrap
 	// declares a required secret, and updates the encrypted value when the

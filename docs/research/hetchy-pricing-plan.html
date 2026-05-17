@@ -1,0 +1,953 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hetchy Pricing Plan</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%230d6b57'/%3E%3Cpath d='M4 11V5h2v2h4V5h2v6h-2V9H6v2H4z' fill='white'/%3E%3C/svg%3E">
+  <style>
+    :root {
+      --ink: #17211f;
+      --muted: #5f6d68;
+      --line: #d8dfdb;
+      --paper: #fbfcfa;
+      --panel: #ffffff;
+      --green: #0d6b57;
+      --green-soft: #e6f3ef;
+      --blue: #2f5f98;
+      --blue-soft: #e8f0fa;
+      --gold: #936b14;
+      --gold-soft: #fbf2d9;
+      --coral: #a14d3b;
+      --coral-soft: #faeae6;
+      --shadow: 0 18px 50px rgba(23, 33, 31, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        linear-gradient(180deg, #f5f8f4 0%, #fbfcfa 34%, #f7faf9 100%);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.5;
+    }
+
+    a {
+      color: var(--blue);
+      text-decoration-thickness: 1px;
+      text-underline-offset: 3px;
+    }
+
+    .page {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 40px 22px 64px;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.8fr);
+      gap: 28px;
+      align-items: stretch;
+      padding: 30px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+    }
+
+    .eyebrow {
+      margin: 0 0 12px;
+      color: var(--green);
+      font-size: 13px;
+      font-weight: 760;
+      letter-spacing: 0;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0;
+      max-width: 780px;
+      font-size: clamp(38px, 5vw, 68px);
+      line-height: 0.96;
+      letter-spacing: 0;
+    }
+
+    h2 {
+      margin: 0 0 14px;
+      font-size: clamp(26px, 3vw, 38px);
+      line-height: 1.05;
+      letter-spacing: 0;
+    }
+
+    h3 {
+      margin: 0 0 8px;
+      font-size: 19px;
+      line-height: 1.2;
+      letter-spacing: 0;
+    }
+
+    p {
+      margin: 0;
+      color: var(--muted);
+    }
+
+    .lede {
+      max-width: 760px;
+      margin-top: 20px;
+      font-size: 18px;
+      color: #40504a;
+    }
+
+    .hero-metrics {
+      display: grid;
+      gap: 12px;
+      align-content: start;
+    }
+
+    .metric {
+      padding: 18px;
+      background: #f7faf8;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      min-width: 0;
+    }
+
+    .metric strong {
+      display: block;
+      font-size: 30px;
+      line-height: 1;
+      letter-spacing: 0;
+    }
+
+    .metric span {
+      display: block;
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    section {
+      margin-top: 34px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .grid.two {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 22px;
+      box-shadow: 0 10px 30px rgba(23, 33, 31, 0.04);
+      min-width: 0;
+    }
+
+    .panel.green {
+      background: var(--green-soft);
+      border-color: #bddbd1;
+    }
+
+    .panel.blue {
+      background: var(--blue-soft);
+      border-color: #c8d8ec;
+    }
+
+    .panel.gold {
+      background: var(--gold-soft);
+      border-color: #ead99d;
+    }
+
+    .panel.coral {
+      background: var(--coral-soft);
+      border-color: #eac7be;
+    }
+
+    .stat-row {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 18px;
+    }
+
+    .stat {
+      padding: 14px;
+      background: rgba(255, 255, 255, 0.65);
+      border: 1px solid rgba(23, 33, 31, 0.12);
+      border-radius: 8px;
+      min-width: 0;
+    }
+
+    .stat .value {
+      display: block;
+      font-size: 25px;
+      font-weight: 800;
+      line-height: 1;
+    }
+
+    .stat .label {
+      display: block;
+      margin-top: 7px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      overflow: hidden;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: 0 10px 30px rgba(23, 33, 31, 0.04);
+    }
+
+    th,
+    td {
+      padding: 14px 15px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+      font-size: 14px;
+    }
+
+    th {
+      background: #eef4f1;
+      color: #2a3a35;
+      font-size: 12px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .money {
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+      color: #1f2b27;
+      font-weight: 760;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      min-height: 25px;
+      padding: 3px 9px;
+      border-radius: 999px;
+      background: #eef4f1;
+      color: #2a3a35;
+      font-size: 12px;
+      font-weight: 780;
+      white-space: nowrap;
+    }
+
+    .recommendation {
+      display: grid;
+      grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    .plan-cards {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .plan {
+      padding: 20px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: 0 10px 30px rgba(23, 33, 31, 0.04);
+      min-width: 0;
+    }
+
+    .plan.featured {
+      border-color: #86b7a8;
+      box-shadow: 0 16px 36px rgba(13, 107, 87, 0.14);
+    }
+
+    .price {
+      margin-top: 8px;
+      font-size: 32px;
+      font-weight: 850;
+      letter-spacing: 0;
+    }
+
+    .price small {
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 650;
+    }
+
+    .plan ul,
+    .notes ul {
+      margin: 16px 0 0;
+      padding-left: 19px;
+      color: var(--muted);
+    }
+
+    .plan li,
+    .notes li {
+      margin: 7px 0;
+    }
+
+    .formula {
+      display: grid;
+      gap: 9px;
+      margin-top: 14px;
+      padding: 16px;
+      background: #17211f;
+      color: #eff6f3;
+      border-radius: 8px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+      overflow-x: auto;
+      min-width: 0;
+    }
+
+    .formula span {
+      white-space: nowrap;
+    }
+
+    .calculator {
+      display: grid;
+      grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    label {
+      display: block;
+      margin: 0 0 8px;
+      color: #2c3d37;
+      font-size: 13px;
+      font-weight: 780;
+    }
+
+    input[type="range"] {
+      width: 100%;
+      accent-color: var(--green);
+    }
+
+    select {
+      width: 100%;
+      min-height: 40px;
+      padding: 8px 10px;
+      color: var(--ink);
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      font: inherit;
+    }
+
+    .control {
+      margin-top: 16px;
+    }
+
+    .result-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .callout {
+      padding: 18px;
+      border-left: 5px solid var(--green);
+      background: #f2f8f5;
+      border-radius: 8px;
+      color: #2c3d37;
+    }
+
+    .small {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .source-list {
+      display: grid;
+      gap: 8px;
+      margin-top: 12px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    @media (max-width: 920px) {
+      .hero,
+      .recommendation,
+      .calculator,
+      .grid,
+      .grid.two,
+      .plan-cards {
+        grid-template-columns: 1fr;
+      }
+
+      .stat-row,
+      .result-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 560px) {
+      .page {
+        padding: 24px 14px 44px;
+      }
+
+      .hero,
+      .panel,
+      .plan {
+        padding: 18px;
+      }
+
+      .stat-row,
+      .result-grid {
+        grid-template-columns: 1fr;
+      }
+
+      th,
+      td {
+        padding: 11px 10px;
+        font-size: 13px;
+      }
+
+      table {
+        display: block;
+        max-width: 100%;
+        overflow-x: auto;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <div>
+        <p class="eyebrow">Pricing recommendation - May 16, 2026</p>
+        <h1>Sell predictable plans, meter the expensive tail.</h1>
+        <p class="lede">
+          Hetchy's direct infrastructure cost per ordinary run is low. The pricing risk is not the median run;
+          it is unbounded long-running sandboxes, failed runs left for debugging, and future heavier repos. The
+          clean model is a monthly plan with included run credits, where one credit covers a bounded 15-minute
+          Standard sandbox window. Longer runs and larger sandbox flavors consume more credits.
+        </p>
+      </div>
+      <div class="hero-metrics">
+        <div class="metric">
+          <strong>$0.037</strong>
+          <span>Conservative Daytona cost for one 15-minute Hetchy run on today's 2 vCPU / 3 GiB / 4 GiB sandbox.</span>
+        </div>
+        <div class="metric">
+          <strong>7.66 min</strong>
+          <span>Average app-recorded duration across 10 local Hetchy agent runs from May 13-14, 2026.</span>
+        </div>
+        <div class="metric">
+          <strong>1x-6x</strong>
+          <span>Recommended credit multipliers across Light, Standard, Pro, and Max sandbox flavors.</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="grid">
+      <div class="panel green">
+        <h3>Recommendation</h3>
+        <p>
+          Use "run credits" publicly, not raw CPU tokens. A run credit is a simple customer-facing unit:
+          one Standard agent turn, up to 15 minutes of sandbox runtime.
+        </p>
+      </div>
+      <div class="panel blue">
+        <h3>Overage Rule</h3>
+        <p>
+          Charge by started 15-minute block, then multiply by sandbox flavor. This protects margins without
+          making normal customers think about seconds.
+        </p>
+      </div>
+      <div class="panel gold">
+        <h3>Positioning</h3>
+        <p>
+          Price against engineering time saved, not Daytona cost. The cost floor is cents; the value ceiling is
+          avoided developer hours and faster PR throughput.
+        </p>
+      </div>
+    </section>
+
+    <section>
+      <h2>Observed Cost Inputs</h2>
+      <div class="grid two">
+        <div class="panel">
+          <h3>Daytona rates</h3>
+          <p class="small">Official public rates observed on May 16, 2026.</p>
+          <div class="formula">
+            <span>vCPU:   $0.0504 per vCPU-hour</span>
+            <span>Memory: $0.0162 per GiB-hour</span>
+            <span>Disk:   $0.000108 per GiB-hour after first 5 GiB free</span>
+          </div>
+        </div>
+        <div class="panel">
+          <h3>Current Hetchy sandbox shape</h3>
+          <p>
+            Daytona API showed the 10 DB-linked Hetchy sandboxes all used <strong>2 vCPU, 3 GiB memory, 4 GiB disk</strong>.
+            Since disk is below the free 5 GiB threshold, the direct active sandbox rate is:
+          </p>
+          <div class="formula">
+            <span>(2 * $0.0504) + (3 * $0.0162) + $0 disk = $0.1494/hour</span>
+            <span>$0.1494 / 60 = $0.00249/minute</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="stat-row">
+        <div class="stat">
+          <span class="value">$0.019</span>
+          <span class="label">Cost at 7.66 min observed app average</span>
+        </div>
+        <div class="stat">
+          <span class="value">$0.023</span>
+          <span class="label">Cost at 9.40 min successful-run average</span>
+        </div>
+        <div class="stat">
+          <span class="value">$0.032</span>
+          <span class="label">Cost at 12.91 min Daytona-linked average</span>
+        </div>
+        <div class="stat">
+          <span class="value">$0.037</span>
+          <span class="label">Cost at 15 min pricing credit</span>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Data Pulled From Our Account</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Source</th>
+            <th>Observation</th>
+            <th>Pricing meaning</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Local Hetchy Postgres</td>
+            <td>10 agent runs, 6 succeeded, 2 failed, 2 cancelled. Average duration 7.66 min, p50 7.41 min, p90 12.25 min.</td>
+            <td>Median usage is cheap; normal run cost is around two to three cents before server allocation.</td>
+          </tr>
+          <tr>
+            <td>Daytona sandbox API</td>
+            <td>52 sandboxes visible. 41 used 2 vCPU / 3 GiB / 4 GiB; 11 used 1 vCPU / 3 GiB / 3 GiB.</td>
+            <td>The production-like sandbox rate is $0.1494/hour, so a 15-minute credit costs about $0.037.</td>
+          </tr>
+          <tr>
+            <td>DB-linked Daytona sandboxes</td>
+            <td>The 10 matching sandbox IDs averaged 12.91 min from creation to Daytona updated timestamp.</td>
+            <td>Use 15 minutes as the base credit. It covers observed cleanup overhead and leaves room for ordinary variance.</td>
+          </tr>
+          <tr>
+            <td>Daytona volume API</td>
+            <td>3 ready cache volumes currently exist: dev, staging, and production slots. Volume size was not exposed by this API key.</td>
+            <td>Treat cache storage as fixed overhead until we can pull billing usage. The app can create up to 100 pooled cache volumes.</td>
+          </tr>
+          <tr>
+            <td>Daytona org usage API</td>
+            <td>The sandbox API key could list sandboxes and volumes, but organization usage returned 401.</td>
+            <td>We have enough for per-run COGS; billing-dashboard reconciliation still needs an owner/JWT credential.</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Sandbox Flavor Model</h2>
+      <div class="grid two">
+        <div class="panel green">
+          <h3>Keep Standard as the base unit</h3>
+          <p>
+            Plans should include Standard run credits. Larger sandboxes do not need separate plan currencies:
+            they simply consume more credits per started 15-minute block.
+          </p>
+          <div class="formula">
+            <span>credits = started_15_min_blocks * flavor_multiplier</span>
+            <span>started_15_min_blocks = ceil(run_minutes / 15)</span>
+          </div>
+        </div>
+        <div class="panel blue">
+          <h3>Why multipliers beat pass-through</h3>
+          <p>
+            The multiplier should be rounded above pure Daytona cost ratio. Bigger sandboxes tend to mean bigger
+            repos, longer test runs, more debugging time, and higher variance. The extra margin buys that risk down.
+          </p>
+        </div>
+      </div>
+
+      <table style="margin-top: 16px;">
+        <thead>
+          <tr>
+            <th>Flavor</th>
+            <th>Example size</th>
+            <th>Daytona cost / hour</th>
+            <th>Daytona cost / 15 min</th>
+            <th>Credit multiplier</th>
+            <th>Default availability</th>
+            <th>Typical use</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Light</strong></td>
+            <td>1 vCPU / 3 GiB / 3 GiB disk</td>
+            <td class="money">$0.0990</td>
+            <td class="money">$0.0248</td>
+            <td><span class="tag">1x</span></td>
+            <td>All paid plans</td>
+            <td>Small repos, docs, config-only changes, cheap retries.</td>
+          </tr>
+          <tr>
+            <td><strong>Standard</strong></td>
+            <td>2 vCPU / 3 GiB / 4 GiB disk</td>
+            <td class="money">$0.1494</td>
+            <td class="money">$0.0374</td>
+            <td><span class="tag">1x</span></td>
+            <td>All plans</td>
+            <td>The default Hetchy run and the unit used in plan bundles.</td>
+          </tr>
+          <tr>
+            <td><strong>Pro</strong></td>
+            <td>4 vCPU / 8 GiB / 10 GiB disk</td>
+            <td class="money">$0.3317</td>
+            <td class="money">$0.0829</td>
+            <td><span class="tag">3x</span></td>
+            <td>Team and above</td>
+            <td>Monorepos, heavier test suites, compile-heavy work.</td>
+          </tr>
+          <tr>
+            <td><strong>Max</strong></td>
+            <td>8 vCPU / 16 GiB / 25 GiB disk</td>
+            <td class="money">$0.6646</td>
+            <td class="money">$0.1661</td>
+            <td><span class="tag">6x</span></td>
+            <td>Growth, Business, Enterprise</td>
+            <td>Large builds, integration tests, large dependency graphs.</td>
+          </tr>
+          <tr>
+            <td><strong>Enterprise</strong></td>
+            <td>Custom CPU / memory / disk</td>
+            <td>Custom</td>
+            <td>Custom</td>
+            <td>Custom</td>
+            <td>Contract only</td>
+            <td>Dedicated limits, negotiated Daytona capacity, custom concurrency.</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="small" style="margin-top: 10px;">
+        Disk cost is modeled only above Daytona's first 5 GiB free per sandbox. Light and Standard remain 1x
+        because the product should avoid nickel-and-diming small work; Pro and Max are rounded up from their
+        pure infrastructure ratio to preserve margin against larger-repo variance.
+      </p>
+    </section>
+
+    <section>
+      <h2>Proposed Public Plans</h2>
+      <div class="plan-cards">
+        <article class="plan">
+          <span class="tag">Trial</span>
+          <h3>Free</h3>
+          <div class="price">$0</div>
+          <ul>
+            <li>10 run credits once</li>
+            <li>1 connected repo</li>
+            <li>Standard flavor only</li>
+            <li>Hard stop at included usage</li>
+          </ul>
+        </article>
+        <article class="plan">
+          <span class="tag">Indie</span>
+          <h3>Starter</h3>
+          <div class="price">$49 <small>/mo</small></div>
+          <ul>
+            <li>50 run credits included</li>
+            <li>$1.25 per extra credit</li>
+            <li>Light and Standard flavors</li>
+            <li>Good for solo devs and small side projects</li>
+          </ul>
+        </article>
+        <article class="plan featured">
+          <span class="tag">Default</span>
+          <h3>Team</h3>
+          <div class="price">$199 <small>/mo</small></div>
+          <ul>
+            <li>300 run credits included</li>
+            <li>$0.90 per extra credit</li>
+            <li>Light, Standard, and Pro flavors</li>
+            <li>Best default for startups with active repos</li>
+          </ul>
+        </article>
+        <article class="plan">
+          <span class="tag">Scale</span>
+          <h3>Growth</h3>
+          <div class="price">$499 <small>/mo</small></div>
+          <ul>
+            <li>1,000 run credits included</li>
+            <li>$0.65 per extra credit</li>
+            <li>All public flavors through Max</li>
+            <li>For teams using Hetchy throughout the week</li>
+          </ul>
+        </article>
+      </div>
+
+      <table style="margin-top: 16px;">
+        <thead>
+          <tr>
+            <th>Plan</th>
+            <th>Monthly price</th>
+            <th>Included credits</th>
+            <th>Included flavors</th>
+            <th>COGS if fully used as Standard</th>
+            <th>Server allocation</th>
+            <th>Gross margin</th>
+            <th>Overage margin</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Starter</strong></td>
+            <td class="money">$49</td>
+            <td>50</td>
+            <td>Light, Standard</td>
+            <td class="money">$1.87</td>
+            <td class="money">$5</td>
+            <td><span class="tag">86.0%</span></td>
+            <td>97.0% at $1.25/credit</td>
+          </tr>
+          <tr>
+            <td><strong>Team</strong></td>
+            <td class="money">$199</td>
+            <td>300</td>
+            <td>Light, Standard, Pro</td>
+            <td class="money">$11.21</td>
+            <td class="money">$15</td>
+            <td><span class="tag">86.8%</span></td>
+            <td>95.9% at $0.90/credit</td>
+          </tr>
+          <tr>
+            <td><strong>Growth</strong></td>
+            <td class="money">$499</td>
+            <td>1,000</td>
+            <td>Light through Max</td>
+            <td class="money">$37.35</td>
+            <td class="money">$35</td>
+            <td><span class="tag">85.5%</span></td>
+            <td>94.3% at $0.65/credit</td>
+          </tr>
+          <tr>
+            <td><strong>Business</strong></td>
+            <td class="money">$1,499</td>
+            <td>4,000</td>
+            <td>Light through Max, custom on request</td>
+            <td class="money">$149.40</td>
+            <td class="money">$100</td>
+            <td><span class="tag">83.4%</span></td>
+            <td>91.7% at $0.45/credit</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="small" style="margin-top: 10px;">
+        COGS uses $0.03735 per included 15-minute Standard run credit. If customers use Pro or Max, they consume
+        credits faster through the multiplier, so the monthly plan stays predictable while the cost exposure stays
+        bounded. Server allocation is a working assumption for app servers, database, logs, cache-volume storage
+        uncertainty, and operational overhead.
+      </p>
+    </section>
+
+    <section class="recommendation">
+      <div class="panel coral">
+        <h2>Why this model works</h2>
+        <p>
+          Customers get a fixed monthly number they can approve, while Hetchy avoids subsidizing pathological
+          usage. The credit block maps to the actual cost driver: active sandbox minutes. It is easier to explain
+          than token accounting and harder to game than "unlimited runs."
+        </p>
+      </div>
+      <div class="panel notes">
+        <h3>Billing rules to write into the product</h3>
+        <ul>
+          <li>A run credit covers one Standard fresh run or follow-up turn up to 15 minutes.</li>
+          <li>Every started additional 15-minute block consumes another block of credits.</li>
+          <li>Sandbox flavor multiplies the block: Light 1x, Standard 1x, Pro 3x, Max 6x.</li>
+          <li>Admins choose allowed flavors at the org level and a default flavor per repo.</li>
+          <li>Failed and cancelled runs consume credits because Daytona cost is still incurred.</li>
+          <li>Free trial runs should hard-stop at the limit; paid plans can overage by default with admin controls.</li>
+          <li>Set an account-level monthly overage cap and a per-run maximum runtime to prevent surprise invoices.</li>
+          <li>Enterprise can buy committed credit pools and custom concurrency.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section>
+      <h2>Interactive Margin Calculator</h2>
+      <div class="calculator">
+        <div class="panel">
+          <p class="small">Adjust the knobs to pressure-test the proposed Team plan, including larger sandbox flavors.</p>
+          <div class="control">
+            <label for="runs">Runs modeled: <span id="runsLabel">300</span></label>
+            <input id="runs" type="range" min="0" max="800" value="300" step="10">
+          </div>
+          <div class="control">
+            <label for="flavor">Sandbox flavor</label>
+            <select id="flavor">
+              <option value="standard">Standard - 2 vCPU / 3 GiB / 4 GiB - 1x credits</option>
+              <option value="light">Light - 1 vCPU / 3 GiB / 3 GiB - 1x credits</option>
+              <option value="pro">Pro - 4 vCPU / 8 GiB / 10 GiB - 3x credits</option>
+              <option value="max">Max - 8 vCPU / 16 GiB / 25 GiB - 6x credits</option>
+            </select>
+          </div>
+          <div class="control">
+            <label for="minutes">Average minutes per run: <span id="minutesLabel">15</span></label>
+            <input id="minutes" type="range" min="5" max="60" value="15" step="1">
+          </div>
+          <div class="control">
+            <label for="server">Monthly server allocation: <span id="serverLabel">$15</span></label>
+            <input id="server" type="range" min="0" max="300" value="15" step="5">
+          </div>
+        </div>
+        <div class="panel">
+          <h3>Team plan outcome at $199/month</h3>
+          <div class="result-grid">
+            <div class="stat">
+              <span class="value" id="calcCredits">300</span>
+              <span class="label">Credits consumed</span>
+            </div>
+            <div class="stat">
+              <span class="value" id="calcRevenue">$199.00</span>
+              <span class="label">Plan revenue after overage</span>
+            </div>
+            <div class="stat">
+              <span class="value" id="calcDaytona">$11.21</span>
+              <span class="label">Daytona COGS</span>
+            </div>
+            <div class="stat">
+              <span class="value" id="calcTotal">$26.21</span>
+              <span class="label">Total COGS with server allocation</span>
+            </div>
+            <div class="stat">
+              <span class="value" id="calcProfit">$172.80</span>
+              <span class="label">Gross profit</span>
+            </div>
+            <div class="stat">
+              <span class="value" id="calcMargin">86.8%</span>
+              <span class="label">Gross margin</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Implementation Notes</h2>
+      <div class="grid two">
+        <div class="panel">
+          <h3>Product instrumentation</h3>
+          <p>
+            Add a billing meter table that records sandbox ID, run ID, start time, stop/archive time, CPU, memory,
+            disk, flavor, multiplier, credits consumed, and terminal state. Do not depend on chat history for billing.
+          </p>
+        </div>
+        <div class="panel">
+          <h3>Cost controls</h3>
+          <p>
+            Keep stop-and-archive on successful runs. Add cleanup alerts for failed runs left running, and consider
+            a forced archive after a debugging grace period unless an admin pins the sandbox. Gate Pro and Max
+            behind org-level controls and monthly overage caps.
+          </p>
+        </div>
+      </div>
+      <div class="callout" style="margin-top: 16px;">
+        Suggested launch posture: start with Starter, Team, Growth, and "Business / Enterprise" sales-assisted.
+        Keep the included credit bundles generous enough to feel fixed, but make overage visible in admin settings
+        before teams hit it.
+      </div>
+    </section>
+
+    <section>
+      <h2>Sources</h2>
+      <div class="source-list">
+        <span>Daytona public pricing page: <a href="https://www.daytona.io/">https://www.daytona.io/</a></span>
+        <span>Daytona billing docs: <a href="https://www.daytona.io/docs/billing">https://www.daytona.io/docs/billing</a></span>
+        <span>Daytona sandbox resource docs: <a href="https://www.daytona.io/docs/en/sandboxes/">https://www.daytona.io/docs/en/sandboxes/</a></span>
+        <span>Local Hetchy data: `agent_runs` and `agent_run_events` in the development Postgres database.</span>
+        <span>Daytona account data: sandbox and volume API responses queried through the repo-scoped Doppler `dev` config.</span>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const teamPrice = 199;
+    const teamIncludedCredits = 300;
+    const teamOveragePrice = 0.90;
+    const flavors = {
+      light: { multiplier: 1, hourlyCost: 0.0990 },
+      standard: { multiplier: 1, hourlyCost: 0.1494 },
+      pro: { multiplier: 3, hourlyCost: 0.33174 },
+      max: { multiplier: 6, hourlyCost: 0.66456 },
+    };
+    const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
+
+    const runs = document.getElementById("runs");
+    const flavor = document.getElementById("flavor");
+    const minutes = document.getElementById("minutes");
+    const server = document.getElementById("server");
+    const runsLabel = document.getElementById("runsLabel");
+    const minutesLabel = document.getElementById("minutesLabel");
+    const serverLabel = document.getElementById("serverLabel");
+    const calcCredits = document.getElementById("calcCredits");
+    const calcRevenue = document.getElementById("calcRevenue");
+    const calcDaytona = document.getElementById("calcDaytona");
+    const calcTotal = document.getElementById("calcTotal");
+    const calcProfit = document.getElementById("calcProfit");
+    const calcMargin = document.getElementById("calcMargin");
+
+    function updateCalculator() {
+      const used = Number(runs.value);
+      const mins = Number(minutes.value);
+      const fixed = Number(server.value);
+      const selectedFlavor = flavors[flavor.value];
+      const blocks = Math.ceil(mins / 15);
+      const credits = used * blocks * selectedFlavor.multiplier;
+      const overageCredits = Math.max(0, credits - teamIncludedCredits);
+      const revenue = teamPrice + (overageCredits * teamOveragePrice);
+      const daytona = used * mins * (selectedFlavor.hourlyCost / 60);
+      const total = daytona + fixed;
+      const profit = revenue - total;
+      const margin = profit / revenue;
+
+      runsLabel.textContent = String(used);
+      minutesLabel.textContent = String(mins);
+      serverLabel.textContent = money.format(fixed);
+      calcCredits.textContent = credits.toLocaleString("en-US");
+      calcRevenue.textContent = money.format(revenue);
+      calcDaytona.textContent = money.format(daytona);
+      calcTotal.textContent = money.format(total);
+      calcProfit.textContent = money.format(profit);
+      calcMargin.textContent = `${(margin * 100).toFixed(1)}%`;
+    }
+
+    [runs, flavor, minutes, server].forEach((input) => input.addEventListener("input", updateCalculator));
+    updateCalculator();
+  </script>
+</body>
+</html>

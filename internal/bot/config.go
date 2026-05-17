@@ -6,6 +6,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/hetchyhq/hetchy/internal/billing"
 )
 
 // Config holds runtime configuration loaded from the environment.
@@ -83,6 +85,15 @@ type Config struct {
 	GitHubAppClientID      string
 	GitHubAppPrivateKey    string
 	GitHubAppWebhookSecret string
+
+	// Stripe is the source of truth for paid subscriptions, payment
+	// methods, invoices, hosted checkout, and customer portal sessions.
+	// Free/trial and comped org enforcement is handled locally.
+	StripeSecretKey            string
+	StripeWebhookSecret        string
+	StripeSubscriptionPriceID  string
+	StripeSubscriptionPriceIDs map[string]string
+	StripeTopupPriceID         string
 
 	AuthBypass      bool
 	AuthBypassUser  string
@@ -208,17 +219,49 @@ func LoadConfig() (Config, error) {
 		GitHubAppClientID:           strings.TrimSpace(os.Getenv("GITHUB_APP_CLIENT_ID")),
 		// Not trimmed: PEM contents are multi-line and the parser relies on
 		// embedded newlines; trimming risks corrupting the key.
-		GitHubAppPrivateKey:    os.Getenv("GITHUB_APP_PRIVATE_KEY"),
-		GitHubAppWebhookSecret: strings.TrimSpace(os.Getenv("GITHUB_APP_WEBHOOK_SECRET")),
-		AuthBypass:             bypass,
-		AuthBypassUser:         getenvDefault("AUTH_BYPASS_USER", "user_bypass"),
-		AuthBypassOrg:          os.Getenv("AUTH_BYPASS_ORG"),
-		AuthBypassRole:         getenvDefault("AUTH_BYPASS_ROLE", "admin"),
-		AuthBypassEmail:        getenvDefault("AUTH_BYPASS_EMAIL", "bypass@hetchy.local"),
-		S3Bucket:               strings.TrimSpace(os.Getenv("HETCHY_S3_BUCKET")),
-		S3Region:               strings.TrimSpace(os.Getenv("HETCHY_S3_REGION")),
-		SXPublicVaultURL:       getenvDefaultTrimAllowDisabled("HETCHY_SX_PUBLIC_VAULT_URL", DefaultSXPublicVaultURL),
+		GitHubAppPrivateKey:       os.Getenv("GITHUB_APP_PRIVATE_KEY"),
+		GitHubAppWebhookSecret:    strings.TrimSpace(os.Getenv("GITHUB_APP_WEBHOOK_SECRET")),
+		StripeSecretKey:           strings.TrimSpace(os.Getenv("STRIPE_SECRET_KEY")),
+		StripeWebhookSecret:       strings.TrimSpace(os.Getenv("STRIPE_WEBHOOK_SECRET")),
+		StripeSubscriptionPriceID: strings.TrimSpace(os.Getenv("STRIPE_SUBSCRIPTION_PRICE_ID")),
+		StripeSubscriptionPriceIDs: stripeSubscriptionPriceIDs(
+			os.Getenv("STRIPE_SUBSCRIPTION_PRICE_IDS"),
+			os.Getenv("STRIPE_SUBSCRIPTION_PRICE_ID"),
+		),
+		StripeTopupPriceID: strings.TrimSpace(os.Getenv("STRIPE_TOPUP_PRICE_ID")),
+		AuthBypass:         bypass,
+		AuthBypassUser:     getenvDefault("AUTH_BYPASS_USER", "user_bypass"),
+		AuthBypassOrg:      os.Getenv("AUTH_BYPASS_ORG"),
+		AuthBypassRole:     getenvDefault("AUTH_BYPASS_ROLE", "admin"),
+		AuthBypassEmail:    getenvDefault("AUTH_BYPASS_EMAIL", "bypass@hetchy.local"),
+		S3Bucket:           strings.TrimSpace(os.Getenv("HETCHY_S3_BUCKET")),
+		S3Region:           strings.TrimSpace(os.Getenv("HETCHY_S3_REGION")),
+		SXPublicVaultURL:   getenvDefaultTrimAllowDisabled("HETCHY_SX_PUBLIC_VAULT_URL", DefaultSXPublicVaultURL),
 	}, nil
+}
+
+func stripeSubscriptionPriceIDs(raw, legacy string) map[string]string {
+	out := map[string]string{}
+	for _, entry := range strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == ';' || r == '\n'
+	}) {
+		parts := strings.SplitN(entry, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		plan := strings.ToLower(strings.TrimSpace(parts[0]))
+		priceID := strings.TrimSpace(parts[1])
+		if plan != "" && priceID != "" {
+			out[plan] = priceID
+		}
+	}
+	if legacy = strings.TrimSpace(legacy); legacy != "" {
+		defaultPlan := billing.DefaultPaidPlan()
+		if out[defaultPlan.Code] == "" {
+			out[defaultPlan.Code] = legacy
+		}
+	}
+	return out
 }
 
 func getenvDefault(key, def string) string {

@@ -1,0 +1,208 @@
+package billing
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+)
+
+var ErrAutoTopupNotConfigured = errors.New("billing: auto top-up is not configured")
+
+type InsufficientCreditsError struct {
+	Needed    int
+	Available int
+}
+
+func (e InsufficientCreditsError) Error() string {
+	return fmt.Sprintf("billing: insufficient credits: need %d, have %d", e.Needed, e.Available)
+}
+
+type FlavorNotAllowedError struct {
+	Flavor    string
+	MaxFlavor string
+}
+
+func (e FlavorNotAllowedError) Error() string {
+	return fmt.Sprintf("billing: flavor %q exceeds plan cap %q", e.Flavor, e.MaxFlavor)
+}
+
+type AutoTopupper interface {
+	PurchaseTopupUnit(context.Context, Account) error
+}
+
+type Service struct {
+	store    *Store
+	topupper AutoTopupper
+}
+
+func NewService(store *Store, topupper AutoTopupper) *Service {
+	return &Service{store: store, topupper: topupper}
+}
+
+func (s *Service) Enabled() bool {
+	return s != nil && s.store != nil && s.store.Enabled()
+}
+
+func (s *Service) AdmitRun(ctx context.Context, req AdmissionRequest) (Admission, error) {
+	if !s.Enabled() {
+		return Admission{Flavor: MustFlavor(FlavorStandard)}, nil
+	}
+	if req.RunID == "" || req.OrgID == "" {
+		return Admission{}, errors.New("billing: org_id and run_id required")
+	}
+	account, err := s.store.EnsureAccount(ctx, req.OrgID)
+	if err != nil {
+		return Admission{}, err
+	}
+	flavor, err := s.store.RepoFlavor(ctx, req.OrgID, req.GitHubOwner, req.GitHubRepo)
+	if err != nil {
+		return Admission{}, err
+	}
+	if !FlavorAllowed(flavor.Code, account.MaxFlavor) {
+		return Admission{}, FlavorNotAllowedError{Flavor: flavor.Code, MaxFlavor: account.MaxFlavor}
+	}
+	reserveCredits := max(account.PerRunMaxCredits, flavor.Multiplier)
+	if account.BillingExempt {
+		if _, _, err := s.store.AdmitRun(ctx, req.OrgID, req.RunID, 0, flavor, req.StartedAt); err != nil {
+			return Admission{}, err
+		}
+		return Admission{
+			Account:          account,
+			Flavor:           flavor,
+			Comped:           true,
+			AvailableCredits: account.Balance(),
+		}, nil
+	}
+	if account.Balance() < reserveCredits {
+		account, err = s.maybeAutoTopup(ctx, account, reserveCredits)
+		if err != nil {
+			return Admission{}, err
+		}
+	}
+	res, account, err := s.store.AdmitRun(ctx, req.OrgID, req.RunID, reserveCredits, flavor, req.StartedAt)
+	if err != nil {
+		return Admission{}, err
+	}
+	return Admission{
+		Account:          account,
+		Flavor:           flavor,
+		ReservedCredits:  res.ReservedCredits,
+		AvailableCredits: account.Balance(),
+	}, nil
+}
+
+func (s *Service) maybeAutoTopup(ctx context.Context, account Account, reserveCredits int) (Account, error) {
+	settings, err := s.store.EnsureTopupSettings(ctx, account.OrgID)
+	if err != nil {
+		return Account{}, err
+	}
+	if !settings.AutoTopupEnabled || account.Balance() > settings.TriggerThreshold {
+		return account, nil
+	}
+	if s.topupper == nil {
+		return Account{}, ErrAutoTopupNotConfigured
+	}
+	target := max(settings.TargetBalance, reserveCredits)
+	for account.Balance() < target {
+		if settings.MonthlyMaxUnits > 0 && settings.MonthlyUnitsUsed >= settings.MonthlyMaxUnits {
+			break
+		}
+		if err := s.topupper.PurchaseTopupUnit(ctx, account); err != nil {
+			_ = s.store.SetLastPaymentError(ctx, account.OrgID, err.Error())
+			return Account{}, err
+		}
+		account, err = s.store.GrantTopupCredits(ctx, account.OrgID, TopupUnitCredits)
+		if err != nil {
+			return Account{}, err
+		}
+		settings, err = s.store.IncrementTopupMonthlyUnits(ctx, account.OrgID, 1)
+		if err != nil {
+			return Account{}, err
+		}
+		if settings.MonthlyMaxUnits == 0 && account.Balance() >= reserveCredits {
+			break
+		}
+	}
+	if account.Balance() < reserveCredits {
+		return Account{}, InsufficientCreditsError{Needed: reserveCredits, Available: account.Balance()}
+	}
+	return account, nil
+}
+
+func (s *Service) FinalizeRun(ctx context.Context, runID, terminalState string, endedAt time.Time) error {
+	if !s.Enabled() {
+		return nil
+	}
+	return s.store.FinalizeRun(ctx, runID, terminalState, endedAt)
+}
+
+func (s *Service) Overview(ctx context.Context, orgID string) (Overview, error) {
+	if !s.Enabled() {
+		return Overview{}, nil
+	}
+	return s.store.Overview(ctx, orgID, 10)
+}
+
+func (s *Service) UpdateTopupSettings(ctx context.Context, orgID string, settings TopupSettings) (TopupSettings, error) {
+	if !s.Enabled() {
+		return TopupSettings{}, nil
+	}
+	return s.store.UpdateTopupSettings(ctx, orgID, settings)
+}
+
+func (s *Service) ListRepoSettings(ctx context.Context, orgID string) (map[string]RepoSetting, error) {
+	if !s.Enabled() {
+		return map[string]RepoSetting{}, nil
+	}
+	return s.store.ListRepoSettings(ctx, orgID)
+}
+
+func (s *Service) SetRepoFlavor(ctx context.Context, orgID, owner, repo, flavor string) (RepoSetting, error) {
+	if !s.Enabled() {
+		return RepoSetting{OrgID: orgID, GitHubOwner: owner, GitHubRepo: repo, Flavor: FlavorStandard}, nil
+	}
+	return s.store.SetRepoFlavor(ctx, orgID, owner, repo, flavor)
+}
+
+func (s *Service) SetStripeCustomer(ctx context.Context, orgID, customerID string) (Account, error) {
+	if !s.Enabled() {
+		return Account{}, nil
+	}
+	return s.store.SetStripeCustomer(ctx, orgID, customerID)
+}
+
+func (s *Service) FindAccountByStripeCustomer(ctx context.Context, customerID string) (Account, error) {
+	if !s.Enabled() {
+		return Account{}, nil
+	}
+	return s.store.FindAccountByStripeCustomer(ctx, customerID)
+}
+
+func (s *Service) UpsertAccountMirror(ctx context.Context, mirror AccountMirror) (Account, error) {
+	if !s.Enabled() {
+		return Account{}, nil
+	}
+	return s.store.UpsertAccountMirror(ctx, mirror)
+}
+
+func (s *Service) GrantTopupCredits(ctx context.Context, orgID string, credits int) (Account, error) {
+	if !s.Enabled() {
+		return Account{}, nil
+	}
+	return s.store.GrantTopupCredits(ctx, orgID, credits)
+}
+
+func (s *Service) GrantTopupCreditsOnce(ctx context.Context, eventID, eventType, orgID string, credits int) (Account, bool, error) {
+	if !s.Enabled() {
+		return Account{}, false, nil
+	}
+	return s.store.GrantTopupCreditsOnce(ctx, eventID, eventType, orgID, credits)
+}
+
+func (s *Service) SetLastPaymentError(ctx context.Context, orgID, msg string) error {
+	if !s.Enabled() {
+		return nil
+	}
+	return s.store.SetLastPaymentError(ctx, orgID, msg)
+}

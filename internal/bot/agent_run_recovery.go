@@ -596,6 +596,7 @@ func (b *Bot) finalizeRecoveredRun(ctx context.Context, sb *daytona.Sandbox, run
 		return
 	}
 	b.runs.UpdateState(context.Background(), run.ID, runstore.StateSucceeded, "", b.workerID)
+	b.finishBillingRun(context.Background(), run.ID, runstore.StateSucceeded)
 	b.log.Info("agent run recovery succeeded",
 		"run_id", run.ID,
 		"org", run.OrgID,
@@ -637,6 +638,7 @@ func (b *Bot) finishRecoveredFailure(ctx context.Context, run runstore.Run, live
 		lastErr = cause.Error()
 	}
 	b.runs.UpdateState(context.Background(), run.ID, runstore.StateFailed, lastErr, b.workerID)
+	b.finishBillingRun(context.Background(), run.ID, runstore.StateFailed)
 	b.log.Warn("agent run recovery failed",
 		"run_id", run.ID,
 		"org", run.OrgID,
@@ -689,6 +691,7 @@ func (b *Bot) finishRecoveredCancellation(ctx context.Context, run runstore.Run)
 		"session", cancelled.SessionID,
 		"command", cancelled.CommandID,
 	)
+	b.finishBillingRun(context.Background(), cancelled.ID, runstore.StateCancelled)
 	b.cleanupCancelledDurableRun(cancelled)
 }
 

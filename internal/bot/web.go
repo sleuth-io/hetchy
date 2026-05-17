@@ -23,6 +23,7 @@ func (b *Bot) runWeb(ctx context.Context) error {
 	mux.HandleFunc("/signup", b.auth.SignupHandler)
 	mux.HandleFunc("/callback", b.auth.CallbackHandler)
 	mux.HandleFunc("/logout", b.auth.LogoutHandler)
+	mux.HandleFunc("/stripe/webhook", b.stripeWebhookHandler)
 
 	// Slack HTTP transport — public endpoints that Slack POSTs to. No
 	// WorkOS auth middleware: these are verified instead by HMAC over
@@ -56,6 +57,11 @@ func (b *Bot) runWeb(ctx context.Context) error {
 	mux.Handle("/settings/org", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.settingsHandler))))
 	mux.Handle("/settings/org/delete", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.orgDeleteHandler))))
 	mux.Handle("/settings/org/agents/", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.agentSettingsActionHandler))))
+	mux.Handle("/settings/org/repositories/flavor", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.repoFlavorSettingsHandler))))
+	mux.Handle("/settings/org/billing/topup-settings", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.billingTopupSettingsHandler))))
+	mux.Handle("/billing/checkout", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.billingCheckoutHandler))))
+	mux.Handle("/billing/topup", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.billingTopupHandler))))
+	mux.Handle("/billing/portal", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.billingPortalHandler))))
 	mux.Handle("/settings/org/invite", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.inviteHandler))))
 	mux.Handle("/settings/org/invitations/", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.invitationActionHandler))))
 	mux.Handle("/settings/org/members/", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.memberActionHandler))))

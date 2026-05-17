@@ -102,6 +102,43 @@ func TestLoadConfig_DaytonaCacheOverrides(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_StripeSubscriptionPriceIDs(t *testing.T) {
+	clearEnv(t, "AUTH_BYPASS", "STRIPE_SUBSCRIPTION_PRICE_ID", "STRIPE_SUBSCRIPTION_PRICE_IDS")
+	setEnv(t, requiredEnv())
+	t.Setenv("STRIPE_SUBSCRIPTION_PRICE_ID", "price_legacy_team")
+	t.Setenv("STRIPE_SUBSCRIPTION_PRICE_IDS", "starter=price_starter; team=price_team\n growth=price_growth,business=price_business")
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	want := map[string]string{
+		"starter":  "price_starter",
+		"team":     "price_team",
+		"growth":   "price_growth",
+		"business": "price_business",
+	}
+	for plan, priceID := range want {
+		if got := cfg.StripeSubscriptionPriceIDs[plan]; got != priceID {
+			t.Fatalf("StripeSubscriptionPriceIDs[%q] = %q, want %q", plan, got, priceID)
+		}
+	}
+}
+
+func TestLoadConfig_StripeSubscriptionPriceIDLegacyDefaultsToTeam(t *testing.T) {
+	clearEnv(t, "AUTH_BYPASS", "STRIPE_SUBSCRIPTION_PRICE_ID", "STRIPE_SUBSCRIPTION_PRICE_IDS")
+	setEnv(t, requiredEnv())
+	t.Setenv("STRIPE_SUBSCRIPTION_PRICE_ID", "price_team")
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if got := cfg.StripeSubscriptionPriceIDs["team"]; got != "price_team" {
+		t.Fatalf("legacy StripeSubscriptionPriceID mapped to team = %q", got)
+	}
+}
+
 func TestLoadConfig_DaytonaCachePruneDaysRejectsInvalid(t *testing.T) {
 	for _, value := range []string{"0", "-1", "abc"} {
 		t.Run(value, func(t *testing.T) {

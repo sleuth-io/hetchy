@@ -24,6 +24,7 @@ import (
 	"github.com/hetchyhq/hetchy/internal/agents"
 	"github.com/hetchyhq/hetchy/internal/artifacts"
 	"github.com/hetchyhq/hetchy/internal/auth"
+	"github.com/hetchyhq/hetchy/internal/billing"
 	"github.com/hetchyhq/hetchy/internal/blocks"
 	"github.com/hetchyhq/hetchy/internal/bootstrap"
 	"github.com/hetchyhq/hetchy/internal/convstore"
@@ -91,6 +92,7 @@ type Bot struct {
 	orgs      orgStore
 	convs     conversationStore
 	runs      runStore
+	billing   *billing.Service
 	agents    *agents.Store
 	auth      *auth.Service
 	slack     *slackManager
@@ -152,6 +154,7 @@ type Bot struct {
 	validateRecoveredPRFn    recoveredPRValidationFunc
 	getSandboxFn             func(context.Context, string) (*daytona.Sandbox, error)
 	resumeSandboxFn          func(context.Context, *daytona.Sandbox, blocks.Emitter) error
+	resizeSandboxFn          func(context.Context, *daytona.Sandbox, billing.Flavor) error
 	deleteSandboxSessionFn   func(*daytona.Sandbox, string)
 	stopAndArchiveFn         func(context.Context, *daytona.Sandbox)
 	cleanupSandboxFn         sandboxCleanupFunc
@@ -247,6 +250,7 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 		orgs:             orgcfg.New(store, cipher),
 		convs:            convstore.New(store),
 		runs:             runstore.New(store),
+		billing:          billing.NewService(billing.NewStore(store), newStripeAutoTopupper(cfg)),
 		agents:           agents.NewStore(store),
 		bootstrap:        bootstrap.New(store, cipher),
 		artifacts:        artifactSigner,
@@ -801,6 +805,15 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 		return
 	}
 
+	flavor, ok := b.admitBillingForRun(ctx, oc.OrgID, rec.GitHubOwner, rec.GitHubRepo, emit)
+	if !ok {
+		appendBlocksToFirstTurn(&rec, recorder.Snapshot())
+		if err := b.convs.Upsert(ctx, rec); err != nil {
+			b.log.Error("convstore upsert (billing admission fail)", "error", err)
+		}
+		return
+	}
+
 	rec.AgentSlug = agent.Slug
 	// Notify first so the user sees activity even if branchNameFor
 	// stalls on Anthropic — the slug request has a tight timeout but
@@ -827,6 +840,7 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 	}
 	addDaytonaCacheEnv(envVars, b.cfg, oc, repo, repo.CacheMounted)
 	labels := daytonaSandboxLabels(b.cfg, oc, cacheVolumeID)
+	addBillingFlavorLabels(labels, flavor)
 	sb, err := b.createSandboxWithRetry(ctx, types.SnapshotParams{
 		SandboxBaseParams: types.SandboxBaseParams{EnvVars: envVars, Labels: labels, Volumes: volumes},
 		Snapshot:          b.cfg.Snapshot,
@@ -858,6 +872,17 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 		} else {
 			b.markRunState(ctx, runstore.StateFailed, err)
 		}
+		return
+	}
+	if err := b.resizeSandboxForBillingFlavor(ctx, sb, flavor); err != nil {
+		b.log.Error("sandbox resize failed", "sandbox", sb.ID, "request_id", requestID, "flavor", flavor.Code, "error", err)
+		emit.Error("Sandbox failed", fmt.Sprintf("Couldn't apply the `%s` sandbox flavor before starting work. Try again or choose a smaller flavor in Organization settings.", flavor.Label))
+		b.cleanupSandboxWithTimeout(sb, "billing flavor resize failed")
+		appendBlocksToFirstTurn(&rec, recorder.Snapshot())
+		if uerr := b.convs.Upsert(context.Background(), rec); uerr != nil {
+			b.log.Error("convstore upsert (sandbox resize fail)", "error", uerr)
+		}
+		b.markRunState(ctx, runstore.StateFailed, err)
 		return
 	}
 	// Mark this fresh-run sandbox as owned by the current turn. The
@@ -988,6 +1013,15 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 		return
 	}
 
+	flavor, ok := b.admitBillingForRun(ctx, oc.OrgID, rec.GitHubOwner, rec.GitHubRepo, emit)
+	if !ok {
+		appendBlocksAsNewTurn(&rec, text, recorder.Snapshot())
+		if err := b.convs.Upsert(ctx, rec); err != nil {
+			b.log.Error("convstore upsert (follow-up billing admission fail)", "error", err)
+		}
+		return
+	}
+
 	sb, err := b.getSandbox(ctx, rec.SandboxID)
 	if err != nil {
 		if liveRunCancelled(ctx) {
@@ -1004,6 +1038,16 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 		appendBlocksAsNewTurn(&rec, text, recorder.Snapshot())
 		if err := b.convs.Upsert(ctx, rec); err != nil {
 			b.log.Error("convstore upsert (follow-up sandbox missing)", "error", err)
+		}
+		b.markRunState(ctx, runstore.StateFailed, err)
+		return
+	}
+	if err := b.resizeSandboxForBillingFlavor(ctx, sb, flavor); err != nil {
+		b.log.Error("follow-up sandbox resize failed", "sandbox", sb.ID, "request_id", requestID, "flavor", flavor.Code, "error", err)
+		emit.Error("Sandbox resume failed", fmt.Sprintf("Couldn't apply the `%s` sandbox flavor before resuming work. Try again or choose a smaller flavor in Organization settings.", flavor.Label))
+		appendBlocksAsNewTurn(&rec, text, recorder.Snapshot())
+		if err := b.convs.Upsert(ctx, rec); err != nil {
+			b.log.Error("convstore upsert (follow-up sandbox resize)", "error", err)
 		}
 		b.markRunState(ctx, runstore.StateFailed, err)
 		return
@@ -1477,6 +1521,7 @@ func (b *Bot) cancelDurableRun(ctx context.Context, run runstore.Run, actor stri
 		"session", cancelled.SessionID,
 		"cleanup_on_cancel", cleanupOnCancel,
 	)
+	b.finishBillingRun(context.Background(), cancelled.ID, runstore.StateCancelled)
 	b.cleanupCancelledDurableRun(cancelled)
 	return nil
 }
