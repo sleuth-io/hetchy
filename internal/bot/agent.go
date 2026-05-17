@@ -30,7 +30,7 @@ var agentScriptBody string
 var followupScriptBody string
 
 //go:embed scripts/setup-clone.sh
-var setupCloneScript string
+var setupCloneScriptBody string
 
 //go:embed scripts/claude-watchdog.sh
 var claudeWatchdogScript string
@@ -38,16 +38,20 @@ var claudeWatchdogScript string
 //go:embed scripts/sandbox-common.sh
 var sandboxCommonScript string
 
-// agentScript and followupScript are the on-the-wire script bodies the
-// bot writes to the sandbox. Shared helper scripts are prepended to
-// the user-visible scripts/agent.sh and scripts/followup.sh so their
-// functions live in the same shell scope. We do the join here (vs.
+// agentScript, followupScript, and setupCloneScript are the
+// on-the-wire script bodies the bot writes to the sandbox. Shared
+// helper scripts are prepended so their functions live in the same
+// shell scope as the user-visible scripts. We do the join here (vs.
 // having each script `source` a separately-deployed file) so runScript
 // only has to push one file per invocation and there's no chance of a
-// half-deployed set.
+// half-deployed set. setupCloneScript needs sandbox-common.sh too so
+// the bootstrap path can call hetchy_prepare_repo_workdir, which uses
+// the volume-cached repo checkout to skip a full network clone.
 var agentScript = claudeWatchdogScript + "\n" + sandboxCommonScript + "\n" + agentScriptBody
 
 var followupScript = claudeWatchdogScript + "\n" + sandboxCommonScript + "\n" + followupScriptBody
+
+var setupCloneScript = sandboxCommonScript + "\n" + setupCloneScriptBody
 
 // The no-hard-wrap rule on bullet 5 also covers the Validation section
 // appended by bootstrap.MergeIntoAgentPrompt — see the matching note at
@@ -283,6 +287,12 @@ func (b *Bot) ensureBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo
 		"SF_BASE_BRANCH": repo.BaseBranch,
 		"GITHUB_TOKEN":   repo.GitHubToken,
 	}
+	// Feed the cache state into setup-clone too so the bootstrap path
+	// benefits from the warm repo checkout. Without this the bootstrap
+	// clone always falls through to a full network fetch even when the
+	// cache volume is mounted, which is exactly the case we are
+	// optimising for.
+	addDaytonaCacheEnv(cloneEnv, b.cfg, oc, repo, repo.CacheMounted)
 	if err := b.runBootstrapInlineScript(ctx, sb, sessionID, "setup-clone", setupCloneScript, cloneEnv, emit); err != nil {
 		return nil, fmt.Errorf("setup-clone: %w", err)
 	}
