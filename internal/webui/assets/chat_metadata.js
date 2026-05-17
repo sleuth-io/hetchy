@@ -116,6 +116,15 @@ function renderMetadata(detail) {
     ? (memberById.get(detail.creator_id) || detail.creator_id)
     : '';
 
+  // Skills installed by sx during this conversation's sandbox setup.
+  // Show the first MAX_SKILL_PREVIEW names inline; if there are more,
+  // append a "Show all (N)" trigger that opens a modal listing the
+  // full set. The list is captured server-side from a "[hetchy:sx-
+  // skills]" marker the sandbox prints right after `sx install`
+  // completes.
+  const skills = Array.isArray(detail.sx_skills) ? detail.sx_skills : [];
+  const skillsHTML = buildSkillsCell(skills);
+
   // Build rows. Each row is wrapped in is-empty class when the value
   // is missing so the dashes look intentionally placeholdered rather
   // than like a layout bug.
@@ -129,6 +138,7 @@ function renderMetadata(detail) {
     { label: 'Repo',    html: repoLink,                 empty: !repoSlug },
     { label: 'Branch',  html: branchLink,               empty: !branch },
     { label: 'PR',      html: prCell,                   empty: !prURL },
+    { label: 'Skills',  html: skillsHTML,               empty: skills.length === 0 },
     { label: 'Sandbox', html: sandbox
         ? '<span class="meta-mono">' + esc(sandbox) + '</span>'
         : '<span>—</span>', empty: !sandbox },
@@ -164,6 +174,116 @@ function renderMetadata(detail) {
     + '</div>';
 
   setupMetaMenu();
+  setupSkillsTrigger(skills);
+}
+
+// MAX_SKILL_PREVIEW caps how many skill chips render inline in the
+// details panel before we collapse the tail into a "+N more" trigger.
+// The cap is per the product spec — show the first 4 then a link to
+// reveal the rest in a modal. Bumping this means we'd need to revisit
+// the visual density of the panel.
+const MAX_SKILL_PREVIEW = 4;
+
+// buildSkillsCell returns the HTML for the Skills row. When there
+// are more skills than fit in the preview the caller wires the click
+// handler via setupSkillsTrigger; that lookup is by element id so we
+// don't need to surface a "hasMore" flag from this builder.
+function buildSkillsCell(skills) {
+  if (!Array.isArray(skills) || skills.length === 0) {
+    return '<span>—</span>';
+  }
+  const preview = skills.slice(0, MAX_SKILL_PREVIEW);
+  const remainder = skills.length - preview.length;
+  const previewHTML = preview.map(name =>
+    '<span class="meta-chip">' + esc(name) + '</span>'
+  ).join('');
+  let trailing = '';
+  if (remainder > 0) {
+    trailing = ' <button type="button" id="skills-show-all"'
+      + ' class="meta-show-all" aria-haspopup="dialog">'
+      + 'Show all (' + esc(String(skills.length)) + ')</button>';
+  }
+  return '<span class="meta-chip-row">' + previewHTML + '</span>' + trailing;
+}
+
+function setupSkillsTrigger(skills) {
+  const btn = document.getElementById('skills-show-all');
+  if (!btn) return;
+  btn.addEventListener('click', () => openSkillsModal(skills));
+}
+
+// openSkillsModal renders a lightweight modal dialog listing every
+// captured skill. We build it on demand (rather than including a
+// hidden modal in the chat template) so renderMetadata() — which
+// rebuilds the panel for every metadata change — doesn't have to
+// reach outside its own DOM subtree to keep the modal in sync.
+function openSkillsModal(skills) {
+  // Tear down any previous instance: re-clicking the trigger should
+  // re-open the modal cleanly rather than stacking duplicates.
+  document.getElementById('skills-modal-overlay')?.remove();
+
+  // The backdrop holds no ARIA role itself — screen readers should
+  // announce the inner `.skills-modal` as the dialog. Putting
+  // role="dialog" on the full-viewport overlay would describe the
+  // whole page as a dialog and double up with the visible heading.
+  const overlay = document.createElement('div');
+  overlay.id = 'skills-modal-overlay';
+  overlay.className = 'skills-modal-overlay';
+
+  const titleID = 'skills-modal-title';
+  const items = skills.map(name =>
+    '<li class="skills-modal-item">' + esc(name) + '</li>'
+  ).join('');
+  overlay.innerHTML =
+    '<div class="skills-modal" role="dialog" aria-modal="true"'
+    +   ' aria-labelledby="' + titleID + '" tabindex="-1">'
+    +   '<div class="skills-modal-head">'
+    +     '<h2 class="skills-modal-title" id="' + titleID + '">'
+    +       'Installed skills (' + esc(String(skills.length)) + ')</h2>'
+    +     '<button type="button" class="skills-modal-close"'
+    +       ' aria-label="Close">&times;</button>'
+    +   '</div>'
+    +   '<ul class="skills-modal-list">' + items + '</ul>'
+    + '</div>';
+
+  const dialog = overlay.querySelector('.skills-modal');
+  const close = () => {
+    document.removeEventListener('keydown', onKey);
+    overlay.remove();
+    if (lastFocus && typeof lastFocus.focus === 'function') lastFocus.focus();
+  };
+  // Focus trap: Tab / Shift-Tab cycle within the dialog's focusable
+  // descendants instead of escaping to the chat behind the modal.
+  // Selector is the standard "focusable" set; refresh on each keydown
+  // so a future skill-row that grows interactive children still works.
+  const focusableSelector = [
+    'a[href]', 'button:not([disabled])', 'input:not([disabled])',
+    'select:not([disabled])', 'textarea:not([disabled])',
+    '[tabindex]:not([tabindex="-1"])',
+  ].join(',');
+  const onKey = (e) => {
+    if (e.key === 'Escape') { close(); return; }
+    if (e.key !== 'Tab') return;
+    const items = Array.from(dialog.querySelectorAll(focusableSelector));
+    if (items.length === 0) return;
+    const first = items[0];
+    const last = items[items.length - 1];
+    const active = document.activeElement;
+    if (e.shiftKey && (active === first || !dialog.contains(active))) {
+      e.preventDefault(); last.focus();
+    } else if (!e.shiftKey && (active === last || !dialog.contains(active))) {
+      e.preventDefault(); first.focus();
+    }
+  };
+  const lastFocus = document.activeElement;
+  document.addEventListener('keydown', onKey);
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) close();
+  });
+  overlay.querySelector('.skills-modal-close').addEventListener('click', close);
+
+  document.body.appendChild(overlay);
+  overlay.querySelector('.skills-modal-close').focus();
 }
 
 function setupMetaMenu() {
@@ -270,6 +390,19 @@ function updateMutablePendingAgentMetadata() {
   renderMetadata(lastDetail);
 }
 
+function updateLiveSXSkills(skills) {
+  if (!Array.isArray(skills)) return;
+  const existing = lastDetail || {};
+  lastDetail = {
+    ...existing,
+    thread_id: existing.thread_id || sessionId,
+    history: existing.history || [],
+    response_blocks: existing.response_blocks || [],
+    sx_skills: skills.slice(),
+  };
+  renderMetadata(lastDetail);
+}
+
 async function refreshMetadata() {
   if (!conversationHasServerState) {
     renderMetadata(null);
@@ -357,13 +490,16 @@ async function loadHistory(opts) {
       if (phase) closePhase(phase, phaseLastEndedAt);
     }
     // Honour #block-<id> deep links by expanding + scrolling to the
-    // referenced block.
+    // referenced block, otherwise scroll to the bottom so the user sees
+    // the end of the conversation rather than the top.
     if (window.location.hash && window.location.hash.startsWith('#block-')) {
       const target = document.getElementById(window.location.hash.slice(1));
       if (target) {
         target.open = true;
         target.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
+    } else {
+      log.scrollTop = log.scrollHeight;
     }
   } catch (e) {
     // Leave the log empty on error; the user can still type a message.

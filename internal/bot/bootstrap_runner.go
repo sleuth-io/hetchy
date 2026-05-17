@@ -76,11 +76,11 @@ func (r *botRunner) Run(ctx context.Context, label, scriptBody string, env map[s
 	defer stop()
 
 	// Bootstrap runs are bounded by the loop's own iteration cap (15
-	// min by design); wall extended to 30m (from 20m) so the 15m idle
-	// timeout has 15m of headroom — a large npm ci or image pull can
-	// go silent for 10-15 minutes without being genuinely stuck.
+	// min by design); wall extended to 60m so the 15m idle timeout has
+	// headroom — a large npm ci or image pull can go silent for 10-15
+	// minutes without being genuinely stuck.
 	router := newBootstrapLineRouter(r.emit)
-	out, err := r.b.shLines(ctx, r.sb.ID, r.sb.Process, r.sessionID, "bootstrap-run-"+label, runCmd, 30*time.Minute, 15*time.Minute, false, router.Line)
+	out, err := r.b.shLines(ctx, r.sb.ID, r.sb.Process, r.sessionID, "bootstrap-run-"+label, runCmd, 60*time.Minute, 15*time.Minute, false, router.Line)
 	if err != nil {
 		router.Fail("Bootstrap step failed: " + label)
 		// Return the partial output even on failure — auto-heal needs

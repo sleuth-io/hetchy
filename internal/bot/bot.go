@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"maps"
 	"net/http"
+	"path"
 	"strings"
 	"time"
 
@@ -47,7 +48,34 @@ const (
 	backoffMultiplier = 2
 )
 
-const workdir = "/home/daytona/work"
+// workdirRoot is the parent directory inside the sandbox under which
+// every repo is cloned. The actual checkout lands at
+// repoWorkdir(slug), which appends the repo name so sx install can
+// detect the right repo by reading the .git remote at a path whose
+// last segment matches the repository name. See repoWorkdir for the
+// rationale.
+const workdirRoot = "/home/daytona/work"
+
+// repoWorkdir returns the absolute path inside the sandbox where the
+// repo identified by slug ("owner/name") gets cloned. The trailing
+// segment matches the repo name on purpose — `sx install` walks the
+// target directory to detect git context (and skills.new uses that
+// context to scope per-repo skills), so a clone path that looks like
+// `/home/daytona/work/<repo-name>` keeps the sandbox layout aligned
+// with how a developer would check the repo out locally. A slug with
+// no slash (or an empty/odd basename) falls back to "repo" so we
+// never return the parent dir as the workdir. ".." is rejected so a
+// future caller passing untrusted input can't escape the workdir
+// root via `path.Base` — GitHub slugs can't contain ".." today, but
+// the helper is the natural extension point and a one-line guard
+// here is cheaper than relying on every future caller to sanitise.
+func repoWorkdir(slug string) string {
+	name := path.Base(strings.TrimSpace(slug))
+	if name == "" || name == "." || name == ".." || name == "/" {
+		name = "repo"
+	}
+	return workdirRoot + "/" + name
+}
 
 const sandboxReadySSETag = "sandbox_ready"
 

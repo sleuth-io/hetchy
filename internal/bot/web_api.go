@@ -53,7 +53,14 @@ type conversationDetail struct {
 	CreatedAt      string           `json:"created_at,omitempty"`
 	History        []string         `json:"history"`
 	ResponseBlocks [][]blocks.Block `json:"response_blocks"`
-	UpdatedAt      string           `json:"updated_at"`
+	// SXSkills is the de-duplicated list of skill names sx installed
+	// for the most recent turn that ran sx. Derived server-side from
+	// the persisted response_blocks (rather than stored in its own
+	// column) so existing conversations from before the capture
+	// shipped don't need a backfill; reading it from the latest turn
+	// keeps the right-hand details panel showing the current state.
+	SXSkills  []string `json:"sx_skills,omitempty"`
+	UpdatedAt string   `json:"updated_at"`
 }
 
 type agentSummary struct {
@@ -330,6 +337,7 @@ func (b *Bot) conversationDetailHandler(w http.ResponseWriter, r *http.Request) 
 			CreatedAt:      createdAt,
 			History:        rec.History,
 			ResponseBlocks: rec.ResponseBlocks,
+			SXSkills:       extractSXSkills(rec.ResponseBlocks),
 			UpdatedAt:      rec.UpdatedAt.UTC().Format(time.RFC3339),
 		})
 
@@ -476,6 +484,7 @@ func (b *Bot) conversationDownloadHandler(w http.ResponseWriter, r *http.Request
 		CreatedAt:      createdAt,
 		History:        rec.History,
 		ResponseBlocks: rec.ResponseBlocks,
+		SXSkills:       extractSXSkills(rec.ResponseBlocks),
 		UpdatedAt:      rec.UpdatedAt.UTC().Format(time.RFC3339),
 	}
 
@@ -512,6 +521,67 @@ func conversationTitle(rec convstore.Record) string {
 	}
 	first = strings.NewReplacer("\r\n", " ", "\r", " ", "\n", " ").Replace(first)
 	return first
+}
+
+// extractSXSkills walks the persisted response_blocks for the most
+// recent turn that carries an sx-skills capture block and returns the
+// list. Walking newest-first matters: a follow-up that re-runs sx
+// install may install a different set than the original turn, and the
+// right-hand details panel should reflect the freshest snapshot. The
+// payload was written by agentLineRouter.emitSXSkills as a
+// KindNotify block whose Meta carries the skill names under
+// SXSkillsMetaKey; if neither the block nor a parseable list is
+// present we return nil so the UI shows nothing rather than an empty
+// "Skills" row.
+func extractSXSkills(turns [][]blocks.Block) []string {
+	for i := len(turns) - 1; i >= 0; i-- {
+		turn := turns[i]
+		for j := len(turn) - 1; j >= 0; j-- {
+			block := turn[j]
+			if block.Kind != blocks.KindNotify || block.Meta == nil {
+				continue
+			}
+			raw, ok := block.Meta[SXSkillsMetaKey]
+			if !ok {
+				continue
+			}
+			skills, ok := coerceStringSlice(raw)
+			if !ok {
+				continue
+			}
+			return skills
+		}
+	}
+	return nil
+}
+
+// coerceStringSlice accepts either a []string or a []any (the JSON
+// round-trip through JSONB hands back []any even when the writer
+// stored a []string) and returns a clean []string. Returns ok=false
+// when the value is neither shape — callers fall back to "no skills"
+// so a malformed block can't surface bad data in the UI.
+func coerceStringSlice(v any) ([]string, bool) {
+	switch s := v.(type) {
+	case []string:
+		out := make([]string, 0, len(s))
+		for _, name := range s {
+			if name = strings.TrimSpace(name); name != "" {
+				out = append(out, name)
+			}
+		}
+		return out, true
+	case []any:
+		out := make([]string, 0, len(s))
+		for _, item := range s {
+			if name, ok := item.(string); ok {
+				if name = strings.TrimSpace(name); name != "" {
+					out = append(out, name)
+				}
+			}
+		}
+		return out, true
+	}
+	return nil, false
 }
 
 // isSafeThreadID guards path segments used to look up conversations.

@@ -33,9 +33,9 @@ const (
 	EnvSlotToken = "HETCHY_ARTIFACT_SLOT_TOKEN"
 
 	// PutExpiry is how long upload URLs stay valid. The agent's task
-	// budget is well under this; stale URLs should not linger after a
-	// run completes.
-	PutExpiry = 30 * time.Minute
+	// budget is still below this, but long-running validation may need
+	// extra time to upload proof artifacts before the run completes.
+	PutExpiry = 90 * time.Minute
 
 	// GetExpiry is the maximum SigV4 will sign for. The bucket
 	// lifecycle can retain objects longer, but signed URL holders can
@@ -48,7 +48,7 @@ const (
 )
 
 // Slot is one upload slot the agent can fill. PutURL accepts one upload
-// for ~30 min; GetURL renders the resulting object for ~7 days.
+// for ~90 min; GetURL renders the resulting object for ~7 days.
 type Slot struct {
 	Kind        string `json:"kind"`
 	ContentType string `json:"content_type"`

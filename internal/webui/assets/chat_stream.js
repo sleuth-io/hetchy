@@ -302,8 +302,13 @@ async function consumeSSEResponse(res, onFirstEvent, state = null) {
           const terminal = payload.kind === 'result' || payload.kind === 'error';
           blockRefs.set(payload.id, { kind: 'standalone', blockKind: payload.kind, terminal, el });
           lastStandaloneEl = el;
-          if (payload.kind === 'notify' && payload.meta && payload.meta.tag === 'sandbox_ready') {
-            refreshMetadata();
+          if (payload.kind === 'notify' && payload.meta) {
+            if (payload.meta.tag === 'sandbox_ready') {
+              refreshMetadata();
+            }
+            if (Array.isArray(payload.meta.sx_skills)) {
+              updateLiveSXSkills(payload.meta.sx_skills);
+            }
           }
           if (payload.kind === 'result' || payload.kind === 'error') {
             sawTurnEnd = true;
@@ -453,4 +458,3 @@ async function stopRun() {
     setRunState(true, false);
   }
 }
-
