@@ -119,19 +119,26 @@ function populateRepoPicker() {
   // Loading / empty placeholder row appended after the choices so a
   // user with a stored selection still sees it pinned to the top
   // while the server response is in flight or the search has no
-  // matches. The "Use org default" row counts as a placeholder choice
-  // (length === 1) — only show the empty-state when no real repos
-  // surfaced.
+  // matches. Count only "real" server-side results — the "Use org
+  // default" row and the pinned selected repo row both render
+  // unconditionally and shouldn't suppress the empty-state hint
+  // when the search truly returned nothing else.
   if (!repoOptionsLoaded) {
     const loading = document.createElement('div');
     loading.className = 'repo-empty';
     loading.textContent = 'Loading repositories…';
     repoOptionsEl.appendChild(loading);
-  } else if (choices.length <= (selectedRepoSlug ? 2 : 1)) {
+    return;
+  }
+  const serverResults = choices.filter(c => {
+    if (!c.owner || !c.name) return false;
+    return (c.owner + '/' + c.name) !== selectedRepoSlug;
+  }).length;
+  if (serverResults === 0) {
     const empty = document.createElement('div');
     empty.className = 'repo-empty';
     empty.textContent = repoSearchQuery.trim()
-      ? 'No repositories match “' + repoSearchQuery + '”.'
+      ? 'No other repositories match “' + repoSearchQuery + '”.'
       : 'No repositories available. Install the GitHub App at /settings/org → Integrations.';
     repoOptionsEl.appendChild(empty);
   }
