@@ -41,11 +41,27 @@ func (b *Bot) indexHandler(w http.ResponseWriter, r *http.Request) {
 	} else {
 		b.log.Warn("profile fetch for chat header failed", "error", err, "user", p.UserID)
 	}
+	// openaiEnabled gates the GPT model block in the composer dropdown
+	// — we look it up once on chat-page render so the picker JS doesn't
+	// have to round-trip back to the server before painting. Errors are
+	// swallowed (treated as "not enabled") since a transient orgcfg
+	// hiccup shouldn't pull down the chat UI.
+	openaiEnabled := false
+	if cfg, err := b.orgs.Get(r.Context(), p.OrgID); err == nil {
+		openaiEnabled = cfg.OpenAIAPIKey != "" || cfg.OpenAICodexOAuthToken != ""
+	} else if !errors.Is(err, orgcfg.ErrNotFound) {
+		// Log transient errors so an org that briefly loses its
+		// integration block in the dropdown leaves a trail in the
+		// server logs. ErrNotFound is the common "first chat for a
+		// brand-new org" case and isn't worth a warn.
+		b.log.Warn("orgcfg lookup for chat page", "org", p.OrgID, "error", err)
+	}
 	b.renderTemplate(w, webui.Chat, map[string]any{
-		"Email":       p.Email,
-		"DisplayName": displayName,
-		"GravatarURL": webui.GravatarURL(p.Email),
-		"UserID":      p.UserID,
+		"Email":         p.Email,
+		"DisplayName":   displayName,
+		"GravatarURL":   webui.GravatarURL(p.Email),
+		"UserID":        p.UserID,
+		"OpenAIEnabled": openaiEnabled,
 	})
 }
 

@@ -331,10 +331,29 @@ function chooseModel(value) {
   inp.focus();
 }
 
+// Provider headings shown above each block in the model dropdown. Only
+// rendered when more than one provider is in play, so the default
+// Anthropic-only org doesn't grow an unnecessary "Claude" label.
+const modelProviderHeadings = {
+  anthropic: 'Claude',
+  openai: 'GPT',
+};
+
 function populateModelPicker() {
   if (!modelOptionsEl) return;
   modelOptionsEl.innerHTML = '';
+  const providers = new Set(modelOptions.map(model => model.provider || 'anthropic'));
+  const showHeadings = providers.size > 1;
+  let lastProvider = null;
   for (const model of modelOptions) {
+    const provider = model.provider || 'anthropic';
+    if (showHeadings && provider !== lastProvider) {
+      const heading = document.createElement('div');
+      heading.className = 'model-provider-heading';
+      heading.textContent = modelProviderHeadings[provider] || provider;
+      modelOptionsEl.appendChild(heading);
+      lastProvider = provider;
+    }
     const item = document.createElement('button');
     item.type = 'button';
     item.className = 'model-choice' + (model.value === selectedModel ? ' is-selected' : '');

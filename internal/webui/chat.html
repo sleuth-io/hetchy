@@ -20,7 +20,7 @@
 <script src="{{assetPath "chat_bootstrap.js"}}"></script>
 <link rel="stylesheet" href="{{assetPath "chat.css"}}">
 </head>
-<body data-current-user-id="{{.UserID}}">
+<body data-current-user-id="{{.UserID}}" data-openai-enabled="{{if .OpenAIEnabled}}1{{else}}0{{end}}">
 
 <div id="toast-stack" aria-live="polite" aria-atomic="true"></div>
 

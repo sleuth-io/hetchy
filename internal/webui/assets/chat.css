@@ -188,6 +188,10 @@
                          font-size: .72rem; font-weight: 600;
                          text-transform: uppercase; letter-spacing: .05em;
                          color: #777; }
+  .model-provider-heading { padding: .45rem .55rem .2rem;
+                            font-size: .68rem; font-weight: 600;
+                            text-transform: uppercase; letter-spacing: .04em;
+                            color: #888; }
   .tools-menu-item { width: 100%; min-height: 2.45rem; padding: .55rem .65rem;
                      border: 0; border-radius: .45rem; background: transparent;
                      color: #222; display: flex; align-items: center; gap: .6rem;
@@ -635,6 +639,7 @@
   html.is-dark .composer-popover { background: #232327; border-color: #2e2e33;
                                    box-shadow: 0 10px 28px rgba(0,0,0,.45); }
   html.is-dark .model-popover-title { color: #9a9aa0; }
+  html.is-dark .model-provider-heading { color: #9a9aa0; }
   html.is-dark .tools-menu-item { color: #e7e7e9; }
   html.is-dark .tools-menu-item:hover,
   html.is-dark .tools-menu-item[aria-expanded="true"] { background: #1f3a5c; }
