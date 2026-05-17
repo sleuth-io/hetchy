@@ -696,7 +696,7 @@ func (b *Bot) runScript(ctx context.Context, sb *daytona.Sandbox, sessionID, lab
 			b.markRunCursor(ctx, cursor)
 		}
 	})
-	if _, err := b.shLines(ctx, sb.ID, sb.Process, sessionID, "run-script", runCmd, 45*time.Minute, 15*time.Minute, true, framed.Line); err != nil {
+	if _, err := b.shLines(ctx, sb.ID, sb.Process, sessionID, "run-script", runCmd, 60*time.Minute, 15*time.Minute, true, framed.Line); err != nil {
 		router.Abort()
 		return "", err
 	}
