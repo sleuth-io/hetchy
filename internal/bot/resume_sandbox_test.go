@@ -88,9 +88,9 @@ func TestResumeSandbox_SuccessEmitsSetupBlock(t *testing.T) {
 	}
 
 	var setup *captureBlock
-	for i := range emit.Blocks {
-		if emit.Blocks[i].Kind == blocks.KindSetup {
-			setup = &emit.Blocks[i]
+	for _, b := range emit.Blocks {
+		if b.Kind == blocks.KindSetup {
+			setup = b
 			break
 		}
 	}
@@ -114,9 +114,9 @@ func TestResumeSandbox_FailureEmitsSetupBlockWithError(t *testing.T) {
 	}
 
 	var setup *captureBlock
-	for i := range emit.Blocks {
-		if emit.Blocks[i].Kind == blocks.KindSetup {
-			setup = &emit.Blocks[i]
+	for _, b := range emit.Blocks {
+		if b.Kind == blocks.KindSetup {
+			setup = b
 			break
 		}
 	}
@@ -147,9 +147,9 @@ func TestResumeSandbox_TimeoutNotRetried(t *testing.T) {
 	}
 
 	var setup *captureBlock
-	for i := range emit.Blocks {
-		if emit.Blocks[i].Kind == blocks.KindSetup {
-			setup = &emit.Blocks[i]
+	for _, b := range emit.Blocks {
+		if b.Kind == blocks.KindSetup {
+			setup = b
 			break
 		}
 	}
@@ -180,9 +180,9 @@ func TestResumeSandbox_RetriesTransientAndSucceeds(t *testing.T) {
 	}
 
 	var setup *captureBlock
-	for i := range emit.Blocks {
-		if emit.Blocks[i].Kind == blocks.KindSetup {
-			setup = &emit.Blocks[i]
+	for _, b := range emit.Blocks {
+		if b.Kind == blocks.KindSetup {
+			setup = b
 			break
 		}
 	}
@@ -209,9 +209,9 @@ func TestResumeSandbox_HeartbeatDoesNotRaceEmitDone(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	var setup *captureBlock
-	for i := range emit.Blocks {
-		if emit.Blocks[i].Kind == blocks.KindSetup {
-			setup = &emit.Blocks[i]
+	for _, b := range emit.Blocks {
+		if b.Kind == blocks.KindSetup {
+			setup = b
 			break
 		}
 	}

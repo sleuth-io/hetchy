@@ -161,11 +161,39 @@ run_sx_install() {
 
   echo "[hetchy] running sx install (${label})"
   mkdir -p "$cache_dir" "$HOME/.claude"
-  SX_CONFIG_DIR="$config_dir" \
-  SX_CACHE_DIR="$cache_dir" \
-  SX_BOT="$sx_bot" \
-  SX_BOT_KEY="$sx_bot_key" \
-    sx install --profile "$profile" --client=claude-code --target "$SF_WORKDIR"
+  # See agent.sh for the rationale on running sx inside the checkout:
+  # the target dir's git remote URL is what scopes per-repo skills,
+  # and a follow-up run starts in $HOME for some daytona images so a
+  # plain --target without an explicit cd has historically dropped to
+  # global scope.
+  (cd "$SF_WORKDIR" && \
+    SX_CONFIG_DIR="$config_dir" \
+    SX_CACHE_DIR="$cache_dir" \
+    SX_BOT="$sx_bot" \
+    SX_BOT_KEY="$sx_bot_key" \
+      sx install --profile "$profile" --client=claude-code --target "$SF_WORKDIR")
+}
+
+# Mirror of agent.sh's emit_installed_skills — see that script for the
+# rationale on collecting both global and repo-scoped skill dirs.
+emit_installed_skills() {
+  local -A seen=()
+  local -a names=()
+  local d entry name
+  for d in "$HOME/.claude/skills" "$SF_WORKDIR/.claude/skills"; do
+    if [[ -d "$d" ]]; then
+      while IFS= read -r -d '' entry; do
+        name="$(basename "$entry")"
+        if [[ -z "${seen[$name]:-}" ]]; then
+          seen[$name]=1
+          names+=("$name")
+        fi
+      done < <(find "$d" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null | LC_ALL=C sort -z)
+    fi
+  done
+  local joined
+  joined="$(IFS=,; printf '%s' "${names[*]:-}")"
+  echo "[hetchy:sx-skills] ${joined}"
 }
 
 if [[ -n "${HETCHY_SX_PUBLIC_VAULT_URL:-}" || -n "${SX_KEY:-}" ]]; then
@@ -190,6 +218,20 @@ if [[ -n "${SX_KEY:-}" ]]; then
   run_sx_install "org-skills" "$org_config" "$org_cache" "$org_profile" "${HETCHY_AGENT_SX_BOT:-}" "$SX_KEY"
 fi
 
+# Emit the marker unconditionally — see the matching note in agent.sh.
+# Without this, a follow-up that didn't re-run sx (e.g. SX_KEY was
+# unset between turns) would leave the metadata showing the previous
+# turn's skill list, contradicting the "latest turn wins" contract that
+# extractSXSkills documents.
+emit_installed_skills
+
+# See agent.sh — saved bootstrap scripts predating the per-repo
+# workdir change defaulted their REPO env var to /home/daytona/work,
+# which became the parent dir after the move. Exporting REPO here
+# makes those scripts find the actual checkout without a DB
+# migration.
+export REPO="$SF_WORKDIR"
+
 # Re-apply the saved bootstrap spec, if attached. The follow-up lands
 # in an unarchived sandbox where the original `start.sh &` background
 # process is gone, so the validation prompt's "the app is running"
@@ -208,6 +250,7 @@ if has_b64_input SF_SPEC_SETUP_B64 && has_b64_input SF_SPEC_START_B64 && has_b64
   decode_b64_input SF_SPEC_START_B64 /tmp/hetchy-spec/start.sh
   echo "[hetchy] writing saved health.sh"
   decode_b64_input SF_SPEC_HEALTH_B64 /tmp/hetchy-spec/health.sh
+  rewrite_legacy_saved_spec_workdir
   echo "[hetchy] making saved setup scripts executable"
   chmod +x /tmp/hetchy-spec/setup.sh /tmp/hetchy-spec/start.sh /tmp/hetchy-spec/health.sh
 

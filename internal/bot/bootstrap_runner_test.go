@@ -67,7 +67,7 @@ func TestBotRunnerRunUsesShLinesAndMergesEnv(t *testing.T) {
 		t.Fatalf("write command missing script body/watchdog:\n%s", write.cmd)
 	}
 	run := calls[1]
-	if run.step != "bootstrap-run-unit" || run.timeout != 30*time.Minute || run.idleTimeout != 15*time.Minute || run.suppressInputEcho {
+	if run.step != "bootstrap-run-unit" || run.timeout != 60*time.Minute || run.idleTimeout != 15*time.Minute || run.suppressInputEcho {
 		t.Fatalf("run call = %+v", run)
 	}
 	for _, want := range []string{"A='alpha'", "BASE='base'", "OVERRIDE='step-value'", "bash /tmp/sf-unit.sh"} {

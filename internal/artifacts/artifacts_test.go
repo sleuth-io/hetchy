@@ -5,36 +5,49 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
 type fakePresigner struct {
-	puts     []*s3.PutObjectInput
-	gets     []*s3.GetObjectInput
-	failPut  bool
-	failGet  bool
-	urlIndex int
+	puts       []*s3.PutObjectInput
+	gets       []*s3.GetObjectInput
+	putExpires []time.Duration
+	getExpires []time.Duration
+	failPut    bool
+	failGet    bool
+	urlIndex   int
 }
 
-func (f *fakePresigner) PresignPutObject(_ context.Context, in *s3.PutObjectInput, _ ...func(*s3.PresignOptions)) (*signedRequest, error) {
+func (f *fakePresigner) PresignPutObject(_ context.Context, in *s3.PutObjectInput, opts ...func(*s3.PresignOptions)) (*signedRequest, error) {
 	if f.failPut {
 		return nil, errors.New("forced put failure")
 	}
 	f.puts = append(f.puts, in)
+	f.putExpires = append(f.putExpires, presignExpires(opts))
 	url := fmt.Sprintf("https://example.test/put/%d", f.urlIndex)
 	f.urlIndex++
 	return &signedRequest{URL: url}, nil
 }
 
-func (f *fakePresigner) PresignGetObject(_ context.Context, in *s3.GetObjectInput, _ ...func(*s3.PresignOptions)) (*signedRequest, error) {
+func (f *fakePresigner) PresignGetObject(_ context.Context, in *s3.GetObjectInput, opts ...func(*s3.PresignOptions)) (*signedRequest, error) {
 	if f.failGet {
 		return nil, errors.New("forced get failure")
 	}
 	f.gets = append(f.gets, in)
+	f.getExpires = append(f.getExpires, presignExpires(opts))
 	url := fmt.Sprintf("https://example.test/get/%d", f.urlIndex)
 	f.urlIndex++
 	return &signedRequest{URL: url}, nil
+}
+
+func presignExpires(opts []func(*s3.PresignOptions)) time.Duration {
+	var po s3.PresignOptions
+	for _, opt := range opts {
+		opt(&po)
+	}
+	return po.Expires
 }
 
 func TestMintSlots_ArtifactMappings(t *testing.T) {
@@ -99,6 +112,12 @@ func TestMintSlots_ArtifactMappings(t *testing.T) {
 			}
 			if got := *fp.puts[0].Bucket; got != "test-bucket" {
 				t.Fatalf("bucket = %q, want test-bucket", got)
+			}
+			if got := fp.putExpires[0]; got != PutExpiry {
+				t.Fatalf("put expiry = %v, want %v", got, PutExpiry)
+			}
+			if got := fp.getExpires[0]; got != GetExpiry {
+				t.Fatalf("get expiry = %v, want %v", got, GetExpiry)
 			}
 		})
 	}
