@@ -7,10 +7,29 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
-var openaiAPIBase = "https://api.openai.com"
+// openaiAPIBaseRef is an atomic pointer to the OpenAI base URL so
+// withOpenAIBase can swap it from test helpers without racing against
+// concurrent settings POSTs. The pointer is initialized at package
+// load and only ever overwritten (never partially written), which
+// keeps validateOpenAICredential read-side free of locks while still
+// being safe under `go test -race`.
+var openaiAPIBaseRef atomic.Pointer[string]
+
+func init() {
+	prod := "https://api.openai.com"
+	openaiAPIBaseRef.Store(&prod)
+}
+
+func openaiAPIBase() string {
+	if p := openaiAPIBaseRef.Load(); p != nil {
+		return *p
+	}
+	return "https://api.openai.com"
+}
 
 const openaiValidateTimeout = 8 * time.Second
 
@@ -38,7 +57,7 @@ func validateOpenAICredential(ctx context.Context, kind openaiCredKind, value st
 	reqCtx, cancel := context.WithTimeout(ctx, openaiValidateTimeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, openaiAPIBase+"/v1/models", nil)
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, openaiAPIBase()+"/v1/models", nil)
 	if err != nil {
 		return fmt.Errorf("openai: build request: %w", err)
 	}

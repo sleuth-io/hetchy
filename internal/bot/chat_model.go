@@ -72,6 +72,22 @@ func parseClaudeModel(raw string) (ClaudeModel, bool) {
 	}
 }
 
+// conversationModelForAPI returns the chat model string to put on
+// the API view of a conversation record. parseClaudeModel-recognised
+// strings (including the GPT aliases) round-trip verbatim so a stored
+// GPT pin survives the response; only genuinely-unknown strings — and
+// the legacy "" placeholder used before the model field landed — fall
+// back to opus so the composer always lands on a valid option.
+func conversationModelForAPI(raw string) string {
+	if raw == "" {
+		return string(ClaudeModelOpus)
+	}
+	if _, ok := parseClaudeModel(raw); ok {
+		return raw
+	}
+	return string(ClaudeModelOpus)
+}
+
 func normalizeClaudeModel(model ClaudeModel) ClaudeModel {
 	if parsed, ok := parseClaudeModel(string(model)); ok {
 		return parsed

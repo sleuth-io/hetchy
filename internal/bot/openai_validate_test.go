@@ -108,7 +108,8 @@ func TestValidateOpenAICredential(t *testing.T) {
 
 func withOpenAIBase(t *testing.T, url string) {
 	t.Helper()
-	prev := openaiAPIBase
-	openaiAPIBase = url
-	t.Cleanup(func() { openaiAPIBase = prev })
+	prev := openaiAPIBaseRef.Load()
+	override := url
+	openaiAPIBaseRef.Store(&override)
+	t.Cleanup(func() { openaiAPIBaseRef.Store(prev) })
 }

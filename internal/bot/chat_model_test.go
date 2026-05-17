@@ -33,6 +33,26 @@ func TestParseClaudeModel(t *testing.T) {
 	}
 }
 
+func TestConversationModelForAPI(t *testing.T) {
+	cases := map[string]string{
+		"":             "opus",
+		"opus":         "opus",
+		"sonnet":       "sonnet",
+		"haiku":        "haiku",
+		"gpt-frontier": "gpt-frontier",
+		"gpt-balanced": "gpt-balanced",
+		"gpt-fastest":  "gpt-fastest",
+		"bad":          "opus",
+	}
+	for in, want := range cases {
+		t.Run(in, func(t *testing.T) {
+			if got := conversationModelForAPI(in); got != want {
+				t.Fatalf("conversationModelForAPI(%q) = %q, want %q", in, got, want)
+			}
+		})
+	}
+}
+
 func TestModelProvider(t *testing.T) {
 	cases := []struct {
 		in   ClaudeModel

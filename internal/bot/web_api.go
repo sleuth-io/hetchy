@@ -419,7 +419,7 @@ func (b *Bot) conversationDetailHandler(w http.ResponseWriter, r *http.Request) 
 			CreatorID:      rec.CreatorID,
 			AgentSlug:      agentSlug,
 			AgentName:      agentName,
-			Model:          string(normalizeClaudeModel(ClaudeModel(rec.Model))),
+			Model:          conversationModelForAPI(rec.Model),
 			TaskOptions:    rec.TaskOptions,
 			CreatedAt:      createdAt,
 			History:        rec.History,
