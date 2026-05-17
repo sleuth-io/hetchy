@@ -264,13 +264,17 @@ rewrite_legacy_saved_spec_workdir() {
   fi
 }
 
-# hetchy_repo_cache_dir prints the absolute path inside the mounted
-# cache volume where the warm repo checkout lives, or returns non-zero
+# hetchy_repo_cache_archive prints the absolute path inside the mounted
+# cache volume where the warm repo checkout archive lives, or returns non-zero
 # when the cache is not mounted. Must be called BEFORE
 # configure_hetchy_cache: that function later rewrites HETCHY_CACHE_DIR
-# to the local dependency staging dir, which is a different filesystem
-# and would silently land the snapshot in the wrong place.
-hetchy_repo_cache_dir() {
+# to the local dependency staging dir, which is a different filesystem.
+#
+# Daytona cache volumes are S3-backed in Cloud, so the repo checkout is
+# stored as one tarball rather than a copied directory tree. Recursive
+# `cp -a` into mountpoint-s3 can wedge in kernel/FUSE I/O and block the
+# whole run.
+hetchy_repo_cache_archive() {
   if [[ "${HETCHY_CACHE_STATUS:-}" != "mounted" ]]; then
     return 1
   fi
@@ -278,7 +282,7 @@ hetchy_repo_cache_dir() {
   if [[ -z "$mount" || ! -d "$mount" ]]; then
     return 1
   fi
-  printf '%s/repo\n' "$mount"
+  printf '%s/repo.tar.gz\n' "$mount"
 }
 
 # hetchy_workdir_safe_for_rm rejects empty strings, root, and a
@@ -298,17 +302,17 @@ hetchy_workdir_safe_for_rm() {
 }
 
 # hetchy_repo_cache_with_lock serialises every save/restore against
-# the shared cache subpath so a concurrent sandbox can't `cp -a` the
-# cache mid-`mv`. Two sandboxes for the same org+repo would otherwise
-# race on the in-flight `cache → cache.old → cache` rename swap and
-# either return a half-copied workdir or clobber each other's saves.
+# the shared cache archive so a concurrent sandbox can't read the
+# archive mid-`mv`. Two sandboxes for the same org+repo would otherwise
+# race on the in-flight `archive.tmp → archive` swap and either restore
+# a partial workdir or clobber each other's saves.
 # Falls back to running the body without a lock if flock isn't on
 # PATH; correctness still holds via tmp-rename ordering, but the
 # concurrency window widens.
 hetchy_repo_cache_with_lock() {
-  local cache_dir="$1"
+  local cache_archive="$1"
   shift
-  local lockfile="${cache_dir}.lock"
+  local lockfile="${cache_archive}.lock"
   mkdir -p "$(dirname "$lockfile")" 2>/dev/null || true
   if ! command -v flock >/dev/null 2>&1; then
     "$@"
@@ -320,33 +324,26 @@ hetchy_repo_cache_with_lock() {
   ) 9>"$lockfile"
 }
 
-# restore_repo_checkout_from_cache populates $2 with a recursive copy
-# of $1. The destination is removed first so a partial or stale copy
-# from a previous run can't bleed through. Uses cp -a --reflink=auto
-# when the filesystem supports CoW; falls back to plain cp -a so the
-# helper still works on ext4 and other non-reflink filesystems. The
-# copy runs under the shared cache lock so a concurrent
-# save_repo_checkout_to_cache cannot rename the source out from under
-# us mid-read.
+# restore_repo_checkout_from_cache populates $2 from the tar archive at
+# $1. The destination is removed first so a partial or stale copy from a
+# previous run can't bleed through. The extract runs under the shared
+# cache lock so a concurrent save_repo_checkout_to_cache cannot rename
+# the archive out from under us mid-read.
 restore_repo_checkout_from_cache() {
-  local cache_dir="$1"
+  local cache_archive="$1"
   local workdir="$2"
-  [[ -d "$cache_dir/.git" ]] || return 1
+  [[ -f "$cache_archive" ]] || return 1
   hetchy_workdir_safe_for_rm "$workdir" || return 1
   local parent
   parent="$(dirname "$workdir")"
   mkdir -p "$parent" || return 1
   _restore_repo_checkout_inner() {
     rm -rf "$workdir" 2>/dev/null || true
-    if cp -a --reflink=auto "$cache_dir" "$workdir" 2>/dev/null; then
-      return 0
-    fi
-    if cp -a "$cache_dir" "$workdir" 2>/dev/null; then
-      return 0
-    fi
-    return 1
+    mkdir -p "$workdir" || return 1
+    tar -C "$workdir" -xzf "$cache_archive" >/dev/null 2>&1 || return 1
+    [[ -d "$workdir/.git" ]] || return 1
   }
-  hetchy_repo_cache_with_lock "$cache_dir" _restore_repo_checkout_inner
+  hetchy_repo_cache_with_lock "$cache_archive" _restore_repo_checkout_inner
   local rc=$?
   unset -f _restore_repo_checkout_inner
   if (( rc != 0 )); then
@@ -355,50 +352,32 @@ restore_repo_checkout_from_cache() {
   return "$rc"
 }
 
-# save_repo_checkout_to_cache snapshots $1 to $2 via a sibling tmp
-# directory and an atomic rename, all under the shared cache lock so
-# concurrent restorers can't see a directory mid-swap. The tmp suffix
-# is the shell PID so simultaneous savers can't trample each other's
-# in-flight copies. Old cache content is moved aside before the swap
-# and only deleted on success, so a failed swap leaves the previous
-# cache reachable for the next run.
+# save_repo_checkout_to_cache snapshots $1 to the tar archive at $2 via
+# a sibling tmp file and an atomic rename, all under the shared cache
+# lock so concurrent restorers can't see a partial archive. The tmp
+# suffix is the shell PID so simultaneous savers can't trample each
+# other's in-flight writes. The previous archive is left in place until
+# the replacement tarball has been fully written.
 save_repo_checkout_to_cache() {
   local workdir="$1"
-  local cache_dir="$2"
+  local cache_archive="$2"
   [[ -d "$workdir/.git" ]] || return 1
   local parent
-  parent="$(dirname "$cache_dir")"
+  parent="$(dirname "$cache_archive")"
   mkdir -p "$parent" || return 1
   _save_repo_checkout_inner() {
-    local tmp="${cache_dir}.tmp.$$"
-    rm -rf "$tmp" 2>/dev/null || true
-    if ! cp -a --reflink=auto "$workdir" "$tmp" 2>/dev/null; then
-      if ! cp -a "$workdir" "$tmp" 2>/dev/null; then
-        rm -rf "$tmp" 2>/dev/null || true
-        return 1
-      fi
-    fi
-    local backup=""
-    if [[ -e "$cache_dir" ]]; then
-      backup="${cache_dir}.old.$$"
-      if ! mv -f "$cache_dir" "$backup" 2>/dev/null; then
-        rm -rf "$tmp" 2>/dev/null || true
-        return 1
-      fi
-    fi
-    if ! mv -f "$tmp" "$cache_dir" 2>/dev/null; then
-      if [[ -n "$backup" ]]; then
-        mv -f "$backup" "$cache_dir" 2>/dev/null || true
-      fi
-      rm -rf "$tmp" 2>/dev/null || true
+    local tmp="${cache_archive}.tmp.$$"
+    rm -f "$tmp" 2>/dev/null || true
+    tar -C "$workdir" -czf "$tmp" . >/dev/null 2>&1 || {
+      rm -f "$tmp" 2>/dev/null || true
       return 1
-    fi
-    if [[ -n "$backup" ]]; then
-      rm -rf "$backup" 2>/dev/null || true
-    fi
-    return 0
+    }
+    mv -f "$tmp" "$cache_archive" >/dev/null 2>&1 || {
+      rm -f "$tmp" 2>/dev/null || true
+      return 1
+    }
   }
-  hetchy_repo_cache_with_lock "$cache_dir" _save_repo_checkout_inner
+  hetchy_repo_cache_with_lock "$cache_archive" _save_repo_checkout_inner
   local rc=$?
   unset -f _save_repo_checkout_inner
   return "$rc"
@@ -426,17 +405,16 @@ hetchy_sync_workdir_to_base() {
   )
 }
 
-# hetchy_refresh_repo_cache snapshots the current workdir back into
+# hetchy_refresh_repo_cache_now snapshots the current workdir back into
 # the volume so the next sandbox starts from an even warmer state.
 # Called only after hetchy_sync_workdir_to_base brings the workdir
 # to a clean base-branch state, so the snapshot is exactly what a
 # fresh clone produces — no agent work, no dependency downloads.
-# Best-effort: every failure is logged and swallowed, the agent run
-# proceeds either way.
-hetchy_refresh_repo_cache() {
+# Best-effort: every failure is logged and swallowed.
+hetchy_refresh_repo_cache_now() {
   local workdir="$1"
-  local cache_dir
-  if ! cache_dir="$(hetchy_repo_cache_dir 2>/dev/null)"; then
+  local cache_archive
+  if ! cache_archive="$(hetchy_repo_cache_archive 2>/dev/null)"; then
     return 0
   fi
   if ! cache_supports_basic_write "${HETCHY_CACHE_DIR}"; then
@@ -445,11 +423,31 @@ hetchy_refresh_repo_cache() {
   local started
   started="$(hetchy_now_seconds)"
   echo "[hetchy] saving repo checkout to volume cache"
-  if save_repo_checkout_to_cache "$workdir" "$cache_dir"; then
+  if save_repo_checkout_to_cache "$workdir" "$cache_archive"; then
     echo "[hetchy] repo checkout cache saved in $(hetchy_elapsed_seconds "$started")"
   else
     echo "[hetchy] WARNING: repo checkout cache save failed after $(hetchy_elapsed_seconds "$started"); continuing"
   fi
+}
+
+# hetchy_refresh_repo_cache starts the best-effort cache save without
+# blocking the agent/bootstrap path. Volume writes can be slow or
+# occasionally wedge; checkout cache warmth is useful, but it must not
+# delay the user-visible run after the repo is already ready.
+hetchy_refresh_repo_cache() {
+  local workdir="$1"
+  if [[ "${HETCHY_REPO_CACHE_REFRESH_SYNC:-}" == "1" ]]; then
+    hetchy_refresh_repo_cache_now "$workdir"
+    return 0
+  fi
+
+  echo "[hetchy] repo checkout cache refresh started in background"
+  (
+    trap '' HUP
+    hetchy_refresh_repo_cache_now "$workdir"
+  ) </dev/null >>/tmp/hetchy-repo-cache.log 2>&1 &
+  local pid=$!
+  disown "$pid" 2>/dev/null || true
 }
 
 # hetchy_prepare_repo_workdir is the single entry point both
@@ -458,8 +456,8 @@ hetchy_refresh_repo_cache() {
 #
 #   1. SF_WORKDIR/.git already exists → reuse (a previous step in
 #      the same sandbox already cloned).
-#   2. The volume cache holds a previous checkout → cp it in and
-#      bring it back to origin/<base> with hard reset + clean,
+#   2. The volume cache holds a previous checkout archive → extract it
+#      and bring it back to origin/<base> with hard reset + clean,
 #      matching the state a fresh clone would yield.
 #   3. Fall back to a network `git clone`.
 #
@@ -478,12 +476,12 @@ hetchy_prepare_repo_workdir() {
     return 0
   fi
 
-  local cache_dir=""
-  if cache_dir="$(hetchy_repo_cache_dir 2>/dev/null)" && [[ -d "${cache_dir}/.git" ]]; then
+  local cache_archive=""
+  if cache_archive="$(hetchy_repo_cache_archive 2>/dev/null)" && [[ -f "${cache_archive}" ]]; then
     local started
     started="$(hetchy_now_seconds)"
-    echo "[hetchy] restoring repo checkout from volume cache (${cache_dir})"
-    if restore_repo_checkout_from_cache "$cache_dir" "$SF_WORKDIR"; then
+    echo "[hetchy] restoring repo checkout from volume cache (${cache_archive})"
+    if restore_repo_checkout_from_cache "$cache_archive" "$SF_WORKDIR"; then
       echo "[hetchy] repo checkout restored in $(hetchy_elapsed_seconds "$started"); syncing to origin/${SF_BASE_BRANCH}"
       if hetchy_sync_workdir_to_base "$SF_WORKDIR" "$SF_BASE_BRANCH"; then
         # user.email/user.name are best-effort here — the cached
@@ -514,6 +512,7 @@ hetchy_prepare_repo_workdir() {
   (
     cd "$SF_WORKDIR" &&
     git checkout "${SF_BASE_BRANCH}" &&
+    git remote set-url origin "https://github.com/${SF_REPO}.git" &&
     git config user.email 'hetchy-bot@users.noreply.github.com' &&
     git config user.name 'hetchy-bot'
   )
