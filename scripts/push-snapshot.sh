@@ -20,7 +20,7 @@
 #   LOCAL_REGISTRY_INTERNAL   default: registry:6000
 #   SNAPSHOT_CPU              default: 2 (vCPUs per sandbox)
 #   SNAPSHOT_MEMORY_GB        default: 6 (memory per sandbox, GB)
-#   SNAPSHOT_DISK_GB          default: 16 (disk per sandbox, GB)
+#   SNAPSHOT_DISK_GB          default: 10 (disk per sandbox, GB)
 set -euo pipefail
 
 SNAPSHOT_NAME="${SNAPSHOT_NAME:-universal-coding}"
@@ -34,14 +34,14 @@ API_URL="${DAYTONA_API_URL:-https://app.daytona.io/api}"
 # values — the SDK's SnapshotParams used at create time has no resource
 # fields, so this is the only programmatic place to set sizing without
 # clicking through the dashboard. Tuned for coding-agent bootstraps on
-# real app repos: 2 vCPU + 6 GB RAM + 16 GB disk. Disk is deliberately
-# larger than Daytona's small defaults because Node/Nuxt/Yarn installs
-# can spend several GiB on package cache plus node_modules before the app
-# is reachable; storage is also much cheaper than CPU/RAM at Daytona's
+# real app repos: 2 vCPU + 6 GB RAM + 10 GB disk. Disk is set to the
+# current Tier 3 per-sandbox cap because Node/Nuxt/Yarn installs can
+# spend several GiB on package cache plus node_modules before the app is
+# reachable; storage is also much cheaper than CPU/RAM at Daytona's
 # public rates, so avoiding rootfs exhaustion is worth the small delta.
 SNAPSHOT_CPU="${SNAPSHOT_CPU:-2}"
 SNAPSHOT_MEMORY_GB="${SNAPSHOT_MEMORY_GB:-6}"
-SNAPSHOT_DISK_GB="${SNAPSHOT_DISK_GB:-16}"
+SNAPSHOT_DISK_GB="${SNAPSHOT_DISK_GB:-10}"
 
 if [[ -z "${DAYTONA_API_KEY:-}" ]]; then
   echo "ERROR: DAYTONA_API_KEY is not set. Run via 'doppler run -- $0' or export it manually." >&2
