@@ -32,7 +32,12 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 		Text      string  `json:"text"`
 		SessionID string  `json:"session_id"`
 		AgentSlug *string `json:"agent_slug,omitempty"`
-		Model     string  `json:"model,omitempty"`
+		// Repository carries the composer repo-picker selection as
+		// "owner/name". Optional — empty string falls back to the
+		// org's saved default repo, matching the pre-picker behaviour
+		// for clients that don't surface the field.
+		Repository *string `json:"repository,omitempty"`
+		Model      string  `json:"model,omitempty"`
 		// Task option fields are pointers so missing (older clients,
 		// non-web callers) is distinguishable from explicit false.
 		// Missing request fields leave saved per-chat values alone;
@@ -120,7 +125,7 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 	go func() {
 		defer b.live.Done(p.OrgID, sessionID, run)
 		runCtx := contextWithLiveRun(run.Context(), run)
-		b.HandleRequest(runCtx, oc, text, requestID, sessionID, p.UserID, optionPatch, body.AgentSlug, model, emitter)
+		b.HandleRequest(runCtx, oc, text, requestID, sessionID, p.UserID, optionPatch, body.AgentSlug, body.Repository, model, emitter)
 	}()
 
 	sub := run.Subscribe()

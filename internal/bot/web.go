@@ -78,6 +78,7 @@ func (b *Bot) runWeb(ctx context.Context) error {
 	mux.Handle("/api/conversations/download/", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.conversationDownloadHandler))))
 	mux.Handle("/api/conversations/", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.conversationDetailHandler))))
 	mux.Handle("/api/agents", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.agentsHandler))))
+	mux.Handle("/api/repositories", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.repositoriesHandler))))
 	mux.Handle("/api/members", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.membersHandler))))
 
 	addr := ":" + b.cfg.WebPort

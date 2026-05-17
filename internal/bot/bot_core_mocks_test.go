@@ -27,7 +27,7 @@ func TestHandleRequestPersistsRepoPromptWithFakeStore(t *testing.T) {
 	b.HandleRequest(context.Background(),
 		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant"},
 		"build a thing", "req-1", "thread-1", "user-1",
-		chatTaskOptionPatch{chatTaskValidateKey: false}, &agentSlug, ClaudeModelSonnet, emit)
+		chatTaskOptionPatch{chatTaskValidateKey: false}, &agentSlug, nil, ClaudeModelSonnet, emit)
 
 	if !emit.hasCall("notify", "Which repository") {
 		t.Fatalf("expected repo prompt, got calls=%v", emit.Calls)
@@ -71,7 +71,7 @@ func TestHandleRequestDefaultRepoResolveFailureClearsRepo(t *testing.T) {
 	b.HandleRequest(context.Background(),
 		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant", DefaultGitHubOwner: "hetchyhq", DefaultGitHubRepo: "hetchy"},
 		"ship it", "req-1", "thread-1", "user-1",
-		chatTaskOptionPatch{}, nil, ClaudeModelOpus, emit)
+		chatTaskOptionPatch{}, nil, nil, ClaudeModelOpus, emit)
 
 	if !emit.hasCall("error", "Repo not accessible") {
 		t.Fatalf("expected repo access error, got calls=%v", emit.Calls)
@@ -106,7 +106,7 @@ func TestHandleRequestAwaitingRepoInvalidReplyKeepsConversationPending(t *testin
 	b.HandleRequest(context.Background(),
 		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant"},
 		"not a repo", "req-2", "thread-1", "user-1",
-		chatTaskOptionPatch{}, nil, ClaudeModelOpus, emit)
+		chatTaskOptionPatch{}, nil, nil, ClaudeModelOpus, emit)
 
 	if !emit.hasCall("notify", "Try again") {
 		t.Fatalf("expected parse retry prompt, got calls=%v", emit.Calls)
@@ -144,7 +144,7 @@ func TestHandleRequestAwaitingRepoValidReplyRunsOriginalRequest(t *testing.T) {
 	b.HandleRequest(context.Background(),
 		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant"},
 		"hetchyhq/hetchy", "req-2", "thread-1", "user-1",
-		chatTaskOptionPatch{}, nil, ClaudeModelOpus, emit)
+		chatTaskOptionPatch{}, nil, nil, ClaudeModelOpus, emit)
 
 	if !emit.hasCall("error", "Repo not accessible") {
 		t.Fatalf("expected repo access error, got calls=%v", emit.Calls)
@@ -182,7 +182,7 @@ func TestHandleRequestFreshRunAgentFailureUsesMocks(t *testing.T) {
 	b.HandleRequest(context.Background(),
 		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant", DefaultGitHubOwner: "hetchyhq", DefaultGitHubRepo: "hetchy"},
 		"ship it", "req-1", "thread-1", "user-1",
-		chatTaskOptionPatch{}, nil, ClaudeModelHaiku, emit)
+		chatTaskOptionPatch{}, nil, nil, ClaudeModelHaiku, emit)
 
 	if !emit.hasCall("error", "Agent failed") {
 		t.Fatalf("expected agent failure, got calls=%v", emit.Calls)
@@ -225,7 +225,7 @@ func TestHandleRequestFreshRunSuccessUsesMocks(t *testing.T) {
 	b.HandleRequest(context.Background(),
 		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant", DefaultGitHubOwner: "hetchyhq", DefaultGitHubRepo: "hetchy"},
 		"ship it", "req-1", "thread-1", "user-1",
-		chatTaskOptionPatch{}, nil, ClaudeModelOpus, emit)
+		chatTaskOptionPatch{}, nil, nil, ClaudeModelOpus, emit)
 
 	if !emit.hasCall("result", "Done!") {
 		t.Fatalf("expected success result, got calls=%v", emit.Calls)
@@ -271,7 +271,7 @@ func TestHandleRequestRetryAfterFailureUsesNewRequest(t *testing.T) {
 	b.HandleRequest(context.Background(),
 		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant"},
 		"retry with better prompt", "req-2", "thread-1", "user-1",
-		chatTaskOptionPatch{}, nil, ClaudeModelOpus, emit)
+		chatTaskOptionPatch{}, nil, nil, ClaudeModelOpus, emit)
 
 	if !emit.hasCall("error", "Repo not accessible") {
 		t.Fatalf("expected repo access error, got calls=%v", emit.Calls)
@@ -308,7 +308,7 @@ func TestHandleRequestSavesTaskOptionsBeforeFollowUp(t *testing.T) {
 	b.HandleRequest(context.Background(),
 		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant"},
 		"follow up", "req-2", "thread-1", "user-1",
-		chatTaskOptionPatch{chatTaskReviewCodeBeforePushKey: false}, nil, ClaudeModelOpus, emit)
+		chatTaskOptionPatch{chatTaskReviewCodeBeforePushKey: false}, nil, nil, ClaudeModelOpus, emit)
 
 	if len(convs.taskSaves) != 1 {
 		t.Fatalf("task save count = %d, want 1", len(convs.taskSaves))
@@ -365,7 +365,7 @@ func TestHandleRequestFollowUpAgentFailureUsesMocks(t *testing.T) {
 	b.HandleRequest(context.Background(),
 		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant"},
 		"follow up", "req-2", "thread-1", "user-1",
-		chatTaskOptionPatch{}, nil, ClaudeModelOpus, emit)
+		chatTaskOptionPatch{}, nil, nil, ClaudeModelOpus, emit)
 
 	if !emit.hasCall("error", "Agent failed") {
 		t.Fatalf("expected follow-up agent failure, got calls=%v", emit.Calls)
@@ -420,7 +420,7 @@ func TestHandleRequestFollowUpSuccessUsesMocks(t *testing.T) {
 	b.HandleRequest(context.Background(),
 		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant"},
 		"follow up", "req-2", "thread-1", "user-1",
-		chatTaskOptionPatch{}, nil, ClaudeModelOpus, emit)
+		chatTaskOptionPatch{}, nil, nil, ClaudeModelOpus, emit)
 
 	if !emit.hasCall("result", "Done!") {
 		t.Fatalf("expected follow-up success result, got calls=%v", emit.Calls)
@@ -439,6 +439,187 @@ func TestHandleRequestFollowUpSuccessUsesMocks(t *testing.T) {
 		t.Fatalf("follow-up should append new turn, history=%#v", got)
 	}
 }
+
+// TestHandleRequestRequestedRepoOverridesOrgDefault pins that the
+// composer's repo picker selection wins over the org-level default
+// repo on a fresh conversation. Without this guard the picker would
+// be cosmetic — sending `repository: "team/api"` from the chat UI
+// must actually route the run at that repo instead of the saved
+// default.
+func TestHandleRequestRequestedRepoOverridesOrgDefault(t *testing.T) {
+	convs := &fakeConversationStore{getErr: convstore.ErrNotFound}
+	b := testCoreBot(convs)
+	gotOwner, gotName := "", ""
+	b.resolveRepoFn = func(_ context.Context, _ string, owner, name string) (repoCtx, error) {
+		gotOwner, gotName = owner, name
+		return repoCtx{}, errors.New("stop after repo resolution")
+	}
+	b.createFn = func(context.Context, any) (*daytona.Sandbox, error) {
+		t.Fatal("sandbox should not be created when repo resolver fails")
+		return nil, errors.New("unreachable")
+	}
+	emit := newCaptureEmitter()
+
+	requested := "team/api"
+	b.HandleRequest(context.Background(),
+		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant", DefaultGitHubOwner: "default-owner", DefaultGitHubRepo: "default-repo"},
+		"ship it", "req-1", "thread-1", "user-1",
+		chatTaskOptionPatch{}, nil, &requested, ClaudeModelOpus, emit)
+
+	if gotOwner != "team" || gotName != "api" {
+		t.Fatalf("resolveRepo received %s/%s, want team/api — composer picker selection must override org default", gotOwner, gotName)
+	}
+}
+
+// TestHandleRequestRequestedRepoWithoutOrgDefaultSkipsPrompt covers
+// the new-conversation path when the org has no default repo: the
+// picker selection alone should be enough to launch the agent rather
+// than dropping into the "Which repository?" awaiting-reply state.
+func TestHandleRequestRequestedRepoWithoutOrgDefaultSkipsPrompt(t *testing.T) {
+	convs := &fakeConversationStore{getErr: convstore.ErrNotFound}
+	b := testCoreBot(convs)
+	resolveCalled := false
+	b.resolveRepoFn = func(_ context.Context, _ string, owner, name string) (repoCtx, error) {
+		resolveCalled = true
+		if owner != "team" || name != "api" {
+			t.Fatalf("resolveRepo got %s/%s, want team/api", owner, name)
+		}
+		return repoCtx{}, errors.New("stop")
+	}
+	emit := newCaptureEmitter()
+
+	requested := "team/api"
+	b.HandleRequest(context.Background(),
+		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant"},
+		"ship it", "req-1", "thread-1", "user-1",
+		chatTaskOptionPatch{}, nil, &requested, ClaudeModelOpus, emit)
+
+	if !resolveCalled {
+		t.Fatalf("composer-picked repo should bypass the 'Which repository?' prompt and reach resolveRepo")
+	}
+	if emit.hasCall("notify", "Which repository") {
+		t.Fatalf("composer-picked repo should suppress the awaiting-repo notify, got calls=%v", emit.Calls)
+	}
+}
+
+// TestHandleRequestRequestedRepoOnAwaitingReplyTurnLaunchesAgent
+// exercises the "awaiting repo" branch when the user has now picked a
+// repo via the composer: the bot should treat the picker selection as
+// the answer rather than re-parsing the message text as `owner/name`,
+// and must launch against the stashed first-turn request rather than
+// the picker turn's text — otherwise the agent runs on "ok" instead
+// of "build me a thing" the user originally typed.
+func TestHandleRequestRequestedRepoOnAwaitingReplyTurnLaunchesAgent(t *testing.T) {
+	convs := &fakeConversationStore{
+		rec: convstore.Record{
+			OrgID:    "org_test",
+			ThreadID: "thread-1",
+			History:  []string{"build me a thing"},
+		},
+	}
+	b := testCoreBot(convs)
+	resolveCalled := false
+	var resolveOwner, resolveName string
+	b.resolveRepoFn = func(_ context.Context, _ string, owner, name string) (repoCtx, error) {
+		resolveCalled = true
+		resolveOwner, resolveName = owner, name
+		return repoCtx{Slug: owner + "/" + name, BaseBranch: "main", GitHubToken: "token"}, nil
+	}
+	var capturedRequest string
+	b.createFn = func(context.Context, any) (*daytona.Sandbox, error) {
+		return &daytona.Sandbox{ID: "sandbox-1"}, nil
+	}
+	b.runAgentFn = func(_ context.Context, _ *daytona.Sandbox, _ repoCtx, _ orgcfg.Config, _ agents.Profile, userRequest, _ string, _ string, _ chatTaskOptions, _ ClaudeModel, emit blocks.Emitter) (string, error) {
+		capturedRequest = userRequest
+		emit.Notify("Agent started", "fake runner reached")
+		return "", errors.New("stop after request captured")
+	}
+	emit := newCaptureEmitter()
+
+	requested := "team/api"
+	b.HandleRequest(context.Background(),
+		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant"},
+		"team/api", "req-2", "thread-1", "user-1",
+		chatTaskOptionPatch{}, nil, &requested, ClaudeModelOpus, emit)
+
+	if !resolveCalled || resolveOwner != "team" || resolveName != "api" {
+		t.Fatalf("expected resolveRepo to be called with team/api; got %s/%s called=%v", resolveOwner, resolveName, resolveCalled)
+	}
+	if capturedRequest != "build me a thing" {
+		t.Fatalf("agent should run against the stashed first-turn request, got %q", capturedRequest)
+	}
+	if emit.hasCall("notify", "Try again") {
+		t.Fatalf("composer-picked repo on awaiting-reply turn should not trigger the parse-retry prompt, got calls=%v", emit.Calls)
+	}
+}
+
+// TestHandleRequestRequestedRepoOverridesRetryAfterFailure pins the
+// "had repo but no sandbox" sub-state: when the prior turn left
+// rec.GitHubOwner pointing at a repo that later turned out to be
+// inaccessible, a fresh picker selection on the retry turn should
+// route the run at the new repo instead of silently re-running the
+// broken one.
+func TestHandleRequestRequestedRepoOverridesRetryAfterFailure(t *testing.T) {
+	convs := &fakeConversationStore{
+		rec: convstore.Record{
+			OrgID:       "org_test",
+			ThreadID:    "thread-1",
+			GitHubOwner: "stale",
+			GitHubRepo:  "broken",
+			History:     []string{"first request"},
+		},
+	}
+	b := testCoreBot(convs)
+	var resolveOwner, resolveName string
+	b.resolveRepoFn = func(_ context.Context, _ string, owner, name string) (repoCtx, error) {
+		resolveOwner, resolveName = owner, name
+		return repoCtx{}, errors.New("stop")
+	}
+	emit := newCaptureEmitter()
+
+	requested := "team/api"
+	b.HandleRequest(context.Background(),
+		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant"},
+		"retry please", "req-2", "thread-1", "user-1",
+		chatTaskOptionPatch{}, nil, &requested, ClaudeModelOpus, emit)
+
+	if resolveOwner != "team" || resolveName != "api" {
+		t.Fatalf("resolveRepo received %s/%s, want team/api — picker selection must override the stashed broken repo", resolveOwner, resolveName)
+	}
+}
+
+// TestParseRequestedRepo covers the boundary cases the chat HTTP body
+// can produce — a nil pointer (older client), an empty string (cleared
+// picker), and assorted whitespace / URL / .git shapes pulled through
+// the shared parseOwnerRepo helper.
+func TestParseRequestedRepo(t *testing.T) {
+	cases := []struct {
+		name      string
+		in        *string
+		wantOwner string
+		wantName  string
+		wantOK    bool
+	}{
+		{name: "nil pointer", in: nil, wantOK: false},
+		{name: "empty string", in: ptr(""), wantOK: false},
+		{name: "whitespace only", in: ptr("   "), wantOK: false},
+		{name: "plain slug", in: ptr("team/api"), wantOwner: "team", wantName: "api", wantOK: true},
+		{name: "trailing whitespace", in: ptr("  team/api  "), wantOwner: "team", wantName: "api", wantOK: true},
+		{name: "github URL", in: ptr("https://github.com/team/api"), wantOwner: "team", wantName: "api", wantOK: true},
+		{name: "single token", in: ptr("api"), wantOK: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotOwner, gotName, gotOK := parseRequestedRepo(tc.in)
+			if gotOK != tc.wantOK || gotOwner != tc.wantOwner || gotName != tc.wantName {
+				t.Fatalf("parseRequestedRepo = (%q, %q, %v), want (%q, %q, %v)",
+					gotOwner, gotName, gotOK, tc.wantOwner, tc.wantName, tc.wantOK)
+			}
+		})
+	}
+}
+
+func ptr(s string) *string { return &s }
 
 func TestChatPersisterSavesProgressWithFakeStore(t *testing.T) {
 	convs := &fakeConversationStore{}

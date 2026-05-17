@@ -8,6 +8,11 @@ const agentSelectorBtn = document.getElementById('agent-selector-btn');
 const agentSelectorValueEl = document.getElementById('agent-selector-value');
 const agentPopover = document.getElementById('agent-popover');
 const agentOptionsEl = document.getElementById('agent-options');
+const repoSelectorBtn = document.getElementById('repo-selector-btn');
+const repoSelectorValueEl = document.getElementById('repo-selector-value');
+const repoPopover = document.getElementById('repo-popover');
+const repoOptionsEl = document.getElementById('repo-options');
+const repoSearchEl = document.getElementById('repo-search');
 const modelBtn = document.getElementById('model-btn');
 const modelLabelEl = document.getElementById('model-label');
 const modelPopover = document.getElementById('model-popover');
@@ -41,6 +46,32 @@ function readStoredAgentSlug() {
 }
 
 let selectedAgentSlug = readStoredAgentSlug();
+
+// Repository picker state. Persisted per user so a fresh chat in the
+// same browser starts on the last repo the user worked on, matching the
+// Agent picker. The selection is a plain "owner/name" slug — the empty
+// string means "use the org default" (or fall back to the bot's repo
+// question if no default is set).
+const repoStorageKey = 'hetchy.repo.' + currentUserID;
+
+function readStoredRepoSlug() {
+  try {
+    const saved = localStorage.getItem(repoStorageKey);
+    return saved === null ? '' : saved.trim();
+  } catch (e) {
+    return '';
+  }
+}
+
+let selectedRepoSlug = readStoredRepoSlug();
+// repoOptions is the most-recent /api/repositories response. The picker
+// also injects the currently selected repo even when it falls outside
+// that page, so a chat that was started against a rare repo still shows
+// it in the dropdown after reload.
+let repoOptions = [];
+let repoOptionsLoaded = false;
+let repoSearchQuery = '';
+let repoLoadToken = 0;
 const modelOptions = [
   { value: 'opus', label: 'Opus', description: 'Most capable' },
   { value: 'sonnet', label: 'Sonnet', description: 'Balanced everyday work' },

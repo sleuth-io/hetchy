@@ -69,6 +69,7 @@ function renderMetadata(detail) {
   if (!detail) {
     applyConversationModel(null);
     applyConversationAgent(null);
+    applyConversationRepo(null);
     applyConversationTaskOptions(null);
     host.innerHTML = '<div class="meta-empty">No chat details yet.</div>';
     setDocTitle('');
@@ -76,6 +77,7 @@ function renderMetadata(detail) {
   }
   applyConversationModel(detail);
   applyConversationAgent(detail);
+  applyConversationRepo(detail);
   applyConversationTaskOptions(detail);
   setDocTitle(detail.title);
   const owner = detail.github_owner || '';
@@ -360,12 +362,15 @@ function renderPendingMetadata(text) {
   conversationHasServerState = true;
   const existing = lastDetail || {};
   const now = new Date().toISOString();
+  const repoParts = parseRepoSlug(selectedRepoSlug);
   lastDetail = {
     ...existing,
     thread_id: sessionId,
     title: text || existing.title || 'New chat',
     agent_slug: selectedAgentSlug || '',
     agent_name: selectedAgentSlug ? selectedAgentName() : '',
+    github_owner: repoParts ? repoParts.owner : (existing.github_owner || ''),
+    github_repo: repoParts ? repoParts.name : (existing.github_repo || ''),
     model: selectedModel,
     task_options: currentTaskOptions(),
     creator_id: existing.creator_id || currentUserID,
@@ -387,6 +392,28 @@ function updateMutablePendingAgentMetadata() {
   if (!conversationAgentIsMutable() || !lastDetail) return;
   lastDetail.agent_slug = selectedAgentSlug || '';
   lastDetail.agent_name = selectedAgentSlug ? selectedAgentName() : '';
+  renderMetadata(lastDetail);
+}
+
+// Repo picker mutability mirrors the agent picker: a chat is "fresh"
+// until the agent has produced a PR, and only fresh chats accept a
+// different repo from the composer. Once the run has touched a repo we
+// keep the metadata in sync but no longer let the picker change it.
+function conversationRepoIsMutable() {
+  if (!conversationHasServerState) return true;
+  if (!lastDetail) return false;
+  if ((lastDetail.pr_url || '').trim()) return false;
+  // sandbox_id is set the moment we successfully clone — at that point
+  // the repo is locked in for the rest of the conversation.
+  if ((lastDetail.sandbox_id || '').trim()) return false;
+  return true;
+}
+
+function updateMutablePendingRepoMetadata() {
+  if (!conversationRepoIsMutable() || !lastDetail) return;
+  const parts = parseRepoSlug(selectedRepoSlug);
+  lastDetail.github_owner = parts ? parts.owner : '';
+  lastDetail.github_repo = parts ? parts.name : '';
   renderMetadata(lastDetail);
 }
 
