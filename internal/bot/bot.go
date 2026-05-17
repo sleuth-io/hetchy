@@ -160,8 +160,12 @@ type Bot struct {
 	sessionCommandStatusFn   sessionCommandStatusFunc
 	usersOnlyInOrgFn         func(context.Context, string) ([]string, error)
 	deleteWorkOSOrgFn        func(context.Context, string) error
-	deleteWorkOSUsersFn      func(context.Context, []string) error
-	lookupRepoFn             func(context.Context, string, string, string) (sqlc.GithubRepo, error)
+	// branchNameFn lets tests bypass the LLM round-trip in
+	// branchNameFor. Production code leaves this nil; the default
+	// path calls Anthropic and falls back to "sf" on any failure.
+	branchNameFn        func(context.Context, orgcfg.Config, string) string
+	deleteWorkOSUsersFn func(context.Context, []string) error
+	lookupRepoFn        func(context.Context, string, string, string) (sqlc.GithubRepo, error)
 	// cleanupSandboxByIDFn is called by chatCancelHandler for opportunistic
 	// cleanup of a fresh-run sandbox; overridable in tests.
 	cleanupSandboxByIDFn func(string, string)
@@ -798,13 +802,17 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 	}
 
 	rec.AgentSlug = agent.Slug
-	branch := "feature/sf-" + requestID
-	b.markRunBranch(ctx, branch)
+	// Notify first so the user sees activity even if branchNameFor
+	// stalls on Anthropic — the slug request has a tight timeout but
+	// blocking the "Starting" message on it makes a slow network look
+	// like the chat is frozen.
 	if agent.Slug == "" {
 		emit.Notify("Starting", fmt.Sprintf("Spinning up an isolated sandbox for your request in `%s` (base: `%s`)…", repo.Slug, repo.BaseBranch))
 	} else {
 		emit.Notify("Starting", fmt.Sprintf("Spinning up `%s` in an isolated sandbox for your request in `%s` (base: `%s`)…", agent.DisplayName, repo.Slug, repo.BaseBranch))
 	}
+	branch := b.branchNameFor(ctx, oc, userRequest)
+	b.markRunBranch(ctx, branch)
 
 	envVars := map[string]string{}
 	if oc.SXKey != "" {
@@ -885,7 +893,7 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 		persister.Stop()
 	}()
 
-	prURL, runErr := b.runAgentForRequest(ctx, sb, repo, oc, agent, userRequest, requestID, opts, model, emit)
+	prURL, runErr := b.runAgentForRequest(ctx, sb, repo, oc, agent, userRequest, requestID, branch, opts, model, emit)
 	if runErr != nil {
 		if liveRunCancelled(ctx) {
 			b.log.Info("agent run stopped", "sandbox", sb.ID, "request_id", requestID, "error", runErr)
@@ -1106,11 +1114,11 @@ func (b *Bot) resolveRepoForRun(ctx context.Context, orgID, owner, name string) 
 	return b.resolveRepo(ctx, orgID, owner, name)
 }
 
-func (b *Bot) runAgentForRequest(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, agent agents.Profile, userRequest, requestID string, opts chatTaskOptions, model ClaudeModel, emit blocks.Emitter) (string, error) {
+func (b *Bot) runAgentForRequest(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, agent agents.Profile, userRequest, requestID, branch string, opts chatTaskOptions, model ClaudeModel, emit blocks.Emitter) (string, error) {
 	if b.runAgentFn != nil {
-		return b.runAgentFn(ctx, sb, repo, oc, agent, userRequest, requestID, opts, model, emit)
+		return b.runAgentFn(ctx, sb, repo, oc, agent, userRequest, requestID, branch, opts, model, emit)
 	}
-	return b.runAgent(ctx, sb, repo, oc, agent, userRequest, requestID, opts, model, emit)
+	return b.runAgent(ctx, sb, repo, oc, agent, userRequest, requestID, branch, opts, model, emit)
 }
 
 func (b *Bot) runFollowUpForRequest(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, text, requestID string, opts chatTaskOptions, model ClaudeModel, emit blocks.Emitter) (string, error) {

@@ -3,6 +3,7 @@ package webui
 
 import (
 	"crypto/md5"
+	"crypto/sha256"
 	"embed"
 	"encoding/hex"
 	"errors"
@@ -14,8 +15,6 @@ import (
 	"net/url"
 	"strings"
 	"sync"
-
-	"github.com/hetchyhq/hetchy/internal/buildinfo"
 )
 
 //go:embed chat.html templates/*.html assets/*
@@ -51,8 +50,9 @@ func GravatarURL(email string) string {
 	return "https://www.gravatar.com/avatar/" + hex.EncodeToString(sum[:]) + "?d=identicon&s=64"
 }
 
-// AssetHandler serves embedded CSS/JS assets below /assets/ with cache
-// headers that match the build version in assetPath.
+// AssetHandler serves embedded CSS/JS assets below /assets/. Templates
+// include a content hash in assetPath, so browsers can keep returned assets
+// indefinitely; a changed embedded CSS/JS file gets a new URL.
 func AssetHandler() http.Handler {
 	sub, err := fs.Sub(files, "assets")
 	if err != nil {
@@ -85,6 +85,7 @@ func Render(log *slog.Logger, w http.ResponseWriter, name Template, data any) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
 	if err := tpl.Execute(w, data); err != nil {
 		// The response stream may have already started, so we can't send a
 		// proper 500, but the failure must not be silent.
@@ -137,7 +138,7 @@ var templateFuncs = template.FuncMap{
 		return template.URL(hetchyFaviconHref)
 	},
 	"assetPath": func(name string) template.URL {
-		return template.URL("/assets/" + url.PathEscape(name) + "?v=" + url.QueryEscape(assetVersion()))
+		return template.URL("/assets/" + url.PathEscape(name) + "?v=" + url.QueryEscape(assetVersion(name)))
 	},
 	"statusExplain": func(s string) string {
 		switch s {
@@ -155,19 +156,22 @@ var templateFuncs = template.FuncMap{
 	},
 }
 
-func assetVersion() string {
-	if buildinfo.Commit != "" && buildinfo.Commit != "none" {
-		return buildinfo.Commit
+func assetVersion(name string) string {
+	if version, ok := assetVersions.Load(name); ok {
+		return version.(string)
 	}
-	if buildinfo.Version != "" && buildinfo.Version != "dev" {
-		return buildinfo.Version
+	body, err := files.ReadFile("assets/" + name)
+	if err != nil {
+		return "missing"
 	}
-	return "dev"
+	sum := sha256.Sum256(body)
+	version := hex.EncodeToString(sum[:8])
+	assetVersions.Store(name, version)
+	return version
 }
 
+var assetVersions sync.Map
+
 func assetCacheControl() string {
-	if assetVersion() == "dev" {
-		return "no-cache"
-	}
 	return "public, max-age=31536000, immutable"
 }

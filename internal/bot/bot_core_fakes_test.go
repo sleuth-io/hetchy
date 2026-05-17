@@ -8,6 +8,7 @@ import (
 
 	"github.com/hetchyhq/hetchy/internal/blocks"
 	"github.com/hetchyhq/hetchy/internal/convstore"
+	"github.com/hetchyhq/hetchy/internal/orgcfg"
 )
 
 type fakeConversationStore struct {
@@ -125,5 +126,12 @@ func testCoreBot(convs conversationStore) *Bot {
 		log:          discardLogger(),
 		convs:        convs,
 		retryBackoff: 0,
+		// Default tests to a deterministic branch name so assertions
+		// on rec.Branch stay stable and so no test fires HTTP to the
+		// real Anthropic API while branch-naming. Individual tests can
+		// override branchNameFn to exercise LLM-driven slug behaviour.
+		branchNameFn: func(_ context.Context, _ orgcfg.Config, _ string) string {
+			return "feature/sf-req-1"
+		},
 	}
 }

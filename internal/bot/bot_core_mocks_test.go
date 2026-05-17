@@ -170,9 +170,9 @@ func TestHandleRequestFreshRunAgentFailureUsesMocks(t *testing.T) {
 	b.createFn = func(context.Context, any) (*daytona.Sandbox, error) {
 		return &daytona.Sandbox{ID: "sandbox-1"}, nil
 	}
-	b.runAgentFn = func(_ context.Context, sb *daytona.Sandbox, repo repoCtx, _ orgcfg.Config, _ agents.Profile, userRequest, requestID string, _ chatTaskOptions, model ClaudeModel, emit blocks.Emitter) (string, error) {
-		if sb.ID != "sandbox-1" || repo.Slug != "hetchyhq/hetchy" || userRequest != "ship it" || requestID != "req-1" || model != ClaudeModelHaiku {
-			t.Fatalf("unexpected runAgent args: sandbox=%s repo=%s request=%q requestID=%q model=%s", sb.ID, repo.Slug, userRequest, requestID, model)
+	b.runAgentFn = func(_ context.Context, sb *daytona.Sandbox, repo repoCtx, _ orgcfg.Config, _ agents.Profile, userRequest, requestID, branch string, _ chatTaskOptions, model ClaudeModel, emit blocks.Emitter) (string, error) {
+		if sb.ID != "sandbox-1" || repo.Slug != "hetchyhq/hetchy" || userRequest != "ship it" || requestID != "req-1" || branch != "feature/sf-req-1" || model != ClaudeModelHaiku {
+			t.Fatalf("unexpected runAgent args: sandbox=%s repo=%s request=%q requestID=%q branch=%q model=%s", sb.ID, repo.Slug, userRequest, requestID, branch, model)
 		}
 		emit.Notify("Agent started", "fake runner reached")
 		return "", errors.New("agent failed")
@@ -208,7 +208,7 @@ func TestHandleRequestFreshRunSuccessUsesMocks(t *testing.T) {
 	b.createFn = func(context.Context, any) (*daytona.Sandbox, error) {
 		return &daytona.Sandbox{ID: "sandbox-1"}, nil
 	}
-	b.runAgentFn = func(_ context.Context, _ *daytona.Sandbox, _ repoCtx, _ orgcfg.Config, _ agents.Profile, _ string, _ string, _ chatTaskOptions, _ ClaudeModel, emit blocks.Emitter) (string, error) {
+	b.runAgentFn = func(_ context.Context, _ *daytona.Sandbox, _ repoCtx, _ orgcfg.Config, _ agents.Profile, _ string, _ string, _ string, _ chatTaskOptions, _ ClaudeModel, emit blocks.Emitter) (string, error) {
 		emit.Notify("Agent started", "fake runner reached")
 		return "https://github.com/hetchyhq/hetchy/pull/2", nil
 	}

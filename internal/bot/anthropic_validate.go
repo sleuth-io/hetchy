@@ -53,13 +53,7 @@ func validateAnthropicCredential(ctx context.Context, kind anthropicCredKind, va
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("anthropic-version", "2023-06-01")
-	switch kind {
-	case anthropicCredAPIKey:
-		req.Header.Set("x-api-key", value)
-	case anthropicCredOAuthToken:
-		req.Header.Set("Authorization", "Bearer "+value)
-		req.Header.Set("anthropic-beta", "oauth-2025-04-20")
-	default:
+	if !applyAnthropicAuth(req, kind, value) {
 		return fmt.Errorf("anthropic: unknown credential kind %d", kind)
 	}
 

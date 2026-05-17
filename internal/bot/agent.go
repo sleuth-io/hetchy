@@ -59,7 +59,7 @@ USER REQUEST:
 %s%s
 
 When you are done implementing the change:
-  1. Create a new branch named feature/sf-%s.
+  1. Create a new branch named %s.
   2. Run ` + "`make format`" + ` to format the code.
   3. Stage and commit your changes with a clear message.
   4. Push the branch to origin (gh CLI is already authenticated).
@@ -114,7 +114,7 @@ type repoCtx struct {
 	TokenExpires time.Time
 }
 
-func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, agent agents.Profile, userRequest, requestID string, opts chatTaskOptions, model ClaudeModel, emit blocks.Emitter) (string, error) {
+func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, agent agents.Profile, userRequest, requestID, branch string, opts chatTaskOptions, model ClaudeModel, emit blocks.Emitter) (string, error) {
 	model = normalizeClaudeModel(model)
 	var spec *bootstrap.Spec
 	// ValidateChanges=false is the user's explicit "skip end-to-end
@@ -175,13 +175,13 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, o
 
 	originalPrompt := fmt.Sprintf(agentPromptTemplate,
 		repo.Slug, wd, repo.BaseBranch,
-		userRequest, conditionalTasksPrompt(opts), requestID, repo.BaseBranch,
+		userRequest, conditionalTasksPrompt(opts), branch, repo.BaseBranch,
 	)
 	finalPrompt := originalPrompt
 	if spec != nil {
 		finalPrompt = bootstrap.MergeIntoAgentPrompt(originalPrompt, spec, bootstrap.ValidationArgs{
 			OwnerRepo:         repo.Slug,
-			Branch:            "feature/sf-" + requestID,
+			Branch:            branch,
 			ArtifactSlotCount: len(slotsManifest),
 		})
 	}
@@ -209,7 +209,7 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, o
 	prURL, err := b.runScriptForRequest(ctx, sb, sessionID, "agent", agentScript, env, emit)
 	if err == nil {
 		b.markRunFinalizing(ctx)
-		prURL, err = b.validateReportedPR(ctx, repo, "feature/sf-"+requestID, repo.BaseBranch, prURL)
+		prURL, err = b.validateReportedPR(ctx, repo, branch, repo.BaseBranch, prURL)
 	}
 	if err == nil && spec != nil {
 		// Post-success reflection: read /tmp/hetchy-spec/improved/ to
