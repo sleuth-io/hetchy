@@ -566,54 +566,7 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		b.handleRetryAfterFailure(ctx, oc, rec, agent, text, requestID, opts, model, recorder, emit)
 		return
 	case err == nil:
-		// No sandbox was ever created. Two sub-states distinguished by
-		// GitHubOwner:
-		//   1. GitHubOwner == "" → we asked for a repo and the user is
-		//      answering. handleAwaitingRepoReply parses owner/name —
-		//      unless the composer's repo picker carried an explicit
-		//      selection on this turn, which takes precedence so the
-		//      user doesn't have to also type the repo into the body.
-		//   2. GitHubOwner != "" → resolveRepo+sandbox-create failed.
-		//      The repo isn't the problem; treat the new message as
-		//      the new request and re-run on the same repo — or on
-		//      the composer's new picker selection when the user has
-		//      explicitly chosen a different repo via the dropdown.
-		if rec.GitHubOwner != "" && rec.GitHubRepo != "" {
-			agent, ok := b.selectAgentForConversation(ctx, oc.OrgID, mutableConversationAgentSlug(rec.AgentSlug, requestedAgent), emit)
-			if !ok {
-				b.markRunState(ctx, runstore.StateFailed, errors.New("unknown agent"))
-				return
-			}
-			if requestedRepoOK {
-				rec.GitHubOwner = requestedOwner
-				rec.GitHubRepo = requestedName
-			}
-			b.handleRetryAfterFailure(ctx, oc, rec, agent, text, requestID, opts, model, recorder, emit)
-			return
-		}
-		agent, ok := b.selectAgentForConversation(ctx, oc.OrgID, mutableConversationAgentSlug(rec.AgentSlug, requestedAgent), emit)
-		if !ok {
-			b.markRunState(ctx, runstore.StateFailed, errors.New("unknown agent"))
-			return
-		}
-		// On the awaiting-repo branch the composer picker can stand in
-		// for the typed `owner/name` answer. We launch against the
-		// original first-turn request (preserved in History[0]) rather
-		// than the new turn's text — the user already told us what to
-		// build, this turn is just the repo selection.
-		if requestedRepoOK {
-			rec.GitHubOwner = requestedOwner
-			rec.GitHubRepo = requestedName
-			rec.AgentSlug = agent.Slug
-			rec.Model = string(model)
-			originalRequest := text
-			if len(rec.History) > 0 && rec.History[0] != "" {
-				originalRequest = rec.History[0]
-			}
-			b.runFreshAgent(ctx, oc, rec, agent, originalRequest, requestID, opts, model, recorder, emit)
-			return
-		}
-		b.handleAwaitingRepoReply(ctx, oc, rec, agent, text, requestID, opts, model, recorder, emit)
+		b.handlePendingConversation(ctx, oc, rec, text, requestID, requestedAgent, requestedOwner, requestedName, requestedRepoOK, opts, model, recorder, emit)
 		return
 	case errors.Is(err, convstore.ErrNotFound):
 		// fall through — new conversation
@@ -673,6 +626,54 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		b.log.Error("convstore upsert (new chat)", "error", err, "org", oc.OrgID, "thread", threadID)
 	}
 	b.runFreshAgent(ctx, oc, rec, agent, text, requestID, opts, model, recorder, emit)
+}
+
+// handlePendingConversation routes the "row exists but no PR yet"
+// branches: a sandbox-built failure that needs a retry on the same
+// (or picker-overridden) repo, and the awaiting-repo state where the
+// user is either typing `owner/name` or has picked one in the
+// composer. Extracted from HandleRequest so the main entry point
+// stays under the cyclomatic-complexity lint cap.
+func (b *Bot) handlePendingConversation(ctx context.Context, oc orgcfg.Config, rec convstore.Record, text, requestID string, requestedAgent *string, requestedOwner, requestedName string, requestedRepoOK bool, opts chatTaskOptions, model ClaudeModel, recorder *blocks.Recorder, emit blocks.Emitter) {
+	// Sub-state 1: prior turn resolved a repo but sandbox creation
+	// failed. Retry with the new text — unless the user has picked a
+	// different repo via the composer, in which case respect the
+	// override before resuming.
+	if rec.GitHubOwner != "" && rec.GitHubRepo != "" {
+		agent, ok := b.selectAgentForConversation(ctx, oc.OrgID, mutableConversationAgentSlug(rec.AgentSlug, requestedAgent), emit)
+		if !ok {
+			b.markRunState(ctx, runstore.StateFailed, errors.New("unknown agent"))
+			return
+		}
+		if requestedRepoOK {
+			rec.GitHubOwner = requestedOwner
+			rec.GitHubRepo = requestedName
+		}
+		b.handleRetryAfterFailure(ctx, oc, rec, agent, text, requestID, opts, model, recorder, emit)
+		return
+	}
+	// Sub-state 2: awaiting-repo. Composer picker selection trumps
+	// the parsed `owner/name` answer; we launch against the
+	// preserved first-turn request rather than the picker turn's
+	// text.
+	agent, ok := b.selectAgentForConversation(ctx, oc.OrgID, mutableConversationAgentSlug(rec.AgentSlug, requestedAgent), emit)
+	if !ok {
+		b.markRunState(ctx, runstore.StateFailed, errors.New("unknown agent"))
+		return
+	}
+	if requestedRepoOK {
+		rec.GitHubOwner = requestedOwner
+		rec.GitHubRepo = requestedName
+		rec.AgentSlug = agent.Slug
+		rec.Model = string(model)
+		originalRequest := text
+		if len(rec.History) > 0 && rec.History[0] != "" {
+			originalRequest = rec.History[0]
+		}
+		b.runFreshAgent(ctx, oc, rec, agent, originalRequest, requestID, opts, model, recorder, emit)
+		return
+	}
+	b.handleAwaitingRepoReply(ctx, oc, rec, agent, text, requestID, opts, model, recorder, emit)
 }
 
 func requestedAgentSlug(requested *string) string {
