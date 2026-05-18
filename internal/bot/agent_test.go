@@ -216,8 +216,8 @@ func TestFollowupScript_EmbeddedAndWellFormed(t *testing.T) {
 		`: "${SF_WORKDIR:?required}"`,
 		`: "${SF_BRANCH:?required}"`,
 		"require_b64_input SF_PROMPT_B64",
-		"git fetch origin",
-		"git pull --rebase origin",
+		"git fetch --prune origin",
+		"git pull --rebase --autostash origin",
 		"local -a claude_args=(",
 		"--dangerously-skip-permissions",
 		`claude_args+=(--model "$HETCHY_CLAUDE_MODEL")`,
@@ -261,6 +261,27 @@ func TestFollowupScript_EmbeddedAndWellFormed(t *testing.T) {
 		t.Error("followup.sh should not invoke hetchy_prepare_repo_workdir — the workdir is already populated")
 	}
 	assertBashSyntax(t, "followup.sh", followupScript)
+}
+
+func TestFollowupScript_SyncsBranchBeforeClaude(t *testing.T) {
+	wantOrder := []string{
+		`git fetch --prune origin`,
+		`git checkout "${SF_BRANCH}"`,
+		`git pull --rebase --autostash origin "${SF_BRANCH}"`,
+		`echo "[hetchy] running claude"`,
+		`run_claude_with_watchdog /tmp/sf-prompt.txt`,
+	}
+	last := -1
+	for _, want := range wantOrder {
+		idx := strings.Index(followupScriptBody, want)
+		if idx < 0 {
+			t.Fatalf("followup.sh missing %q", want)
+		}
+		if idx <= last {
+			t.Fatalf("followup.sh command %q is out of order", want)
+		}
+		last = idx
+	}
 }
 
 func TestSandboxCommon_RewriteLegacySavedSpecWorkdir(t *testing.T) {

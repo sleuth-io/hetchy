@@ -100,9 +100,10 @@ git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".ins
 
 echo "[hetchy] checking out branch"
 cd "${SF_WORKDIR}"
-git fetch origin
+git fetch --prune origin
 git checkout "${SF_BRANCH}"
-git pull --rebase origin "${SF_BRANCH}"
+echo "[hetchy] syncing ${SF_BRANCH} with origin/${SF_BRANCH}"
+git pull --rebase --autostash origin "${SF_BRANCH}"
 
 # Same pre-create as agent.sh — the Playwright MCP server requires
 # this directory to exist before the first screenshot, and follow-ups
