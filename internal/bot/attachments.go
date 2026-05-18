@@ -116,7 +116,9 @@ func (b *Bot) materializePromptAttachments(ctx context.Context, sb *daytona.Sand
 		Files []sandboxAttachmentRef `json:"files"`
 	}{Files: refs}, "", "  ")
 	if err == nil {
-		_ = sb.FileSystem.UploadFile(ctx, manifest, dir+"/manifest.json")
+		if merr := sb.FileSystem.UploadFile(ctx, manifest, dir+"/manifest.json"); merr != nil {
+			b.log.Warn("manifest upload failed", "dir", dir, "error", merr)
+		}
 	}
 	emit.Append(blockID, "Attachments are ready for Claude Code.\n")
 	emit.Done(blockID, fmt.Sprintf("%d file(s)", len(refs)))

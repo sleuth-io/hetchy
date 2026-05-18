@@ -190,7 +190,7 @@ function buildAttachmentsCell(attachments) {
     const name = a.filename || 'attachment';
     const url = a.download_url || ('/api/conversations/attachments/' + encodeURIComponent(a.id || ''));
     const size = a.size_bytes ? ' <span class="meta-attachment-size">' + esc(formatAttachmentSize(a.size_bytes)) + '</span>' : '';
-    if (!a.id && !a.download_url) {
+    if (!a.download_url) {
       return '<span class="meta-attachment-link">' + esc(name) + size + '</span>';
     }
     return '<a class="meta-attachment-link" href="' + esc(url) + '" download="' + esc(name) + '">'

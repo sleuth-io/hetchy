@@ -294,24 +294,13 @@ func (s *Store) Rename(ctx context.Context, orgID, threadID, title string) error
 
 // SaveAttachments inserts prompt attachments. Empty input and disabled
 // stores are no-ops. Callers must ensure the parent conversation row
-// already exists so the FK can associate the files with it.
+// already exists so the FK can associate the files with it, and must
+// populate IDs, content types, sources, and sizes before calling.
 func (s *Store) SaveAttachments(ctx context.Context, attachments []Attachment) error {
 	if s == nil || s.db == nil || len(attachments) == 0 {
 		return nil
 	}
 	for _, a := range attachments {
-		if a.ID == "" {
-			a.ID = NewAttachmentID()
-		}
-		if a.ContentType == "" {
-			a.ContentType = "application/octet-stream"
-		}
-		if a.Source == "" {
-			a.Source = "web"
-		}
-		if a.SizeBytes == 0 {
-			a.SizeBytes = int64(len(a.Data))
-		}
 		_, err := s.db.Queries.SaveConversationAttachment(ctx, sqlc.SaveConversationAttachmentParams{
 			ID:          a.ID,
 			OrgID:       a.OrgID,
