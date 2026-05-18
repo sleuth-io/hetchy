@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -91,11 +92,13 @@ func (s *Store) SaveSpec(ctx context.Context, spec *Spec) error {
 	}
 	var stop *string
 	if spec.StopScript != "" {
-		stop = &spec.StopScript
+		v := postgresText(spec.StopScript)
+		stop = &v
 	}
 	var bootLog *string
 	if spec.BootstrapLog != "" {
-		bootLog = &spec.BootstrapLog
+		v := postgresText(spec.BootstrapLog)
+		bootLog = &v
 	}
 	// Only stamp last_validated_at when the spec actually validated
 	// end-to-end. A failing or stale spec with NOW() in this column
@@ -112,19 +115,19 @@ func (s *Store) SaveSpec(ctx context.Context, spec *Spec) error {
 	_, err = s.db.Queries.UpsertRepoSetupSpec(ctx, sqlc.UpsertRepoSetupSpecParams{
 		InstallationID:       spec.InstallationID,
 		RepoID:               spec.RepoID,
-		Path:                 spec.Path,
+		Path:                 postgresText(spec.Path),
 		SpecVersion:          spec.SpecVersion,
-		Kind:                 spec.Kind,
-		SetupScript:          spec.SetupScript,
-		StartScript:          spec.StartScript,
-		HealthCheck:          spec.HealthCheck,
+		Kind:                 postgresText(spec.Kind),
+		SetupScript:          postgresText(spec.SetupScript),
+		StartScript:          postgresText(spec.StartScript),
+		HealthCheck:          postgresText(spec.HealthCheck),
 		StopScript:           stop,
 		Services:             services,
 		RequiredSecrets:      required,
 		DeferredCapabilities: deferred,
 		SuggestedRepoChanges: suggestions,
-		SourceFingerprint:    spec.SourceFingerprint,
-		ValidationStatus:     string(spec.ValidationStatus),
+		SourceFingerprint:    postgresText(spec.SourceFingerprint),
+		ValidationStatus:     postgresText(string(spec.ValidationStatus)),
 		LastValidatedAt:      lastValidated,
 		SuccessCount:         spec.SuccessCount,
 		FailureCount:         spec.FailureCount,
@@ -166,28 +169,30 @@ func (s *Store) SaveFailingSpec(ctx context.Context, spec *Spec) error {
 	}
 	var stop *string
 	if spec.StopScript != "" {
-		stop = &spec.StopScript
+		v := postgresText(spec.StopScript)
+		stop = &v
 	}
 	var bootLog *string
 	if spec.BootstrapLog != "" {
-		bootLog = &spec.BootstrapLog
+		v := postgresText(spec.BootstrapLog)
+		bootLog = &v
 	}
 	_, err = s.db.Queries.UpsertFailingRepoSetupSpec(ctx, sqlc.UpsertFailingRepoSetupSpecParams{
 		InstallationID:       spec.InstallationID,
 		RepoID:               spec.RepoID,
-		Path:                 spec.Path,
+		Path:                 postgresText(spec.Path),
 		SpecVersion:          spec.SpecVersion,
-		Kind:                 spec.Kind,
-		SetupScript:          spec.SetupScript,
-		StartScript:          spec.StartScript,
-		HealthCheck:          spec.HealthCheck,
+		Kind:                 postgresText(spec.Kind),
+		SetupScript:          postgresText(spec.SetupScript),
+		StartScript:          postgresText(spec.StartScript),
+		HealthCheck:          postgresText(spec.HealthCheck),
 		StopScript:           stop,
 		Services:             services,
 		RequiredSecrets:      required,
 		DeferredCapabilities: deferred,
 		SuggestedRepoChanges: suggestions,
-		SourceFingerprint:    spec.SourceFingerprint,
-		ValidationStatus:     string(spec.ValidationStatus),
+		SourceFingerprint:    postgresText(spec.SourceFingerprint),
+		ValidationStatus:     postgresText(string(spec.ValidationStatus)),
 		BootstrapLog:         bootLog,
 	})
 	if err != nil {
@@ -209,8 +214,8 @@ func (s *Store) MarkApplied(
 	err := s.db.Queries.UpdateRepoSetupSpecStatus(ctx, sqlc.UpdateRepoSetupSpecStatusParams{
 		InstallationID:   installationID,
 		RepoID:           repoID,
-		Path:             path,
-		ValidationStatus: string(status),
+		Path:             postgresText(path),
+		ValidationStatus: postgresText(string(status)),
 		LastValidatedAt:  pgtype.Timestamptz{Time: time.Now(), Valid: true},
 		SuccessCount:     success,
 		FailureCount:     failure,
@@ -219,6 +224,14 @@ func (s *Store) MarkApplied(
 		return fmt.Errorf("bootstrap: update status: %w", err)
 	}
 	return nil
+}
+
+// postgresText normalizes sandbox-originated text before it reaches
+// Postgres TEXT columns. Daytona command streams can contain malformed
+// byte sequences from terminal progress renderers; Go strings permit
+// those bytes, but pgx/Postgres reject them with SQLSTATE 22021.
+func postgresText(s string) string {
+	return strings.ToValidUTF8(s, "\uFFFD")
 }
 
 // SecretValues holds the plaintext values the user has supplied for a
