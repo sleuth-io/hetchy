@@ -75,7 +75,7 @@ func (b *Bot) recoverUnframedAgentRun(ctx context.Context, sb *daytona.Sandbox, 
 
 		status, err := b.sessionCommandStatus(ctx, sb, run.SessionID, run.CommandID)
 		if err != nil {
-			b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
+			b.handleRecoverySetupError(ctx, run, live, "Agent failed", unrecoverableCommandLogBody, err)
 			return
 		}
 		exitCode, done := sessionCommandExitCode(status)
