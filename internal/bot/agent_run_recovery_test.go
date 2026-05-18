@@ -84,6 +84,75 @@ func TestRecoverExpiredRunsSkipsClaimLostRace(t *testing.T) {
 	}
 }
 
+func TestRecoverStaleRunsClaimsAndLaunchesWithFakeStore(t *testing.T) {
+	store := &fakeRunStore{
+		enabled: true,
+		staleRuns: []runstore.Run{{
+			ID:          "run-stale",
+			OrgID:       "org_1",
+			ThreadID:    "thread_1",
+			LeaseOwner:  "old-worker",
+			CommandStep: "bootstrap-run-bootstrap",
+		}},
+		claimStaleRun: runstore.Run{
+			ID:          "run-stale",
+			OrgID:       "org_1",
+			ThreadID:    "thread_1",
+			LeaseOwner:  "host-123-new",
+			CommandStep: "bootstrap-run-bootstrap",
+		},
+	}
+	var launched []launchedRecoveryRun
+	b := &Bot{
+		log:      discardLogger(),
+		runs:     store,
+		workerID: "host-123-new",
+		recoverRunFn: func(_ context.Context, run runstore.Run, waitForLive bool) {
+			launched = append(launched, launchedRecoveryRun{run: run, waitForLive: waitForLive})
+		},
+	}
+
+	b.recoverStaleRuns(context.Background())
+
+	if len(store.staleCalls) != 1 || store.staleCalls[0].limit != 5 || store.staleCalls[0].staleAfter != agentRunStaleHeartbeat {
+		t.Fatalf("stale calls = %+v", store.staleCalls)
+	}
+	if len(store.claimStaleCalls) != 1 ||
+		store.claimStaleCalls[0].runID != "run-stale" ||
+		store.claimStaleCalls[0].leaseOwner != "host-123-new" ||
+		store.claimStaleCalls[0].staleAfter != agentRunStaleHeartbeat {
+		t.Fatalf("claim stale calls = %+v", store.claimStaleCalls)
+	}
+	if len(launched) != 1 || launched[0].run.ID != "run-stale" || launched[0].run.CommandStep != "bootstrap-run-bootstrap" || launched[0].waitForLive {
+		t.Fatalf("launched = %+v", launched)
+	}
+}
+
+func TestBootstrapRecoveryStepClassifiers(t *testing.T) {
+	prepCases := map[string]bool{
+		"setup-clone-run":         true,
+		"detect-tar":              true,
+		"bootstrap-run-bootstrap": true,
+		"write-script":            false,
+	}
+	for step, want := range prepCases {
+		if got := bootstrapPreparationStep(step); got != want {
+			t.Fatalf("bootstrapPreparationStep(%q) = %v, want %v", step, got, want)
+		}
+	}
+
+	replayCases := map[string]bool{
+		"setup-clone-run":         true,
+		"bootstrap-run-bootstrap": true,
+		"detect-tar":              false,
+	}
+	for step, want := range replayCases {
+		if got := replayUnframedStep(step); got != want {
+			t.Fatalf("replayUnframedStep(%q) = %v, want %v", step, got, want)
+		}
+	}
+}
+
 func TestRecoverStartupRunsClaimsDeadSameHostLease(t *testing.T) {
 	oldProcessExists := processExistsForRecovery
 	processExistsForRecovery = func(pid int) bool {
@@ -656,6 +725,63 @@ func TestFinalizeRecoveredRunNonZeroExitFailsWithoutValidation(t *testing.T) {
 	lastBlock := rec.ResponseBlocks[0][len(rec.ResponseBlocks[0])-1]
 	if lastBlock.Kind != blocks.KindError || lastBlock.Title != "Agent failed" {
 		t.Fatalf("terminal block = %+v", lastBlock)
+	}
+}
+
+func TestFinishContinuedRecoveredErrorDurabilityKeepsRecovering(t *testing.T) {
+	store := &fakeRunStore{enabled: true}
+	b := &Bot{log: discardLogger(), runs: store, workerID: "worker-1"}
+
+	b.finishContinuedRecoveredError(context.Background(), runstore.Run{ID: "run_retry"}, nil, errAgentRunDurability)
+
+	if len(store.updateStates) != 1 {
+		t.Fatalf("state updates = %+v", store.updateStates)
+	}
+	got := store.updateStates[0]
+	if got.state != runstore.StateRecovering || got.lastErr != errAgentRunDurability.Error() || got.leaseOwner != "worker-1" {
+		t.Fatalf("state update = %+v", got)
+	}
+}
+
+func TestFinishContinuedRecoveredErrorPRNotVerifiedFailsAndCleansUp(t *testing.T) {
+	store := &fakeRunStore{enabled: true}
+	convs := &fakeConversationStore{getErr: convstore.ErrNotFound}
+	var cleanupCall string
+	b := &Bot{
+		log:      discardLogger(),
+		runs:     store,
+		convs:    convs,
+		workerID: "worker-1",
+		cleanupSandboxFn: func(_ context.Context, sb *daytona.Sandbox, reason string) {
+			cleanupCall = sb.ID + "|" + reason
+		},
+	}
+	run := runstore.Run{
+		ID:          "run_bad_pr",
+		OrgID:       "org_1",
+		ThreadID:    "thread_1",
+		UserRequest: "ship it",
+		SandboxID:   "sandbox-1",
+		Branch:      "feature/sf-1",
+		RunKind:     "chat",
+	}
+
+	b.finishContinuedRecoveredError(context.Background(), run, nil, errReportedPRNotVerified)
+
+	if len(store.updateStates) == 0 {
+		t.Fatal("expected failed state update")
+	}
+	lastState := store.updateStates[len(store.updateStates)-1]
+	if lastState.state != runstore.StateFailed || lastState.lastErr != errReportedPRNotVerified.Error() {
+		t.Fatalf("last state = %+v", lastState)
+	}
+	rec := convs.lastUpsert(t)
+	lastBlock := rec.ResponseBlocks[0][len(rec.ResponseBlocks[0])-1]
+	if lastBlock.Kind != blocks.KindError || lastBlock.Title != "PR not verified" || !strings.Contains(lastBlock.Body, "feature/sf-1") {
+		t.Fatalf("terminal block = %+v", lastBlock)
+	}
+	if cleanupCall != "sandbox-1|recovered failed run" {
+		t.Fatalf("cleanup call = %q", cleanupCall)
 	}
 }
 
