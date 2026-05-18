@@ -60,7 +60,7 @@ WHERE id = $1
 RETURNING id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
           user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
           lease_owner, lease_expires_at, heartbeat_at, last_error,
-          created_at, updated_at
+          created_at, updated_at, command_step
 `
 
 type ClaimAgentRunForCancelParams struct {
@@ -93,6 +93,7 @@ func (q *Queries) ClaimAgentRunForCancel(ctx context.Context, arg ClaimAgentRunF
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CommandStep,
 	)
 	return i, err
 }
@@ -110,7 +111,7 @@ WHERE id = $3
 RETURNING id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
           user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
           lease_owner, lease_expires_at, heartbeat_at, last_error,
-          created_at, updated_at
+          created_at, updated_at, command_step
 `
 
 type ClaimAgentRunLeaseParams struct {
@@ -143,6 +144,7 @@ func (q *Queries) ClaimAgentRunLease(ctx context.Context, arg ClaimAgentRunLease
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CommandStep,
 	)
 	return i, err
 }
@@ -160,7 +162,7 @@ WHERE id = $3
 RETURNING id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
           user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
           lease_owner, lease_expires_at, heartbeat_at, last_error,
-          created_at, updated_at
+          created_at, updated_at, command_step
 `
 
 type ClaimAgentRunLeaseFromOwnerParams struct {
@@ -199,6 +201,65 @@ func (q *Queries) ClaimAgentRunLeaseFromOwner(ctx context.Context, arg ClaimAgen
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CommandStep,
+	)
+	return i, err
+}
+
+const claimStaleAgentRunLease = `-- name: ClaimStaleAgentRunLease :one
+UPDATE agent_runs
+   SET state = 'recovering',
+       lease_owner = $1,
+       lease_expires_at = NOW() + $2::interval,
+       heartbeat_at = NOW(),
+       updated_at = NOW()
+WHERE id = $3
+  AND state IN ('preparing', 'running', 'recovering', 'finalizing')
+  AND lease_owner <> $1
+  AND (heartbeat_at IS NULL OR heartbeat_at < NOW() - $4::interval)
+RETURNING id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
+          user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
+          lease_owner, lease_expires_at, heartbeat_at, last_error,
+          created_at, updated_at, command_step
+`
+
+type ClaimStaleAgentRunLeaseParams struct {
+	LeaseOwner    string          `json:"lease_owner"`
+	LeaseDuration pgtype.Interval `json:"lease_duration"`
+	ID            string          `json:"id"`
+	StaleAfter    pgtype.Interval `json:"stale_after"`
+}
+
+func (q *Queries) ClaimStaleAgentRunLease(ctx context.Context, arg ClaimStaleAgentRunLeaseParams) (AgentRun, error) {
+	row := q.db.QueryRow(ctx, claimStaleAgentRunLease,
+		arg.LeaseOwner,
+		arg.LeaseDuration,
+		arg.ID,
+		arg.StaleAfter,
+	)
+	var i AgentRun
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ThreadID,
+		&i.RunKind,
+		&i.RequestID,
+		&i.SandboxID,
+		&i.Branch,
+		&i.UserRequest,
+		&i.SessionID,
+		&i.CommandID,
+		&i.CommandStartSeq,
+		&i.State,
+		&i.LogCursor,
+		&i.NextEventSeq,
+		&i.LeaseOwner,
+		&i.LeaseExpiresAt,
+		&i.HeartbeatAt,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CommandStep,
 	)
 	return i, err
 }
@@ -215,7 +276,7 @@ ON CONFLICT DO NOTHING
 RETURNING id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
           user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
           lease_owner, lease_expires_at, heartbeat_at, last_error,
-          created_at, updated_at
+          created_at, updated_at, command_step
 `
 
 type CreateAgentRunParams struct {
@@ -262,6 +323,7 @@ func (q *Queries) CreateAgentRun(ctx context.Context, arg CreateAgentRunParams) 
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CommandStep,
 	)
 	return i, err
 }
@@ -270,7 +332,7 @@ const getActiveAgentRunForThread = `-- name: GetActiveAgentRunForThread :one
 SELECT id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
        user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
        lease_owner, lease_expires_at, heartbeat_at, last_error,
-       created_at, updated_at
+       created_at, updated_at, command_step
 FROM agent_runs
 WHERE org_id = $1 AND thread_id = $2
   AND state IN ('preparing', 'running', 'recovering', 'finalizing')
@@ -307,6 +369,7 @@ func (q *Queries) GetActiveAgentRunForThread(ctx context.Context, arg GetActiveA
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CommandStep,
 	)
 	return i, err
 }
@@ -315,7 +378,7 @@ const getAgentRun = `-- name: GetAgentRun :one
 SELECT id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
        user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
        lease_owner, lease_expires_at, heartbeat_at, last_error,
-       created_at, updated_at
+       created_at, updated_at, command_step
 FROM agent_runs
 WHERE id = $1
 `
@@ -344,6 +407,7 @@ func (q *Queries) GetAgentRun(ctx context.Context, id string) (AgentRun, error) 
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CommandStep,
 	)
 	return i, err
 }
@@ -352,7 +416,7 @@ const getAgentRunByRequest = `-- name: GetAgentRunByRequest :one
 SELECT id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
        user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
        lease_owner, lease_expires_at, heartbeat_at, last_error,
-       created_at, updated_at
+       created_at, updated_at, command_step
 FROM agent_runs
 WHERE org_id = $1 AND request_id = $2
   AND state IN ('preparing', 'running', 'recovering', 'finalizing')
@@ -387,6 +451,7 @@ func (q *Queries) GetAgentRunByRequest(ctx context.Context, arg GetAgentRunByReq
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CommandStep,
 	)
 	return i, err
 }
@@ -395,7 +460,7 @@ const getLatestAgentRunForThread = `-- name: GetLatestAgentRunForThread :one
 SELECT id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
        user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
        lease_owner, lease_expires_at, heartbeat_at, last_error,
-       created_at, updated_at
+       created_at, updated_at, command_step
 FROM agent_runs
 WHERE org_id = $1 AND thread_id = $2
 ORDER BY created_at DESC
@@ -431,6 +496,7 @@ func (q *Queries) GetLatestAgentRunForThread(ctx context.Context, arg GetLatestA
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CommandStep,
 	)
 	return i, err
 }
@@ -439,7 +505,7 @@ const listActiveAgentRunsForLeaseOwnerPrefix = `-- name: ListActiveAgentRunsForL
 SELECT id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
        user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
        lease_owner, lease_expires_at, heartbeat_at, last_error,
-       created_at, updated_at
+       created_at, updated_at, command_step
 FROM agent_runs
 WHERE state IN ('preparing', 'running', 'recovering', 'finalizing')
   AND LEFT(lease_owner, LENGTH($1::text)) = $1::text
@@ -482,6 +548,7 @@ func (q *Queries) ListActiveAgentRunsForLeaseOwnerPrefix(ctx context.Context, ar
 			&i.LastError,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.CommandStep,
 		); err != nil {
 			return nil, err
 		}
@@ -535,7 +602,7 @@ const listExpiredAgentRuns = `-- name: ListExpiredAgentRuns :many
 SELECT id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
        user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
        lease_owner, lease_expires_at, heartbeat_at, last_error,
-       created_at, updated_at
+       created_at, updated_at, command_step
 FROM agent_runs
 WHERE state IN ('preparing', 'running', 'recovering', 'finalizing')
   AND (lease_expires_at IS NULL OR lease_expires_at < NOW())
@@ -573,6 +640,66 @@ func (q *Queries) ListExpiredAgentRuns(ctx context.Context, limit int32) ([]Agen
 			&i.LastError,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.CommandStep,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listStaleAgentRuns = `-- name: ListStaleAgentRuns :many
+SELECT id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
+       user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
+       lease_owner, lease_expires_at, heartbeat_at, last_error,
+       created_at, updated_at, command_step
+FROM agent_runs
+WHERE state IN ('preparing', 'running', 'recovering', 'finalizing')
+  AND (heartbeat_at IS NULL OR heartbeat_at < NOW() - $1::interval)
+ORDER BY heartbeat_at ASC NULLS FIRST, updated_at ASC
+LIMIT $2
+`
+
+type ListStaleAgentRunsParams struct {
+	StaleAfter pgtype.Interval `json:"stale_after"`
+	LimitCount int32           `json:"limit_count"`
+}
+
+func (q *Queries) ListStaleAgentRuns(ctx context.Context, arg ListStaleAgentRunsParams) ([]AgentRun, error) {
+	rows, err := q.db.Query(ctx, listStaleAgentRuns, arg.StaleAfter, arg.LimitCount)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AgentRun
+	for rows.Next() {
+		var i AgentRun
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.ThreadID,
+			&i.RunKind,
+			&i.RequestID,
+			&i.SandboxID,
+			&i.Branch,
+			&i.UserRequest,
+			&i.SessionID,
+			&i.CommandID,
+			&i.CommandStartSeq,
+			&i.State,
+			&i.LogCursor,
+			&i.NextEventSeq,
+			&i.LeaseOwner,
+			&i.LeaseExpiresAt,
+			&i.HeartbeatAt,
+			&i.LastError,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.CommandStep,
 		); err != nil {
 			return nil, err
 		}
@@ -630,14 +757,15 @@ const updateAgentRunCommand = `-- name: UpdateAgentRunCommand :exec
 UPDATE agent_runs
    SET session_id = $2,
        command_id = $3,
+       command_step = $4,
        command_start_seq = next_event_seq,
        state = 'running',
        heartbeat_at = NOW(),
-       lease_owner = $4,
-       lease_expires_at = NOW() + $5::interval,
+       lease_owner = $5,
+       lease_expires_at = NOW() + $6::interval,
        updated_at = NOW()
 WHERE id = $1
-  AND lease_owner = $4
+  AND lease_owner = $5
   AND state IN ('preparing', 'running', 'recovering', 'finalizing')
 `
 
@@ -645,6 +773,7 @@ type UpdateAgentRunCommandParams struct {
 	ID            string          `json:"id"`
 	SessionID     string          `json:"session_id"`
 	CommandID     string          `json:"command_id"`
+	CommandStep   string          `json:"command_step"`
 	LeaseOwner    string          `json:"lease_owner"`
 	LeaseDuration pgtype.Interval `json:"lease_duration"`
 }
@@ -654,6 +783,7 @@ func (q *Queries) UpdateAgentRunCommand(ctx context.Context, arg UpdateAgentRunC
 		arg.ID,
 		arg.SessionID,
 		arg.CommandID,
+		arg.CommandStep,
 		arg.LeaseOwner,
 		arg.LeaseDuration,
 	)
