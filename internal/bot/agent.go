@@ -450,6 +450,8 @@ func (b *Bot) persistFailingBootstrap(ctx context.Context, res *bootstrap.LoopRe
 // truncateLogTail returns the trailing 32 KB of s, walking forward to
 // the next valid UTF-8 lead byte so the column write doesn't reject
 // on an invalid byte sequence (Postgres TEXT requires valid UTF-8).
+// The store layer also sanitizes before DB writes; this pre-store
+// normalization keeps any intermediate copies valid and is idempotent.
 // Shared by ensureBootstrapSpec and persistFailingBootstrap.
 func truncateLogTail(s string) string {
 	const max = 32 * 1024
@@ -476,6 +478,9 @@ func bootstrapErrorSummary(err error) string {
 	msg := err.Error()
 	switch {
 	case strings.Contains(msg, "invalid byte sequence for encoding"):
+		// Current store writes sanitize bootstrap text fields before Postgres.
+		// Keep this classification for older deployments or future save paths
+		// that may still surface the raw SQLSTATE 22021 error.
 		return "could not save the generated spec because captured sandbox output contained invalid UTF-8"
 	case strings.Contains(msg, "save spec"):
 		return "could not save the generated spec"

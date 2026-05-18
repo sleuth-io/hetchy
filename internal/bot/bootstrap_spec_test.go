@@ -218,6 +218,56 @@ func TestTruncateLogTailSanitizesInvalidUTF8(t *testing.T) {
 	}
 }
 
+func TestBootstrapSkippedMessage(t *testing.T) {
+	const base = "Couldn't auto-bootstrap this repo for end-to-end validation — running the agent without a validation spec."
+	got := bootstrapSkippedMessage(nil)
+	if got != base+" Check server logs for details." {
+		t.Fatalf("nil error message = %q", got)
+	}
+
+	got = bootstrapSkippedMessage(errors.New(`save spec: bootstrap: upsert spec: ERROR: invalid byte sequence for encoding "UTF8": 0xe2 0x80 0x5b (SQLSTATE 22021)`))
+	if !strings.Contains(got, "Reason: could not save the generated spec because captured sandbox output contained invalid UTF-8.") {
+		t.Fatalf("invalid UTF-8 message = %q", got)
+	}
+}
+
+func TestBootstrapErrorSummary(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{
+			name: "invalid utf8",
+			err:  errors.New(`save spec: bootstrap: upsert spec: ERROR: invalid byte sequence for encoding "UTF8"`),
+			want: "could not save the generated spec because captured sandbox output contained invalid UTF-8",
+		},
+		{
+			name: "save spec",
+			err:  errors.New("save spec: bootstrap: upsert spec: connection reset"),
+			want: "could not save the generated spec",
+		},
+		{
+			name: "parse manifest",
+			err:  errors.New("parse manifest: unexpected end of JSON input"),
+			want: "the generated manifest was not valid JSON",
+		},
+		{
+			name: "default",
+			err:  errors.New("unexpected internal failure"),
+			want: "bootstrap returned an internal error; check server logs for details",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := bootstrapErrorSummary(tt.err); got != tt.want {
+				t.Fatalf("summary = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestEnsureBootstrapSpecReturnsExistingSpecWithoutExternalWork(t *testing.T) {
 	boot := &fakeBootstrapStore{
 		spec: &bootstrap.Spec{
