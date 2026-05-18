@@ -189,14 +189,20 @@ func TestShLines(t *testing.T) {
 func TestRecoverableSandboxStepKeepsTerminalCommand(t *testing.T) {
 	for _, step := range []string{
 		"run-script",
+		"setup-clone-write",
 		"setup-clone-run",
 		"detect-tar",
+		"bootstrap-write",
+		"bootstrap-write-bootstrap",
 		"bootstrap-run-bootstrap",
 		"write-script",
 		"write-env",
 	} {
 		if !recoverableSandboxStep(step) {
 			t.Fatalf("recoverableSandboxStep(%q) = false, want true", step)
+		}
+		if step != "run-script" && !unframedRecoverableStep(step) {
+			t.Fatalf("unframedRecoverableStep(%q) = false, want true for persisted pre-agent command", step)
 		}
 	}
 	for _, step := range []string{"bootstrap-read", "spec-read", "test-step", ""} {

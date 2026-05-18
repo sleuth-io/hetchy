@@ -562,6 +562,69 @@ func TestRecoverAgentRunReadyBootstrapCommandSavesSpecAndContinues(t *testing.T)
 	}
 }
 
+func TestRecoverUnframedAgentRunTimesOutStuckCommand(t *testing.T) {
+	oldPollInterval := unframedRecoveryPollInterval
+	oldPollTimeout := unframedRecoveryPollTimeout
+	unframedRecoveryPollInterval = time.Millisecond
+	unframedRecoveryPollTimeout = func(string) time.Duration { return 5 * time.Millisecond }
+	t.Cleanup(func() {
+		unframedRecoveryPollInterval = oldPollInterval
+		unframedRecoveryPollTimeout = oldPollTimeout
+	})
+
+	store := &fakeRunStore{enabled: true}
+	convs := &fakeConversationStore{getErr: convstore.ErrNotFound}
+	var statusCalls int
+	var cleanupCall string
+	b := &Bot{
+		log:      discardLogger(),
+		runs:     store,
+		convs:    convs,
+		workerID: "worker-1",
+		sessionCommandStatusFn: func(context.Context, *daytona.Sandbox, string, string) (map[string]any, error) {
+			statusCalls++
+			return map[string]any{}, nil
+		},
+		cleanupSandboxFn: func(_ context.Context, sb *daytona.Sandbox, reason string) {
+			cleanupCall = sb.ID + "|" + reason
+		},
+	}
+	run := runstore.Run{
+		ID:          "run_stuck",
+		OrgID:       "org_1",
+		ThreadID:    "thread_1",
+		UserRequest: "ship it",
+		SandboxID:   "sandbox-1",
+		SessionID:   "session-1",
+		CommandID:   "command-1",
+		CommandStep: "write-script",
+		RunKind:     "chat",
+	}
+
+	b.recoverUnframedAgentRun(context.Background(), &daytona.Sandbox{ID: "sandbox-1"}, run, nil, nil)
+
+	if statusCalls == 0 {
+		t.Fatal("expected command status polling")
+	}
+	if len(store.touched) == 0 || store.touched[0].runID != "run_stuck" {
+		t.Fatalf("touches = %+v", store.touched)
+	}
+	if len(store.updateStates) == 0 {
+		t.Fatal("expected failed state update")
+	}
+	last := store.updateStates[len(store.updateStates)-1]
+	if last.state != runstore.StateFailed || !strings.Contains(last.lastErr, "status polling timed out") {
+		t.Fatalf("last state = %+v", last)
+	}
+	block := convs.lastUpsert(t).ResponseBlocks[0][0]
+	if block.Kind != blocks.KindError || block.Title != "Agent failed" || !strings.Contains(block.Body, "did not finish") {
+		t.Fatalf("terminal block = %+v", block)
+	}
+	if cleanupCall != "sandbox-1|recovered failed run" {
+		t.Fatalf("cleanup call = %q", cleanupCall)
+	}
+}
+
 func TestRecoverAgentRunReadyFinishedCommandWithoutFrameFails(t *testing.T) {
 	store := &fakeRunStore{enabled: true}
 	convs := &fakeConversationStore{getErr: convstore.ErrNotFound}

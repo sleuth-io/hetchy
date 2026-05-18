@@ -99,6 +99,7 @@ func (b *Bot) recoverStartupRuns(ctx context.Context) {
 			"sandbox", reclaimed.SandboxID,
 			"session", reclaimed.SessionID,
 			"command", reclaimed.CommandID,
+			"command_step", reclaimed.CommandStep,
 			"previous_worker", run.LeaseOwner,
 		)
 		b.launchRecoverAgentRun(ctx, reclaimed, true)

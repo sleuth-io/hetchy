@@ -18,6 +18,16 @@ import (
 	"github.com/hetchyhq/hetchy/internal/runstore"
 )
 
+var (
+	unframedRecoveryPollInterval = 5 * time.Second
+	unframedRecoveryPollTimeout  = func(step string) time.Duration {
+		if step == "bootstrap-run-bootstrap" {
+			return 65 * time.Minute
+		}
+		return 30 * time.Minute
+	}
+)
+
 func unframedRecoverableStep(step string) bool {
 	switch step {
 	case "setup-clone-write",
@@ -57,15 +67,21 @@ func (b *Bot) recoverUnframedAgentRun(ctx context.Context, sb *daytona.Sandbox, 
 	}
 	replayCursor := run.LogCursor
 	logText := ""
+	runCtx := contextWithAgentRun(ctx, run)
+	stopHeartbeat := b.startRunLeaseHeartbeat(runCtx)
+	defer stopHeartbeat()
+	b.runs.TouchLease(context.Background(), run.ID, b.workerID, agentRunLeaseDuration)
 
-	poll := time.NewTicker(5 * time.Second)
+	poll := time.NewTicker(unframedRecoveryPollInterval)
 	defer poll.Stop()
+	timeout := unframedRecoveryPollTimeout(run.CommandStep)
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
 	for {
 		if live != nil && live.Cancelled() {
 			b.finishRecoveredCancellation(ctx, run)
 			return
 		}
-		b.runs.TouchLease(context.Background(), run.ID, b.workerID, agentRunLeaseDuration)
 
 		status, err := b.sessionCommandStatus(ctx, sb, run.SessionID, run.CommandID)
 		if err != nil {
@@ -81,7 +97,14 @@ func (b *Bot) recoverUnframedAgentRun(ctx context.Context, sb *daytona.Sandbox, 
 			}
 		}
 		if !done {
-			<-poll.C
+			select {
+			case <-poll.C:
+			case <-deadline.C:
+				err := fmt.Errorf("recovered command %s status polling timed out after %s", run.CommandStep, timeout)
+				body := fmt.Sprintf("The recovered sandbox command `%s` did not finish within %s. Sandbox `%s` will be archived.", run.CommandStep, timeout, run.SandboxID)
+				b.finishRecoveredFailure(ctx, run, live, "Agent failed", body, err)
+				return
+			}
 			continue
 		}
 
@@ -374,6 +397,13 @@ func (b *Bot) cleanupRecoveredFailedRun(ctx context.Context, run runstore.Run) {
 		return
 	}
 	reason := "recovered failed run"
+	if b.cleanupSandboxByIDFn != nil {
+		if run.SessionID != "" && b.deleteSandboxSessionFn != nil {
+			b.deleteSandboxSession(&daytona.Sandbox{ID: run.SandboxID}, run.SessionID)
+		}
+		b.cleanupSandboxByIDFn(run.SandboxID, reason)
+		return
+	}
 	if b.cleanupSandboxFn != nil {
 		sb := &daytona.Sandbox{ID: run.SandboxID}
 		if run.SessionID != "" && b.deleteSandboxSessionFn != nil {
@@ -382,16 +412,8 @@ func (b *Bot) cleanupRecoveredFailedRun(ctx context.Context, run runstore.Run) {
 		b.cleanupSandbox(ctx, sb, reason)
 		return
 	}
-	if b.getSandboxFn == nil && b.daytona == nil {
-		cleanup := b.cleanupSandboxByID
-		if b.cleanupSandboxByIDFn != nil {
-			cleanup = b.cleanupSandboxByIDFn
-		}
-		cleanup(run.SandboxID, reason)
-		return
-	}
-	if b.getSandboxFn != nil && b.cleanupSandboxFn == nil {
-		b.log.Warn("recovered failed run cleanup skipped: test sandbox has no cleanup hook",
+	if b.daytona == nil {
+		b.log.Warn("recovered failed run cleanup skipped: daytona client unavailable",
 			"run_id", run.ID,
 			"sandbox", run.SandboxID,
 		)
