@@ -20,6 +20,7 @@ func TestBuildPromptContent(t *testing.T) {
 				"image":             "mcr.microsoft.com/devcontainers/go:1-1.25",
 				"features":          map[string]any{"ghcr.io/devcontainers/features/docker-outside-of-docker:1": map[string]any{}},
 				"postCreateCommand": "go mod download",
+				"postAttachCommand": "code --install-extension example.extension",
 				"forwardPorts":      []any{8080},
 			},
 			AlternatePaths: []string{".devcontainer/worker/devcontainer.json"},
@@ -87,6 +88,9 @@ func TestBuildPromptContent(t *testing.T) {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("rendered prompt missing %q\n--- prompt ---\n%s\n", want, prompt)
 		}
+	}
+	if strings.Contains(prompt, "postAttachCommand") {
+		t.Errorf("rendered prompt included client attach hook\n--- prompt ---\n%s\n", prompt)
 	}
 
 	// The hints section must show up AFTER the process steps. Otherwise

@@ -123,8 +123,7 @@ func detectDevContainer(root string, notes *[]string) *DevContainer {
 		return nil
 	}
 
-	alternatePaths := append([]string(nil), candidates[1:]...)
-	for _, rel := range candidates {
+	for i, rel := range candidates {
 		p := filepath.Join(root, rel)
 		data, err := os.ReadFile(p)
 		if err != nil {
@@ -136,11 +135,22 @@ func detectDevContainer(root string, notes *[]string) *DevContainer {
 		clean := stripJSONC(data)
 		if err := json.Unmarshal(clean, &raw); err != nil {
 			*notes = append(*notes, fmt.Sprintf("devcontainer parse failed (%s): %v", rel, err))
-			return &DevContainer{Path: rel, AlternatePaths: alternatePaths}
+			continue
 		}
+		alternatePaths := devContainerAlternatePaths(candidates, i)
 		return &DevContainer{Path: rel, Raw: raw, AlternatePaths: alternatePaths}
 	}
 	return nil
+}
+
+func devContainerAlternatePaths(candidates []string, selected int) []string {
+	if len(candidates) <= 1 {
+		return nil
+	}
+	out := make([]string, 0, len(candidates)-1)
+	out = append(out, candidates[:selected]...)
+	out = append(out, candidates[selected+1:]...)
+	return out
 }
 
 func devContainerCandidates(root string) []string {
@@ -213,7 +223,7 @@ func stripJSONComments(data []byte) []byte {
 				continue
 			case '*':
 				i += 2
-				for i+1 < len(data) && !(data[i] == '*' && data[i+1] == '/') {
+				for i+1 < len(data) && (data[i] != '*' || data[i+1] != '/') {
 					if data[i] == '\n' {
 						out = append(out, '\n')
 					}
@@ -232,7 +242,7 @@ func stripTrailingJSONCommas(data []byte) []byte {
 	out := make([]byte, 0, len(data))
 	inString := false
 	escaped := false
-	for i := 0; i < len(data); i++ {
+	for i := range data {
 		c := data[i]
 		if inString {
 			out = append(out, c)

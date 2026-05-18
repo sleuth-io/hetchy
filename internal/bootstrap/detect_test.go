@@ -135,6 +135,48 @@ func TestDetectDevContainerNestedFallback(t *testing.T) {
 	}
 }
 
+func TestDetectDevContainerParseFailureFallsBack(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, ".devcontainer", "devcontainer.json"), `{`)
+	mustWrite(t, filepath.Join(root, ".devcontainer.json"), `{"image":"ubuntu:24.04"}`)
+	mustWrite(t, filepath.Join(root, ".devcontainer", "worker", "devcontainer.json"), `{"image":"ubuntu:22.04"}`)
+
+	hints, err := Detect(root)
+	if err != nil {
+		t.Fatalf("detect: %v", err)
+	}
+	if hints.DevContainer == nil {
+		t.Fatal("expected devcontainer hint")
+	}
+	if hints.DevContainer.Path != ".devcontainer.json" {
+		t.Fatalf("devcontainer path = %q", hints.DevContainer.Path)
+	}
+	if got := hints.DevContainer.Raw["image"]; got != "ubuntu:24.04" {
+		t.Fatalf("image = %#v", got)
+	}
+	wantAlternates := []string{".devcontainer/devcontainer.json", ".devcontainer/worker/devcontainer.json"}
+	if strings.Join(hints.DevContainer.AlternatePaths, ",") != strings.Join(wantAlternates, ",") {
+		t.Fatalf("alternate paths = %#v, want %#v", hints.DevContainer.AlternatePaths, wantAlternates)
+	}
+	if len(hints.Notes) != 1 || !strings.Contains(hints.Notes[0], "devcontainer parse failed (.devcontainer/devcontainer.json)") {
+		t.Fatalf("notes = %#v", hints.Notes)
+	}
+}
+
+func TestDevContainerAlternatePathsUsesSelectedIndex(t *testing.T) {
+	candidates := []string{
+		".devcontainer/devcontainer.json",
+		".devcontainer.json",
+		".devcontainer/worker/devcontainer.json",
+	}
+
+	got := devContainerAlternatePaths(candidates, 1)
+	want := []string{".devcontainer/devcontainer.json", ".devcontainer/worker/devcontainer.json"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("alternate paths = %#v, want %#v", got, want)
+	}
+}
+
 // TestDetectMissingRoot makes sure Detect doesn't silently succeed on
 // a nonexistent path — that would cause the loop to hand the LLM a
 // hints payload pointing at /tmp/does-not-exist.

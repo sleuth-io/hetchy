@@ -341,7 +341,6 @@ func renderDevContainer(b *strings.Builder, raw map[string]any) {
 		"updateContentCommand",
 		"postCreateCommand",
 		"postStartCommand",
-		"postAttachCommand",
 	} {
 		v, ok := raw[key]
 		if !ok {
