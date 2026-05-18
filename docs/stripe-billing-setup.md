@@ -34,13 +34,15 @@ The app expects these environment variables:
 | `STRIPE_WEBHOOK_SECRET` | Webhook signing secret for that environment's endpoint. Starts with `whsec_...`. |
 | `STRIPE_SUBSCRIPTION_PRICE_IDS` | Comma-, semicolon-, or newline-separated map of paid plan code to recurring Price ID, for example `starter=price_...,team=price_...`. |
 | `STRIPE_SUBSCRIPTION_PRICE_ID` | Legacy fallback recurring Stripe Price ID for the default Team plan. Use only when a single subscription price is configured. |
-| `STRIPE_TOPUP_PRICE_ID` | A one-time Stripe Price ID representing exactly 10 Hetchy credits. Starts with `price_...`. |
+| `STRIPE_TOPUP_PRICE_IDS` | Comma-, semicolon-, or newline-separated map of paid plan code to one-time 10-credit top-up Price ID. |
+| `STRIPE_TOPUP_PRICE_ID` | Legacy fallback one-time top-up Price ID. Use only when a single top-up price is configured. |
+| `STRIPE_RETURN_TO` | Public app root used for Stripe Checkout and Customer Portal return URLs. |
 
-Also confirm `LOGOUT_RETURN_TO` points at the public app root for the environment, because Checkout and Portal return URLs are built from `Config.PublicBaseURL()`:
+Also confirm `STRIPE_RETURN_TO` points at the public app root for the environment, because Checkout and Portal return URLs are built from `Config.StripeReturnBaseURL()`:
 
 | Environment | Example |
 | --- | --- |
-| Dev | `http://localhost:8080/` |
+| Dev | `http://dev.hetchy.ai:8080/` or the exact localhost/tunnel origin you use in the browser |
 | Stage | `https://<stage-host>/` |
 | Prod | `https://app.hetchy.ai/` |
 
@@ -93,21 +95,28 @@ per_run_max_credits=<plan per-run reservation>
 
 ### Top-Up Product
 
-Create one one-time price:
+Create one top-up product and one one-time Price for each paid plan:
 
 - Product name: `Hetchy Usage Credits - 10 credits`
 - Price type: One-time
 - Currency: `usd`
-- Amount: `$9.00`
-- Save the Price ID as `STRIPE_TOPUP_PRICE_ID`
+
+| Plan | Amount | Extra credit price |
+| --- | ---: | ---: |
+| `starter` | `$12.50` | `$1.25/credit` |
+| `team` | `$9.00` | `$0.90/credit` |
+| `growth` | `$6.50` | `$0.65/credit` |
+| `business` | `$4.50` | `$0.45/credit` |
+
+Set the resulting Price IDs in `STRIPE_TOPUP_PRICE_IDS`.
 
 Manual top-ups use Checkout quantity:
 
 ```text
-quantity N => grants N * 10 Hetchy credits after checkout.session.completed
+quantity N => charges N top-up units at the org's current plan price and grants N * 10 Hetchy credits after checkout.session.completed
 ```
 
-Auto top-up uses the same one-time Price ID and charges exactly one quantity at a time.
+Auto top-up uses the org's current plan top-up Price ID and charges exactly one quantity at a time.
 
 ## Customer Portal
 
@@ -154,7 +163,7 @@ Do not configure Connect webhooks. Hetchy listens for account-level events from 
 
 Use Stripe test mode or a dedicated Stripe Sandbox for local development.
 
-Current dev sandbox resources created with the Stripe CLI on May 15, 2026:
+Current dev sandbox resources created with the Stripe CLI on May 15 and May 18, 2026:
 
 | Plan/resource | Product ID | Price ID | Notes |
 | --- | --- | --- | --- |
@@ -162,11 +171,14 @@ Current dev sandbox resources created with the Stripe CLI on May 15, 2026:
 | Team | `prod_UWcwNawJSICYqO` | `price_1TXZgoGbUsjCTHqjsKErCD1E` | `$199.00` monthly, 300 credits, max `pro` |
 | Growth | `prod_UWcw1Pw1B7R2sp` | `price_1TXZgoGbUsjCTHqjr0AVzxsg` | `$499.00` monthly, 1,000 credits, max `max` |
 | Business | `prod_UWcwILdgEPHWOM` | `price_1TXZgoGbUsjCTHqj3G6pt2w8` | `$1,499.00` monthly, 4,000 credits, max `max` |
-| 10-credit top-up | `prod_UWcxj9L8dLX5G9` | `price_1TXZhKGbUsjCTHqjDnhVPea5` | `$9.00` one-time top-up |
+| Starter 10-credit top-up | `prod_UWcxj9L8dLX5G9` | `price_1TYYNpGbUsjCTHqjXgbdT1Zg` | `$12.50` one-time top-up |
+| Team 10-credit top-up | `prod_UWcxj9L8dLX5G9` | `price_1TXZhKGbUsjCTHqjDnhVPea5` | `$9.00` one-time top-up |
+| Growth 10-credit top-up | `prod_UWcxj9L8dLX5G9` | `price_1TYYNpGbUsjCTHqjYiOWMJ6a` | `$6.50` one-time top-up |
+| Business 10-credit top-up | `prod_UWcxj9L8dLX5G9` | `price_1TYYNpGbUsjCTHqjW2f0gT6c` | `$4.50` one-time top-up |
 
 1. In Stripe Dashboard, switch to test mode or select the dev sandbox.
 2. Create the subscription product and recurring price.
-3. Create the top-up product and one-time price.
+3. Create the top-up product and one-time prices.
 4. Copy the test secret key from Developers > API keys.
 5. Log in to the Stripe CLI:
 
@@ -189,8 +201,8 @@ stripe listen \
 STRIPE_SECRET_KEY=sk_test_...
 STRIPE_WEBHOOK_SECRET=whsec_...
 STRIPE_SUBSCRIPTION_PRICE_IDS=starter=price_1TXZgoGbUsjCTHqj7uIOpQWI,team=price_1TXZgoGbUsjCTHqjsKErCD1E,growth=price_1TXZgoGbUsjCTHqjr0AVzxsg,business=price_1TXZgoGbUsjCTHqj3G6pt2w8
-STRIPE_TOPUP_PRICE_ID=price_1TXZhKGbUsjCTHqjDnhVPea5
-LOGOUT_RETURN_TO=http://localhost:8080/
+STRIPE_TOPUP_PRICE_IDS=starter=price_1TYYNpGbUsjCTHqjXgbdT1Zg,team=price_1TXZhKGbUsjCTHqjDnhVPea5,growth=price_1TYYNpGbUsjCTHqjYiOWMJ6a,business=price_1TYYNpGbUsjCTHqjW2f0gT6c
+STRIPE_RETURN_TO=http://dev.hetchy.ai:8080/
 ```
 
 9. Start the app.
@@ -199,7 +211,7 @@ LOGOUT_RETURN_TO=http://localhost:8080/
 12. Buy a manual top-up and confirm the top-up balance increases by `quantity * 10`.
 13. Enable auto top-up in Hetchy and run a low-balance org through admission to verify one 10-credit unit is charged.
 
-If you use a tunnel instead of localhost, set `LOGOUT_RETURN_TO` to the tunnel origin and either keep using `stripe listen --forward-to localhost:8080/stripe/webhook` or create a Dashboard webhook endpoint to the tunnel URL.
+If you use a tunnel instead of localhost, set `STRIPE_RETURN_TO` to the tunnel origin and either keep using `stripe listen --forward-to localhost:8080/stripe/webhook` or create a Dashboard webhook endpoint to the tunnel URL.
 
 ## Stage Setup
 
@@ -220,7 +232,7 @@ Store the stage webhook endpoint signing secret from Stripe Dashboard as `STRIPE
 
 1. In Stripe Dashboard, select the stage sandbox or test mode account.
 2. Create the subscription product and recurring price.
-3. Create the top-up product and one-time price.
+3. Create the top-up product and one-time prices.
 4. Configure Customer Portal in that same mode.
 5. Create a webhook endpoint:
 
@@ -237,7 +249,7 @@ STRIPE_SECRET_KEY=sk_test_...
 STRIPE_WEBHOOK_SECRET=whsec_...
 STRIPE_SUBSCRIPTION_PRICE_ID=price_1TXZVXGbUsjCTHqjSNKTjCOl
 STRIPE_TOPUP_PRICE_ID=price_1TXZVeGbUsjCTHqjFnecuTue
-LOGOUT_RETURN_TO=https://hetchy-hetchy-staging.demo.okteto.dev/
+STRIPE_RETURN_TO=https://hetchy-hetchy-staging.demo.okteto.dev/
 ```
 
 9. Deploy stage.
@@ -259,8 +271,8 @@ The current Stripe CLI login is for `Hetchy.ai sandbox (acct_1TXZNrGbUsjCTHqj)` 
 
 1. Activate the Stripe account for live payments.
 2. In live mode, configure business profile, branding, customer emails, invoice settings, payment methods, and tax settings as required by the business.
-3. Create the live subscription product and recurring price.
-4. Create the live top-up product and one-time price.
+3. Create the live subscription products and recurring prices.
+4. Create the live top-up product and one-time prices.
 5. Configure the live Customer Portal.
 6. Create a live webhook endpoint:
 
@@ -275,9 +287,9 @@ https://app.hetchy.ai/stripe/webhook
 ```bash
 STRIPE_SECRET_KEY=sk_live_...
 STRIPE_WEBHOOK_SECRET=whsec_...
-STRIPE_SUBSCRIPTION_PRICE_ID=price_...
-STRIPE_TOPUP_PRICE_ID=price_...
-LOGOUT_RETURN_TO=https://app.hetchy.ai/
+STRIPE_SUBSCRIPTION_PRICE_IDS=starter=price_...,team=price_...,growth=price_...,business=price_...
+STRIPE_TOPUP_PRICE_IDS=starter=price_...,team=price_...,growth=price_...,business=price_...
+STRIPE_RETURN_TO=https://app.hetchy.ai/
 ```
 
 10. Deploy prod.
@@ -309,10 +321,10 @@ Before enabling billing in any environment:
 - `STRIPE_SECRET_KEY` belongs to the same Stripe mode/account as every configured Price ID.
 - `STRIPE_WEBHOOK_SECRET` belongs to the webhook endpoint that points at that app environment.
 - The webhook endpoint includes all five required events.
-- `STRIPE_TOPUP_PRICE_ID` is a one-time price for exactly 10 Hetchy credits.
+- Every price in `STRIPE_TOPUP_PRICE_IDS` is a one-time price for exactly 10 Hetchy credits.
 - Every price in `STRIPE_SUBSCRIPTION_PRICE_IDS` is a recurring price for the matching paid plan.
 - Customer Portal is configured in the same Stripe mode/account.
-- `LOGOUT_RETURN_TO` is the public app root for that environment.
+- `STRIPE_RETURN_TO` is the public app root for that environment.
 - The app has run the billing migration.
 
 ## Failure Modes

@@ -33,7 +33,7 @@ func requiredEnv() map[string]string {
 }
 
 func TestLoadConfig_AllRequiredSet(t *testing.T) {
-	clearEnv(t, "AUTH_BYPASS", "WEB_PORT", "DAYTONA_API_URL", "LOGOUT_RETURN_TO")
+	clearEnv(t, "AUTH_BYPASS", "WEB_PORT", "DAYTONA_API_URL", "LOGOUT_RETURN_TO", "STRIPE_RETURN_TO")
 	setEnv(t, requiredEnv())
 
 	cfg, err := LoadConfig()
@@ -52,7 +52,7 @@ func TestLoadConfig_AllRequiredSet(t *testing.T) {
 }
 
 func TestLoadConfig_AppliesDefaults(t *testing.T) {
-	clearEnv(t, "AUTH_BYPASS", "WEB_PORT", "DAYTONA_API_URL", "LOGOUT_RETURN_TO", "HETCHY_SX_PUBLIC_VAULT_URL",
+	clearEnv(t, "AUTH_BYPASS", "WEB_PORT", "DAYTONA_API_URL", "LOGOUT_RETURN_TO", "STRIPE_RETURN_TO", "HETCHY_SX_PUBLIC_VAULT_URL",
 		"DAYTONA_CACHE_VOLUMES_DISABLED", "DAYTONA_CACHE_VOLUME_PREFIX", "DAYTONA_CACHE_PRUNE_DAYS")
 	setEnv(t, requiredEnv())
 
@@ -66,6 +66,9 @@ func TestLoadConfig_AppliesDefaults(t *testing.T) {
 	if cfg.LogoutReturnTo != "http://localhost:8080/" {
 		t.Errorf("LogoutReturnTo default = %q", cfg.LogoutReturnTo)
 	}
+	if cfg.StripeReturnTo != "http://localhost:8080/" {
+		t.Errorf("StripeReturnTo default = %q", cfg.StripeReturnTo)
+	}
 	if cfg.SXPublicVaultURL != DefaultSXPublicVaultURL {
 		t.Errorf("SXPublicVaultURL default = %q", cfg.SXPublicVaultURL)
 	}
@@ -77,6 +80,24 @@ func TestLoadConfig_AppliesDefaults(t *testing.T) {
 	}
 	if cfg.DaytonaCachePruneDays != 30 {
 		t.Errorf("DaytonaCachePruneDays default = %d", cfg.DaytonaCachePruneDays)
+	}
+}
+
+func TestLoadConfig_StripeReturnToOverridesPublicBase(t *testing.T) {
+	clearEnv(t, "AUTH_BYPASS")
+	setEnv(t, requiredEnv())
+	t.Setenv("LOGOUT_RETURN_TO", "https://app.example.test/")
+	t.Setenv("STRIPE_RETURN_TO", "https://billing.example.test/")
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if got := cfg.PublicBaseURL(); got != "https://app.example.test" {
+		t.Fatalf("PublicBaseURL = %q", got)
+	}
+	if got := cfg.StripeReturnBaseURL(); got != "https://billing.example.test" {
+		t.Fatalf("StripeReturnBaseURL = %q", got)
 	}
 }
 
@@ -136,6 +157,32 @@ func TestLoadConfig_StripeSubscriptionPriceIDLegacyDefaultsToTeam(t *testing.T) 
 	}
 	if got := cfg.StripeSubscriptionPriceIDs["team"]; got != "price_team" {
 		t.Fatalf("legacy StripeSubscriptionPriceID mapped to team = %q", got)
+	}
+}
+
+func TestLoadConfig_StripeTopupPriceIDs(t *testing.T) {
+	clearEnv(t, "AUTH_BYPASS", "STRIPE_TOPUP_PRICE_ID", "STRIPE_TOPUP_PRICE_IDS")
+	setEnv(t, requiredEnv())
+	t.Setenv("STRIPE_TOPUP_PRICE_ID", "price_legacy_topup")
+	t.Setenv("STRIPE_TOPUP_PRICE_IDS", "starter=price_starter_topup; team=price_team_topup\n growth=price_growth_topup,business=price_business_topup")
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	want := map[string]string{
+		"starter":  "price_starter_topup",
+		"team":     "price_team_topup",
+		"growth":   "price_growth_topup",
+		"business": "price_business_topup",
+	}
+	for plan, priceID := range want {
+		if got := cfg.StripeTopupPriceIDs[plan]; got != priceID {
+			t.Fatalf("StripeTopupPriceIDs[%q] = %q, want %q", plan, got, priceID)
+		}
+	}
+	if cfg.StripeTopupPriceID != "price_legacy_topup" {
+		t.Fatalf("StripeTopupPriceID = %q", cfg.StripeTopupPriceID)
 	}
 }
 

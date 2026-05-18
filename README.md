@@ -106,7 +106,8 @@ database, not in Doppler. Doppler only holds the *process-level* config:
 | `WORKOS_CLIENT_ID` | WorkOS client ID (client_test_…) |
 | `WORKOS_COOKIE_PASSWORD` | 32-byte secret for sealing session cookies |
 | `WORKOS_REDIRECT_URI` | OAuth callback URL — must match a Redirect URI in the WorkOS dashboard (use `http://dev.hetchy.ai:8080/callback` for local dev) |
-| `LOGOUT_RETURN_TO` | URL the browser lands on after WorkOS-side logout |
+| `LOGOUT_RETURN_TO` | Legacy public app root for non-Stripe generated links |
+| `STRIPE_RETURN_TO` | Public app root for Stripe Checkout and Customer Portal return URLs |
 | `SECRETS_ENCRYPTION_KEY` | 32-byte key used to encrypt per-org tokens at rest |
 | `DATABASE_URL` | Postgres connection string (required) |
 | `DAYTONA_API_URL` | Daytona API endpoint |

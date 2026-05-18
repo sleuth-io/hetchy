@@ -94,6 +94,8 @@ type Config struct {
 	StripeSubscriptionPriceID  string
 	StripeSubscriptionPriceIDs map[string]string
 	StripeTopupPriceID         string
+	StripeTopupPriceIDs        map[string]string
+	StripeReturnTo             string
 
 	AuthBypass      bool
 	AuthBypassUser  string
@@ -148,6 +150,7 @@ func LoadConfig() (Config, error) {
 
 	port := getenvDefault("WEB_PORT", "8080")
 	logout := getenvDefault("LOGOUT_RETURN_TO", "http://localhost:"+port+"/")
+	stripeReturnTo := getenvDefault("STRIPE_RETURN_TO", logout)
 	// CookieSecure defaults to true (required for production HTTPS). It is
 	// forced to false when COOKIE_INSECURE=1 is set OR when WORKOS_REDIRECT_URI
 	// starts with http:// — that scheme indicates the server is running over
@@ -228,19 +231,32 @@ func LoadConfig() (Config, error) {
 			os.Getenv("STRIPE_SUBSCRIPTION_PRICE_IDS"),
 			os.Getenv("STRIPE_SUBSCRIPTION_PRICE_ID"),
 		),
-		StripeTopupPriceID: strings.TrimSpace(os.Getenv("STRIPE_TOPUP_PRICE_ID")),
-		AuthBypass:         bypass,
-		AuthBypassUser:     getenvDefault("AUTH_BYPASS_USER", "user_bypass"),
-		AuthBypassOrg:      os.Getenv("AUTH_BYPASS_ORG"),
-		AuthBypassRole:     getenvDefault("AUTH_BYPASS_ROLE", "admin"),
-		AuthBypassEmail:    getenvDefault("AUTH_BYPASS_EMAIL", "bypass@hetchy.local"),
-		S3Bucket:           strings.TrimSpace(os.Getenv("HETCHY_S3_BUCKET")),
-		S3Region:           strings.TrimSpace(os.Getenv("HETCHY_S3_REGION")),
-		SXPublicVaultURL:   getenvDefaultTrimAllowDisabled("HETCHY_SX_PUBLIC_VAULT_URL", DefaultSXPublicVaultURL),
+		StripeTopupPriceID:  strings.TrimSpace(os.Getenv("STRIPE_TOPUP_PRICE_ID")),
+		StripeTopupPriceIDs: stripePriceIDMap(os.Getenv("STRIPE_TOPUP_PRICE_IDS")),
+		StripeReturnTo:      stripeReturnTo,
+		AuthBypass:          bypass,
+		AuthBypassUser:      getenvDefault("AUTH_BYPASS_USER", "user_bypass"),
+		AuthBypassOrg:       os.Getenv("AUTH_BYPASS_ORG"),
+		AuthBypassRole:      getenvDefault("AUTH_BYPASS_ROLE", "admin"),
+		AuthBypassEmail:     getenvDefault("AUTH_BYPASS_EMAIL", "bypass@hetchy.local"),
+		S3Bucket:            strings.TrimSpace(os.Getenv("HETCHY_S3_BUCKET")),
+		S3Region:            strings.TrimSpace(os.Getenv("HETCHY_S3_REGION")),
+		SXPublicVaultURL:    getenvDefaultTrimAllowDisabled("HETCHY_SX_PUBLIC_VAULT_URL", DefaultSXPublicVaultURL),
 	}, nil
 }
 
 func stripeSubscriptionPriceIDs(raw, legacy string) map[string]string {
+	out := stripePriceIDMap(raw)
+	if legacy = strings.TrimSpace(legacy); legacy != "" {
+		defaultPlan := billing.DefaultPaidPlan()
+		if out[defaultPlan.Code] == "" {
+			out[defaultPlan.Code] = legacy
+		}
+	}
+	return out
+}
+
+func stripePriceIDMap(raw string) map[string]string {
 	out := map[string]string{}
 	for _, entry := range strings.FieldsFunc(raw, func(r rune) bool {
 		return r == ',' || r == ';' || r == '\n'
@@ -253,12 +269,6 @@ func stripeSubscriptionPriceIDs(raw, legacy string) map[string]string {
 		priceID := strings.TrimSpace(parts[1])
 		if plan != "" && priceID != "" {
 			out[plan] = priceID
-		}
-	}
-	if legacy = strings.TrimSpace(legacy); legacy != "" {
-		defaultPlan := billing.DefaultPaidPlan()
-		if out[defaultPlan.Code] == "" {
-			out[defaultPlan.Code] = legacy
 		}
 	}
 	return out
@@ -284,15 +294,25 @@ func getenvDefaultTrimAllowDisabled(key, def string) string {
 	}
 }
 
-// PublicBaseURL returns the externally-reachable base URL for the web
-// app (no trailing slash). LOGOUT_RETURN_TO is the canonical "public app
-// root" used for external link generation (e.g. Slack deep links) — it no
-// longer controls the post-logout redirect, which is derived from
-// WORKOS_REDIRECT_URI in auth.New(). Falls back to the local bind URL when
-// LOGOUT_RETURN_TO is unset.
+// PublicBaseURL returns the externally-reachable base URL for non-Stripe
+// app links (no trailing slash). LOGOUT_RETURN_TO is the legacy variable
+// name for this public root; it no longer controls the post-logout
+// redirect, which is derived from WORKOS_REDIRECT_URI in auth.New().
+// Falls back to the local bind URL when LOGOUT_RETURN_TO is unset.
 func (c Config) PublicBaseURL() string {
 	if base := strings.TrimSuffix(c.LogoutReturnTo, "/"); base != "" {
 		return base
 	}
 	return "http://localhost:" + c.WebPort
+}
+
+// StripeReturnBaseURL returns the base URL used for Stripe Checkout and
+// Customer Portal return links. STRIPE_RETURN_TO is preferred; existing
+// LOGOUT_RETURN_TO/PublicBaseURL config remains a fallback for deployments
+// that have not renamed the variable yet.
+func (c Config) StripeReturnBaseURL() string {
+	if base := strings.TrimSuffix(c.StripeReturnTo, "/"); base != "" {
+		return base
+	}
+	return c.PublicBaseURL()
 }

@@ -25,19 +25,21 @@ const (
 )
 
 func newStripeAutoTopupper(cfg Config) billing.AutoTopupper {
-	if strings.TrimSpace(cfg.StripeSecretKey) == "" || strings.TrimSpace(cfg.StripeTopupPriceID) == "" {
+	if strings.TrimSpace(cfg.StripeSecretKey) == "" ||
+		stripeTopupPlanPriceID(cfg.StripeTopupPriceIDs, cfg.StripeTopupPriceID, billing.DefaultPaidPlan().Code) == "" {
 		return nil
 	}
 	return stripeAutoTopupper{
-		secretKey:    strings.TrimSpace(cfg.StripeSecretKey),
-		topupPriceID: strings.TrimSpace(cfg.StripeTopupPriceID),
+		secretKey:     strings.TrimSpace(cfg.StripeSecretKey),
+		topupPriceID:  strings.TrimSpace(cfg.StripeTopupPriceID),
+		topupPriceIDs: cfg.StripeTopupPriceIDs,
 	}
 }
 
 func (b *Bot) stripeConfigured() bool {
 	return strings.TrimSpace(b.cfg.StripeSecretKey) != "" &&
 		b.stripeSubscriptionPriceID(billing.DefaultPaidPlan().Code) != "" &&
-		strings.TrimSpace(b.cfg.StripeTopupPriceID) != ""
+		b.stripeTopupPriceID(billing.DefaultPaidPlan().Code) != ""
 }
 
 func (b *Bot) stripeClient() *stripe.Client {
@@ -58,6 +60,23 @@ func (b *Bot) stripeSubscriptionPriceID(planCode string) string {
 		return strings.TrimSpace(b.cfg.StripeSubscriptionPriceID)
 	}
 	return ""
+}
+
+func (b *Bot) stripeTopupPriceID(planCode string) string {
+	return stripeTopupPlanPriceID(b.cfg.StripeTopupPriceIDs, b.cfg.StripeTopupPriceID, planCode)
+}
+
+func stripeTopupPlanPriceID(priceIDs map[string]string, legacy, planCode string) string {
+	planCode = strings.ToLower(strings.TrimSpace(planCode))
+	if _, ok := billing.PaidPlanByCode(planCode); !ok {
+		planCode = billing.DefaultPaidPlan().Code
+	}
+	if priceIDs != nil {
+		if priceID := strings.TrimSpace(priceIDs[planCode]); priceID != "" {
+			return priceID
+		}
+	}
+	return strings.TrimSpace(legacy)
 }
 
 func (b *Bot) checkoutPlan(planCode string) (billing.PaidPlan, string, error) {
@@ -179,11 +198,16 @@ func (b *Bot) billingTopupHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "stripe customer: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	priceID := b.stripeTopupPriceID(acct.PlanCode)
+	if priceID == "" {
+		http.Error(w, "top-up price is not configured for plan "+acct.PlanCode, http.StatusServiceUnavailable)
+		return
+	}
 
 	params := &stripe.CheckoutSessionCreateParams{
 		Mode: stripe.String(string(stripe.CheckoutSessionModePayment)),
 		LineItems: []*stripe.CheckoutSessionCreateLineItemParams{{
-			Price:    stripe.String(b.cfg.StripeTopupPriceID),
+			Price:    stripe.String(priceID),
 			Quantity: stripe.Int64(int64(quantity)),
 		}},
 		Customer:          stripe.String(acct.StripeCustomerID),
@@ -486,7 +510,7 @@ func metadataInt(metadata map[string]string, key string, def int) int {
 }
 
 func (b *Bot) settingsURL(tab, query string) string {
-	base := strings.TrimRight(b.cfg.PublicBaseURL(), "/") + "/settings/org?tab=" + tab
+	base := strings.TrimRight(b.cfg.StripeReturnBaseURL(), "/") + "/settings/org?tab=" + tab
 	if query == "" {
 		return base
 	}
@@ -494,12 +518,17 @@ func (b *Bot) settingsURL(tab, query string) string {
 }
 
 type stripeAutoTopupper struct {
-	secretKey    string
-	topupPriceID string
+	secretKey     string
+	topupPriceID  string
+	topupPriceIDs map[string]string
 }
 
 func (s stripeAutoTopupper) PurchaseTopupUnit(ctx context.Context, account billing.Account) error {
 	if strings.TrimSpace(account.StripeCustomerID) == "" {
+		return billing.ErrAutoTopupNotConfigured
+	}
+	priceID := stripeTopupPlanPriceID(s.topupPriceIDs, s.topupPriceID, account.PlanCode)
+	if priceID == "" {
 		return billing.ErrAutoTopupNotConfigured
 	}
 	client := stripe.NewClient(s.secretKey)
@@ -528,7 +557,7 @@ func (s stripeAutoTopupper) PurchaseTopupUnit(ctx context.Context, account billi
 		Customer: stripe.String(account.StripeCustomerID),
 		Invoice:  stripe.String(created.ID),
 		Pricing: &stripe.InvoiceItemCreatePricingParams{
-			Price: stripe.String(s.topupPriceID),
+			Price: stripe.String(priceID),
 		},
 		Quantity: stripe.Int64(1),
 		Metadata: map[string]string{
