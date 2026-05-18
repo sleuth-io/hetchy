@@ -47,7 +47,10 @@ func main() {
 	_ = godotenv.Load()
 
 	level := parseLogLevel(os.Getenv("LOG_LEVEL"))
-	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
+	// Railway (and most log aggregators) treat stderr as error-level regardless of
+	// the message's actual level. JSON on stdout lets Railway parse the "level"
+	// field and display each record at the correct severity.
+	log := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
 	slog.SetDefault(log)
 	log.Info("hetchy starting",
 		"version", buildinfo.Version,
