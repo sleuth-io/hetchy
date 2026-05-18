@@ -168,6 +168,7 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
 RUN npm install -g \
         pnpm yarn bun \
         eslint prettier chromedriver \
+        @devcontainers/cli \
         @anthropic-ai/claude-code \
         @openai/codex \
         @google/gemini-cli \

@@ -60,6 +60,7 @@ type AgentRun struct {
 	LastError       string             `json:"last_error"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	CommandStep     string             `json:"command_step"`
 }
 
 type AgentRunEvent struct {
@@ -155,6 +156,20 @@ type Conversation struct {
 	AgentSlug      string             `json:"agent_slug"`
 	Model          string             `json:"model"`
 	TaskOptions    []byte             `json:"task_options"`
+}
+
+type ConversationAttachment struct {
+	ID          string             `json:"id"`
+	OrgID       string             `json:"org_id"`
+	ThreadID    string             `json:"thread_id"`
+	TurnIndex   int32              `json:"turn_index"`
+	Filename    string             `json:"filename"`
+	ContentType string             `json:"content_type"`
+	SizeBytes   int64              `json:"size_bytes"`
+	Data        []byte             `json:"data"`
+	Source      string             `json:"source"`
+	SlackFileID string             `json:"slack_file_id"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
 type GithubAppInstallation struct {

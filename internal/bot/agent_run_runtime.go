@@ -19,12 +19,17 @@ import (
 	"github.com/hetchyhq/hetchy/internal/runstore"
 )
 
-const agentRunLeaseDuration = 5 * time.Minute
+const (
+	agentRunLeaseDuration  = 5 * time.Minute
+	agentRunLeaseHeartbeat = 10 * time.Second
+	agentRunStaleHeartbeat = 45 * time.Second
+)
 
 var errAgentRunDurability = errors.New("agent run durability failure")
 
 type agentRunContextKey struct{}
 type agentRunEmitterContextKey struct{}
+type skipBootstrapContextKey struct{}
 
 func contextWithAgentRun(ctx context.Context, run runstore.Run) context.Context {
 	return context.WithValue(ctx, agentRunContextKey{}, run)
@@ -59,6 +64,15 @@ func agentRunDurabilityErr(ctx context.Context) error {
 		return em.Err()
 	}
 	return nil
+}
+
+func contextWithBootstrapSkipped(ctx context.Context) context.Context {
+	return context.WithValue(ctx, skipBootstrapContextKey{}, true)
+}
+
+func bootstrapSkippedFromContext(ctx context.Context) bool {
+	v, _ := ctx.Value(skipBootstrapContextKey{}).(bool)
+	return v
 }
 
 func stableAgentRunID(orgID, threadID, requestID string) string {
@@ -132,9 +146,35 @@ func (b *Bot) markRunSession(ctx context.Context, sessionID string) {
 	}
 }
 
-func (b *Bot) markRunCommand(ctx context.Context, sessionID, commandID string) {
+func (b *Bot) markRunCommand(ctx context.Context, sessionID, commandID, step string) {
 	if run, ok := agentRunFromContext(ctx); ok && b.runs != nil {
-		b.runs.UpdateCommand(context.Background(), run.ID, sessionID, commandID, b.workerID, agentRunLeaseDuration)
+		b.runs.UpdateCommand(context.Background(), run.ID, sessionID, commandID, step, b.workerID, agentRunLeaseDuration)
+	}
+}
+
+func (b *Bot) startRunLeaseHeartbeat(ctx context.Context) func() {
+	run, ok := agentRunFromContext(ctx)
+	if !ok || b.runs == nil || !b.runs.Enabled() {
+		return func() {}
+	}
+	hbCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		t := time.NewTicker(agentRunLeaseHeartbeat)
+		defer t.Stop()
+		for {
+			select {
+			case <-hbCtx.Done():
+				return
+			case <-t.C:
+				b.runs.TouchLease(context.Background(), run.ID, b.workerID, agentRunLeaseDuration)
+			}
+		}
+	}()
+	return func() {
+		cancel()
+		<-done
 	}
 }
 

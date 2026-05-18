@@ -1,4 +1,4 @@
-CREATE TABLE billing_accounts (
+CREATE TABLE IF NOT EXISTS billing_accounts (
     org_id                 TEXT PRIMARY KEY,
     stripe_customer_id     TEXT NOT NULL DEFAULT '',
     stripe_subscription_id TEXT NOT NULL DEFAULT '',
@@ -18,15 +18,15 @@ CREATE TABLE billing_accounts (
     updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE UNIQUE INDEX billing_accounts_stripe_customer_idx
+CREATE UNIQUE INDEX IF NOT EXISTS billing_accounts_stripe_customer_idx
     ON billing_accounts (stripe_customer_id)
     WHERE stripe_customer_id <> '';
 
-CREATE UNIQUE INDEX billing_accounts_stripe_subscription_idx
+CREATE UNIQUE INDEX IF NOT EXISTS billing_accounts_stripe_subscription_idx
     ON billing_accounts (stripe_subscription_id)
     WHERE stripe_subscription_id <> '';
 
-CREATE TABLE billing_topup_settings (
+CREATE TABLE IF NOT EXISTS billing_topup_settings (
     org_id                TEXT PRIMARY KEY REFERENCES billing_accounts(org_id) ON DELETE CASCADE,
     auto_topup_enabled    BOOLEAN NOT NULL DEFAULT FALSE,
     trigger_threshold     INTEGER NOT NULL DEFAULT 2 CHECK (trigger_threshold >= 0),
@@ -38,7 +38,7 @@ CREATE TABLE billing_topup_settings (
     updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE billing_credit_reservations (
+CREATE TABLE IF NOT EXISTS billing_credit_reservations (
     run_id                TEXT PRIMARY KEY REFERENCES agent_runs(id) ON DELETE CASCADE,
     org_id                TEXT NOT NULL,
     reserved_credits      INTEGER NOT NULL DEFAULT 0 CHECK (reserved_credits >= 0),
@@ -52,10 +52,10 @@ CREATE TABLE billing_credit_reservations (
     updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX billing_credit_reservations_org_idx
+CREATE INDEX IF NOT EXISTS billing_credit_reservations_org_idx
     ON billing_credit_reservations (org_id, created_at DESC);
 
-CREATE TABLE billing_run_meters (
+CREATE TABLE IF NOT EXISTS billing_run_meters (
     run_id           TEXT PRIMARY KEY REFERENCES agent_runs(id) ON DELETE CASCADE,
     org_id           TEXT NOT NULL,
     flavor           TEXT NOT NULL DEFAULT 'standard',
@@ -72,10 +72,10 @@ CREATE TABLE billing_run_meters (
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX billing_run_meters_org_started_idx
+CREATE INDEX IF NOT EXISTS billing_run_meters_org_started_idx
     ON billing_run_meters (org_id, started_at DESC);
 
-CREATE TABLE repo_billing_settings (
+CREATE TABLE IF NOT EXISTS repo_billing_settings (
     org_id        TEXT NOT NULL,
     github_owner  TEXT NOT NULL,
     github_repo   TEXT NOT NULL,
@@ -86,10 +86,10 @@ CREATE TABLE repo_billing_settings (
     PRIMARY KEY (org_id, github_owner, github_repo)
 );
 
-CREATE INDEX repo_billing_settings_org_idx
+CREATE INDEX IF NOT EXISTS repo_billing_settings_org_idx
     ON repo_billing_settings (org_id);
 
-CREATE TABLE billing_stripe_events (
+CREATE TABLE IF NOT EXISTS billing_stripe_events (
     event_id    TEXT PRIMARY KEY,
     event_type  TEXT NOT NULL,
     org_id      TEXT NOT NULL DEFAULT '',

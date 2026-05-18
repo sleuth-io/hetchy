@@ -116,3 +116,37 @@ DELETE FROM conversations WHERE org_id = $1 AND thread_id = $2;
 -- name: RenameConversation :execrows
 UPDATE conversations SET custom_title = $3
 WHERE org_id = $1 AND thread_id = $2;
+
+-- name: SaveConversationAttachment :one
+INSERT INTO conversation_attachments (
+    id, org_id, thread_id, turn_index, filename, content_type,
+    size_bytes, data, source, slack_file_id
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+)
+RETURNING id, org_id, thread_id, turn_index, filename, content_type,
+          size_bytes, data, source, slack_file_id, created_at;
+
+-- name: ListConversationAttachments :many
+SELECT id, org_id, thread_id, turn_index, filename, content_type,
+       size_bytes, source, slack_file_id, created_at
+FROM conversation_attachments
+WHERE org_id = $1 AND thread_id = $2
+ORDER BY turn_index ASC, created_at ASC, id ASC;
+
+-- name: ListConversationAttachmentsForTurn :many
+SELECT id, org_id, thread_id, turn_index, filename, content_type,
+       size_bytes, data, source, slack_file_id, created_at
+FROM conversation_attachments
+WHERE org_id = $1 AND thread_id = $2 AND turn_index = $3
+ORDER BY created_at ASC, id ASC;
+
+-- name: DeleteConversationAttachmentsForTurn :exec
+DELETE FROM conversation_attachments
+WHERE org_id = $1 AND thread_id = $2 AND turn_index = $3;
+
+-- name: GetConversationAttachment :one
+SELECT id, org_id, thread_id, turn_index, filename, content_type,
+       size_bytes, data, source, slack_file_id, created_at
+FROM conversation_attachments
+WHERE org_id = $1 AND id = $2;

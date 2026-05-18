@@ -24,6 +24,22 @@ type sandboxProcess interface {
 	GetSessionCommandLogsStream(ctx context.Context, sessionID, commandID string, stdout, stderr chan<- string) error
 }
 
+var preAgentRecoverableSandboxSteps = map[string]struct{}{
+	"setup-clone-write":         {},
+	"setup-clone-run":           {},
+	"detect-tar":                {},
+	"bootstrap-write":           {},
+	"bootstrap-write-bootstrap": {},
+	"bootstrap-run-bootstrap":   {},
+	"write-script":              {},
+	"write-env":                 {},
+}
+
+func preAgentRecoverableSandboxStep(step string) bool {
+	_, ok := preAgentRecoverableSandboxSteps[step]
+	return ok
+}
+
 // shLines runs cmd inside an existing sandbox session, splits its
 // stdout+stderr into whole lines, forwards each line to onLine, and
 // returns the full captured stdout+stderr. A non-zero exit becomes an
@@ -80,9 +96,11 @@ func (b *Bot) shLines(ctx context.Context, sandboxID string, proc sandboxProcess
 		"cmd_id", cmdID,
 		"exec_duration", time.Since(execStarted),
 	)
-	if step == "run-script" && cmdID != "" {
-		b.markRunCommand(ctx, sessionID, cmdID)
+	if cmdID != "" && recoverableSandboxStep(step) {
+		b.markRunCommand(ctx, sessionID, cmdID, step)
 	}
+	stopRunLeaseHeartbeat := b.startRunLeaseHeartbeat(stepCtx)
+	defer stopRunLeaseHeartbeat()
 
 	// Start the idle clock only after ExecuteSessionCommand returns so
 	// the SDK round-trip (which can take several seconds) doesn't
@@ -315,6 +333,10 @@ func effectiveSuppressInputEcho(explicit bool, cmd string) bool {
 		return true
 	}
 	return len(cmd) > 8*1024
+}
+
+func recoverableSandboxStep(step string) bool {
+	return step == "run-script" || preAgentRecoverableSandboxStep(step)
 }
 
 func (b *Bot) logSandboxOutputTiming(sandboxID, step string, commandAcceptedAt, lastChunkAt time.Time, seenChunk bool, capturedBytes int, now time.Time) {

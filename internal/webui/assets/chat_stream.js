@@ -379,9 +379,13 @@ async function consumeSSEResponse(res, onFirstEvent, state = null) {
 async function send() {
   if (isRunning) return;
   const text = inp.value.trim();
-  if (!text) return;
+  const attachmentsForTurn = pendingAttachments.slice();
+  if (!text && attachmentsForTurn.length === 0) return;
+  const displayText = text || 'Use the attached file(s) as context.';
   stopRequested = false;
   inp.value = '';
+  pendingAttachments = [];
+  renderPendingAttachments();
   autosizeInput();
   setRunState(true);
 
@@ -390,33 +394,42 @@ async function send() {
   const agentChoiceApplies = conversationAgentIsMutable();
   const repoChoiceApplies = conversationRepoIsMutable();
   const isFirstTurn = log.querySelectorAll('.msg').length === 0;
-  addUserMsg(text);
+  addUserMsg(displayText, attachmentsForTurn.map(file => ({
+    filename: attachmentDisplayName(file),
+    size_bytes: file.size || 0,
+    content_type: file.type || 'application/octet-stream',
+  })));
   if (lastDetail) lastDetail.task_options = taskOptions;
   if (isFirstTurn || agentChoiceApplies) {
     setModelPickerLocked(true);
-    renderPendingMetadata(text);
+    renderPendingMetadata(displayText, attachmentsForTurn);
   }
 
-  const payload = { text, session_id: sessionId, model: selectedModel };
-  payload.validate = taskOptions[taskOptionKeys.validate];
-  payload.review_code_before_push = taskOptions[taskOptionKeys.reviewBeforePush];
-  payload.action_pr_checks_for_done = taskOptions[taskOptionKeys.actionPRChecks];
-  if (agentChoiceApplies) {
-    payload.agent_slug = selectedAgentSlug;
+  const hasAttachments = attachmentsForTurn.length > 0;
+  const payload = hasAttachments ? new FormData() : { text: displayText, session_id: sessionId, model: selectedModel };
+  const setPayload = (key, value) => {
+    if (hasAttachments) payload.append(key, String(value));
+    else payload[key] = value;
+  };
+  if (hasAttachments) {
+    setPayload('text', displayText);
+    setPayload('session_id', sessionId);
+    setPayload('model', selectedModel);
   }
-  // Only send `repository` on turns where the conversation hasn't
-  // locked one in yet. Sending it on follow-ups would be a no-op
-  // server-side (HandleRequest pins the repo at sandbox creation), but
-  // the explicit guard keeps the wire payload honest about what the
-  // server will actually use.
-  if (repoChoiceApplies && selectedRepoSlug) {
-    payload.repository = selectedRepoSlug;
+  setPayload('validate', taskOptions[taskOptionKeys.validate]);
+  setPayload('review_code_before_push', taskOptions[taskOptionKeys.reviewBeforePush]);
+  setPayload('action_pr_checks_for_done', taskOptions[taskOptionKeys.actionPRChecks]);
+  if (agentChoiceApplies) setPayload('agent_slug', selectedAgentSlug);
+  if (repoChoiceApplies && selectedRepoSlug) setPayload('repository', selectedRepoSlug);
+  if (hasAttachments) {
+    attachmentsForTurn.forEach(file => payload.append('attachments', file, file.name || 'attachment'));
   }
   try {
+    const headers = hasAttachments ? {} : { 'Content-Type': 'application/json' };
     const res = await fetch('/chat', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+      headers,
+      body: hasAttachments ? payload : JSON.stringify(payload)
     });
     if (!res.ok) {
       const body = await res.text().catch(() => '');

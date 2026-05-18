@@ -141,6 +141,22 @@ func Run(ctx context.Context, runner Runner, in LoopInput) (*LoopResult, error) 
 			fmt.Errorf("%w: %w", ErrLoopFailed, err)
 	}
 
+	return ResultFromArtifacts(ctx, runner, in, log)
+}
+
+// ResultFromArtifacts reads the files BootstrapScript leaves in the sandbox
+// and turns them into the same LoopResult Run would return after a successful
+// bootstrap command. Recovery uses this when the Hetchy process dies after
+// launching bootstrap.sh: the Daytona command may keep running, and once it
+// exits we can still read/save the generated spec instead of starting over.
+func ResultFromArtifacts(ctx context.Context, runner Runner, in LoopInput, log string) (*LoopResult, error) {
+	if runner == nil {
+		return nil, errors.New("bootstrap: runner is required")
+	}
+	if in.Hints == nil {
+		return nil, errors.New("bootstrap: hints are required")
+	}
+
 	manifestBytes, err := runner.ReadFile(ctx, bootstrapOutDir+"/manifest.json")
 	if err != nil {
 		return nil, fmt.Errorf("bootstrap: read manifest: %w", err)
@@ -242,6 +258,9 @@ func Fingerprint(h *Hints) string {
 	}
 	if h.DevContainer != nil {
 		addPath(h.DevContainer.Path)
+		for _, path := range h.DevContainer.AlternatePaths {
+			addPath(path)
+		}
 	}
 	for _, candidate := range []string{
 		"AGENTS.md", "agents.md",

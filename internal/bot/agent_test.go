@@ -3,6 +3,7 @@ package bot
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/google/go-github/v66/github"
 
 	"github.com/hetchyhq/hetchy/internal/agents"
+	"github.com/hetchyhq/hetchy/internal/artifacts"
 	"github.com/hetchyhq/hetchy/internal/blocks"
 	"github.com/hetchyhq/hetchy/internal/bootstrap"
 	"github.com/hetchyhq/hetchy/internal/convstore"
@@ -25,6 +27,7 @@ func TestAgentPromptTemplate_IncludesAllInputs(t *testing.T) {
 	prompt := fmt.Sprintf(agentPromptTemplate,
 		"owner/repo", "/work", "main",
 		"Add a feature flag to gate the new login flow",
+		"",
 		"",
 		"feature/add-login-flag-3e2df2",
 		"main",
@@ -52,6 +55,7 @@ func TestAgentFollowUpPromptTemplate_IncludesAllInputs(t *testing.T) {
 		"/work", "feature/sf-1", "https://github.com/owner/repo/pull/42",
 		"first turn\n---\nsecond turn",
 		"please change the button color",
+		"",
 		"",
 	)
 
@@ -102,7 +106,7 @@ func TestBuildFollowUpPromptAddsValidationWhenSpecPresent(t *testing.T) {
 	}
 }
 
-func TestBuildFollowUpPromptWithoutSpecSkipsValidation(t *testing.T) {
+func TestBuildFollowUpPromptWithoutSpecAddsProofInstructionsWhenSlotsPresent(t *testing.T) {
 	rec := convstore.Record{
 		Branch:  "feature/sf-1",
 		PRURL:   "https://github.com/owner/repo/pull/42",
@@ -110,8 +114,17 @@ func TestBuildFollowUpPromptWithoutSpecSkipsValidation(t *testing.T) {
 	}
 	prompt := buildFollowUpPrompt("owner/repo", rec, "please adjust the flow", nil, 3, defaultChatTaskOptions())
 
-	if strings.Contains(prompt, "POST-CHANGE VALIDATION") || strings.Contains(prompt, "HETCHY_ARTIFACT_SLOTS") {
-		t.Fatalf("follow-up prompt without spec should not include validation/upload instructions\n%s", prompt)
+	if strings.Contains(prompt, "POST-CHANGE VALIDATION") {
+		t.Fatalf("follow-up prompt without spec should not include bootstrap validation\n%s", prompt)
+	}
+	for _, want := range []string{
+		"HETCHY_ARTIFACT_SLOTS",
+		"Do NOT stage, commit, push",
+		"GitHub blob/raw URLs",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("follow-up prompt without spec missing proof instruction %q\n%s", want, prompt)
+		}
 	}
 	if !strings.Contains(prompt, "Review code before push") || !strings.Contains(prompt, "Action PR checks for done") {
 		t.Fatalf("follow-up prompt without spec should still include enabled conditional tasks\n%s", prompt)
@@ -178,8 +191,8 @@ func TestAgentScript_EmbeddedAndWellFormed(t *testing.T) {
 		"save_hetchy_cache_archive",
 		`local archive="${volume_cache_dir}/cache.tar.gz"`,
 		`local legacy_archive="${volume_cache_dir}/cache.tar"`,
-		`local archive_tmp="${archive}.tmp"`,
-		`mv -f "$archive_tmp" "$archive"`,
+		`archive_tmp="$(mktemp "${TMPDIR:-/tmp}/hetchy-cache-archive.XXXXXX")" || return 1`,
+		`cp -f "$archive_tmp" "$archive"`,
 		`export HETCHY_CACHE_DIR="$local_cache_dir"`,
 		`export GOCACHE="${local_cache_dir}/go-build"`,
 		`export npm_config_store_dir="${local_cache_dir}/pnpm"`,
@@ -203,8 +216,8 @@ func TestFollowupScript_EmbeddedAndWellFormed(t *testing.T) {
 		`: "${SF_WORKDIR:?required}"`,
 		`: "${SF_BRANCH:?required}"`,
 		"require_b64_input SF_PROMPT_B64",
-		"git fetch origin",
-		"git pull --rebase origin",
+		"git fetch --prune origin",
+		"git pull --rebase --autostash origin",
 		"local -a claude_args=(",
 		"--dangerously-skip-permissions",
 		`claude_args+=(--model "$HETCHY_CLAUDE_MODEL")`,
@@ -221,8 +234,8 @@ func TestFollowupScript_EmbeddedAndWellFormed(t *testing.T) {
 		"save_hetchy_cache_archive",
 		`local archive="${volume_cache_dir}/cache.tar.gz"`,
 		`local legacy_archive="${volume_cache_dir}/cache.tar"`,
-		`local archive_tmp="${archive}.tmp"`,
-		`mv -f "$archive_tmp" "$archive"`,
+		`archive_tmp="$(mktemp "${TMPDIR:-/tmp}/hetchy-cache-archive.XXXXXX")" || return 1`,
+		`cp -f "$archive_tmp" "$archive"`,
 		`export HETCHY_CACHE_DIR="$local_cache_dir"`,
 		`export GOCACHE="${local_cache_dir}/go-build"`,
 		`export npm_config_store_dir="${local_cache_dir}/pnpm"`,
@@ -235,11 +248,40 @@ func TestFollowupScript_EmbeddedAndWellFormed(t *testing.T) {
 			t.Errorf("followupScript missing %q", line)
 		}
 	}
-	// Follow-up should NOT contain initial-run setup steps.
-	if strings.Contains(followupScript, "git clone") {
-		t.Error("followupScript should not clone — it reuses an existing sandbox")
+	// Follow-up should NOT contain initial-run setup steps. We assert
+	// on the followup-only body, because the shared sandbox-common.sh
+	// prepended to every script defines the cache-aware clone helper
+	// (git clone is part of its fallback path) — but followup.sh never
+	// invokes that helper, since the sandbox already has a checkout
+	// from the initial agent.sh run.
+	if strings.Contains(followupScriptBody, "git clone") {
+		t.Error("followup.sh body should not clone — it reuses an existing sandbox")
+	}
+	if strings.Contains(followupScriptBody, "hetchy_prepare_repo_workdir") {
+		t.Error("followup.sh should not invoke hetchy_prepare_repo_workdir — the workdir is already populated")
 	}
 	assertBashSyntax(t, "followup.sh", followupScript)
+}
+
+func TestFollowupScript_SyncsBranchBeforeClaude(t *testing.T) {
+	wantOrder := []string{
+		`git fetch --prune origin`,
+		`git checkout "${SF_BRANCH}"`,
+		`git pull --rebase --autostash origin "${SF_BRANCH}"`,
+		`echo "[hetchy] running claude"`,
+		`run_claude_with_watchdog /tmp/sf-prompt.txt`,
+	}
+	last := -1
+	for _, want := range wantOrder {
+		idx := strings.Index(followupScriptBody, want)
+		if idx < 0 {
+			t.Fatalf("followup.sh missing %q", want)
+		}
+		if idx <= last {
+			t.Fatalf("followup.sh command %q is out of order", want)
+		}
+		last = idx
+	}
 }
 
 func TestSandboxCommon_RewriteLegacySavedSpecWorkdir(t *testing.T) {
@@ -590,6 +632,59 @@ func TestRunAgentBuildsScriptEnvironmentWithFakeRunner(t *testing.T) {
 	persona := mustDecodeBase64Env(t, captured.env, "HETCHY_AGENT_PROMPT_B64")
 	if persona != "Review carefully." {
 		t.Fatalf("persona = %q", persona)
+	}
+}
+
+func TestRunAgentMintsArtifactSlotsWhenBootstrapFails(t *testing.T) {
+	restore := stubPRLookup(t, "acme/repo", "feature/sf-req-1", "main", "https://github.com/acme/repo/pull/7")
+	defer restore()
+
+	var captured capturedScriptRun
+	fakeArtifacts := &fakeArtifactMinter{}
+	b := &Bot{
+		log:           discardLogger(),
+		cfg:           Config{LogoutReturnTo: "https://app.example.test/"},
+		bootstrap:     &fakeBootstrapStore{},
+		artifacts:     fakeArtifacts,
+		artifactSlots: newArtifactSlotBroker(fakeArtifacts),
+		createBootstrapSessionFn: func(context.Context, *daytona.Sandbox, string) error {
+			return errors.New("bootstrap session failed")
+		},
+		runScriptFn: func(_ context.Context, sb *daytona.Sandbox, sessionID, label, scriptBody string, env map[string]string, _ blocks.Emitter) (string, error) {
+			captured = captureScriptRun(sb, sessionID, label, scriptBody, env)
+			return "https://github.com/acme/repo/pull/7", nil
+		},
+	}
+	repo := repoCtx{
+		Slug:        "acme/repo",
+		BaseBranch:  "main",
+		GitHubToken: "ghs_token",
+		InstallID:   11,
+		RepoID:      22,
+	}
+
+	_, err := b.runAgent(context.Background(), &daytona.Sandbox{ID: "sandbox-1"}, repo, orgcfg.Config{OrgID: "org_1", AnthropicAPIKey: "sk-ant"}, agents.Profile{}, "ship feature with screenshot proof", "req-1", "feature/sf-req-1", chatTaskOptions{ValidateChanges: true}, ClaudeModelSonnet, newCaptureEmitter())
+	if err != nil {
+		t.Fatalf("runAgent: %v", err)
+	}
+	if captured.env[artifacts.EnvSlots] == "" {
+		t.Fatalf("artifact slots env was not set after bootstrap failure: %#v", captured.env)
+	}
+	if got, want := captured.env[artifacts.EnvSlotURL], "https://app.example.test"+artifactSlotPath; got != want {
+		t.Fatalf("artifact slot URL = %q, want %q", got, want)
+	}
+	prompt := mustDecodeBase64Env(t, captured.env, "SF_PROMPT_B64")
+	if strings.Contains(prompt, "POST-CHANGE VALIDATION") {
+		t.Fatalf("prompt should not include saved-spec validation when bootstrap failed\n%s", prompt)
+	}
+	for _, want := range []string{
+		"HETCHY_ARTIFACT_SLOTS",
+		"Do NOT stage, commit, push",
+		"GitHub blob/raw URLs",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt missing %q after bootstrap failure\n%s", want, prompt)
+		}
 	}
 }
 

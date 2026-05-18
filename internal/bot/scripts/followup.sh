@@ -100,9 +100,10 @@ git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".ins
 
 echo "[hetchy] checking out branch"
 cd "${SF_WORKDIR}"
-git fetch origin
+git fetch --prune origin
 git checkout "${SF_BRANCH}"
-git pull --rebase origin "${SF_BRANCH}"
+echo "[hetchy] syncing ${SF_BRANCH} with origin/${SF_BRANCH}"
+git pull --rebase --autostash origin "${SF_BRANCH}"
 
 # Same pre-create as agent.sh — the Playwright MCP server requires
 # this directory to exist before the first screenshot, and follow-ups
@@ -177,15 +178,15 @@ run_sx_install() {
 # Mirror of agent.sh's emit_installed_skills — see that script for the
 # rationale on collecting both global and repo-scoped skill dirs.
 emit_installed_skills() {
-  local -A seen=()
   local -a names=()
   local d entry name
+  local seen_names=$'\n'
   for d in "$HOME/.claude/skills" "$SF_WORKDIR/.claude/skills"; do
     if [[ -d "$d" ]]; then
       while IFS= read -r -d '' entry; do
         name="$(basename "$entry")"
-        if [[ -z "${seen[$name]:-}" ]]; then
-          seen[$name]=1
+        if [[ "$seen_names" != *$'\n'"$name"$'\n'* ]]; then
+          seen_names+="${name}"$'\n'
           names+=("$name")
         fi
       done < <(find "$d" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null | LC_ALL=C sort -z)

@@ -76,6 +76,7 @@ func (b *Bot) runWeb(ctx context.Context) error {
 	mux.Handle("/api/repo-bootstrap", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.repoBootstrapResetHandler))))
 	mux.Handle("/api/conversations", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.conversationsHandler))))
 	mux.Handle("/api/conversations/download/", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.conversationDownloadHandler))))
+	mux.Handle("/api/conversations/attachments/", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.conversationAttachmentDownloadHandler))))
 	mux.Handle("/api/conversations/", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.conversationDetailHandler))))
 	mux.Handle("/api/agents", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.agentsHandler))))
 	mux.Handle("/api/repositories", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.repositoriesHandler))))

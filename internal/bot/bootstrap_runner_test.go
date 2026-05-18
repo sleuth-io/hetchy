@@ -2,11 +2,14 @@ package bot
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
+	toolbox "github.com/daytonaio/daytona/libs/toolbox-api-client-go"
 
 	"github.com/hetchyhq/hetchy/internal/blocks"
 )
@@ -17,6 +20,12 @@ type bootstrapRunnerSHCall struct {
 	timeout           time.Duration
 	idleTimeout       time.Duration
 	suppressInputEcho bool
+}
+
+func newTestFileSystem(serverURL string) *daytona.FileSystemService {
+	cfg := toolbox.NewConfiguration()
+	cfg.Servers = toolbox.ServerConfigurations{{URL: serverURL}}
+	return daytona.NewFileSystemService(toolbox.NewAPIClient(cfg), nil)
 }
 
 func TestBotRunnerRunUsesShLinesAndMergesEnv(t *testing.T) {
@@ -74,6 +83,98 @@ func TestBotRunnerRunUsesShLinesAndMergesEnv(t *testing.T) {
 		if !strings.Contains(run.cmd, want) {
 			t.Fatalf("run command missing %q:\n%s", want, run.cmd)
 		}
+	}
+}
+
+func TestBotRunnerReadFileUsesDownloadFile(t *testing.T) {
+	var requestedPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("method = %s, want GET", r.Method)
+		}
+		if r.URL.Path != "/files/download" {
+			t.Fatalf("path = %s, want /files/download", r.URL.Path)
+		}
+		requestedPath = r.URL.Query().Get("path")
+		w.Header().Set("Content-Type", "application/octet-stream")
+		_, _ = w.Write([]byte("downloaded contents"))
+	}))
+	defer server.Close()
+
+	var shLinesCalled bool
+	b := &Bot{
+		log: discardLogger(),
+		shLinesFn: func(context.Context, string, sandboxProcess, string, string, string, time.Duration, time.Duration, bool, func(string)) (string, error) {
+			shLinesCalled = true
+			t.Fatal("ReadFile should not fall back to shLines when DownloadFile succeeds")
+			return "", nil
+		},
+	}
+	runner := &botRunner{
+		b:         b,
+		sb:        &daytona.Sandbox{ID: "sandbox-1", FileSystem: newTestFileSystem(server.URL)},
+		sessionID: "session-1",
+	}
+
+	got, err := runner.ReadFile(context.Background(), "/tmp/prompt.txt")
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if string(got) != "downloaded contents" {
+		t.Fatalf("read file = %q", got)
+	}
+	if requestedPath != "/tmp/prompt.txt" {
+		t.Fatalf("download path = %q", requestedPath)
+	}
+	if shLinesCalled {
+		t.Fatal("shLines was called")
+	}
+}
+
+func TestBotRunnerReadFileFallsBackWhenDownloadFileFails(t *testing.T) {
+	var downloadAttempted bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		downloadAttempted = true
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"message":"download failed"}`))
+	}))
+	defer server.Close()
+
+	var calls []bootstrapRunnerSHCall
+	b := &Bot{
+		log: discardLogger(),
+		shLinesFn: func(_ context.Context, _ string, _ sandboxProcess, _, step, cmd string, timeout, idleTimeout time.Duration, suppressInputEcho bool, _ func(string)) (string, error) {
+			calls = append(calls, bootstrapRunnerSHCall{
+				step:              step,
+				cmd:               cmd,
+				timeout:           timeout,
+				idleTimeout:       idleTimeout,
+				suppressInputEcho: suppressInputEcho,
+			})
+			return "fallback contents", nil
+		},
+	}
+	runner := &botRunner{
+		b:         b,
+		sb:        &daytona.Sandbox{ID: "sandbox-1", FileSystem: newTestFileSystem(server.URL)},
+		sessionID: "session-1",
+	}
+
+	got, err := runner.ReadFile(context.Background(), "/tmp/prompt.txt")
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if string(got) != "fallback contents" {
+		t.Fatalf("read file = %q", got)
+	}
+	if !downloadAttempted {
+		t.Fatal("DownloadFile was not attempted")
+	}
+	if len(calls) != 1 {
+		t.Fatalf("shLines calls = %+v", calls)
+	}
+	if calls[0].step != "bootstrap-read" || calls[0].cmd != "cat '/tmp/prompt.txt'" || calls[0].timeout != 5*time.Minute || calls[0].suppressInputEcho {
+		t.Fatalf("fallback call = %+v", calls[0])
 	}
 }
 

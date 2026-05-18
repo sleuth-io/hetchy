@@ -153,6 +153,8 @@
 <div id="bar">
   <div id="composer">
     <textarea id="inp" rows="1" placeholder="Describe a feature, fix or refactor and hetchy will open a pr…" autofocus></textarea>
+    <input id="attachment-input" type="file" multiple hidden>
+    <div id="attachment-list" hidden></div>
     <div id="composer-controls">
       <div id="tools-picker">
         <button id="tools-btn" type="button" aria-label="Open composer options" aria-expanded="false" title="Options">
@@ -162,6 +164,15 @@
           </svg>
         </button>
         <div id="tools-popover" class="composer-popover" hidden>
+          <button id="attach-files-btn" class="tools-menu-item" type="button">
+            <svg class="tools-menu-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m21.4 11.6-8.5 8.5a5 5 0 0 1-7.1-7.1l9.2-9.2a3.5 3.5 0 0 1 5 5l-9.2 9.2a2 2 0 1 1-2.8-2.8l8.5-8.5"/>
+            </svg>
+            <span class="tools-menu-main">
+              <span class="tools-menu-label">Add files or photos</span>
+            </span>
+          </button>
+          <div class="tools-divider"></div>
           <div id="repo-flyout-root">
             <button id="repo-selector-btn" class="tools-menu-item" type="button"
                     aria-label="Choose repository" aria-haspopup="menu" aria-expanded="false">

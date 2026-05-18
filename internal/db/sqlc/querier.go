@@ -15,12 +15,14 @@ type Querier interface {
 	ClaimAgentRunForCancel(ctx context.Context, arg ClaimAgentRunForCancelParams) (AgentRun, error)
 	ClaimAgentRunLease(ctx context.Context, arg ClaimAgentRunLeaseParams) (AgentRun, error)
 	ClaimAgentRunLeaseFromOwner(ctx context.Context, arg ClaimAgentRunLeaseFromOwnerParams) (AgentRun, error)
+	ClaimStaleAgentRunLease(ctx context.Context, arg ClaimStaleAgentRunLeaseParams) (AgentRun, error)
 	CountAgentProfilesByOrg(ctx context.Context, orgID string) (int64, error)
 	CreateAgentRun(ctx context.Context, arg CreateAgentRunParams) (AgentRun, error)
 	DeleteAgentProfilesByOrg(ctx context.Context, orgID string) error
 	// agent_run_events cascade-deletes via FK ON DELETE CASCADE.
 	DeleteAgentRunsByOrg(ctx context.Context, orgID string) error
 	DeleteConversation(ctx context.Context, arg DeleteConversationParams) error
+	DeleteConversationAttachmentsForTurn(ctx context.Context, arg DeleteConversationAttachmentsForTurnParams) error
 	DeleteConversationsByOrg(ctx context.Context, orgID string) error
 	DeleteGithubInstallation(ctx context.Context, installationID int64) error
 	// github_repos / github_teams / github_team_members cascade via FK.
@@ -55,6 +57,7 @@ type Querier interface {
 	GetBillingRunMeterForUpdate(ctx context.Context, runID string) (BillingRunMeter, error)
 	GetBillingTopupSettings(ctx context.Context, orgID string) (BillingTopupSetting, error)
 	GetConversation(ctx context.Context, arg GetConversationParams) (GetConversationRow, error)
+	GetConversationAttachment(ctx context.Context, arg GetConversationAttachmentParams) (ConversationAttachment, error)
 	GetGithubInstallation(ctx context.Context, installationID int64) (GithubAppInstallation, error)
 	// Resolves an (owner, name) the user typed in chat to a concrete
 	// (installation_id, repo_id, default_branch) for this org. If the same
@@ -85,6 +88,8 @@ type Querier interface {
 	ListAgentProfilesByOrg(ctx context.Context, orgID string) ([]ListAgentProfilesByOrgRow, error)
 	ListAgentRunEventsFromSeq(ctx context.Context, arg ListAgentRunEventsFromSeqParams) ([]AgentRunEvent, error)
 	ListBillingRunMetersByOrg(ctx context.Context, arg ListBillingRunMetersByOrgParams) ([]BillingRunMeter, error)
+	ListConversationAttachments(ctx context.Context, arg ListConversationAttachmentsParams) ([]ListConversationAttachmentsRow, error)
+	ListConversationAttachmentsForTurn(ctx context.Context, arg ListConversationAttachmentsForTurnParams) ([]ConversationAttachment, error)
 	ListExpiredAgentRuns(ctx context.Context, limit int32) ([]AgentRun, error)
 	ListGithubInstallationsByOrg(ctx context.Context, orgID string) ([]GithubAppInstallation, error)
 	ListGithubReposByInstallation(ctx context.Context, installationID int64) ([]GithubRepo, error)
@@ -112,10 +117,12 @@ type Querier interface {
 	// where the user can see every target Hetchy has bootstrapped under
 	// one repository.
 	ListRepoSetupSpecs(ctx context.Context, arg ListRepoSetupSpecsParams) ([]RepoSetupSpec, error)
+	ListStaleAgentRuns(ctx context.Context, arg ListStaleAgentRunsParams) ([]AgentRun, error)
 	LockBillingAccountForUpdate(ctx context.Context, orgID string) (BillingAccount, error)
 	LockBillingTopupSettingsForUpdate(ctx context.Context, orgID string) (BillingTopupSetting, error)
 	RenameConversation(ctx context.Context, arg RenameConversationParams) (int64, error)
 	ResetBillingTopupMonthlyUsage(ctx context.Context, arg ResetBillingTopupMonthlyUsageParams) (BillingTopupSetting, error)
+	SaveConversationAttachment(ctx context.Context, arg SaveConversationAttachmentParams) (ConversationAttachment, error)
 	// Periodic mid-run snapshot used by chatPersister. Only writes the
 	// handful of fields that change progressively as the agent emits
 	// blocks (history + response_blocks + creator_id). The fields that

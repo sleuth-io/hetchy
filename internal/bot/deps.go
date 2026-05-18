@@ -19,6 +19,11 @@ type conversationStore interface {
 	Search(context.Context, string, convstore.SearchOptions) ([]convstore.Record, error)
 	SaveProgress(context.Context, convstore.Record) error
 	SaveTaskOptions(context.Context, string, string, map[string]bool) error
+	SaveAttachments(context.Context, []convstore.Attachment) error
+	ListAttachments(context.Context, string, string) ([]convstore.Attachment, error)
+	ListAttachmentsForTurn(context.Context, string, string, int) ([]convstore.Attachment, error)
+	GetAttachment(context.Context, string, string) (convstore.Attachment, error)
+	DeleteAttachmentsForTurn(context.Context, string, string, int) error
 	Upsert(context.Context, convstore.Record) error
 	Delete(context.Context, string, string) error
 	Rename(context.Context, string, string, string) error
@@ -72,13 +77,15 @@ type runStore interface {
 	UpdateBranch(context.Context, string, string, string)
 	UpdateSandbox(context.Context, string, string, string)
 	UpdateSession(context.Context, string, string, string)
-	UpdateCommand(context.Context, string, string, string, string, time.Duration)
+	UpdateCommand(context.Context, string, string, string, string, string, time.Duration)
 	UpdateState(context.Context, string, string, string, string)
 	TouchLease(context.Context, string, string, time.Duration)
 	UpdateLogCursor(context.Context, string, int64, string)
 	ListExpired(context.Context, int32) ([]runstore.Run, error)
+	ListStale(context.Context, int32, time.Duration) ([]runstore.Run, error)
 	ListActiveForLeaseOwnerPrefix(context.Context, string, int32) ([]runstore.Run, error)
 	Claim(context.Context, string, string, time.Duration) (runstore.Run, error)
+	ClaimStale(context.Context, string, string, time.Duration, time.Duration) (runstore.Run, error)
 	ClaimFromOwner(context.Context, string, string, string, time.Duration) (runstore.Run, error)
 	Cancel(context.Context, string, string, string, time.Duration, []runstore.PendingEvent) (runstore.Run, error)
 	AppendEvent(context.Context, string, string, []byte, string) (int64, error)

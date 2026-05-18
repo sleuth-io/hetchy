@@ -126,16 +126,7 @@ Save evidence under /tmp/hetchy-validate/:
                                      what you verified, any gaps)
 `, truncate(args.Diff, 8000), truncate(args.PRBody, 1500))
 
-	if args.ArtifactSlotCount > 0 {
-		b.WriteString(artifacts.UploadInstructions(args.ArtifactSlotCount))
-	} else {
-		b.WriteString(`
-The host has not configured artifact upload for this run, so DO NOT
-embed local screenshots, recordings, or diagrams in the PR markdown.
-Broken local-file references make the PR look unfinished. Describe
-the proof you attempted in summary.md and mark validation incomplete.
-`)
-	}
+	b.WriteString(artifacts.ProofInstructions(args.ArtifactSlotCount))
 
 	// The no-hard-wrap rule for the PR body is set once in the agent
 	// prompt template (internal/bot/agent.go); this validation block

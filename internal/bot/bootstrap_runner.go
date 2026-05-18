@@ -91,10 +91,12 @@ func (r *botRunner) Run(ctx context.Context, label, scriptBody string, env map[s
 	return out, nil
 }
 
-// ReadFile pulls a file out of the sandbox by cat'ing it. For small
-// artifacts (<256 KB — our spec scripts and manifest are well under)
-// this is fine; for binary or larger payloads we'd switch to the
-// Daytona SDK's FileSystem.DownloadFile, but it isn't needed yet.
+// ReadFile pulls a file out of the sandbox. Prefer Daytona's file API
+// over a shell `cat` because command-log streaming is optimized for
+// human-readable output, not exact byte transfer, and can introduce
+// malformed byte sequences from terminal/progress output into the
+// captured buffer. Fall back to `cat` for older/fake sandboxes that
+// don't expose FileSystem.
 //
 // The 5-minute timeout is generous on purpose. The cat itself
 // finishes in milliseconds, but Daytona's session log stream has
@@ -110,6 +112,16 @@ func (r *botRunner) Run(ctx context.Context, label, scriptBody string, env map[s
 // we just wrote — there's no scenario where 5 min worth of bytes
 // is "the right answer" but more would have been correct.
 func (r *botRunner) ReadFile(ctx context.Context, path string) ([]byte, error) {
+	if r.sb != nil && r.sb.FileSystem != nil {
+		data, err := r.sb.FileSystem.DownloadFile(ctx, path, nil)
+		if err == nil {
+			return data, nil
+		}
+		if r.b.log != nil {
+			r.b.log.Warn("sandbox file download failed; falling back to cat",
+				"sandbox", r.sb.ID, "path", path, "error", err)
+		}
+	}
 	out, err := r.b.shLines(ctx, r.sb.ID, r.sb.Process, r.sessionID, "bootstrap-read",
 		"cat "+shellQuote(path),
 		5*time.Minute, 0,

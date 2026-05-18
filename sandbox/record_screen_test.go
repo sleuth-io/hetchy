@@ -48,6 +48,8 @@ func TestDockerfileAvoidsPlaywrightChromeAptInstall(t *testing.T) {
 		"-path '*/chrome-linux64/chrome'",
 		"ffmpeg xvfb xauth x11-utils",
 		"xz-utils file",
+		"docker-compose-plugin",
+		"@devcontainers/cli",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("Dockerfile missing %q\n%s", want, got)
