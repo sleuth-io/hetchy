@@ -117,7 +117,7 @@ func (r *botRunner) ReadFile(ctx context.Context, path string) ([]byte, error) {
 		if err == nil {
 			return data, nil
 		}
-		if r.b != nil && r.b.log != nil {
+		if r.b.log != nil {
 			r.b.log.Warn("sandbox file download failed; falling back to cat",
 				"sandbox", r.sb.ID, "path", path, "error", err)
 		}

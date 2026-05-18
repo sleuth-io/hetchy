@@ -2,7 +2,6 @@ package bot
 
 import (
 	"context"
-	_ "embed"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -16,111 +15,11 @@ import (
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
 
 	"github.com/hetchyhq/hetchy/internal/agents"
-	"github.com/hetchyhq/hetchy/internal/artifacts"
 	"github.com/hetchyhq/hetchy/internal/blocks"
 	"github.com/hetchyhq/hetchy/internal/bootstrap"
 	"github.com/hetchyhq/hetchy/internal/convstore"
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
 )
-
-//go:embed scripts/agent.sh
-var agentScriptBody string
-
-//go:embed scripts/followup.sh
-var followupScriptBody string
-
-//go:embed scripts/setup-clone.sh
-var setupCloneScriptBody string
-
-//go:embed scripts/claude-watchdog.sh
-var claudeWatchdogScript string
-
-//go:embed scripts/sandbox-common.sh
-var sandboxCommonScript string
-
-// agentScript, followupScript, and setupCloneScript are the
-// on-the-wire script bodies the bot writes to the sandbox. Shared
-// helper scripts are prepended so their functions live in the same
-// shell scope as the user-visible scripts. We do the join here (vs.
-// having each script `source` a separately-deployed file) so runScript
-// only has to push one file per invocation and there's no chance of a
-// half-deployed set. setupCloneScript needs sandbox-common.sh too so
-// the bootstrap path can call hetchy_prepare_repo_workdir, which uses
-// the volume-cached repo checkout to skip a full network clone.
-var agentScript = claudeWatchdogScript + "\n" + sandboxCommonScript + "\n" + agentScriptBody
-
-var followupScript = claudeWatchdogScript + "\n" + sandboxCommonScript + "\n" + followupScriptBody
-
-var setupCloneScript = sandboxCommonScript + "\n" + setupCloneScriptBody
-
-// The no-hard-wrap rule on bullet 5 also covers the Validation section
-// appended by bootstrap.MergeIntoAgentPrompt — see the matching note at
-// internal/bootstrap/validate.go:121.
-const agentPromptTemplate = `You are working inside a fresh sandbox. The repo %s has been cloned
-to %s and %s is checked out. Your task is the user request below.
-
-USER REQUEST:
-%s%s
-
-%s
-
-When you are done implementing the change:
-  1. Create a new branch named %s.
-  2. Run ` + "`make format`" + ` to format the code.
-  3. Stage and commit your changes with a clear message.
-  4. Push the branch to origin (gh CLI is already authenticated).
-  5. Open a pull request against %s with ` + "`gh pr create`" + `, giving it a clear title and a markdown body describing what changed and why. Write each paragraph or bullet of the PR body as one long line — do NOT insert hard line breaks; let GitHub reflow the text for the reader's viewport.
-  6. The very last line of your output MUST be just the PR URL — no other text on that line.`
-
-const agentFollowUpPromptTemplate = `You are continuing work in %s on branch %s.
-The pull request is at %s.
-
-Conversation so far:
-%s
-
-USER REQUEST:
-%s%s
-
-%s
-
-When you are done implementing the change:
-  1. Run ` + "`make format`" + ` to format the code.
-  2. Stage and commit your changes with a clear message.
-  3. Push the branch to origin — the PR will update automatically.
-  4. DO NOT update the PR title — it should remain consistent with the original
-     user request shown in "Conversation so far" above, not this latest change.
-  5. If you edit the PR body (e.g. to add a Validation section), write each paragraph or bullet as one long line — do NOT insert hard line breaks; let GitHub reflow the text for the reader's viewport.
-  6. The very last line of your output MUST be just the PR URL — no other text on that line.`
-
-func conditionalTasksPrompt(opts chatTaskOptions) string {
-	var tasks []string
-	if opts.ReviewCodeBeforePush {
-		tasks = append(tasks, "- Review code before push: before pushing or opening the PR, launch a Claude Code sub-agent/task to review the branch diff against its base branch. Use the sub-agent for an independent code review focused on bugs, regressions, missing tests, security issues, and maintainability problems. If the reviewer uses severity levels, fix every issue above LOW severity; otherwise fix every concrete actionable issue it reports. Commit and push only after those fixes are in place.")
-	}
-	if opts.ActionPRChecksForDone {
-		tasks = append(tasks, `- Action PR checks for done: after opening or updating the PR, you are not done. Set `+"`PR_URL`"+` to the returned PR URL and `+"`BRANCH`"+` to the pushed branch name, or substitute literal values. Run `+"`gh pr checks \"$PR_URL\" --watch --interval 10`"+`. Do not append `+"`|| true`"+`, `+"`|| echo`"+`, or otherwise swallow check failures; GraphQL/API permission errors are not success. If `+"`gh pr checks`"+` cannot read checks, try `+"`gh run list --branch \"$BRANCH\"`"+` and `+"`gh run watch <run-id>`"+`. If you need a structured snapshot of review or check state, use `+"`gh pr view \"$PR_URL\" --json reviewDecision,latestReviews,statusCheckRollup`"+` — the correct gh field is `+"`statusCheckRollup`"+` (NOT `+"`statusCheckRollupState`"+`, which gh rejects with `+"`Unknown JSON field`"+` and exit 1). If any check fails, fix it, commit, push, and wait again. If an automated AI review is running, wait for it to finish and fix every actionable issue above LOW severity. Only finish when checks and automated reviews are clean, or clearly say verification is blocked instead of claiming done.`)
-	}
-	if len(tasks) == 0 {
-		return ""
-	}
-	return "\n\nADDITIONAL CHAT TASKS ENABLED FOR THIS RUN:\n" + strings.Join(tasks, "\n")
-}
-
-// repoCtx carries the resolved per-request repository details into the
-// sandbox: the slug "owner/name", the default branch the agent should
-// branch off, and a freshly-minted GitHub App installation token. The
-// token is scoped to a single repo (RepoID is set when minting upstream)
-// so a compromised sandbox can only push to the one repo it's working
-// on, not the whole installation.
-type repoCtx struct {
-	Slug         string
-	BaseBranch   string
-	GitHubToken  string
-	InstallID    int64
-	RepoID       int64
-	CacheMounted bool
-	TokenExpires time.Time
-}
 
 func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, agent agents.Profile, userRequest, requestID, branch string, opts chatTaskOptions, model ClaudeModel, emit blocks.Emitter) (string, error) {
 	model = normalizeClaudeModel(model)
@@ -166,13 +65,13 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, o
 	// proof even when bootstrap generation or persistence failed. The
 	// run-scoped token lets the sandbox request more slots up to
 	// artifacts.MaxSlots.
-	var slotsManifest []artifacts.Slot
+	artifactSlotCount := 0
 	if opts.ValidateChanges && repo.RepoID != 0 {
 		prefix := fmt.Sprintf("%s/%d/%s", oc.OrgID, repo.RepoID, requestID)
 		s, err := b.addArtifactRunEnv(ctx, prefix, env)
 		switch {
 		case err == nil:
-			slotsManifest = s
+			artifactSlotCount = len(s)
 		case errors.Is(err, errArtifactSlotsDisabled):
 			// No S3 upload path configured; BuildValidationPrompt will
 			// tell the agent to mark artifact proof incomplete rather
@@ -182,10 +81,7 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, o
 				"request_id", requestID, "error", err)
 		}
 	}
-	proofInstructions := ""
-	if opts.ValidateChanges && spec == nil {
-		proofInstructions = artifacts.ProofInstructions(len(slotsManifest))
-	}
+	proofInstructions := proofInstructionsForSpec(opts, spec, artifactSlotCount)
 
 	originalPrompt := fmt.Sprintf(agentPromptTemplate,
 		repo.Slug, wd, repo.BaseBranch,
@@ -196,7 +92,7 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, o
 		finalPrompt = bootstrap.MergeIntoAgentPrompt(originalPrompt, spec, bootstrap.ValidationArgs{
 			OwnerRepo:         repo.Slug,
 			Branch:            branch,
-			ArtifactSlotCount: len(slotsManifest),
+			ArtifactSlotCount: artifactSlotCount,
 		})
 	}
 
@@ -477,43 +373,6 @@ func truncateLogTail(s string) string {
 	return "...(truncated)...\n" + s[start:]
 }
 
-func bootstrapSkippedMessage(err error) string {
-	const base = "Couldn't auto-bootstrap this repo for end-to-end validation — running the agent without a validation spec."
-	if err == nil {
-		return base + " Check server logs for details."
-	}
-	return base + "\n\nReason: " + bootstrapErrorSummary(err) + "."
-}
-
-func bootstrapErrorSummary(err error) string {
-	msg := err.Error()
-	switch {
-	case strings.Contains(msg, "invalid byte sequence for encoding"):
-		// Current store writes sanitize bootstrap text fields before Postgres.
-		// Keep this classification for older deployments or future save paths
-		// that may still surface the raw SQLSTATE 22021 error.
-		return "could not save the generated spec because captured sandbox output contained invalid UTF-8"
-	case strings.Contains(msg, "save spec"):
-		return "could not save the generated spec"
-	case strings.Contains(msg, "parse manifest"):
-		return "the generated manifest was not valid JSON"
-	case strings.Contains(msg, "read manifest"):
-		return "could not read the generated manifest from the sandbox"
-	case strings.Contains(msg, "read setup.sh"):
-		return "could not read the generated setup script from the sandbox"
-	case strings.Contains(msg, "read start.sh"):
-		return "could not read the generated start script from the sandbox"
-	case strings.Contains(msg, "read health.sh"):
-		return "could not read the generated health check from the sandbox"
-	case strings.Contains(msg, "setup-clone"):
-		return "could not prepare the repository checkout for bootstrap"
-	case strings.Contains(msg, "detect"):
-		return "could not inspect the repository for bootstrap hints"
-	default:
-		return "bootstrap returned an internal error; check server logs for details"
-	}
-}
-
 // runInlineScript writes scriptBody to the sandbox via heredoc and runs
 // it with env vars prefixed, reusing an existing session. It mirrors
 // runScript's prologue but stays in-process — bootstrap shares one
@@ -547,42 +406,6 @@ func (b *Bot) runInlineScript(ctx context.Context, sb *daytona.Sandbox, sessionI
 	return nil
 }
 
-// claudeAuthEnv picks the env-var name + value to inject into the
-// sandbox so the `claude` binary authenticates correctly. It prefers
-// the subscription OAuth token over an API key when both are set:
-// Claude Code's own precedence puts ANTHROPIC_API_KEY ahead of
-// CLAUDE_CODE_OAUTH_TOKEN, so injecting both would silently fall back
-// to the API key, which is not what an org that pasted a subscription
-// token expects. Callers must have already verified that at least one
-// of the two is non-empty (HandleRequest does this).
-func claudeAuthEnv(oc orgcfg.Config) (name, value string) {
-	if oc.ClaudeCodeOAuthToken != "" {
-		return "CLAUDE_CODE_OAUTH_TOKEN", oc.ClaudeCodeOAuthToken
-	}
-	return "ANTHROPIC_API_KEY", oc.AnthropicAPIKey
-}
-
-// maskToken returns exactly 8 asterisks so logs confirm a token is set without
-// revealing any characters or length information. Returns "(empty)" when s is
-// empty so callers can distinguish a missing token from a present one.
-func maskToken(s string) string {
-	if len(s) == 0 {
-		return "(empty)"
-	}
-	return "********"
-}
-
-func addAgentEnv(env map[string]string, cfg Config, agent agents.Profile) {
-	env["HETCHY_AGENT_SLUG"] = agent.Slug
-	env["HETCHY_AGENT_NAME"] = agent.DisplayName
-	env["HETCHY_AGENT_SX_BOT"] = agent.SXBot
-	env["HETCHY_AGENT_PERSONA_ASSET"] = agent.PersonaAsset
-	env["HETCHY_AGENT_PROMPT_B64"] = base64.StdEncoding.EncodeToString([]byte(agent.PersonaPrompt))
-	if cfg.SXPublicVaultURL != "" {
-		env["HETCHY_SX_PUBLIC_VAULT_URL"] = cfg.SXPublicVaultURL
-	}
-}
-
 // runFollowUp resumes work in an existing sandbox. The installation
 // token is freshly minted and passed per-run (not just at sandbox-create
 // time) so a token rotation or a re-installed App takes effect on the
@@ -612,7 +435,7 @@ func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx
 	}
 	addAgentEnv(env, b.cfg, agent)
 
-	var slotsManifest []artifacts.Slot
+	artifactSlotCount := 0
 	if opts.ValidateChanges && repo.RepoID != 0 {
 		// Follow-ups can still need fresh proof links. Issue a new
 		// run-scoped batch under a follow-up prefix so keys don't
@@ -621,7 +444,7 @@ func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx
 		s, err := b.addArtifactRunEnv(ctx, prefix, env)
 		switch {
 		case err == nil:
-			slotsManifest = s
+			artifactSlotCount = len(s)
 		case errors.Is(err, errArtifactSlotsDisabled):
 			// No S3 upload path configured; validation prompt will
 			// require an explicit incomplete-artifact note.
@@ -630,7 +453,7 @@ func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx
 				"request_id", requestID, "error", err)
 		}
 	}
-	prompt := buildFollowUpPrompt(repo.Slug, rec, userRequest, spec, len(slotsManifest), opts)
+	prompt := buildFollowUpPrompt(repo.Slug, rec, userRequest, spec, artifactSlotCount, opts)
 	env["SF_PROMPT_B64"] = base64.StdEncoding.EncodeToString([]byte(prompt))
 	authKey, authVal := claudeAuthEnv(oc)
 	b.log.Info("claude auth", "method", authKey, "token", maskToken(authVal), "request_id", requestID)
@@ -657,30 +480,6 @@ func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx
 	}
 	b.markRunFinalizing(ctx)
 	return b.validateReportedPR(ctx, repo, rec.Branch, "", prURL)
-}
-
-func buildFollowUpPrompt(ownerRepo string, rec convstore.Record, userRequest string, spec *bootstrap.Spec, artifactSlotCount int, opts chatTaskOptions) string {
-	history := strings.Join(rec.History, "\n---\n")
-	prompt := fmt.Sprintf(agentFollowUpPromptTemplate,
-		repoWorkdir(ownerRepo), rec.Branch, rec.PRURL,
-		history, userRequest, conditionalTasksPrompt(opts),
-		proofInstructionsForSpec(opts, spec, artifactSlotCount),
-	)
-	if spec == nil {
-		return prompt
-	}
-	return bootstrap.MergeIntoAgentPrompt(prompt, spec, bootstrap.ValidationArgs{
-		OwnerRepo:         ownerRepo,
-		Branch:            rec.Branch,
-		ArtifactSlotCount: artifactSlotCount,
-	})
-}
-
-func proofInstructionsForSpec(opts chatTaskOptions, spec *bootstrap.Spec, artifactSlotCount int) string {
-	if !opts.ValidateChanges || spec != nil {
-		return ""
-	}
-	return artifacts.ProofInstructions(artifactSlotCount)
 }
 
 func (b *Bot) runScriptForRequest(ctx context.Context, sb *daytona.Sandbox, sessionID, label, scriptBody string, env map[string]string, emit blocks.Emitter) (string, error) {
@@ -796,60 +595,4 @@ func (b *Bot) runScript(ctx context.Context, sb *daytona.Sandbox, sessionID, lab
 		return "", fmt.Errorf("claude finished the %s run without posting a PR URL — check the agent transcript blocks", label)
 	}
 	return prURL, nil
-}
-
-const sandboxEnvFileThreshold = 8 * 1024
-
-var sandboxEnvFileKeys = map[string]string{
-	"HETCHY_AGENT_PROMPT_B64": "HETCHY_AGENT_PROMPT_B64_FILE",
-	"SF_PROMPT_B64":           "SF_PROMPT_B64_FILE",
-	"SF_SPEC_HEALTH_B64":      "SF_SPEC_HEALTH_B64_FILE",
-	"SF_SPEC_SETUP_B64":       "SF_SPEC_SETUP_B64_FILE",
-	"SF_SPEC_START_B64":       "SF_SPEC_START_B64_FILE",
-}
-
-func (b *Bot) materializeLargeRunEnv(ctx context.Context, sandboxID string, proc sandboxProcess, sessionID, label string, env map[string]string) error {
-	var keys []string
-	for key := range sandboxEnvFileKeys {
-		if val, ok := env[key]; ok && len(val) > sandboxEnvFileThreshold {
-			keys = append(keys, key)
-		}
-	}
-	slices.Sort(keys)
-	if len(keys) == 0 {
-		return nil
-	}
-
-	dir := "/tmp/hetchy-env/" + label
-	var cmd strings.Builder
-	cmd.WriteString("rm -rf -- ")
-	cmd.WriteString(shellQuote(dir))
-	cmd.WriteByte('\n')
-	cmd.WriteString("mkdir -p -- ")
-	cmd.WriteString(shellQuote(dir))
-
-	fileVars := make(map[string]string, len(keys))
-	for _, key := range keys {
-		val := env[key]
-		path := dir + "/" + strings.ToLower(key) + ".b64"
-		fileVars[key] = path
-		cmd.WriteByte('\n')
-		cmd.WriteString(heredocWriteCmd(path, val, false))
-		b.log.Info("sandbox env file write",
-			"sandbox", sandboxID,
-			"session", sessionID,
-			"label", label,
-			"key", key,
-			"bytes", len(val),
-		)
-	}
-	if _, err := b.shLines(ctx, sandboxID, proc, sessionID, "write-env", cmd.String(), 60*time.Second, 0, true, func(string) {}); err != nil {
-		return fmt.Errorf("write env files: %w", err)
-	}
-	for _, key := range keys {
-		fileKey := sandboxEnvFileKeys[key]
-		delete(env, key)
-		env[fileKey] = fileVars[key]
-	}
-	return nil
 }
