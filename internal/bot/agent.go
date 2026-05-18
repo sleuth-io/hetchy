@@ -138,8 +138,7 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, o
 			// flight has nothing to do with running the app.
 			b.log.Warn("bootstrap failed; proceeding without spec",
 				"request_id", requestID, "repo", repo.Slug, "error", err)
-			emit.Notify("Bootstrap skipped",
-				"Couldn't auto-bootstrap this repo for end-to-end validation — running the agent without a validation spec. Check server logs for details.")
+			emit.Notify("Bootstrap skipped", bootstrapSkippedMessage(err))
 		} else {
 			spec = s
 		}
@@ -454,6 +453,7 @@ func (b *Bot) persistFailingBootstrap(ctx context.Context, res *bootstrap.LoopRe
 // Shared by ensureBootstrapSpec and persistFailingBootstrap.
 func truncateLogTail(s string) string {
 	const max = 32 * 1024
+	s = strings.ToValidUTF8(s, "\uFFFD")
 	if len(s) <= max {
 		return s
 	}
@@ -462,6 +462,40 @@ func truncateLogTail(s string) string {
 		start++
 	}
 	return "...(truncated)...\n" + s[start:]
+}
+
+func bootstrapSkippedMessage(err error) string {
+	const base = "Couldn't auto-bootstrap this repo for end-to-end validation — running the agent without a validation spec."
+	if err == nil {
+		return base + " Check server logs for details."
+	}
+	return base + "\n\nReason: " + bootstrapErrorSummary(err) + "."
+}
+
+func bootstrapErrorSummary(err error) string {
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "invalid byte sequence for encoding"):
+		return "could not save the generated spec because captured sandbox output contained invalid UTF-8"
+	case strings.Contains(msg, "save spec"):
+		return "could not save the generated spec"
+	case strings.Contains(msg, "parse manifest"):
+		return "the generated manifest was not valid JSON"
+	case strings.Contains(msg, "read manifest"):
+		return "could not read the generated manifest from the sandbox"
+	case strings.Contains(msg, "read setup.sh"):
+		return "could not read the generated setup script from the sandbox"
+	case strings.Contains(msg, "read start.sh"):
+		return "could not read the generated start script from the sandbox"
+	case strings.Contains(msg, "read health.sh"):
+		return "could not read the generated health check from the sandbox"
+	case strings.Contains(msg, "setup-clone"):
+		return "could not prepare the repository checkout for bootstrap"
+	case strings.Contains(msg, "detect"):
+		return "could not inspect the repository for bootstrap hints"
+	default:
+		return "bootstrap returned an internal error; check server logs for details"
+	}
 }
 
 // runInlineScript writes scriptBody to the sandbox via heredoc and runs
