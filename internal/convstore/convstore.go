@@ -6,6 +6,8 @@ package convstore
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -69,6 +71,24 @@ type Record struct {
 	TaskOptions map[string]bool
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+}
+
+// Attachment is a user-supplied file attached to one prompt turn.
+// Data is populated only on paths that need file contents, such as
+// sandbox upload and direct download; list/detail APIs return metadata
+// with Data left nil.
+type Attachment struct {
+	ID          string
+	OrgID       string
+	ThreadID    string
+	TurnIndex   int
+	Filename    string
+	ContentType string
+	SizeBytes   int64
+	Data        []byte
+	Source      string
+	SlackFileID string
+	CreatedAt   time.Time
 }
 
 // Store wraps the sqlc queries with the loose Record shape used elsewhere.
@@ -272,6 +292,111 @@ func (s *Store) Rename(ctx context.Context, orgID, threadID, title string) error
 	return nil
 }
 
+// SaveAttachments inserts prompt attachments. Empty input and disabled
+// stores are no-ops. Callers must ensure the parent conversation row
+// already exists so the FK can associate the files with it.
+func (s *Store) SaveAttachments(ctx context.Context, attachments []Attachment) error {
+	if s == nil || s.db == nil || len(attachments) == 0 {
+		return nil
+	}
+	for _, a := range attachments {
+		if a.ID == "" {
+			a.ID = NewAttachmentID()
+		}
+		if a.ContentType == "" {
+			a.ContentType = "application/octet-stream"
+		}
+		if a.Source == "" {
+			a.Source = "web"
+		}
+		if a.SizeBytes == 0 {
+			a.SizeBytes = int64(len(a.Data))
+		}
+		_, err := s.db.Queries.SaveConversationAttachment(ctx, sqlc.SaveConversationAttachmentParams{
+			ID:          a.ID,
+			OrgID:       a.OrgID,
+			ThreadID:    a.ThreadID,
+			TurnIndex:   int32(a.TurnIndex),
+			Filename:    a.Filename,
+			ContentType: a.ContentType,
+			SizeBytes:   a.SizeBytes,
+			Data:        a.Data,
+			Source:      a.Source,
+			SlackFileID: a.SlackFileID,
+		})
+		if err != nil {
+			return fmt.Errorf("save attachment %s: %w", a.Filename, err)
+		}
+	}
+	return nil
+}
+
+// ListAttachments returns attachment metadata for the whole conversation.
+func (s *Store) ListAttachments(ctx context.Context, orgID, threadID string) ([]Attachment, error) {
+	if s == nil || s.db == nil {
+		return nil, nil
+	}
+	rows, err := s.db.Queries.ListConversationAttachments(ctx, sqlc.ListConversationAttachmentsParams{
+		OrgID:    orgID,
+		ThreadID: threadID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list attachments: %w", err)
+	}
+	out := make([]Attachment, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, attachmentFromListRow(r))
+	}
+	return out, nil
+}
+
+// ListAttachmentsForTurn returns attachment contents for one prompt turn.
+func (s *Store) ListAttachmentsForTurn(ctx context.Context, orgID, threadID string, turnIndex int) ([]Attachment, error) {
+	if s == nil || s.db == nil {
+		return nil, nil
+	}
+	rows, err := s.db.Queries.ListConversationAttachmentsForTurn(ctx, sqlc.ListConversationAttachmentsForTurnParams{
+		OrgID:     orgID,
+		ThreadID:  threadID,
+		TurnIndex: int32(turnIndex),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list turn attachments: %w", err)
+	}
+	out := make([]Attachment, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, attachmentFromModel(r))
+	}
+	return out, nil
+}
+
+// GetAttachment returns one attachment with its data for download.
+func (s *Store) GetAttachment(ctx context.Context, orgID, attachmentID string) (Attachment, error) {
+	if s == nil || s.db == nil {
+		return Attachment{}, ErrNotFound
+	}
+	row, err := s.db.Queries.GetConversationAttachment(ctx, sqlc.GetConversationAttachmentParams{
+		OrgID: orgID,
+		ID:    attachmentID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Attachment{}, ErrNotFound
+		}
+		return Attachment{}, fmt.Errorf("get attachment: %w", err)
+	}
+	return attachmentFromModel(row), nil
+}
+
+// NewAttachmentID returns a URL/path-safe random id for attachments.
+func NewAttachmentID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "att_" + strings.ReplaceAll(time.Now().UTC().Format("20060102150405.000000000"), ".", "")
+	}
+	return "att_" + base64.RawURLEncoding.EncodeToString(b[:])
+}
+
 // encodeBlocks marshals each per-turn []Block to a JSONB element. A nil
 // or empty slice for a turn becomes the JSON literal `[]` so the column
 // stays NOT NULL-clean and decode round-trips to a non-nil empty slice.
@@ -406,4 +531,35 @@ func recordFromSearchRow(row sqlc.SearchConversationsRow) (Record, error) {
 		TaskOptions: row.TaskOptions,
 		CreatedAt:   row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	})
+}
+
+func attachmentFromModel(row sqlc.ConversationAttachment) Attachment {
+	return Attachment{
+		ID:          row.ID,
+		OrgID:       row.OrgID,
+		ThreadID:    row.ThreadID,
+		TurnIndex:   int(row.TurnIndex),
+		Filename:    row.Filename,
+		ContentType: row.ContentType,
+		SizeBytes:   row.SizeBytes,
+		Data:        row.Data,
+		Source:      row.Source,
+		SlackFileID: row.SlackFileID,
+		CreatedAt:   row.CreatedAt.Time,
+	}
+}
+
+func attachmentFromListRow(row sqlc.ListConversationAttachmentsRow) Attachment {
+	return Attachment{
+		ID:          row.ID,
+		OrgID:       row.OrgID,
+		ThreadID:    row.ThreadID,
+		TurnIndex:   int(row.TurnIndex),
+		Filename:    row.Filename,
+		ContentType: row.ContentType,
+		SizeBytes:   row.SizeBytes,
+		Source:      row.Source,
+		SlackFileID: row.SlackFileID,
+		CreatedAt:   row.CreatedAt.Time,
+	}
 }

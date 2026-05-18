@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"mime"
 	"net/http"
 	"strconv"
 	"strings"
@@ -51,6 +52,7 @@ type conversationDetail struct {
 	AgentName      string           `json:"agent_name,omitempty"`
 	Model          string           `json:"model,omitempty"`
 	TaskOptions    map[string]bool  `json:"task_options,omitempty"`
+	Attachments    []attachmentInfo `json:"attachments,omitempty"`
 	CreatedAt      string           `json:"created_at,omitempty"`
 	History        []string         `json:"history"`
 	ResponseBlocks [][]blocks.Block `json:"response_blocks"`
@@ -62,6 +64,17 @@ type conversationDetail struct {
 	// keeps the right-hand details panel showing the current state.
 	SXSkills  []string `json:"sx_skills,omitempty"`
 	UpdatedAt string   `json:"updated_at"`
+}
+
+type attachmentInfo struct {
+	ID          string `json:"id"`
+	Filename    string `json:"filename"`
+	ContentType string `json:"content_type"`
+	SizeBytes   int64  `json:"size_bytes"`
+	TurnIndex   int    `json:"turn_index"`
+	Source      string `json:"source"`
+	CreatedAt   string `json:"created_at,omitempty"`
+	DownloadURL string `json:"download_url"`
 }
 
 type agentSummary struct {
@@ -408,6 +421,7 @@ func (b *Bot) conversationDetailHandler(w http.ResponseWriter, r *http.Request) 
 			createdAt = rec.CreatedAt.UTC().Format(time.RFC3339)
 		}
 		agentSlug, agentName := b.resolveAgent(r.Context(), p.OrgID, rec.AgentSlug)
+		attachments := b.attachmentInfos(r.Context(), p.OrgID, rec.ThreadID)
 		writeJSON(w, conversationDetail{
 			ThreadID:       rec.ThreadID,
 			Title:          conversationTitle(rec),
@@ -421,6 +435,7 @@ func (b *Bot) conversationDetailHandler(w http.ResponseWriter, r *http.Request) 
 			AgentName:      agentName,
 			Model:          string(normalizeClaudeModel(ClaudeModel(rec.Model))),
 			TaskOptions:    rec.TaskOptions,
+			Attachments:    attachments,
 			CreatedAt:      createdAt,
 			History:        rec.History,
 			ResponseBlocks: rec.ResponseBlocks,
@@ -554,6 +569,7 @@ func (b *Bot) conversationDownloadHandler(w http.ResponseWriter, r *http.Request
 		createdAt = rec.CreatedAt.UTC().Format(time.RFC3339)
 	}
 	agentSlug, agentName := b.resolveAgent(r.Context(), p.OrgID, rec.AgentSlug)
+	attachments := b.attachmentInfos(r.Context(), p.OrgID, rec.ThreadID)
 
 	downloadData := conversationDetail{
 		ThreadID:       rec.ThreadID,
@@ -568,6 +584,7 @@ func (b *Bot) conversationDownloadHandler(w http.ResponseWriter, r *http.Request
 		AgentName:      agentName,
 		Model:          string(normalizeClaudeModel(ClaudeModel(rec.Model))),
 		TaskOptions:    rec.TaskOptions,
+		Attachments:    attachments,
 		CreatedAt:      createdAt,
 		History:        rec.History,
 		ResponseBlocks: rec.ResponseBlocks,
@@ -582,6 +599,66 @@ func (b *Bot) conversationDownloadHandler(w http.ResponseWriter, r *http.Request
 	if err := json.NewEncoder(w).Encode(downloadData); err != nil {
 		b.log.Error("encode conversation for download", "error", err, "org", p.OrgID, "thread", threadID)
 	}
+}
+
+func (b *Bot) conversationAttachmentDownloadHandler(w http.ResponseWriter, r *http.Request) {
+	attachmentID := strings.TrimPrefix(r.URL.Path, "/api/conversations/attachments/")
+	if attachmentID == "" || strings.Contains(attachmentID, "/") || !isSafeAttachmentID(attachmentID) {
+		http.NotFound(w, r)
+		return
+	}
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", "GET")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	p, _ := auth.FromContext(r.Context())
+	attachment, err := b.convs.GetAttachment(r.Context(), p.OrgID, attachmentID)
+	if err != nil {
+		if errors.Is(err, convstore.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		b.log.Error("get conversation attachment", "error", err, "org", p.OrgID, "attachment", attachmentID)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+	contentType := attachment.ContentType
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Length", strconv.FormatInt(int64(len(attachment.Data)), 10))
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{
+		"filename": attachment.Filename,
+	}))
+	_, _ = w.Write(attachment.Data)
+}
+
+func (b *Bot) attachmentInfos(ctx context.Context, orgID, threadID string) []attachmentInfo {
+	attachments, err := b.convs.ListAttachments(ctx, orgID, threadID)
+	if err != nil {
+		b.log.Warn("list conversation attachments", "org", orgID, "thread", threadID, "error", err)
+		return nil
+	}
+	out := make([]attachmentInfo, 0, len(attachments))
+	for _, a := range attachments {
+		var createdAt string
+		if !a.CreatedAt.IsZero() {
+			createdAt = a.CreatedAt.UTC().Format(time.RFC3339)
+		}
+		out = append(out, attachmentInfo{
+			ID:          a.ID,
+			Filename:    a.Filename,
+			ContentType: a.ContentType,
+			SizeBytes:   a.SizeBytes,
+			TurnIndex:   a.TurnIndex,
+			Source:      a.Source,
+			CreatedAt:   createdAt,
+			DownloadURL: "/api/conversations/attachments/" + a.ID,
+		})
+	}
+	return out
 }
 
 // conversationTitle derives a sidebar label. If the user has set a custom
@@ -685,6 +762,23 @@ func isSafeThreadID(s string) bool {
 		case r >= 'A' && r <= 'Z':
 		case r >= '0' && r <= '9':
 		case r == '-' || r == '_' || r == '.':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func isSafeAttachmentID(s string) bool {
+	if s == "" || len(s) > 128 {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case r == '-' || r == '_':
 		default:
 			return false
 		}

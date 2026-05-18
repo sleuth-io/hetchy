@@ -25,6 +25,7 @@ type fakeConversationStore struct {
 	upserts       []convstore.Record
 	progressSaves []convstore.Record
 	taskSaves     []map[string]bool
+	attachments   []convstore.Attachment
 }
 
 func (f *fakeConversationStore) Get(context.Context, string, string) (convstore.Record, error) {
@@ -64,6 +65,51 @@ func (f *fakeConversationStore) SaveTaskOptions(_ context.Context, _, _ string, 
 	defer f.mu.Unlock()
 	f.taskSaves = append(f.taskSaves, cloneTaskOptions(opts))
 	return nil
+}
+
+func (f *fakeConversationStore) SaveAttachments(_ context.Context, attachments []convstore.Attachment) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, a := range attachments {
+		if a.ID == "" {
+			a.ID = convstore.NewAttachmentID()
+		}
+		f.attachments = append(f.attachments, cloneAttachment(a))
+	}
+	return nil
+}
+
+func (f *fakeConversationStore) ListAttachments(context.Context, string, string) ([]convstore.Attachment, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]convstore.Attachment, 0, len(f.attachments))
+	for _, a := range f.attachments {
+		out = append(out, cloneAttachment(a))
+	}
+	return out, nil
+}
+
+func (f *fakeConversationStore) ListAttachmentsForTurn(_ context.Context, orgID, threadID string, turnIndex int) ([]convstore.Attachment, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []convstore.Attachment
+	for _, a := range f.attachments {
+		if a.OrgID == orgID && a.ThreadID == threadID && a.TurnIndex == turnIndex {
+			out = append(out, cloneAttachment(a))
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeConversationStore) GetAttachment(_ context.Context, orgID, attachmentID string) (convstore.Attachment, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, a := range f.attachments {
+		if a.OrgID == orgID && a.ID == attachmentID {
+			return cloneAttachment(a), nil
+		}
+	}
+	return convstore.Attachment{}, convstore.ErrNotFound
 }
 
 func (f *fakeConversationStore) Upsert(_ context.Context, rec convstore.Record) error {
@@ -119,6 +165,11 @@ func cloneTaskOptions(in map[string]bool) map[string]bool {
 	out := make(map[string]bool, len(in))
 	maps.Copy(out, in)
 	return out
+}
+
+func cloneAttachment(in convstore.Attachment) convstore.Attachment {
+	in.Data = append([]byte(nil), in.Data...)
+	return in
 }
 
 func testCoreBot(convs conversationStore) *Bot {

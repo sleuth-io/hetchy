@@ -1,7 +1,9 @@
 package bot
 
 import (
+	"bytes"
 	"context"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -79,14 +81,14 @@ func TestChatTemplate_ComposerControls(t *testing.T) {
 		`waitingTitle: 'Reconnecting'`,
 		`stopRequested`,
 		`conversationHasServerState`,
-		`renderPendingMetadata(text)`,
+		`renderPendingMetadata(displayText, attachmentsForTurn)`,
 		`conversationAgentIsMutable()`,
-		`payload.agent_slug = selectedAgentSlug`,
+		`setPayload('agent_slug', selectedAgentSlug)`,
 		`document.body.dataset.currentUserId`,
 		`taskOptionKeys`,
 		`applyConversationTaskOptions(detail)`,
-		`payload.review_code_before_push = taskOptions[taskOptionKeys.reviewBeforePush]`,
-		`payload.action_pr_checks_for_done = taskOptions[taskOptionKeys.actionPRChecks]`,
+		`setPayload('review_code_before_push', taskOptions[taskOptionKeys.reviewBeforePush])`,
+		`setPayload('action_pr_checks_for_done', taskOptions[taskOptionKeys.actionPRChecks])`,
 		`agentStorageKey`,
 		`localStorage.setItem(agentStorageKey`,
 		`applyConversationAgent(detail)`,
@@ -94,7 +96,7 @@ func TestChatTemplate_ComposerControls(t *testing.T) {
 		`loadRepos`,
 		`repoStorageKey`,
 		`localStorage.setItem(repoStorageKey`,
-		`payload.repository = selectedRepoSlug`,
+		`setPayload('repository', selectedRepoSlug)`,
 		`blk-awaiting-next`,
 		`markBlockAwaitingNext(ref.el)`,
 		`payload.meta.tag === 'sandbox_ready'`,
@@ -108,6 +110,72 @@ func TestChatTemplate_ComposerControls(t *testing.T) {
 		if !strings.Contains(script, w) {
 			t.Errorf("chat asset missing %q", w)
 		}
+	}
+}
+
+func TestParseMultipartChatPostBodyReadsAttachments(t *testing.T) {
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	fields := map[string]string{
+		"text":                      "use this log",
+		"session_id":                "thread-1",
+		"model":                     "sonnet",
+		"validate":                  "false",
+		"review_code_before_push":   "true",
+		"action_pr_checks_for_done": "false",
+		"agent_slug":                "bob",
+		"repository":                "hetchyhq/hetchy",
+	}
+	for k, v := range fields {
+		if err := writer.WriteField(k, v); err != nil {
+			t.Fatalf("write field: %v", err)
+		}
+	}
+	part, err := writer.CreateFormFile("attachments", "logs.json")
+	if err != nil {
+		t.Fatalf("create file: %v", err)
+	}
+	if _, err := part.Write([]byte(`{"ok":true}`)); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/chat", &buf)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	rec := httptest.NewRecorder()
+	body, ok := parseChatPostBody(rec, req)
+	if !ok {
+		t.Fatalf("parse failed with status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	if body.Text != "use this log" || body.SessionID != "thread-1" || body.Model != "sonnet" {
+		t.Fatalf("unexpected parsed body: %+v", body)
+	}
+	if body.AgentSlug == nil || *body.AgentSlug != "bob" {
+		t.Fatalf("agent slug = %v, want bob", body.AgentSlug)
+	}
+	if body.Repository == nil || *body.Repository != "hetchyhq/hetchy" {
+		t.Fatalf("repository = %v, want hetchyhq/hetchy", body.Repository)
+	}
+	if body.Validate == nil || *body.Validate {
+		t.Fatalf("validate = %v, want false", body.Validate)
+	}
+	if body.ReviewCodeBeforePush == nil || !*body.ReviewCodeBeforePush {
+		t.Fatalf("review = %v, want true", body.ReviewCodeBeforePush)
+	}
+	if body.ActionPRChecksForDone == nil || *body.ActionPRChecksForDone {
+		t.Fatalf("checks = %v, want false", body.ActionPRChecksForDone)
+	}
+	if len(body.Attachments) != 1 {
+		t.Fatalf("attachments len = %d, want 1", len(body.Attachments))
+	}
+	a := body.Attachments[0]
+	if a.Filename != "logs.json" || string(a.Data) != `{"ok":true}` || a.Source != "web" {
+		t.Fatalf("attachment = %+v data=%q", a, string(a.Data))
+	}
+	if a.ContentType == "" || a.SizeBytes != int64(len(a.Data)) {
+		t.Fatalf("attachment metadata = %+v", a)
 	}
 }
 

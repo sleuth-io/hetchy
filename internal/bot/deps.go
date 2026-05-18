@@ -19,6 +19,10 @@ type conversationStore interface {
 	Search(context.Context, string, convstore.SearchOptions) ([]convstore.Record, error)
 	SaveProgress(context.Context, convstore.Record) error
 	SaveTaskOptions(context.Context, string, string, map[string]bool) error
+	SaveAttachments(context.Context, []convstore.Attachment) error
+	ListAttachments(context.Context, string, string) ([]convstore.Attachment, error)
+	ListAttachmentsForTurn(context.Context, string, string, int) ([]convstore.Attachment, error)
+	GetAttachment(context.Context, string, string) (convstore.Attachment, error)
 	Upsert(context.Context, convstore.Record) error
 	Delete(context.Context, string, string) error
 	Rename(context.Context, string, string, string) error

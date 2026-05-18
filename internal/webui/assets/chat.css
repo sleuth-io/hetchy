@@ -139,6 +139,16 @@
           flex-direction: column; gap: .75rem; }
   .msg  { max-width: 70%; padding: .6rem 1rem; border-radius: 1rem; line-height: 1.4; }
   .user { align-self: flex-end; background: #0b93f6; color: #fff; border-bottom-right-radius: .25rem; }
+  .user .msg-text { white-space: pre-wrap; }
+  .msg-attachments { display: flex; flex-wrap: wrap; gap: .35rem;
+                     margin-top: .45rem; }
+  .msg-attachment { display: inline-flex; align-items: center;
+                    max-width: 100%; padding: .18rem .45rem;
+                    border-radius: .4rem; background: rgba(255,255,255,.18);
+                    color: inherit; border: 1px solid rgba(255,255,255,.28);
+                    font-size: .78rem; line-height: 1.25; text-decoration: none;
+                    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .msg-attachment:hover { text-decoration: underline; }
   .bot  { align-self: flex-start; background: #fff; border: 1px solid #ddd;
           border-bottom-left-radius: .25rem; white-space: pre-wrap; }
   #empty-state { margin: auto; text-align: center; color: #888; font-size: .95rem; }
@@ -162,6 +172,23 @@
           /* Match line-height so a single empty textarea renders at the same
              height as the previous single-line input — no jump on focus. */
           min-height: 1.4em; }
+  #attachment-list { display: flex; flex-wrap: wrap; gap: .4rem;
+                     padding-top: .1rem; }
+  #attachment-list[hidden] { display: none; }
+  .attachment-chip { display: inline-flex; align-items: center; gap: .35rem;
+                     max-width: 100%; min-width: 0; padding: .28rem .35rem .28rem .5rem;
+                     border: 1px solid #dcdce2; border-radius: .5rem;
+                     background: #f7f7f8; color: #222; font-size: .78rem;
+                     line-height: 1.2; }
+  .attachment-chip-name { min-width: 0; overflow: hidden; text-overflow: ellipsis;
+                          white-space: nowrap; max-width: 16rem; font-weight: 500; }
+  .attachment-chip-size { color: #777; flex-shrink: 0; }
+  .attachment-chip-remove { width: 1.25rem; height: 1.25rem; padding: 0;
+                            border-radius: .35rem; border: 0; background: transparent;
+                            color: #777; font-size: 1rem; line-height: 1;
+                            display: inline-flex; align-items: center;
+                            justify-content: center; }
+  .attachment-chip-remove:hover { background: #e9e9ed; color: #222; }
   #composer-controls { display: flex; align-items: center;
                        justify-content: space-between; gap: .75rem; }
   #composer-actions { display: flex; align-items: center; gap: .5rem; }
@@ -325,6 +352,14 @@
                    background: none; color: #0b5ec0; font: inherit;
                    font-size: .72rem; cursor: pointer; text-decoration: underline; }
   .meta-show-all:hover { color: #084a99; }
+  .meta-attachment-list { display: flex; flex-direction: column; gap: .25rem; }
+  .meta-attachment-link { display: inline-flex; align-items: baseline; gap: .35rem;
+                          max-width: 100%; width: fit-content;
+                          padding: .1rem .35rem; border-radius: .35rem;
+                          background: #eef2f7; color: #0b5ec0;
+                          font-size: .75rem; line-height: 1.25;
+                          overflow-wrap: anywhere; }
+  .meta-attachment-size { color: #777; font-size: .7rem; white-space: nowrap; }
 
   /* Skills modal — opened from the "Show all" link in the Skills row.
      Fixed overlay covers the chat behind it; the dialog itself caps
@@ -628,6 +663,13 @@
                            box-shadow: 0 1px 2px rgba(0,0,0,.18); }
   html.is-dark #composer:focus-within { border-color: #7dc4ff; }
   html.is-dark #inp { color: #e7e7e9; }
+  html.is-dark .msg-attachment { background: rgba(255,255,255,.14);
+                                 border-color: rgba(255,255,255,.24); }
+  html.is-dark .attachment-chip { background: #2a2a2e; border-color: #3a3a40;
+                                  color: #e7e7e9; }
+  html.is-dark .attachment-chip-size { color: #9a9aa0; }
+  html.is-dark .attachment-chip-remove { color: #9a9aa0; }
+  html.is-dark .attachment-chip-remove:hover { background: #34343a; color: #e7e7e9; }
   html.is-dark #tools-btn { color: #c4c4c8; }
   html.is-dark #tools-btn:hover,
   html.is-dark #tools-btn[aria-expanded="true"] { background: #2a2a2e; border-color: #3a3a40; }
@@ -685,6 +727,8 @@
   html.is-dark .meta-row.is-empty .meta-value { color: #555a60; }
   html.is-dark .meta-empty { color: #8a8a90; }
   html.is-dark .meta-chip { background: #2a2f3a; color: #e7e7e9; }
+  html.is-dark .meta-attachment-link { background: #2a2f3a; color: #7dc4ff; }
+  html.is-dark .meta-attachment-size { color: #9a9aa0; }
   html.is-dark .meta-show-all { color: #7dc4ff; }
   html.is-dark .meta-show-all:hover { color: #a8d8ff; }
   html.is-dark .skills-modal { background: #1c1c1f;

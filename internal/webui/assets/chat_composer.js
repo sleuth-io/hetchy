@@ -230,6 +230,72 @@ function currentTaskOptions() {
   };
 }
 
+function formatAttachmentSize(bytes) {
+  const n = Number(bytes) || 0;
+  if (n < 1024) return n + ' B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(n < 10 * 1024 ? 1 : 0) + ' KB';
+  return (n / (1024 * 1024)).toFixed(n < 10 * 1024 * 1024 ? 1 : 0) + ' MB';
+}
+
+function attachmentDisplayName(file) {
+  return (file && (file.filename || file.name)) || 'attachment';
+}
+
+function renderPendingAttachments() {
+  if (!attachmentListEl) return;
+  attachmentListEl.innerHTML = '';
+  if (pendingAttachments.length === 0) {
+    attachmentListEl.hidden = true;
+    return;
+  }
+  attachmentListEl.hidden = false;
+  pendingAttachments.forEach((file, index) => {
+    const chip = document.createElement('div');
+    chip.className = 'attachment-chip';
+
+    const name = document.createElement('span');
+    name.className = 'attachment-chip-name';
+    name.textContent = attachmentDisplayName(file);
+    chip.appendChild(name);
+
+    const size = document.createElement('span');
+    size.className = 'attachment-chip-size';
+    size.textContent = formatAttachmentSize(file.size || 0);
+    chip.appendChild(size);
+
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'attachment-chip-remove';
+    remove.setAttribute('aria-label', 'Remove ' + attachmentDisplayName(file));
+    remove.textContent = '×';
+    remove.addEventListener('click', () => {
+      pendingAttachments.splice(index, 1);
+      renderPendingAttachments();
+      inp.focus();
+    });
+    chip.appendChild(remove);
+
+    attachmentListEl.appendChild(chip);
+  });
+}
+
+function addPendingFiles(files) {
+  const incoming = Array.from(files || []);
+  if (incoming.length === 0) return;
+  for (const file of incoming) {
+    if (pendingAttachments.length >= maxPromptAttachments) {
+      showToast('attachment-limit', 'You can attach up to ' + maxPromptAttachments + ' files.', 'warn', 3500);
+      break;
+    }
+    if (file.size > maxPromptAttachmentBytes) {
+      showToast('attachment-size', attachmentDisplayName(file) + ' is larger than 10 MB.', 'warn', 4500);
+      continue;
+    }
+    pendingAttachments.push(file);
+  }
+  renderPendingAttachments();
+}
+
 function applyConversationTaskOptions(detail) {
   if (validateBox) validateBox.checked = taskOptionValue(detail, taskOptionKeys.validate);
   if (reviewBeforePushBox) reviewBeforePushBox.checked = taskOptionValue(detail, taskOptionKeys.reviewBeforePush);
@@ -425,6 +491,19 @@ toolsBtn.addEventListener('click', e => {
   else closeToolsPopover();
 });
 toolsPopover.addEventListener('click', e => e.stopPropagation());
+if (attachFilesBtn && attachmentInput) {
+  attachFilesBtn.addEventListener('click', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    attachmentInput.click();
+  });
+  attachmentInput.addEventListener('change', () => {
+    addPendingFiles(attachmentInput.files);
+    attachmentInput.value = '';
+    closeToolsPopover();
+    inp.focus();
+  });
+}
 agentSelectorBtn.addEventListener('click', e => {
   e.stopPropagation();
   if (agentPopover.hidden) openAgentPopover();
@@ -522,4 +601,3 @@ document.addEventListener('keydown', e => {
     closeMetaDropdown();
   }
 });
-
