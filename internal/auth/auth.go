@@ -194,6 +194,10 @@ func (s *Service) SignupHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) redirectToAuthKit(w http.ResponseWriter, r *http.Request, hint workos.UserManagementAuthenticationScreenHint) {
+	s.redirectToAuthKitWithInvitation(w, r, hint, "")
+}
+
+func (s *Service) redirectToAuthKitWithInvitation(w http.ResponseWriter, r *http.Request, hint workos.UserManagementAuthenticationScreenHint, invitationToken string) {
 	if s.cfg.Bypass {
 		// In bypass mode there's no real auth — just send the browser home.
 		http.Redirect(w, r, "/", http.StatusFound)
@@ -211,15 +215,20 @@ func (s *Service) redirectToAuthKit(w http.ResponseWriter, r *http.Request, hint
 		"cookie_path", s.statePath,
 		"cookie_secure", s.cfg.CookieSecure,
 		"redirect_uri", s.cfg.RedirectURI,
+		"invitation_flow", invitationToken != "",
 	)
 	provider := workos.UserManagementAuthenticationProviderAuthkit
 	hintCopy := hint
-	url := s.client.UserManagement().GetAuthorizationURL(&workos.UserManagementGetAuthorizationURLParams{
+	params := &workos.UserManagementGetAuthorizationURLParams{
 		RedirectURI: s.cfg.RedirectURI,
 		Provider:    &provider,
 		ScreenHint:  &hintCopy,
 		State:       &state,
-	})
+	}
+	if invitationToken != "" {
+		params.InvitationToken = &invitationToken
+	}
+	url := s.client.UserManagement().GetAuthorizationURL(params)
 	http.Redirect(w, r, url, http.StatusFound)
 }
 
@@ -238,6 +247,13 @@ func (s *Service) CallbackHandler(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
 	}
+	invitationToken := strings.TrimSpace(r.URL.Query().Get("invitation_token"))
+	code := r.URL.Query().Get("code")
+	queryState := r.URL.Query().Get("state")
+	if invitationToken != "" && queryState == "" {
+		s.redirectToAuthKitWithInvitation(w, r, workos.UserManagementAuthenticationScreenHintSignIn, invitationToken)
+		return
+	}
 	// Verify the OAuth state nonce before doing anything else. We clear the
 	// state cookie *before* the nil-check on cookieErr — even on early-return
 	// paths — so a single signed value can't be replayed against a future
@@ -251,21 +267,21 @@ func (s *Service) CallbackHandler(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login?error=callback_failed", http.StatusFound)
 		return
 	}
-	queryState := r.URL.Query().Get("state")
 	if queryState == "" || !s.verifyOAuthState(stateCookie.Value, queryState) {
 		s.logStateRejection(r, "state mismatch or invalid hmac")
 		http.Redirect(w, r, "/login?error=callback_failed", http.StatusFound)
 		return
 	}
-	code := r.URL.Query().Get("code")
 	if code == "" {
 		s.logStateRejection(r, "missing code")
 		http.Error(w, "missing code", http.StatusBadRequest)
 		return
 	}
-	resp, err := s.client.UserManagement().AuthenticateWithCode(r.Context(), &workos.UserManagementAuthenticateWithCodeParams{
-		Code: code,
-	})
+	authParams := &workos.UserManagementAuthenticateWithCodeParams{Code: code}
+	if invitationToken != "" {
+		authParams.InvitationToken = &invitationToken
+	}
+	resp, err := s.client.UserManagement().AuthenticateWithCode(r.Context(), authParams)
 	if err != nil {
 		http.Error(w, "authenticate: "+err.Error(), http.StatusUnauthorized)
 		return

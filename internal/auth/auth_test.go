@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"slices"
 	"strings"
 	"testing"
@@ -165,6 +166,59 @@ func TestCallbackPassesStateGate(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "missing code") {
 		t.Fatalf("expected to land on missing-code branch, got body %q", rec.Body.String())
+	}
+}
+
+func TestCallbackWithInvitationTokenStartsStatefulAuthFlow(t *testing.T) {
+	s := newTestService(t, "test-cookie-password-keep-it-long")
+	s.cfg.RedirectURI = "https://app.example.com/callback"
+	s.client = workos.NewClient("sk_test", workos.WithClientID("client_test"), workos.WithBaseURL("https://api.workos.test"))
+
+	req := httptest.NewRequest(http.MethodGet, "/callback?code=ignored_direct_code&invitation_token=inv_test_123", nil)
+	rec := httptest.NewRecorder()
+	s.CallbackHandler(rec, req)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("expected invitation callback to redirect into AuthKit, got %d", rec.Code)
+	}
+	loc := rec.Header().Get("Location")
+	u, err := url.Parse(loc)
+	if err != nil {
+		t.Fatalf("parse redirect location %q: %v", loc, err)
+	}
+	if u.Host != "api.workos.test" || u.Path != "/user_management/authorize" {
+		t.Fatalf("unexpected AuthKit redirect target: %s", loc)
+	}
+	q := u.Query()
+	if got := q.Get("invitation_token"); got != "inv_test_123" {
+		t.Fatalf("invitation_token = %q, want inv_test_123", got)
+	}
+	if got := q.Get("redirect_uri"); got != s.cfg.RedirectURI {
+		t.Fatalf("redirect_uri = %q, want %q", got, s.cfg.RedirectURI)
+	}
+	if got := q.Get("provider"); got != string(workos.UserManagementAuthenticationProviderAuthkit) {
+		t.Fatalf("provider = %q, want authkit", got)
+	}
+	state := q.Get("state")
+	if state == "" {
+		t.Fatal("state must be present on invitation auth redirect")
+	}
+
+	var stateCookie *http.Cookie
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == oauthStateCookieName {
+			stateCookie = c
+			break
+		}
+	}
+	if stateCookie == nil {
+		t.Fatal("expected oauth state cookie to be set")
+	}
+	if stateCookie.Path != "/callback" {
+		t.Fatalf("state cookie path = %q, want /callback", stateCookie.Path)
+	}
+	if !s.verifyOAuthState(stateCookie.Value, state) {
+		t.Fatal("state cookie should verify against redirected state")
 	}
 }
 
