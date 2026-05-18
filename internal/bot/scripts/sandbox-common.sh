@@ -428,17 +428,24 @@ hetchy_write_repo_cache_metadata() {
   rm -f "$tmp" 2>/dev/null || true
 }
 
-# hetchy_workdir_safe_for_rm rejects empty strings, root, and a
-# handful of obvious system paths so a misconfigured SF_WORKDIR
-# can't accidentally turn `rm -rf "$workdir"` into a host-wipe. The
-# upstream caller already enforces SF_WORKDIR via `: "${SF_WORKDIR:?…}"`,
-# but a one-liner here is cheap defence in depth.
+# hetchy_workdir_safe_for_rm rejects empty strings, root, common system
+# paths, and direct children of broad system roots so a misconfigured
+# SF_WORKDIR can't accidentally turn `rm -rf "$workdir"` into a
+# host-wipe. The upstream caller already enforces SF_WORKDIR via
+# `: "${SF_WORKDIR:?…}"`, but a one-liner here is cheap defence in
+# depth.
 hetchy_workdir_safe_for_rm() {
   local path="$1"
   [[ -n "$path" ]] || return 1
   case "$path" in
     /|/root|/home|/tmp|/var|/etc|/usr|/bin|/sbin|/lib|/lib64|/opt|/srv|/boot|/dev|/proc|/sys)
       return 1
+      ;;
+  esac
+  case "$path" in
+    /home/*|/tmp/*|/var/*|/opt/*|/srv/*)
+      local rest="${path#/*/}"
+      [[ "$rest" == */* ]] || return 1
       ;;
   esac
   return 0
@@ -504,18 +511,29 @@ restore_repo_checkout_from_cache() {
 save_repo_checkout_to_cache() {
   local workdir="$1"
   local cache_archive="$2"
+  local clone_seconds="${3:-}"
+  local restore_sync_seconds="${4:-}"
   [[ -d "$workdir/.git" ]] || return 1
   local parent
   parent="$(dirname "$cache_archive")"
   mkdir -p "$parent" || return 1
   local tmp="/tmp/hetchy-repo-cache.$$.$RANDOM.tar.gz"
   rm -f "$tmp" 2>/dev/null || true
-  tar -C "$workdir" -czf "$tmp" . >/dev/null 2>&1 || {
+  tar -C "$workdir" \
+    --exclude=./.env \
+    --exclude=./.npmrc \
+    --exclude=./cargo/credentials \
+    --exclude=./cargo/credentials.toml \
+    -czf "$tmp" . >/dev/null 2>&1 || {
     rm -f "$tmp" 2>/dev/null || true
     return 1
   }
   _save_repo_checkout_inner() {
-    cp -f "$tmp" "$cache_archive" >/dev/null 2>&1
+    cp -f "$tmp" "$cache_archive" >/dev/null 2>&1 || return 1
+    if [[ "$clone_seconds" =~ ^[0-9]+$ ]] && ! hetchy_write_repo_cache_metadata "$cache_archive" "$clone_seconds" "$restore_sync_seconds"; then
+      echo "[hetchy] WARNING: repo checkout cache metadata save failed; continuing"
+    fi
+    return 0
   }
   hetchy_repo_cache_with_lock "$cache_archive" _save_repo_checkout_inner
   local rc=$?
@@ -563,16 +581,15 @@ hetchy_refresh_repo_cache_now() {
   if ! cache_archive="$(hetchy_repo_cache_archive 2>/dev/null)"; then
     return 0
   fi
-  if ! cache_supports_basic_write "${HETCHY_CACHE_DIR}"; then
+  local volume_mount
+  volume_mount="$(dirname "$cache_archive")"
+  if ! cache_supports_basic_write "$volume_mount"; then
     return 0
   fi
   local started
   started="$(hetchy_now_seconds)"
   echo "[hetchy] saving repo checkout to volume cache"
-  if save_repo_checkout_to_cache "$workdir" "$cache_archive"; then
-    if [[ "$clone_seconds" =~ ^[0-9]+$ ]] && ! hetchy_write_repo_cache_metadata "$cache_archive" "$clone_seconds" "$restore_sync_seconds"; then
-      echo "[hetchy] WARNING: repo checkout cache metadata save failed; continuing"
-    fi
+  if save_repo_checkout_to_cache "$workdir" "$cache_archive" "$clone_seconds" "$restore_sync_seconds"; then
     echo "[hetchy] repo checkout cache saved in $(hetchy_elapsed_seconds "$started")"
   else
     echo "[hetchy] WARNING: repo checkout cache save failed after $(hetchy_elapsed_seconds "$started"); continuing"

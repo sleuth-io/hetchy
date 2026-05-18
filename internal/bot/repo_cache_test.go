@@ -129,19 +129,21 @@ func filterRepoCacheEnv(in []string) []string {
 }
 
 func TestHetchyRepoCacheArchive_RespectsMountStatus(t *testing.T) {
+	mountedCache := t.TempDir()
 	cases := []struct {
-		name      string
-		env       map[string]string
-		wantExit  int
-		wantStdin string
+		name       string
+		env        map[string]string
+		wantExit   int
+		wantStdout string
 	}{
 		{
 			name: "mounted",
 			env: map[string]string{
 				"HETCHY_CACHE_STATUS": "mounted",
-				"HETCHY_CACHE_DIR":    t.TempDir(),
+				"HETCHY_CACHE_DIR":    mountedCache,
 			},
-			wantExit: 0,
+			wantExit:   0,
+			wantStdout: mountedCache + "/repo.tar.gz",
 		},
 		{
 			name: "unavailable",
@@ -181,10 +183,8 @@ func TestHetchyRepoCacheArchive_RespectsMountStatus(t *testing.T) {
 			if gotExit != formatInt(tc.wantExit) {
 				t.Fatalf("hetchy_repo_cache_archive exit = %s, want %d\noutput:\n%s", gotExit, tc.wantExit, out)
 			}
-			if tc.wantExit == 0 {
-				if !strings.Contains(out, tc.env["HETCHY_CACHE_DIR"]+"/repo.tar.gz") {
-					t.Fatalf("expected printed path to include %q\noutput:\n%s", tc.env["HETCHY_CACHE_DIR"]+"/repo.tar.gz", out)
-				}
+			if tc.wantStdout != "" && !strings.Contains(out, tc.wantStdout) {
+				t.Fatalf("expected %q in output:\n%s", tc.wantStdout, out)
 			}
 		})
 	}
@@ -509,6 +509,38 @@ save_repo_checkout_to_cache "$WORKDIR" "$CACHE"
 	}
 }
 
+func TestSaveRepoCheckoutToCache_ExcludesSecretFiles(t *testing.T) {
+	cacheArchive := filepath.Join(t.TempDir(), "repo.tar.gz")
+	workdir := filepath.Join(t.TempDir(), "src", "hetchy")
+	mustMkdir(t, filepath.Join(workdir, ".git"))
+	mustMkdir(t, filepath.Join(workdir, "cargo"))
+	mustWriteFile(t, filepath.Join(workdir, "README.md"), "ok\n")
+	mustWriteFile(t, filepath.Join(workdir, ".env"), "TOKEN=secret\n")
+	mustWriteFile(t, filepath.Join(workdir, ".npmrc"), "//registry.npmjs.org/:_authToken=secret\n")
+	mustWriteFile(t, filepath.Join(workdir, "cargo", "credentials"), "secret\n")
+	mustWriteFile(t, filepath.Join(workdir, "cargo", "credentials.toml"), "secret\n")
+
+	script := "set -euo pipefail\n" + sandboxCommonScript + `
+save_repo_checkout_to_cache "$WORKDIR" "$CACHE"
+`
+	out, err := runBashScript(t, script, map[string]string{
+		"WORKDIR": workdir,
+		"CACHE":   cacheArchive,
+	})
+	if err != nil {
+		t.Fatalf("save repo checkout: %v\n%s", err, out)
+	}
+	extracted := extractTarGz(t, cacheArchive)
+	if got := mustReadFile(t, filepath.Join(extracted, "README.md")); got != "ok\n" {
+		t.Fatalf("README.md = %q", got)
+	}
+	for _, secret := range []string{".env", ".npmrc", "cargo/credentials", "cargo/credentials.toml"} {
+		if _, err := os.Stat(filepath.Join(extracted, secret)); !os.IsNotExist(err) {
+			t.Fatalf("repo cache should not contain %s (err=%v)", secret, err)
+		}
+	}
+}
+
 func TestSaveHetchyCacheArchive_DoesNotRequireRename(t *testing.T) {
 	localCache := filepath.Join(t.TempDir(), "local-cache")
 	mustMkdir(t, localCache)
@@ -543,7 +575,7 @@ func TestRestoreRepoCheckoutFromCache_RejectsUnsafeWorkdir(t *testing.T) {
 	cacheArchive := filepath.Join(t.TempDir(), "repo.tar.gz")
 	tarDir(t, cacheRepo, cacheArchive)
 
-	for _, unsafe := range []string{"", "/", "/home", "/etc", "/usr"} {
+	for _, unsafe := range []string{"", "/", "/home", "/home/ubuntu", "/tmp/work", "/etc", "/usr"} {
 		t.Run("workdir="+unsafe, func(t *testing.T) {
 			script := "set -uo pipefail\n" + sandboxCommonScript +
 				"\nrestore_repo_checkout_from_cache \"$CACHE\" \"$WORK\"; echo EXIT=$?\n"
@@ -583,9 +615,9 @@ func TestSaveRepoCheckoutToCache_SerialisesUnderFlock(t *testing.T) {
 	// archive. Without flock, a parallel reader/writer could observe
 	// an overwrite in progress on less object-like filesystems.
 	script := "set -euo pipefail\n" + sandboxCommonScript + `
-save_repo_checkout_to_cache "$WORK_A" "$CACHE" &
+save_repo_checkout_to_cache "$WORK_A" "$CACHE" 11 &
 PID_A=$!
-save_repo_checkout_to_cache "$WORK_B" "$CACHE" &
+save_repo_checkout_to_cache "$WORK_B" "$CACHE" 22 &
 PID_B=$!
 wait "$PID_A" || true
 wait "$PID_B" || true
@@ -603,6 +635,14 @@ wait "$PID_B" || true
 	if g != "A" && g != "B" {
 		t.Fatalf("cache marker = %q, want exactly A or B (no half-merged state)\nout:\n%s", g, out)
 	}
+	meta := mustReadFile(t, cacheArchive+".meta")
+	wantCloneSeconds := "clone_seconds=11\n"
+	if g == "B" {
+		wantCloneSeconds = "clone_seconds=22\n"
+	}
+	if !strings.Contains(meta, wantCloneSeconds) {
+		t.Fatalf("cache metadata = %q, want %q for marker %s", meta, wantCloneSeconds, g)
+	}
 	// And no sibling tmp / backup directories should be left behind.
 	entries, err := os.ReadDir(cacheMount)
 	if err != nil {
@@ -610,7 +650,7 @@ wait "$PID_B" || true
 	}
 	for _, e := range entries {
 		switch e.Name() {
-		case "repo.tar.gz", "repo.tar.gz.lock":
+		case "repo.tar.gz", "repo.tar.gz.lock", "repo.tar.gz.meta":
 			continue
 		}
 		t.Fatalf("unexpected leftover after concurrent save: %s", e.Name())
@@ -658,11 +698,12 @@ func TestAgentScript_EmbedsRepoCacheHelper(t *testing.T) {
 		if !strings.Contains(body, "save_repo_checkout_to_cache") {
 			t.Errorf("%s missing save_repo_checkout_to_cache definition", name)
 		}
-		if !strings.Contains(body, `git reset --hard "origin/${base_branch}"`) {
-			t.Errorf("%s missing hard reset to origin/<base_branch>", name)
-		}
-		if !strings.Contains(body, "git clean -fdx") {
-			t.Errorf("%s missing git clean -fdx", name)
+		if name == "followupScript" {
+			if strings.Contains(body, "\nhetchy_prepare_repo_workdir\n") {
+				t.Errorf("%s should not call hetchy_prepare_repo_workdir", name)
+			}
+		} else if !strings.Contains(body, "\nhetchy_prepare_repo_workdir\n") {
+			t.Errorf("%s missing prepare repo call-site", name)
 		}
 	}
 }
