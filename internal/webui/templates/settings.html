@@ -872,7 +872,7 @@
       <div class="billing-plan-grid">
         {{range $b.PlanOptions}}
           {{if .Configured}}
-            <form method="POST" action="/billing/checkout" class="billing-plan-option{{if .Current}} current{{end}}">
+            <form method="POST" action="/billing/checkout" class="billing-plan-option{{if .Current}} current{{end}}"{{if .ConfirmMessage}} data-billing-plan-confirm="1" data-confirm-title="{{.ConfirmTitle}}" data-confirm-message="{{.ConfirmMessage}}" data-confirm-action="{{.ActionLabel}}"{{end}}>
               <input type="hidden" name="plan" value="{{.Code}}">
               <div class="billing-plan-head">
                 <strong>{{.Label}}</strong>
@@ -891,11 +891,21 @@
                 </div>
               </div>
               <p class="billing-plan-detail">Sandbox size options: {{.SandboxOptions}}</p>
-              <button type="submit"{{if .Current}} disabled{{end}}>{{if .Current}}Current{{else}}Choose{{end}}</button>
+              <button type="submit"{{if .Current}} disabled{{end}}>{{.ActionLabel}}</button>
             </form>
           {{end}}
         {{end}}
       </div>
+      <dialog class="app-dialog" id="billing-plan-switch-dialog" aria-labelledby="billing-plan-switch-title">
+        <div class="dlg-body">
+          <h3 id="billing-plan-switch-title">Switch plan?</h3>
+          <p id="billing-plan-switch-message">This will update your Stripe subscription.</p>
+        </div>
+        <div class="dlg-actions">
+          <button type="button" class="dlg-cancel" id="billing-plan-switch-cancel">Cancel</button>
+          <button type="button" class="dlg-primary" id="billing-plan-switch-confirm">Switch</button>
+        </div>
+      </dialog>
     {{else if .IsAdmin}}
       <p class="hint">Stripe is not configured for this environment.</p>
     {{end}}

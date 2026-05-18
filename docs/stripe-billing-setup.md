@@ -50,7 +50,7 @@ The app exposes these Stripe-facing routes:
 
 | Route | Purpose |
 | --- | --- |
-| `POST /billing/checkout` | Creates a Stripe Checkout Session in subscription mode. Admin-only. |
+| `POST /billing/checkout` | Creates the first Stripe subscription, or switches the existing subscription to another plan. Admin-only. |
 | `POST /billing/topup` | Creates a Stripe Checkout Session in payment mode. Admin-only. |
 | `GET /billing/portal` | Creates a Stripe Customer Portal session and redirects to Stripe. Admin-only. |
 | `POST /stripe/webhook` | Public Stripe webhook endpoint with signature verification. |
@@ -84,7 +84,7 @@ Create one monthly recurring price for each paid public plan:
 
 Set the resulting Price IDs in `STRIPE_SUBSCRIPTION_PRICE_IDS`.
 
-Do not add these prices to Customer Portal plan switching until the app updates subscription metadata during portal-driven plan changes. Checkout writes plan metadata onto the Stripe Subscription, and the webhook mirrors those fields locally:
+Plan changes happen through the app, not Customer Portal plan switching. The first paid plan uses Stripe Checkout. Later upgrades update the existing subscription item and invoice immediately; downgrades are scheduled for the next billing cycle. The app writes plan metadata onto the Stripe Subscription or scheduled phase, and the webhook mirrors those fields locally:
 
 ```text
 plan_code=<starter|team|growth|business>

@@ -1,8 +1,11 @@
 package bot
 
 import (
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/stripe/stripe-go/v85"
 
 	"github.com/hetchyhq/hetchy/internal/billing"
 )
@@ -102,5 +105,159 @@ func TestPaidAccountMirrorUsesLocalPlanLimits(t *testing.T) {
 	}
 	if mirror.PerRunMaxCredits != 6 {
 		t.Fatalf("PerRunMaxCredits = %d, want 6", mirror.PerRunMaxCredits)
+	}
+}
+
+func TestBillingPlanSwitchDirection(t *testing.T) {
+	team, _ := billing.PaidPlanByCode(billing.PlanTeam)
+	growth, _ := billing.PaidPlanByCode(billing.PlanGrowth)
+	starter, _ := billing.PaidPlanByCode(billing.PlanStarter)
+
+	if !isBillingPlanUpgrade(team, growth) {
+		t.Fatal("team -> growth should be an upgrade")
+	}
+	if isBillingPlanUpgrade(growth, starter) {
+		t.Fatal("growth -> starter should be a downgrade")
+	}
+	if isBillingPlanUpgrade(team, team) {
+		t.Fatal("team -> team should not be an upgrade")
+	}
+}
+
+func TestStripeSubscriptionPlanItemFindsConfiguredPlanPrice(t *testing.T) {
+	sub := &stripe.Subscription{
+		Items: &stripe.SubscriptionItemList{
+			Data: []*stripe.SubscriptionItem{
+				{ID: "si_metered", Price: &stripe.Price{ID: "price_metered"}},
+				{ID: "si_plan", Price: &stripe.Price{ID: "price_growth"}},
+			},
+		},
+	}
+
+	item, priceID, err := stripeSubscriptionPlanItem(sub, map[string]string{
+		billing.PlanTeam:   "price_team",
+		billing.PlanGrowth: "price_growth",
+	})
+	if err != nil {
+		t.Fatalf("stripeSubscriptionPlanItem returned error: %v", err)
+	}
+	if item.ID != "si_plan" || priceID != "price_growth" {
+		t.Fatalf("item=%q priceID=%q, want si_plan price_growth", item.ID, priceID)
+	}
+}
+
+func TestStripeSubscriptionPlanItemFallsBackToSingleItem(t *testing.T) {
+	sub := &stripe.Subscription{
+		Items: &stripe.SubscriptionItemList{
+			Data: []*stripe.SubscriptionItem{
+				{ID: "si_only", Price: &stripe.Price{ID: "price_unknown"}},
+			},
+		},
+	}
+
+	item, priceID, err := stripeSubscriptionPlanItem(sub, map[string]string{billing.PlanTeam: "price_team"})
+	if err != nil {
+		t.Fatalf("stripeSubscriptionPlanItem returned error: %v", err)
+	}
+	if item.ID != "si_only" || priceID != "price_unknown" {
+		t.Fatalf("item=%q priceID=%q, want si_only price_unknown", item.ID, priceID)
+	}
+}
+
+func TestStripeUpgradeSubscriptionParamsInvoicesImmediately(t *testing.T) {
+	growth, _ := billing.PaidPlanByCode(billing.PlanGrowth)
+	params := stripeUpgradeSubscriptionParams("org_1", "sub_1", "si_1", growth, "price_growth")
+
+	if got := *params.Items[0].ID; got != "si_1" {
+		t.Fatalf("item ID = %q, want si_1", got)
+	}
+	if got := *params.Items[0].Price; got != "price_growth" {
+		t.Fatalf("item price = %q, want price_growth", got)
+	}
+	if got := *params.ProrationBehavior; got != "always_invoice" {
+		t.Fatalf("ProrationBehavior = %q, want always_invoice", got)
+	}
+	if got := *params.PaymentBehavior; got != "pending_if_incomplete" {
+		t.Fatalf("PaymentBehavior = %q, want pending_if_incomplete", got)
+	}
+	if got := params.Metadata["plan_code"]; got != billing.PlanGrowth {
+		t.Fatalf("metadata plan_code = %q, want growth", got)
+	}
+}
+
+func TestStripeDowngradeScheduleCreateParamsOnlySetsSubscription(t *testing.T) {
+	growth, _ := billing.PaidPlanByCode(billing.PlanGrowth)
+	team, _ := billing.PaidPlanByCode(billing.PlanTeam)
+	params := stripeDowngradeScheduleCreateParams("sub_1", growth, "price_growth", team, "price_team", 1, 2)
+
+	if params.FromSubscription == nil || *params.FromSubscription != "sub_1" {
+		t.Fatalf("FromSubscription = %v, want sub_1", params.FromSubscription)
+	}
+	if key := *params.Params.IdempotencyKey; !strings.Contains(key, "price_growth") || !strings.Contains(key, "price_team") {
+		t.Fatalf("idempotency key = %q, want current and target prices", key)
+	}
+	if params.Metadata != nil {
+		t.Fatalf("Metadata = %v, want nil because Stripe rejects metadata with from_subscription", params.Metadata)
+	}
+	if params.Phases != nil {
+		t.Fatalf("Phases = %v, want nil with from_subscription create", params.Phases)
+	}
+}
+
+func TestStripeSubscriptionScheduleCanUpdate(t *testing.T) {
+	for _, status := range []stripe.SubscriptionScheduleStatus{
+		stripe.SubscriptionScheduleStatusActive,
+		stripe.SubscriptionScheduleStatusNotStarted,
+	} {
+		if !stripeSubscriptionScheduleCanUpdate(status) {
+			t.Fatalf("status %q should be mutable", status)
+		}
+	}
+	for _, status := range []stripe.SubscriptionScheduleStatus{
+		stripe.SubscriptionScheduleStatusReleased,
+		stripe.SubscriptionScheduleStatusCanceled,
+		stripe.SubscriptionScheduleStatusCompleted,
+	} {
+		if stripeSubscriptionScheduleCanUpdate(status) {
+			t.Fatalf("status %q should not be mutable", status)
+		}
+	}
+}
+
+func TestStripeDowngradeScheduleParamsAppliesNextCycle(t *testing.T) {
+	growth, _ := billing.PaidPlanByCode(billing.PlanGrowth)
+	team, _ := billing.PaidPlanByCode(billing.PlanTeam)
+	start := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	params := stripeDowngradeScheduleParams(
+		"org_1",
+		billing.Account{OrgID: "org_1", CurrentPeriodStart: start, CurrentPeriodEnd: end},
+		&stripe.SubscriptionItem{ID: "si_1", Price: &stripe.Price{ID: "price_growth"}, Quantity: 1},
+		growth,
+		"price_growth",
+		team,
+		"price_team",
+	)
+
+	if got := *params.ProrationBehavior; got != "none" {
+		t.Fatalf("ProrationBehavior = %q, want none", got)
+	}
+	if len(params.Phases) != 2 {
+		t.Fatalf("len(Phases) = %d, want 2", len(params.Phases))
+	}
+	if got := *params.Phases[0].EndDate; got != end.Unix() {
+		t.Fatalf("current phase end = %d, want %d", got, end.Unix())
+	}
+	if got := *params.Phases[0].Items[0].Price; got != "price_growth" {
+		t.Fatalf("current phase price = %q, want price_growth", got)
+	}
+	if got := *params.Phases[1].Items[0].Price; got != "price_team" {
+		t.Fatalf("next phase price = %q, want price_team", got)
+	}
+	if got := params.Phases[1].Metadata["plan_code"]; got != billing.PlanTeam {
+		t.Fatalf("next phase metadata plan_code = %q, want team", got)
+	}
+	if key := *params.Params.IdempotencyKey; !strings.Contains(key, "price_growth") || !strings.Contains(key, "price_team") {
+		t.Fatalf("idempotency key = %q, want current and target prices", key)
 	}
 }

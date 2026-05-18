@@ -295,7 +295,13 @@ func TestSettingsTemplate_RendersBillingTabLayout(t *testing.T) {
 				{
 					Code: billing.PlanTeam, Label: "Team", Monthly: "$199", TopupUnitPrice: "$9",
 					IncludedCredits: 300, MaxFlavor: billing.FlavorMax, SandboxOptions: "All sizes", PerRunMaxCredits: 6,
-					Configured: true, Current: true,
+					Configured: true, Current: true, ActionLabel: "Current",
+				},
+				{
+					Code: billing.PlanGrowth, Label: "Growth", Monthly: "$499", TopupUnitPrice: "$6.50",
+					IncludedCredits: 1000, MaxFlavor: billing.FlavorMax, SandboxOptions: "All sizes", PerRunMaxCredits: 6,
+					Configured: true, ActionLabel: "Switch", ConfirmTitle: "Switch to Growth?",
+					ConfirmMessage: "This upgrade takes effect immediately. Stripe will invoice the prorated difference now.",
 				},
 			},
 			RecentMeters: []billingMeterView{
@@ -337,6 +343,12 @@ func TestSettingsTemplate_RendersBillingTabLayout(t *testing.T) {
 		`Top-up price`,
 		`per 10-credit top-up`,
 		`Sandbox size options: All sizes`,
+		`Switch`,
+		`id="billing-plan-switch-dialog"`,
+		`data-billing-plan-confirm="1"`,
+		`data-confirm-title="Switch to Growth?"`,
+		`data-confirm-action="Switch"`,
+		`billing-plan-switch-confirm`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("billing tab missing %q", want)

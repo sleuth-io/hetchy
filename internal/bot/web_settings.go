@@ -389,6 +389,7 @@ type billingOverviewView struct {
 	TopupUnitCredits  int
 	StripeConfigured  bool
 	HasStripeCustomer bool
+	HasSubscription   bool
 	PlanOptions       []billingPlanOptionView
 	RecentMeters      []billingMeterView
 }
@@ -404,6 +405,9 @@ type billingPlanOptionView struct {
 	PerRunMaxCredits int
 	Configured       bool
 	Current          bool
+	ActionLabel      string
+	ConfirmTitle     string
+	ConfirmMessage   string
 }
 
 type billingMeterView struct {
@@ -456,7 +460,8 @@ func (b *Bot) loadBillingOverview(ctx context.Context, orgID string) (billingOve
 		TopupUnitCredits:  billing.TopupUnitCredits,
 		StripeConfigured:  b.stripeConfigured(),
 		HasStripeCustomer: acct.StripeCustomerID != "",
-		PlanOptions:       b.billingPlanOptions(acct.PlanCode),
+		HasSubscription:   acct.StripeSubscriptionID != "",
+		PlanOptions:       b.billingPlanOptions(acct.PlanCode, acct.StripeSubscriptionID != "", formatSettingsTime(acct.CurrentPeriodEnd)),
 	}
 	for _, meter := range overview.RecentMeters {
 		out.RecentMeters = append(out.RecentMeters, billingMeterView{
@@ -471,9 +476,12 @@ func (b *Bot) loadBillingOverview(ctx context.Context, orgID string) (billingOve
 	return out, nil
 }
 
-func (b *Bot) billingPlanOptions(currentPlan string) []billingPlanOptionView {
+func (b *Bot) billingPlanOptions(currentPlan string, hasSubscription bool, periodEnd string) []billingPlanOptionView {
 	out := make([]billingPlanOptionView, 0, len(billing.PaidPlans()))
+	currentPaidPlan, hasCurrentPaidPlan := billing.PaidPlanByCode(currentPlan)
 	for _, plan := range billing.PaidPlans() {
+		current := plan.Code == currentPlan
+		confirmTitle, confirmMessage := billingPlanSwitchConfirmation(currentPaidPlan, hasCurrentPaidPlan, plan, current, hasSubscription, periodEnd)
 		out = append(out, billingPlanOptionView{
 			Code:             plan.Code,
 			Label:            plan.Label,
@@ -484,10 +492,42 @@ func (b *Bot) billingPlanOptions(currentPlan string) []billingPlanOptionView {
 			SandboxOptions:   sandboxOptionsLabel(plan.MaxFlavor),
 			PerRunMaxCredits: plan.PerRunMaxCredits,
 			Configured:       b.stripeSubscriptionPriceID(plan.Code) != "",
-			Current:          plan.Code == currentPlan,
+			Current:          current,
+			ActionLabel:      billingPlanActionLabel(current, hasSubscription),
+			ConfirmTitle:     confirmTitle,
+			ConfirmMessage:   confirmMessage,
 		})
 	}
 	return out
+}
+
+func billingPlanActionLabel(current, hasSubscription bool) string {
+	if current {
+		return "Current"
+	}
+	if hasSubscription {
+		return "Switch"
+	}
+	return "Choose"
+}
+
+func billingPlanSwitchConfirmation(currentPlan billing.PaidPlan, hasCurrentPlan bool, targetPlan billing.PaidPlan, current, hasSubscription bool, periodEnd string) (string, string) {
+	if current || !hasSubscription || !hasCurrentPlan {
+		return "", ""
+	}
+	title := "Switch to " + targetPlan.Label + "?"
+	if isBillingPlanDowngrade(currentPlan, targetPlan) {
+		when := "the start of your next billing cycle"
+		if periodEnd != "" {
+			when = periodEnd
+		}
+		return title, fmt.Sprintf("This downgrade will take effect on %s. Your current %s plan stays active until then, and there is no immediate charge.", when, currentPlan.Label)
+	}
+	return title, fmt.Sprintf("This upgrade takes effect immediately. Stripe will invoice the prorated difference now, and the %s plan limits will apply after the switch succeeds.", targetPlan.Label)
+}
+
+func isBillingPlanDowngrade(currentPlan, targetPlan billing.PaidPlan) bool {
+	return targetPlan.MonthlyUSDCents < currentPlan.MonthlyUSDCents
 }
 
 func sandboxOptionsLabel(maxFlavor string) string {
@@ -658,6 +698,10 @@ func savedMessage(s string) string {
 		return "Billing settings saved."
 	case "topup_started":
 		return "Stripe Checkout opened for top-up."
+	case "plan_switched":
+		return "Plan switched."
+	case "plan_scheduled":
+		return "Plan downgrade scheduled for the next billing cycle."
 	case "portal_return":
 		return "Returned from Stripe billing portal."
 	default:

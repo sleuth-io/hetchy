@@ -304,6 +304,32 @@ func TestBillingTopupSettingsFromSpend(t *testing.T) {
 	}
 }
 
+func TestBillingPlanSwitchConfirmation(t *testing.T) {
+	team, _ := billing.PaidPlanByCode(billing.PlanTeam)
+	growth, _ := billing.PaidPlanByCode(billing.PlanGrowth)
+
+	title, msg := billingPlanSwitchConfirmation(team, true, growth, false, true, "Jun 18, 2026")
+	if title != "Switch to Growth?" {
+		t.Fatalf("upgrade title = %q, want Switch to Growth?", title)
+	}
+	if !strings.Contains(msg, "takes effect immediately") || !strings.Contains(msg, "prorated") {
+		t.Fatalf("upgrade message = %q, want immediate prorated billing copy", msg)
+	}
+
+	title, msg = billingPlanSwitchConfirmation(growth, true, team, false, true, "Jun 18, 2026")
+	if title != "Switch to Team?" {
+		t.Fatalf("downgrade title = %q, want Switch to Team?", title)
+	}
+	if !strings.Contains(msg, "Jun 18, 2026") || !strings.Contains(msg, "no immediate charge") {
+		t.Fatalf("downgrade message = %q, want next-cycle no-charge copy", msg)
+	}
+
+	_, msg = billingPlanSwitchConfirmation(growth, true, team, true, true, "Jun 18, 2026")
+	if msg != "" {
+		t.Fatalf("current-plan confirmation = %q, want empty", msg)
+	}
+}
+
 func TestParseBillingCents(t *testing.T) {
 	cases := []struct {
 		raw  string

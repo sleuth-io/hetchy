@@ -93,6 +93,65 @@
     dlg.addEventListener('close', resetDialog);
   })();
 
+  // Billing plan switches need explicit confirmation because upgrades
+  // bill immediately and downgrades schedule a future Stripe change.
+  (function () {
+    const dlg = document.getElementById('billing-plan-switch-dialog');
+    if (!dlg) return;
+    const title = document.getElementById('billing-plan-switch-title');
+    const message = document.getElementById('billing-plan-switch-message');
+    const cancel = document.getElementById('billing-plan-switch-cancel');
+    const confirm = document.getElementById('billing-plan-switch-confirm');
+    let pendingForm = null;
+
+    function resetDialog() {
+      pendingForm = null;
+      if (confirm) {
+        confirm.disabled = false;
+        confirm.textContent = 'Switch';
+      }
+    }
+
+    function submitPending() {
+      if (!pendingForm) return;
+      const form = pendingForm;
+      pendingForm = null;
+      form.dataset.confirmed = '1';
+      if (confirm) {
+        confirm.disabled = true;
+        confirm.textContent = 'Switching...';
+      }
+      if (typeof form.requestSubmit === 'function') {
+        form.requestSubmit();
+      } else {
+        form.submit();
+      }
+    }
+
+    document.querySelectorAll('form[data-billing-plan-confirm="1"]').forEach(form => {
+      form.addEventListener('submit', e => {
+        if (form.dataset.confirmed === '1') return;
+        e.preventDefault();
+        pendingForm = form;
+        if (title) title.textContent = form.dataset.confirmTitle || 'Switch plan?';
+        if (message) message.textContent = form.dataset.confirmMessage || 'This will update your Stripe subscription.';
+        if (confirm) {
+          confirm.disabled = false;
+          confirm.textContent = form.dataset.confirmAction || 'Switch';
+        }
+        if (typeof dlg.showModal === 'function') {
+          dlg.showModal();
+        } else {
+          submitPending();
+        }
+      });
+    });
+
+    if (cancel) cancel.addEventListener('click', () => dlg.close());
+    if (confirm) confirm.addEventListener('click', submitPending);
+    dlg.addEventListener('close', resetDialog);
+  })();
+
   // Org delete dialog (General tab → Danger zone). Same app-dialog
   // pattern as the integration-disconnect flow: intercept the submit,
   // open the dialog, only submit when the user confirms.
