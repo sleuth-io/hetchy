@@ -36,6 +36,7 @@ type incoming struct {
 	threadTS string
 	botID    string
 	text     string
+	files    []slack.File
 }
 
 // slackManager owns one socket-mode connection per org with Slack creds.
@@ -231,6 +232,7 @@ func (m *slackManager) dispatchCallback(ctx context.Context, oc orgcfg.Config, e
 		go m.handler(ctx, oc, incoming{
 			channel: inner.Channel, user: inner.User, ts: inner.TimeStamp,
 			threadTS: inner.ThreadTimeStamp, botID: inner.BotID, text: inner.Text,
+			files: inner.Files,
 		}, cli)
 	case *slackevents.MessageEvent:
 		if !inner.IsIM() {
@@ -239,6 +241,7 @@ func (m *slackManager) dispatchCallback(ctx context.Context, oc orgcfg.Config, e
 		go m.handler(ctx, oc, incoming{
 			channel: inner.Channel, user: inner.User, ts: inner.TimeStamp,
 			threadTS: inner.ThreadTimeStamp, botID: inner.BotID, text: inner.Text,
+			files: messageEventFiles(inner),
 		}, cli)
 	case *slackevents.AppUninstalledEvent:
 		// Spawn off the main goroutine: clearInstall calls RestartOrg
@@ -305,18 +308,22 @@ func (b *Bot) handleSlackEvent(ctx context.Context, oc orgcfg.Config, ev incomin
 		return
 	}
 	text := strings.TrimSpace(ev.text)
-	if text == "" {
+	if text == "" && len(ev.files) == 0 {
 		return
 	}
 	text = strings.TrimSpace(mentionPrefix.ReplaceAllString(text, ""))
-	if text == "" {
+	if text == "" && len(ev.files) == 0 {
 		return
 	}
 	requestedAgent, cleanedText := b.extractSlackAgent(ctx, oc.OrgID, text, cli)
 	text = strings.TrimSpace(cleanedText)
-	if text == "" {
+	if text == "" && len(ev.files) == 0 {
 		return
 	}
+	if text == "" {
+		text = "Use the attached file(s) as context."
+	}
+	attachments := b.downloadSlackAttachments(ctx, cli, ev.files)
 
 	threadID := ev.ts
 	replyTo := ev.ts
@@ -357,7 +364,7 @@ func (b *Bot) handleSlackEvent(ctx context.Context, oc orgcfg.Config, ev incomin
 	if strings.TrimSpace(requestedAgent) != "" {
 		requestedAgentPtr = &requestedAgent
 	}
-	b.HandleRequest(ctx, oc, text, requestID, threadID, creatorID, chatTaskOptionPatch{}, requestedAgentPtr, nil, ClaudeModelOpus, emit)
+	b.HandleRequest(ctx, oc, text, requestID, threadID, creatorID, chatTaskOptionPatch{}, requestedAgentPtr, nil, ClaudeModelOpus, emit, attachments...)
 	// Reaction bookkeeping: only swap the eyes/recycle that signalled
 	// "working on it" for a final ✓/✗ when the run actually reached a
 	// terminal state. Bot-driven question turns ("Which repository?"
@@ -372,6 +379,13 @@ func (b *Bot) handleSlackEvent(ctx context.Context, oc orgcfg.Config, ev incomin
 			addReaction(b.log, cli, ev.channel, threadID, "white_check_mark")
 		}
 	}
+}
+
+func messageEventFiles(ev *slackevents.MessageEvent) []slack.File {
+	if ev == nil || ev.Message == nil || len(ev.Message.Files) == 0 {
+		return nil
+	}
+	return ev.Message.Files
 }
 
 func (b *Bot) extractSlackAgent(ctx context.Context, orgID, text string, cli *slack.Client) (agentSlug, cleaned string) {

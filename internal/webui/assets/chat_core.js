@@ -20,6 +20,9 @@ const modelOptionsEl = document.getElementById('model-options');
 const validateBox = document.getElementById('validate-checkbox');
 const reviewBeforePushBox = document.getElementById('review-before-push-checkbox');
 const actionPRChecksBox = document.getElementById('action-pr-checks-checkbox');
+const attachmentInput = document.getElementById('attachment-input');
+const attachmentListEl = document.getElementById('attachment-list');
+const attachFilesBtn = document.getElementById('attach-files-btn');
 const qualityOptionBoxes = [validateBox, reviewBeforePushBox, actionPRChecksBox].filter(Boolean);
 const qualityOptionRows = document.querySelectorAll('.tools-checkbox-row');
 const helpIcons = document.querySelectorAll('.tools-help');
@@ -89,6 +92,9 @@ let modelLocked = false;
 let isRunning = false;
 let isStopping = false;
 let stopRequested = false;
+let pendingAttachments = [];
+const maxPromptAttachments = 5;
+const maxPromptAttachmentBytes = 10 * 1024 * 1024;
 
 function setRunState(running, stopping = false) {
   isRunning = running;
@@ -196,16 +202,36 @@ inp.addEventListener('keydown', e => {
   send();
 });
 
-function addUserMsg(text) {
+function addUserMsg(text, attachments = []) {
   // Replace the empty-state placeholder the first time we add a message
   // so the welcome card disappears as the conversation begins.
   const empty = document.getElementById('empty-state');
   if (empty) empty.remove();
   const d = document.createElement('div');
   d.className = 'msg user';
-  d.textContent = text;
+  if (Array.isArray(attachments) && attachments.length > 0) {
+    const body = document.createElement('div');
+    body.className = 'msg-text';
+    body.textContent = text;
+    d.appendChild(body);
+    const list = document.createElement('div');
+    list.className = 'msg-attachments';
+    for (const attachment of attachments) {
+      const name = attachment.filename || attachment.name || 'attachment';
+      const item = document.createElement(attachment.download_url ? 'a' : 'span');
+      item.className = 'msg-attachment';
+      item.textContent = name;
+      if (attachment.download_url) {
+        item.href = attachment.download_url;
+        item.download = name;
+      }
+      list.appendChild(item);
+    }
+    d.appendChild(list);
+  } else {
+    d.textContent = text;
+  }
   log.appendChild(d);
   log.scrollTop = log.scrollHeight;
   return d;
 }
-

@@ -90,6 +90,20 @@ type Conversation struct {
 	TaskOptions    []byte             `json:"task_options"`
 }
 
+type ConversationAttachment struct {
+	ID          string             `json:"id"`
+	OrgID       string             `json:"org_id"`
+	ThreadID    string             `json:"thread_id"`
+	TurnIndex   int32              `json:"turn_index"`
+	Filename    string             `json:"filename"`
+	ContentType string             `json:"content_type"`
+	SizeBytes   int64              `json:"size_bytes"`
+	Data        []byte             `json:"data"`
+	Source      string             `json:"source"`
+	SlackFileID string             `json:"slack_file_id"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
 type GithubAppInstallation struct {
 	InstallationID int64              `json:"installation_id"`
 	OrgID          string             `json:"org_id"`

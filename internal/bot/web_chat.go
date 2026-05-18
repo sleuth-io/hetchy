@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"strconv"
 	"strings"
@@ -14,7 +17,28 @@ import (
 
 	"github.com/hetchyhq/hetchy/internal/auth"
 	"github.com/hetchyhq/hetchy/internal/blocks"
+	"github.com/hetchyhq/hetchy/internal/convstore"
 )
+
+type chatPostBody struct {
+	Text      string  `json:"text"`
+	SessionID string  `json:"session_id"`
+	AgentSlug *string `json:"agent_slug,omitempty"`
+	// Repository carries the composer repo-picker selection as
+	// "owner/name". Optional - empty string falls back to the
+	// org's saved default repo, matching the pre-picker behaviour
+	// for clients that don't surface the field.
+	Repository *string `json:"repository,omitempty"`
+	Model      string  `json:"model,omitempty"`
+	// Task option fields are pointers so missing (older clients,
+	// non-web callers) is distinguishable from explicit false.
+	// Missing request fields leave saved per-chat values alone;
+	// missing saved keys default on in HandleRequest.
+	Validate              *bool `json:"validate,omitempty"`
+	ReviewCodeBeforePush  *bool `json:"review_code_before_push,omitempty"`
+	ActionPRChecksForDone *bool `json:"action_pr_checks_for_done,omitempty"`
+	Attachments           []convstore.Attachment
+}
 
 func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -28,32 +52,17 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 		return
 	}
 
-	var body struct {
-		Text      string  `json:"text"`
-		SessionID string  `json:"session_id"`
-		AgentSlug *string `json:"agent_slug,omitempty"`
-		// Repository carries the composer repo-picker selection as
-		// "owner/name". Optional — empty string falls back to the
-		// org's saved default repo, matching the pre-picker behaviour
-		// for clients that don't surface the field.
-		Repository *string `json:"repository,omitempty"`
-		Model      string  `json:"model,omitempty"`
-		// Task option fields are pointers so missing (older clients,
-		// non-web callers) is distinguishable from explicit false.
-		// Missing request fields leave saved per-chat values alone;
-		// missing saved keys default on in HandleRequest.
-		Validate              *bool `json:"validate,omitempty"`
-		ReviewCodeBeforePush  *bool `json:"review_code_before_push,omitempty"`
-		ActionPRChecksForDone *bool `json:"action_pr_checks_for_done,omitempty"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+	body, ok := parseChatPostBody(w, r)
+	if !ok {
 		return
 	}
 	text := strings.TrimSpace(body.Text)
 	if text == "" {
-		http.Error(w, "empty text", http.StatusBadRequest)
-		return
+		if len(body.Attachments) == 0 {
+			http.Error(w, "empty text", http.StatusBadRequest)
+			return
+		}
+		text = "Use the attached file(s) as context."
 	}
 	sessionID := strings.TrimSpace(body.SessionID)
 	optionPatch := chatTaskOptionPatch{}
@@ -125,12 +134,132 @@ func (b *Bot) chatHandler(parentCtx context.Context, w http.ResponseWriter, r *h
 	go func() {
 		defer b.live.Done(p.OrgID, sessionID, run)
 		runCtx := contextWithLiveRun(run.Context(), run)
-		b.HandleRequest(runCtx, oc, text, requestID, sessionID, p.UserID, optionPatch, body.AgentSlug, body.Repository, model, emitter)
+		b.HandleRequest(runCtx, oc, text, requestID, sessionID, p.UserID, optionPatch, body.AgentSlug, body.Repository, model, emitter, body.Attachments...)
 	}()
 
 	sub := run.Subscribe()
 	defer run.Unsubscribe(sub)
 	b.streamLiveSubscription(w, flusher, r.Context(), sub)
+}
+
+func parseChatPostBody(w http.ResponseWriter, r *http.Request) (chatPostBody, bool) {
+	mediaType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if strings.EqualFold(mediaType, "multipart/form-data") {
+		return parseMultipartChatPostBody(w, r)
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var body chatPostBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return chatPostBody{}, false
+	}
+	return body, true
+}
+
+func parseMultipartChatPostBody(w http.ResponseWriter, r *http.Request) (chatPostBody, bool) {
+	r.Body = http.MaxBytesReader(w, r.Body, int64(maxPromptAttachmentTotal+(1*1024*1024)))
+	if err := r.ParseMultipartForm(maxPromptAttachmentBytes); err != nil {
+		http.Error(w, "invalid multipart form: "+err.Error(), http.StatusBadRequest)
+		return chatPostBody{}, false
+	}
+	if r.MultipartForm != nil {
+		defer r.MultipartForm.RemoveAll()
+	}
+	values := map[string][]string{}
+	if r.MultipartForm != nil {
+		values = r.MultipartForm.Value
+	}
+	body := chatPostBody{
+		Text:                  firstFormValue(values, "text"),
+		SessionID:             firstFormValue(values, "session_id"),
+		AgentSlug:             optionalFormString(values, "agent_slug"),
+		Repository:            optionalFormString(values, "repository"),
+		Model:                 firstFormValue(values, "model"),
+		Validate:              optionalFormBool(values, "validate"),
+		ReviewCodeBeforePush:  optionalFormBool(values, "review_code_before_push"),
+		ActionPRChecksForDone: optionalFormBool(values, "action_pr_checks_for_done"),
+	}
+	if r.MultipartForm != nil {
+		attachments, err := readMultipartAttachments(r.MultipartForm.File["attachments"])
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return chatPostBody{}, false
+		}
+		body.Attachments = attachments
+	}
+	return body, true
+}
+
+func firstFormValue(values map[string][]string, key string) string {
+	if vals := values[key]; len(vals) > 0 {
+		return vals[0]
+	}
+	return ""
+}
+
+func optionalFormString(values map[string][]string, key string) *string {
+	vals, ok := values[key]
+	if !ok || len(vals) == 0 {
+		return nil
+	}
+	v := vals[0]
+	return &v
+}
+
+func optionalFormBool(values map[string][]string, key string) *bool {
+	vals, ok := values[key]
+	if !ok || len(vals) == 0 {
+		return nil
+	}
+	v := strings.EqualFold(vals[0], "true") || vals[0] == "1" || strings.EqualFold(vals[0], "on")
+	return &v
+}
+
+func readMultipartAttachments(files []*multipart.FileHeader) ([]convstore.Attachment, error) {
+	if len(files) == 0 {
+		return nil, nil
+	}
+	if len(files) > maxPromptAttachments {
+		return nil, fmt.Errorf("too many attachments: maximum is %d", maxPromptAttachments)
+	}
+	var total int64
+	out := make([]convstore.Attachment, 0, len(files))
+	for _, fh := range files {
+		if fh.Size > maxPromptAttachmentBytes {
+			return nil, fmt.Errorf("%s is too large: maximum is %d MB", fh.Filename, maxPromptAttachmentBytes/(1024*1024))
+		}
+		f, err := fh.Open()
+		if err != nil {
+			return nil, fmt.Errorf("open attachment %s: %w", fh.Filename, err)
+		}
+		data, err := io.ReadAll(io.LimitReader(f, maxPromptAttachmentBytes+1))
+		_ = f.Close()
+		if err != nil {
+			return nil, fmt.Errorf("read attachment %s: %w", fh.Filename, err)
+		}
+		if len(data) > maxPromptAttachmentBytes {
+			return nil, fmt.Errorf("%s is too large: maximum is %d MB", fh.Filename, maxPromptAttachmentBytes/(1024*1024))
+		}
+		total += int64(len(data))
+		if total > maxPromptAttachmentTotal {
+			return nil, fmt.Errorf("attachments are too large: maximum total is %d MB", maxPromptAttachmentTotal/(1024*1024))
+		}
+		name := strings.TrimSpace(fh.Filename)
+		if name == "" {
+			name = "attachment"
+		}
+		contentType := strings.TrimSpace(fh.Header.Get("Content-Type"))
+		contentType = detectAttachmentContentType(contentType, data)
+		out = append(out, convstore.Attachment{
+			ID:          convstore.NewAttachmentID(),
+			Filename:    name,
+			ContentType: contentType,
+			SizeBytes:   int64(len(data)),
+			Data:        data,
+			Source:      "web",
+		})
+	}
+	return out, nil
 }
 
 func (b *Bot) chatCancelHandler(w http.ResponseWriter, r *http.Request) {

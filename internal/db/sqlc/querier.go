@@ -22,6 +22,7 @@ type Querier interface {
 	// agent_run_events cascade-deletes via FK ON DELETE CASCADE.
 	DeleteAgentRunsByOrg(ctx context.Context, orgID string) error
 	DeleteConversation(ctx context.Context, arg DeleteConversationParams) error
+	DeleteConversationAttachmentsForTurn(ctx context.Context, arg DeleteConversationAttachmentsForTurnParams) error
 	DeleteConversationsByOrg(ctx context.Context, orgID string) error
 	DeleteGithubInstallation(ctx context.Context, installationID int64) error
 	// github_repos / github_teams / github_team_members cascade via FK.
@@ -46,6 +47,7 @@ type Querier interface {
 	GetAgentRun(ctx context.Context, id string) (AgentRun, error)
 	GetAgentRunByRequest(ctx context.Context, arg GetAgentRunByRequestParams) (AgentRun, error)
 	GetConversation(ctx context.Context, arg GetConversationParams) (GetConversationRow, error)
+	GetConversationAttachment(ctx context.Context, arg GetConversationAttachmentParams) (ConversationAttachment, error)
 	GetGithubInstallation(ctx context.Context, installationID int64) (GithubAppInstallation, error)
 	// Resolves an (owner, name) the user typed in chat to a concrete
 	// (installation_id, repo_id, default_branch) for this org. If the same
@@ -70,6 +72,8 @@ type Querier interface {
 	ListActiveAgentRunsForLeaseOwnerPrefix(ctx context.Context, arg ListActiveAgentRunsForLeaseOwnerPrefixParams) ([]AgentRun, error)
 	ListAgentProfilesByOrg(ctx context.Context, orgID string) ([]ListAgentProfilesByOrgRow, error)
 	ListAgentRunEventsFromSeq(ctx context.Context, arg ListAgentRunEventsFromSeqParams) ([]AgentRunEvent, error)
+	ListConversationAttachments(ctx context.Context, arg ListConversationAttachmentsParams) ([]ListConversationAttachmentsRow, error)
+	ListConversationAttachmentsForTurn(ctx context.Context, arg ListConversationAttachmentsForTurnParams) ([]ConversationAttachment, error)
 	ListExpiredAgentRuns(ctx context.Context, limit int32) ([]AgentRun, error)
 	ListGithubInstallationsByOrg(ctx context.Context, orgID string) ([]GithubAppInstallation, error)
 	ListGithubReposByInstallation(ctx context.Context, installationID int64) ([]GithubRepo, error)
@@ -98,6 +102,7 @@ type Querier interface {
 	ListRepoSetupSpecs(ctx context.Context, arg ListRepoSetupSpecsParams) ([]RepoSetupSpec, error)
 	ListStaleAgentRuns(ctx context.Context, arg ListStaleAgentRunsParams) ([]AgentRun, error)
 	RenameConversation(ctx context.Context, arg RenameConversationParams) (int64, error)
+	SaveConversationAttachment(ctx context.Context, arg SaveConversationAttachmentParams) (ConversationAttachment, error)
 	// Periodic mid-run snapshot used by chatPersister. Only writes the
 	// handful of fields that change progressively as the agent emits
 	// blocks (history + response_blocks + creator_id). The fields that

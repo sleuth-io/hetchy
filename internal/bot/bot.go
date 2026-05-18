@@ -483,7 +483,7 @@ func (b *Bot) prepareAgentRun(ctx context.Context, orgID, threadID, requestID, t
 	return ctx, run, true
 }
 
-func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, requestID, threadID, userID string, optionPatch chatTaskOptionPatch, requestedAgent *string, requestedRepo *string, model ClaudeModel, out blocks.Emitter) {
+func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, requestID, threadID, userID string, optionPatch chatTaskOptionPatch, requestedAgent *string, requestedRepo *string, model ClaudeModel, out blocks.Emitter, incomingAttachments ...convstore.Attachment) {
 	model = normalizeClaudeModel(model)
 	requestedOwner, requestedName, requestedRepoOK := parseRequestedRepo(requestedRepo)
 	b.log.Info("request received",
@@ -494,6 +494,7 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		"requested_repo", requestedRepoSlug(requestedOwner, requestedName),
 		"model", model,
 		"text_len", len(text),
+		"attachments", len(incomingAttachments),
 		"text_preview", truncate(text, 200),
 	)
 
@@ -553,6 +554,12 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 			b.markRunState(ctx, runstore.StateFailed, errors.New("unknown agent"))
 			return
 		}
+		if err := b.saveIncomingAttachments(ctx, oc.OrgID, threadID, len(rec.History), incomingAttachments); err != nil {
+			b.log.Error("save prompt attachments", "error", err, "org", oc.OrgID, "thread", threadID)
+			emit.Error("Attachment upload failed", "Hetchy could not save the attached files for this turn. Try again.")
+			b.markRunState(ctx, runstore.StateFailed, err)
+			return
+		}
 		b.handleFollowUp(ctx, oc, rec, agent, text, requestID, opts, model, recorder, emit)
 		return
 	case err == nil && rec.SandboxID != "":
@@ -563,9 +570,25 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 			b.markRunState(ctx, runstore.StateFailed, errors.New("unknown agent"))
 			return
 		}
+		if err := b.replaceIncomingAttachmentsForTurn(ctx, oc.OrgID, threadID, 0, incomingAttachments); err != nil {
+			b.log.Error("save prompt attachments", "error", err, "org", oc.OrgID, "thread", threadID)
+			emit.Error("Attachment upload failed", "Hetchy could not save the attached files for this turn. Try again.")
+			b.markRunState(ctx, runstore.StateFailed, err)
+			return
+		}
 		b.handleRetryAfterFailure(ctx, oc, rec, agent, text, requestID, opts, model, recorder, emit)
 		return
 	case err == nil:
+		saveAttachments := b.saveIncomingAttachments
+		if rec.GitHubOwner != "" && rec.GitHubRepo != "" {
+			saveAttachments = b.replaceIncomingAttachmentsForTurn
+		}
+		if err := saveAttachments(ctx, oc.OrgID, threadID, 0, incomingAttachments); err != nil {
+			b.log.Error("save prompt attachments", "error", err, "org", oc.OrgID, "thread", threadID)
+			emit.Error("Attachment upload failed", "Hetchy could not save the attached files for this turn. Try again.")
+			b.markRunState(ctx, runstore.StateFailed, err)
+			return
+		}
 		b.handlePendingConversation(ctx, oc, rec, text, requestID, requestedAgent, requestedOwner, requestedName, requestedRepoOK, opts, model, recorder, emit)
 		return
 	case errors.Is(err, convstore.ErrNotFound):
@@ -602,6 +625,12 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		if err := b.convs.Upsert(ctx, partial); err != nil {
 			b.log.Error("convstore upsert (awaiting repo)", "error", err, "org", oc.OrgID, "thread", threadID)
 		}
+		if err := b.saveIncomingAttachments(ctx, oc.OrgID, threadID, 0, incomingAttachments); err != nil {
+			b.log.Error("save prompt attachments", "error", err, "org", oc.OrgID, "thread", threadID)
+			emit.Error("Attachment upload failed", "Hetchy could not save the attached files for this turn. Try again.")
+			b.markRunState(ctx, runstore.StateFailed, err)
+			return
+		}
 		b.markRunState(ctx, runstore.StateSucceeded, nil)
 		return
 	}
@@ -624,6 +653,12 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 	// list until the first persister tick fires inside runFreshAgent.
 	if err := b.convs.Upsert(ctx, rec); err != nil {
 		b.log.Error("convstore upsert (new chat)", "error", err, "org", oc.OrgID, "thread", threadID)
+	}
+	if err := b.saveIncomingAttachments(ctx, oc.OrgID, threadID, 0, incomingAttachments); err != nil {
+		b.log.Error("save prompt attachments", "error", err, "org", oc.OrgID, "thread", threadID)
+		emit.Error("Attachment upload failed", "Hetchy could not save the attached files for this turn. Try again.")
+		b.markRunState(ctx, runstore.StateFailed, err)
+		return
 	}
 	b.runFreshAgent(ctx, oc, rec, agent, text, requestID, opts, model, recorder, emit)
 }
@@ -946,6 +981,19 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 	emit.Append(sandboxReadyID, fmt.Sprintf("`%s` is up — cloning repo and starting Claude Code.", sb.ID))
 	emit.Done(sandboxReadyID, "")
 
+	agentRequest, err := b.promptWithSandboxAttachments(ctx, sb, rec.OrgID, rec.ThreadID, 0, requestID, userRequest, emit)
+	if err != nil {
+		b.log.Error("sandbox attachment upload failed", "sandbox", sb.ID, "request_id", requestID, "error", err)
+		emit.Error("Attachment upload failed", fmt.Sprintf("Could not copy the attached files into sandbox `%s`. Try again.", sb.ID))
+		appendBlocksToFirstTurn(&rec, recorder.Snapshot())
+		if uerr := b.convs.Upsert(context.Background(), rec); uerr != nil {
+			b.log.Error("convstore upsert (attachment upload fail)", "error", uerr)
+		}
+		b.markRunState(ctx, runstore.StateFailed, err)
+		b.cleanupSandboxWithTimeout(sb, "attachment upload failed")
+		return
+	}
+
 	// Persist progress every 2 s for the rest of the run so a
 	// reload (or bot crash) doesn't lose blocks. The persister
 	// writes only history + response_blocks + creator_id via
@@ -963,7 +1011,7 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 		persister.Stop()
 	}()
 
-	prURL, runErr := b.runAgentForRequest(ctx, sb, repo, oc, agent, userRequest, requestID, branch, opts, model, emit)
+	prURL, runErr := b.runAgentForRequest(ctx, sb, repo, oc, agent, agentRequest, requestID, branch, opts, model, emit)
 	if runErr != nil {
 		if liveRunCancelled(ctx) {
 			b.log.Info("agent run stopped", "sandbox", sb.ID, "request_id", requestID, "error", runErr)
@@ -1109,6 +1157,18 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 		return
 	}
 
+	agentText, err := b.promptWithSandboxAttachments(ctx, sb, rec.OrgID, rec.ThreadID, len(rec.History), requestID, text, emit)
+	if err != nil {
+		b.log.Error("sandbox attachment upload failed", "sandbox", sb.ID, "request_id", requestID, "error", err)
+		emit.Error("Attachment upload failed", fmt.Sprintf("Could not copy the attached files into sandbox `%s`. Try again.", sb.ID))
+		appendBlocksAsNewTurn(&rec, text, recorder.Snapshot())
+		if uerr := b.convs.Upsert(context.Background(), rec); uerr != nil {
+			b.log.Error("convstore upsert (follow-up attachment upload fail)", "error", uerr)
+		}
+		b.markRunState(ctx, runstore.StateFailed, err)
+		return
+	}
+
 	// Persister sees a forward-looking rec where the new user turn's
 	// text is already in history — otherwise a mid-run reload would
 	// render the user's message back in the previous turn instead of
@@ -1124,7 +1184,7 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 		persister.Stop()
 	}()
 
-	prURL, err := b.runFollowUpForRequest(ctx, sb, repo, oc, rec, agent, text, requestID, opts, model, emit)
+	prURL, err := b.runFollowUpForRequest(ctx, sb, repo, oc, rec, agent, agentText, requestID, opts, model, emit)
 	if err != nil {
 		if liveRunCancelled(ctx) {
 			b.log.Info("follow-up stopped", "sandbox", sb.ID, "request_id", requestID, "error", err)
