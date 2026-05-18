@@ -4,6 +4,9 @@ ALTER TABLE billing_topup_settings
 
 UPDATE billing_topup_settings AS settings
 SET monthly_max_cents = CASE
+    -- One-time backfill using the billing plan top-up prices in effect when
+    -- migration 20260518150000 was created. Future price changes should not
+    -- rewrite existing customer caps without an explicit migration.
     WHEN settings.monthly_max_cents = 0 AND settings.monthly_max_units > 0 THEN settings.monthly_max_units *
     CASE account.plan_code
         WHEN 'starter' THEN 1250

@@ -193,7 +193,7 @@ func TestStripeDowngradeScheduleCreateParamsOnlySetsSubscription(t *testing.T) {
 	if params.FromSubscription == nil || *params.FromSubscription != "sub_1" {
 		t.Fatalf("FromSubscription = %v, want sub_1", params.FromSubscription)
 	}
-	if key := *params.Params.IdempotencyKey; !strings.Contains(key, "price_growth") || !strings.Contains(key, "price_team") {
+	if key := *params.IdempotencyKey; !strings.Contains(key, "price_growth") || !strings.Contains(key, "price_team") {
 		t.Fatalf("idempotency key = %q, want current and target prices", key)
 	}
 	if params.Metadata != nil {
@@ -281,7 +281,7 @@ func TestStripeDowngradeScheduleParamsAppliesNextCycle(t *testing.T) {
 	if got := params.Phases[1].Metadata["plan_code"]; got != billing.PlanTeam {
 		t.Fatalf("next phase metadata plan_code = %q, want team", got)
 	}
-	if key := *params.Params.IdempotencyKey; !strings.Contains(key, "sub_sched_1") || !strings.Contains(key, "price_growth") || !strings.Contains(key, "price_team") {
+	if key := *params.IdempotencyKey; !strings.Contains(key, "sub_sched_1") || !strings.Contains(key, "price_growth") || !strings.Contains(key, "price_team") {
 		t.Fatalf("idempotency key = %q, want schedule ID plus current and target prices", key)
 	}
 }

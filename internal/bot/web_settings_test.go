@@ -342,12 +342,12 @@ func TestBillingPendingPlanChange(t *testing.T) {
 		t.Fatalf("pending plan = (%q, %q, %q, %v), want Team on Jun 18, 2026", code, label, when, ok)
 	}
 
-	_, _, _, ok = billingPendingPlanChange(billing.Account{
+	code, label, when, ok = billingPendingPlanChange(billing.Account{
 		PlanCode:        billing.PlanTeam,
 		PendingPlanCode: billing.PlanTeam,
 	})
 	if ok {
-		t.Fatal("pending plan matching current plan should not render")
+		t.Fatalf("pending plan matching current plan should not render, got (%q, %q, %q)", code, label, when)
 	}
 }
 

@@ -28,7 +28,7 @@ func (e FlavorNotAllowedError) Error() string {
 }
 
 type AutoTopupper interface {
-	PurchaseTopupUnit(context.Context, Account) error
+	PurchaseTopupUnit(context.Context, Account) (string, error)
 }
 
 type Service struct {
@@ -93,37 +93,17 @@ func (s *Service) AdmitRun(ctx context.Context, req AdmissionRequest) (Admission
 }
 
 func (s *Service) maybeAutoTopup(ctx context.Context, account Account, reserveCredits int) (Account, error) {
-	settings, err := s.store.EnsureTopupSettings(ctx, account.OrgID)
+	var purchase func(context.Context, Account) (string, error)
+	if s.topupper != nil {
+		purchase = s.topupper.PurchaseTopupUnit
+	}
+	account, err := s.store.AutoTopup(ctx, account.OrgID, reserveCredits, purchase)
 	if err != nil {
+		var paymentErr autoTopupPaymentError
+		if errors.As(err, &paymentErr) {
+			_ = s.store.SetLastPaymentError(ctx, account.OrgID, paymentErr.err.Error())
+		}
 		return Account{}, err
-	}
-	if !settings.AutoTopupEnabled || account.Balance() > settings.TriggerThreshold {
-		return account, nil
-	}
-	if s.topupper == nil {
-		return Account{}, ErrAutoTopupNotConfigured
-	}
-	target := max(settings.TargetBalance, reserveCredits)
-	topupUnitCents := topupUnitCentsForPlan(account.PlanCode)
-	for account.Balance() < target {
-		if settings.MonthlyMaxCents <= 0 || settings.MonthlySpendCentsUsed+topupUnitCents > settings.MonthlyMaxCents {
-			break
-		}
-		if err := s.topupper.PurchaseTopupUnit(ctx, account); err != nil {
-			_ = s.store.SetLastPaymentError(ctx, account.OrgID, err.Error())
-			return Account{}, err
-		}
-		account, err = s.store.GrantTopupCredits(ctx, account.OrgID, TopupUnitCredits)
-		if err != nil {
-			return Account{}, err
-		}
-		settings, err = s.store.IncrementTopupMonthlyUsage(ctx, account.OrgID, 1, topupUnitCents)
-		if err != nil {
-			return Account{}, err
-		}
-	}
-	if account.Balance() < reserveCredits {
-		return Account{}, InsufficientCreditsError{Needed: reserveCredits, Available: account.Balance()}
 	}
 	return account, nil
 }
