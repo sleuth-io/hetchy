@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	workos "github.com/workos/workos-go/v7"
 )
@@ -219,6 +220,76 @@ func TestCallbackWithInvitationTokenStartsStatefulAuthFlow(t *testing.T) {
 	}
 	if !s.verifyOAuthState(stateCookie.Value, state) {
 		t.Fatal("state cookie should verify against redirected state")
+	}
+}
+
+func TestCallbackWithInvitationTokenExchangesCodeWithInvitation(t *testing.T) {
+	bodyCh := make(chan map[string]any, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/user_management/authenticate" {
+			t.Errorf("unexpected WorkOS request: %s %s", r.Method, r.URL.String())
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode WorkOS request body: %v", err)
+		}
+		bodyCh <- body
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"code":    "invalid_grant",
+			"message": "stop after request capture",
+		})
+	}))
+	defer server.Close()
+
+	s := newTestService(t, "test-cookie-password-keep-it-long")
+	s.client = workos.NewClient("sk_test", workos.WithClientID("client_test"), workos.WithBaseURL(server.URL))
+
+	state, err := generateOAuthState()
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	signed := s.signOAuthState(state)
+	req := httptest.NewRequest(http.MethodGet, "/callback?code=code_second&state="+state+"&invitation_token=inv_second_123", nil)
+	req.AddCookie(&http.Cookie{Name: oauthStateCookieName, Value: signed})
+	rec := httptest.NewRecorder()
+	s.CallbackHandler(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected WorkOS auth error after exchange attempt, got %d", rec.Code)
+	}
+	select {
+	case body := <-bodyCh:
+		if got := body["grant_type"]; got != "authorization_code" {
+			t.Fatalf("grant_type = %#v, want authorization_code", got)
+		}
+		if got := body["code"]; got != "code_second" {
+			t.Fatalf("code = %#v, want code_second", got)
+		}
+		if got := body["invitation_token"]; got != "inv_second_123" {
+			t.Fatalf("invitation_token = %#v, want inv_second_123", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected AuthenticateWithCode request")
+	}
+}
+
+func TestCallbackRejectsOversizedInvitationToken(t *testing.T) {
+	s := newTestService(t, "test-cookie-password-keep-it-long")
+	token := strings.Repeat("a", maxInvitationTokenLength+1)
+
+	req := httptest.NewRequest(http.MethodGet, "/callback?invitation_token="+token, nil)
+	rec := httptest.NewRecorder()
+	s.CallbackHandler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for oversized invitation token, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "invalid invitation token") {
+		t.Fatalf("expected invalid token body, got %q", rec.Body.String())
 	}
 }
 

@@ -43,6 +43,10 @@ const oauthStateCookieName = "hetchy_oauth_state"
 // can easily exceed 10 minutes.
 const oauthStateCookieTTL = time.Hour
 
+// maxInvitationTokenLength caps untrusted invite tokens before forwarding
+// them into WorkOS URL generation or token exchange calls.
+const maxInvitationTokenLength = 512
+
 // SignedOutParam is the query parameter appended to the post-logout redirect
 // in bypass mode so indexHandler can show the landing page even though bypass
 // middleware always fabricates a Principal.
@@ -248,6 +252,10 @@ func (s *Service) CallbackHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	invitationToken := strings.TrimSpace(r.URL.Query().Get("invitation_token"))
+	if len(invitationToken) > maxInvitationTokenLength {
+		http.Error(w, "invalid invitation token", http.StatusBadRequest)
+		return
+	}
 	code := r.URL.Query().Get("code")
 	queryState := r.URL.Query().Get("state")
 	if invitationToken != "" && queryState == "" {
