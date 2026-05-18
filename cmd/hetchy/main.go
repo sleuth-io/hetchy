@@ -50,7 +50,15 @@ func main() {
 	// Railway (and most log aggregators) treat stderr as error-level regardless of
 	// the message's actual level. JSON on stdout lets Railway parse the "level"
 	// field and display each record at the correct severity.
-	log := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
+	//
+	// Exception: one-shot migrate subcommands write machine-readable text to stdout
+	// (e.g. "schema version: N"), so their logs go to stderr to keep stdout clean
+	// for callers like `make db-up` that parse that output.
+	logDest := os.Stdout
+	if *migrateFlag || *migrateDown >= 0 || *migrateStatus {
+		logDest = os.Stderr
+	}
+	log := slog.New(slog.NewJSONHandler(logDest, &slog.HandlerOptions{Level: level}))
 	slog.SetDefault(log)
 	log.Info("hetchy starting",
 		"version", buildinfo.Version,
