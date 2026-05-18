@@ -106,6 +106,7 @@ func TestChatTemplate_ComposerControls(t *testing.T) {
 		`model: selectedModel`,
 		`applyConversationModel(detail)`,
 		`setModelPickerLocked(true)`,
+		`attachFilesBtn.addEventListener('mouseenter'`,
 	} {
 		if !strings.Contains(script, w) {
 			t.Errorf("chat asset missing %q", w)

@@ -492,6 +492,10 @@ toolsBtn.addEventListener('click', e => {
 });
 toolsPopover.addEventListener('click', e => e.stopPropagation());
 if (attachFilesBtn && attachmentInput) {
+  attachFilesBtn.addEventListener('mouseenter', () => {
+    closeAgentPopover();
+    closeRepoPopover();
+  });
   attachFilesBtn.addEventListener('click', e => {
     e.preventDefault();
     e.stopPropagation();
