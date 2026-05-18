@@ -83,8 +83,8 @@ save_hetchy_cache_archive() {
   hetchy_cache_has_entries "$local_cache_dir" || return 0
   mkdir -p "$volume_cache_dir" || return 1
 
-  local archive_tmp="/tmp/hetchy-cache-archive.$$.$RANDOM.tar.gz"
-  rm -f "$archive_tmp" 2>/dev/null || true
+  local archive_tmp
+  archive_tmp="$(mktemp "${TMPDIR:-/tmp}/hetchy-cache-archive.XXXXXX")" || return 1
 
   if ! tar -C "$local_cache_dir" \
     --exclude=./.git \
@@ -406,8 +406,8 @@ hetchy_write_repo_cache_metadata() {
   meta="$(hetchy_repo_cache_metadata_path "$cache_archive")"
   local archive_bytes
   archive_bytes="$(hetchy_file_size_bytes "$cache_archive")"
-  local tmp="/tmp/hetchy-repo-cache-meta.$$.$RANDOM"
-  rm -f "$tmp" 2>/dev/null || true
+  local tmp
+  tmp="$(mktemp "${TMPDIR:-/tmp}/hetchy-repo-cache-meta.XXXXXX")" || return 1
   {
     printf 'clone_seconds=%s\n' "$clone_seconds"
     if [[ "$restore_sync_seconds" =~ ^[0-9]+$ ]]; then
@@ -517,8 +517,8 @@ save_repo_checkout_to_cache() {
   local parent
   parent="$(dirname "$cache_archive")"
   mkdir -p "$parent" || return 1
-  local tmp="/tmp/hetchy-repo-cache.$$.$RANDOM.tar.gz"
-  rm -f "$tmp" 2>/dev/null || true
+  local tmp
+  tmp="$(mktemp "${TMPDIR:-/tmp}/hetchy-repo-cache.XXXXXX")" || return 1
   tar -C "$workdir" \
     --exclude=./.env \
     --exclude=./.npmrc \
