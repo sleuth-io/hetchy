@@ -10,13 +10,13 @@ ON CONFLICT DO NOTHING
 RETURNING id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
           user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
           lease_owner, lease_expires_at, heartbeat_at, last_error,
-          created_at, updated_at;
+          created_at, updated_at, command_step;
 
 -- name: GetAgentRun :one
 SELECT id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
        user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
        lease_owner, lease_expires_at, heartbeat_at, last_error,
-       created_at, updated_at
+       created_at, updated_at, command_step
 FROM agent_runs
 WHERE id = $1;
 
@@ -24,7 +24,7 @@ WHERE id = $1;
 SELECT id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
        user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
        lease_owner, lease_expires_at, heartbeat_at, last_error,
-       created_at, updated_at
+       created_at, updated_at, command_step
 FROM agent_runs
 WHERE org_id = $1 AND request_id = $2
   AND state IN ('preparing', 'running', 'recovering', 'finalizing');
@@ -33,7 +33,7 @@ WHERE org_id = $1 AND request_id = $2
 SELECT id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
        user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
        lease_owner, lease_expires_at, heartbeat_at, last_error,
-       created_at, updated_at
+       created_at, updated_at, command_step
 FROM agent_runs
 WHERE org_id = $1 AND thread_id = $2
   AND state IN ('preparing', 'running', 'recovering', 'finalizing')
@@ -44,7 +44,7 @@ LIMIT 1;
 SELECT id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
        user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
        lease_owner, lease_expires_at, heartbeat_at, last_error,
-       created_at, updated_at
+       created_at, updated_at, command_step
 FROM agent_runs
 WHERE org_id = $1 AND thread_id = $2
 ORDER BY created_at DESC
@@ -86,14 +86,15 @@ WHERE id = $1
 UPDATE agent_runs
    SET session_id = $2,
        command_id = $3,
+       command_step = $4,
        command_start_seq = next_event_seq,
        state = 'running',
        heartbeat_at = NOW(),
-       lease_owner = $4,
+       lease_owner = $5,
        lease_expires_at = NOW() + sqlc.arg(lease_duration)::interval,
        updated_at = NOW()
 WHERE id = $1
-  AND lease_owner = $4
+  AND lease_owner = $5
   AND state IN ('preparing', 'running', 'recovering', 'finalizing');
 
 -- name: UpdateAgentRunState :exec
@@ -129,18 +130,29 @@ WHERE id = $1
 SELECT id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
        user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
        lease_owner, lease_expires_at, heartbeat_at, last_error,
-       created_at, updated_at
+       created_at, updated_at, command_step
 FROM agent_runs
 WHERE state IN ('preparing', 'running', 'recovering', 'finalizing')
   AND (lease_expires_at IS NULL OR lease_expires_at < NOW())
 ORDER BY updated_at ASC
 LIMIT $1;
 
+-- name: ListStaleAgentRuns :many
+SELECT id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
+       user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
+       lease_owner, lease_expires_at, heartbeat_at, last_error,
+       created_at, updated_at, command_step
+FROM agent_runs
+WHERE state IN ('preparing', 'running', 'recovering', 'finalizing')
+  AND (heartbeat_at IS NULL OR heartbeat_at < NOW() - sqlc.arg(stale_after)::interval)
+ORDER BY heartbeat_at ASC NULLS FIRST, updated_at ASC
+LIMIT sqlc.arg(limit_count);
+
 -- name: ListActiveAgentRunsForLeaseOwnerPrefix :many
 SELECT id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
        user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
        lease_owner, lease_expires_at, heartbeat_at, last_error,
-       created_at, updated_at
+       created_at, updated_at, command_step
 FROM agent_runs
 WHERE state IN ('preparing', 'running', 'recovering', 'finalizing')
   AND LEFT(lease_owner, LENGTH(sqlc.arg(lease_owner_prefix)::text)) = sqlc.arg(lease_owner_prefix)::text
@@ -160,7 +172,7 @@ WHERE id = sqlc.arg(id)
 RETURNING id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
           user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
           lease_owner, lease_expires_at, heartbeat_at, last_error,
-          created_at, updated_at;
+          created_at, updated_at, command_step;
 
 -- name: ClaimAgentRunLeaseFromOwner :one
 UPDATE agent_runs
@@ -175,7 +187,23 @@ WHERE id = sqlc.arg(id)
 RETURNING id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
           user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
           lease_owner, lease_expires_at, heartbeat_at, last_error,
-          created_at, updated_at;
+          created_at, updated_at, command_step;
+
+-- name: ClaimStaleAgentRunLease :one
+UPDATE agent_runs
+   SET state = 'recovering',
+       lease_owner = sqlc.arg(lease_owner),
+       lease_expires_at = NOW() + sqlc.arg(lease_duration)::interval,
+       heartbeat_at = NOW(),
+       updated_at = NOW()
+WHERE id = sqlc.arg(id)
+  AND state IN ('preparing', 'running', 'recovering', 'finalizing')
+  AND lease_owner <> sqlc.arg(lease_owner)
+  AND (heartbeat_at IS NULL OR heartbeat_at < NOW() - sqlc.arg(stale_after)::interval)
+RETURNING id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
+          user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
+          lease_owner, lease_expires_at, heartbeat_at, last_error,
+          created_at, updated_at, command_step;
 
 -- name: ClaimAgentRunForCancel :one
 UPDATE agent_runs
@@ -188,7 +216,7 @@ WHERE id = $1
 RETURNING id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
           user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
           lease_owner, lease_expires_at, heartbeat_at, last_error,
-          created_at, updated_at;
+          created_at, updated_at, command_step;
 
 -- Appends intentionally serialize per run on the agent_runs row lock so
 -- next_event_seq stays monotonic and replay order is deterministic.

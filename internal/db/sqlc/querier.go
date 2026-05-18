@@ -15,6 +15,7 @@ type Querier interface {
 	ClaimAgentRunForCancel(ctx context.Context, arg ClaimAgentRunForCancelParams) (AgentRun, error)
 	ClaimAgentRunLease(ctx context.Context, arg ClaimAgentRunLeaseParams) (AgentRun, error)
 	ClaimAgentRunLeaseFromOwner(ctx context.Context, arg ClaimAgentRunLeaseFromOwnerParams) (AgentRun, error)
+	ClaimStaleAgentRunLease(ctx context.Context, arg ClaimStaleAgentRunLeaseParams) (AgentRun, error)
 	CountAgentProfilesByOrg(ctx context.Context, orgID string) (int64, error)
 	CreateAgentRun(ctx context.Context, arg CreateAgentRunParams) (AgentRun, error)
 	DeleteAgentProfilesByOrg(ctx context.Context, orgID string) error
@@ -95,6 +96,7 @@ type Querier interface {
 	// where the user can see every target Hetchy has bootstrapped under
 	// one repository.
 	ListRepoSetupSpecs(ctx context.Context, arg ListRepoSetupSpecsParams) ([]RepoSetupSpec, error)
+	ListStaleAgentRuns(ctx context.Context, arg ListStaleAgentRunsParams) ([]AgentRun, error)
 	RenameConversation(ctx context.Context, arg RenameConversationParams) (int64, error)
 	// Periodic mid-run snapshot used by chatPersister. Only writes the
 	// handful of fields that change progressively as the agent emits

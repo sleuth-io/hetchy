@@ -60,6 +60,7 @@ type AgentRun struct {
 	LastError       string             `json:"last_error"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	CommandStep     string             `json:"command_step"`
 }
 
 type AgentRunEvent struct {

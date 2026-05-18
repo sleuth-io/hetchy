@@ -5,12 +5,16 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/hetchyhq/hetchy/internal/agents"
 	"github.com/hetchyhq/hetchy/internal/blocks"
+	"github.com/hetchyhq/hetchy/internal/bootstrap"
 	"github.com/hetchyhq/hetchy/internal/convstore"
+	"github.com/hetchyhq/hetchy/internal/orgcfg"
 	"github.com/hetchyhq/hetchy/internal/runstore"
 )
 
@@ -169,15 +173,61 @@ func TestRecoverRunForReattachClaimsAndRegistersLiveRun(t *testing.T) {
 	}
 }
 
+func TestRecoverRunForReattachClaimsStaleHeartbeat(t *testing.T) {
+	store := &fakeRunStore{
+		enabled:  true,
+		claimErr: pgx.ErrNoRows,
+		claimStaleRun: runstore.Run{
+			ID:       "run_1",
+			OrgID:    "org_1",
+			ThreadID: "thread_1",
+			State:    runstore.StateRecovering,
+		},
+	}
+	b := &Bot{
+		log:      discardLogger(),
+		runs:     store,
+		live:     newLiveRegistry(),
+		workerID: "new-host-123-worker",
+	}
+	b.recoverRunFn = func(ctx context.Context, run runstore.Run, waitForLive bool) {
+		if !waitForLive {
+			t.Fatal("reattach recovery should wait for live registration")
+		}
+		if _, ok := b.live.RegisterIfAbsent(ctx, run.OrgID, run.ThreadID); !ok {
+			t.Fatal("expected live run registration")
+		}
+	}
+
+	live := b.recoverRunForReattach(context.Background(), runstore.Run{
+		ID:         "run_1",
+		OrgID:      "org_1",
+		ThreadID:   "thread_1",
+		State:      runstore.StateRunning,
+		LeaseOwner: "old-host-222-worker",
+	})
+
+	if live == nil {
+		t.Fatal("expected live run after stale recovery launch")
+	}
+	if len(store.claimStaleCalls) != 1 || store.claimStaleCalls[0].runID != "run_1" || store.claimStaleCalls[0].staleAfter != agentRunStaleHeartbeat {
+		t.Fatalf("claim stale calls = %+v", store.claimStaleCalls)
+	}
+}
+
 func TestRecoverAgentRunReadyMissingCommandFailsDurableRun(t *testing.T) {
 	store := &fakeRunStore{enabled: true}
 	convs := &fakeConversationStore{getErr: convstore.ErrNotFound}
+	var cleanup string
 	b := &Bot{
 		log:      discardLogger(),
 		runs:     store,
 		convs:    convs,
 		live:     newLiveRegistry(),
 		workerID: "worker-1",
+		cleanupSandboxFn: func(_ context.Context, sb *daytona.Sandbox, reason string) {
+			cleanup = sb.ID + "|" + reason
+		},
 	}
 	ready := make(chan struct{})
 	run := runstore.Run{
@@ -219,6 +269,9 @@ func TestRecoverAgentRunReadyMissingCommandFailsDurableRun(t *testing.T) {
 	block := rec.ResponseBlocks[0][0]
 	if block.Kind != blocks.KindError || block.Title != "Agent failed" || block.Status != blocks.StatusError {
 		t.Fatalf("projected block = %+v", block)
+	}
+	if cleanup != "sandbox-1|recovered failed run" {
+		t.Fatalf("cleanup = %q", cleanup)
 	}
 }
 
@@ -328,6 +381,115 @@ func TestRecoverAgentRunReadyReplaysCommandLogToSuccess(t *testing.T) {
 	}
 	if cleanupCall != "sandbox-1|recovered successful run" {
 		t.Fatalf("cleanup call = %q", cleanupCall)
+	}
+}
+
+func TestRecoverAgentRunReadyBootstrapCommandSavesSpecAndContinues(t *testing.T) {
+	store := &fakeRunStore{enabled: true}
+	boot := &fakeBootstrapStore{}
+	convs := &fakeConversationStore{rec: convstore.Record{
+		OrgID:       "org_1",
+		ThreadID:    "thread_1",
+		History:     []string{"ship it"},
+		GitHubOwner: "acme",
+		GitHubRepo:  "repo",
+		TaskOptions: map[string]bool{chatTaskValidateKey: true},
+	}}
+	repo := repoCtx{Slug: "acme/repo", BaseBranch: "main", GitHubToken: "gh-token", InstallID: 11, RepoID: 22}
+	hintsRoot := t.TempDir()
+	run := runstore.Run{
+		ID:          "run_bootstrap",
+		OrgID:       "org_1",
+		ThreadID:    "thread_1",
+		RequestID:   "req-1",
+		UserRequest: "ship it",
+		SandboxID:   "sandbox-1",
+		SessionID:   "bootstrap-req-1",
+		CommandID:   "command-1",
+		CommandStep: "bootstrap-run-bootstrap",
+		Branch:      "feature/sf-req-1",
+		RunKind:     "fresh",
+	}
+	var ranAgent bool
+	var cleanupCall string
+	var deletedSessions []string
+	b := &Bot{
+		log:       discardLogger(),
+		runs:      store,
+		convs:     convs,
+		orgs:      &fakeOrgStore{getConfig: orgcfg.Config{OrgID: "org_1", AnthropicAPIKey: "sk-ant"}},
+		bootstrap: boot,
+		live:      newLiveRegistry(),
+		workerID:  "worker-1",
+		getSandboxFn: func(_ context.Context, sandboxID string) (*daytona.Sandbox, error) {
+			return &daytona.Sandbox{ID: sandboxID}, nil
+		},
+		ensureSandboxStartedFn: func(context.Context, *daytona.Sandbox) error { return nil },
+		commandLogSnapshotFn: func(context.Context, *daytona.Sandbox, string, string) (string, error) {
+			return "[hetchy-bootstrap] verifying artifacts\n", nil
+		},
+		sessionCommandStatusFn: func(context.Context, *daytona.Sandbox, string, string) (map[string]any, error) {
+			return map[string]any{"exitCode": 0}, nil
+		},
+		resolveRepoFn: func(context.Context, string, string, string) (repoCtx, error) {
+			return repo, nil
+		},
+		detectViaSandboxFn: func(context.Context, *daytona.Sandbox, string, string) (*bootstrap.Hints, string, error) {
+			return &bootstrap.Hints{Path: hintsRoot}, hintsRoot, nil
+		},
+		shLinesFn: func(_ context.Context, _ string, _ sandboxProcess, _ string, step, cmd string, _ time.Duration, _ time.Duration, _ bool, _ func(string)) (string, error) {
+			if step != "bootstrap-read" {
+				t.Fatalf("unexpected shLines step %q", step)
+			}
+			switch {
+			case strings.Contains(cmd, "manifest.json"):
+				return `{"kind":"node","services":[],"required_secrets":[]}`, nil
+			case strings.Contains(cmd, "setup.sh"):
+				return "npm install\n", nil
+			case strings.Contains(cmd, "start.sh"):
+				return "npm run dev\n", nil
+			case strings.Contains(cmd, "health.sh"):
+				return "curl -f http://localhost:3000\n", nil
+			default:
+				t.Fatalf("unexpected bootstrap read cmd %q", cmd)
+				return "", nil
+			}
+		},
+		runAgentFn: func(_ context.Context, sb *daytona.Sandbox, gotRepo repoCtx, _ orgcfg.Config, _ agents.Profile, userRequest, requestID, branch string, _ chatTaskOptions, _ ClaudeModel, _ blocks.Emitter) (string, error) {
+			ranAgent = true
+			if sb.ID != "sandbox-1" || gotRepo.Slug != "acme/repo" || userRequest != "ship it" || requestID != "req-1" || branch != "feature/sf-req-1" {
+				t.Fatalf("runAgent args sb=%s repo=%+v user=%q request=%q branch=%q", sb.ID, gotRepo, userRequest, requestID, branch)
+			}
+			return "https://github.com/acme/repo/pull/9", nil
+		},
+		deleteSandboxSessionFn: func(_ *daytona.Sandbox, sessionID string) {
+			deletedSessions = append(deletedSessions, sessionID)
+		},
+		cleanupSandboxFn: func(_ context.Context, sb *daytona.Sandbox, reason string) {
+			cleanupCall = sb.ID + "|" + reason
+		},
+	}
+
+	b.recoverAgentRunReady(context.Background(), run, nil)
+
+	if !ranAgent {
+		t.Fatal("expected recovered run to continue into agent")
+	}
+	if len(boot.savedSpecs) != 1 || boot.savedSpecs[0].Kind != "node" || boot.savedSpecs[0].InstallationID != 11 || boot.savedSpecs[0].RepoID != 22 {
+		t.Fatalf("saved specs = %+v", boot.savedSpecs)
+	}
+	if len(store.updateStates) == 0 || store.updateStates[len(store.updateStates)-1].state != runstore.StateSucceeded {
+		t.Fatalf("state updates = %+v", store.updateStates)
+	}
+	rec := convs.lastUpsert(t)
+	if rec.PRURL != "https://github.com/acme/repo/pull/9" || rec.SandboxID != "sandbox-1" {
+		t.Fatalf("projected conversation = %+v", rec)
+	}
+	if cleanupCall != "sandbox-1|recovered successful run" {
+		t.Fatalf("cleanup call = %q", cleanupCall)
+	}
+	if len(deletedSessions) == 0 || deletedSessions[0] != "bootstrap-req-1" {
+		t.Fatalf("deleted sessions = %+v", deletedSessions)
 	}
 }
 
@@ -461,8 +623,10 @@ func TestFinalizeRecoveredRunNonZeroExitFailsWithoutValidation(t *testing.T) {
 			t.Fatal("non-zero exit should not validate a PR")
 			return "", "", nil
 		},
-		cleanupSandboxFn: func(context.Context, *daytona.Sandbox, string) {
-			t.Fatal("failed recovered run should not cleanup sandbox as successful")
+		cleanupSandboxFn: func(_ context.Context, sb *daytona.Sandbox, reason string) {
+			if sb.ID != "sandbox-1" || reason != "recovered failed run" {
+				t.Fatalf("cleanup = %s|%s", sb.ID, reason)
+			}
 		},
 	}
 	run := runstore.Run{

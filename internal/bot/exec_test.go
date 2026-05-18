@@ -185,3 +185,23 @@ func TestShLines(t *testing.T) {
 		})
 	}
 }
+
+func TestRecoverableSandboxStepKeepsTerminalCommand(t *testing.T) {
+	for _, step := range []string{
+		"run-script",
+		"setup-clone-run",
+		"detect-tar",
+		"bootstrap-run-bootstrap",
+		"write-script",
+		"write-env",
+	} {
+		if !recoverableSandboxStep(step) {
+			t.Fatalf("recoverableSandboxStep(%q) = false, want true", step)
+		}
+	}
+	for _, step := range []string{"bootstrap-read", "spec-read", "test-step", ""} {
+		if recoverableSandboxStep(step) {
+			t.Fatalf("recoverableSandboxStep(%q) = true, want false", step)
+		}
+	}
+}

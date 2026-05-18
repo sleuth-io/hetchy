@@ -68,7 +68,7 @@ func TestMarkRunHelpersUseRunStoreFake(t *testing.T) {
 	b.markRunBranch(ctx, "feature/sf-1")
 	b.markRunSandbox(ctx, "sandbox-1")
 	b.markRunSession(ctx, "session-1")
-	b.markRunCommand(ctx, "session-1", "command-1")
+	b.markRunCommand(ctx, "session-1", "command-1", "run-script")
 	b.markRunState(ctx, runstore.StateFailed, errors.New("boom"))
 	b.markRunCursor(ctx, 123)
 
@@ -84,7 +84,7 @@ func TestMarkRunHelpersUseRunStoreFake(t *testing.T) {
 	if got := store.updateSessions; len(got) != 1 || got[0] != "session-1" {
 		t.Fatalf("updateSessions = %#v", got)
 	}
-	if got := store.updateCommands; len(got) != 1 || got[0].sessionID != "session-1" || got[0].commandID != "command-1" || got[0].leaseOwner != "worker-1" {
+	if got := store.updateCommands; len(got) != 1 || got[0].sessionID != "session-1" || got[0].commandID != "command-1" || got[0].step != "run-script" || got[0].leaseOwner != "worker-1" {
 		t.Fatalf("updateCommands = %#v", got)
 	}
 	if got := store.updateStates; len(got) != 1 || got[0].state != runstore.StateFailed || got[0].lastErr != "boom" || got[0].leaseOwner != "worker-1" {

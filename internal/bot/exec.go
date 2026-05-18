@@ -80,9 +80,11 @@ func (b *Bot) shLines(ctx context.Context, sandboxID string, proc sandboxProcess
 		"cmd_id", cmdID,
 		"exec_duration", time.Since(execStarted),
 	)
-	if step == "run-script" && cmdID != "" {
-		b.markRunCommand(ctx, sessionID, cmdID)
+	if cmdID != "" && recoverableSandboxStep(step) {
+		b.markRunCommand(ctx, sessionID, cmdID, step)
 	}
+	stopRunLeaseHeartbeat := b.startRunLeaseHeartbeat(stepCtx)
+	defer stopRunLeaseHeartbeat()
 
 	// Start the idle clock only after ExecuteSessionCommand returns so
 	// the SDK round-trip (which can take several seconds) doesn't
@@ -315,6 +317,23 @@ func effectiveSuppressInputEcho(explicit bool, cmd string) bool {
 		return true
 	}
 	return len(cmd) > 8*1024
+}
+
+func recoverableSandboxStep(step string) bool {
+	switch step {
+	case "run-script",
+		"write-script",
+		"write-env",
+		"setup-clone-write",
+		"setup-clone-run",
+		"detect-tar",
+		"bootstrap-write",
+		"bootstrap-write-bootstrap",
+		"bootstrap-run-bootstrap":
+		return true
+	default:
+		return false
+	}
 }
 
 func (b *Bot) logSandboxOutputTiming(sandboxID, step string, commandAcceptedAt, lastChunkAt time.Time, seenChunk bool, capturedBytes int, now time.Time) {
