@@ -1,6 +1,7 @@
 package bootstrap
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -24,21 +25,22 @@ type PromptArgs struct {
 
 // BuildPrompt renders the bootstrap prompt the agent will work against.
 // The structure is fixed by docs/research/repo-bootstrap-and-validation.md
-// — process steps 0-8, four success criteria, the manifest schema. Hints
+// — process steps 0-9, four success criteria, the manifest schema. Hints
 // are inserted as labeled, easy-to-skim sections; everything is text so
 // the agent's tokenization stays predictable.
 //
 // The prompt is opinionated about a few things that cost real-world
 // frustration when omitted:
 //
-//   - Step 0 explicitly tells the agent to interpret docs, not run them
+//   - Step 0 tells the agent to prefer Dev Container specs when present.
+//   - Step 1 explicitly tells the agent to interpret docs, not run them
 //     literally. Hetchy itself (with its Doppler + WorkOS scaffolding)
 //     is a good example of why.
-//   - Step 1 names the grep pattern for finding the source-of-truth env
+//   - Step 2 names the grep pattern for finding the source-of-truth env
 //     consumer (os.Getenv, process.env, os.environ). Without this, the
 //     agent treats README's required-vars list as authoritative and gets
 //     blocked on user secrets it doesn't actually need.
-//   - Step 6 is explicit about NOT fabricating fake third-party API keys.
+//   - Step 7 is explicit about NOT fabricating fake third-party API keys.
 //     This is the most common failure mode for naive "make it run"
 //     prompts — the app appears to start, then dies later.
 func BuildPrompt(hints *Hints, args PromptArgs) string {
@@ -107,7 +109,20 @@ Manifest schema:
 
 Process:
 
-  0. Read the README and any docs/ contributor guides. They are written
+  0. If the detection hints include a Dev Container spec
+     (devcontainer.json), treat it as the strongest setup signal. Try
+     the reference CLI first:
+
+       devcontainer up --workspace-folder "$PWD" --config <path>
+
+     If it works, base setup/start/health on that environment using
+     devcontainer exec and forwarded ports. If it fails because nested
+     Docker, privileges, mounts, or networking are unavailable in the
+     sandbox, translate the spec's image/build/dockerComposeFile/features
+     and lifecycle commands into ordinary setup/start scripts, then
+     declare the unsupported container capability in manifest.json.
+
+  1. Read the README and any docs/ contributor guides. They are written
      for humans on dev workstations — INTERPRET, don't execute literally.
      Skip developer-only tooling (Doppler, dev hostnames, live-reload
      watchers). Look for AUTH_BYPASS / CI / TEST flags that elide
@@ -127,23 +142,23 @@ Process:
      flag is often insufficient — apps frequently chain auth → org
      selection → onboarding, so each stage may need its own opt-out.
 
-  1. Find the source of truth for required env vars. The README's list
+  2. Find the source of truth for required env vars. The README's list
      is a superset for the dev experience; the actual binary often
      requires fewer. Grep the codebase for os.Getenv, process.env,
      os.environ, ENV[, etc., and find the function that decides
      "fail to start" — that is the authoritative list.
 
-  2. Inspect the repo structure beyond the hints below. The hints are
+  3. Inspect the repo structure beyond the hints below. The hints are
      starting points, not a complete inventory.
 
-  3. Write setup.sh and run it from a clean checkout. It must be
+  4. Write setup.sh and run it from a clean checkout. It must be
      idempotent — every future task re-runs it.
 
-  4. Write start.sh and run it. Record the URL the app is on.
+  5. Write start.sh and run it. Record the URL the app is on.
 
-  5. Write health.sh and run it. Iterate until it passes.
+  6. Write health.sh and run it. Iterate until it passes.
 
-  6. Real third-party credentials handling:
+  7. Real third-party credentials handling:
      - If a credential has a documented test-mode bypass
        (AUTH_BYPASS=1, NODE_ENV=test, etc.) that lets the app boot, USE it.
        Bootstrap succeeds with reduced functionality.
@@ -155,11 +170,11 @@ Process:
        services (e.g. fake Stripe sk_test_… keys). The app will appear
        to start and then fail later in confusing ways.
 
-  7. For every UI service, navigate to its root URL with Playwright and
+  8. For every UI service, navigate to its root URL with Playwright and
      take a screenshot. The screenshot must show real content — not an
      error page or blank screen.
 
-  8. Populate suggested_repo_changes if you hit friction that a small
+  9. Populate suggested_repo_changes if you hit friction that a small
      repo change would have eliminated. Examples: add a 'make bootstrap'
      target; expose required env vars via a --print-required-env flag;
      add a docker-compose profile that starts with bypass flags. ~3 max.
@@ -192,11 +207,14 @@ func renderHints(b *strings.Builder, h *Hints) {
 	}
 
 	if h.DevContainer != nil {
-		fmt.Fprintf(b, "## .devcontainer (%s)\n\n", h.DevContainer.Path)
+		fmt.Fprintf(b, "## Dev Container spec (%s)\n\n", h.DevContainer.Path)
 		if h.DevContainer.Raw == nil {
 			fmt.Fprintln(b, "(parse failed — see notes below)")
 		} else {
 			renderDevContainer(b, h.DevContainer.Raw)
+		}
+		if len(h.DevContainer.AlternatePaths) > 0 {
+			fmt.Fprintf(b, "Alternate devcontainer configs: %s\n", strings.Join(h.DevContainer.AlternatePaths, ", "))
 		}
 		b.WriteString("\n")
 	}
@@ -304,13 +322,40 @@ func renderHints(b *strings.Builder, h *Hints) {
 // labeled lines instead of dumping the whole JSON. Keeps the prompt
 // terse while preserving the actionable bits.
 func renderDevContainer(b *strings.Builder, raw map[string]any) {
-	for _, key := range []string{"image", "build", "postCreateCommand", "postStartCommand", "forwardPorts", "containerEnv"} {
+	for _, key := range []string{
+		"image",
+		"build",
+		"dockerComposeFile",
+		"service",
+		"runServices",
+		"features",
+		"containerEnv",
+		"remoteEnv",
+		"forwardPorts",
+		"portsAttributes",
+		"workspaceFolder",
+		"remoteUser",
+		"containerUser",
+		"initializeCommand",
+		"onCreateCommand",
+		"updateContentCommand",
+		"postCreateCommand",
+		"postStartCommand",
+	} {
 		v, ok := raw[key]
 		if !ok {
 			continue
 		}
-		fmt.Fprintf(b, "%s: %v\n", key, v)
+		fmt.Fprintf(b, "%s: %s\n", key, renderDevContainerValue(v))
 	}
+}
+
+func renderDevContainerValue(v any) string {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Sprint(v)
+	}
+	return string(data)
 }
 
 func sortedKeys[V any](m map[string]V) []string {

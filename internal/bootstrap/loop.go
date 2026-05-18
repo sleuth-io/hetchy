@@ -258,6 +258,9 @@ func Fingerprint(h *Hints) string {
 	}
 	if h.DevContainer != nil {
 		addPath(h.DevContainer.Path)
+		for _, path := range h.DevContainer.AlternatePaths {
+			addPath(path)
+		}
 	}
 	for _, candidate := range []string{
 		"AGENTS.md", "agents.md",
