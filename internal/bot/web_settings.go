@@ -372,6 +372,10 @@ type billingOverviewView struct {
 	Status            string
 	PeriodStart       string
 	PeriodEnd         string
+	PendingPlanCode   string
+	PendingPlanLabel  string
+	PendingPlanAt     string
+	HasPendingPlan    bool
 	IncludedCredits   int
 	IncludedUsed      int
 	IncludedRemaining int
@@ -405,6 +409,7 @@ type billingPlanOptionView struct {
 	PerRunMaxCredits int
 	Configured       bool
 	Current          bool
+	Scheduled        bool
 	ActionLabel      string
 	ConfirmTitle     string
 	ConfirmMessage   string
@@ -437,12 +442,17 @@ func (b *Bot) loadBillingOverview(ctx context.Context, orgID string) (billingOve
 	acct := overview.Account
 	settings := overview.TopupSettings
 	plan := billingPlanForTopup(acct.PlanCode)
+	pendingPlanCode, pendingPlanLabel, pendingPlanAt, hasPendingPlan := billingPendingPlanChange(acct)
 	out := billingOverviewView{
 		PlanCode:          acct.PlanCode,
 		CurrentPlanLabel:  billingPlanLabel(acct.PlanCode),
 		Status:            acct.Status,
 		PeriodStart:       formatSettingsTime(acct.CurrentPeriodStart),
 		PeriodEnd:         formatSettingsTime(acct.CurrentPeriodEnd),
+		PendingPlanCode:   pendingPlanCode,
+		PendingPlanLabel:  pendingPlanLabel,
+		PendingPlanAt:     pendingPlanAt,
+		HasPendingPlan:    hasPendingPlan,
 		IncludedCredits:   acct.IncludedCredits,
 		IncludedUsed:      acct.IncludedCreditsUsed,
 		IncludedRemaining: acct.IncludedRemaining(),
@@ -461,7 +471,7 @@ func (b *Bot) loadBillingOverview(ctx context.Context, orgID string) (billingOve
 		StripeConfigured:  b.stripeConfigured(),
 		HasStripeCustomer: acct.StripeCustomerID != "",
 		HasSubscription:   acct.StripeSubscriptionID != "",
-		PlanOptions:       b.billingPlanOptions(acct.PlanCode, acct.StripeSubscriptionID != "", formatSettingsTime(acct.CurrentPeriodEnd)),
+		PlanOptions:       b.billingPlanOptions(acct.PlanCode, pendingPlanCode, acct.StripeSubscriptionID != "", formatSettingsTime(acct.CurrentPeriodEnd)),
 	}
 	for _, meter := range overview.RecentMeters {
 		out.RecentMeters = append(out.RecentMeters, billingMeterView{
@@ -476,12 +486,13 @@ func (b *Bot) loadBillingOverview(ctx context.Context, orgID string) (billingOve
 	return out, nil
 }
 
-func (b *Bot) billingPlanOptions(currentPlan string, hasSubscription bool, periodEnd string) []billingPlanOptionView {
+func (b *Bot) billingPlanOptions(currentPlan, pendingPlan string, hasSubscription bool, periodEnd string) []billingPlanOptionView {
 	out := make([]billingPlanOptionView, 0, len(billing.PaidPlans()))
 	currentPaidPlan, hasCurrentPaidPlan := billing.PaidPlanByCode(currentPlan)
 	for _, plan := range billing.PaidPlans() {
 		current := plan.Code == currentPlan
-		confirmTitle, confirmMessage := billingPlanSwitchConfirmation(currentPaidPlan, hasCurrentPaidPlan, plan, current, hasSubscription, periodEnd)
+		scheduled := plan.Code == pendingPlan
+		confirmTitle, confirmMessage := billingPlanSwitchConfirmation(currentPaidPlan, hasCurrentPaidPlan, plan, current || scheduled, hasSubscription, periodEnd)
 		out = append(out, billingPlanOptionView{
 			Code:             plan.Code,
 			Label:            plan.Label,
@@ -493,7 +504,8 @@ func (b *Bot) billingPlanOptions(currentPlan string, hasSubscription bool, perio
 			PerRunMaxCredits: plan.PerRunMaxCredits,
 			Configured:       b.stripeSubscriptionPriceID(plan.Code) != "",
 			Current:          current,
-			ActionLabel:      billingPlanActionLabel(current, hasSubscription),
+			Scheduled:        scheduled,
+			ActionLabel:      billingPlanActionLabel(current, scheduled, hasSubscription),
 			ConfirmTitle:     confirmTitle,
 			ConfirmMessage:   confirmMessage,
 		})
@@ -501,9 +513,20 @@ func (b *Bot) billingPlanOptions(currentPlan string, hasSubscription bool, perio
 	return out
 }
 
-func billingPlanActionLabel(current, hasSubscription bool) string {
+func billingPendingPlanChange(acct billing.Account) (string, string, string, bool) {
+	code := strings.TrimSpace(acct.PendingPlanCode)
+	if code == "" || code == acct.PlanCode {
+		return "", "", "", false
+	}
+	return code, billingPlanLabel(code), formatSettingsTime(acct.PendingPlanEffectiveAt), true
+}
+
+func billingPlanActionLabel(current, scheduled, hasSubscription bool) string {
 	if current {
 		return "Current"
+	}
+	if scheduled {
+		return "Scheduled"
 	}
 	if hasSubscription {
 		return "Switch"

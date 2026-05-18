@@ -376,6 +376,61 @@ func TestSettingsTemplate_RendersBillingTabLayout(t *testing.T) {
 	}
 }
 
+func TestSettingsTemplate_RendersPendingBillingPlanChange(t *testing.T) {
+	b := newBypassBot(t)
+	rec := httptest.NewRecorder()
+	b.renderTemplate(rec, webui.Settings, map[string]any{
+		"OrgID": "org_y", "OrgName": "Acme", "Email": "u@y", "PrincipalUserID": "user_me",
+		"IsAdmin": true, "Tab": "billing", "SavedMessage": "",
+		"Billing": billingOverviewView{
+			PlanCode:          billing.PlanBusiness,
+			CurrentPlanLabel:  "Business",
+			Status:            "active",
+			PeriodEnd:         "Jun 18, 2026",
+			PendingPlanCode:   billing.PlanTeam,
+			PendingPlanLabel:  "Team",
+			PendingPlanAt:     "Jun 18, 2026",
+			HasPendingPlan:    true,
+			IncludedCredits:   4000,
+			Balance:           4000,
+			SandboxOptions:    "All sizes",
+			TopupUnitCredits:  billing.TopupUnitCredits,
+			StripeConfigured:  true,
+			HasStripeCustomer: true,
+			PlanOptions: []billingPlanOptionView{
+				{
+					Code: billing.PlanTeam, Label: "Team", Monthly: "$199", TopupUnitPrice: "$9",
+					IncludedCredits: 300, SandboxOptions: "All sizes", Configured: true,
+					Scheduled: true, ActionLabel: "Scheduled",
+				},
+				{
+					Code: billing.PlanBusiness, Label: "Business", Monthly: "$1499", TopupUnitPrice: "$4.50",
+					IncludedCredits: 4000, SandboxOptions: "All sizes", Configured: true,
+					Current: true, ActionLabel: "Current",
+				},
+			},
+		},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`Team scheduled`,
+		`Takes effect on Jun 18, 2026.`,
+		`Your current Business plan stays active until then.`,
+		`class="billing-plan-option scheduled"`,
+		`<button type="submit" disabled>Scheduled</button>`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("pending billing tab missing %q", want)
+		}
+	}
+	if strings.Contains(body, `data-confirm-title="Switch to Team?"`) {
+		t.Error("scheduled pending plan should not submit through the switch confirmation")
+	}
+}
+
 func TestSettingsTemplate_HidesMembersTabForNonAdmin(t *testing.T) {
 	b := newBypassBot(t)
 	rec := httptest.NewRecorder()

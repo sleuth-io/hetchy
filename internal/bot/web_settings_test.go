@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -327,6 +328,26 @@ func TestBillingPlanSwitchConfirmation(t *testing.T) {
 	_, msg = billingPlanSwitchConfirmation(growth, true, team, true, true, "Jun 18, 2026")
 	if msg != "" {
 		t.Fatalf("current-plan confirmation = %q, want empty", msg)
+	}
+}
+
+func TestBillingPendingPlanChange(t *testing.T) {
+	effective := time.Date(2026, 6, 18, 12, 0, 0, 0, time.UTC)
+	code, label, when, ok := billingPendingPlanChange(billing.Account{
+		PlanCode:               billing.PlanBusiness,
+		PendingPlanCode:        billing.PlanTeam,
+		PendingPlanEffectiveAt: effective,
+	})
+	if !ok || code != billing.PlanTeam || label != "Team" || when != "Jun 18, 2026" {
+		t.Fatalf("pending plan = (%q, %q, %q, %v), want Team on Jun 18, 2026", code, label, when, ok)
+	}
+
+	_, _, _, ok = billingPendingPlanChange(billing.Account{
+		PlanCode:        billing.PlanTeam,
+		PendingPlanCode: billing.PlanTeam,
+	})
+	if ok {
+		t.Fatal("pending plan matching current plan should not render")
 	}
 }
 

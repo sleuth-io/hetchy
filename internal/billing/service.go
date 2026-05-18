@@ -192,6 +192,20 @@ func (s *Service) UpsertAccountMirror(ctx context.Context, mirror AccountMirror)
 	return s.store.UpsertAccountMirror(ctx, mirror)
 }
 
+func (s *Service) SetPendingPlanChange(ctx context.Context, orgID, planCode string, effectiveAt time.Time) (Account, error) {
+	if !s.Enabled() {
+		return Account{}, nil
+	}
+	return s.store.SetPendingPlanChange(ctx, orgID, planCode, effectiveAt)
+}
+
+func (s *Service) ClearPendingPlanChange(ctx context.Context, orgID string) (Account, error) {
+	if !s.Enabled() {
+		return Account{}, nil
+	}
+	return s.store.ClearPendingPlanChange(ctx, orgID)
+}
+
 func (s *Service) GrantTopupCredits(ctx context.Context, orgID string, credits int) (Account, error) {
 	if !s.Enabled() {
 		return Account{}, nil

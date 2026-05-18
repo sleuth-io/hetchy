@@ -72,22 +72,24 @@ type AgentRunEvent struct {
 }
 
 type BillingAccount struct {
-	OrgID                string             `json:"org_id"`
-	StripeCustomerID     string             `json:"stripe_customer_id"`
-	StripeSubscriptionID string             `json:"stripe_subscription_id"`
-	PlanCode             string             `json:"plan_code"`
-	Status               string             `json:"status"`
-	CurrentPeriodStart   pgtype.Timestamptz `json:"current_period_start"`
-	CurrentPeriodEnd     pgtype.Timestamptz `json:"current_period_end"`
-	IncludedCredits      int32              `json:"included_credits"`
-	IncludedCreditsUsed  int32              `json:"included_credits_used"`
-	TopupCredits         int32              `json:"topup_credits"`
-	MaxFlavor            string             `json:"max_flavor"`
-	PerRunMaxCredits     int32              `json:"per_run_max_credits"`
-	BillingExempt        bool               `json:"billing_exempt"`
-	LastPaymentError     string             `json:"last_payment_error"`
-	CreatedAt            pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+	OrgID                  string             `json:"org_id"`
+	StripeCustomerID       string             `json:"stripe_customer_id"`
+	StripeSubscriptionID   string             `json:"stripe_subscription_id"`
+	PlanCode               string             `json:"plan_code"`
+	Status                 string             `json:"status"`
+	CurrentPeriodStart     pgtype.Timestamptz `json:"current_period_start"`
+	CurrentPeriodEnd       pgtype.Timestamptz `json:"current_period_end"`
+	IncludedCredits        int32              `json:"included_credits"`
+	IncludedCreditsUsed    int32              `json:"included_credits_used"`
+	TopupCredits           int32              `json:"topup_credits"`
+	MaxFlavor              string             `json:"max_flavor"`
+	PerRunMaxCredits       int32              `json:"per_run_max_credits"`
+	BillingExempt          bool               `json:"billing_exempt"`
+	LastPaymentError       string             `json:"last_payment_error"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+	PendingPlanCode        string             `json:"pending_plan_code"`
+	PendingPlanEffectiveAt pgtype.Timestamptz `json:"pending_plan_effective_at"`
 }
 
 type BillingCreditReservation struct {

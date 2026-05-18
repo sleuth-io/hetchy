@@ -228,6 +228,9 @@ func (b *Bot) switchStripeSubscriptionPlan(ctx context.Context, orgID string, ac
 		if err := b.mirrorStripeSubscription(ctx, orgID, acct, updated, targetPlan); err != nil {
 			return stripePlanSwitchNoop, fmt.Errorf("mirror switched subscription: %w", err)
 		}
+		if _, err := b.billing.ClearPendingPlanChange(ctx, orgID); err != nil {
+			return stripePlanSwitchNoop, fmt.Errorf("clear pending plan change: %w", err)
+		}
 		return stripePlanSwitchImmediate, nil
 	}
 
@@ -246,6 +249,9 @@ func (b *Bot) switchStripeSubscriptionPlan(ctx context.Context, orgID string, ac
 
 	if _, err := client.V1SubscriptionSchedules.Update(ctx, scheduleID, stripeDowngradeScheduleParams(orgID, acct, item, currentPlan, currentPriceID, targetPlan, targetPriceID)); err != nil {
 		return stripePlanSwitchNoop, fmt.Errorf("schedule subscription downgrade: %w", err)
+	}
+	if _, err := b.billing.SetPendingPlanChange(ctx, orgID, targetPlan.Code, unixTime(periodEnd)); err != nil {
+		return stripePlanSwitchNoop, fmt.Errorf("record pending plan change: %w", err)
 	}
 	return stripePlanSwitchScheduled, nil
 }

@@ -16,6 +16,7 @@ type Querier interface {
 	ClaimAgentRunLease(ctx context.Context, arg ClaimAgentRunLeaseParams) (AgentRun, error)
 	ClaimAgentRunLeaseFromOwner(ctx context.Context, arg ClaimAgentRunLeaseFromOwnerParams) (AgentRun, error)
 	ClaimStaleAgentRunLease(ctx context.Context, arg ClaimStaleAgentRunLeaseParams) (AgentRun, error)
+	ClearBillingPendingPlanChange(ctx context.Context, orgID string) (BillingAccount, error)
 	CountAgentProfilesByOrg(ctx context.Context, orgID string) (int64, error)
 	CreateAgentRun(ctx context.Context, arg CreateAgentRunParams) (AgentRun, error)
 	DeleteAgentProfilesByOrg(ctx context.Context, orgID string) error
@@ -180,6 +181,7 @@ type Querier interface {
 	SearchConversations(ctx context.Context, arg SearchConversationsParams) ([]SearchConversationsRow, error)
 	SeedDefaultAgentProfilesForOrg(ctx context.Context, orgID string) error
 	SetBillingLastPaymentError(ctx context.Context, arg SetBillingLastPaymentErrorParams) error
+	SetBillingPendingPlanChange(ctx context.Context, arg SetBillingPendingPlanChangeParams) (BillingAccount, error)
 	TouchAgentRunLease(ctx context.Context, arg TouchAgentRunLeaseParams) error
 	UpdateAgentProfileName(ctx context.Context, arg UpdateAgentProfileNameParams) (UpdateAgentProfileNameRow, error)
 	UpdateAgentRunBranch(ctx context.Context, arg UpdateAgentRunBranchParams) error

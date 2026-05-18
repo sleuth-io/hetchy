@@ -11,6 +11,45 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const clearBillingPendingPlanChange = `-- name: ClearBillingPendingPlanChange :one
+UPDATE billing_accounts
+   SET pending_plan_code = '',
+       pending_plan_effective_at = NULL,
+       updated_at = NOW()
+WHERE org_id = $1
+RETURNING org_id, stripe_customer_id, stripe_subscription_id, plan_code, status,
+          current_period_start, current_period_end,
+          included_credits, included_credits_used, topup_credits,
+          max_flavor, per_run_max_credits, billing_exempt, last_payment_error,
+          created_at, updated_at, pending_plan_code, pending_plan_effective_at
+`
+
+func (q *Queries) ClearBillingPendingPlanChange(ctx context.Context, orgID string) (BillingAccount, error) {
+	row := q.db.QueryRow(ctx, clearBillingPendingPlanChange, orgID)
+	var i BillingAccount
+	err := row.Scan(
+		&i.OrgID,
+		&i.StripeCustomerID,
+		&i.StripeSubscriptionID,
+		&i.PlanCode,
+		&i.Status,
+		&i.CurrentPeriodStart,
+		&i.CurrentPeriodEnd,
+		&i.IncludedCredits,
+		&i.IncludedCreditsUsed,
+		&i.TopupCredits,
+		&i.MaxFlavor,
+		&i.PerRunMaxCredits,
+		&i.BillingExempt,
+		&i.LastPaymentError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.PendingPlanCode,
+		&i.PendingPlanEffectiveAt,
+	)
+	return i, err
+}
+
 const deleteRepoBillingSetting = `-- name: DeleteRepoBillingSetting :exec
 DELETE FROM repo_billing_settings
 WHERE org_id = $1 AND github_owner = $2 AND github_repo = $3
@@ -35,7 +74,7 @@ RETURNING org_id, stripe_customer_id, stripe_subscription_id, plan_code, status,
           current_period_start, current_period_end,
           included_credits, included_credits_used, topup_credits,
           max_flavor, per_run_max_credits, billing_exempt, last_payment_error,
-          created_at, updated_at
+          created_at, updated_at, pending_plan_code, pending_plan_effective_at
 `
 
 func (q *Queries) EnsureBillingAccount(ctx context.Context, orgID string) (BillingAccount, error) {
@@ -58,6 +97,8 @@ func (q *Queries) EnsureBillingAccount(ctx context.Context, orgID string) (Billi
 		&i.LastPaymentError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.PendingPlanCode,
+		&i.PendingPlanEffectiveAt,
 	)
 	return i, err
 }
@@ -144,7 +185,7 @@ SELECT org_id, stripe_customer_id, stripe_subscription_id, plan_code, status,
        current_period_start, current_period_end,
        included_credits, included_credits_used, topup_credits,
        max_flavor, per_run_max_credits, billing_exempt, last_payment_error,
-       created_at, updated_at
+       created_at, updated_at, pending_plan_code, pending_plan_effective_at
 FROM billing_accounts
 WHERE org_id = $1
 `
@@ -169,6 +210,8 @@ func (q *Queries) GetBillingAccount(ctx context.Context, orgID string) (BillingA
 		&i.LastPaymentError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.PendingPlanCode,
+		&i.PendingPlanEffectiveAt,
 	)
 	return i, err
 }
@@ -178,7 +221,7 @@ SELECT org_id, stripe_customer_id, stripe_subscription_id, plan_code, status,
        current_period_start, current_period_end,
        included_credits, included_credits_used, topup_credits,
        max_flavor, per_run_max_credits, billing_exempt, last_payment_error,
-       created_at, updated_at
+       created_at, updated_at, pending_plan_code, pending_plan_effective_at
 FROM billing_accounts
 WHERE stripe_customer_id = $1
 `
@@ -203,6 +246,8 @@ func (q *Queries) GetBillingAccountByStripeCustomer(ctx context.Context, stripeC
 		&i.LastPaymentError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.PendingPlanCode,
+		&i.PendingPlanEffectiveAt,
 	)
 	return i, err
 }
@@ -352,7 +397,7 @@ RETURNING org_id, stripe_customer_id, stripe_subscription_id, plan_code, status,
           current_period_start, current_period_end,
           included_credits, included_credits_used, topup_credits,
           max_flavor, per_run_max_credits, billing_exempt, last_payment_error,
-          created_at, updated_at
+          created_at, updated_at, pending_plan_code, pending_plan_effective_at
 `
 
 type GrantBillingTopupCreditsParams struct {
@@ -380,6 +425,8 @@ func (q *Queries) GrantBillingTopupCredits(ctx context.Context, arg GrantBilling
 		&i.LastPaymentError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.PendingPlanCode,
+		&i.PendingPlanEffectiveAt,
 	)
 	return i, err
 }
@@ -583,7 +630,7 @@ SELECT org_id, stripe_customer_id, stripe_subscription_id, plan_code, status,
        current_period_start, current_period_end,
        included_credits, included_credits_used, topup_credits,
        max_flavor, per_run_max_credits, billing_exempt, last_payment_error,
-       created_at, updated_at
+       created_at, updated_at, pending_plan_code, pending_plan_effective_at
 FROM billing_accounts
 WHERE org_id = $1
 FOR UPDATE
@@ -609,6 +656,8 @@ func (q *Queries) LockBillingAccountForUpdate(ctx context.Context, orgID string)
 		&i.LastPaymentError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.PendingPlanCode,
+		&i.PendingPlanEffectiveAt,
 	)
 	return i, err
 }
@@ -694,6 +743,51 @@ func (q *Queries) SetBillingLastPaymentError(ctx context.Context, arg SetBilling
 	return err
 }
 
+const setBillingPendingPlanChange = `-- name: SetBillingPendingPlanChange :one
+UPDATE billing_accounts
+   SET pending_plan_code = $2,
+       pending_plan_effective_at = $3,
+       updated_at = NOW()
+WHERE org_id = $1
+RETURNING org_id, stripe_customer_id, stripe_subscription_id, plan_code, status,
+          current_period_start, current_period_end,
+          included_credits, included_credits_used, topup_credits,
+          max_flavor, per_run_max_credits, billing_exempt, last_payment_error,
+          created_at, updated_at, pending_plan_code, pending_plan_effective_at
+`
+
+type SetBillingPendingPlanChangeParams struct {
+	OrgID                  string             `json:"org_id"`
+	PendingPlanCode        string             `json:"pending_plan_code"`
+	PendingPlanEffectiveAt pgtype.Timestamptz `json:"pending_plan_effective_at"`
+}
+
+func (q *Queries) SetBillingPendingPlanChange(ctx context.Context, arg SetBillingPendingPlanChangeParams) (BillingAccount, error) {
+	row := q.db.QueryRow(ctx, setBillingPendingPlanChange, arg.OrgID, arg.PendingPlanCode, arg.PendingPlanEffectiveAt)
+	var i BillingAccount
+	err := row.Scan(
+		&i.OrgID,
+		&i.StripeCustomerID,
+		&i.StripeSubscriptionID,
+		&i.PlanCode,
+		&i.Status,
+		&i.CurrentPeriodStart,
+		&i.CurrentPeriodEnd,
+		&i.IncludedCredits,
+		&i.IncludedCreditsUsed,
+		&i.TopupCredits,
+		&i.MaxFlavor,
+		&i.PerRunMaxCredits,
+		&i.BillingExempt,
+		&i.LastPaymentError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.PendingPlanCode,
+		&i.PendingPlanEffectiveAt,
+	)
+	return i, err
+}
+
 const updateBillingCapturedBalances = `-- name: UpdateBillingCapturedBalances :one
 UPDATE billing_accounts
    SET included_credits_used = GREATEST(included_credits_used + $2, 0),
@@ -704,7 +798,7 @@ RETURNING org_id, stripe_customer_id, stripe_subscription_id, plan_code, status,
           current_period_start, current_period_end,
           included_credits, included_credits_used, topup_credits,
           max_flavor, per_run_max_credits, billing_exempt, last_payment_error,
-          created_at, updated_at
+          created_at, updated_at, pending_plan_code, pending_plan_effective_at
 `
 
 type UpdateBillingCapturedBalancesParams struct {
@@ -733,6 +827,8 @@ func (q *Queries) UpdateBillingCapturedBalances(ctx context.Context, arg UpdateB
 		&i.LastPaymentError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.PendingPlanCode,
+		&i.PendingPlanEffectiveAt,
 	)
 	return i, err
 }
@@ -788,7 +884,7 @@ RETURNING org_id, stripe_customer_id, stripe_subscription_id, plan_code, status,
           current_period_start, current_period_end,
           included_credits, included_credits_used, topup_credits,
           max_flavor, per_run_max_credits, billing_exempt, last_payment_error,
-          created_at, updated_at
+          created_at, updated_at, pending_plan_code, pending_plan_effective_at
 `
 
 type UpdateBillingReservedBalancesParams struct {
@@ -817,6 +913,8 @@ func (q *Queries) UpdateBillingReservedBalances(ctx context.Context, arg UpdateB
 		&i.LastPaymentError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.PendingPlanCode,
+		&i.PendingPlanEffectiveAt,
 	)
 	return i, err
 }
@@ -830,7 +928,7 @@ RETURNING org_id, stripe_customer_id, stripe_subscription_id, plan_code, status,
           current_period_start, current_period_end,
           included_credits, included_credits_used, topup_credits,
           max_flavor, per_run_max_credits, billing_exempt, last_payment_error,
-          created_at, updated_at
+          created_at, updated_at, pending_plan_code, pending_plan_effective_at
 `
 
 type UpdateBillingStripeCustomerParams struct {
@@ -858,6 +956,8 @@ func (q *Queries) UpdateBillingStripeCustomer(ctx context.Context, arg UpdateBil
 		&i.LastPaymentError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.PendingPlanCode,
+		&i.PendingPlanEffectiveAt,
 	)
 	return i, err
 }
@@ -938,12 +1038,20 @@ ON CONFLICT (org_id) DO UPDATE SET
     per_run_max_credits    = EXCLUDED.per_run_max_credits,
     billing_exempt         = EXCLUDED.billing_exempt,
     last_payment_error     = EXCLUDED.last_payment_error,
+    pending_plan_code      = CASE
+        WHEN billing_accounts.pending_plan_code = EXCLUDED.plan_code THEN ''
+        ELSE billing_accounts.pending_plan_code
+    END,
+    pending_plan_effective_at = CASE
+        WHEN billing_accounts.pending_plan_code = EXCLUDED.plan_code THEN NULL
+        ELSE billing_accounts.pending_plan_effective_at
+    END,
     updated_at             = NOW()
 RETURNING org_id, stripe_customer_id, stripe_subscription_id, plan_code, status,
           current_period_start, current_period_end,
           included_credits, included_credits_used, topup_credits,
           max_flavor, per_run_max_credits, billing_exempt, last_payment_error,
-          created_at, updated_at
+          created_at, updated_at, pending_plan_code, pending_plan_effective_at
 `
 
 type UpsertBillingAccountMirrorParams struct {
@@ -994,6 +1102,8 @@ func (q *Queries) UpsertBillingAccountMirror(ctx context.Context, arg UpsertBill
 		&i.LastPaymentError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.PendingPlanCode,
+		&i.PendingPlanEffectiveAt,
 	)
 	return i, err
 }

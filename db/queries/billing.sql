@@ -6,14 +6,14 @@ RETURNING org_id, stripe_customer_id, stripe_subscription_id, plan_code, status,
           current_period_start, current_period_end,
           included_credits, included_credits_used, topup_credits,
           max_flavor, per_run_max_credits, billing_exempt, last_payment_error,
-          created_at, updated_at;
+          created_at, updated_at, pending_plan_code, pending_plan_effective_at;
 
 -- name: GetBillingAccount :one
 SELECT org_id, stripe_customer_id, stripe_subscription_id, plan_code, status,
        current_period_start, current_period_end,
        included_credits, included_credits_used, topup_credits,
        max_flavor, per_run_max_credits, billing_exempt, last_payment_error,
-       created_at, updated_at
+       created_at, updated_at, pending_plan_code, pending_plan_effective_at
 FROM billing_accounts
 WHERE org_id = $1;
 
@@ -22,7 +22,7 @@ SELECT org_id, stripe_customer_id, stripe_subscription_id, plan_code, status,
        current_period_start, current_period_end,
        included_credits, included_credits_used, topup_credits,
        max_flavor, per_run_max_credits, billing_exempt, last_payment_error,
-       created_at, updated_at
+       created_at, updated_at, pending_plan_code, pending_plan_effective_at
 FROM billing_accounts
 WHERE stripe_customer_id = $1;
 
@@ -31,7 +31,7 @@ SELECT org_id, stripe_customer_id, stripe_subscription_id, plan_code, status,
        current_period_start, current_period_end,
        included_credits, included_credits_used, topup_credits,
        max_flavor, per_run_max_credits, billing_exempt, last_payment_error,
-       created_at, updated_at
+       created_at, updated_at, pending_plan_code, pending_plan_effective_at
 FROM billing_accounts
 WHERE org_id = $1
 FOR UPDATE;
@@ -63,12 +63,20 @@ ON CONFLICT (org_id) DO UPDATE SET
     per_run_max_credits    = EXCLUDED.per_run_max_credits,
     billing_exempt         = EXCLUDED.billing_exempt,
     last_payment_error     = EXCLUDED.last_payment_error,
+    pending_plan_code      = CASE
+        WHEN billing_accounts.pending_plan_code = EXCLUDED.plan_code THEN ''
+        ELSE billing_accounts.pending_plan_code
+    END,
+    pending_plan_effective_at = CASE
+        WHEN billing_accounts.pending_plan_code = EXCLUDED.plan_code THEN NULL
+        ELSE billing_accounts.pending_plan_effective_at
+    END,
     updated_at             = NOW()
 RETURNING org_id, stripe_customer_id, stripe_subscription_id, plan_code, status,
           current_period_start, current_period_end,
           included_credits, included_credits_used, topup_credits,
           max_flavor, per_run_max_credits, billing_exempt, last_payment_error,
-          created_at, updated_at;
+          created_at, updated_at, pending_plan_code, pending_plan_effective_at;
 
 -- name: UpdateBillingStripeCustomer :one
 UPDATE billing_accounts
@@ -79,7 +87,7 @@ RETURNING org_id, stripe_customer_id, stripe_subscription_id, plan_code, status,
           current_period_start, current_period_end,
           included_credits, included_credits_used, topup_credits,
           max_flavor, per_run_max_credits, billing_exempt, last_payment_error,
-          created_at, updated_at;
+          created_at, updated_at, pending_plan_code, pending_plan_effective_at;
 
 -- name: GrantBillingTopupCredits :one
 UPDATE billing_accounts
@@ -91,7 +99,31 @@ RETURNING org_id, stripe_customer_id, stripe_subscription_id, plan_code, status,
           current_period_start, current_period_end,
           included_credits, included_credits_used, topup_credits,
           max_flavor, per_run_max_credits, billing_exempt, last_payment_error,
-          created_at, updated_at;
+          created_at, updated_at, pending_plan_code, pending_plan_effective_at;
+
+-- name: SetBillingPendingPlanChange :one
+UPDATE billing_accounts
+   SET pending_plan_code = $2,
+       pending_plan_effective_at = $3,
+       updated_at = NOW()
+WHERE org_id = $1
+RETURNING org_id, stripe_customer_id, stripe_subscription_id, plan_code, status,
+          current_period_start, current_period_end,
+          included_credits, included_credits_used, topup_credits,
+          max_flavor, per_run_max_credits, billing_exempt, last_payment_error,
+          created_at, updated_at, pending_plan_code, pending_plan_effective_at;
+
+-- name: ClearBillingPendingPlanChange :one
+UPDATE billing_accounts
+   SET pending_plan_code = '',
+       pending_plan_effective_at = NULL,
+       updated_at = NOW()
+WHERE org_id = $1
+RETURNING org_id, stripe_customer_id, stripe_subscription_id, plan_code, status,
+          current_period_start, current_period_end,
+          included_credits, included_credits_used, topup_credits,
+          max_flavor, per_run_max_credits, billing_exempt, last_payment_error,
+          created_at, updated_at, pending_plan_code, pending_plan_effective_at;
 
 -- name: SetBillingLastPaymentError :exec
 UPDATE billing_accounts
@@ -109,7 +141,7 @@ RETURNING org_id, stripe_customer_id, stripe_subscription_id, plan_code, status,
           current_period_start, current_period_end,
           included_credits, included_credits_used, topup_credits,
           max_flavor, per_run_max_credits, billing_exempt, last_payment_error,
-          created_at, updated_at;
+          created_at, updated_at, pending_plan_code, pending_plan_effective_at;
 
 -- name: UpdateBillingCapturedBalances :one
 UPDATE billing_accounts
@@ -121,7 +153,7 @@ RETURNING org_id, stripe_customer_id, stripe_subscription_id, plan_code, status,
           current_period_start, current_period_end,
           included_credits, included_credits_used, topup_credits,
           max_flavor, per_run_max_credits, billing_exempt, last_payment_error,
-          created_at, updated_at;
+          created_at, updated_at, pending_plan_code, pending_plan_effective_at;
 
 -- name: EnsureBillingTopupSettings :one
 INSERT INTO billing_topup_settings (org_id)

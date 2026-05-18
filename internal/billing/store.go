@@ -113,6 +113,32 @@ func (s *Store) SetStripeCustomer(ctx context.Context, orgID, customerID string)
 	return accountFromRow(row), nil
 }
 
+func (s *Store) SetPendingPlanChange(ctx context.Context, orgID, planCode string, effectiveAt time.Time) (Account, error) {
+	if !s.Enabled() {
+		return Account{}, pgx.ErrNoRows
+	}
+	row, err := s.db.Queries.SetBillingPendingPlanChange(ctx, sqlc.SetBillingPendingPlanChangeParams{
+		OrgID:                  orgID,
+		PendingPlanCode:        planCode,
+		PendingPlanEffectiveAt: timestamptz(effectiveAt),
+	})
+	if err != nil {
+		return Account{}, fmt.Errorf("set billing pending plan change: %w", err)
+	}
+	return accountFromRow(row), nil
+}
+
+func (s *Store) ClearPendingPlanChange(ctx context.Context, orgID string) (Account, error) {
+	if !s.Enabled() {
+		return Account{}, pgx.ErrNoRows
+	}
+	row, err := s.db.Queries.ClearBillingPendingPlanChange(ctx, orgID)
+	if err != nil {
+		return Account{}, fmt.Errorf("clear billing pending plan change: %w", err)
+	}
+	return accountFromRow(row), nil
+}
+
 func (s *Store) GrantTopupCredits(ctx context.Context, orgID string, credits int) (Account, error) {
 	if !s.Enabled() {
 		return Account{}, pgx.ErrNoRows
@@ -641,22 +667,24 @@ func (s *Store) SetRepoFlavor(ctx context.Context, orgID, owner, repo, flavorCod
 
 func accountFromRow(row sqlc.BillingAccount) Account {
 	return Account{
-		OrgID:                row.OrgID,
-		StripeCustomerID:     row.StripeCustomerID,
-		StripeSubscriptionID: row.StripeSubscriptionID,
-		PlanCode:             row.PlanCode,
-		Status:               row.Status,
-		CurrentPeriodStart:   pgTime(row.CurrentPeriodStart),
-		CurrentPeriodEnd:     pgTime(row.CurrentPeriodEnd),
-		IncludedCredits:      int(row.IncludedCredits),
-		IncludedCreditsUsed:  int(row.IncludedCreditsUsed),
-		TopupCredits:         int(row.TopupCredits),
-		MaxFlavor:            row.MaxFlavor,
-		PerRunMaxCredits:     int(row.PerRunMaxCredits),
-		BillingExempt:        row.BillingExempt,
-		LastPaymentError:     row.LastPaymentError,
-		CreatedAt:            pgTime(row.CreatedAt),
-		UpdatedAt:            pgTime(row.UpdatedAt),
+		OrgID:                  row.OrgID,
+		StripeCustomerID:       row.StripeCustomerID,
+		StripeSubscriptionID:   row.StripeSubscriptionID,
+		PlanCode:               row.PlanCode,
+		Status:                 row.Status,
+		CurrentPeriodStart:     pgTime(row.CurrentPeriodStart),
+		CurrentPeriodEnd:       pgTime(row.CurrentPeriodEnd),
+		IncludedCredits:        int(row.IncludedCredits),
+		IncludedCreditsUsed:    int(row.IncludedCreditsUsed),
+		TopupCredits:           int(row.TopupCredits),
+		MaxFlavor:              row.MaxFlavor,
+		PerRunMaxCredits:       int(row.PerRunMaxCredits),
+		BillingExempt:          row.BillingExempt,
+		LastPaymentError:       row.LastPaymentError,
+		PendingPlanCode:        row.PendingPlanCode,
+		PendingPlanEffectiveAt: pgTime(row.PendingPlanEffectiveAt),
+		CreatedAt:              pgTime(row.CreatedAt),
+		UpdatedAt:              pgTime(row.UpdatedAt),
 	}
 }
 

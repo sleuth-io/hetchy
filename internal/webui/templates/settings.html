@@ -865,6 +865,12 @@
         <strong>{{$b.SandboxOptions}}</strong>
       </div>
     </div>
+    {{if $b.HasPendingPlan}}
+      <div class="billing-pending-plan">
+        <strong>{{$b.PendingPlanLabel}} scheduled</strong>
+        <span>{{if $b.PendingPlanAt}}Takes effect on {{$b.PendingPlanAt}}.{{else}}Takes effect at the start of the next billing cycle.{{end}} Your current {{$b.CurrentPlanLabel}} plan stays active until then.</span>
+      </div>
+    {{end}}
     {{if and .IsAdmin $b.BillingExempt}}
       <p class="billing-comped">Comped billing exemption enabled.</p>
     {{end}}
@@ -872,7 +878,7 @@
       <div class="billing-plan-grid">
         {{range $b.PlanOptions}}
           {{if .Configured}}
-            <form method="POST" action="/billing/checkout" class="billing-plan-option{{if .Current}} current{{end}}"{{if .ConfirmMessage}} data-billing-plan-confirm="1" data-confirm-title="{{.ConfirmTitle}}" data-confirm-message="{{.ConfirmMessage}}" data-confirm-action="{{.ActionLabel}}"{{end}}>
+            <form method="POST" action="/billing/checkout" class="billing-plan-option{{if .Current}} current{{end}}{{if .Scheduled}} scheduled{{end}}"{{if .ConfirmMessage}} data-billing-plan-confirm="1" data-confirm-title="{{.ConfirmTitle}}" data-confirm-message="{{.ConfirmMessage}}" data-confirm-action="{{.ActionLabel}}"{{end}}>
               <input type="hidden" name="plan" value="{{.Code}}">
               <div class="billing-plan-head">
                 <strong>{{.Label}}</strong>
@@ -891,7 +897,7 @@
                 </div>
               </div>
               <p class="billing-plan-detail">Sandbox size options: {{.SandboxOptions}}</p>
-              <button type="submit"{{if .Current}} disabled{{end}}>{{.ActionLabel}}</button>
+              <button type="submit"{{if or .Current .Scheduled}} disabled{{end}}>{{.ActionLabel}}</button>
             </form>
           {{end}}
         {{end}}

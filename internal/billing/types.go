@@ -25,22 +25,24 @@ const (
 const TopupUnitCredits = 10
 
 type Account struct {
-	OrgID                string
-	StripeCustomerID     string
-	StripeSubscriptionID string
-	PlanCode             string
-	Status               string
-	CurrentPeriodStart   time.Time
-	CurrentPeriodEnd     time.Time
-	IncludedCredits      int
-	IncludedCreditsUsed  int
-	TopupCredits         int
-	MaxFlavor            string
-	PerRunMaxCredits     int
-	BillingExempt        bool
-	LastPaymentError     string
-	CreatedAt            time.Time
-	UpdatedAt            time.Time
+	OrgID                  string
+	StripeCustomerID       string
+	StripeSubscriptionID   string
+	PlanCode               string
+	Status                 string
+	CurrentPeriodStart     time.Time
+	CurrentPeriodEnd       time.Time
+	IncludedCredits        int
+	IncludedCreditsUsed    int
+	TopupCredits           int
+	MaxFlavor              string
+	PerRunMaxCredits       int
+	BillingExempt          bool
+	LastPaymentError       string
+	PendingPlanCode        string
+	PendingPlanEffectiveAt time.Time
+	CreatedAt              time.Time
+	UpdatedAt              time.Time
 }
 
 func (a Account) IncludedRemaining() int {
