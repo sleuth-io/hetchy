@@ -195,6 +195,9 @@ func (b *Bot) switchStripeSubscriptionPlan(ctx context.Context, orgID string, ac
 	if currentPlan.Code == targetPlan.Code {
 		return stripePlanSwitchNoop, nil
 	}
+	if acct.PendingPlanCode == targetPlan.Code && acct.PendingPlanEffectiveAt.After(time.Now()) {
+		return stripePlanSwitchScheduled, nil
+	}
 
 	client := b.stripeClient()
 	sub, err := client.V1Subscriptions.Retrieve(ctx, acct.StripeSubscriptionID, nil)
@@ -247,7 +250,7 @@ func (b *Bot) switchStripeSubscriptionPlan(ctx context.Context, orgID string, ac
 		scheduleID = schedule.ID
 	}
 
-	if _, err := client.V1SubscriptionSchedules.Update(ctx, scheduleID, stripeDowngradeScheduleParams(orgID, acct, item, currentPlan, currentPriceID, targetPlan, targetPriceID)); err != nil {
+	if _, err := client.V1SubscriptionSchedules.Update(ctx, scheduleID, stripeDowngradeScheduleParams(scheduleID, orgID, acct, item, currentPlan, currentPriceID, targetPlan, targetPriceID)); err != nil {
 		return stripePlanSwitchNoop, fmt.Errorf("schedule subscription downgrade: %w", err)
 	}
 	if _, err := b.billing.SetPendingPlanChange(ctx, orgID, targetPlan.Code, unixTime(periodEnd)); err != nil {
@@ -383,7 +386,7 @@ func stripeDowngradeScheduleCreateParams(subscriptionID string, currentPlan bill
 	}
 }
 
-func stripeDowngradeScheduleParams(orgID string, acct billing.Account, currentItem *stripe.SubscriptionItem, currentPlan billing.PaidPlan, currentPriceID string, targetPlan billing.PaidPlan, targetPriceID string) *stripe.SubscriptionScheduleUpdateParams {
+func stripeDowngradeScheduleParams(scheduleID, orgID string, acct billing.Account, currentItem *stripe.SubscriptionItem, currentPlan billing.PaidPlan, currentPriceID string, targetPlan billing.PaidPlan, targetPriceID string) *stripe.SubscriptionScheduleUpdateParams {
 	periodStart, periodEnd := stripeSubscriptionItemPeriod(acct, currentItem)
 	quantity := currentItem.Quantity
 	if quantity < 1 {
@@ -391,7 +394,7 @@ func stripeDowngradeScheduleParams(orgID string, acct billing.Account, currentIt
 	}
 	return &stripe.SubscriptionScheduleUpdateParams{
 		Params: stripe.Params{
-			IdempotencyKey: stripe.String("hetchy-plan-downgrade-" + orgID + "-" + currentPlan.Code + "-" + currentPriceID + "-" + targetPlan.Code + "-" + targetPriceID + "-" + strconv.FormatInt(periodStart, 10) + "-" + strconv.FormatInt(periodEnd, 10)),
+			IdempotencyKey: stripe.String("hetchy-plan-downgrade-" + scheduleID + "-" + orgID + "-" + currentPlan.Code + "-" + currentPriceID + "-" + targetPlan.Code + "-" + targetPriceID + "-" + strconv.FormatInt(periodStart, 10) + "-" + strconv.FormatInt(periodEnd, 10)),
 		},
 		EndBehavior:       stripe.String(string(stripe.SubscriptionScheduleEndBehaviorRelease)),
 		ProrationBehavior: stripe.String("none"),

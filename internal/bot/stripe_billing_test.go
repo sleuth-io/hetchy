@@ -224,12 +224,36 @@ func TestStripeSubscriptionScheduleCanUpdate(t *testing.T) {
 	}
 }
 
+func TestStripePlanSwitchAlreadyPendingSkipsStripe(t *testing.T) {
+	team, _ := billing.PaidPlanByCode(billing.PlanTeam)
+	result, err := (&Bot{}).switchStripeSubscriptionPlan(
+		t.Context(),
+		"org_1",
+		billing.Account{
+			OrgID:                  "org_1",
+			StripeSubscriptionID:   "sub_1",
+			PlanCode:               billing.PlanBusiness,
+			PendingPlanCode:        billing.PlanTeam,
+			PendingPlanEffectiveAt: time.Now().Add(time.Hour),
+		},
+		team,
+		"price_team",
+	)
+	if err != nil {
+		t.Fatalf("switchStripeSubscriptionPlan returned error: %v", err)
+	}
+	if result != stripePlanSwitchScheduled {
+		t.Fatalf("result = %q, want %q", result, stripePlanSwitchScheduled)
+	}
+}
+
 func TestStripeDowngradeScheduleParamsAppliesNextCycle(t *testing.T) {
 	growth, _ := billing.PaidPlanByCode(billing.PlanGrowth)
 	team, _ := billing.PaidPlanByCode(billing.PlanTeam)
 	start := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
 	end := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 	params := stripeDowngradeScheduleParams(
+		"sub_sched_1",
 		"org_1",
 		billing.Account{OrgID: "org_1", CurrentPeriodStart: start, CurrentPeriodEnd: end},
 		&stripe.SubscriptionItem{ID: "si_1", Price: &stripe.Price{ID: "price_growth"}, Quantity: 1},
@@ -257,7 +281,7 @@ func TestStripeDowngradeScheduleParamsAppliesNextCycle(t *testing.T) {
 	if got := params.Phases[1].Metadata["plan_code"]; got != billing.PlanTeam {
 		t.Fatalf("next phase metadata plan_code = %q, want team", got)
 	}
-	if key := *params.Params.IdempotencyKey; !strings.Contains(key, "price_growth") || !strings.Contains(key, "price_team") {
-		t.Fatalf("idempotency key = %q, want current and target prices", key)
+	if key := *params.Params.IdempotencyKey; !strings.Contains(key, "sub_sched_1") || !strings.Contains(key, "price_growth") || !strings.Contains(key, "price_team") {
+		t.Fatalf("idempotency key = %q, want schedule ID plus current and target prices", key)
 	}
 }
