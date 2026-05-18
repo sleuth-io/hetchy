@@ -1,12 +1,14 @@
 package bot
 
 import (
+	"context"
 	"encoding/json"
 	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hetchyhq/hetchy/internal/blocks"
 	"github.com/hetchyhq/hetchy/internal/convstore"
@@ -213,6 +215,32 @@ func TestIsSafeThreadID(t *testing.T) {
 	}
 }
 
+func TestIsSafeAttachmentID(t *testing.T) {
+	valid := []string{
+		"att_123",
+		"file-ABC_123",
+		strings.Repeat("a", 128),
+	}
+	for _, in := range valid {
+		if !isSafeAttachmentID(in) {
+			t.Errorf("isSafeAttachmentID(%q) = false, want true", in)
+		}
+	}
+	invalid := []string{
+		"",
+		strings.Repeat("a", 129),
+		"../secret",
+		"att.123",
+		"att/123",
+		"att 123",
+	}
+	for _, in := range invalid {
+		if isSafeAttachmentID(in) {
+			t.Errorf("isSafeAttachmentID(%q) = true, want false", in)
+		}
+	}
+}
+
 func TestAgentsHandlerListsFallbackProfiles(t *testing.T) {
 	b := newBypassOrgBot(t, "member")
 	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.agentsHandler)))
@@ -408,5 +436,91 @@ func TestConversationDownloadHandlerNilStoreAndMethods(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("nil store status = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+}
+
+func TestAttachmentInfosReturnsDownloadMetadata(t *testing.T) {
+	b := newBypassOrgBot(t, "member")
+	createdAt := time.Date(2026, 5, 18, 12, 30, 0, 0, time.UTC)
+	b.convs = &fakeConversationStore{attachments: []convstore.Attachment{
+		{
+			ID:          "att_keep",
+			OrgID:       "org_test",
+			ThreadID:    "thread-1",
+			TurnIndex:   1,
+			Filename:    "logs.json",
+			ContentType: "application/json",
+			SizeBytes:   17,
+			Source:      "web",
+			CreatedAt:   createdAt,
+		},
+		{ID: "att_other", OrgID: "org_test", ThreadID: "thread-2", Filename: "other.txt"},
+	}}
+
+	got := b.attachmentInfos(context.Background(), "org_test", "thread-1")
+	if len(got) != 1 {
+		t.Fatalf("len = %d, want 1: %+v", len(got), got)
+	}
+	a := got[0]
+	if a.ID != "att_keep" || a.Filename != "logs.json" || a.ContentType != "application/json" {
+		t.Fatalf("unexpected attachment metadata: %+v", a)
+	}
+	if a.SizeBytes != 17 || a.TurnIndex != 1 || a.Source != "web" {
+		t.Fatalf("unexpected attachment details: %+v", a)
+	}
+	if a.CreatedAt != "2026-05-18T12:30:00Z" {
+		t.Fatalf("CreatedAt = %q, want RFC3339 UTC", a.CreatedAt)
+	}
+	if a.DownloadURL != "/api/conversations/attachments/att_keep" {
+		t.Fatalf("DownloadURL = %q", a.DownloadURL)
+	}
+}
+
+func TestConversationAttachmentDownloadHandler(t *testing.T) {
+	b := newBypassOrgBot(t, "member")
+	b.convs = &fakeConversationStore{attachments: []convstore.Attachment{{
+		ID:          "att_123",
+		OrgID:       "org_test",
+		ThreadID:    "thread-1",
+		Filename:    "report.csv",
+		ContentType: "text/csv",
+		Data:        []byte("a,b\n1,2\n"),
+	}}}
+	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.conversationAttachmentDownloadHandler)))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/conversations/attachments/att_123", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); got != "text/csv" {
+		t.Fatalf("Content-Type = %q, want text/csv", got)
+	}
+	if got := rec.Header().Get("Content-Length"); got != "8" {
+		t.Fatalf("Content-Length = %q, want 8", got)
+	}
+	if got := rec.Header().Get("Content-Disposition"); !strings.Contains(got, `filename=report.csv`) {
+		t.Fatalf("Content-Disposition = %q", got)
+	}
+	if got := rec.Body.String(); got != "a,b\n1,2\n" {
+		t.Fatalf("body = %q", got)
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/conversations/attachments/att_123", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("method status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
+	}
+	if got := rec.Header().Get("Allow"); got != "GET" {
+		t.Fatalf("Allow = %q, want GET", got)
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/api/conversations/attachments/../secret", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("unsafe id status = %d, want %d", rec.Code, http.StatusNotFound)
 	}
 }

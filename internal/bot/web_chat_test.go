@@ -179,6 +179,64 @@ func TestParseMultipartChatPostBodyReadsAttachments(t *testing.T) {
 	}
 }
 
+func TestParseJSONChatPostBody(t *testing.T) {
+	bodyJSON := []byte(`{
+		"text":"ship it",
+		"session_id":"thread-json",
+		"model":"haiku",
+		"validate":true,
+		"review_code_before_push":false,
+		"action_pr_checks_for_done":true,
+		"agent_slug":"alice",
+		"repository":"hetchyhq/hetchy"
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/chat", bytes.NewReader(bodyJSON))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	body, ok := parseChatPostBody(rec, req)
+	if !ok {
+		t.Fatalf("parse failed with status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	if body.Text != "ship it" || body.SessionID != "thread-json" || body.Model != "haiku" {
+		t.Fatalf("unexpected parsed body: %+v", body)
+	}
+	if body.AgentSlug == nil || *body.AgentSlug != "alice" {
+		t.Fatalf("agent slug = %v, want alice", body.AgentSlug)
+	}
+	if body.Repository == nil || *body.Repository != "hetchyhq/hetchy" {
+		t.Fatalf("repository = %v, want hetchyhq/hetchy", body.Repository)
+	}
+	if body.Validate == nil || !*body.Validate {
+		t.Fatalf("validate = %v, want true", body.Validate)
+	}
+	if body.ReviewCodeBeforePush == nil || *body.ReviewCodeBeforePush {
+		t.Fatalf("review = %v, want false", body.ReviewCodeBeforePush)
+	}
+	if body.ActionPRChecksForDone == nil || !*body.ActionPRChecksForDone {
+		t.Fatalf("checks = %v, want true", body.ActionPRChecksForDone)
+	}
+	if len(body.Attachments) != 0 {
+		t.Fatalf("attachments len = %d, want 0", len(body.Attachments))
+	}
+}
+
+func TestParseChatPostBodyRejectsInvalidJSON(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/chat", strings.NewReader(`{"text":`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	if _, ok := parseChatPostBody(rec, req); ok {
+		t.Fatal("parseChatPostBody returned ok for invalid JSON")
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+	if !strings.Contains(rec.Body.String(), "invalid JSON") {
+		t.Fatalf("body = %q, want invalid JSON error", rec.Body.String())
+	}
+}
+
 func TestChatTemplate_LoadsSplitScriptsInOrder(t *testing.T) {
 	b := newBypassBot(t)
 	rec := httptest.NewRecorder()

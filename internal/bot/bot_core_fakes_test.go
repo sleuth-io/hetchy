@@ -79,11 +79,14 @@ func (f *fakeConversationStore) SaveAttachments(_ context.Context, attachments [
 	return nil
 }
 
-func (f *fakeConversationStore) ListAttachments(context.Context, string, string) ([]convstore.Attachment, error) {
+func (f *fakeConversationStore) ListAttachments(_ context.Context, orgID, threadID string) ([]convstore.Attachment, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	out := make([]convstore.Attachment, 0, len(f.attachments))
 	for _, a := range f.attachments {
+		if a.OrgID != orgID || a.ThreadID != threadID {
+			continue
+		}
 		out = append(out, cloneAttachment(a))
 	}
 	return out, nil
