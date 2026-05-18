@@ -2,10 +2,8 @@
 
 cache_supports_basic_write() {
   local cache_dir="$1"
-  local probe_dir="${cache_dir}/.hetchy-probe"
-  local probe="${probe_dir}/basic-write"
+  local probe="${cache_dir}/.hetchy-probe.$$.$RANDOM"
 
-  mkdir -p "$probe_dir" || return 1
   rm -f "$probe" 2>/dev/null || true
   printf 'probe\n' > "$probe" || return 1
   if ! grep -qx 'probe' "$probe" 2>/dev/null; then
@@ -13,6 +11,7 @@ cache_supports_basic_write() {
     return 1
   fi
   rm -f "$probe" 2>/dev/null || true
+  return 0
 }
 
 hetchy_cache_has_entries() {
@@ -28,19 +27,29 @@ hetchy_now_seconds() {
 
 hetchy_elapsed_seconds() {
   local started="$1"
+  local elapsed
+  if elapsed="$(hetchy_elapsed_seconds_value "$started")"; then
+    echo "${elapsed}s"
+  else
+    echo "unknown"
+  fi
+}
+
+hetchy_elapsed_seconds_value() {
+  local started="$1"
   local now
   now="$(hetchy_now_seconds)"
   if [[ "$started" =~ ^[0-9]+$ && "$now" =~ ^[0-9]+$ && "$now" -ge "$started" ]]; then
-    echo "$((now - started))s"
+    echo "$((now - started))"
   else
-    echo "unknown"
+    return 1
   fi
 }
 
 hetchy_file_size_bytes() {
   local path="$1"
   local size
-  size="$(wc -c < "$path" 2>/dev/null | tr -d '[:space:]' || true)"
+  size="$(stat -c '%s' "$path" 2>/dev/null || stat -f '%z' "$path" 2>/dev/null || wc -c < "$path" 2>/dev/null | tr -d '[:space:]' || true)"
   if [[ "$size" =~ ^[0-9]+$ ]]; then
     echo "$size"
   else
@@ -74,7 +83,7 @@ save_hetchy_cache_archive() {
   hetchy_cache_has_entries "$local_cache_dir" || return 0
   mkdir -p "$volume_cache_dir" || return 1
 
-  local archive_tmp="${archive}.tmp"
+  local archive_tmp="/tmp/hetchy-cache-archive.$$.$RANDOM.tar.gz"
   rm -f "$archive_tmp" 2>/dev/null || true
 
   if ! tar -C "$local_cache_dir" \
@@ -88,10 +97,11 @@ save_hetchy_cache_archive() {
     rm -f "$archive_tmp" 2>/dev/null || true
     return 1
   fi
-  if ! mv -f "$archive_tmp" "$archive" >/dev/null 2>&1; then
+  if ! cp -f "$archive_tmp" "$archive" >/dev/null 2>&1; then
     rm -f "$archive_tmp" 2>/dev/null || true
     return 1
   fi
+  rm -f "$archive_tmp" 2>/dev/null || true
   if [[ "$archive" == *.gz ]]; then
     rm -f "${archive%.gz}" 2>/dev/null || true
   fi
@@ -285,6 +295,139 @@ hetchy_repo_cache_archive() {
   printf '%s/repo.tar.gz\n' "$mount"
 }
 
+hetchy_repo_cache_min_clone_seconds() {
+  local value="${HETCHY_REPO_CACHE_MIN_CLONE_SECONDS:-10}"
+  if [[ "$value" =~ ^[0-9]+$ ]]; then
+    echo "$value"
+  else
+    echo "10"
+  fi
+}
+
+hetchy_repo_cache_min_archive_bytes() {
+  local value="${HETCHY_REPO_CACHE_MIN_ARCHIVE_BYTES:-52428800}"
+  if [[ "$value" =~ ^[0-9]+$ ]]; then
+    echo "$value"
+  else
+    echo "52428800"
+  fi
+}
+
+hetchy_repo_cache_min_saved_seconds() {
+  local value="${HETCHY_REPO_CACHE_MIN_SAVED_SECONDS:-3}"
+  if [[ "$value" =~ ^[0-9]+$ ]]; then
+    echo "$value"
+  else
+    echo "3"
+  fi
+}
+
+hetchy_repo_cache_metadata_path() {
+  local cache_archive="$1"
+  printf '%s.meta\n' "$cache_archive"
+}
+
+hetchy_repo_cache_metadata_value() {
+  local cache_archive="$1"
+  local key="$2"
+  local meta
+  meta="$(hetchy_repo_cache_metadata_path "$cache_archive")"
+  [[ -f "$meta" ]] || return 1
+  local value
+  value="$(awk -F= -v key="$key" '$1 == key {print $2; exit}' "$meta" 2>/dev/null || true)"
+  [[ -n "$value" ]] || return 1
+  echo "$value"
+}
+
+hetchy_repo_cache_numeric_metadata_value() {
+  local cache_archive="$1"
+  local key="$2"
+  local value
+  value="$(hetchy_repo_cache_metadata_value "$cache_archive" "$key" 2>/dev/null || true)"
+  [[ "$value" =~ ^[0-9]+$ ]] || return 1
+  echo "$value"
+}
+
+hetchy_repo_cache_should_restore() {
+  local cache_archive="$1"
+  local min_clone_seconds
+  min_clone_seconds="$(hetchy_repo_cache_min_clone_seconds)"
+
+  local clone_seconds
+  if clone_seconds="$(hetchy_repo_cache_numeric_metadata_value "$cache_archive" "clone_seconds")"; then
+    if (( clone_seconds < min_clone_seconds )); then
+      echo "[hetchy] repo cache archive present but skipped (previous fresh clone ${clone_seconds}s < ${min_clone_seconds}s threshold)"
+      return 1
+    fi
+
+    local restore_sync_seconds
+    if restore_sync_seconds="$(hetchy_repo_cache_numeric_metadata_value "$cache_archive" "restore_sync_seconds")"; then
+      local min_saved_seconds
+      min_saved_seconds="$(hetchy_repo_cache_min_saved_seconds)"
+      if (( clone_seconds <= restore_sync_seconds + min_saved_seconds )); then
+        echo "[hetchy] repo cache archive present but skipped (last restore+sync ${restore_sync_seconds}s did not beat clone ${clone_seconds}s by ${min_saved_seconds}s)"
+        return 1
+      fi
+    fi
+    return 0
+  fi
+
+  local archive_bytes
+  archive_bytes="$(hetchy_file_size_bytes "$cache_archive")"
+  local min_archive_bytes
+  min_archive_bytes="$(hetchy_repo_cache_min_archive_bytes)"
+  if [[ "$archive_bytes" =~ ^[0-9]+$ ]] && (( archive_bytes >= min_archive_bytes )); then
+    echo "[hetchy] repo cache metadata missing; using archive because size ${archive_bytes}B >= ${min_archive_bytes}B threshold"
+    return 0
+  fi
+  echo "[hetchy] repo cache archive present but skipped (no metadata and archive size ${archive_bytes}B < ${min_archive_bytes}B threshold)"
+  return 1
+}
+
+hetchy_repo_cache_should_save_after_clone() {
+  local clone_seconds="${1:-}"
+  [[ "$clone_seconds" =~ ^[0-9]+$ ]] || return 0
+  local min_clone_seconds
+  min_clone_seconds="$(hetchy_repo_cache_min_clone_seconds)"
+  if (( clone_seconds < min_clone_seconds )); then
+    echo "[hetchy] repo checkout cache save skipped (fresh clone ${clone_seconds}s < ${min_clone_seconds}s threshold)"
+    return 1
+  fi
+  return 0
+}
+
+hetchy_write_repo_cache_metadata() {
+  local cache_archive="$1"
+  local clone_seconds="$2"
+  local restore_sync_seconds="${3:-}"
+  [[ "$clone_seconds" =~ ^[0-9]+$ ]] || return 0
+
+  local meta
+  meta="$(hetchy_repo_cache_metadata_path "$cache_archive")"
+  local archive_bytes
+  archive_bytes="$(hetchy_file_size_bytes "$cache_archive")"
+  local tmp="/tmp/hetchy-repo-cache-meta.$$.$RANDOM"
+  rm -f "$tmp" 2>/dev/null || true
+  {
+    printf 'clone_seconds=%s\n' "$clone_seconds"
+    if [[ "$restore_sync_seconds" =~ ^[0-9]+$ ]]; then
+      printf 'restore_sync_seconds=%s\n' "$restore_sync_seconds"
+    fi
+    printf 'archive_bytes=%s\n' "$archive_bytes"
+    printf 'repo=%s\n' "${SF_REPO:-}"
+    printf 'base_branch=%s\n' "${SF_BASE_BRANCH:-}"
+    printf 'saved_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)"
+  } > "$tmp" || {
+    rm -f "$tmp" 2>/dev/null || true
+    return 1
+  }
+  cp -f "$tmp" "$meta" >/dev/null 2>&1 || {
+    rm -f "$tmp" 2>/dev/null || true
+    return 1
+  }
+  rm -f "$tmp" 2>/dev/null || true
+}
+
 # hetchy_workdir_safe_for_rm rejects empty strings, root, and a
 # handful of obvious system paths so a misconfigured SF_WORKDIR
 # can't accidentally turn `rm -rf "$workdir"` into a host-wipe. The
@@ -303,12 +446,12 @@ hetchy_workdir_safe_for_rm() {
 
 # hetchy_repo_cache_with_lock serialises every save/restore against
 # the shared cache archive so a concurrent sandbox can't read the
-# archive mid-`mv`. Two sandboxes for the same org+repo would otherwise
-# race on the in-flight `archive.tmp → archive` swap and either restore
-# a partial workdir or clobber each other's saves.
+# archive while another sandbox is overwriting it. Two sandboxes for
+# the same org+repo would otherwise race and either restore a partial
+# workdir or clobber each other's saves.
 # Falls back to running the body without a lock if flock isn't on
-# PATH; correctness still holds via tmp-rename ordering, but the
-# concurrency window widens.
+# PATH; S3 object upload semantics still avoid directory-tree partials,
+# but the concurrency window widens.
 hetchy_repo_cache_with_lock() {
   local cache_archive="$1"
   shift
@@ -328,7 +471,7 @@ hetchy_repo_cache_with_lock() {
 # $1. The destination is removed first so a partial or stale copy from a
 # previous run can't bleed through. The extract runs under the shared
 # cache lock so a concurrent save_repo_checkout_to_cache cannot rename
-# the archive out from under us mid-read.
+# the archive while we read.
 restore_repo_checkout_from_cache() {
   local cache_archive="$1"
   local workdir="$2"
@@ -352,12 +495,12 @@ restore_repo_checkout_from_cache() {
   return "$rc"
 }
 
-# save_repo_checkout_to_cache snapshots $1 to the tar archive at $2 via
-# a sibling tmp file and an atomic rename, all under the shared cache
-# lock so concurrent restorers can't see a partial archive. The tmp
-# suffix is the shell PID so simultaneous savers can't trample each
-# other's in-flight writes. The previous archive is left in place until
-# the replacement tarball has been fully written.
+# save_repo_checkout_to_cache snapshots $1 to the tar archive at $2.
+# Daytona Cloud cache volumes are mountpoint-s3, which does not support
+# rename. Build the tarball on local disk, then copy the completed file
+# to the mounted object key. S3 object replacement becomes visible only
+# after the upload completes, which gives us the practical atomicity we
+# need without relying on filesystem rename.
 save_repo_checkout_to_cache() {
   local workdir="$1"
   local cache_archive="$2"
@@ -365,21 +508,19 @@ save_repo_checkout_to_cache() {
   local parent
   parent="$(dirname "$cache_archive")"
   mkdir -p "$parent" || return 1
-  _save_repo_checkout_inner() {
-    local tmp="${cache_archive}.tmp.$$"
+  local tmp="/tmp/hetchy-repo-cache.$$.$RANDOM.tar.gz"
+  rm -f "$tmp" 2>/dev/null || true
+  tar -C "$workdir" -czf "$tmp" . >/dev/null 2>&1 || {
     rm -f "$tmp" 2>/dev/null || true
-    tar -C "$workdir" -czf "$tmp" . >/dev/null 2>&1 || {
-      rm -f "$tmp" 2>/dev/null || true
-      return 1
-    }
-    mv -f "$tmp" "$cache_archive" >/dev/null 2>&1 || {
-      rm -f "$tmp" 2>/dev/null || true
-      return 1
-    }
+    return 1
+  }
+  _save_repo_checkout_inner() {
+    cp -f "$tmp" "$cache_archive" >/dev/null 2>&1
   }
   hetchy_repo_cache_with_lock "$cache_archive" _save_repo_checkout_inner
   local rc=$?
   unset -f _save_repo_checkout_inner
+  rm -f "$tmp" 2>/dev/null || true
   return "$rc"
 }
 
@@ -413,6 +554,11 @@ hetchy_sync_workdir_to_base() {
 # Best-effort: every failure is logged and swallowed.
 hetchy_refresh_repo_cache_now() {
   local workdir="$1"
+  local clone_seconds="${2:-}"
+  local restore_sync_seconds="${3:-}"
+  if ! hetchy_repo_cache_should_save_after_clone "$clone_seconds"; then
+    return 0
+  fi
   local cache_archive
   if ! cache_archive="$(hetchy_repo_cache_archive 2>/dev/null)"; then
     return 0
@@ -424,6 +570,9 @@ hetchy_refresh_repo_cache_now() {
   started="$(hetchy_now_seconds)"
   echo "[hetchy] saving repo checkout to volume cache"
   if save_repo_checkout_to_cache "$workdir" "$cache_archive"; then
+    if [[ "$clone_seconds" =~ ^[0-9]+$ ]] && ! hetchy_write_repo_cache_metadata "$cache_archive" "$clone_seconds" "$restore_sync_seconds"; then
+      echo "[hetchy] WARNING: repo checkout cache metadata save failed; continuing"
+    fi
     echo "[hetchy] repo checkout cache saved in $(hetchy_elapsed_seconds "$started")"
   else
     echo "[hetchy] WARNING: repo checkout cache save failed after $(hetchy_elapsed_seconds "$started"); continuing"
@@ -436,15 +585,20 @@ hetchy_refresh_repo_cache_now() {
 # delay the user-visible run after the repo is already ready.
 hetchy_refresh_repo_cache() {
   local workdir="$1"
+  local clone_seconds="${2:-}"
+  local restore_sync_seconds="${3:-}"
+  if ! hetchy_repo_cache_should_save_after_clone "$clone_seconds"; then
+    return 0
+  fi
   if [[ "${HETCHY_REPO_CACHE_REFRESH_SYNC:-}" == "1" ]]; then
-    hetchy_refresh_repo_cache_now "$workdir"
+    hetchy_refresh_repo_cache_now "$workdir" "$clone_seconds" "$restore_sync_seconds"
     return 0
   fi
 
   echo "[hetchy] repo checkout cache refresh started in background"
   (
     trap '' HUP
-    hetchy_refresh_repo_cache_now "$workdir"
+    hetchy_refresh_repo_cache_now "$workdir" "$clone_seconds" "$restore_sync_seconds"
   ) </dev/null >>/tmp/hetchy-repo-cache.log 2>&1 &
   local pid=$!
   disown "$pid" 2>/dev/null || true
@@ -456,9 +610,11 @@ hetchy_refresh_repo_cache() {
 #
 #   1. SF_WORKDIR/.git already exists → reuse (a previous step in
 #      the same sandbox already cloned).
-#   2. The volume cache holds a previous checkout archive → extract it
-#      and bring it back to origin/<base> with hard reset + clean,
-#      matching the state a fresh clone would yield.
+#   2. The volume cache holds an eligible previous checkout archive →
+#      extract it and bring it back to origin/<base> with hard reset +
+#      clean, matching the state a fresh clone would yield. Eligibility
+#      is based on observed fresh-clone time and, after a cache hit, the
+#      observed extract+sync time.
 #   3. Fall back to a network `git clone`.
 #
 # In paths (2) and (3) the freshly-synced workdir is snapshotted
@@ -477,13 +633,15 @@ hetchy_prepare_repo_workdir() {
   fi
 
   local cache_archive=""
-  if cache_archive="$(hetchy_repo_cache_archive 2>/dev/null)" && [[ -f "${cache_archive}" ]]; then
+  if cache_archive="$(hetchy_repo_cache_archive 2>/dev/null)" && [[ -f "${cache_archive}" ]] && hetchy_repo_cache_should_restore "$cache_archive"; then
     local started
     started="$(hetchy_now_seconds)"
     echo "[hetchy] restoring repo checkout from volume cache (${cache_archive})"
     if restore_repo_checkout_from_cache "$cache_archive" "$SF_WORKDIR"; then
       echo "[hetchy] repo checkout restored in $(hetchy_elapsed_seconds "$started"); syncing to origin/${SF_BASE_BRANCH}"
       if hetchy_sync_workdir_to_base "$SF_WORKDIR" "$SF_BASE_BRANCH"; then
+        local restore_sync_seconds
+        restore_sync_seconds="$(hetchy_elapsed_seconds_value "$started" || true)"
         # user.email/user.name are best-effort here — the cached
         # .git already has them from a prior run, and a failed
         # `git config` shouldn't abort the cache-hit path.
@@ -493,7 +651,9 @@ hetchy_prepare_repo_workdir() {
           git config user.name 'hetchy-bot'
         ) || true
         echo "[hetchy] repo checkout ready at ${SF_WORKDIR} (cache hit)"
-        hetchy_refresh_repo_cache "$SF_WORKDIR"
+        local clone_seconds
+        clone_seconds="$(hetchy_repo_cache_numeric_metadata_value "$cache_archive" "clone_seconds" 2>/dev/null || true)"
+        hetchy_refresh_repo_cache "$SF_WORKDIR" "$clone_seconds" "$restore_sync_seconds"
         return 0
       fi
       echo "[hetchy] WARNING: cached checkout could not be fast-forwarded to origin/${SF_BASE_BRANCH}; falling back to fresh clone"
@@ -516,6 +676,12 @@ hetchy_prepare_repo_workdir() {
     git config user.email 'hetchy-bot@users.noreply.github.com' &&
     git config user.name 'hetchy-bot'
   )
-  echo "[hetchy] repo checkout ready at ${SF_WORKDIR} (fresh clone in $(hetchy_elapsed_seconds "$clone_started"))"
-  hetchy_refresh_repo_cache "$SF_WORKDIR"
+  local clone_seconds
+  clone_seconds="$(hetchy_elapsed_seconds_value "$clone_started" || true)"
+  if [[ "$clone_seconds" =~ ^[0-9]+$ ]]; then
+    echo "[hetchy] repo checkout ready at ${SF_WORKDIR} (fresh clone in ${clone_seconds}s)"
+  else
+    echo "[hetchy] repo checkout ready at ${SF_WORKDIR} (fresh clone in unknown)"
+  fi
+  hetchy_refresh_repo_cache "$SF_WORKDIR" "$clone_seconds"
 }

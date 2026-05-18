@@ -221,15 +221,15 @@ run_sx_install() {
 # skill installed by both the public vault and the org vault doesn't
 # show up twice in the UI.
 emit_installed_skills() {
-  local -A seen=()
   local -a names=()
   local d entry name
+  local seen_names=$'\n'
   for d in "$HOME/.claude/skills" "$SF_WORKDIR/.claude/skills"; do
     if [[ -d "$d" ]]; then
       while IFS= read -r -d '' entry; do
         name="$(basename "$entry")"
-        if [[ -z "${seen[$name]:-}" ]]; then
-          seen[$name]=1
+        if [[ "$seen_names" != *$'\n'"$name"$'\n'* ]]; then
+          seen_names+="${name}"$'\n'
           names+=("$name")
         fi
       done < <(find "$d" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null | LC_ALL=C sort -z)

@@ -201,6 +201,27 @@ func formatInt(n int) string {
 	}
 }
 
+func TestCacheSupportsBasicWrite_UsesEphemeralProbeFile(t *testing.T) {
+	cacheMount := t.TempDir()
+	script := "set -euo pipefail\n" + sandboxCommonScript + `
+cache_supports_basic_write "$CACHE"
+if [[ -e "$CACHE/.hetchy-probe" ]]; then
+  echo "fixed probe directory left behind"
+  exit 1
+fi
+if compgen -G "$CACHE/.hetchy-probe.*" >/dev/null; then
+  echo "ephemeral probe file left behind"
+  exit 1
+fi
+`
+	out, err := runBashScript(t, script, map[string]string{
+		"CACHE": cacheMount,
+	})
+	if err != nil {
+		t.Fatalf("basic write probe should clean up after itself: %v\n%s", err, out)
+	}
+}
+
 func TestPrepareRepoWorkdir_FreshCloneSeedsCache(t *testing.T) {
 	originBare := initFakeOriginRepo(t, "main", "hello cold\n")
 	workdir := filepath.Join(t.TempDir(), "src", "hetchy")
@@ -208,12 +229,13 @@ func TestPrepareRepoWorkdir_FreshCloneSeedsCache(t *testing.T) {
 
 	script := repoCacheHarness(originBare) + "\nhetchy_prepare_repo_workdir\n"
 	out, err := runBashScript(t, script, map[string]string{
-		"SF_REPO":                        "hetchyhq/hetchy",
-		"SF_WORKDIR":                     workdir,
-		"SF_BASE_BRANCH":                 "main",
-		"HETCHY_CACHE_STATUS":            "mounted",
-		"HETCHY_CACHE_DIR":               cacheMount,
-		"HETCHY_REPO_CACHE_REFRESH_SYNC": "1",
+		"SF_REPO":                             "hetchyhq/hetchy",
+		"SF_WORKDIR":                          workdir,
+		"SF_BASE_BRANCH":                      "main",
+		"HETCHY_CACHE_STATUS":                 "mounted",
+		"HETCHY_CACHE_DIR":                    cacheMount,
+		"HETCHY_REPO_CACHE_REFRESH_SYNC":      "1",
+		"HETCHY_REPO_CACHE_MIN_CLONE_SECONDS": "0",
 	})
 	if err != nil {
 		t.Fatalf("prepare: %v\noutput:\n%s", err, out)
@@ -232,6 +254,9 @@ func TestPrepareRepoWorkdir_FreshCloneSeedsCache(t *testing.T) {
 	cachedReadme := filepath.Join(extracted, "README.md")
 	if got := mustReadFile(t, cachedReadme); got != "hello cold\n" {
 		t.Fatalf("cache README = %q", got)
+	}
+	if got := mustReadFile(t, cacheArchive+".meta"); !strings.Contains(got, "clone_seconds=") {
+		t.Fatalf("cache metadata missing clone_seconds:\n%s", got)
 	}
 }
 
@@ -252,6 +277,7 @@ func TestPrepareRepoWorkdir_WarmCacheRestoresAndHardResets(t *testing.T) {
 	mustMkdir(t, filepath.Join(cacheRepo, "junk-dir"))
 	mustWriteFile(t, filepath.Join(cacheRepo, "junk-dir", "inside"), "x\n")
 	tarDir(t, cacheRepo, cacheArchive)
+	mustWriteFile(t, cacheArchive+".meta", "clone_seconds=42\n")
 
 	workdir := filepath.Join(t.TempDir(), "src", "hetchy")
 	script := repoCacheHarness(originBare) + "\nhetchy_prepare_repo_workdir\n"
@@ -286,6 +312,70 @@ func TestPrepareRepoWorkdir_WarmCacheRestoresAndHardResets(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(refreshedCache, "leftover.txt")); !os.IsNotExist(err) {
 		t.Fatalf("cache should not contain leftover.txt after refresh, err=%v", err)
+	}
+	if got := mustReadFile(t, cacheArchive+".meta"); !strings.Contains(got, "restore_sync_seconds=") {
+		t.Fatalf("cache metadata missing restore_sync_seconds after cache hit refresh:\n%s", got)
+	}
+}
+
+func TestPrepareRepoWorkdir_SkipsWarmCacheBelowCloneThreshold(t *testing.T) {
+	originBare := initFakeOriginRepo(t, "main", "fresh origin\n")
+	cacheMount := t.TempDir()
+	cacheRepo := filepath.Join(t.TempDir(), "repo")
+	cacheArchive := filepath.Join(cacheMount, "repo.tar.gz")
+	if out, err := exec.Command("git", "clone", originBare, cacheRepo).CombinedOutput(); err != nil {
+		t.Fatalf("seed cache clone: %v\n%s", err, out)
+	}
+	mustWriteFile(t, filepath.Join(cacheRepo, "README.md"), "cached but should not restore\n")
+	tarDir(t, cacheRepo, cacheArchive)
+	mustWriteFile(t, cacheArchive+".meta", "clone_seconds=1\n")
+
+	workdir := filepath.Join(t.TempDir(), "src", "hetchy")
+	script := repoCacheHarness(originBare) + "\nhetchy_prepare_repo_workdir\n"
+	out, err := runBashScript(t, script, map[string]string{
+		"SF_REPO":             "hetchyhq/hetchy",
+		"SF_WORKDIR":          workdir,
+		"SF_BASE_BRANCH":      "main",
+		"HETCHY_CACHE_STATUS": "mounted",
+		"HETCHY_CACHE_DIR":    cacheMount,
+	})
+	if err != nil {
+		t.Fatalf("prepare: %v\noutput:\n%s", err, out)
+	}
+	if !strings.Contains(out, "previous fresh clone 1s < 10s threshold") {
+		t.Fatalf("expected clone-threshold skip, output:\n%s", out)
+	}
+	if !strings.Contains(out, "fresh clone") {
+		t.Fatalf("expected fresh clone after skipping cache, output:\n%s", out)
+	}
+	if strings.Contains(out, "cache hit") {
+		t.Fatalf("did not expect cache hit, output:\n%s", out)
+	}
+	if got := mustReadFile(t, filepath.Join(workdir, "README.md")); got != "fresh origin\n" {
+		t.Fatalf("workdir README = %q", got)
+	}
+}
+
+func TestRepoCacheShouldRestore_AccountsForRestoreSyncCost(t *testing.T) {
+	cacheMount := t.TempDir()
+	cacheArchive := filepath.Join(cacheMount, "repo.tar.gz")
+	mustWriteFile(t, cacheArchive, "archive placeholder\n")
+	mustWriteFile(t, cacheArchive+".meta", "clone_seconds=10\nrestore_sync_seconds=8\n")
+
+	script := "set -euo pipefail\n" + sandboxCommonScript + `
+if hetchy_repo_cache_should_restore "$CACHE"; then
+  echo "unexpected restore"
+  exit 1
+fi
+`
+	out, err := runBashScript(t, script, map[string]string{
+		"CACHE": cacheArchive,
+	})
+	if err != nil {
+		t.Fatalf("restore gate should skip but not fail: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "last restore+sync 8s did not beat clone 10s by 3s") {
+		t.Fatalf("expected restore+sync skip reason, output:\n%s", out)
 	}
 }
 
@@ -392,6 +482,60 @@ func TestSaveRepoCheckoutToCache_AtomicReplace(t *testing.T) {
 	}
 }
 
+func TestSaveRepoCheckoutToCache_DoesNotRequireRename(t *testing.T) {
+	cacheArchive := filepath.Join(t.TempDir(), "repo.tar.gz")
+	workdir := filepath.Join(t.TempDir(), "src", "hetchy")
+	mustMkdir(t, filepath.Join(workdir, ".git"))
+	mustWriteFile(t, filepath.Join(workdir, "fresh.txt"), "v2\n")
+
+	script := "set -euo pipefail\n" + sandboxCommonScript + `
+mv() {
+  echo "mv should not be called" >&2
+  return 99
+}
+export -f mv
+save_repo_checkout_to_cache "$WORKDIR" "$CACHE"
+`
+	out, err := runBashScript(t, script, map[string]string{
+		"WORKDIR": workdir,
+		"CACHE":   cacheArchive,
+	})
+	if err != nil {
+		t.Fatalf("save without rename: %v\n%s", err, out)
+	}
+	extracted := extractTarGz(t, cacheArchive)
+	if got := mustReadFile(t, filepath.Join(extracted, "fresh.txt")); got != "v2\n" {
+		t.Fatalf("fresh.txt = %q", got)
+	}
+}
+
+func TestSaveHetchyCacheArchive_DoesNotRequireRename(t *testing.T) {
+	localCache := filepath.Join(t.TempDir(), "local-cache")
+	mustMkdir(t, localCache)
+	mustWriteFile(t, filepath.Join(localCache, "gomod.txt"), "cached\n")
+	archive := filepath.Join(t.TempDir(), "cache.tar.gz")
+
+	script := "set -euo pipefail\n" + sandboxCommonScript + `
+mv() {
+  echo "mv should not be called" >&2
+  return 99
+}
+export -f mv
+save_hetchy_cache_archive "$LOCAL_CACHE" "$ARCHIVE"
+`
+	out, err := runBashScript(t, script, map[string]string{
+		"LOCAL_CACHE": localCache,
+		"ARCHIVE":     archive,
+	})
+	if err != nil {
+		t.Fatalf("save dependency cache without rename: %v\n%s", err, out)
+	}
+	extracted := extractTarGz(t, archive)
+	if got := mustReadFile(t, filepath.Join(extracted, "gomod.txt")); got != "cached\n" {
+		t.Fatalf("gomod.txt = %q", got)
+	}
+}
+
 func TestRestoreRepoCheckoutFromCache_RejectsUnsafeWorkdir(t *testing.T) {
 	cacheRepo := filepath.Join(t.TempDir(), "repo")
 	mustMkdir(t, filepath.Join(cacheRepo, ".git"))
@@ -436,9 +580,8 @@ func TestSaveRepoCheckoutToCache_SerialisesUnderFlock(t *testing.T) {
 	// Drive two saves concurrently against the same cache. Lock
 	// serialisation means the cache ends up with exactly one of the
 	// two markers — never a half-merged blend or a missing
-	// archive. The race window matters most in the `mv` swap
-	// inside save_repo_checkout_to_cache; without flock a parallel
-	// reader/writer could observe the cache mid-rename.
+	// archive. Without flock, a parallel reader/writer could observe
+	// an overwrite in progress on less object-like filesystems.
 	script := "set -euo pipefail\n" + sandboxCommonScript + `
 save_repo_checkout_to_cache "$WORK_A" "$CACHE" &
 PID_A=$!
