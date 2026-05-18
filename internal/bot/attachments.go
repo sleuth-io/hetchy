@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"mime"
+	"net/http"
 	"path"
 	"strings"
 
@@ -47,6 +49,7 @@ func (b *Bot) saveIncomingAttachments(ctx context.Context, orgID, threadID strin
 		if a.ContentType == "" {
 			a.ContentType = defaultAttachmentMimeType
 		}
+		a.ContentType = normalizeAttachmentContentType(a.ContentType)
 		if a.Source == "" {
 			a.Source = "web"
 		}
@@ -54,6 +57,13 @@ func (b *Bot) saveIncomingAttachments(ctx context.Context, orgID, threadID strin
 		out = append(out, a)
 	}
 	return b.convs.SaveAttachments(ctx, out)
+}
+
+func (b *Bot) replaceIncomingAttachmentsForTurn(ctx context.Context, orgID, threadID string, turnIndex int, attachments []convstore.Attachment) error {
+	if err := b.convs.DeleteAttachmentsForTurn(ctx, orgID, threadID, turnIndex); err != nil {
+		return err
+	}
+	return b.saveIncomingAttachments(ctx, orgID, threadID, turnIndex, attachments)
 }
 
 func (b *Bot) promptWithSandboxAttachments(ctx context.Context, sb *daytona.Sandbox, orgID, threadID string, turnIndex int, requestID, text string, emit blocks.Emitter) (string, error) {
@@ -125,6 +135,41 @@ func appendAttachmentContext(text string, refs []sandboxAttachmentRef) string {
 	}
 	b.WriteString("\nA JSON manifest is also available beside them as manifest.json.")
 	return b.String()
+}
+
+func detectAttachmentContentType(contentType string, data []byte) string {
+	contentType = strings.TrimSpace(contentType)
+	if contentType == "" || strings.EqualFold(contentType, defaultAttachmentMimeType) {
+		contentType = http.DetectContentType(data)
+	}
+	return normalizeAttachmentContentType(contentType)
+}
+
+func normalizeAttachmentContentType(contentType string) string {
+	contentType = strings.TrimSpace(contentType)
+	if contentType == "" {
+		return defaultAttachmentMimeType
+	}
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err == nil && isDangerousAttachmentMediaType(mediaType) {
+		return defaultAttachmentMimeType
+	}
+	return contentType
+}
+
+func isDangerousAttachmentMediaType(mediaType string) bool {
+	switch strings.ToLower(strings.TrimSpace(mediaType)) {
+	case "text/html",
+		"image/svg+xml",
+		"application/javascript",
+		"application/ecmascript",
+		"application/x-javascript",
+		"text/javascript",
+		"text/ecmascript":
+		return true
+	default:
+		return false
+	}
 }
 
 func safeSandboxSegment(s string) string {

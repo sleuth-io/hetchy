@@ -23,6 +23,7 @@ type conversationStore interface {
 	ListAttachments(context.Context, string, string) ([]convstore.Attachment, error)
 	ListAttachmentsForTurn(context.Context, string, string, int) ([]convstore.Attachment, error)
 	GetAttachment(context.Context, string, string) (convstore.Attachment, error)
+	DeleteAttachmentsForTurn(context.Context, string, string, int) error
 	Upsert(context.Context, convstore.Record) error
 	Delete(context.Context, string, string) error
 	Rename(context.Context, string, string, string) error

@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"strings"
 	"time"
 
@@ -101,10 +100,7 @@ func (b *Bot) downloadSlackAttachment(ctx context.Context, cli *slack.Client, fi
 	if name == "" {
 		name = "slack-attachment"
 	}
-	contentType := strings.TrimSpace(file.Mimetype)
-	if contentType == "" || contentType == defaultAttachmentMimeType {
-		contentType = http.DetectContentType(data)
-	}
+	contentType := detectAttachmentContentType(file.Mimetype, data)
 	return convstore.Attachment{
 		ID:          convstore.NewAttachmentID(),
 		Filename:    name,

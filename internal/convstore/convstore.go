@@ -370,6 +370,23 @@ func (s *Store) ListAttachmentsForTurn(ctx context.Context, orgID, threadID stri
 	return out, nil
 }
 
+// DeleteAttachmentsForTurn removes files for one logical prompt turn.
+// Retry paths replace History[0], so they must also replace turn-0
+// files instead of carrying stale failed-attempt context forward.
+func (s *Store) DeleteAttachmentsForTurn(ctx context.Context, orgID, threadID string, turnIndex int) error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+	if err := s.db.Queries.DeleteConversationAttachmentsForTurn(ctx, sqlc.DeleteConversationAttachmentsForTurnParams{
+		OrgID:     orgID,
+		ThreadID:  threadID,
+		TurnIndex: int32(turnIndex),
+	}); err != nil {
+		return fmt.Errorf("delete turn attachments: %w", err)
+	}
+	return nil
+}
+
 // GetAttachment returns one attachment with its data for download.
 func (s *Store) GetAttachment(ctx context.Context, orgID, attachmentID string) (Attachment, error) {
 	if s == nil || s.db == nil {

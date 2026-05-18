@@ -144,7 +144,8 @@ func TestHandleRequestAwaitingRepoValidReplyRunsOriginalRequest(t *testing.T) {
 	b.HandleRequest(context.Background(),
 		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant"},
 		"hetchyhq/hetchy", "req-2", "thread-1", "user-1",
-		chatTaskOptionPatch{}, nil, nil, ClaudeModelOpus, emit)
+		chatTaskOptionPatch{}, nil, nil, ClaudeModelOpus, emit,
+		convstore.Attachment{Filename: "repo-context.txt", Data: []byte("use this after repo selection")})
 
 	if !emit.hasCall("error", "Repo not accessible") {
 		t.Fatalf("expected repo access error, got calls=%v", emit.Calls)
@@ -155,6 +156,13 @@ func TestHandleRequestAwaitingRepoValidReplyRunsOriginalRequest(t *testing.T) {
 	}
 	if rec.GitHubOwner != "" || rec.GitHubRepo != "" {
 		t.Fatalf("failed repo resolution should return to awaiting-repo state: %+v", rec)
+	}
+	attachments, err := convs.ListAttachmentsForTurn(context.Background(), "org_test", "thread-1", 0)
+	if err != nil {
+		t.Fatalf("ListAttachmentsForTurn: %v", err)
+	}
+	if len(attachments) != 1 || attachments[0].Filename != "repo-context.txt" {
+		t.Fatalf("awaiting-repo reply attachments = %+v", attachments)
 	}
 }
 
@@ -254,6 +262,10 @@ func TestHandleRequestRetryAfterFailureUsesNewRequest(t *testing.T) {
 			GitHubRepo:  "hetchy",
 			History:     []string{"old failed request"},
 		},
+		attachments: []convstore.Attachment{
+			{ID: "old", OrgID: "org_test", ThreadID: "thread-1", TurnIndex: 0, Filename: "old.txt", Data: []byte("old")},
+			{ID: "later", OrgID: "org_test", ThreadID: "thread-1", TurnIndex: 1, Filename: "later.txt", Data: []byte("later")},
+		},
 	}
 	b := testCoreBot(convs)
 	b.resolveRepoFn = func(_ context.Context, _, owner, name string) (repoCtx, error) {
@@ -271,7 +283,8 @@ func TestHandleRequestRetryAfterFailureUsesNewRequest(t *testing.T) {
 	b.HandleRequest(context.Background(),
 		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant"},
 		"retry with better prompt", "req-2", "thread-1", "user-1",
-		chatTaskOptionPatch{}, nil, nil, ClaudeModelOpus, emit)
+		chatTaskOptionPatch{}, nil, nil, ClaudeModelOpus, emit,
+		convstore.Attachment{Filename: "new.txt", Data: []byte("new")})
 
 	if !emit.hasCall("error", "Repo not accessible") {
 		t.Fatalf("expected repo access error, got calls=%v", emit.Calls)
@@ -282,6 +295,20 @@ func TestHandleRequestRetryAfterFailureUsesNewRequest(t *testing.T) {
 	}
 	if rec.GitHubOwner != "" || rec.GitHubRepo != "" {
 		t.Fatalf("failed retry repo resolution should return to awaiting-repo state: %+v", rec)
+	}
+	turn0, err := convs.ListAttachmentsForTurn(context.Background(), "org_test", "thread-1", 0)
+	if err != nil {
+		t.Fatalf("ListAttachmentsForTurn turn 0: %v", err)
+	}
+	if len(turn0) != 1 || turn0[0].Filename != "new.txt" {
+		t.Fatalf("retry should replace turn-0 attachments, got %+v", turn0)
+	}
+	turn1, err := convs.ListAttachmentsForTurn(context.Background(), "org_test", "thread-1", 1)
+	if err != nil {
+		t.Fatalf("ListAttachmentsForTurn turn 1: %v", err)
+	}
+	if len(turn1) != 1 || turn1[0].Filename != "later.txt" {
+		t.Fatalf("retry should leave later attachments alone, got %+v", turn1)
 	}
 }
 

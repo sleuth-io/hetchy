@@ -570,7 +570,7 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 			b.markRunState(ctx, runstore.StateFailed, errors.New("unknown agent"))
 			return
 		}
-		if err := b.saveIncomingAttachments(ctx, oc.OrgID, threadID, 0, incomingAttachments); err != nil {
+		if err := b.replaceIncomingAttachmentsForTurn(ctx, oc.OrgID, threadID, 0, incomingAttachments); err != nil {
 			b.log.Error("save prompt attachments", "error", err, "org", oc.OrgID, "thread", threadID)
 			emit.Error("Attachment upload failed", "Hetchy could not save the attached files for this turn. Try again.")
 			b.markRunState(ctx, runstore.StateFailed, err)
@@ -579,13 +579,15 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		b.handleRetryAfterFailure(ctx, oc, rec, agent, text, requestID, opts, model, recorder, emit)
 		return
 	case err == nil:
+		saveAttachments := b.saveIncomingAttachments
 		if rec.GitHubOwner != "" && rec.GitHubRepo != "" {
-			if err := b.saveIncomingAttachments(ctx, oc.OrgID, threadID, 0, incomingAttachments); err != nil {
-				b.log.Error("save prompt attachments", "error", err, "org", oc.OrgID, "thread", threadID)
-				emit.Error("Attachment upload failed", "Hetchy could not save the attached files for this turn. Try again.")
-				b.markRunState(ctx, runstore.StateFailed, err)
-				return
-			}
+			saveAttachments = b.replaceIncomingAttachmentsForTurn
+		}
+		if err := saveAttachments(ctx, oc.OrgID, threadID, 0, incomingAttachments); err != nil {
+			b.log.Error("save prompt attachments", "error", err, "org", oc.OrgID, "thread", threadID)
+			emit.Error("Attachment upload failed", "Hetchy could not save the attached files for this turn. Try again.")
+			b.markRunState(ctx, runstore.StateFailed, err)
+			return
 		}
 		b.handlePendingConversation(ctx, oc, rec, text, requestID, requestedAgent, requestedOwner, requestedName, requestedRepoOK, opts, model, recorder, emit)
 		return

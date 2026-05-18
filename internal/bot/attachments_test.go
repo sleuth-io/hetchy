@@ -158,6 +158,57 @@ func TestSaveIncomingAttachmentsNormalizesMetadata(t *testing.T) {
 	}
 }
 
+func TestReplaceIncomingAttachmentsForTurnDropsStaleRetryFiles(t *testing.T) {
+	convs := &fakeConversationStore{attachments: []convstore.Attachment{
+		{ID: "old", OrgID: "org-1", ThreadID: "thread-1", TurnIndex: 0, Filename: "old.txt", Data: []byte("old")},
+		{ID: "follow-up", OrgID: "org-1", ThreadID: "thread-1", TurnIndex: 1, Filename: "follow-up.txt", Data: []byte("later")},
+	}}
+	b := &Bot{log: discardLogger(), convs: convs}
+	err := b.replaceIncomingAttachmentsForTurn(context.Background(), "org-1", "thread-1", 0, []convstore.Attachment{{
+		Filename: "new.txt",
+		Data:     []byte("new"),
+	}})
+	if err != nil {
+		t.Fatalf("replaceIncomingAttachmentsForTurn: %v", err)
+	}
+
+	turn0, err := convs.ListAttachmentsForTurn(context.Background(), "org-1", "thread-1", 0)
+	if err != nil {
+		t.Fatalf("ListAttachmentsForTurn turn 0: %v", err)
+	}
+	if len(turn0) != 1 || turn0[0].Filename != "new.txt" || string(turn0[0].Data) != "new" {
+		t.Fatalf("turn 0 attachments = %+v", turn0)
+	}
+	turn1, err := convs.ListAttachmentsForTurn(context.Background(), "org-1", "thread-1", 1)
+	if err != nil {
+		t.Fatalf("ListAttachmentsForTurn turn 1: %v", err)
+	}
+	if len(turn1) != 1 || turn1[0].Filename != "follow-up.txt" {
+		t.Fatalf("turn 1 attachments = %+v", turn1)
+	}
+}
+
+func TestAttachmentContentTypesRewriteDangerousMedia(t *testing.T) {
+	cases := []string{
+		"text/html",
+		"text/html; charset=utf-8",
+		"application/javascript",
+		"text/javascript",
+		"image/svg+xml",
+	}
+	for _, in := range cases {
+		if got := normalizeAttachmentContentType(in); got != defaultAttachmentMimeType {
+			t.Fatalf("normalizeAttachmentContentType(%q) = %q, want %q", in, got, defaultAttachmentMimeType)
+		}
+	}
+	if got := detectAttachmentContentType("", []byte("<html><script>alert(1)</script></html>")); got != defaultAttachmentMimeType {
+		t.Fatalf("detected html content type = %q, want %q", got, defaultAttachmentMimeType)
+	}
+	if got := normalizeAttachmentContentType("application/json"); got != "application/json" {
+		t.Fatalf("json content type = %q, want application/json", got)
+	}
+}
+
 func TestSafeSandboxFilename(t *testing.T) {
 	cases := []struct {
 		in   string

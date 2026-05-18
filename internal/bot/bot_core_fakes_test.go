@@ -115,6 +115,20 @@ func (f *fakeConversationStore) GetAttachment(_ context.Context, orgID, attachme
 	return convstore.Attachment{}, convstore.ErrNotFound
 }
 
+func (f *fakeConversationStore) DeleteAttachmentsForTurn(_ context.Context, orgID, threadID string, turnIndex int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := f.attachments[:0]
+	for _, a := range f.attachments {
+		if a.OrgID == orgID && a.ThreadID == threadID && a.TurnIndex == turnIndex {
+			continue
+		}
+		out = append(out, a)
+	}
+	f.attachments = out
+	return nil
+}
+
 func (f *fakeConversationStore) Upsert(_ context.Context, rec convstore.Record) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

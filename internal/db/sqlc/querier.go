@@ -22,6 +22,7 @@ type Querier interface {
 	// agent_run_events cascade-deletes via FK ON DELETE CASCADE.
 	DeleteAgentRunsByOrg(ctx context.Context, orgID string) error
 	DeleteConversation(ctx context.Context, arg DeleteConversationParams) error
+	DeleteConversationAttachmentsForTurn(ctx context.Context, arg DeleteConversationAttachmentsForTurnParams) error
 	DeleteConversationsByOrg(ctx context.Context, orgID string) error
 	DeleteGithubInstallation(ctx context.Context, installationID int64) error
 	// github_repos / github_teams / github_team_members cascade via FK.

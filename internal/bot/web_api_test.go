@@ -483,7 +483,7 @@ func TestConversationAttachmentDownloadHandler(t *testing.T) {
 		OrgID:       "org_test",
 		ThreadID:    "thread-1",
 		Filename:    "report.csv",
-		ContentType: "text/csv",
+		ContentType: "text/html",
 		Data:        []byte("a,b\n1,2\n"),
 	}}}
 	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.conversationAttachmentDownloadHandler)))
@@ -494,8 +494,11 @@ func TestConversationAttachmentDownloadHandler(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
 	}
-	if got := rec.Header().Get("Content-Type"); got != "text/csv" {
-		t.Fatalf("Content-Type = %q, want text/csv", got)
+	if got := rec.Header().Get("Content-Type"); got != defaultAttachmentMimeType {
+		t.Fatalf("Content-Type = %q, want %s", got, defaultAttachmentMimeType)
+	}
+	if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Fatalf("X-Content-Type-Options = %q, want nosniff", got)
 	}
 	if got := rec.Header().Get("Content-Length"); got != "8" {
 		t.Fatalf("Content-Length = %q, want 8", got)

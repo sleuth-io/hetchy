@@ -623,10 +623,8 @@ func (b *Bot) conversationAttachmentDownloadHandler(w http.ResponseWriter, r *ht
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
-	contentType := attachment.ContentType
-	if contentType == "" {
-		contentType = "application/octet-stream"
-	}
+	contentType := normalizeAttachmentContentType(attachment.ContentType)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Length", strconv.FormatInt(int64(len(attachment.Data)), 10))
 	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{

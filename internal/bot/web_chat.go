@@ -249,9 +249,7 @@ func readMultipartAttachments(files []*multipart.FileHeader) ([]convstore.Attach
 			name = "attachment"
 		}
 		contentType := strings.TrimSpace(fh.Header.Get("Content-Type"))
-		if contentType == "" || contentType == defaultAttachmentMimeType {
-			contentType = http.DetectContentType(data)
-		}
+		contentType = detectAttachmentContentType(contentType, data)
 		out = append(out, convstore.Attachment{
 			ID:          convstore.NewAttachmentID(),
 			Filename:    name,

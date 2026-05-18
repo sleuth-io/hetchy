@@ -141,6 +141,10 @@ FROM conversation_attachments
 WHERE org_id = $1 AND thread_id = $2 AND turn_index = $3
 ORDER BY created_at ASC, id ASC;
 
+-- name: DeleteConversationAttachmentsForTurn :exec
+DELETE FROM conversation_attachments
+WHERE org_id = $1 AND thread_id = $2 AND turn_index = $3;
+
 -- name: GetConversationAttachment :one
 SELECT id, org_id, thread_id, turn_index, filename, content_type,
        size_bytes, data, source, slack_file_id, created_at

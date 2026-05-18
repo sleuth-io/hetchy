@@ -25,6 +25,22 @@ func (q *Queries) DeleteConversation(ctx context.Context, arg DeleteConversation
 	return err
 }
 
+const deleteConversationAttachmentsForTurn = `-- name: DeleteConversationAttachmentsForTurn :exec
+DELETE FROM conversation_attachments
+WHERE org_id = $1 AND thread_id = $2 AND turn_index = $3
+`
+
+type DeleteConversationAttachmentsForTurnParams struct {
+	OrgID     string `json:"org_id"`
+	ThreadID  string `json:"thread_id"`
+	TurnIndex int32  `json:"turn_index"`
+}
+
+func (q *Queries) DeleteConversationAttachmentsForTurn(ctx context.Context, arg DeleteConversationAttachmentsForTurnParams) error {
+	_, err := q.db.Exec(ctx, deleteConversationAttachmentsForTurn, arg.OrgID, arg.ThreadID, arg.TurnIndex)
+	return err
+}
+
 const getConversation = `-- name: GetConversation :one
 SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, response_blocks,
        github_owner, github_repo, custom_title, creator_id, agent_slug, model, task_options
