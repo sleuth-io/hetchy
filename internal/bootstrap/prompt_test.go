@@ -14,6 +14,16 @@ import (
 func TestBuildPromptContent(t *testing.T) {
 	hints := &Hints{
 		Path: "/repo",
+		DevContainer: &DevContainer{
+			Path: ".devcontainer/devcontainer.json",
+			Raw: map[string]any{
+				"image":             "mcr.microsoft.com/devcontainers/go:1-1.25",
+				"features":          map[string]any{"ghcr.io/devcontainers/features/docker-outside-of-docker:1": map[string]any{}},
+				"postCreateCommand": "go mod download",
+				"forwardPorts":      []any{8080},
+			},
+			AlternatePaths: []string{".devcontainer/worker/devcontainer.json"},
+		},
 		Makefile: &Makefile{
 			Path: "Makefile",
 			RunTargets: map[string]string{
@@ -43,18 +53,26 @@ func TestBuildPromptContent(t *testing.T) {
 		"hetchyhq/hetchy",
 		// Goal statement (informs the agent's stop criteria)
 		"Goal: the app responds well enough",
-		// Step 0 — "interpret, don't execute literally"
+		// Step 1 — "interpret, don't execute literally"
 		"INTERPRET, don't execute literally",
-		// Step 0 — landing-page reachability for the validation agent.
+		// Dev Container support — this is the highest-signal bootstrap
+		// input when present, and the sandbox image is expected to ship
+		// the CLI named here.
+		"Dev Container spec",
+		"devcontainer up",
+		".devcontainer/devcontainer.json",
+		"docker-outside-of-docker",
+		"Alternate devcontainer configs",
+		// Step 1 — landing-page reachability for the validation agent.
 		// This is load-bearing: without it, repos that chain auth → org
 		// selection → onboarding (like hetchy itself) silently produce a
 		// spec where start.sh boots the app but the validation agent
 		// gets stuck on a login wall.
 		"landing-page reachability",
 		"BYPASS_*",
-		// Step 1 — name the grep pattern
+		// Step 2 — name the grep pattern
 		"os.Getenv",
-		// Step 6 — the explicit "do not fabricate" line
+		// Step 7 — the explicit "do not fabricate" line
 		"NEVER fabricate",
 		// Manifest schema sentinel
 		`"deferred_capabilities"`,

@@ -34,8 +34,9 @@ type Hints struct {
 }
 
 type DevContainer struct {
-	Path string         `json:"path"`
-	Raw  map[string]any `json:"raw"`
+	Path           string         `json:"path"`
+	Raw            map[string]any `json:"raw"`
+	AlternatePaths []string       `json:"alternate_paths,omitempty"`
 }
 
 type DockerCompose struct {
@@ -117,10 +118,12 @@ func Detect(root string) (*Hints, error) {
 }
 
 func detectDevContainer(root string, notes *[]string) *DevContainer {
-	candidates := []string{
-		".devcontainer/devcontainer.json",
-		".devcontainer.json",
+	candidates := devContainerCandidates(root)
+	if len(candidates) == 0 {
+		return nil
 	}
+
+	alternatePaths := append([]string(nil), candidates[1:]...)
 	for _, rel := range candidates {
 		p := filepath.Join(root, rel)
 		data, err := os.ReadFile(p)
@@ -133,23 +136,131 @@ func detectDevContainer(root string, notes *[]string) *DevContainer {
 		clean := stripJSONC(data)
 		if err := json.Unmarshal(clean, &raw); err != nil {
 			*notes = append(*notes, fmt.Sprintf("devcontainer parse failed (%s): %v", rel, err))
-			return &DevContainer{Path: rel}
+			return &DevContainer{Path: rel, AlternatePaths: alternatePaths}
 		}
-		return &DevContainer{Path: rel, Raw: raw}
+		return &DevContainer{Path: rel, Raw: raw, AlternatePaths: alternatePaths}
 	}
 	return nil
 }
 
-var (
-	jsoncLineComment  = regexp.MustCompile(`(?m)//[^\n]*`)
-	jsoncBlockComment = regexp.MustCompile(`(?s)/\*.*?\*/`)
-	jsoncTrailComma   = regexp.MustCompile(`,(\s*[\]}])`)
-)
+func devContainerCandidates(root string) []string {
+	var out []string
+	for _, rel := range []string{
+		".devcontainer/devcontainer.json",
+		".devcontainer.json",
+	} {
+		if regularFileExists(filepath.Join(root, rel)) {
+			out = append(out, rel)
+		}
+	}
+
+	entries, err := os.ReadDir(filepath.Join(root, ".devcontainer"))
+	if err != nil {
+		return out
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		rel := filepath.Join(".devcontainer", entry.Name(), "devcontainer.json")
+		if regularFileExists(filepath.Join(root, rel)) {
+			out = append(out, filepath.ToSlash(rel))
+		}
+	}
+	return out
+}
+
+func regularFileExists(path string) bool {
+	st, err := os.Stat(path)
+	return err == nil && !st.IsDir()
+}
 
 func stripJSONC(data []byte) []byte {
-	out := jsoncBlockComment.ReplaceAll(data, nil)
-	out = jsoncLineComment.ReplaceAll(out, nil)
-	out = jsoncTrailComma.ReplaceAll(out, []byte("$1"))
+	return stripTrailingJSONCommas(stripJSONComments(data))
+}
+
+func stripJSONComments(data []byte) []byte {
+	out := make([]byte, 0, len(data))
+	inString := false
+	escaped := false
+	for i := 0; i < len(data); i++ {
+		c := data[i]
+		if inString {
+			out = append(out, c)
+			if escaped {
+				escaped = false
+			} else if c == '\\' {
+				escaped = true
+			} else if c == '"' {
+				inString = false
+			}
+			continue
+		}
+		if c == '"' {
+			inString = true
+			out = append(out, c)
+			continue
+		}
+		if c == '/' && i+1 < len(data) {
+			switch data[i+1] {
+			case '/':
+				for i < len(data) && data[i] != '\n' {
+					i++
+				}
+				if i < len(data) {
+					out = append(out, data[i])
+				}
+				continue
+			case '*':
+				i += 2
+				for i+1 < len(data) && !(data[i] == '*' && data[i+1] == '/') {
+					if data[i] == '\n' {
+						out = append(out, '\n')
+					}
+					i++
+				}
+				i++
+				continue
+			}
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+func stripTrailingJSONCommas(data []byte) []byte {
+	out := make([]byte, 0, len(data))
+	inString := false
+	escaped := false
+	for i := 0; i < len(data); i++ {
+		c := data[i]
+		if inString {
+			out = append(out, c)
+			if escaped {
+				escaped = false
+			} else if c == '\\' {
+				escaped = true
+			} else if c == '"' {
+				inString = false
+			}
+			continue
+		}
+		if c == '"' {
+			inString = true
+			out = append(out, c)
+			continue
+		}
+		if c == ',' {
+			j := i + 1
+			for j < len(data) && (data[j] == ' ' || data[j] == '\n' || data[j] == '\r' || data[j] == '\t') {
+				j++
+			}
+			if j < len(data) && (data[j] == '}' || data[j] == ']') {
+				continue
+			}
+		}
+		out = append(out, c)
+	}
 	return out
 }
 
