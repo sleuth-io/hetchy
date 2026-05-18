@@ -39,6 +39,40 @@ func TestUploadInstructions_NonZeroSlotCount(t *testing.T) {
 	}
 }
 
+func TestProofInstructionsWithSlots(t *testing.T) {
+	got := ProofInstructions(2)
+	for _, want := range []string{
+		"scratch validation artifacts",
+		"not repository",
+		"Prefer /tmp/hetchy-validate/",
+		".playwright-mcp/<name>.png",
+		"Do NOT stage, commit, push",
+		"GitHub blob/raw URLs",
+		"HETCHY_ARTIFACT_SLOTS",
+		"curl -fSs -X PUT",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("proof instructions missing %q\n%s", want, got)
+		}
+	}
+}
+
+func TestProofInstructionsWithoutSlots(t *testing.T) {
+	got := ProofInstructions(0)
+	for _, want := range []string{
+		"No artifact upload slots are available",
+		"mark validation incomplete",
+		"committing a generated proof file",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("proof instructions without slots missing %q\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "HETCHY_ARTIFACT_SLOTS") || strings.Contains(got, "put_url") {
+		t.Errorf("proof instructions without slots should not mention upload env vars or URLs\n%s", got)
+	}
+}
+
 func TestUploadInstructions_ZeroOrNegativeReturnsEmpty(t *testing.T) {
 	for _, n := range []int{0, -1, -100} {
 		if got := UploadInstructions(n); got != "" {

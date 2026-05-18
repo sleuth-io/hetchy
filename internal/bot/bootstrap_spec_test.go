@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
 
@@ -203,6 +204,17 @@ func TestEnsureBootstrapSpecPersistsFailingBootstrapForLoopFailure(t *testing.T)
 	}
 	if !strings.HasPrefix(got.BootstrapLog, "...(truncated)...\n") {
 		t.Fatalf("bootstrap log was not truncated: prefix %q", got.BootstrapLog[:min(len(got.BootstrapLog), 20)])
+	}
+}
+
+func TestTruncateLogTailSanitizesInvalidUTF8(t *testing.T) {
+	raw := "ok\n" + string([]byte{0xe2, 0x80, 0x5b}) + "\ndone"
+	got := truncateLogTail(raw)
+	if !utf8.ValidString(got) {
+		t.Fatalf("truncateLogTail returned invalid UTF-8: %q", got)
+	}
+	if !strings.Contains(got, "\uFFFD[") {
+		t.Fatalf("invalid bytes were not replaced: %q", got)
 	}
 }
 
