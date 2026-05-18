@@ -86,20 +86,41 @@ func (b *Bot) recoverAgentRunReady(ctx context.Context, run runstore.Run, ready 
 		b.recoverUnframedAgentRun(ctx, sb, run, live, existingEvents)
 		return
 	}
+	b.recoverFramedAgentRun(ctx, sb, run, live, existingEvents)
+}
+
+func (b *Bot) recoverFramedAgentRun(ctx context.Context, sb *daytona.Sandbox, run runstore.Run, live *liveRun, existingEvents []runstore.Event) {
 	em := newRecoveredAgentRunEmitter(b.runs, run, b.workerID, live, existingEvents)
 	router := newAgentLineRouter(em)
 	frameState := replayFrameState{}
 	resumeFrameState := initialRecoveryFrameState(run, existingEvents)
 	replayCursor := int64(0)
+	runCtx := contextWithAgentRun(ctx, run)
+	stopHeartbeat := b.startRunLeaseHeartbeat(runCtx)
+	defer stopHeartbeat()
+	b.runs.TouchLease(context.Background(), run.ID, b.workerID, agentRunLeaseDuration)
 
-	poll := time.NewTicker(5 * time.Second)
+	poll := time.NewTicker(recoveryCommandPollInterval)
 	defer poll.Stop()
+	timeout := recoveryCommandPollTimeout(run.CommandStep)
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	waitForNextPoll := func() bool {
+		select {
+		case <-poll.C:
+			return true
+		case <-deadline.C:
+			err := fmt.Errorf("recovered command %s status polling timed out after %s", run.CommandStep, timeout)
+			body := fmt.Sprintf("The recovered sandbox command `%s` did not finish within %s. Sandbox `%s` will be archived.", run.CommandStep, timeout, run.SandboxID)
+			b.finishRecoveredFailure(ctx, run, live, "Agent failed", body, err)
+			return false
+		}
+	}
 	for {
 		if live != nil && live.Cancelled() {
 			b.finishRecoveredCancellation(ctx, run)
 			return
 		}
-		b.runs.TouchLease(context.Background(), run.ID, b.workerID, agentRunLeaseDuration)
 
 		res, err := b.replayRecoveredLogTail(ctx, sb, &run, em, router, &frameState, &replayCursor)
 		if err != nil {
@@ -149,7 +170,9 @@ func (b *Bot) recoverAgentRunReady(ctx context.Context, run runstore.Run, ready 
 				"session", run.SessionID,
 				"command", run.CommandID,
 			)
-			<-poll.C
+			if !waitForNextPoll() {
+				return
+			}
 			continue
 		}
 
@@ -172,7 +195,9 @@ func (b *Bot) recoverAgentRunReady(ctx context.Context, run runstore.Run, ready 
 			return
 		}
 
-		<-poll.C
+		if !waitForNextPoll() {
+			return
+		}
 	}
 }
 

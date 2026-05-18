@@ -19,29 +19,19 @@ import (
 )
 
 var (
-	unframedRecoveryPollInterval = 5 * time.Second
-	unframedRecoveryPollTimeout  = func(step string) time.Duration {
-		if step == "bootstrap-run-bootstrap" {
+	recoveryCommandPollInterval = 5 * time.Second
+	recoveryCommandPollTimeout  = func(step string) time.Duration {
+		switch step {
+		case "run-script", "bootstrap-run-bootstrap":
 			return 65 * time.Minute
+		default:
+			return 30 * time.Minute
 		}
-		return 30 * time.Minute
 	}
 )
 
 func unframedRecoverableStep(step string) bool {
-	switch step {
-	case "setup-clone-write",
-		"setup-clone-run",
-		"detect-tar",
-		"bootstrap-write",
-		"bootstrap-write-bootstrap",
-		"bootstrap-run-bootstrap",
-		"write-script",
-		"write-env":
-		return true
-	default:
-		return false
-	}
+	return preAgentRecoverableSandboxStep(step)
 }
 
 func bootstrapPreparationStep(step string) bool {
@@ -72,9 +62,9 @@ func (b *Bot) recoverUnframedAgentRun(ctx context.Context, sb *daytona.Sandbox, 
 	defer stopHeartbeat()
 	b.runs.TouchLease(context.Background(), run.ID, b.workerID, agentRunLeaseDuration)
 
-	poll := time.NewTicker(unframedRecoveryPollInterval)
+	poll := time.NewTicker(recoveryCommandPollInterval)
 	defer poll.Stop()
-	timeout := unframedRecoveryPollTimeout(run.CommandStep)
+	timeout := recoveryCommandPollTimeout(run.CommandStep)
 	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
 	for {

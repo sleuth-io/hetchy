@@ -24,6 +24,22 @@ type sandboxProcess interface {
 	GetSessionCommandLogsStream(ctx context.Context, sessionID, commandID string, stdout, stderr chan<- string) error
 }
 
+var preAgentRecoverableSandboxSteps = map[string]struct{}{
+	"setup-clone-write":         {},
+	"setup-clone-run":           {},
+	"detect-tar":                {},
+	"bootstrap-write":           {},
+	"bootstrap-write-bootstrap": {},
+	"bootstrap-run-bootstrap":   {},
+	"write-script":              {},
+	"write-env":                 {},
+}
+
+func preAgentRecoverableSandboxStep(step string) bool {
+	_, ok := preAgentRecoverableSandboxSteps[step]
+	return ok
+}
+
 // shLines runs cmd inside an existing sandbox session, splits its
 // stdout+stderr into whole lines, forwards each line to onLine, and
 // returns the full captured stdout+stderr. A non-zero exit becomes an
@@ -320,20 +336,7 @@ func effectiveSuppressInputEcho(explicit bool, cmd string) bool {
 }
 
 func recoverableSandboxStep(step string) bool {
-	switch step {
-	case "run-script",
-		"write-script",
-		"write-env",
-		"setup-clone-write",
-		"setup-clone-run",
-		"detect-tar",
-		"bootstrap-write",
-		"bootstrap-write-bootstrap",
-		"bootstrap-run-bootstrap":
-		return true
-	default:
-		return false
-	}
+	return step == "run-script" || preAgentRecoverableSandboxStep(step)
 }
 
 func (b *Bot) logSandboxOutputTiming(sandboxID, step string, commandAcceptedAt, lastChunkAt time.Time, seenChunk bool, capturedBytes int, now time.Time) {

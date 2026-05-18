@@ -141,6 +141,7 @@ func (b *Bot) recoverExpiredRuns(ctx context.Context) {
 			"sandbox", claimed.SandboxID,
 			"session", claimed.SessionID,
 			"command", claimed.CommandID,
+			"command_step", claimed.CommandStep,
 			"previous_worker", run.LeaseOwner,
 		)
 		b.launchRecoverAgentRun(ctx, claimed, false)
@@ -233,6 +234,7 @@ func (b *Bot) recoverRunForReattach(ctx context.Context, run runstore.Run) *live
 			"run_id", claimed.ID,
 			"org", claimed.OrgID,
 			"thread", claimed.ThreadID,
+			"command_step", claimed.CommandStep,
 			"previous_worker", run.LeaseOwner,
 		)
 		b.launchRecoverAgentRun(ctx, claimed, true)
@@ -255,6 +257,7 @@ func (b *Bot) recoverRunForReattach(ctx context.Context, run runstore.Run) *live
 				"run_id", claimed.ID,
 				"org", claimed.OrgID,
 				"thread", claimed.ThreadID,
+				"command_step", claimed.CommandStep,
 				"previous_worker", run.LeaseOwner,
 				"heartbeat_at", run.HeartbeatAt,
 			)
@@ -309,6 +312,7 @@ func (b *Bot) recoverRunForReattach(ctx context.Context, run runstore.Run) *live
 		"sandbox", claimed.SandboxID,
 		"session", claimed.SessionID,
 		"command", claimed.CommandID,
+		"command_step", claimed.CommandStep,
 		"previous_worker", run.LeaseOwner,
 	)
 	b.launchRecoverAgentRun(ctx, claimed, true)

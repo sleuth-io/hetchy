@@ -453,6 +453,73 @@ func TestRecoverAgentRunReadyReplaysCommandLogToSuccess(t *testing.T) {
 	}
 }
 
+func TestRecoverAgentRunReadyTimesOutStuckFramedCommand(t *testing.T) {
+	oldPollInterval := recoveryCommandPollInterval
+	oldPollTimeout := recoveryCommandPollTimeout
+	recoveryCommandPollInterval = time.Millisecond
+	recoveryCommandPollTimeout = func(string) time.Duration { return 5 * time.Millisecond }
+	t.Cleanup(func() {
+		recoveryCommandPollInterval = oldPollInterval
+		recoveryCommandPollTimeout = oldPollTimeout
+	})
+
+	store := &fakeRunStore{enabled: true}
+	convs := &fakeConversationStore{getErr: convstore.ErrNotFound}
+	var statusCalls int
+	var cleanupCall string
+	b := &Bot{
+		log:      discardLogger(),
+		runs:     store,
+		convs:    convs,
+		workerID: "worker-1",
+		getSandboxFn: func(_ context.Context, sandboxID string) (*daytona.Sandbox, error) {
+			return &daytona.Sandbox{ID: sandboxID}, nil
+		},
+		ensureSandboxStartedFn: func(context.Context, *daytona.Sandbox) error { return nil },
+		commandLogSnapshotFn: func(context.Context, *daytona.Sandbox, string, string) (string, error) {
+			return "agent command still running\n", nil
+		},
+		sessionCommandStatusFn: func(context.Context, *daytona.Sandbox, string, string) (map[string]any, error) {
+			statusCalls++
+			return map[string]any{}, nil
+		},
+		cleanupSandboxFn: func(_ context.Context, sb *daytona.Sandbox, reason string) {
+			cleanupCall = sb.ID + "|" + reason
+		},
+	}
+	run := runstore.Run{
+		ID:          "run_stuck_framed",
+		OrgID:       "org_1",
+		ThreadID:    "thread_1",
+		UserRequest: "ship it",
+		SandboxID:   "sandbox-1",
+		SessionID:   "session-1",
+		CommandID:   "command-1",
+		CommandStep: "run-script",
+		RunKind:     "chat",
+	}
+
+	b.recoverAgentRunReady(context.Background(), run, nil)
+
+	if statusCalls == 0 {
+		t.Fatal("expected command status polling")
+	}
+	if len(store.touched) == 0 || store.touched[0].runID != "run_stuck_framed" {
+		t.Fatalf("touches = %+v", store.touched)
+	}
+	last := store.updateStates[len(store.updateStates)-1]
+	if last.state != runstore.StateFailed || !strings.Contains(last.lastErr, "status polling timed out") {
+		t.Fatalf("last state = %+v", last)
+	}
+	block := convs.lastUpsert(t).ResponseBlocks[0][0]
+	if block.Kind != blocks.KindError || block.Title != "Agent failed" || !strings.Contains(block.Body, "did not finish") {
+		t.Fatalf("terminal block = %+v", block)
+	}
+	if cleanupCall != "sandbox-1|recovered failed run" {
+		t.Fatalf("cleanup call = %q", cleanupCall)
+	}
+}
+
 func TestRecoverAgentRunReadyBootstrapCommandSavesSpecAndContinues(t *testing.T) {
 	store := &fakeRunStore{enabled: true}
 	boot := &fakeBootstrapStore{}
@@ -563,13 +630,13 @@ func TestRecoverAgentRunReadyBootstrapCommandSavesSpecAndContinues(t *testing.T)
 }
 
 func TestRecoverUnframedAgentRunTimesOutStuckCommand(t *testing.T) {
-	oldPollInterval := unframedRecoveryPollInterval
-	oldPollTimeout := unframedRecoveryPollTimeout
-	unframedRecoveryPollInterval = time.Millisecond
-	unframedRecoveryPollTimeout = func(string) time.Duration { return 5 * time.Millisecond }
+	oldPollInterval := recoveryCommandPollInterval
+	oldPollTimeout := recoveryCommandPollTimeout
+	recoveryCommandPollInterval = time.Millisecond
+	recoveryCommandPollTimeout = func(string) time.Duration { return 5 * time.Millisecond }
 	t.Cleanup(func() {
-		unframedRecoveryPollInterval = oldPollInterval
-		unframedRecoveryPollTimeout = oldPollTimeout
+		recoveryCommandPollInterval = oldPollInterval
+		recoveryCommandPollTimeout = oldPollTimeout
 	})
 
 	store := &fakeRunStore{enabled: true}
