@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/hetchyhq/hetchy/internal/auth"
+	"github.com/hetchyhq/hetchy/internal/billing"
 	"github.com/hetchyhq/hetchy/internal/webui"
 )
 
@@ -261,6 +262,104 @@ func TestSettingsTemplate_RendersAgentsTab(t *testing.T) {
 	} {
 		if !strings.Contains(body, w) {
 			t.Errorf("agents tab missing %q", w)
+		}
+	}
+}
+
+func TestSettingsTemplate_RendersBillingTabLayout(t *testing.T) {
+	b := newBypassBot(t)
+	rec := httptest.NewRecorder()
+	b.renderTemplate(rec, webui.Settings, map[string]any{
+		"OrgID": "org_y", "OrgName": "Acme", "Email": "u@y", "PrincipalUserID": "user_me",
+		"IsAdmin": true, "Tab": "billing", "SavedMessage": "",
+		"Billing": billingOverviewView{
+			PlanCode:          billing.PlanTeam,
+			CurrentPlanLabel:  "Team",
+			Status:            "active",
+			IncludedCredits:   300,
+			IncludedUsed:      60,
+			IncludedRemaining: 240,
+			TopupCredits:      20,
+			Balance:           260,
+			MaxFlavor:         billing.FlavorMax,
+			SandboxOptions:    "All sizes",
+			PerRunMaxCredits:  6,
+			AutoTopupEnabled:  true,
+			MonthlyMaxSpend:   "27",
+			MonthlySpendUsed:  "$9",
+			TopupUnitPrice:    "$9",
+			TopupUnitCredits:  billing.TopupUnitCredits,
+			StripeConfigured:  true,
+			HasStripeCustomer: true,
+			PlanOptions: []billingPlanOptionView{
+				{
+					Code: billing.PlanTeam, Label: "Team", Monthly: "$199", TopupUnitPrice: "$9",
+					IncludedCredits: 300, MaxFlavor: billing.FlavorMax, SandboxOptions: "All sizes", PerRunMaxCredits: 6,
+					Configured: true, Current: true,
+				},
+			},
+			RecentMeters: []billingMeterView{
+				{
+					RunID: "run_123", Flavor: billing.FlavorMax, BillableMinutes: 15,
+					CapturedCredits: 4, TerminalState: "succeeded", StartedAt: "May 18, 2026",
+				},
+			},
+		},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`class="billing-panel billing-section"`,
+		`<h3>Plan</h3>`,
+		`<h3>Usage</h3>`,
+		`class="billing-usage-meter"`,
+		`Credit balance`,
+		`260 credits available`,
+		`Included credits used`,
+		`60 / 300`,
+		`240 included credits remaining this period`,
+		`20 top-up credits available after included credits`,
+		`class="billing-topups-panel"`,
+		`Buy credits now`,
+		`class="secondary" type="submit"`,
+		`Save top-up settings`,
+		`name="quantity" value="1"`,
+		`name="monthly_max_spend"`,
+		`Monthly max spend`,
+		`Recent runs`,
+		`run_123`,
+		`target="_blank"`,
+		`href="/billing/portal"`,
+		`One credit covers a 15-minute run on a standard sandbox.`,
+		`Included credits`,
+		`Top-up price`,
+		`per 10-credit top-up`,
+		`Sandbox size options: All sizes`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("billing tab missing %q", want)
+		}
+	}
+	for _, notWant := range []string{
+		`<h3>Credits</h3>`,
+		`class="billing-credit-row"`,
+		`class="billing-usage-controls"`,
+		`class="billing-control-card"`,
+		`Save auto top-up`,
+		`Buy top-up credits`,
+		`id="topup_quantity"`,
+		`Manual top-up units`,
+		`name="trigger_threshold"`,
+		`name="target_balance"`,
+		`name="monthly_max_units"`,
+		`Recent usage`,
+		`max flavor`,
+		`run reserve`,
+	} {
+		if strings.Contains(body, notWant) {
+			t.Errorf("billing tab unexpectedly contained %q", notWant)
 		}
 	}
 }

@@ -68,7 +68,7 @@ VALUES ($1)
 ON CONFLICT (org_id) DO UPDATE SET org_id = EXCLUDED.org_id
 RETURNING org_id, auto_topup_enabled, trigger_threshold, target_balance,
           monthly_max_units, monthly_units_used, monthly_anchor_month,
-          created_at, updated_at
+          created_at, updated_at, monthly_max_cents, monthly_spend_cents_used
 `
 
 func (q *Queries) EnsureBillingTopupSettings(ctx context.Context, orgID string) (BillingTopupSetting, error) {
@@ -84,6 +84,8 @@ func (q *Queries) EnsureBillingTopupSettings(ctx context.Context, orgID string) 
 		&i.MonthlyAnchorMonth,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.MonthlyMaxCents,
+		&i.MonthlySpendCentsUsed,
 	)
 	return i, err
 }
@@ -290,7 +292,7 @@ func (q *Queries) GetBillingRunMeterForUpdate(ctx context.Context, runID string)
 const getBillingTopupSettings = `-- name: GetBillingTopupSettings :one
 SELECT org_id, auto_topup_enabled, trigger_threshold, target_balance,
        monthly_max_units, monthly_units_used, monthly_anchor_month,
-       created_at, updated_at
+       created_at, updated_at, monthly_max_cents, monthly_spend_cents_used
 FROM billing_topup_settings
 WHERE org_id = $1
 `
@@ -308,6 +310,8 @@ func (q *Queries) GetBillingTopupSettings(ctx context.Context, orgID string) (Bi
 		&i.MonthlyAnchorMonth,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.MonthlyMaxCents,
+		&i.MonthlySpendCentsUsed,
 	)
 	return i, err
 }
@@ -380,25 +384,32 @@ func (q *Queries) GrantBillingTopupCredits(ctx context.Context, arg GrantBilling
 	return i, err
 }
 
-const incrementBillingTopupMonthlyUnits = `-- name: IncrementBillingTopupMonthlyUnits :one
+const incrementBillingTopupMonthlyUsage = `-- name: IncrementBillingTopupMonthlyUsage :one
 UPDATE billing_topup_settings
    SET monthly_units_used = monthly_units_used + $2,
-       monthly_anchor_month = $3,
+       monthly_spend_cents_used = monthly_spend_cents_used + $3,
+       monthly_anchor_month = $4,
        updated_at = NOW()
 WHERE org_id = $1
 RETURNING org_id, auto_topup_enabled, trigger_threshold, target_balance,
           monthly_max_units, monthly_units_used, monthly_anchor_month,
-          created_at, updated_at
+          created_at, updated_at, monthly_max_cents, monthly_spend_cents_used
 `
 
-type IncrementBillingTopupMonthlyUnitsParams struct {
-	OrgID              string `json:"org_id"`
-	MonthlyUnitsUsed   int32  `json:"monthly_units_used"`
-	MonthlyAnchorMonth string `json:"monthly_anchor_month"`
+type IncrementBillingTopupMonthlyUsageParams struct {
+	OrgID                 string `json:"org_id"`
+	MonthlyUnitsUsed      int32  `json:"monthly_units_used"`
+	MonthlySpendCentsUsed int32  `json:"monthly_spend_cents_used"`
+	MonthlyAnchorMonth    string `json:"monthly_anchor_month"`
 }
 
-func (q *Queries) IncrementBillingTopupMonthlyUnits(ctx context.Context, arg IncrementBillingTopupMonthlyUnitsParams) (BillingTopupSetting, error) {
-	row := q.db.QueryRow(ctx, incrementBillingTopupMonthlyUnits, arg.OrgID, arg.MonthlyUnitsUsed, arg.MonthlyAnchorMonth)
+func (q *Queries) IncrementBillingTopupMonthlyUsage(ctx context.Context, arg IncrementBillingTopupMonthlyUsageParams) (BillingTopupSetting, error) {
+	row := q.db.QueryRow(ctx, incrementBillingTopupMonthlyUsage,
+		arg.OrgID,
+		arg.MonthlyUnitsUsed,
+		arg.MonthlySpendCentsUsed,
+		arg.MonthlyAnchorMonth,
+	)
 	var i BillingTopupSetting
 	err := row.Scan(
 		&i.OrgID,
@@ -410,6 +421,8 @@ func (q *Queries) IncrementBillingTopupMonthlyUnits(ctx context.Context, arg Inc
 		&i.MonthlyAnchorMonth,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.MonthlyMaxCents,
+		&i.MonthlySpendCentsUsed,
 	)
 	return i, err
 }
@@ -603,7 +616,7 @@ func (q *Queries) LockBillingAccountForUpdate(ctx context.Context, orgID string)
 const lockBillingTopupSettingsForUpdate = `-- name: LockBillingTopupSettingsForUpdate :one
 SELECT org_id, auto_topup_enabled, trigger_threshold, target_balance,
        monthly_max_units, monthly_units_used, monthly_anchor_month,
-       created_at, updated_at
+       created_at, updated_at, monthly_max_cents, monthly_spend_cents_used
 FROM billing_topup_settings
 WHERE org_id = $1
 FOR UPDATE
@@ -622,6 +635,8 @@ func (q *Queries) LockBillingTopupSettingsForUpdate(ctx context.Context, orgID s
 		&i.MonthlyAnchorMonth,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.MonthlyMaxCents,
+		&i.MonthlySpendCentsUsed,
 	)
 	return i, err
 }
@@ -629,12 +644,13 @@ func (q *Queries) LockBillingTopupSettingsForUpdate(ctx context.Context, orgID s
 const resetBillingTopupMonthlyUsage = `-- name: ResetBillingTopupMonthlyUsage :one
 UPDATE billing_topup_settings
    SET monthly_units_used = 0,
+       monthly_spend_cents_used = 0,
        monthly_anchor_month = $2,
        updated_at = NOW()
 WHERE org_id = $1
 RETURNING org_id, auto_topup_enabled, trigger_threshold, target_balance,
           monthly_max_units, monthly_units_used, monthly_anchor_month,
-          created_at, updated_at
+          created_at, updated_at, monthly_max_cents, monthly_spend_cents_used
 `
 
 type ResetBillingTopupMonthlyUsageParams struct {
@@ -655,6 +671,8 @@ func (q *Queries) ResetBillingTopupMonthlyUsage(ctx context.Context, arg ResetBi
 		&i.MonthlyAnchorMonth,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.MonthlyMaxCents,
+		&i.MonthlySpendCentsUsed,
 	)
 	return i, err
 }
@@ -850,11 +868,12 @@ UPDATE billing_topup_settings
        trigger_threshold = $3,
        target_balance = $4,
        monthly_max_units = $5,
+       monthly_max_cents = $6,
        updated_at = NOW()
 WHERE org_id = $1
 RETURNING org_id, auto_topup_enabled, trigger_threshold, target_balance,
           monthly_max_units, monthly_units_used, monthly_anchor_month,
-          created_at, updated_at
+          created_at, updated_at, monthly_max_cents, monthly_spend_cents_used
 `
 
 type UpdateBillingTopupSettingsParams struct {
@@ -863,6 +882,7 @@ type UpdateBillingTopupSettingsParams struct {
 	TriggerThreshold int32  `json:"trigger_threshold"`
 	TargetBalance    int32  `json:"target_balance"`
 	MonthlyMaxUnits  int32  `json:"monthly_max_units"`
+	MonthlyMaxCents  int32  `json:"monthly_max_cents"`
 }
 
 func (q *Queries) UpdateBillingTopupSettings(ctx context.Context, arg UpdateBillingTopupSettingsParams) (BillingTopupSetting, error) {
@@ -872,6 +892,7 @@ func (q *Queries) UpdateBillingTopupSettings(ctx context.Context, arg UpdateBill
 		arg.TriggerThreshold,
 		arg.TargetBalance,
 		arg.MonthlyMaxUnits,
+		arg.MonthlyMaxCents,
 	)
 	var i BillingTopupSetting
 	err := row.Scan(
@@ -884,6 +905,8 @@ func (q *Queries) UpdateBillingTopupSettings(ctx context.Context, arg UpdateBill
 		&i.MonthlyAnchorMonth,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.MonthlyMaxCents,
+		&i.MonthlySpendCentsUsed,
 	)
 	return i, err
 }

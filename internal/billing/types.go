@@ -52,15 +52,17 @@ func (a Account) Balance() int {
 }
 
 type TopupSettings struct {
-	OrgID              string
-	AutoTopupEnabled   bool
-	TriggerThreshold   int
-	TargetBalance      int
-	MonthlyMaxUnits    int
-	MonthlyUnitsUsed   int
-	MonthlyAnchorMonth string
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
+	OrgID                 string
+	AutoTopupEnabled      bool
+	TriggerThreshold      int
+	TargetBalance         int
+	MonthlyMaxUnits       int
+	MonthlyUnitsUsed      int
+	MonthlyMaxCents       int
+	MonthlySpendCentsUsed int
+	MonthlyAnchorMonth    string
+	CreatedAt             time.Time
+	UpdatedAt             time.Time
 }
 
 type Reservation struct {

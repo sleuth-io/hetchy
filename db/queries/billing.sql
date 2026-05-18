@@ -129,19 +129,19 @@ VALUES ($1)
 ON CONFLICT (org_id) DO UPDATE SET org_id = EXCLUDED.org_id
 RETURNING org_id, auto_topup_enabled, trigger_threshold, target_balance,
           monthly_max_units, monthly_units_used, monthly_anchor_month,
-          created_at, updated_at;
+          created_at, updated_at, monthly_max_cents, monthly_spend_cents_used;
 
 -- name: GetBillingTopupSettings :one
 SELECT org_id, auto_topup_enabled, trigger_threshold, target_balance,
        monthly_max_units, monthly_units_used, monthly_anchor_month,
-       created_at, updated_at
+       created_at, updated_at, monthly_max_cents, monthly_spend_cents_used
 FROM billing_topup_settings
 WHERE org_id = $1;
 
 -- name: LockBillingTopupSettingsForUpdate :one
 SELECT org_id, auto_topup_enabled, trigger_threshold, target_balance,
        monthly_max_units, monthly_units_used, monthly_anchor_month,
-       created_at, updated_at
+       created_at, updated_at, monthly_max_cents, monthly_spend_cents_used
 FROM billing_topup_settings
 WHERE org_id = $1
 FOR UPDATE;
@@ -152,31 +152,34 @@ UPDATE billing_topup_settings
        trigger_threshold = $3,
        target_balance = $4,
        monthly_max_units = $5,
+       monthly_max_cents = $6,
        updated_at = NOW()
 WHERE org_id = $1
 RETURNING org_id, auto_topup_enabled, trigger_threshold, target_balance,
           monthly_max_units, monthly_units_used, monthly_anchor_month,
-          created_at, updated_at;
+          created_at, updated_at, monthly_max_cents, monthly_spend_cents_used;
 
--- name: IncrementBillingTopupMonthlyUnits :one
+-- name: IncrementBillingTopupMonthlyUsage :one
 UPDATE billing_topup_settings
    SET monthly_units_used = monthly_units_used + $2,
-       monthly_anchor_month = $3,
+       monthly_spend_cents_used = monthly_spend_cents_used + $3,
+       monthly_anchor_month = $4,
        updated_at = NOW()
 WHERE org_id = $1
 RETURNING org_id, auto_topup_enabled, trigger_threshold, target_balance,
           monthly_max_units, monthly_units_used, monthly_anchor_month,
-          created_at, updated_at;
+          created_at, updated_at, monthly_max_cents, monthly_spend_cents_used;
 
 -- name: ResetBillingTopupMonthlyUsage :one
 UPDATE billing_topup_settings
    SET monthly_units_used = 0,
+       monthly_spend_cents_used = 0,
        monthly_anchor_month = $2,
        updated_at = NOW()
 WHERE org_id = $1
 RETURNING org_id, auto_topup_enabled, trigger_threshold, target_balance,
           monthly_max_units, monthly_units_used, monthly_anchor_month,
-          created_at, updated_at;
+          created_at, updated_at, monthly_max_cents, monthly_spend_cents_used;
 
 -- name: GetBillingCreditReservationForUpdate :one
 SELECT run_id, org_id, reserved_credits, from_included_credits, from_topup_credits,

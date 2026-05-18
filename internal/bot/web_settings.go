@@ -368,6 +368,7 @@ func (b *Bot) populateSettingsTabData(ctx context.Context, orgID, tab string, da
 
 type billingOverviewView struct {
 	PlanCode          string
+	CurrentPlanLabel  string
 	Status            string
 	PeriodStart       string
 	PeriodEnd         string
@@ -377,14 +378,15 @@ type billingOverviewView struct {
 	TopupCredits      int
 	Balance           int
 	MaxFlavor         string
+	SandboxOptions    string
 	PerRunMaxCredits  int
 	BillingExempt     bool
 	LastPaymentError  string
 	AutoTopupEnabled  bool
-	TriggerThreshold  int
-	TargetBalance     int
-	MonthlyMaxUnits   int
-	MonthlyUnitsUsed  int
+	MonthlyMaxSpend   string
+	MonthlySpendUsed  string
+	TopupUnitPrice    string
+	TopupUnitCredits  int
 	StripeConfigured  bool
 	HasStripeCustomer bool
 	PlanOptions       []billingPlanOptionView
@@ -395,8 +397,10 @@ type billingPlanOptionView struct {
 	Code             string
 	Label            string
 	Monthly          string
+	TopupUnitPrice   string
 	IncludedCredits  int
 	MaxFlavor        string
+	SandboxOptions   string
 	PerRunMaxCredits int
 	Configured       bool
 	Current          bool
@@ -413,9 +417,13 @@ type billingMeterView struct {
 
 func (b *Bot) loadBillingOverview(ctx context.Context, orgID string) (billingOverviewView, error) {
 	if b.billing == nil || !b.billing.Enabled() {
+		plan := billing.DefaultPaidPlan()
 		return billingOverviewView{
-			PlanCode: "free", Status: "free", MaxFlavor: billing.FlavorStandard,
+			PlanCode: "free", CurrentPlanLabel: "Free", Status: "free", MaxFlavor: billing.FlavorStandard,
+			SandboxOptions:  sandboxOptionsLabel(billing.FlavorStandard),
 			IncludedCredits: 10, IncludedRemaining: 10, Balance: 10, PerRunMaxCredits: 4,
+			TopupUnitPrice: formatUSDCents(plan.TopupUnitUSDCents), TopupUnitCredits: billing.TopupUnitCredits,
+			MonthlyMaxSpend: "0", MonthlySpendUsed: "$0",
 		}, nil
 	}
 	overview, err := b.billing.Overview(ctx, orgID)
@@ -424,8 +432,10 @@ func (b *Bot) loadBillingOverview(ctx context.Context, orgID string) (billingOve
 	}
 	acct := overview.Account
 	settings := overview.TopupSettings
+	plan := billingPlanForTopup(acct.PlanCode)
 	out := billingOverviewView{
 		PlanCode:          acct.PlanCode,
+		CurrentPlanLabel:  billingPlanLabel(acct.PlanCode),
 		Status:            acct.Status,
 		PeriodStart:       formatSettingsTime(acct.CurrentPeriodStart),
 		PeriodEnd:         formatSettingsTime(acct.CurrentPeriodEnd),
@@ -435,14 +445,15 @@ func (b *Bot) loadBillingOverview(ctx context.Context, orgID string) (billingOve
 		TopupCredits:      acct.TopupCredits,
 		Balance:           acct.Balance(),
 		MaxFlavor:         acct.MaxFlavor,
+		SandboxOptions:    sandboxOptionsLabel(acct.MaxFlavor),
 		PerRunMaxCredits:  acct.PerRunMaxCredits,
 		BillingExempt:     acct.BillingExempt,
 		LastPaymentError:  acct.LastPaymentError,
 		AutoTopupEnabled:  settings.AutoTopupEnabled,
-		TriggerThreshold:  settings.TriggerThreshold,
-		TargetBalance:     settings.TargetBalance,
-		MonthlyMaxUnits:   settings.MonthlyMaxUnits,
-		MonthlyUnitsUsed:  settings.MonthlyUnitsUsed,
+		MonthlyMaxSpend:   formatUSDDollarInput(settings.MonthlyMaxCents),
+		MonthlySpendUsed:  formatUSDCents(settings.MonthlySpendCentsUsed),
+		TopupUnitPrice:    formatUSDCents(plan.TopupUnitUSDCents),
+		TopupUnitCredits:  billing.TopupUnitCredits,
 		StripeConfigured:  b.stripeConfigured(),
 		HasStripeCustomer: acct.StripeCustomerID != "",
 		PlanOptions:       b.billingPlanOptions(acct.PlanCode),
@@ -467,8 +478,10 @@ func (b *Bot) billingPlanOptions(currentPlan string) []billingPlanOptionView {
 			Code:             plan.Code,
 			Label:            plan.Label,
 			Monthly:          formatUSDCents(plan.MonthlyUSDCents),
+			TopupUnitPrice:   formatUSDCents(plan.TopupUnitUSDCents),
 			IncludedCredits:  plan.IncludedCredits,
 			MaxFlavor:        plan.MaxFlavor,
+			SandboxOptions:   sandboxOptionsLabel(plan.MaxFlavor),
 			PerRunMaxCredits: plan.PerRunMaxCredits,
 			Configured:       b.stripeSubscriptionPriceID(plan.Code) != "",
 			Current:          plan.Code == currentPlan,
@@ -477,11 +490,49 @@ func (b *Bot) billingPlanOptions(currentPlan string) []billingPlanOptionView {
 	return out
 }
 
+func sandboxOptionsLabel(maxFlavor string) string {
+	if maxFlavor == billing.FlavorStandard {
+		return "Standard only"
+	}
+	return "All sizes"
+}
+
+func billingPlanForTopup(planCode string) billing.PaidPlan {
+	if plan, ok := billing.PaidPlanByCode(planCode); ok {
+		return plan
+	}
+	return billing.DefaultPaidPlan()
+}
+
+func billingPlanLabel(planCode string) string {
+	if plan, ok := billing.PaidPlanByCode(planCode); ok {
+		return plan.Label
+	}
+	switch planCode {
+	case "", billing.PlanFree:
+		return "Free"
+	case billing.PlanTrial:
+		return "Trial"
+	default:
+		return planCode
+	}
+}
+
 func formatUSDCents(cents int) string {
 	if cents%100 == 0 {
 		return fmt.Sprintf("$%d", cents/100)
 	}
 	return fmt.Sprintf("$%.2f", float64(cents)/100)
+}
+
+func formatUSDDollarInput(cents int) string {
+	if cents <= 0 {
+		return "0"
+	}
+	if cents%100 == 0 {
+		return strconv.Itoa(cents / 100)
+	}
+	return fmt.Sprintf("%d.%02d", cents/100, cents%100)
 }
 
 func (b *Bot) repoBillingViewData(ctx context.Context, orgID string) (map[string]billing.RepoSetting, []billing.Flavor) {
@@ -679,22 +730,43 @@ func (b *Bot) billingTopupSettingsHandler(w http.ResponseWriter, r *http.Request
 		http.Error(w, "bad form", http.StatusBadRequest)
 		return
 	}
-	settings := billing.TopupSettings{
-		AutoTopupEnabled: r.FormValue("auto_topup_enabled") == "1",
-		TriggerThreshold: parseBillingInt(r.FormValue("trigger_threshold"), 0),
-		TargetBalance:    parseBillingInt(r.FormValue("target_balance"), 0),
-		MonthlyMaxUnits:  parseBillingInt(r.FormValue("monthly_max_units"), 0),
-	}
 	if b.billing == nil || !b.billing.Enabled() {
 		http.Error(w, "billing is not configured", http.StatusInternalServerError)
 		return
 	}
+	overview, err := b.billing.Overview(r.Context(), p.OrgID)
+	if err != nil {
+		b.log.Error("load billing account for top-up settings", "error", err, "org", p.OrgID)
+		http.Error(w, "load billing settings: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	settings := billingTopupSettingsFromSpend(
+		overview.Account,
+		r.FormValue("auto_topup_enabled") == "1",
+		parseBillingCents(r.FormValue("monthly_max_spend"), 0),
+	)
 	if _, err := b.billing.UpdateTopupSettings(r.Context(), p.OrgID, settings); err != nil {
 		b.log.Error("update billing top-up settings", "error", err, "org", p.OrgID)
 		http.Error(w, "save billing settings: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	http.Redirect(w, r, "/settings/org?tab=billing&saved=billing_saved", http.StatusFound)
+}
+
+func billingTopupSettingsFromSpend(account billing.Account, enabled bool, monthlyMaxSpendCents int) billing.TopupSettings {
+	plan := billingPlanForTopup(account.PlanCode)
+	monthlyMaxUnits := 0
+	if monthlyMaxSpendCents > 0 && plan.TopupUnitUSDCents > 0 {
+		monthlyMaxUnits = monthlyMaxSpendCents / plan.TopupUnitUSDCents
+	}
+	reserve := max(account.PerRunMaxCredits, 1)
+	return billing.TopupSettings{
+		AutoTopupEnabled: enabled,
+		TriggerThreshold: reserve,
+		TargetBalance:    reserve + billing.TopupUnitCredits,
+		MonthlyMaxUnits:  monthlyMaxUnits,
+		MonthlyMaxCents:  max(monthlyMaxSpendCents, 0),
+	}
 }
 
 func parseBillingInt(raw string, def int) int {
@@ -707,6 +779,45 @@ func parseBillingInt(raw string, def int) int {
 		return def
 	}
 	return n
+}
+
+func parseBillingCents(raw string, def int) int {
+	raw = strings.TrimSpace(raw)
+	raw = strings.TrimPrefix(raw, "$")
+	raw = strings.ReplaceAll(raw, ",", "")
+	if raw == "" {
+		return def
+	}
+	parts := strings.Split(raw, ".")
+	if len(parts) > 2 {
+		return def
+	}
+	dollarsRaw := parts[0]
+	if dollarsRaw == "" {
+		dollarsRaw = "0"
+	}
+	dollars, err := strconv.Atoi(dollarsRaw)
+	if err != nil || dollars < 0 {
+		return def
+	}
+	cents := 0
+	if len(parts) == 2 {
+		centsRaw := parts[1]
+		if centsRaw == "" {
+			centsRaw = "0"
+		}
+		if len(centsRaw) > 2 {
+			return def
+		}
+		for len(centsRaw) < 2 {
+			centsRaw += "0"
+		}
+		cents, err = strconv.Atoi(centsRaw)
+		if err != nil || cents < 0 {
+			return def
+		}
+	}
+	return dollars*100 + cents
 }
 
 func (b *Bot) agentSettingsActionHandler(w http.ResponseWriter, r *http.Request) {

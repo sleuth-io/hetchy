@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/hetchyhq/hetchy/internal/auth"
+	"github.com/hetchyhq/hetchy/internal/billing"
 	"github.com/hetchyhq/hetchy/internal/bootstrap"
 	"github.com/hetchyhq/hetchy/internal/db/sqlc"
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
@@ -269,6 +270,58 @@ func TestApplyDefaultRepoChange(t *testing.T) {
 				t.Fatalf("status = %d, want %d body=%q", gotCode, tc.wantCode, rec.Body.String())
 			}
 		})
+	}
+}
+
+func TestBillingTopupSettingsFromSpend(t *testing.T) {
+	account := billing.Account{PlanCode: billing.PlanGrowth, PerRunMaxCredits: 6}
+	got := billingTopupSettingsFromSpend(account, true, 2000)
+
+	if !got.AutoTopupEnabled {
+		t.Fatal("AutoTopupEnabled = false, want true")
+	}
+	if got.TriggerThreshold != 6 {
+		t.Fatalf("TriggerThreshold = %d, want 6", got.TriggerThreshold)
+	}
+	if got.TargetBalance != 16 {
+		t.Fatalf("TargetBalance = %d, want 16", got.TargetBalance)
+	}
+	// Growth top-ups are $6.50, so a $20 spend cap permits 3 whole units.
+	if got.MonthlyMaxUnits != 3 {
+		t.Fatalf("MonthlyMaxUnits = %d, want 3", got.MonthlyMaxUnits)
+	}
+	if got.MonthlyMaxCents != 2000 {
+		t.Fatalf("MonthlyMaxCents = %d, want 2000", got.MonthlyMaxCents)
+	}
+
+	got = billingTopupSettingsFromSpend(
+		billing.Account{PlanCode: billing.PlanStarter, PerRunMaxCredits: 1},
+		true,
+		2000,
+	)
+	if got.MonthlyMaxUnits != 1 {
+		t.Fatalf("starter MonthlyMaxUnits = %d, want 1", got.MonthlyMaxUnits)
+	}
+}
+
+func TestParseBillingCents(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want int
+	}{
+		{"", 42},
+		{"$27", 2700},
+		{"12.50", 1250},
+		{".99", 99},
+		{"1,234.05", 123405},
+		{"12.345", 42},
+		{"-1", 42},
+		{"abc", 42},
+	}
+	for _, tc := range cases {
+		if got := parseBillingCents(tc.raw, 42); got != tc.want {
+			t.Errorf("parseBillingCents(%q) = %d, want %d", tc.raw, got, tc.want)
+		}
 	}
 }
 

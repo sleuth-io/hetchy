@@ -206,10 +206,9 @@ func (b *Bot) billingTopupHandler(w http.ResponseWriter, r *http.Request) {
 
 	params := &stripe.CheckoutSessionCreateParams{
 		Mode: stripe.String(string(stripe.CheckoutSessionModePayment)),
-		LineItems: []*stripe.CheckoutSessionCreateLineItemParams{{
-			Price:    stripe.String(priceID),
-			Quantity: stripe.Int64(int64(quantity)),
-		}},
+		LineItems: []*stripe.CheckoutSessionCreateLineItemParams{
+			stripeTopupLineItem(priceID, quantity),
+		},
 		Customer:          stripe.String(acct.StripeCustomerID),
 		ClientReferenceID: stripe.String(p.OrgID),
 		SuccessURL:        stripe.String(b.settingsURL("billing", "saved=topup_started")),
@@ -238,9 +237,21 @@ func (b *Bot) billingTopupHandler(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, sess.URL, http.StatusSeeOther)
 }
 
+func stripeTopupLineItem(priceID string, quantity int) *stripe.CheckoutSessionCreateLineItemParams {
+	return &stripe.CheckoutSessionCreateLineItemParams{
+		Price:    stripe.String(priceID),
+		Quantity: stripe.Int64(int64(quantity)),
+		AdjustableQuantity: &stripe.CheckoutSessionCreateLineItemAdjustableQuantityParams{
+			Enabled: stripe.Bool(true),
+			Minimum: stripe.Int64(1),
+			Maximum: stripe.Int64(100),
+		},
+	}
+}
+
 func (b *Bot) billingPortalHandler(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.FromContext(r.Context())
-	if r.Method != http.MethodPost {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
@@ -248,9 +259,11 @@ func (b *Bot) billingPortalHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "admin role required", http.StatusForbidden)
 		return
 	}
-	if err := requireSameOrigin(r); err != nil {
-		http.Error(w, err.Error(), http.StatusForbidden)
-		return
+	if r.Method == http.MethodPost {
+		if err := requireSameOrigin(r); err != nil {
+			http.Error(w, err.Error(), http.StatusForbidden)
+			return
+		}
 	}
 	if b.billing == nil || !b.billing.Enabled() {
 		http.Error(w, "billing is not configured", http.StatusInternalServerError)
@@ -351,9 +364,9 @@ func (b *Bot) handleStripeCheckoutCompleted(ctx context.Context, event stripe.Ev
 		if sess.Mode != string(stripe.CheckoutSessionModePayment) || sess.PaymentStatus != "paid" {
 			return nil
 		}
-		credits := metadataInt(sess.Metadata, "credits", 0)
-		if credits == 0 {
-			credits = metadataInt(sess.Metadata, "quantity", 1) * billing.TopupUnitCredits
+		credits, err := b.stripeCheckoutTopupCredits(ctx, sess)
+		if err != nil {
+			return err
 		}
 		if _, _, err := b.billing.GrantTopupCreditsOnce(ctx, event.ID, string(event.Type), orgID, credits); err != nil {
 			return err
@@ -444,17 +457,23 @@ func paidAccountMirror(orgID, customerID, subscriptionID, status string, periodS
 		status = "active"
 	}
 	defaultPlan := billing.DefaultPaidPlan()
+	planCode := metadataString(metadata, "plan_code", defaultPlan.Code)
+	plan, ok := billing.PaidPlanByCode(planCode)
+	if !ok {
+		plan = defaultPlan
+		planCode = defaultPlan.Code
+	}
 	return billing.AccountMirror{
 		OrgID:                orgID,
 		StripeCustomerID:     customerID,
 		StripeSubscriptionID: subscriptionID,
-		PlanCode:             metadataString(metadata, "plan_code", defaultPlan.Code),
+		PlanCode:             planCode,
 		Status:               status,
 		CurrentPeriodStart:   periodStart,
 		CurrentPeriodEnd:     periodEnd,
-		IncludedCredits:      metadataInt(metadata, "included_credits", defaultPlan.IncludedCredits),
-		MaxFlavor:            metadataString(metadata, "max_flavor", defaultPlan.MaxFlavor),
-		PerRunMaxCredits:     metadataInt(metadata, "per_run_max_credits", defaultPlan.PerRunMaxCredits),
+		IncludedCredits:      metadataInt(metadata, "included_credits", plan.IncludedCredits),
+		MaxFlavor:            plan.MaxFlavor,
+		PerRunMaxCredits:     plan.PerRunMaxCredits,
 	}
 }
 
@@ -507,6 +526,44 @@ func metadataInt(metadata map[string]string, key string, def int) int {
 		return def
 	}
 	return n
+}
+
+func topupCreditsFromCheckoutMetadata(metadata map[string]string) int {
+	credits := metadataInt(metadata, "credits", 0)
+	if credits == 0 {
+		credits = metadataInt(metadata, "quantity", 1) * billing.TopupUnitCredits
+	}
+	return credits
+}
+
+func (b *Bot) stripeCheckoutTopupCredits(ctx context.Context, sess stripeCheckoutSessionObject) (int, error) {
+	if strings.TrimSpace(sess.ID) == "" || strings.TrimSpace(b.cfg.StripeSecretKey) == "" {
+		return topupCreditsFromCheckoutMetadata(sess.Metadata), nil
+	}
+	quantity, err := b.stripeCheckoutLineItemQuantity(ctx, sess.ID)
+	if err != nil {
+		return 0, err
+	}
+	if quantity <= 0 {
+		return 0, fmt.Errorf("stripe checkout session %s has no top-up line item quantity", sess.ID)
+	}
+	return quantity * billing.TopupUnitCredits, nil
+}
+
+func (b *Bot) stripeCheckoutLineItemQuantity(ctx context.Context, sessionID string) (int, error) {
+	lines := b.stripeClient().V1CheckoutSessions.ListLineItems(ctx, &stripe.CheckoutSessionListLineItemsParams{
+		Session: stripe.String(sessionID),
+	})
+	if err := lines.Err(); err != nil {
+		return 0, fmt.Errorf("list stripe checkout session line items: %w", err)
+	}
+	var quantity int64
+	for _, item := range lines.Data() {
+		if item != nil {
+			quantity += item.Quantity
+		}
+	}
+	return int(quantity), nil
 }
 
 func (b *Bot) settingsURL(tab, query string) string {

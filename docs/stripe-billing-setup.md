@@ -19,7 +19,7 @@ Hetchy owns:
 - Comped orgs via `billing_accounts.billing_exempt`.
 - Local credit balance and real-time admission before Daytona starts.
 - Repo sandbox flavor defaults in `repo_billing_settings`.
-- Auto top-up thresholds, target balance, and monthly max units.
+- Auto top-up reserve behavior and monthly max spend enforcement.
 - Run metering and credit capture/release.
 
 Do not configure Stripe Billing Credits or Stripe Meters for this launch. The app uses Hetchy-local credits and Stripe only as the payment and subscription source of truth.
@@ -52,7 +52,7 @@ The app exposes these Stripe-facing routes:
 | --- | --- |
 | `POST /billing/checkout` | Creates a Stripe Checkout Session in subscription mode. Admin-only. |
 | `POST /billing/topup` | Creates a Stripe Checkout Session in payment mode. Admin-only. |
-| `POST /billing/portal` | Creates a Stripe Customer Portal session. Admin-only. |
+| `GET /billing/portal` | Creates a Stripe Customer Portal session and redirects to Stripe. Admin-only. |
 | `POST /stripe/webhook` | Public Stripe webhook endpoint with signature verification. |
 
 The webhook handler listens for these event types:
@@ -75,10 +75,10 @@ Create the products and prices separately for each Stripe mode or Stripe account
 
 Create one monthly recurring price for each paid public plan:
 
-| Plan | Product name | Amount | Included credits | Max flavor | Per-run reservation |
+| Plan | Product name | Amount | Included credits | Sandbox options | Per-run maximum |
 | --- | --- | --- | ---: | --- | ---: |
 | `starter` | `Hetchy Starter` | `$49.00` | 50 | `standard` | 1 |
-| `team` | `Hetchy Team` | `$199.00` | 300 | `pro` | 3 |
+| `team` | `Hetchy Team` | `$199.00` | 300 | `all` | 6 |
 | `growth` | `Hetchy Growth` | `$499.00` | 1,000 | `max` | 6 |
 | `business` | `Hetchy Business` | `$1,499.00` | 4,000 | `max` | 6 |
 
@@ -90,7 +90,7 @@ Do not add these prices to Customer Portal plan switching until the app updates 
 plan_code=<starter|team|growth|business>
 included_credits=<plan included credits>
 max_flavor=<plan max flavor>
-per_run_max_credits=<plan per-run reservation>
+per_run_max_credits=<plan per-run maximum>
 ```
 
 ### Top-Up Product
@@ -113,10 +113,12 @@ Set the resulting Price IDs in `STRIPE_TOPUP_PRICE_IDS`.
 Manual top-ups use Checkout quantity:
 
 ```text
-quantity N => charges N top-up units at the org's current plan price and grants N * 10 Hetchy credits after checkout.session.completed
+the admin UI starts Checkout at 1 top-up unit
+Stripe Checkout allows the customer to adjust quantity from 1 to 100
+the webhook grants final Checkout line-item quantity * 10 Hetchy credits after checkout.session.completed
 ```
 
-Auto top-up uses the org's current plan top-up Price ID and charges exactly one quantity at a time.
+Auto top-up uses the org's current plan top-up Price ID and charges exactly one quantity at a time. The admin UI collects a monthly dollar cap; Hetchy converts that to the largest whole number of 10-credit top-up units that will not exceed the cap.
 
 ## Customer Portal
 
@@ -168,7 +170,7 @@ Current dev sandbox resources created with the Stripe CLI on May 15 and May 18, 
 | Plan/resource | Product ID | Price ID | Notes |
 | --- | --- | --- | --- |
 | Starter | `prod_UWcwzkjaHwsh1N` | `price_1TXZgoGbUsjCTHqj7uIOpQWI` | `$49.00` monthly, 50 credits, max `standard` |
-| Team | `prod_UWcwNawJSICYqO` | `price_1TXZgoGbUsjCTHqjsKErCD1E` | `$199.00` monthly, 300 credits, max `pro` |
+| Team | `prod_UWcwNawJSICYqO` | `price_1TXZgoGbUsjCTHqjsKErCD1E` | `$199.00` monthly, 300 credits, all sandbox sizes |
 | Growth | `prod_UWcw1Pw1B7R2sp` | `price_1TXZgoGbUsjCTHqjr0AVzxsg` | `$499.00` monthly, 1,000 credits, max `max` |
 | Business | `prod_UWcwILdgEPHWOM` | `price_1TXZgoGbUsjCTHqj3G6pt2w8` | `$1,499.00` monthly, 4,000 credits, max `max` |
 | Starter 10-credit top-up | `prod_UWcxj9L8dLX5G9` | `price_1TYYNpGbUsjCTHqjXgbdT1Zg` | `$12.50` one-time top-up |

@@ -128,15 +128,17 @@ type BillingStripeEvent struct {
 }
 
 type BillingTopupSetting struct {
-	OrgID              string             `json:"org_id"`
-	AutoTopupEnabled   bool               `json:"auto_topup_enabled"`
-	TriggerThreshold   int32              `json:"trigger_threshold"`
-	TargetBalance      int32              `json:"target_balance"`
-	MonthlyMaxUnits    int32              `json:"monthly_max_units"`
-	MonthlyUnitsUsed   int32              `json:"monthly_units_used"`
-	MonthlyAnchorMonth string             `json:"monthly_anchor_month"`
-	CreatedAt          pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+	OrgID                 string             `json:"org_id"`
+	AutoTopupEnabled      bool               `json:"auto_topup_enabled"`
+	TriggerThreshold      int32              `json:"trigger_threshold"`
+	TargetBalance         int32              `json:"target_balance"`
+	MonthlyMaxUnits       int32              `json:"monthly_max_units"`
+	MonthlyUnitsUsed      int32              `json:"monthly_units_used"`
+	MonthlyAnchorMonth    string             `json:"monthly_anchor_month"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+	MonthlyMaxCents       int32              `json:"monthly_max_cents"`
+	MonthlySpendCentsUsed int32              `json:"monthly_spend_cents_used"`
 }
 
 type Conversation struct {

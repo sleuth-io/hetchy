@@ -233,6 +233,7 @@ func (s *Store) UpdateTopupSettings(ctx context.Context, orgID string, settings 
 		TriggerThreshold: int32(max(settings.TriggerThreshold, 0)),
 		TargetBalance:    int32(max(settings.TargetBalance, 0)),
 		MonthlyMaxUnits:  int32(max(settings.MonthlyMaxUnits, 0)),
+		MonthlyMaxCents:  int32(max(settings.MonthlyMaxCents, 0)),
 	})
 	if err != nil {
 		return TopupSettings{}, fmt.Errorf("update top-up settings: %w", err)
@@ -240,18 +241,19 @@ func (s *Store) UpdateTopupSettings(ctx context.Context, orgID string, settings 
 	return topupSettingsFromRow(row), nil
 }
 
-func (s *Store) IncrementTopupMonthlyUnits(ctx context.Context, orgID string, units int) (TopupSettings, error) {
+func (s *Store) IncrementTopupMonthlyUsage(ctx context.Context, orgID string, units, cents int) (TopupSettings, error) {
 	if !s.Enabled() {
 		return TopupSettings{}, pgx.ErrNoRows
 	}
-	if units <= 0 {
+	if units <= 0 && cents <= 0 {
 		return s.EnsureTopupSettings(ctx, orgID)
 	}
 	month := currentBillingMonth(time.Now())
-	row, err := s.db.Queries.IncrementBillingTopupMonthlyUnits(ctx, sqlc.IncrementBillingTopupMonthlyUnitsParams{
-		OrgID:              orgID,
-		MonthlyUnitsUsed:   int32(units),
-		MonthlyAnchorMonth: month,
+	row, err := s.db.Queries.IncrementBillingTopupMonthlyUsage(ctx, sqlc.IncrementBillingTopupMonthlyUsageParams{
+		OrgID:                 orgID,
+		MonthlyUnitsUsed:      int32(max(units, 0)),
+		MonthlySpendCentsUsed: int32(max(cents, 0)),
+		MonthlyAnchorMonth:    month,
 	})
 	if err != nil {
 		return TopupSettings{}, fmt.Errorf("increment monthly top-up usage: %w", err)
@@ -660,15 +662,17 @@ func accountFromRow(row sqlc.BillingAccount) Account {
 
 func topupSettingsFromRow(row sqlc.BillingTopupSetting) TopupSettings {
 	return TopupSettings{
-		OrgID:              row.OrgID,
-		AutoTopupEnabled:   row.AutoTopupEnabled,
-		TriggerThreshold:   int(row.TriggerThreshold),
-		TargetBalance:      int(row.TargetBalance),
-		MonthlyMaxUnits:    int(row.MonthlyMaxUnits),
-		MonthlyUnitsUsed:   int(row.MonthlyUnitsUsed),
-		MonthlyAnchorMonth: row.MonthlyAnchorMonth,
-		CreatedAt:          pgTime(row.CreatedAt),
-		UpdatedAt:          pgTime(row.UpdatedAt),
+		OrgID:                 row.OrgID,
+		AutoTopupEnabled:      row.AutoTopupEnabled,
+		TriggerThreshold:      int(row.TriggerThreshold),
+		TargetBalance:         int(row.TargetBalance),
+		MonthlyMaxUnits:       int(row.MonthlyMaxUnits),
+		MonthlyUnitsUsed:      int(row.MonthlyUnitsUsed),
+		MonthlyMaxCents:       int(row.MonthlyMaxCents),
+		MonthlySpendCentsUsed: int(row.MonthlySpendCentsUsed),
+		MonthlyAnchorMonth:    row.MonthlyAnchorMonth,
+		CreatedAt:             pgTime(row.CreatedAt),
+		UpdatedAt:             pgTime(row.UpdatedAt),
 	}
 }
 

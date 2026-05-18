@@ -62,7 +62,7 @@ func (s *Service) AdmitRun(ctx context.Context, req AdmissionRequest) (Admission
 	if !FlavorAllowed(flavor.Code, account.MaxFlavor) {
 		return Admission{}, FlavorNotAllowedError{Flavor: flavor.Code, MaxFlavor: account.MaxFlavor}
 	}
-	reserveCredits := max(account.PerRunMaxCredits, flavor.Multiplier)
+	reserveCredits := max(flavor.Multiplier, 1)
 	if account.BillingExempt {
 		if _, _, err := s.store.AdmitRun(ctx, req.OrgID, req.RunID, 0, flavor, req.StartedAt); err != nil {
 			return Admission{}, err
@@ -104,8 +104,9 @@ func (s *Service) maybeAutoTopup(ctx context.Context, account Account, reserveCr
 		return Account{}, ErrAutoTopupNotConfigured
 	}
 	target := max(settings.TargetBalance, reserveCredits)
+	topupUnitCents := topupUnitCentsForPlan(account.PlanCode)
 	for account.Balance() < target {
-		if settings.MonthlyMaxUnits > 0 && settings.MonthlyUnitsUsed >= settings.MonthlyMaxUnits {
+		if settings.MonthlyMaxCents <= 0 || settings.MonthlySpendCentsUsed+topupUnitCents > settings.MonthlyMaxCents {
 			break
 		}
 		if err := s.topupper.PurchaseTopupUnit(ctx, account); err != nil {
@@ -116,18 +117,23 @@ func (s *Service) maybeAutoTopup(ctx context.Context, account Account, reserveCr
 		if err != nil {
 			return Account{}, err
 		}
-		settings, err = s.store.IncrementTopupMonthlyUnits(ctx, account.OrgID, 1)
+		settings, err = s.store.IncrementTopupMonthlyUsage(ctx, account.OrgID, 1, topupUnitCents)
 		if err != nil {
 			return Account{}, err
-		}
-		if settings.MonthlyMaxUnits == 0 && account.Balance() >= reserveCredits {
-			break
 		}
 	}
 	if account.Balance() < reserveCredits {
 		return Account{}, InsufficientCreditsError{Needed: reserveCredits, Available: account.Balance()}
 	}
 	return account, nil
+}
+
+func topupUnitCentsForPlan(planCode string) int {
+	plan, ok := PaidPlanByCode(planCode)
+	if !ok {
+		plan = DefaultPaidPlan()
+	}
+	return max(plan.TopupUnitUSDCents, 0)
 }
 
 func (s *Service) FinalizeRun(ctx context.Context, runID, terminalState string, endedAt time.Time) error {

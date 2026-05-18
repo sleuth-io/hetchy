@@ -73,7 +73,7 @@ type Querier interface {
 	GetRepoSecretValue(ctx context.Context, arg GetRepoSecretValueParams) (RepoSecretValue, error)
 	GetRepoSetupSpec(ctx context.Context, arg GetRepoSetupSpecParams) (RepoSetupSpec, error)
 	GrantBillingTopupCredits(ctx context.Context, arg GrantBillingTopupCreditsParams) (BillingAccount, error)
-	IncrementBillingTopupMonthlyUnits(ctx context.Context, arg IncrementBillingTopupMonthlyUnitsParams) (BillingTopupSetting, error)
+	IncrementBillingTopupMonthlyUsage(ctx context.Context, arg IncrementBillingTopupMonthlyUsageParams) (BillingTopupSetting, error)
 	InsertBillingCreditReservation(ctx context.Context, arg InsertBillingCreditReservationParams) (BillingCreditReservation, error)
 	InsertBillingStripeEvent(ctx context.Context, arg InsertBillingStripeEventParams) (bool, error)
 	// Used by DeclareRequiredSecret to register a placeholder row for a
