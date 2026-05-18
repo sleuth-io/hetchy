@@ -147,7 +147,21 @@ func (b *Bot) recoverFramedAgentRun(ctx context.Context, sb *daytona.Sandbox, ru
 
 		if !res.SeenBegin {
 			status, err := b.sessionCommandStatus(ctx, sb, run.SessionID, run.CommandID)
-			if err == nil {
+			if err != nil {
+				if isPermanentRecoverySandboxError(err) {
+					b.handleRecoverySetupError(ctx, run, live, "Agent failed", unrecoverableCommandLogBody, err)
+					return
+				}
+				b.log.Warn("framed recovery pre-begin status check failed",
+					"run_id", run.ID,
+					"org", run.OrgID,
+					"thread", run.ThreadID,
+					"sandbox", run.SandboxID,
+					"session", run.SessionID,
+					"command", run.CommandID,
+					"error", err,
+				)
+			} else {
 				if code, done := sessionCommandExitCode(status); done {
 					finalRes, err := b.replayRecoveredLogTail(ctx, sb, &run, em, router, &frameState, &replayCursor)
 					if err != nil {
@@ -178,7 +192,7 @@ func (b *Bot) recoverFramedAgentRun(ctx context.Context, sb *daytona.Sandbox, ru
 
 		status, err := b.sessionCommandStatus(ctx, sb, run.SessionID, run.CommandID)
 		if err != nil {
-			b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
+			b.handleRecoverySetupError(ctx, run, live, "Agent failed", unrecoverableCommandLogBody, err)
 			return
 		}
 		if code, ok := sessionCommandExitCode(status); ok {

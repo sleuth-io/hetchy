@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
+	sdkerrors "github.com/daytonaio/daytona/libs/sdk-go/pkg/errors"
 
 	"github.com/hetchyhq/hetchy/internal/blocks"
 	"github.com/hetchyhq/hetchy/internal/convstore"
@@ -247,6 +248,76 @@ func TestRecoverAgentRunReadyTimesOutStuckFramedCommand(t *testing.T) {
 	}
 	if cleanupCall != "sandbox-1|recovered failed run" {
 		t.Fatalf("cleanup call = %q", cleanupCall)
+	}
+}
+
+func TestRecoverFramedStatusPermanentErrorsFail(t *testing.T) {
+	cases := []struct {
+		name    string
+		logText string
+	}{
+		{name: "pre-begin", logText: "agent output before frame\n"},
+		{name: "post-begin", logText: hetchyRunBeginSentinel("run_post_begin") + "\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			runID := "run_pre_begin"
+			if tc.name == "post-begin" {
+				runID = "run_post_begin"
+			}
+			store := &fakeRunStore{enabled: true}
+			convs := &fakeConversationStore{getErr: convstore.ErrNotFound}
+			var cleanupCall string
+			var statusCalls int
+			b := &Bot{
+				log:      discardLogger(),
+				runs:     store,
+				convs:    convs,
+				workerID: "worker-1",
+				getSandboxFn: func(_ context.Context, sandboxID string) (*daytona.Sandbox, error) {
+					return &daytona.Sandbox{ID: sandboxID}, nil
+				},
+				ensureSandboxStartedFn: func(context.Context, *daytona.Sandbox) error { return nil },
+				commandLogSnapshotFn: func(context.Context, *daytona.Sandbox, string, string) (string, error) {
+					return tc.logText, nil
+				},
+				sessionCommandStatusFn: func(context.Context, *daytona.Sandbox, string, string) (map[string]any, error) {
+					statusCalls++
+					return nil, sdkerrors.NewDaytonaNotFoundError("missing command", nil)
+				},
+				cleanupSandboxFn: func(_ context.Context, sb *daytona.Sandbox, reason string) {
+					cleanupCall = sb.ID + "|" + reason
+				},
+			}
+			run := runstore.Run{
+				ID:          runID,
+				OrgID:       "org_1",
+				ThreadID:    "thread_1",
+				UserRequest: "ship it",
+				SandboxID:   "sandbox-1",
+				SessionID:   "session-1",
+				CommandID:   "command-1",
+				CommandStep: "run-script",
+				RunKind:     "chat",
+			}
+
+			b.recoverAgentRunReady(context.Background(), run, nil)
+
+			if statusCalls == 0 {
+				t.Fatal("expected command status polling")
+			}
+			last := store.updateStates[len(store.updateStates)-1]
+			if last.state != runstore.StateFailed || !strings.Contains(last.lastErr, "missing command") {
+				t.Fatalf("last state = %+v", last)
+			}
+			block := convs.lastUpsert(t).ResponseBlocks[0][0]
+			if block.Kind != blocks.KindError || block.Title != "Agent failed" || !strings.Contains(block.Body, "could not be recovered") {
+				t.Fatalf("terminal block = %+v", block)
+			}
+			if cleanupCall != "sandbox-1|recovered failed run" {
+				t.Fatalf("cleanup call = %q", cleanupCall)
+			}
+		})
 	}
 }
 
