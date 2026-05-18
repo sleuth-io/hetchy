@@ -104,6 +104,8 @@ func TestBuildValidationPrompt_ArtifactSlotsEnabled(t *testing.T) {
 		"curl -fSs -X PUT",
 		"Authorization: Bearer",
 		"GitHub inline playback is not guaranteed",
+		"Do NOT stage, commit, push",
+		"GitHub blob/raw URLs",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("artifacts-on prompt missing %q\n%s", want, prompt)
@@ -128,6 +130,9 @@ func TestBuildValidationPrompt_ArtifactSlotsDisabled(t *testing.T) {
 	})
 	if strings.Contains(prompt, "HETCHY_ARTIFACT_SLOTS") || strings.Contains(prompt, "HETCHY_SCREENSHOT_SLOTS") {
 		t.Errorf("artifacts-off prompt should not mention upload env vars\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "Do NOT stage, commit, push") {
+		t.Errorf("artifacts-off prompt should still forbid committing proof files\n%s", prompt)
 	}
 	if !strings.Contains(prompt, "Validation: incomplete - <specific reason>") {
 		t.Errorf("artifacts-off prompt should require explicit incomplete validation\n%s", prompt)

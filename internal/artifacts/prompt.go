@@ -1,6 +1,43 @@
 package artifacts
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
+
+// ProofInstructions tells the agent how to handle generated proof files.
+// It is intentionally independent of repo-bootstrap: a user can ask for
+// screenshot proof even when the saved bootstrap spec is missing or failed
+// to load, and those proof files still must not be committed to the repo.
+func ProofInstructions(slotCount int) string {
+	var b strings.Builder
+	b.WriteString(`
+PROOF ARTIFACT HANDLING - read this carefully.
+
+If you create screenshots, recordings, diagrams, traces, or any other
+proof files, they are scratch validation artifacts, not repository
+changes. Save them outside tracked source when possible:
+
+  - Prefer /tmp/hetchy-validate/.
+  - For Playwright MCP screenshots, use .playwright-mcp/<name>.png if
+    the tool must write under the repo checkout.
+
+Do NOT stage, commit, push, or link to GitHub blob/raw URLs for
+generated proof artifacts unless the user explicitly asks to add that
+asset to the repository as source/docs content.
+`)
+	if slotCount > 0 {
+		b.WriteString(UploadInstructions(slotCount))
+	} else {
+		b.WriteString(`
+No artifact upload slots are available for this run. If proof was
+requested, describe what you attempted and mark validation incomplete
+instead of committing a generated proof file or embedding a local path
+in the PR body.
+`)
+	}
+	return b.String()
+}
 
 // UploadInstructions returns the prompt block that teaches the
 // in-sandbox agent how to PUT proof artifacts into pre-signed S3 slots

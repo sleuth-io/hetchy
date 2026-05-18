@@ -62,6 +62,8 @@ to %s and %s is checked out. Your task is the user request below.
 USER REQUEST:
 %s%s
 
+%s
+
 When you are done implementing the change:
   1. Create a new branch named %s.
   2. Run ` + "`make format`" + ` to format the code.
@@ -78,6 +80,8 @@ Conversation so far:
 
 USER REQUEST:
 %s%s
+
+%s
 
 When you are done implementing the change:
   1. Run ` + "`make format`" + ` to format the code.
@@ -156,11 +160,14 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, o
 	addDaytonaCacheEnv(env, b.cfg, oc, repo, repo.CacheMounted)
 
 	// Mint the default proof-artifact batch before constructing the
-	// prompt, so validation instructions can mention upload slots only
-	// when the S3 path is actually available. The run-scoped token lets
-	// the sandbox request more slots up to artifacts.MaxSlots.
+	// prompt, so proof instructions can mention upload slots whenever
+	// the S3 path is actually available. This must not depend on a
+	// saved bootstrap spec: users can explicitly ask for screenshot
+	// proof even when bootstrap generation or persistence failed. The
+	// run-scoped token lets the sandbox request more slots up to
+	// artifacts.MaxSlots.
 	var slotsManifest []artifacts.Slot
-	if opts.ValidateChanges && spec != nil {
+	if opts.ValidateChanges && repo.RepoID != 0 {
 		prefix := fmt.Sprintf("%s/%d/%s", oc.OrgID, repo.RepoID, requestID)
 		s, err := b.addArtifactRunEnv(ctx, prefix, env)
 		switch {
@@ -175,10 +182,14 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, o
 				"request_id", requestID, "error", err)
 		}
 	}
+	proofInstructions := ""
+	if opts.ValidateChanges && spec == nil {
+		proofInstructions = artifacts.ProofInstructions(len(slotsManifest))
+	}
 
 	originalPrompt := fmt.Sprintf(agentPromptTemplate,
 		repo.Slug, wd, repo.BaseBranch,
-		userRequest, conditionalTasksPrompt(opts), branch, repo.BaseBranch,
+		userRequest, conditionalTasksPrompt(opts), proofInstructions, branch, repo.BaseBranch,
 	)
 	finalPrompt := originalPrompt
 	if spec != nil {
@@ -602,7 +613,7 @@ func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx
 	addAgentEnv(env, b.cfg, agent)
 
 	var slotsManifest []artifacts.Slot
-	if opts.ValidateChanges && spec != nil {
+	if opts.ValidateChanges && repo.RepoID != 0 {
 		// Follow-ups can still need fresh proof links. Issue a new
 		// run-scoped batch under a follow-up prefix so keys don't
 		// collide with the initial request.
@@ -653,6 +664,7 @@ func buildFollowUpPrompt(ownerRepo string, rec convstore.Record, userRequest str
 	prompt := fmt.Sprintf(agentFollowUpPromptTemplate,
 		repoWorkdir(ownerRepo), rec.Branch, rec.PRURL,
 		history, userRequest, conditionalTasksPrompt(opts),
+		proofInstructionsForSpec(opts, spec, artifactSlotCount),
 	)
 	if spec == nil {
 		return prompt
@@ -662,6 +674,13 @@ func buildFollowUpPrompt(ownerRepo string, rec convstore.Record, userRequest str
 		Branch:            rec.Branch,
 		ArtifactSlotCount: artifactSlotCount,
 	})
+}
+
+func proofInstructionsForSpec(opts chatTaskOptions, spec *bootstrap.Spec, artifactSlotCount int) string {
+	if !opts.ValidateChanges || spec != nil {
+		return ""
+	}
+	return artifacts.ProofInstructions(artifactSlotCount)
 }
 
 func (b *Bot) runScriptForRequest(ctx context.Context, sb *daytona.Sandbox, sessionID, label, scriptBody string, env map[string]string, emit blocks.Emitter) (string, error) {
