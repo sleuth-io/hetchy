@@ -50,7 +50,6 @@ function updateRepoButton() {
   repoSelectorValueEl.textContent = label;
   repoSelectorBtn.title = 'Repository: ' + label;
   repoSelectorBtn.setAttribute('aria-label', 'Choose repository. Current: ' + label);
-  repoSelectorBtn.classList.toggle('has-selection', !!selectedRepoSlug);
 }
 
 function chooseRepo(slug) {
@@ -113,7 +112,12 @@ function populateRepoPicker() {
     item.type = 'button';
     item.className = 'repo-choice' + (slug === selectedRepoSlug ? ' is-selected' : '');
     item.dataset.repoSlug = slug;
-    if (choice.placeholder) item.disabled = true;
+    item.setAttribute('role', 'option');
+    item.setAttribute('aria-selected', String(slug === selectedRepoSlug));
+    if (choice.placeholder) {
+      item.disabled = true;
+      item.setAttribute('aria-disabled', 'true');
+    }
     const name = document.createElement('span');
     name.className = 'repo-choice-name';
     name.textContent = choice.label;
@@ -210,7 +214,6 @@ function updateToolsButton() {
   agentSelectorValueEl.textContent = agentLabel === 'none' ? 'No agent' : agentLabel;
   agentSelectorBtn.title = 'Agent: ' + agentLabel;
   agentSelectorBtn.setAttribute('aria-label', 'Choose agent. Current: ' + agentLabel);
-  agentSelectorBtn.classList.toggle('has-selection', !!selectedAgentSlug);
   toolsBtn.title = 'Validation ' + (validates ? 'on' : 'off') + '; code review ' + (reviewsBeforePush ? 'on' : 'off') + '; PR checks ' + (actionsPRChecks ? 'on' : 'off');
   toolsBtn.setAttribute('aria-label', 'Composer options. Validation ' + (validates ? 'on' : 'off') + '. Code review ' + (reviewsBeforePush ? 'on' : 'off') + '. PR checks ' + (actionsPRChecks ? 'on' : 'off') + '.');
   toolsBtn.classList.remove('has-agent');

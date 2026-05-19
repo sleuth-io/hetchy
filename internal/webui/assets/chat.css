@@ -899,7 +899,7 @@
        chip rather than dropping below into the keyboard's bite area. */
     #repo-popover,
     #agent-popover { left: 0; right: auto; top: auto;
-                     bottom: calc(100% + .4rem);
+                     bottom: calc(100% + .5rem);
                      width: min(18rem, calc(100vw - 1.5rem));
                      max-height: min(20rem, 60vh); }
     .repo-chip { max-width: 10rem; font-size: .82rem; }
