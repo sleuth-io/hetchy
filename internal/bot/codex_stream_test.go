@@ -68,6 +68,20 @@ func TestCodexStreamParser_CurrentCodexThreadEvents(t *testing.T) {
 	}
 }
 
+func TestCodexStreamParser_ExtractsPRURLFromCommandOutput(t *testing.T) {
+	emit := newCaptureEmitter()
+	p := newCodexStreamParser(emit)
+
+	p.Line(`{"type":"item.started","item":{"id":"cmd-1","type":"command_execution","command":"gh pr create","aggregated_output":"","status":"in_progress"}}`)
+	p.Line(`{"type":"item.completed","item":{"id":"cmd-1","type":"command_execution","command":"gh pr create","aggregated_output":"https://github.com/hetchyhq/hetchy/pull/212\n","exit_code":0,"status":"completed"}}`)
+	p.Line(`{"type":"item.completed","item":{"id":"msg-1","type":"agent_message","text":"Done."}}`)
+
+	prURL := p.Finish()
+	if prURL != "https://github.com/hetchyhq/hetchy/pull/212" {
+		t.Fatalf("PR URL = %q", prURL)
+	}
+}
+
 func TestCodexStreamParser_CommandDoneFinalEventFallsThrough(t *testing.T) {
 	emit := newCaptureEmitter()
 	p := newCodexStreamParser(emit)
