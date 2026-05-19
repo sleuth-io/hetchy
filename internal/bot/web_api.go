@@ -495,6 +495,7 @@ func (b *Bot) serveConversationDetail(w http.ResponseWriter, r *http.Request, th
 		w.WriteHeader(http.StatusNoContent)
 
 	default:
+		w.Header().Set("Allow", "GET, DELETE, PATCH")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }

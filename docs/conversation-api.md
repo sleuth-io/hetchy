@@ -10,6 +10,10 @@ Authorization: Bearer hetchy_...
 API keys are organization-scoped and are created by org admins in
 `/settings/org?tab=api-keys`.
 
+API-key requests run with member-level access regardless of the creating
+admin's role. Admin operations, including API-key and member management, require
+a browser session.
+
 ## Conversations
 
 Start a conversation and stream the first turn:

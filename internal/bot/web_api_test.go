@@ -535,6 +535,11 @@ func TestConversationResourceHandlerRejectsUnsafeAndMissingRecords(t *testing.T)
 			if rec.Code != tc.want {
 				t.Fatalf("status = %d, want %d body=%q", rec.Code, tc.want, rec.Body.String())
 			}
+			if tc.want == http.StatusMethodNotAllowed {
+				if got := rec.Header().Get("Allow"); got != "GET, DELETE, PATCH" {
+					t.Fatalf("Allow = %q, want GET, DELETE, PATCH", got)
+				}
+			}
 		})
 	}
 }
