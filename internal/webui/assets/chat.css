@@ -250,7 +250,7 @@
   #repo-flyout-root { position: relative; min-width: 0; display: inline-flex; }
   .repo-chip { display: inline-flex; align-items: center; gap: .35rem;
                height: 2rem; padding: 0 .5rem; border: 1px solid #d7d7dc;
-               border-radius: 1rem; background: #f7f7f8; color: #222;
+               border-radius: .6rem; background: #f7f7f8; color: #222;
                font-size: .85rem; font-family: inherit; cursor: pointer;
                max-width: 14rem; min-width: 0; line-height: 1; }
   .repo-chip:hover, .repo-chip[aria-expanded="true"] { background: #f0f0f2;
