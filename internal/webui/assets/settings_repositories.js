@@ -1,7 +1,7 @@
       // Delete-bootstrap flow:
       //   1. Confirm dialog explains the side-effect (a future re-run, not
       //      an immediate one) so users know the cost is paid lazily.
-      //   2. DELETE /api/repo-bootstrap drops the saved spec; the server
+      //   2. DELETE /api/v1/repo-bootstrap drops the saved spec; the server
       //      handler is idempotent and never deletes per-repo secrets.
       //   3. On success, swap the card's right-hand side to the
       //      "not bootstrapped" empty state in-place and show a toast —
@@ -18,7 +18,7 @@
           toastTimer = setTimeout(function () { toast.hidden = true; }, 6000);
         }
 
-        // Set / replace secret value — PUT /api/repo-secrets carries
+        // Set / replace secret value — PUT /api/v1/repo-secrets carries
         // the owner/name/secret + value. Same endpoint serves both
         // first-time set and replace; the "filled" state visible in
         // the row only changes the wording. On success we flip the
@@ -57,7 +57,7 @@
         // Clear-value dialog — same single-shared-instance pattern as
         // the delete-bootstrap one. The form's Clear button stamps
         // owner / name / secret + a back-pointer onto the dialog,
-        // calls showModal(); confirm runs DELETE /api/repo-secrets.
+        // calls showModal(); confirm runs DELETE /api/v1/repo-secrets.
         var clearDlg     = document.getElementById('clear-secret-dialog');
         var clearDlgName = document.getElementById('clear-secret-name');
         var clearDlgSlug = document.getElementById('clear-secret-slug');
@@ -79,7 +79,7 @@
             var qs  = '?owner=' + encodeURIComponent(owner)
                     + '&name=' + encodeURIComponent(name)
                     + '&secret_name=' + encodeURIComponent(secret);
-            var res = await fetch('/api/repo-secrets' + qs, { method: 'DELETE' });
+            var res = await fetch('/api/v1/repo-secrets' + qs, { method: 'DELETE' });
             if (!res.ok) {
               var body = await res.text();
               showToast('Could not clear ' + secret + ': ' + res.status + ' ' + (body || res.statusText), 'error');
@@ -139,7 +139,7 @@
             if (save) { save.disabled = true; save.textContent = 'Saving…'; }
             if (statusEl) { statusEl.hidden = true; statusEl.classList.remove('is-error'); }
             try {
-              var res = await fetch('/api/repo-secrets', {
+              var res = await fetch('/api/v1/repo-secrets', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ owner: owner, name: name, secret_name: secret, value: value }),
@@ -219,7 +219,7 @@
           }
           try {
             var qs  = '?owner=' + encodeURIComponent(owner) + '&name=' + encodeURIComponent(name);
-            var res = await fetch('/api/repo-bootstrap' + qs, { method: 'DELETE' });
+            var res = await fetch('/api/v1/repo-bootstrap' + qs, { method: 'DELETE' });
             if (!res.ok) {
               var body = await res.text();
               showToast('Could not delete: ' + res.status + ' ' + (body || res.statusText), 'error');

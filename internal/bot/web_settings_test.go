@@ -114,6 +114,60 @@ func TestPopulateSettingsTabDataAgentsUsesFallbackProfiles(t *testing.T) {
 	}
 }
 
+func TestAPIKeySettingsActionHandlerRejectsInvalidRequests(t *testing.T) {
+	cases := []struct {
+		name   string
+		role   string
+		method string
+		origin string
+		want   int
+	}{
+		{name: "wrong method", role: "admin", method: http.MethodGet, want: http.StatusMethodNotAllowed},
+		{name: "member forbidden", role: "member", method: http.MethodPost, origin: "http://example.com", want: http.StatusForbidden},
+		{name: "missing origin", role: "admin", method: http.MethodPost, want: http.StatusForbidden},
+		{name: "api keys not configured", role: "admin", method: http.MethodPost, origin: "http://example.com", want: http.StatusInternalServerError},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			b := newBypassOrgBot(t, tc.role)
+			handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.apiKeySettingsActionHandler)))
+
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(tc.method, "http://example.com/settings/org/api-keys/create", strings.NewReader("name=test"))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			if tc.origin != "" {
+				req.Header.Set("Origin", tc.origin)
+			}
+			handler.ServeHTTP(rec, req)
+			if rec.Code != tc.want {
+				t.Fatalf("status = %d, want %d body=%q", rec.Code, tc.want, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestRenderAPIKeysSettingsShowsCreatedToken(t *testing.T) {
+	b := newBypassOrgBot(t, "admin")
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/settings/org?tab=api-keys", nil)
+	p := auth.Principal{
+		UserID: "user_test",
+		Email:  "test@hetchy.local",
+		OrgID:  "org_test",
+		Role:   "admin",
+	}
+
+	b.renderAPIKeysSettings(rec, req, p, "hetchy_visible_once", "API key created.")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	for _, want := range []string{"API keys", "API key created.", "hetchy_visible_once"} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Fatalf("settings page missing %q", want)
+		}
+	}
+}
+
 func TestSettingsHandlerGetAndPostWithFakes(t *testing.T) {
 	store := &fakeOrgStore{
 		getConfig: orgcfg.Config{

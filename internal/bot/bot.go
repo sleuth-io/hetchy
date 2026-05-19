@@ -22,6 +22,7 @@ import (
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/types"
 
 	"github.com/hetchyhq/hetchy/internal/agents"
+	"github.com/hetchyhq/hetchy/internal/apikeys"
 	"github.com/hetchyhq/hetchy/internal/artifacts"
 	"github.com/hetchyhq/hetchy/internal/auth"
 	"github.com/hetchyhq/hetchy/internal/blocks"
@@ -92,6 +93,7 @@ type Bot struct {
 	convs     conversationStore
 	runs      runStore
 	agents    *agents.Store
+	apiKeys   *apikeys.Store
 	auth      *auth.Service
 	slack     *slackManager
 	bootstrap bootstrapStore
@@ -102,7 +104,7 @@ type Bot struct {
 	// artifactSlots tracks run-scoped bearer tokens for in-sandbox
 	// requests that need more slots than the default batch.
 	artifactSlots *artifactSlotBroker
-	// live tracks in-flight chat turns so the /chat/stream
+	// live tracks in-flight chat turns so the conversation events API
 	// reattach endpoint can find them and replay buffered
 	// SSE events to a reloading tab. Goroutine-safe.
 	live *liveRegistry
@@ -248,6 +250,7 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 		convs:            convstore.New(store),
 		runs:             runstore.New(store),
 		agents:           agents.NewStore(store),
+		apiKeys:          apikeys.New(store),
 		bootstrap:        bootstrap.New(store, cipher),
 		artifacts:        artifactSigner,
 		artifactSlots:    newArtifactSlotBroker(artifactSigner),
@@ -647,7 +650,7 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		TaskOptions: taskOptions,
 	}
 	// Persist the row immediately — before we spend 10–30s creating the
-	// sandbox — so the LHN sidebar and /api/conversations both see this
+	// sandbox — so the LHN sidebar and /api/v1/conversations both see this
 	// chat as soon as the user clicks Send. Without this, a reload during
 	// sandbox creation finds nothing and the chat disappears from the
 	// list until the first persister tick fires inside runFreshAgent.
@@ -966,7 +969,7 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 		return
 	}
 	// Mark this fresh-run sandbox as owned by the current turn. The
-	// /chat/cancel handler uses this only as an opportunistic cleanup path;
+	// conversation cancel handler uses this only as an opportunistic cleanup path;
 	// the agent goroutine below remains the authoritative cleanup owner
 	// because a cancel can arrive in the small window before this ID is set.
 	setLiveRunSandboxID(ctx, sb.ID, true)
