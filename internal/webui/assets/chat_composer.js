@@ -47,12 +47,21 @@ function selectedRepoLabel() {
 function updateRepoButton() {
   if (!repoSelectorValueEl || !repoSelectorBtn) return;
   const label = selectedRepoLabel();
+  const suffix = repoLocked ? ' (set for this chat)' : '';
   repoSelectorValueEl.textContent = label;
-  repoSelectorBtn.title = 'Repository: ' + label;
-  repoSelectorBtn.setAttribute('aria-label', 'Choose repository. Current: ' + label);
+  repoSelectorBtn.title = 'Repository: ' + label + suffix;
+  repoSelectorBtn.setAttribute('aria-label', 'Choose repository. Current: ' + label + suffix);
+}
+
+function setRepoPickerLocked(locked) {
+  repoLocked = !!locked;
+  if (repoSelectorBtn) repoSelectorBtn.disabled = repoLocked;
+  if (repoLocked) closeRepoPopover();
+  updateRepoButton();
 }
 
 function chooseRepo(slug) {
+  if (repoLocked) return;
   selectedRepoSlug = (slug || '').trim();
   persistSelectedRepo();
   populateRepoPicker();
@@ -155,6 +164,7 @@ function populateRepoPicker() {
 }
 
 function applyConversationRepo(detail) {
+  const hasTurns = !!(detail && Array.isArray(detail.turns) && detail.turns.length);
   if (detail) {
     const owner = (detail.github_owner || '').trim();
     const name = (detail.github_repo || '').trim();
@@ -169,6 +179,7 @@ function applyConversationRepo(detail) {
   }
   populateRepoPicker();
   updateRepoButton();
+  setRepoPickerLocked(hasTurns);
 }
 
 async function loadAgents() {
@@ -211,9 +222,10 @@ function updateToolsButton() {
   const validates = validateBox ? validateBox.checked : true;
   const reviewsBeforePush = reviewBeforePushBox ? reviewBeforePushBox.checked : true;
   const actionsPRChecks = actionPRChecksBox ? actionPRChecksBox.checked : true;
+  const agentSuffix = agentLocked ? ' (set for this chat)' : '';
   agentSelectorValueEl.textContent = agentLabel === 'none' ? 'No agent' : agentLabel;
-  agentSelectorBtn.title = 'Agent: ' + agentLabel;
-  agentSelectorBtn.setAttribute('aria-label', 'Choose agent. Current: ' + agentLabel);
+  agentSelectorBtn.title = 'Agent: ' + agentLabel + agentSuffix;
+  agentSelectorBtn.setAttribute('aria-label', 'Choose agent. Current: ' + agentLabel + agentSuffix);
   toolsBtn.title = 'Validation ' + (validates ? 'on' : 'off') + '; code review ' + (reviewsBeforePush ? 'on' : 'off') + '; PR checks ' + (actionsPRChecks ? 'on' : 'off');
   toolsBtn.setAttribute('aria-label', 'Composer options. Validation ' + (validates ? 'on' : 'off') + '. Code review ' + (reviewsBeforePush ? 'on' : 'off') + '. PR checks ' + (actionsPRChecks ? 'on' : 'off') + '.');
   toolsBtn.classList.remove('has-agent');
@@ -315,6 +327,7 @@ function applyConversationTaskOptions(detail) {
 }
 
 function chooseAgent(slug) {
+  if (agentLocked) return;
   selectedAgentSlug = slug || '';
   persistSelectedAgent();
   populateAgentPicker();
@@ -323,6 +336,13 @@ function chooseAgent(slug) {
   closeAgentPopover();
   closeToolsPopover();
   inp.focus();
+}
+
+function setAgentPickerLocked(locked) {
+  agentLocked = !!locked;
+  if (agentSelectorBtn) agentSelectorBtn.disabled = agentLocked;
+  if (agentLocked) closeAgentPopover();
+  updateToolsButton();
 }
 
 function populateAgentPicker() {
@@ -391,10 +411,12 @@ function applyConversationModel(detail) {
 }
 
 function applyConversationAgent(detail) {
+  const hasTurns = !!(detail && Array.isArray(detail.turns) && detail.turns.length);
   selectedAgentSlug = detail ? (detail.agent_slug || '') : readStoredAgentSlug();
   if (!detail) reconcileSelectedAgentWithOptions();
   populateAgentPicker();
   updateToolsButton();
+  setAgentPickerLocked(hasTurns);
 }
 
 function chooseModel(value) {
@@ -454,6 +476,7 @@ function closeToolsPopover() {
 }
 
 function openAgentPopover() {
+  if (agentLocked) return;
   closeToolsPopover();
   closeRepoPopover();
   closeModelPopover();
@@ -468,6 +491,7 @@ function closeAgentPopover() {
 
 function openRepoPopover() {
   if (!repoPopover || !repoSelectorBtn) return;
+  if (repoLocked) return;
   repoPopover.hidden = false;
   repoSelectorBtn.setAttribute('aria-expanded', 'true');
   closeToolsPopover();

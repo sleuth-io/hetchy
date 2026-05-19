@@ -98,6 +98,13 @@ let selectedModel = (function () {
   return 'opus';
 })();
 let modelLocked = false;
+// repoLocked / agentLocked mirror modelLocked: once a chat has any
+// turns the repo and agent are pinned for the rest of the conversation
+// (the sandbox is already cloned against that repo and the agent
+// produced the running response), so the chips lock to plain-text and
+// a tooltip explains why.
+let repoLocked = false;
+let agentLocked = false;
 let isRunning = false;
 let isStopping = false;
 let stopRequested = false;
