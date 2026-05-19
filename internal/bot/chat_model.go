@@ -10,6 +10,10 @@ import "strings"
 // model use it before dispatch.
 type ClaudeModel string
 
+// ChatModel is the forward-looking name for ClaudeModel now that the
+// chat runtime can dispatch both Anthropic and OpenAI Codex models.
+type ChatModel = ClaudeModel
+
 const (
 	ClaudeModelOpus   ClaudeModel = "opus"
 	ClaudeModelSonnet ClaudeModel = "sonnet"

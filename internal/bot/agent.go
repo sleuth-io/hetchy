@@ -144,7 +144,7 @@ func (b *Bot) agentBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo 
 	canRunBootstrap := provider == modelProviderAnthropic || hasAnthropicCredentials(oc)
 	if !canRunBootstrap {
 		if provider == modelProviderOpenAI {
-			emit.Notify("Bootstrap skipped", "Claude credentials are not configured, so Codex will validate the change without the saved repo bootstrap step.")
+			emit.Notify("Bootstrap skipped", "Bootstrap runs Claude Code internally; without an Anthropic credential Codex will validate the change without the saved repo bootstrap step.")
 		}
 		return out, nil
 	}

@@ -60,6 +60,40 @@ func TestValidateOpenAICredential(t *testing.T) {
 		}
 	})
 
+	t.Run("agentIdentity auth_mode json wrapper accepted", func(t *testing.T) {
+		token := testJWT(t, map[string]any{
+			"agent_runtime_id":  "runtime-id",
+			"agent_private_key": "private-key",
+			"account_id":        "account-id",
+			"chatgpt_user_id":   "user-id",
+			"exp":               time.Now().Add(time.Hour).Unix(),
+		})
+		payload, err := json.Marshal(map[string]any{
+			"auth_mode":      "agentIdentity",
+			"agent_identity": token,
+		})
+		if err != nil {
+			t.Fatalf("marshal payload: %v", err)
+		}
+		if err := validateOpenAICredential(context.Background(), openaiCredOAuthToken, string(payload)); err != nil {
+			t.Fatalf("validateOpenAICredential: %v", err)
+		}
+	})
+
+	t.Run("agentIdentity auth_mode json rejects empty agent_identity", func(t *testing.T) {
+		payload, err := json.Marshal(map[string]any{
+			"auth_mode":      "agentIdentity",
+			"agent_identity": "",
+		})
+		if err != nil {
+			t.Fatalf("marshal payload: %v", err)
+		}
+		err = validateOpenAICredential(context.Background(), openaiCredOAuthToken, string(payload))
+		if !errors.Is(err, errOpenAIInvalidCredential) {
+			t.Fatalf("error = %v, want errOpenAIInvalidCredential", err)
+		}
+	})
+
 	t.Run("401 is invalid credential", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			http.Error(w, "bad key", http.StatusUnauthorized)
