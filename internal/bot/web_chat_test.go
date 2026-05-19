@@ -109,6 +109,11 @@ func TestChatTemplate_ComposerControls(t *testing.T) {
 		`model: selectedModel`,
 		`applyConversationModel(detail)`,
 		`setModelPickerLocked(true)`,
+		`setRepoPickerLocked(true)`,
+		`setAgentPickerLocked(true)`,
+		`setRepoPickerLocked(hasTurns)`,
+		`setAgentPickerLocked(hasTurns)`,
+		`(set for this chat)`,
 		`attachFilesBtn.addEventListener('mouseenter'`,
 	} {
 		if !strings.Contains(script, w) {

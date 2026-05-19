@@ -409,6 +409,8 @@ async function send() {
   if (lastDetail) lastDetail.task_options = taskOptions;
   if (isFirstTurn || agentChoiceApplies) {
     setModelPickerLocked(true);
+    setRepoPickerLocked(true);
+    setAgentPickerLocked(true);
     renderPendingMetadata(displayText, attachmentsForTurn);
   }
 
