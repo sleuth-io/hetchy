@@ -123,6 +123,37 @@ func TestBillingSettingsFormattingHelpers(t *testing.T) {
 	}
 }
 
+func TestBillingTopupSettingsFromSpend(t *testing.T) {
+	account := billing.Account{PlanCode: billing.PlanGrowth, PerRunMaxCredits: 6}
+	got := billingTopupSettingsFromSpend(account, true, 2000)
+
+	if !got.AutoTopupEnabled {
+		t.Fatal("AutoTopupEnabled = false, want true")
+	}
+	if got.TriggerThreshold != 6 {
+		t.Fatalf("TriggerThreshold = %d, want 6", got.TriggerThreshold)
+	}
+	if got.TargetBalance != 16 {
+		t.Fatalf("TargetBalance = %d, want 16", got.TargetBalance)
+	}
+	// Growth top-ups are $6.50, so a $20 spend cap permits 3 whole units.
+	if got.MonthlyMaxUnits != 3 {
+		t.Fatalf("MonthlyMaxUnits = %d, want 3", got.MonthlyMaxUnits)
+	}
+	if got.MonthlyMaxCents != 2000 {
+		t.Fatalf("MonthlyMaxCents = %d, want 2000", got.MonthlyMaxCents)
+	}
+
+	got = billingTopupSettingsFromSpend(
+		billing.Account{PlanCode: billing.PlanStarter, PerRunMaxCredits: 1},
+		true,
+		2000,
+	)
+	if got.MonthlyMaxUnits != 1 {
+		t.Fatalf("starter MonthlyMaxUnits = %d, want 1", got.MonthlyMaxUnits)
+	}
+}
+
 func TestBillingTopupSettingsFromSpendAdditionalCases(t *testing.T) {
 	settings := billingTopupSettingsFromSpend(billing.Account{
 		PlanCode:         billing.PlanTeam,
@@ -141,6 +172,73 @@ func TestBillingTopupSettingsFromSpendAdditionalCases(t *testing.T) {
 	settings = billingTopupSettingsFromSpend(billing.Account{PlanCode: "unknown"}, false, -10)
 	if settings.MonthlyMaxCents != 0 || settings.MonthlyMaxUnits != 0 {
 		t.Fatalf("negative monthly cap = %d/%d, want 0/0", settings.MonthlyMaxCents, settings.MonthlyMaxUnits)
+	}
+}
+
+func TestBillingPlanSwitchConfirmation(t *testing.T) {
+	team, _ := billing.PaidPlanByCode(billing.PlanTeam)
+	growth, _ := billing.PaidPlanByCode(billing.PlanGrowth)
+
+	title, msg := billingPlanSwitchConfirmation(team, true, growth, false, true, "Jun 18, 2026")
+	if title != "Switch to Growth?" {
+		t.Fatalf("upgrade title = %q, want Switch to Growth?", title)
+	}
+	if !strings.Contains(msg, "takes effect immediately") || !strings.Contains(msg, "prorated") {
+		t.Fatalf("upgrade message = %q, want immediate prorated billing copy", msg)
+	}
+
+	title, msg = billingPlanSwitchConfirmation(growth, true, team, false, true, "Jun 18, 2026")
+	if title != "Switch to Team?" {
+		t.Fatalf("downgrade title = %q, want Switch to Team?", title)
+	}
+	if !strings.Contains(msg, "Jun 18, 2026") || !strings.Contains(msg, "no immediate charge") {
+		t.Fatalf("downgrade message = %q, want next-cycle no-charge copy", msg)
+	}
+
+	_, msg = billingPlanSwitchConfirmation(growth, true, team, true, true, "Jun 18, 2026")
+	if msg != "" {
+		t.Fatalf("current-plan confirmation = %q, want empty", msg)
+	}
+}
+
+func TestBillingPendingPlanChange(t *testing.T) {
+	effective := time.Date(2026, 6, 18, 12, 0, 0, 0, time.UTC)
+	code, label, when, ok := billingPendingPlanChange(billing.Account{
+		PlanCode:               billing.PlanBusiness,
+		PendingPlanCode:        billing.PlanTeam,
+		PendingPlanEffectiveAt: effective,
+	})
+	if !ok || code != billing.PlanTeam || label != "Team" || when != "Jun 18, 2026" {
+		t.Fatalf("pending plan = (%q, %q, %q, %v), want Team on Jun 18, 2026", code, label, when, ok)
+	}
+
+	code, label, when, ok = billingPendingPlanChange(billing.Account{
+		PlanCode:        billing.PlanTeam,
+		PendingPlanCode: billing.PlanTeam,
+	})
+	if ok {
+		t.Fatalf("pending plan matching current plan should not render, got (%q, %q, %q)", code, label, when)
+	}
+}
+
+func TestParseBillingCents(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want int
+	}{
+		{"", 42},
+		{"$27", 2700},
+		{"12.50", 1250},
+		{".99", 99},
+		{"1,234.05", 123405},
+		{"12.345", 42},
+		{"-1", 42},
+		{"abc", 42},
+	}
+	for _, tc := range cases {
+		if got := parseBillingCents(tc.raw, 42); got != tc.want {
+			t.Errorf("parseBillingCents(%q) = %d, want %d", tc.raw, got, tc.want)
+		}
 	}
 }
 
