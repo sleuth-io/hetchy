@@ -364,6 +364,37 @@ func TestChatStreamHandlerReplaysClosedLiveRun(t *testing.T) {
 	}
 }
 
+func TestConversationResourceEventsRouteReplaysLiveRun(t *testing.T) {
+	b := newBypassOrgBot(t, "member")
+	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b.conversationResourceHandler(context.Background(), w, r)
+	})))
+
+	run, ok := b.live.RegisterIfAbsent(context.Background(), "org_test", "thread-1")
+	if !ok {
+		t.Fatal("expected live run registration")
+	}
+	run.Emit(liveEvent{Event: "notify", Data: []byte(`{"text":"hello"}`), Seq: 3})
+	run.Close()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/conversations/thread-1/events?after_seq=2", nil)
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	for _, want := range []string{
+		"id: 3\n",
+		"event: notify\n",
+		`data: {"text":"hello"}`,
+	} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Fatalf("stream response missing %q: %q", want, rec.Body.String())
+		}
+	}
+}
+
 func TestChatStreamHandlerReplaysDurableRunEvents(t *testing.T) {
 	b := newBypassOrgBot(t, "member")
 	ev := runEventForTest(t, "block_start", sseEvent{ID: "p2", Kind: blocks.KindResult, Title: "Done"})
@@ -513,6 +544,38 @@ func TestChatCancelHandlerCancelsRunAndSchedulesCleanup(t *testing.T) {
 	case got := <-cleanupCh:
 		t.Fatalf("follow-up cancel should not cleanup sandbox, got %+v", got)
 	case <-time.After(20 * time.Millisecond):
+	}
+}
+
+func TestConversationResourceCancelRouteCancelsLiveRun(t *testing.T) {
+	b := newBypassOrgBot(t, "member")
+	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b.conversationResourceHandler(context.Background(), w, r)
+	})))
+
+	run, ok := b.live.RegisterIfAbsent(context.Background(), "org_test", "thread-1")
+	if !ok {
+		t.Fatal("expected live run registration")
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/conversations/thread-1/cancel", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d; body=%q", rec.Code, http.StatusAccepted, rec.Body.String())
+	}
+	if !run.Cancelled() {
+		t.Fatal("run should be cancelled")
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/conversations/thread-1/cancel", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("wrong method status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
+	}
+	if got := rec.Header().Get("Allow"); got != "POST" {
+		t.Fatalf("Allow = %q, want POST", got)
 	}
 }
 

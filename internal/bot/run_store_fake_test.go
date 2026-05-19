@@ -20,8 +20,9 @@ type fakeRunStore struct {
 	getRun runstore.Run
 	getErr error
 
-	latestRun runstore.Run
-	latestErr error
+	latestRun   runstore.Run
+	latestErr   error
+	latestCalls int
 
 	activeRun runstore.Run
 	activeErr error
@@ -163,6 +164,7 @@ func (f *fakeRunStore) Get(context.Context, string) (runstore.Run, error) {
 func (f *fakeRunStore) LatestForThread(context.Context, string, string) (runstore.Run, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.latestCalls++
 	return f.latestRun, f.latestErr
 }
 

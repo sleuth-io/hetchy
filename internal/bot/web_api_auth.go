@@ -9,8 +9,6 @@ import (
 	"github.com/hetchyhq/hetchy/internal/auth"
 )
 
-const apiKeySessionPrefix = "api_key:"
-
 func (b *Bot) apiAuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if token := apiBearerToken(r); token != "" {
@@ -28,14 +26,18 @@ func (b *Bot) apiAuthMiddleware(next http.Handler) http.Handler {
 				writeAPIAuthError(w, http.StatusUnauthorized, "invalid api key")
 				return
 			}
-			if err := b.apiKeys.Touch(r.Context(), key.ID); err != nil {
-				b.log.Warn("touch api key", "org", key.OrgID, "key", key.ID, "error", err)
-			}
+			go func() {
+				if err := b.apiKeys.Touch(context.Background(), key.ID); err != nil {
+					b.log.Warn("touch api key", "org", key.OrgID, "key", key.ID, "error", err)
+				}
+			}()
+			sessionID := "api_key:" + key.ID
 			p := auth.Principal{
-				UserID:    apiKeySessionPrefix + key.ID,
+				UserID:    sessionID,
 				OrgID:     key.OrgID,
 				Role:      "member",
-				SessionID: apiKeySessionPrefix + key.ID,
+				SessionID: sessionID,
+				IsAPIKey:  true,
 			}
 			next.ServeHTTP(w, r.WithContext(auth.WithPrincipal(r.Context(), p)))
 			return
@@ -70,7 +72,7 @@ func apiBearerToken(r *http.Request) string {
 
 func isAPIKeyRequest(ctx context.Context) bool {
 	p, ok := auth.FromContext(ctx)
-	return ok && strings.HasPrefix(p.SessionID, apiKeySessionPrefix)
+	return ok && p.IsAPIKey
 }
 
 func requireSameOriginUnlessAPIKey(r *http.Request) error {

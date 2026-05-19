@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hetchyhq/hetchy/internal/auth"
 	"github.com/hetchyhq/hetchy/internal/blocks"
 	"github.com/hetchyhq/hetchy/internal/convstore"
 	"github.com/hetchyhq/hetchy/internal/db/sqlc"
@@ -337,6 +338,77 @@ func TestRepositoriesHandlerNilStoreReturnsEmptyList(t *testing.T) {
 	}
 }
 
+func TestAPIAuthMiddlewareFallsBackToCookieAuthAndRejectsUnconfiguredKeys(t *testing.T) {
+	b := newBypassOrgBot(t, "member")
+	called := false
+	handler := b.apiAuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		p, ok := auth.FromContext(r.Context())
+		if !ok || p.OrgID != "org_test" || p.IsAPIKey {
+			t.Fatalf("principal = %+v ok=%v", p, ok)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/conversations", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent || !called {
+		t.Fatalf("cookie auth status=%d called=%v body=%q", rec.Code, called, rec.Body.String())
+	}
+
+	called = false
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/conversations", nil)
+	req.Header.Set("Authorization", "Bearer hetchy_missing")
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("api key status = %d, want %d; body=%q", rec.Code, http.StatusUnauthorized, rec.Body.String())
+	}
+	if called {
+		t.Fatal("next handler should not run for rejected API key")
+	}
+	if got := rec.Header().Get("Content-Type"); got != "application/json; charset=utf-8" {
+		t.Fatalf("Content-Type = %q", got)
+	}
+}
+
+func TestAPIBearerTokenParsing(t *testing.T) {
+	cases := []struct {
+		name   string
+		header string
+		want   string
+	}{
+		{name: "empty"},
+		{name: "bearer", header: "Bearer hetchy_123", want: "hetchy_123"},
+		{name: "case insensitive scheme", header: "bearer token", want: "token"},
+		{name: "trims token", header: "Bearer   token  ", want: "token"},
+		{name: "wrong scheme ignored", header: "Basic token"},
+		{name: "missing space ignored", header: "Bearer"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/conversations", nil)
+			req.Header.Set("Authorization", tc.header)
+			if got := apiBearerToken(req); got != tc.want {
+				t.Fatalf("apiBearerToken(%q) = %q, want %q", tc.header, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRequireSameOriginUnlessAPIKey(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "http://example.com/api/v1/conversations/thread-1/cancel", nil)
+	if err := requireSameOriginUnlessAPIKey(req); err == nil {
+		t.Fatal("browser request without Origin should fail same-origin check")
+	}
+
+	ctx := auth.WithPrincipal(req.Context(), auth.Principal{OrgID: "org_test", IsAPIKey: true})
+	if err := requireSameOriginUnlessAPIKey(req.WithContext(ctx)); err != nil {
+		t.Fatalf("api key request should bypass same-origin check: %v", err)
+	}
+}
+
 func TestConversationsHandlerNilStoreReturnsEmptyList(t *testing.T) {
 	b := newBypassOrgBot(t, "member")
 	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.conversationsHandler)))
@@ -357,6 +429,54 @@ func TestConversationsHandlerNilStoreReturnsEmptyList(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("wrong method status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
+	}
+}
+
+func TestConversationsHandlerListUsesLiveStatusOnly(t *testing.T) {
+	b := newBypassOrgBot(t, "member")
+	b.convs = &fakeConversationStore{searchResult: []convstore.Record{
+		{OrgID: "org_test", ThreadID: "thread-running", History: []string{"running"}, UpdatedAt: time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)},
+		{OrgID: "org_test", ThreadID: "thread-idle", History: []string{"idle"}, UpdatedAt: time.Date(2026, 5, 18, 12, 1, 0, 0, time.UTC)},
+	}}
+	store := &fakeRunStore{enabled: true}
+	b.runs = store
+	if _, ok := b.live.RegisterIfAbsent(context.Background(), "org_test", "thread-running"); !ok {
+		t.Fatal("expected live run registration")
+	}
+	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.conversationsHandler)))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/conversations", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	var got []conversationSummary
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v body=%q", err, rec.Body.String())
+	}
+	if len(got) != 2 || got[0].Status != "running" || got[1].Status != "idle" {
+		t.Fatalf("statuses = %+v, want running/idle", got)
+	}
+	if store.latestCalls != 0 {
+		t.Fatalf("LatestForThread calls = %d, want 0 on list path", store.latestCalls)
+	}
+}
+
+func TestConversationCollectionHandlerMethodNotAllowedSetsAllow(t *testing.T) {
+	b := newBypassOrgBot(t, "member")
+	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b.conversationCollectionHandler(context.Background(), w, r)
+	})))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/conversations", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
+	}
+	if got := rec.Header().Get("Allow"); got != "GET, POST" {
+		t.Fatalf("Allow = %q, want GET, POST", got)
 	}
 }
 

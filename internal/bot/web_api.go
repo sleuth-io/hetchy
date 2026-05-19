@@ -2,6 +2,8 @@ package bot
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"mime"
@@ -243,7 +245,7 @@ func (b *Bot) conversationsHandler(w http.ResponseWriter, r *http.Request) {
 		out = append(out, conversationSummary{
 			ID:        rec.ThreadID,
 			Title:     conversationTitle(rec),
-			Status:    b.conversationStatus(r.Context(), p.OrgID, rec.ThreadID),
+			Status:    b.conversationListStatus(p.OrgID, rec.ThreadID),
 			PRURL:     rec.PRURL,
 			UpdatedAt: rec.UpdatedAt.UTC().Format(time.RFC3339),
 		})
@@ -604,7 +606,7 @@ func conversationTurns(rec convstore.Record, attachments []attachmentInfo, inclu
 			blocksForTurn = rec.ResponseBlocks[i]
 		}
 		turn := conversationTurn{
-			ID:      "turn_" + strconv.Itoa(i),
+			ID:      conversationTurnID(rec.ThreadID, i, message),
 			Index:   i,
 			Message: message,
 			Blocks:  blocksForTurn,
@@ -615,6 +617,23 @@ func conversationTurns(rec convstore.Record, attachments []attachmentInfo, inclu
 		turns = append(turns, turn)
 	}
 	return turns
+}
+
+func conversationTurnID(threadID string, index int, message string) string {
+	h := sha256.New()
+	_, _ = h.Write([]byte(threadID))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write([]byte(strconv.Itoa(index)))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write([]byte(message))
+	return "turn_" + hex.EncodeToString(h.Sum(nil)[:12])
+}
+
+func (b *Bot) conversationListStatus(orgID, threadID string) string {
+	if b.live != nil && b.live.Get(orgID, threadID) != nil {
+		return "running"
+	}
+	return "idle"
 }
 
 func (b *Bot) conversationStatus(ctx context.Context, orgID, threadID string) string {

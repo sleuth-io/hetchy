@@ -1,11 +1,12 @@
 package bot
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 )
 
@@ -18,6 +19,7 @@ func (b *Bot) conversationCollectionHandler(parentCtx context.Context, w http.Re
 	case http.MethodPost:
 		b.startConversationTurn(parentCtx, w, r, "")
 	default:
+		w.Header().Set("Allow", "GET, POST")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
@@ -80,14 +82,19 @@ func (b *Bot) conversationEventsHandler(w http.ResponseWriter, r *http.Request, 
 
 func (b *Bot) conversationCancelHandler(w http.ResponseWriter, r *http.Request, conversationID string) {
 	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	payload, err := json.Marshal(map[string]string{"session_id": conversationID})
+	if err != nil {
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
 	r2 := r.Clone(r.Context())
-	r2.Body = http.NoBody
 	r2.Header = r.Header.Clone()
 	r2.Header.Set("Content-Type", "application/json")
-	r2.Body = io.NopCloser(strings.NewReader(`{"session_id":` + strconv.Quote(conversationID) + `}`))
+	r2.Body = io.NopCloser(bytes.NewReader(payload))
 	b.chatCancelHandler(w, r2)
 }
 

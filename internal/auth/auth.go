@@ -65,6 +65,7 @@ type Principal struct {
 	OrgID     string
 	Role      string
 	SessionID string
+	IsAPIKey  bool
 }
 
 // HasOrg reports whether the principal currently has an active
