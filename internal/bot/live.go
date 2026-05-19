@@ -128,7 +128,7 @@ func (r *liveRun) Subscribe() *liveSubscription {
 }
 
 // SubscribeAfter is Subscribe with durable-event de-duplication. When
-// /chat/stream has already replayed agent_run_events through seq N,
+// the conversation events endpoint has already replayed agent_run_events through seq N,
 // it asks the in-memory fanout only for newer live events. Events with
 // Seq==0 are process-local fallback events and are always included.
 func (r *liveRun) SubscribeAfter(seq int64) *liveSubscription {
@@ -232,7 +232,7 @@ func liveKey(orgID, threadID string) string { return orgID + "\x00" + threadID }
 // when another goroutine already holds it. chatHandler uses this to
 // reject concurrent POSTs on the same session — the second caller
 // gets a 409 and the UI's reload-to-reattach path takes over via
-// /chat/stream.
+// the conversation events endpoint.
 func (r *liveRegistry) RegisterIfAbsent(ctx context.Context, orgID, threadID string) (*liveRun, bool) {
 	runCtx, cancel := context.WithCancel(ctx)
 	key := liveKey(orgID, threadID)

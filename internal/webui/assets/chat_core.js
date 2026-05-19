@@ -67,7 +67,7 @@ function readStoredRepoSlug() {
 }
 
 let selectedRepoSlug = readStoredRepoSlug();
-// repoOptions is the most-recent /api/repositories response. The picker
+// repoOptions is the most-recent /api/v1/repositories response. The picker
 // also injects the currently selected repo even when it falls outside
 // that page, so a chat that was started against a rare repo still shows
 // it in the dropdown after reload.

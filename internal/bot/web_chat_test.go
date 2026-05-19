@@ -71,7 +71,7 @@ func TestChatTemplate_ComposerControls(t *testing.T) {
 	for _, w := range []string{
 		`is-checked`,
 		`function stopRun()`,
-		`/chat/cancel`,
+		`/api/v1/conversations/`,
 		`setRunState(true)`,
 		`streamTurnWithReconnect`,
 		`after_seq`,
@@ -83,12 +83,13 @@ func TestChatTemplate_ComposerControls(t *testing.T) {
 		`conversationHasServerState`,
 		`renderPendingMetadata(displayText, attachmentsForTurn)`,
 		`conversationAgentIsMutable()`,
-		`setPayload('agent_slug', selectedAgentSlug)`,
+		`requestPayload.agent = selectedAgentSlug`,
 		`document.body.dataset.currentUserId`,
 		`taskOptionKeys`,
 		`applyConversationTaskOptions(detail)`,
-		`setPayload('review_code_before_push', taskOptions[taskOptionKeys.reviewBeforePush])`,
-		`setPayload('action_pr_checks_for_done', taskOptions[taskOptionKeys.actionPRChecks])`,
+		`task_options: taskOptions`,
+		`'/api/v1/conversations'`,
+		`'/api/v1/conversations/' + encodeURIComponent(sessionId) + '/cancel'`,
 		`agentStorageKey`,
 		`localStorage.setItem(agentStorageKey`,
 		`applyConversationAgent(detail)`,
@@ -96,7 +97,7 @@ func TestChatTemplate_ComposerControls(t *testing.T) {
 		`loadRepos`,
 		`repoStorageKey`,
 		`localStorage.setItem(repoStorageKey`,
-		`setPayload('repository', selectedRepoSlug)`,
+		`requestPayload.repository = selectedRepoSlug`,
 		`blk-awaiting-next`,
 		`markBlockAwaitingNext(ref.el)`,
 		`payload.meta.tag === 'sandbox_ready'`,
@@ -219,6 +220,56 @@ func TestParseJSONChatPostBody(t *testing.T) {
 	}
 	if len(body.Attachments) != 0 {
 		t.Fatalf("attachments len = %d, want 0", len(body.Attachments))
+	}
+}
+
+func TestParseConversationAPIJSONBody(t *testing.T) {
+	bodyJSON := []byte(`{
+		"id":"thread-json",
+		"message":"ship with context",
+		"model":"sonnet",
+		"agent":"bob",
+		"repository":"hetchyhq/hetchy",
+		"task_options":{
+			"validate":false,
+			"review_code_before_push":true,
+			"action_pr_checks_for_done":false
+		},
+		"attachments":[{
+			"filename":"notes.txt",
+			"content_type":"text/plain",
+			"data_base64":"aGVsbG8="
+		}]
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/conversations", bytes.NewReader(bodyJSON))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	body, ok := parseChatPostBody(rec, req)
+	if !ok {
+		t.Fatalf("parse failed with status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	if body.Message != "ship with context" || body.ID != "thread-json" || body.Model != "sonnet" {
+		t.Fatalf("unexpected parsed body: %+v", body)
+	}
+	if body.Agent == nil || *body.Agent != "bob" {
+		t.Fatalf("agent = %v, want bob", body.Agent)
+	}
+	if body.Validate == nil || *body.Validate {
+		t.Fatalf("validate = %v, want false", body.Validate)
+	}
+	if body.ReviewCodeBeforePush == nil || !*body.ReviewCodeBeforePush {
+		t.Fatalf("review = %v, want true", body.ReviewCodeBeforePush)
+	}
+	if body.ActionPRChecksForDone == nil || *body.ActionPRChecksForDone {
+		t.Fatalf("checks = %v, want false", body.ActionPRChecksForDone)
+	}
+	if len(body.Attachments) != 1 {
+		t.Fatalf("attachments len = %d, want 1", len(body.Attachments))
+	}
+	a := body.Attachments[0]
+	if a.Filename != "notes.txt" || a.ContentType != "text/plain" || string(a.Data) != "hello" || a.Source != "api" {
+		t.Fatalf("attachment = %+v data=%q", a, string(a.Data))
 	}
 }
 

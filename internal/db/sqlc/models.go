@@ -141,6 +141,18 @@ type GithubTeamMember struct {
 	GithubLogin    string `json:"github_login"`
 }
 
+type OrgApiKey struct {
+	ID         string             `json:"id"`
+	OrgID      string             `json:"org_id"`
+	Name       string             `json:"name"`
+	KeyPrefix  string             `json:"key_prefix"`
+	KeyHash    []byte             `json:"key_hash"`
+	CreatedBy  string             `json:"created_by"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	LastUsedAt pgtype.Timestamptz `json:"last_used_at"`
+	RevokedAt  pgtype.Timestamptz `json:"revoked_at"`
+}
+
 type OrgConfig struct {
 	OrgID                         string             `json:"org_id"`
 	SlackBotTokenEncrypted        []byte             `json:"slack_bot_token_encrypted"`

@@ -204,6 +204,13 @@
   .agent-meta span { color: #777; background: #fafafa; border: 1px solid #eee;
                      border-radius: .35rem; padding: .2rem .45rem; font-size: .75rem; }
 
+  /* API keys tab */
+  .api-key-created { margin: 0 0 1.25rem; padding: .9rem 1rem;
+                     border: 1px solid #b9e0c2; border-radius: .5rem;
+                     background: #ecf7ee; }
+  .api-key-created input { font-size: .82rem; }
+  .api-key-create-form { margin-bottom: 1.5rem; }
+
   /* Status tags shared across all bootstrap UI */
   .tag { display: inline-block; font-size: .72rem; padding: .15rem .55rem;
          border-radius: .8rem; font-weight: 500; text-transform: lowercase;

@@ -85,6 +85,13 @@ func withPrincipal(ctx context.Context, p Principal) context.Context {
 	return context.WithValue(ctx, ctxKey{}, p)
 }
 
+// WithPrincipal returns a derived context carrying p. It is exported for
+// non-cookie authenticators, such as org API keys, that need to enter the
+// same downstream auth context as WorkOS sessions.
+func WithPrincipal(ctx context.Context, p Principal) context.Context {
+	return withPrincipal(ctx, p)
+}
+
 // Config holds everything the auth service needs at construction time.
 type Config struct {
 	APIKey         string

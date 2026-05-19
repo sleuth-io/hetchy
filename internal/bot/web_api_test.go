@@ -246,7 +246,7 @@ func TestAgentsHandlerListsFallbackProfiles(t *testing.T) {
 	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.agentsHandler)))
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/agents", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/agents", nil)
 	handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -264,7 +264,7 @@ func TestAgentsHandlerListsFallbackProfiles(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPut, "/api/agents", nil)
+	req = httptest.NewRequest(http.MethodPut, "/api/v1/agents", nil)
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("wrong method status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
@@ -320,7 +320,7 @@ func TestRepositoriesHandlerNilStoreReturnsEmptyList(t *testing.T) {
 	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.repositoriesHandler)))
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/repositories?limit=5&q=anything", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/repositories?limit=5&q=anything", nil)
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
@@ -330,7 +330,7 @@ func TestRepositoriesHandlerNilStoreReturnsEmptyList(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/api/repositories", nil)
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/repositories", nil)
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("wrong method status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
@@ -342,7 +342,7 @@ func TestConversationsHandlerNilStoreReturnsEmptyList(t *testing.T) {
 	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.conversationsHandler)))
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/conversations?limit=999&offset=-5&q="+strings.Repeat("x", 300), nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/conversations?limit=999&offset=-5&q="+strings.Repeat("x", 300), nil)
 	handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -353,7 +353,7 @@ func TestConversationsHandlerNilStoreReturnsEmptyList(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/api/conversations", nil)
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/conversations", nil)
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("wrong method status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
@@ -365,7 +365,7 @@ func TestMembersHandlerBypassMemberList(t *testing.T) {
 	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.membersHandler)))
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/members", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/members", nil)
 	handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -396,11 +396,11 @@ func TestConversationDetailHandlerRejectsUnsafeAndMissingRecords(t *testing.T) {
 		want   int
 		header map[string]string
 	}{
-		{name: "slash in id", method: http.MethodGet, path: "/api/conversations/thread/extra", want: http.StatusNotFound},
-		{name: "unsafe id", method: http.MethodGet, path: "/api/conversations/thread%20bad", want: http.StatusNotFound},
-		{name: "nil store get", method: http.MethodGet, path: "/api/conversations/thread-1", want: http.StatusNotFound},
-		{name: "patch requires same origin", method: http.MethodPatch, path: "/api/conversations/thread-1", want: http.StatusForbidden},
-		{name: "unsupported method", method: http.MethodPost, path: "/api/conversations/thread-1", want: http.StatusMethodNotAllowed},
+		{name: "slash in id", method: http.MethodGet, path: "/api/v1/conversations/thread/extra", want: http.StatusNotFound},
+		{name: "unsafe id", method: http.MethodGet, path: "/api/v1/conversations/thread%20bad", want: http.StatusNotFound},
+		{name: "nil store get", method: http.MethodGet, path: "/api/v1/conversations/thread-1", want: http.StatusNotFound},
+		{name: "patch requires same origin", method: http.MethodPatch, path: "/api/v1/conversations/thread-1", want: http.StatusForbidden},
+		{name: "unsupported method", method: http.MethodPost, path: "/api/v1/conversations/thread-1", want: http.StatusMethodNotAllowed},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -417,25 +417,47 @@ func TestConversationDetailHandlerRejectsUnsafeAndMissingRecords(t *testing.T) {
 	}
 }
 
-func TestConversationDownloadHandlerNilStoreAndMethods(t *testing.T) {
+func TestConversationDetailResponseUsesTurnsAndOptionalAttachments(t *testing.T) {
 	b := newBypassOrgBot(t, "member")
-	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.conversationDownloadHandler)))
-
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/conversations/download/thread-1", nil)
-	handler.ServeHTTP(rec, req)
-	if rec.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("wrong method status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
+	b.convs = &fakeConversationStore{attachments: []convstore.Attachment{{
+		ID:          "att_1",
+		OrgID:       "org_test",
+		ThreadID:    "thread-1",
+		TurnIndex:   1,
+		Filename:    "notes.txt",
+		ContentType: "text/plain",
+		SizeBytes:   5,
+		Source:      "web",
+	}}}
+	rec := convstore.Record{
+		OrgID:     "org_test",
+		ThreadID:  "thread-1",
+		History:   []string{"first", "second"},
+		CreatedAt: time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC),
+		UpdatedAt: time.Date(2026, 5, 18, 12, 1, 0, 0, time.UTC),
+		ResponseBlocks: [][]blocks.Block{
+			{{Kind: blocks.KindNotify, Title: "setup"}},
+			{{Kind: blocks.KindResult, Title: "done"}},
+		},
 	}
-	if got := rec.Header().Get("Allow"); got != "GET" {
-		t.Fatalf("Allow = %q, want GET", got)
+
+	withoutAttachments := b.conversationDetailResponse(context.Background(), "org_test", rec, conversationIncludeOptions{Turns: true})
+	if withoutAttachments.ID != "thread-1" || len(withoutAttachments.Turns) != 2 {
+		t.Fatalf("unexpected detail: %+v", withoutAttachments)
+	}
+	if withoutAttachments.Turns[1].Message != "second" || len(withoutAttachments.Turns[1].Blocks) != 1 {
+		t.Fatalf("unexpected turn response: %+v", withoutAttachments.Turns[1])
+	}
+	if len(withoutAttachments.Turns[1].Attachments) != 0 || len(withoutAttachments.Attachments) != 0 {
+		t.Fatalf("attachments should be omitted unless requested: %+v", withoutAttachments)
 	}
 
-	rec = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodGet, "/api/conversations/download/thread-1", nil)
-	handler.ServeHTTP(rec, req)
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("nil store status = %d, want %d", rec.Code, http.StatusNotFound)
+	withAttachments := b.conversationDetailResponse(context.Background(), "org_test", rec, conversationIncludeOptions{Turns: true, Attachments: true})
+	if len(withAttachments.Attachments) != 1 {
+		t.Fatalf("detail attachments len = %d, want 1", len(withAttachments.Attachments))
+	}
+	if len(withAttachments.Turns[1].Attachments) != 1 || withAttachments.Turns[1].Attachments[0].ID != "att_1" {
+		t.Fatalf("turn attachments not grouped: %+v", withAttachments.Turns[1].Attachments)
 	}
 }
 
@@ -471,7 +493,7 @@ func TestAttachmentInfosReturnsDownloadMetadata(t *testing.T) {
 	if a.CreatedAt != "2026-05-18T12:30:00Z" {
 		t.Fatalf("CreatedAt = %q, want RFC3339 UTC", a.CreatedAt)
 	}
-	if a.DownloadURL != "/api/conversations/attachments/att_keep" {
+	if a.DownloadURL != "/api/v1/conversations/thread-1/attachments/att_keep" {
 		t.Fatalf("DownloadURL = %q", a.DownloadURL)
 	}
 }
@@ -486,10 +508,12 @@ func TestConversationAttachmentDownloadHandler(t *testing.T) {
 		ContentType: "text/html",
 		Data:        []byte("a,b\n1,2\n"),
 	}}}
-	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.conversationAttachmentDownloadHandler)))
+	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b.conversationResourceHandler(context.Background(), w, r)
+	})))
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/conversations/attachments/att_123", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/conversations/thread-1/attachments/att_123", nil)
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
@@ -511,7 +535,7 @@ func TestConversationAttachmentDownloadHandler(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/api/conversations/attachments/att_123", nil)
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/conversations/thread-1/attachments/att_123", nil)
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("method status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
@@ -521,7 +545,7 @@ func TestConversationAttachmentDownloadHandler(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodGet, "/api/conversations/attachments/../secret", nil)
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/conversations/thread-1/attachments/../secret", nil)
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("unsafe id status = %d, want %d", rec.Code, http.StatusNotFound)
