@@ -602,6 +602,26 @@ func TestHandleRequestRequestedRepoOverridesOrgDefault(t *testing.T) {
 	}
 }
 
+func TestHandleRequestEmptyRequestedRepoSuppressesOrgDefault(t *testing.T) {
+	convs := &fakeConversationStore{getErr: convstore.ErrNotFound}
+	b := testCoreBot(convs)
+	b.resolveRepoFn = func(_ context.Context, _ string, owner, name string) (repoCtx, error) {
+		t.Fatalf("resolveRepo should not run for explicit no-repository selection, got %s/%s", owner, name)
+		return repoCtx{}, errors.New("unreachable")
+	}
+	emit := newCaptureEmitter()
+
+	requested := ""
+	b.HandleRequest(context.Background(),
+		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant", DefaultGitHubOwner: "default-owner", DefaultGitHubRepo: "default-repo"},
+		"ship it", "req-1", "thread-1", "user-1",
+		chatTaskOptionPatch{}, nil, &requested, ClaudeModelOpus, emit)
+
+	if !emit.hasCall("notify", "Which repository") {
+		t.Fatalf("explicit no-repository selection should ask for a repo, got calls=%v", emit.Calls)
+	}
+}
+
 // TestHandleRequestRequestedRepoWithoutOrgDefaultSkipsPrompt covers
 // the new-conversation path when the org has no default repo: the
 // picker selection alone should be enough to launch the agent rather

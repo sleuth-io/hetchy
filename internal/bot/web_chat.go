@@ -30,9 +30,9 @@ type chatPostBody struct {
 	AgentSlug      *string `json:"agent_slug,omitempty"`
 	Agent          *string `json:"agent,omitempty"`
 	// Repository carries the composer repo-picker selection as
-	// "owner/name". Optional - empty string falls back to the
-	// org's saved default repo, matching the pre-picker behaviour
-	// for clients that don't surface the field.
+	// "owner/name". Nil falls back to the org's saved default repo
+	// for clients that don't surface the field; an explicit empty
+	// string means "No repository" and suppresses the default.
 	Repository *string `json:"repository,omitempty"`
 	Model      string  `json:"model,omitempty"`
 	// Task option fields are pointers so missing (older clients,

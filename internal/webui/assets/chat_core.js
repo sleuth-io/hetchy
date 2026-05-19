@@ -52,21 +52,30 @@ let selectedAgentSlug = readStoredAgentSlug();
 
 // Repository picker state. Persisted per user so a fresh chat in the
 // same browser starts on the last repo the user worked on, matching the
-// Agent picker. The selection is a plain "owner/name" slug — the empty
-// string means "use the org default" (or fall back to the bot's repo
-// question if no default is set).
+// Agent picker. The selection is a plain "owner/name" slug. Empty means
+// no web selection yet; the composer blocks submit until one is chosen.
 const repoStorageKey = 'hetchy.repo.' + currentUserID;
+const orgDefaultRepoSlug = (document.body.dataset.defaultRepoSlug || '').trim();
 
 function readStoredRepoSlug() {
   try {
     const saved = localStorage.getItem(repoStorageKey);
-    return saved === null ? '' : saved.trim();
+    if (saved === null) return null;
+    const trimmed = saved.trim();
+    if (!trimmed) return null;
+    if (trimmed === '__hetchy_no_repository__') return null;
+    return trimmed;
   } catch (e) {
-    return '';
+    return null;
   }
 }
 
-let selectedRepoSlug = readStoredRepoSlug();
+function initialRepoSlug() {
+  const stored = readStoredRepoSlug();
+  return stored === null ? orgDefaultRepoSlug : stored;
+}
+
+let selectedRepoSlug = initialRepoSlug();
 // repoOptions is the most-recent /api/v1/repositories response. The picker
 // also injects the currently selected repo even when it falls outside
 // that page, so a chat that was started against a rare repo still shows
