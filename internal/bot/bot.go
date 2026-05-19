@@ -492,6 +492,7 @@ func (b *Bot) prepareAgentRun(ctx context.Context, orgID, threadID, requestID, t
 
 func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, requestID, threadID, userID string, optionPatch chatTaskOptionPatch, requestedAgent *string, requestedRepo *string, model ClaudeModel, out blocks.Emitter, incomingAttachments ...convstore.Attachment) {
 	model = normalizeClaudeModel(model)
+	requestedRepoExplicit := requestedRepo != nil
 	requestedOwner, requestedName, requestedRepoOK := parseRequestedRepo(requestedRepo)
 	b.log.Info("request received",
 		"org", oc.OrgID,
@@ -616,7 +617,7 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		b.markRunState(ctx, runstore.StateFailed, errors.New("unknown agent"))
 		return
 	}
-	owner, name, ok := resolveRequestedOrDefaultRepo(requestedOwner, requestedName, requestedRepoOK, oc.DefaultGitHubOwner, oc.DefaultGitHubRepo)
+	owner, name, ok := resolveRequestedOrDefaultRepo(requestedOwner, requestedName, requestedRepoOK, requestedRepoExplicit, oc.DefaultGitHubOwner, oc.DefaultGitHubRepo)
 	if !ok {
 		emit.Notify("Which repository?", "Reply with `owner/name`.\n(You can save a default at /settings/org → Integrations.)")
 		partial := convstore.Record{
@@ -747,15 +748,15 @@ func requestedRepoSlug(owner, name string) string {
 
 // resolveRequestedOrDefaultRepo returns the repo to use for a new
 // conversation. An explicit composer-picker selection wins outright;
-// otherwise the org's saved default is used. Returns ok=false when
-// neither is available so the caller can fall back to asking the
-// user. The empty-string guard on each branch keeps the function
-// correct by construction: even if a future direct caller bypasses
-// parseRequestedRepo and passes hasReq=true with empty strings, we
-// don't write an empty owner/name into the conversation row.
-func resolveRequestedOrDefaultRepo(reqOwner, reqName string, hasReq bool, defOwner, defName string) (owner, name string, ok bool) {
+// when the picker explicitly sends an empty repository, skip the org
+// default so the caller can ask the user which repo to use. Older
+// clients that omit the field still fall back to the org default.
+func resolveRequestedOrDefaultRepo(reqOwner, reqName string, hasReq, explicitRepoField bool, defOwner, defName string) (owner, name string, ok bool) {
 	if hasReq && reqOwner != "" && reqName != "" {
 		return reqOwner, reqName, true
+	}
+	if explicitRepoField {
+		return "", "", false
 	}
 	if defOwner != "" && defName != "" {
 		return defOwner, defName, true

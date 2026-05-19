@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/hetchyhq/hetchy/internal/auth"
+	"github.com/hetchyhq/hetchy/internal/orgcfg"
 	"github.com/hetchyhq/hetchy/internal/webui"
 )
 
@@ -69,6 +70,25 @@ func TestIndexHandler_ShowsLandingAfterBypassLogout(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "Sign up") {
 		t.Errorf("expected landing page, got: %s", rec.Body.String())
+	}
+}
+
+func TestIndexHandler_RendersDefaultRepoSlug(t *testing.T) {
+	b := newBypassOrgBot(t, "admin")
+	b.orgs = &fakeOrgStore{getConfig: orgcfg.Config{
+		OrgID:              "org_test",
+		DefaultGitHubOwner: "acme",
+		DefaultGitHubRepo:  "web",
+	}}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	b.auth.Middleware(http.HandlerFunc(b.indexHandler)).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), `data-default-repo-slug="acme/web"`) {
+		t.Fatalf("chat template missing default repo slug, body=%s", rec.Body.String())
 	}
 }
 

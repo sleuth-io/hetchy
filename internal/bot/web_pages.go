@@ -41,11 +41,22 @@ func (b *Bot) indexHandler(w http.ResponseWriter, r *http.Request) {
 	} else {
 		b.log.Warn("profile fetch for chat header failed", "error", err, "user", p.UserID)
 	}
+	defaultRepoSlug := ""
+	if b.orgs != nil {
+		if oc, err := b.orgs.Get(r.Context(), p.OrgID); err == nil {
+			if oc.DefaultGitHubOwner != "" && oc.DefaultGitHubRepo != "" {
+				defaultRepoSlug = oc.DefaultGitHubOwner + "/" + oc.DefaultGitHubRepo
+			}
+		} else if !errors.Is(err, orgcfg.ErrNotFound) {
+			b.log.Warn("org config fetch for chat default repo failed", "error", err, "org", p.OrgID)
+		}
+	}
 	b.renderTemplate(w, webui.Chat, map[string]any{
-		"Email":       p.Email,
-		"DisplayName": displayName,
-		"GravatarURL": webui.GravatarURL(p.Email),
-		"UserID":      p.UserID,
+		"Email":           p.Email,
+		"DisplayName":     displayName,
+		"GravatarURL":     webui.GravatarURL(p.Email),
+		"UserID":          p.UserID,
+		"DefaultRepoSlug": defaultRepoSlug,
 	})
 }
 

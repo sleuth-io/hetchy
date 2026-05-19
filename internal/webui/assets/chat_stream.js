@@ -383,6 +383,13 @@ async function send() {
   const attachmentsForTurn = pendingAttachments.slice();
   if (!text && attachmentsForTurn.length === 0) return;
   const displayText = text || 'Use the attached file(s) as context.';
+  const agentChoiceApplies = conversationAgentIsMutable();
+  const repoChoiceApplies = conversationRepoIsMutable();
+  if (repoChoiceApplies && !selectedRepoSlug) {
+    showToast('repo-required', 'Choose a repository before sending this chat.', 'warn', 4500);
+    openRepoPopover();
+    return;
+  }
   stopRequested = false;
   inp.value = '';
   pendingAttachments = [];
@@ -392,8 +399,6 @@ async function send() {
 
   const taskOptions = currentTaskOptions();
 
-  const agentChoiceApplies = conversationAgentIsMutable();
-  const repoChoiceApplies = conversationRepoIsMutable();
   const willCreateConversation = !conversationHasServerState;
   const isFirstTurn = log.querySelectorAll('.msg').length === 0;
   addUserMsg(displayText, attachmentsForTurn.map(file => ({

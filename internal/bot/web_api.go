@@ -313,7 +313,7 @@ func (b *Bot) repositoriesHandler(w http.ResponseWriter, r *http.Request) {
 	// Handlers that test against a bot built without a DB pool (the
 	// bypass-bot path used by unit tests) won't have a Queries handle.
 	// Return an empty page instead of NPE-ing so the picker still
-	// renders the "Use org default" row cleanly.
+	// renders the "Choose repository" placeholder cleanly.
 	if b.store == nil || b.store.Queries == nil {
 		writeJSON(w, []repositorySummary{})
 		return
