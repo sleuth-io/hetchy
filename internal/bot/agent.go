@@ -97,6 +97,7 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, o
 	}
 	sessionID := "agent-" + requestID
 	prURL, err := b.runScriptForRequest(ctx, sb, sessionID, "agent", agentScript, env, emit)
+	b.writeBackOpenAICodexAuthJSON(ctx, sb, oc, requestID)
 	if err == nil && prURL != "" {
 		b.markRunFinalizing(ctx)
 		prURL, err = b.validateReportedPR(ctx, repo, branch, repo.BaseBranch, prURL)
@@ -479,6 +480,7 @@ func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx
 		env["SF_SPEC_HEALTH_B64"] = base64.StdEncoding.EncodeToString([]byte(spec.HealthCheck))
 	}
 	prURL, err := b.runScriptForRequest(ctx, sb, "followup-"+requestID, "followup", followupScript, env, emit)
+	b.writeBackOpenAICodexAuthJSON(ctx, sb, oc, requestID)
 	if err != nil {
 		return "", err
 	}

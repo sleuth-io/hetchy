@@ -477,7 +477,7 @@
             {{template "secret" dict "Field" "openai_api_key" "Label" "OpenAI API key" "Preview" .OpenAIAPIKeyPreview "Placeholder" "sk-…" "Required" false}}
           </div>
           <div class="cred-panel{{if eq $activeTab "subscription"}} active{{end}}" data-cred-panel="subscription">
-            <p class="cred-help">Run <code>codex login</code>, then paste the compact auth file from <code>jq -c . ~/.codex/auth.json</code>. This contains refresh credentials; treat it like a password.</p>
+            <p class="cred-help">Run <code>codex login</code>, then paste the compact auth file from <code>jq -c . ~/.codex/auth.json</code>. Hetchy saves Codex refreshes after runs; treat this like a password.</p>
             {{template "secret" dict "Field" "openai_codex_oauth_token" "Label" "Codex auth.json" "Preview" .OpenAICodexOAuthTokenPreview "Placeholder" `{"auth_mode":"chatgpt",…}` "Required" false}}
           </div>
           <button class="primary" type="submit">Save</button>

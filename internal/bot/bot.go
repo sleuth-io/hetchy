@@ -160,6 +160,7 @@ type Bot struct {
 	ensureSandboxStartedFn   sandboxStartCheckFunc
 	commandLogSnapshotFn     commandLogSnapshotFunc
 	sessionCommandStatusFn   sessionCommandStatusFunc
+	downloadSandboxFileFn    func(context.Context, *daytona.Sandbox, string) ([]byte, error)
 	usersOnlyInOrgFn         func(context.Context, string) ([]string, error)
 	deleteWorkOSOrgFn        func(context.Context, string) error
 	// branchNameFn lets tests bypass the LLM round-trip in
