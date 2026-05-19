@@ -20,7 +20,7 @@
 <script src="{{assetPath "chat_bootstrap.js"}}"></script>
 <link rel="stylesheet" href="{{assetPath "chat.css"}}">
 </head>
-<body data-current-user-id="{{.UserID}}">
+<body data-current-user-id="{{.UserID}}" data-default-repo-slug="{{.DefaultRepoSlug}}">
 
 <div id="toast-stack" aria-live="polite" aria-atomic="true"></div>
 
@@ -174,26 +174,6 @@
             </span>
           </button>
           <div class="tools-divider"></div>
-          <div id="agent-flyout-root">
-            <button id="agent-selector-btn" class="tools-menu-item" type="button"
-                    aria-label="Choose agent" aria-haspopup="menu" aria-expanded="false">
-              <svg class="tools-menu-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M12 8V4"/>
-                <rect x="6" y="8" width="12" height="10" rx="3"/>
-                <path d="M9 13h.01"/>
-                <path d="M15 13h.01"/>
-              </svg>
-              <span class="tools-menu-main">
-                <span class="tools-menu-label">Agent</span>
-                <span id="agent-selector-value" class="tools-menu-value">No agent</span>
-              </span>
-              <span class="tools-chevron" aria-hidden="true">›</span>
-            </button>
-            <div id="agent-popover" class="composer-popover" hidden>
-              <div id="agent-options"></div>
-            </div>
-          </div>
-          <div class="tools-divider"></div>
           <label class="tools-menu-item tools-checkbox-row">
             <input type="checkbox" id="validate-checkbox" checked>
             <svg class="tools-menu-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -269,6 +249,25 @@
                    placeholder="Search repositories…" aria-label="Search repositories">
           </div>
           <div id="repo-options"></div>
+        </div>
+      </div>
+      <div id="agent-flyout-root">
+        <button id="agent-selector-btn" class="agent-chip" type="button"
+                aria-label="Choose agent" aria-haspopup="menu" aria-expanded="false"
+                aria-controls="agent-popover" title="Choose agent">
+          <svg class="agent-chip-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 8V4"/>
+            <rect x="6" y="8" width="12" height="10" rx="3"/>
+            <path d="M9 13h.01"/>
+            <path d="M15 13h.01"/>
+          </svg>
+          <span id="agent-selector-value" class="agent-chip-label">No agent</span>
+          <svg class="agent-chip-chevron" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+            <path d="m7 10 5 5 5-5"/>
+          </svg>
+        </button>
+        <div id="agent-popover" class="composer-popover" hidden>
+          <div id="agent-options"></div>
         </div>
       </div>
       </div>
