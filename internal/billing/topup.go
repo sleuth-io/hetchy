@@ -187,16 +187,6 @@ func grantTopupCreditsForInvoice(ctx context.Context, q *sqlc.Queries, invoiceID
 	return accountFromRow(row), true, nil
 }
 
-func (s *Store) IncrementTopupMonthlyUsage(ctx context.Context, orgID string, units, cents int) (TopupSettings, error) {
-	if !s.Enabled() {
-		return TopupSettings{}, pgx.ErrNoRows
-	}
-	if units <= 0 && cents <= 0 {
-		return s.EnsureTopupSettings(ctx, orgID)
-	}
-	return incrementTopupMonthlyUsage(ctx, s.db.Queries, orgID, units, cents)
-}
-
 func incrementTopupMonthlyUsage(ctx context.Context, q *sqlc.Queries, orgID string, units, cents int) (TopupSettings, error) {
 	month := currentBillingMonth(time.Now())
 	row, err := q.IncrementBillingTopupMonthlyUsage(ctx, sqlc.IncrementBillingTopupMonthlyUsageParams{

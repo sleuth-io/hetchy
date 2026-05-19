@@ -145,7 +145,7 @@ RETURNING org_id, stripe_customer_id, stripe_subscription_id, plan_code, status,
 
 -- name: UpdateBillingCapturedBalances :one
 UPDATE billing_accounts
-   SET included_credits_used = GREATEST(included_credits_used + $2, 0),
+   SET included_credits_used = LEAST(GREATEST(included_credits_used + $2, 0), included_credits),
        topup_credits = GREATEST(topup_credits + $3, 0),
        updated_at = NOW()
 WHERE org_id = $1
