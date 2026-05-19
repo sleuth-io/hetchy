@@ -22,6 +22,56 @@ func claudeAuthEnv(oc orgcfg.Config) (name, value string) {
 	return "ANTHROPIC_API_KEY", oc.AnthropicAPIKey
 }
 
+func hasAnthropicCredentials(oc orgcfg.Config) bool {
+	return oc.AnthropicAPIKey != "" || oc.ClaudeCodeOAuthToken != ""
+}
+
+func hasOpenAICredentials(oc orgcfg.Config) bool {
+	return oc.OpenAIAPIKey != "" || oc.OpenAICodexOAuthToken != ""
+}
+
+func openAICodexAuth(oc orgcfg.Config) (kind, value string) {
+	if oc.OpenAICodexOAuthToken != "" {
+		return "access_token", oc.OpenAICodexOAuthToken
+	}
+	return "api_key", oc.OpenAIAPIKey
+}
+
+func (b *Bot) addRuntimeEnv(env map[string]string, oc orgcfg.Config, model ClaudeModel, requestID string) {
+	switch modelProvider(normalizeClaudeModel(model)) {
+	case modelProviderOpenAI:
+		kind, value := openAICodexAuth(oc)
+		if b != nil && b.log != nil {
+			b.log.Info("codex auth", "method", kind, "token", maskToken(value), "request_id", requestID)
+		}
+		env["HETCHY_CODEX_AUTH_KIND"] = kind
+		env["HETCHY_CODEX_AUTH_VALUE"] = value
+		env["HETCHY_CODEX_MODEL"] = codexModelForCLI(model)
+	default:
+		authKey, authVal := claudeAuthEnv(oc)
+		if b != nil && b.log != nil {
+			b.log.Info("claude auth", "method", authKey, "token", maskToken(authVal), "request_id", requestID)
+		}
+		env[authKey] = authVal
+		env["HETCHY_CLAUDE_MODEL"] = string(normalizeClaudeModel(model))
+	}
+}
+
+func missingCredentialError(model ClaudeModel, oc orgcfg.Config) (title, body string, missing bool) {
+	switch modelProvider(normalizeClaudeModel(model)) {
+	case modelProviderOpenAI:
+		if hasOpenAICredentials(oc) {
+			return "", "", false
+		}
+		return "Missing OpenAI Codex credentials", "This organization has neither an OpenAI API key nor a Codex subscription token set. Add one at /settings/org -> Integrations -> OpenAI Codex.", true
+	default:
+		if hasAnthropicCredentials(oc) {
+			return "", "", false
+		}
+		return "Missing Claude credentials", "This organization has neither a Claude API key nor a subscription token set. Add one at /settings/org -> Integrations -> Claude (Anthropic).", true
+	}
+}
+
 // maskToken returns exactly 8 asterisks so logs confirm a token is set without
 // revealing any characters or length information. Returns "(empty)" when s is
 // empty so callers can distinguish a missing token from a present one.

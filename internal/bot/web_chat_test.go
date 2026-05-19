@@ -330,13 +330,10 @@ func TestChatTemplate_LoadsSplitScriptsInOrder(t *testing.T) {
 	}
 }
 
-// TestChatHandlerRejectsGPTModelsBasedOnOpenAIConfig covers the two
-// 400 branches added when a user picks a GPT model: one when OpenAI
-// isn't configured at all (point them at /settings/org), and one when
-// it IS configured but the Codex runtime swap isn't wired yet (so the
-// chat doesn't silently fall back to a Claude run on a request that
-// asked for GPT).
-func TestChatHandlerRejectsGPTModelsBasedOnOpenAIConfig(t *testing.T) {
+// TestChatHandlerRoutesGPTModelsBasedOnOpenAIConfig covers the GPT
+// credential gate: missing OpenAI config is still a clean 400, while a
+// configured org is allowed through to the normal chat state machine.
+func TestChatHandlerRoutesGPTModelsBasedOnOpenAIConfig(t *testing.T) {
 	cases := []struct {
 		name      string
 		orgConfig orgcfg.Config
@@ -352,11 +349,11 @@ func TestChatHandlerRejectsGPTModelsBasedOnOpenAIConfig(t *testing.T) {
 			wantSub:   "OpenAI Codex isn't configured yet",
 		},
 		{
-			name:      "gpt rejected with runtime-not-wired when openai configured",
+			name:      "gpt accepted when openai configured",
 			orgConfig: orgcfg.Config{OrgID: "org_test", OpenAIAPIKey: "sk-stub"},
 			body:      `{"text":"hi","session_id":"t2","model":"gpt-balanced"}`,
-			wantStat:  http.StatusBadRequest,
-			wantSub:   "OpenAI Codex execution isn't wired",
+			wantStat:  http.StatusOK,
+			wantSub:   "Which repository",
 		},
 		{
 			name:      "unknown model rejected",

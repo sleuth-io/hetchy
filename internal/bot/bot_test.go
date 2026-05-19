@@ -218,21 +218,32 @@ func TestHandleRequest_SubscriptionTokenSatisfiesCredCheck(t *testing.T) {
 	}
 }
 
-// TestHandleRequest_GPTModelRejected verifies the runtime-level guard
-// added so a GPT model arriving through any code path (Slack today,
-// future entry points tomorrow) refuses to advance instead of silently
-// running Claude in its place. The chat HTTP handler already 400s on
-// this, so this test asserts the back-stop.
-func TestHandleRequest_GPTModelRejected(t *testing.T) {
+func TestHandleRequest_MissingOpenAICodexCredentials(t *testing.T) {
 	b := &Bot{log: discardLogger(), convs: convstore.New(nil), retryBackoff: 0}
 	b.createFn = func(context.Context, any) (*daytona.Sandbox, error) {
-		t.Fatal("sandbox should not be created when a GPT model reaches HandleRequest")
+		t.Fatal("sandbox should not be created when OpenAI config is incomplete")
 		return nil, errors.New("unreachable")
 	}
 	emit := newCaptureEmitter()
 	b.HandleRequest(context.Background(), orgcfg.Config{OrgID: "o", AnthropicAPIKey: "sk-ant-…"}, "do something", "req", "thread", "", chatTaskOptionPatch{}, nil, nil, ModelGPTFrontier, emit)
-	if !emit.hasCall("error", "OpenAI Codex runtime not wired") {
-		t.Errorf("expected GPT-rejected error, got Calls=%v", emit.Calls)
+	if !emit.hasCall("error", "Missing OpenAI Codex credentials") {
+		t.Errorf("expected missing OpenAI error, got Calls=%v", emit.Calls)
+	}
+}
+
+func TestHandleRequest_OpenAICodexCredentialsSatisfyGPTCheck(t *testing.T) {
+	b := &Bot{log: discardLogger(), convs: convstore.New(nil), retryBackoff: 0}
+	b.createFn = func(context.Context, any) (*daytona.Sandbox, error) {
+		t.Fatal("sandbox should not be created when no default repo is set")
+		return nil, errors.New("unreachable")
+	}
+	emit := newCaptureEmitter()
+	b.HandleRequest(context.Background(), orgcfg.Config{OrgID: "o", OpenAICodexOAuthToken: "ey-token"}, "do something", "req", "thread", "", chatTaskOptionPatch{}, nil, nil, ModelGPTFrontier, emit)
+	if emit.hasCall("error", "Missing OpenAI Codex credentials") {
+		t.Errorf("subscription token alone should satisfy GPT cred check, got Calls=%v", emit.Calls)
+	}
+	if !emit.hasCall("notify", "Which repository") {
+		t.Errorf("expected to advance to repo prompt, got Calls=%v", emit.Calls)
 	}
 }
 

@@ -24,6 +24,12 @@ const (
 	ModelGPTFastest  ClaudeModel = "gpt-fastest"
 )
 
+const (
+	codexModelFrontier = "gpt-5.5"
+	codexModelBalanced = "gpt-5.4"
+	codexModelFastest  = "gpt-5.4-mini"
+)
+
 type modelProviderKind int
 
 const (
@@ -93,4 +99,24 @@ func normalizeClaudeModel(model ClaudeModel) ClaudeModel {
 		return parsed
 	}
 	return ClaudeModelOpus
+}
+
+func codexModelForCLI(model ClaudeModel) string {
+	switch normalizeClaudeModel(model) {
+	case ModelGPTFrontier:
+		return codexModelFrontier
+	case ModelGPTBalanced:
+		return codexModelBalanced
+	case ModelGPTFastest:
+		return codexModelFastest
+	default:
+		return codexModelBalanced
+	}
+}
+
+func agentRuntimeDisplayName(model ClaudeModel) string {
+	if modelProvider(normalizeClaudeModel(model)) == modelProviderOpenAI {
+		return "OpenAI Codex"
+	}
+	return "Claude Code"
 }

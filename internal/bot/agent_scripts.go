@@ -14,6 +14,9 @@ var setupCloneScriptBody string
 //go:embed scripts/claude-watchdog.sh
 var claudeWatchdogScript string
 
+//go:embed scripts/codex-runner.sh
+var codexRunnerScript string
+
 //go:embed scripts/sandbox-common.sh
 var sandboxCommonScript string
 
@@ -26,8 +29,8 @@ var sandboxCommonScript string
 // half-deployed set. setupCloneScript needs sandbox-common.sh too so
 // the bootstrap path can call hetchy_prepare_repo_workdir, which uses
 // the volume-cached repo checkout to skip a full network clone.
-var agentScript = claudeWatchdogScript + "\n" + sandboxCommonScript + "\n" + agentScriptBody
+var agentScript = claudeWatchdogScript + "\n" + codexRunnerScript + "\n" + sandboxCommonScript + "\n" + agentScriptBody
 
-var followupScript = claudeWatchdogScript + "\n" + sandboxCommonScript + "\n" + followupScriptBody
+var followupScript = claudeWatchdogScript + "\n" + codexRunnerScript + "\n" + sandboxCommonScript + "\n" + followupScriptBody
 
 var setupCloneScript = sandboxCommonScript + "\n" + setupCloneScriptBody

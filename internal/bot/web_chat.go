@@ -115,15 +115,11 @@ func (b *Bot) startConversationTurn(parentCtx context.Context, w http.ResponseWr
 	if modelProvider(model) == modelProviderOpenAI {
 		// Saved-credentials check happens up front so the user gets a
 		// clean 400 instead of the runtime tripping over a missing
-		// OPENAI_API_KEY mid-stream. Codex execution is wired in a
-		// follow-up PR; surface that limitation explicitly rather than
-		// silently downgrading the chosen model.
-		if oc.OpenAIAPIKey == "" && oc.OpenAICodexOAuthToken == "" {
+		// Codex credential mid-stream.
+		if !hasOpenAICredentials(oc) {
 			http.Error(w, "OpenAI Codex isn't configured yet — paste an API key or subscription token in /settings/org?tab=integrations.", http.StatusBadRequest)
 			return
 		}
-		http.Error(w, "OpenAI Codex execution isn't wired into the chat runtime yet — pick Opus, Sonnet, or Haiku for now.", http.StatusBadRequest)
-		return
 	}
 
 	flusher, ok := w.(http.Flusher)

@@ -11,15 +11,14 @@ import (
 
 // agentLineRouter consumes the line-by-line output of agent.sh /
 // followup.sh, opens a single "Sandbox setup" block for the bash
-// echoes, and switches to a Claude NDJSON parser once the script
-// reaches `[hetchy] running claude` (after which most lines are
-// stream-json events from `claude --output-format stream-json`;
-// trailing `[hetchy]` lines are sandbox cleanup logs emitted after
-// Claude exits).
+// echoes, and switches to a runtime stream parser once the script
+// reaches `[hetchy] running claude` or `[hetchy] running codex` (after
+// which most lines are JSONL runtime events; trailing `[hetchy]` lines
+// are sandbox cleanup logs emitted after the runtime exits).
 //
 // The router owns the lifetime of both blocks: the setup block closes
 // when the agent stream begins (or when the run ends, whichever comes
-// first); the Claude parser holds its own per-content-block lifecycles.
+// first); the runtime parser holds its own per-content-block lifecycles.
 //
 // On Finish, returns the PR URL extracted from the final assistant
 // text (empty string if not found — the caller errors out in that
@@ -34,18 +33,29 @@ type agentLineRouter struct {
 	cleanupID            string
 	cleanupOpen          bool
 
-	parser      *claudeStreamParser
+	parser      agentStreamParser
 	inAgent     bool
 	agentClosed bool
 	prURL       string
 }
 
-// setupSwitchMarker is the exact echo line in agent.sh / followup.sh
-// that signals "the next line will be Claude stream-json output".
-// Exact-match (not HasPrefix) so a future debug echo whose prefix
-// happens to overlap can't accidentally flip the router and start
-// dropping setup lines as malformed JSON.
-const setupSwitchMarker = "[hetchy] running claude"
+type agentStreamParser interface {
+	Line(string)
+	Finish() string
+	Abort()
+}
+
+// setupSwitchMarker* are the exact echo lines in agent.sh / followup.sh
+// that signal "the next line will be runtime JSONL output". Exact-match
+// (not HasPrefix) so a future debug echo whose prefix happens to overlap
+// can't accidentally flip the router and start dropping setup lines as
+// malformed JSON.
+const (
+	setupSwitchMarkerClaude = "[hetchy] running claude"
+	setupSwitchMarkerCodex  = "[hetchy] running codex"
+)
+
+const setupSwitchMarker = setupSwitchMarkerClaude
 
 // sxSkillsMarkerPrefix is the prefix agent.sh / followup.sh prints
 // after sx install completes. Body is a comma-separated list of
@@ -93,11 +103,15 @@ func (r *agentLineRouter) Line(line string) {
 		return
 	}
 	// The marker line itself is logged as the last setup step, then
-	// the parser takes over. Exact-match — see setupSwitchMarker.
-	if line == setupSwitchMarker {
+	// the parser takes over. Exact-match — see setupSwitchMarker*.
+	if line == setupSwitchMarkerClaude || line == setupSwitchMarkerCodex {
 		r.appendSetup(line)
 		r.closeSetup("Sandbox ready, starting agent")
-		r.parser = newClaudeStreamParser(r.emit)
+		if line == setupSwitchMarkerCodex {
+			r.parser = newCodexStreamParser(r.emit)
+		} else {
+			r.parser = newClaudeStreamParser(r.emit)
+		}
 		r.inAgent = true
 		return
 	}
@@ -138,7 +152,7 @@ func (r *agentLineRouter) emitSXSkills(payload string) {
 // Finish closes any still-open blocks and returns the PR URL parsed
 // from the assistant's final message. ReachedAgent reports whether
 // the script ever crossed the setup→agent handoff so the caller can
-// distinguish "setup script bailed before claude ran" from "claude
+// distinguish "setup script bailed before the runtime ran" from "runtime
 // ran but didn't surface a URL".
 func (r *agentLineRouter) Finish() string {
 	if r.setupOpen {
@@ -152,8 +166,8 @@ func (r *agentLineRouter) Finish() string {
 }
 
 // ReachedAgent reports whether the line stream crossed the
-// `[hetchy] running claude` marker. False means the setup script exited
-// (cleanly or otherwise) before invoking claude — the caller can
+// runtime marker. False means the setup script exited (cleanly or
+// otherwise) before invoking the agent runtime — the caller can
 // surface a setup-specific error instead of the generic "no PR URL
 // found".
 func (r *agentLineRouter) ReachedAgent() bool { return r.inAgent }

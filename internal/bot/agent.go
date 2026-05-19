@@ -23,12 +23,14 @@ import (
 
 func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, agent agents.Profile, userRequest, requestID, branch string, opts chatTaskOptions, model ClaudeModel, emit blocks.Emitter) (string, error) {
 	model = normalizeClaudeModel(model)
+	provider := modelProvider(model)
 	var spec *bootstrap.Spec
 	// ValidateChanges=false is the user's explicit "skip end-to-end
 	// testing" opt-out from the new-chat UI. We honour it by not
 	// running bootstrap (which can take minutes on a fresh repo) and
 	// not merging the validation prompt.
-	if opts.ValidateChanges && !bootstrapSkippedFromContext(ctx) && b.bootstrap != nil && repo.InstallID != 0 && repo.RepoID != 0 {
+	canRunBootstrap := provider == modelProviderAnthropic || hasAnthropicCredentials(oc)
+	if opts.ValidateChanges && !bootstrapSkippedFromContext(ctx) && b.bootstrap != nil && repo.InstallID != 0 && repo.RepoID != 0 && canRunBootstrap {
 		s, err := b.ensureBootstrapSpec(ctx, sb, repo, oc, requestID, emit)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -45,15 +47,16 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, o
 		} else {
 			spec = s
 		}
+	} else if opts.ValidateChanges && provider == modelProviderOpenAI && !canRunBootstrap && b.bootstrap != nil && repo.InstallID != 0 && repo.RepoID != 0 {
+		emit.Notify("Bootstrap skipped", "Claude credentials are not configured, so Codex will validate the change without the saved repo bootstrap step.")
 	}
 
 	wd := repoWorkdir(repo.Slug)
 	env := map[string]string{
-		"SF_REPO":             repo.Slug,
-		"SF_WORKDIR":          wd,
-		"SF_BASE_BRANCH":      repo.BaseBranch,
-		"GITHUB_TOKEN":        repo.GitHubToken,
-		"HETCHY_CLAUDE_MODEL": string(model),
+		"SF_REPO":        repo.Slug,
+		"SF_WORKDIR":     wd,
+		"SF_BASE_BRANCH": repo.BaseBranch,
+		"GITHUB_TOKEN":   repo.GitHubToken,
 	}
 	addAgentEnv(env, b.cfg, agent)
 	addDaytonaCacheEnv(env, b.cfg, oc, repo, repo.CacheMounted)
@@ -99,7 +102,7 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, o
 	env["SF_PROMPT_B64"] = base64.StdEncoding.EncodeToString([]byte(finalPrompt))
 	// When we have a saved spec, ship its setup/start/health scripts
 	// to agent.sh as base64 env vars. agent.sh decodes them before
-	// invoking claude and runs setup → start (bg) → poll health, so
+	// invoking the agent and runs setup → start (bg) → poll health, so
 	// the validation prompt's "the app is running" assertion holds.
 	// Without this step the cached spec is loaded into the prompt
 	// but the agent finds a dead port and falls back to figuring out
@@ -109,9 +112,7 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, o
 		env["SF_SPEC_START_B64"] = base64.StdEncoding.EncodeToString([]byte(spec.StartScript))
 		env["SF_SPEC_HEALTH_B64"] = base64.StdEncoding.EncodeToString([]byte(spec.HealthCheck))
 	}
-	authKey, authVal := claudeAuthEnv(oc)
-	b.log.Info("claude auth", "method", authKey, "token", maskToken(authVal), "request_id", requestID)
-	env[authKey] = authVal
+	b.addRuntimeEnv(env, oc, model, requestID)
 	if oc.SXKey != "" {
 		env["SX_KEY"] = oc.SXKey
 	}
@@ -419,11 +420,10 @@ func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx
 
 	wd := repoWorkdir(repo.Slug)
 	env := map[string]string{
-		"SF_REPO":             repo.Slug,
-		"SF_WORKDIR":          wd,
-		"SF_BRANCH":           rec.Branch,
-		"GITHUB_TOKEN":        repo.GitHubToken,
-		"HETCHY_CLAUDE_MODEL": string(model),
+		"SF_REPO":      repo.Slug,
+		"SF_WORKDIR":   wd,
+		"SF_BRANCH":    rec.Branch,
+		"GITHUB_TOKEN": repo.GitHubToken,
 	}
 	addAgentEnv(env, b.cfg, agent)
 
@@ -447,9 +447,7 @@ func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx
 	}
 	prompt := buildFollowUpPrompt(repo.Slug, rec, userRequest, spec, artifactSlotCount, opts)
 	env["SF_PROMPT_B64"] = base64.StdEncoding.EncodeToString([]byte(prompt))
-	authKey, authVal := claudeAuthEnv(oc)
-	b.log.Info("claude auth", "method", authKey, "token", maskToken(authVal), "request_id", requestID)
-	env[authKey] = authVal
+	b.addRuntimeEnv(env, oc, model, requestID)
 	if oc.SXKey != "" {
 		env["SX_KEY"] = oc.SXKey
 	}
@@ -487,10 +485,10 @@ func (b *Bot) runScriptForRequest(ctx context.Context, sb *daytona.Sandbox, sess
 // runScript writes scriptBody to /tmp/sf-<label>.sh inside the sandbox
 // and runs it with the given env vars prefixed on the command line. It
 // streams Block-shaped updates via emit (sandbox bootstrap goes into a
-// "setup" block; the Claude stream-json output is parsed line-by-line
-// into typed blocks). Returns the PR URL extracted from the final
-// assistant message in the Claude stream, or an empty string when Claude
-// completed successfully but answered without creating a pull request.
+// "setup" block; the runtime JSONL output is parsed line-by-line into
+// typed blocks). Returns the PR URL extracted from the final assistant
+// message, or an empty string when the agent completed successfully but
+// answered without creating a pull request.
 func (b *Bot) runScript(ctx context.Context, sb *daytona.Sandbox, sessionID, label, scriptBody string, env map[string]string, emit blocks.Emitter) (string, error) {
 	if err := sb.Process.CreateSession(ctx, sessionID); err != nil {
 		if b.log != nil {
@@ -581,12 +579,12 @@ func (b *Bot) runScript(ctx context.Context, sb *daytona.Sandbox, sessionID, lab
 		}
 	}
 	if prURL == "" {
-		// Distinguish "setup never reached claude" from "claude ran
+		// Distinguish "setup never reached the runtime" from "the runtime ran
 		// but didn't post a URL". Both surface here but they need
 		// different remediation, so on-call shouldn't have to tail
 		// logs to tell them apart.
 		if !router.ReachedAgent() {
-			return "", fmt.Errorf("setup script for %s exited before invoking claude — check the sandbox setup block for the failing step", label)
+			return "", fmt.Errorf("setup script for %s exited before invoking the agent runtime — check the sandbox setup block for the failing step", label)
 		}
 		return "", nil
 	}

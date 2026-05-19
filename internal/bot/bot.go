@@ -488,24 +488,6 @@ func (b *Bot) prepareAgentRun(ctx context.Context, orgID, threadID, requestID, t
 
 func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, requestID, threadID, userID string, optionPatch chatTaskOptionPatch, requestedAgent *string, requestedRepo *string, model ClaudeModel, out blocks.Emitter, incomingAttachments ...convstore.Attachment) {
 	model = normalizeClaudeModel(model)
-	// Belt-and-braces invariant: the chat HTTP handler already 400s on
-	// GPT model picks until the Codex runtime swap lands, but other
-	// entry points (Slack today, future webhook handlers tomorrow) all
-	// funnel through here. Refusing here keeps the "never silently
-	// downgrade GPT to Claude" promise honest no matter how the model
-	// arrived.
-	if modelProvider(model) == modelProviderOpenAI {
-		b.log.Warn("gpt model reached agent runtime",
-			"org", oc.OrgID,
-			"request_id", requestID,
-			"thread_id", threadID,
-			"model", model,
-		)
-		if out != nil {
-			out.Error("OpenAI Codex runtime not wired", "Picking a GPT model isn't supported by the agent runtime yet — pick Opus, Sonnet, or Haiku, or stay on the chat composer where the picker enforces the same rule.")
-		}
-		return
-	}
 	requestedRepoExplicit := requestedRepo != nil
 	requestedOwner, requestedName, requestedRepoOK := parseRequestedRepo(requestedRepo)
 	b.log.Info("request received",
@@ -544,13 +526,6 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 	}
 	emit := blocks.Tee(emitters...)
 
-	if oc.AnthropicAPIKey == "" && oc.ClaudeCodeOAuthToken == "" {
-		b.log.Warn("org missing claude credentials", "org", oc.OrgID)
-		emit.Error("Missing Claude credentials", "This organization has neither a Claude API key nor a subscription token set. Add one at /settings/org → Integrations → Claude (Anthropic).")
-		b.markRunState(ctx, runstore.StateFailed, errors.New("missing claude credentials"))
-		return
-	}
-
 	rec, err := b.convs.Get(ctx, oc.OrgID, threadID)
 	var opts chatTaskOptions
 	var taskOptions map[string]bool
@@ -567,6 +542,12 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		}
 	} else {
 		opts, taskOptions = resolveChatTaskOptions(nil, optionPatch)
+	}
+	if title, body, missing := missingCredentialError(model, oc); missing {
+		b.log.Warn("org missing agent credentials", "org", oc.OrgID, "model", model, "provider", modelProvider(model))
+		emit.Error(title, body)
+		b.markRunState(ctx, runstore.StateFailed, errors.New("missing agent credentials"))
+		return
 	}
 	switch {
 	case err == nil && rec.SandboxID != "" && rec.PRURL != "":
@@ -1000,7 +981,7 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 	}
 	b.log.Info("sandbox created", "id", sb.ID, "request_id", requestID)
 	sandboxReadyID := emit.Start(blocks.KindNotify, "Sandbox ready", map[string]any{"tag": sandboxReadySSETag})
-	emit.Append(sandboxReadyID, fmt.Sprintf("`%s` is up — cloning repo and starting Claude Code.", sb.ID))
+	emit.Append(sandboxReadyID, fmt.Sprintf("`%s` is up — cloning repo and starting %s.", sb.ID, agentRuntimeDisplayName(model)))
 	emit.Done(sandboxReadyID, "")
 
 	agentRequest, err := b.promptWithSandboxAttachments(ctx, sb, rec.OrgID, rec.ThreadID, 0, requestID, userRequest, emit)
