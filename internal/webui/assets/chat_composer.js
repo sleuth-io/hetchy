@@ -57,7 +57,6 @@ function chooseRepo(slug) {
   updateRepoButton();
   updateMutablePendingRepoMetadata();
   closeRepoPopover();
-  closeToolsPopover();
   inp.focus();
 }
 
@@ -432,13 +431,13 @@ function openToolsPopover() {
   toolsPopover.hidden = false;
   toolsBtn.setAttribute('aria-expanded', 'true');
   closeModelPopover();
+  closeRepoPopover();
 }
 
 function closeToolsPopover() {
   toolsPopover.hidden = true;
   toolsBtn.setAttribute('aria-expanded', 'false');
   closeAgentPopover();
-  closeRepoPopover();
 }
 
 function openAgentPopover() {
@@ -455,6 +454,8 @@ function openRepoPopover() {
   if (!repoPopover || !repoSelectorBtn) return;
   repoPopover.hidden = false;
   repoSelectorBtn.setAttribute('aria-expanded', 'true');
+  closeToolsPopover();
+  closeModelPopover();
   // Focusing the search box on open turns "open the menu and start
   // typing" into one continuous action — matches what users expect of
   // a command-palette style picker. Selecting any existing value lets
@@ -478,6 +479,7 @@ function openModelPopover() {
   modelPopover.hidden = false;
   modelBtn.setAttribute('aria-expanded', 'true');
   closeToolsPopover();
+  closeRepoPopover();
 }
 
 function closeModelPopover() {
@@ -492,10 +494,7 @@ toolsBtn.addEventListener('click', e => {
 });
 toolsPopover.addEventListener('click', e => e.stopPropagation());
 if (attachFilesBtn && attachmentInput) {
-  attachFilesBtn.addEventListener('mouseenter', () => {
-    closeAgentPopover();
-    closeRepoPopover();
-  });
+  attachFilesBtn.addEventListener('mouseenter', closeAgentPopover);
   attachFilesBtn.addEventListener('click', e => {
     e.preventDefault();
     e.stopPropagation();
@@ -513,22 +512,12 @@ agentSelectorBtn.addEventListener('click', e => {
   if (agentPopover.hidden) openAgentPopover();
   else closeAgentPopover();
 });
-document.getElementById('agent-flyout-root').addEventListener('mouseenter', () => {
-  closeRepoPopover();
-  openAgentPopover();
-});
+document.getElementById('agent-flyout-root').addEventListener('mouseenter', openAgentPopover);
 if (repoSelectorBtn) {
   repoSelectorBtn.addEventListener('click', e => {
     e.stopPropagation();
     if (repoPopover.hidden) openRepoPopover();
     else closeRepoPopover();
-  });
-}
-const repoFlyoutRoot = document.getElementById('repo-flyout-root');
-if (repoFlyoutRoot) {
-  repoFlyoutRoot.addEventListener('mouseenter', () => {
-    closeAgentPopover();
-    openRepoPopover();
   });
 }
 if (repoSearchEl) {
@@ -573,10 +562,7 @@ if (repoPopover) {
   repoPopover.addEventListener('click', e => e.stopPropagation());
 }
 qualityOptionBoxes.forEach(box => box.addEventListener('change', updateToolsButton));
-qualityOptionRows.forEach(row => row.addEventListener('mouseenter', () => {
-  closeAgentPopover();
-  closeRepoPopover();
-}));
+qualityOptionRows.forEach(row => row.addEventListener('mouseenter', closeAgentPopover));
 helpIcons.forEach(icon => {
   icon.addEventListener('click', e => {
     e.preventDefault();

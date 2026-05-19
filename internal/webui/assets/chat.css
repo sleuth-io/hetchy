@@ -191,6 +191,12 @@
   .attachment-chip-remove:hover { background: #e9e9ed; color: #222; }
   #composer-controls { display: flex; align-items: center;
                        justify-content: space-between; gap: .75rem; }
+  /* Left cluster holds the + tools menu and the repository chip. The
+     chip lives outside the + popover so the repo picker is visible at
+     a glance instead of buried behind a menu — discoverability was the
+     motivation for surfacing it as a top-level control. */
+  #composer-controls-left { display: flex; align-items: center; gap: .4rem;
+                            min-width: 0; }
   #composer-actions { display: flex; align-items: center; gap: .5rem; }
   button { padding: .6rem 1.2rem; background: #0b93f6; color: #fff; border: none;
            border-radius: 2rem; font-size: 1rem; cursor: pointer; }
@@ -235,14 +241,36 @@
                    width: min(21rem, calc(100vw - 2rem));
                    max-height: min(22rem, calc(100vh - 2rem));
                    overflow-y: auto; }
-  #repo-flyout-root { position: relative; }
+  /* Repository chip — a top-level composer control next to the + menu.
+     The button is a pill with a repo icon, the selected slug, and a
+     chevron; clicking opens the same search-and-list popover the
+     "+ → Repository" flyout used to surface. The popover opens upward
+     from the chip (like #model-popover) so it doesn't get clipped by
+     the page's bottom edge. */
+  #repo-flyout-root { position: relative; min-width: 0; display: inline-flex; }
+  .repo-chip { display: inline-flex; align-items: center; gap: .35rem;
+               height: 2rem; padding: 0 .5rem; border: 1px solid #d7d7dc;
+               border-radius: 1rem; background: #f7f7f8; color: #222;
+               font-size: .85rem; font-family: inherit; cursor: pointer;
+               max-width: 14rem; min-width: 0; line-height: 1; }
+  .repo-chip:hover, .repo-chip[aria-expanded="true"] { background: #f0f0f2;
+                                                       border-color: #c8c8ce; }
+  .repo-chip-icon { width: 1rem; height: 1rem; color: #777; flex-shrink: 0;
+                    display: block; }
+  .repo-chip-label { min-width: 0; overflow: hidden; text-overflow: ellipsis;
+                     white-space: nowrap; font-weight: 500; }
+  .repo-chip-chevron { width: .85rem; height: .85rem; color: #777;
+                       stroke-width: 1.8; flex-shrink: 0; display: block; }
+  .repo-chip.has-selection { color: #0b5ec0; background: #f3f8ff;
+                             border-color: #cfe2f8; }
+  .repo-chip.has-selection .repo-chip-icon,
+  .repo-chip.has-selection .repo-chip-chevron { color: #0b5ec0; }
   /* Repo picker has its own popover with a sticky search box, so let it
      define a column with the search header pinned and the option list
-     scrolling underneath. The width matches the agent popover so the
-     two flyouts feel like siblings rather than divergent designs. */
-  #repo-popover { left: calc(100% + .45rem); top: auto; bottom: 0;
+     scrolling underneath. */
+  #repo-popover { left: 0; bottom: calc(100% + .5rem); top: auto;
                   width: min(22rem, calc(100vw - 2rem));
-                  max-height: min(24rem, calc(100vh - 2rem));
+                  max-height: min(24rem, calc(100vh - 4rem));
                   display: flex; flex-direction: column;
                   padding: 0; overflow: hidden; }
   #repo-popover[hidden] { display: none; }
@@ -264,7 +292,6 @@
                        font-weight: 500; }
   .repo-empty { padding: .6rem .7rem; font-size: .8rem; color: #888;
                  line-height: 1.35; }
-  #repo-selector-btn.has-selection { color: #0b5ec0; }
   .tools-checkbox-row { position: relative; cursor: pointer; user-select: none; color: #222; }
   .tools-checkbox-row.is-checked { color: #0b93f6; }
   .tools-checkbox-row .tools-menu-label { flex: 1; }
@@ -696,6 +723,15 @@
   html.is-dark .agent-choice:hover,
   html.is-dark .agent-choice.is-selected { background: #1f3a5c; }
   html.is-dark .agent-choice-desc { color: #9a9aa0; }
+  html.is-dark .repo-chip { background: #2a2a2e; border-color: #3a3a40; color: #e7e7e9; }
+  html.is-dark .repo-chip:hover,
+  html.is-dark .repo-chip[aria-expanded="true"] { background: #303036; border-color: #4a4a52; }
+  html.is-dark .repo-chip-icon,
+  html.is-dark .repo-chip-chevron { color: #9a9aa0; }
+  html.is-dark .repo-chip.has-selection { color: #7dc4ff; background: #1f3a5c;
+                                          border-color: #2a4a72; }
+  html.is-dark .repo-chip.has-selection .repo-chip-icon,
+  html.is-dark .repo-chip.has-selection .repo-chip-chevron { color: #7dc4ff; }
   html.is-dark .repo-search-wrap { background: #232327; border-bottom-color: #2e2e33; }
   html.is-dark #repo-search { background: #1c1c1f; border-color: #2e2e33; color: #e7e7e9; }
   html.is-dark #repo-search:focus { border-color: #7dc4ff; }
@@ -704,7 +740,6 @@
   html.is-dark .repo-choice:hover,
   html.is-dark .repo-choice.is-selected { background: #1f3a5c; }
   html.is-dark .repo-empty { color: #8a8a90; }
-  html.is-dark #repo-selector-btn.has-selection { color: #7dc4ff; }
   html.is-dark #model-btn { background: #2a2a2e; border-color: #3a3a40; color: #e7e7e9; }
   html.is-dark #model-btn:hover,
   html.is-dark #model-btn[aria-expanded="true"] { background: #303036; border-color: #4a4a52; }
@@ -859,9 +894,14 @@
     #agent-popover { left: 0; right: auto; top: 100%; bottom: auto;
                      width: min(18rem, calc(100vw - 1.5rem));
                      max-height: min(20rem, 60vh); }
-    #repo-popover { left: 0; right: auto; top: 100%; bottom: auto;
+    /* Repo chip lives in the composer footer (not inside the + flyout),
+       so on mobile the popover stays anchored above the chip rather
+       than dropping below into the keyboard's bite area. */
+    #repo-popover { left: 0; right: auto; top: auto;
+                     bottom: calc(100% + .4rem);
                      width: min(18rem, calc(100vw - 1.5rem));
                      max-height: min(20rem, 60vh); }
+    .repo-chip { max-width: 10rem; font-size: .82rem; }
   }
 
   /* Phone-portrait niceties — shave a bit more padding so the
