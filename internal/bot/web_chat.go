@@ -88,8 +88,8 @@ func (b *Bot) startConversationTurn(parentCtx context.Context, w http.ResponseWr
 	if !ok {
 		return
 	}
-	text := strings.TrimSpace(firstNonEmpty(body.Message, body.Text))
-	if text == "" {
+	text := firstNonEmpty(body.Message, body.Text)
+	if strings.TrimSpace(text) == "" {
 		if len(body.Attachments) == 0 {
 			http.Error(w, "empty text", http.StatusBadRequest)
 			return
