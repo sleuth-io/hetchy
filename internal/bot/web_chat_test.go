@@ -578,6 +578,17 @@ func TestConversationResourceCancelRouteCancelsLiveRun(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/conversations/thread-1/cancel", nil)
 	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("missing origin status = %d, want %d", rec.Code, http.StatusForbidden)
+	}
+	if run.Cancelled() {
+		t.Fatal("run should not be cancelled without same-origin proof")
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "http://example.com/api/v1/conversations/thread-1/cancel", nil)
+	req.Header.Set("Origin", "http://example.com")
+	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, want %d; body=%q", rec.Code, http.StatusAccepted, rec.Body.String())
 	}

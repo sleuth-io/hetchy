@@ -86,6 +86,10 @@ func (b *Bot) conversationCancelHandler(w http.ResponseWriter, r *http.Request, 
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	if err := requireSameOriginUnlessAPIKey(r); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
 	payload, err := json.Marshal(map[string]string{"session_id": conversationID})
 	if err != nil {
 		http.Error(w, "internal server error", http.StatusInternalServerError)

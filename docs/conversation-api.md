@@ -58,6 +58,10 @@ GET /api/v1/conversations?limit=20&offset=0&q=search&user=user_id
 GET /api/v1/conversations/{id}?include=turns,attachments
 ```
 
+The list response `status` is intentionally lightweight and only reports live
+in-memory state: `running` or `idle`. Fetch an individual conversation to get
+the persisted terminal run state such as `succeeded`, `failed`, or `cancelled`.
+
 `include=attachments` returns attachment metadata at both the conversation and
 turn levels. Attachment bytes are downloaded from the nested conversation URL
 returned as `download_url`.
