@@ -404,19 +404,6 @@ func (b *Bot) membersHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out)
 }
 
-func (b *Bot) conversationDetailHandler(w http.ResponseWriter, r *http.Request) {
-	threadID := strings.TrimPrefix(r.URL.Path, "/api/v1/conversations/")
-	if threadID == "" || strings.Contains(threadID, "/") {
-		http.NotFound(w, r)
-		return
-	}
-	if !isSafeThreadID(threadID) {
-		http.NotFound(w, r)
-		return
-	}
-	b.serveConversationDetail(w, r, threadID)
-}
-
 func (b *Bot) serveConversationDetail(w http.ResponseWriter, r *http.Request, threadID string) {
 	p, _ := auth.FromContext(r.Context())
 

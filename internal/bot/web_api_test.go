@@ -505,9 +505,11 @@ func TestMembersHandlerBypassMemberList(t *testing.T) {
 	}
 }
 
-func TestConversationDetailHandlerRejectsUnsafeAndMissingRecords(t *testing.T) {
+func TestConversationResourceHandlerRejectsUnsafeAndMissingRecords(t *testing.T) {
 	b := newBypassOrgBot(t, "member")
-	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.conversationDetailHandler)))
+	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b.conversationResourceHandler(context.Background(), w, r)
+	})))
 
 	cases := []struct {
 		name   string
@@ -534,6 +536,24 @@ func TestConversationDetailHandlerRejectsUnsafeAndMissingRecords(t *testing.T) {
 				t.Fatalf("status = %d, want %d body=%q", rec.Code, tc.want, rec.Body.String())
 			}
 		})
+	}
+}
+
+func TestConversationTurnIDIsStable(t *testing.T) {
+	cases := []struct {
+		threadID string
+		index    int
+		message  string
+		want     string
+	}{
+		{threadID: "thread-1", index: 0, message: "first", want: "turn_38ffa1ef00ff295158e543fa"},
+		{threadID: "thread-1", index: 1, message: "second", want: "turn_861e946f4a75f41ade313ae7"},
+	}
+	for _, tc := range cases {
+		if got := conversationTurnID(tc.threadID, tc.index, tc.message); got != tc.want {
+			t.Fatalf("conversationTurnID(%q, %d, %q) = %q, want %q",
+				tc.threadID, tc.index, tc.message, got, tc.want)
+		}
 	}
 }
 

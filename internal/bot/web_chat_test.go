@@ -395,6 +395,23 @@ func TestConversationResourceEventsRouteReplaysLiveRun(t *testing.T) {
 	}
 }
 
+func TestConversationResourceTurnsRouteRejectsWrongMethodWithAllow(t *testing.T) {
+	b := newBypassOrgBot(t, "member")
+	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b.conversationResourceHandler(context.Background(), w, r)
+	})))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/conversations/thread-1/turns", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
+	}
+	if got := rec.Header().Get("Allow"); got != "POST" {
+		t.Fatalf("Allow = %q, want POST", got)
+	}
+}
+
 func TestChatStreamHandlerReplaysDurableRunEvents(t *testing.T) {
 	b := newBypassOrgBot(t, "member")
 	ev := runEventForTest(t, "block_start", sseEvent{ID: "p2", Kind: blocks.KindResult, Title: "Done"})

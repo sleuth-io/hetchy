@@ -73,6 +73,7 @@ type chatPostJSONAttachment struct {
 
 func (b *Bot) startConversationTurn(parentCtx context.Context, w http.ResponseWriter, r *http.Request, pathConversationID string) {
 	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
