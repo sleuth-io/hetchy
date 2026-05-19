@@ -32,6 +32,42 @@ func TestCodexStreamParser_TextCommandAndFinal(t *testing.T) {
 	}
 }
 
+func TestCodexStreamParser_CurrentCodexThreadEvents(t *testing.T) {
+	emit := newCaptureEmitter()
+	p := newCodexStreamParser(emit)
+
+	p.Line(`{"type":"thread.started","thread_id":"thread-1"}`)
+	p.Line(`{"type":"turn.started"}`)
+	p.Line(`{"type":"item.started","item":{"id":"cmd-1","type":"command_execution","command":"sed -n '1,20p' README.md","aggregated_output":"","status":"in_progress"}}`)
+	p.Line(`{"type":"item.updated","item":{"id":"cmd-1","type":"command_execution","command":"sed -n '1,20p' README.md","aggregated_output":"# Hetchy\n","status":"in_progress"}}`)
+	p.Line(`{"type":"item.completed","item":{"id":"cmd-1","type":"command_execution","command":"sed -n '1,20p' README.md","aggregated_output":"# Hetchy\nMore output\n","exit_code":0,"status":"completed"}}`)
+	p.Line(`{"type":"item.completed","item":{"id":"msg-1","type":"agent_message","text":"Done: https://github.com/hetchyhq/hetchy/pull/44"}}`)
+	p.Line(`{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0,"output_tokens":2,"reasoning_output_tokens":0}}`)
+
+	prURL := p.Finish()
+	if prURL != "https://github.com/hetchyhq/hetchy/pull/44" {
+		t.Fatalf("PR URL = %q", prURL)
+	}
+	if len(emit.Blocks) != 2 {
+		t.Fatalf("blocks = %d, want 2: %+v", len(emit.Blocks), emit.Blocks)
+	}
+	tool := emit.Blocks[0]
+	if tool.Kind != blocks.KindToolUse || tool.Status != blocks.StatusDone {
+		t.Fatalf("tool block wrong: %+v", tool)
+	}
+	toolBody := tool.Body.String()
+	if !strings.Contains(toolBody, "sed -n") || !strings.Contains(toolBody, "# Hetchy") || !strings.Contains(toolBody, "More output") {
+		t.Fatalf("tool output not surfaced: %q", toolBody)
+	}
+	if strings.Count(toolBody, "# Hetchy") != 1 {
+		t.Fatalf("tool output duplicated: %q", toolBody)
+	}
+	text := emit.Blocks[1]
+	if text.Kind != blocks.KindClaudeText || !strings.Contains(text.Body.String(), "Done:") {
+		t.Fatalf("text block wrong: %+v", text)
+	}
+}
+
 func TestCodexStreamParser_CommandDoneFinalEventFallsThrough(t *testing.T) {
 	emit := newCaptureEmitter()
 	p := newCodexStreamParser(emit)
