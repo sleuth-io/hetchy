@@ -955,32 +955,7 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 		Snapshot:          b.cfg.Snapshot,
 	})
 	if err != nil {
-		if liveRunCancelled(ctx) {
-			b.log.Info("sandbox create stopped", "request_id", requestID, "error", err)
-			emit.Result("Stopped", "Stopped before the sandbox finished starting.")
-		} else if ctx.Err() != nil {
-			b.log.Error("sandbox create cancelled", "request_id", requestID, "error", err)
-			emit.Error("Sandbox cancelled", "Sandbox creation was cancelled before it could start. Try again.")
-		} else {
-			b.log.Error("sandbox create failed", "request_id", requestID, "error", err)
-			emit.Error("Sandbox failed", "Couldn't start a sandbox for your request. Check the server logs for details and try again.")
-		}
-		// Persist the streamed blocks so a refresh shows the failure
-		// instead of an empty chat. For a brand-new conversation the
-		// row hasn't been written yet — without this the user loses
-		// every block they just watched stream by. The dispatcher
-		// recognises (GitHubOwner != "" && SandboxID == "" && first
-		// turn already has blocks) as "retry pending" and re-runs on
-		// the next message instead of asking for a repo.
-		appendBlocksToFirstTurn(&rec, recorder.Snapshot())
-		if uerr := b.convs.Upsert(context.Background(), rec); uerr != nil {
-			b.log.Error("convstore upsert (sandbox create fail)", "error", uerr)
-		}
-		if liveRunCancelled(ctx) {
-			b.markRunState(ctx, runstore.StateCancelled, err)
-		} else {
-			b.markRunState(ctx, runstore.StateFailed, err)
-		}
+		b.handleFreshSandboxCreateError(ctx, &rec, recorder, requestID, err, emit)
 		return
 	}
 	if err := b.resizeSandboxForBillingFlavor(ctx, sb, flavor); err != nil {
@@ -1042,41 +1017,7 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 
 	prURL, runErr := b.runAgentForRequest(ctx, sb, repo, oc, agent, agentRequest, requestID, branch, opts, model, emit)
 	if runErr != nil {
-		if liveRunCancelled(ctx) {
-			b.log.Info("agent run stopped", "sandbox", sb.ID, "request_id", requestID, "error", runErr)
-			b.cleanupSandboxWithTimeout(sb, "cancelled fresh run")
-			emit.Result("Stopped", fmt.Sprintf("Stopped the run and archived sandbox `%s`.", sb.ID))
-			appendBlocksToFirstTurn(&rec, recorder.Snapshot())
-			if err := b.convs.Upsert(context.Background(), rec); err != nil {
-				b.log.Error("convstore upsert (agent stopped)", "error", err)
-			}
-			b.markRunState(ctx, runstore.StateCancelled, runErr)
-			return
-		}
-		if errors.Is(runErr, errAgentRunDurability) {
-			b.log.Error("agent run durability failed; leaving run recoverable", "sandbox", sb.ID, "request_id", requestID, "error", runErr)
-			b.markRunState(ctx, runstore.StateRecovering, runErr)
-			return
-		}
-		b.log.Error("agent run failed", "sandbox", sb.ID, "request_id", requestID, "error", runErr)
-		if isAgentTimeout(runErr) {
-			emit.Error("Agent timed out", fmt.Sprintf("The agent exceeded its time limit on sandbox `%s`. Reply here to retry (the orphan sandbox will be archived automatically) or check the server logs for details.", sb.ID))
-		} else if errors.Is(runErr, errReportedPRNotVerified) {
-			emit.Error("PR not verified", fmt.Sprintf("The agent reported a PR URL, but GitHub did not verify it for branch `%s`. Sandbox `%s` is left running for debugging — check the transcript and server logs for details.", branch, sb.ID))
-		} else {
-			emit.Error("Agent failed", fmt.Sprintf("Something went wrong while running the agent. Sandbox `%s` is left running for debugging — reply here to retry (the orphan sandbox will be archived automatically) or check the server logs for details.", sb.ID))
-		}
-		// Persist sb.ID so handleRetryAfterFailure can archive the
-		// stale sandbox on the next user message — without this we'd
-		// leak a sandbox per retry. PRURL stays empty, which is how
-		// the dispatcher tells "agent failed mid-run, clean up first"
-		// apart from a real follow-up.
-		rec.SandboxID = sb.ID
-		appendBlocksToFirstTurn(&rec, recorder.Snapshot())
-		if err := b.convs.Upsert(ctx, rec); err != nil {
-			b.log.Error("convstore upsert (agent fail)", "error", err)
-		}
-		b.markRunState(ctx, runstore.StateFailed, runErr)
+		b.handleFreshAgentRunError(ctx, sb, &rec, recorder, requestID, branch, runErr, emit)
 		return
 	}
 
@@ -1119,6 +1060,70 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 	b.markRunState(ctx, runstore.StateSucceeded, nil)
 	b.deleteSandboxSession(sb, b.currentAgentRunSessionID(ctx, "agent-"+requestID))
 	b.stopAndArchiveSandbox(ctx, sb)
+}
+
+func (b *Bot) handleFreshSandboxCreateError(ctx context.Context, rec *convstore.Record, recorder *blocks.Recorder, requestID string, err error, emit blocks.Emitter) {
+	cancelled := liveRunCancelled(ctx)
+	if cancelled {
+		b.log.Info("sandbox create stopped", "request_id", requestID, "error", err)
+		emit.Result("Stopped", "Stopped before the sandbox finished starting.")
+	} else if ctx.Err() != nil {
+		b.log.Error("sandbox create cancelled", "request_id", requestID, "error", err)
+		emit.Error("Sandbox cancelled", "Sandbox creation was cancelled before it could start. Try again.")
+	} else {
+		b.log.Error("sandbox create failed", "request_id", requestID, "error", err)
+		emit.Error("Sandbox failed", "Couldn't start a sandbox for your request. Check the server logs for details and try again.")
+	}
+	// Persist the streamed blocks so a refresh shows the failure instead
+	// of an empty chat. For a brand-new conversation the row hasn't been
+	// written yet, and the dispatcher treats an empty sandbox with existing
+	// blocks as retry-pending rather than asking for a repo again.
+	appendBlocksToFirstTurn(rec, recorder.Snapshot())
+	if uerr := b.convs.Upsert(context.Background(), *rec); uerr != nil {
+		b.log.Error("convstore upsert (sandbox create fail)", "error", uerr)
+	}
+	if cancelled {
+		b.markRunState(ctx, runstore.StateCancelled, err)
+		return
+	}
+	b.markRunState(ctx, runstore.StateFailed, err)
+}
+
+func (b *Bot) handleFreshAgentRunError(ctx context.Context, sb *daytona.Sandbox, rec *convstore.Record, recorder *blocks.Recorder, requestID, branch string, runErr error, emit blocks.Emitter) {
+	if liveRunCancelled(ctx) {
+		b.log.Info("agent run stopped", "sandbox", sb.ID, "request_id", requestID, "error", runErr)
+		b.cleanupSandboxWithTimeout(sb, "cancelled fresh run")
+		emit.Result("Stopped", fmt.Sprintf("Stopped the run and archived sandbox `%s`.", sb.ID))
+		appendBlocksToFirstTurn(rec, recorder.Snapshot())
+		if err := b.convs.Upsert(context.Background(), *rec); err != nil {
+			b.log.Error("convstore upsert (agent stopped)", "error", err)
+		}
+		b.markRunState(ctx, runstore.StateCancelled, runErr)
+		return
+	}
+	if errors.Is(runErr, errAgentRunDurability) {
+		b.log.Error("agent run durability failed; leaving run recoverable", "sandbox", sb.ID, "request_id", requestID, "error", runErr)
+		b.markRunState(ctx, runstore.StateRecovering, runErr)
+		return
+	}
+
+	b.log.Error("agent run failed", "sandbox", sb.ID, "request_id", requestID, "error", runErr)
+	if isAgentTimeout(runErr) {
+		emit.Error("Agent timed out", fmt.Sprintf("The agent exceeded its time limit on sandbox `%s`. Reply here to retry (the orphan sandbox will be archived automatically) or check the server logs for details.", sb.ID))
+	} else if errors.Is(runErr, errReportedPRNotVerified) {
+		emit.Error("PR not verified", fmt.Sprintf("The agent reported a PR URL, but GitHub did not verify it for branch `%s`. Sandbox `%s` is left running for debugging — check the transcript and server logs for details.", branch, sb.ID))
+	} else {
+		emit.Error("Agent failed", fmt.Sprintf("Something went wrong while running the agent. Sandbox `%s` is left running for debugging — reply here to retry (the orphan sandbox will be archived automatically) or check the server logs for details.", sb.ID))
+	}
+	// Persist sb.ID so handleRetryAfterFailure can archive the stale sandbox
+	// on the next user message. PRURL stays empty, which tells the dispatcher
+	// this is a retryable mid-run failure rather than a real follow-up.
+	rec.SandboxID = sb.ID
+	appendBlocksToFirstTurn(rec, recorder.Snapshot())
+	if err := b.convs.Upsert(ctx, *rec); err != nil {
+		b.log.Error("convstore upsert (agent fail)", "error", err)
+	}
+	b.markRunState(ctx, runstore.StateFailed, runErr)
 }
 
 func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, text, requestID string, opts chatTaskOptions, model ClaudeModel, recorder *blocks.Recorder, emit blocks.Emitter) {
@@ -1255,34 +1260,7 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 
 	prURL, err := b.runFollowUpForRequest(ctx, sb, repo, oc, rec, agent, agentText, requestID, opts, model, emit)
 	if err != nil {
-		if liveRunCancelled(ctx) {
-			b.log.Info("follow-up stopped", "sandbox", sb.ID, "request_id", requestID, "error", err)
-			emit.Result("Stopped", fmt.Sprintf("Stopped this turn. Sandbox `%s` is still available; send another message to continue.", sb.ID))
-			appendBlocksAsNewTurn(&rec, text, recorder.Snapshot())
-			if err := b.convs.Upsert(context.Background(), rec); err != nil {
-				b.log.Error("convstore upsert (follow-up stopped)", "error", err)
-			}
-			b.markRunState(ctx, runstore.StateCancelled, err)
-			b.deleteSandboxSession(sb, b.currentAgentRunSessionID(ctx, "followup-"+requestID))
-			return
-		}
-		if errors.Is(err, errAgentRunDurability) {
-			b.log.Error("follow-up durability failed; leaving run recoverable", "sandbox", sb.ID, "request_id", requestID, "error", err)
-			b.markRunState(ctx, runstore.StateRecovering, err)
-			return
-		}
-		b.log.Error("follow-up failed", "sandbox", sb.ID, "request_id", requestID, "error", err)
-		if errors.Is(err, errReportedPRNotVerified) {
-			emit.Error("PR not verified", fmt.Sprintf("The agent reported a PR URL, but GitHub did not verify it for branch `%s`. Sandbox `%s` is left running for debugging — check the transcript and server logs for details.", rec.Branch, sb.ID))
-		} else {
-			emit.Error("Agent failed", fmt.Sprintf("Something went wrong while running the agent. Sandbox `%s` is left running for debugging — check the server logs for details.", sb.ID))
-		}
-		appendBlocksAsNewTurn(&rec, text, recorder.Snapshot())
-		if err := b.convs.Upsert(ctx, rec); err != nil {
-			b.log.Error("convstore upsert (follow-up agent fail)", "error", err)
-		}
-		b.markRunState(ctx, runstore.StateFailed, err)
-		b.deleteSandboxSession(sb, b.currentAgentRunSessionID(ctx, "followup-"+requestID))
+		b.handleFollowUpRunError(ctx, sb, &rec, text, recorder, requestID, err, emit)
 		return
 	}
 
@@ -1310,6 +1288,38 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 	b.markRunState(ctx, runstore.StateSucceeded, nil)
 	b.deleteSandboxSession(sb, b.currentAgentRunSessionID(ctx, "followup-"+requestID))
 	b.stopAndArchiveSandbox(ctx, sb)
+}
+
+func (b *Bot) handleFollowUpRunError(ctx context.Context, sb *daytona.Sandbox, rec *convstore.Record, text string, recorder *blocks.Recorder, requestID string, err error, emit blocks.Emitter) {
+	if liveRunCancelled(ctx) {
+		b.log.Info("follow-up stopped", "sandbox", sb.ID, "request_id", requestID, "error", err)
+		emit.Result("Stopped", fmt.Sprintf("Stopped this turn. Sandbox `%s` is still available; send another message to continue.", sb.ID))
+		appendBlocksAsNewTurn(rec, text, recorder.Snapshot())
+		if uerr := b.convs.Upsert(context.Background(), *rec); uerr != nil {
+			b.log.Error("convstore upsert (follow-up stopped)", "error", uerr)
+		}
+		b.markRunState(ctx, runstore.StateCancelled, err)
+		b.deleteSandboxSession(sb, b.currentAgentRunSessionID(ctx, "followup-"+requestID))
+		return
+	}
+	if errors.Is(err, errAgentRunDurability) {
+		b.log.Error("follow-up durability failed; leaving run recoverable", "sandbox", sb.ID, "request_id", requestID, "error", err)
+		b.markRunState(ctx, runstore.StateRecovering, err)
+		return
+	}
+
+	b.log.Error("follow-up failed", "sandbox", sb.ID, "request_id", requestID, "error", err)
+	if errors.Is(err, errReportedPRNotVerified) {
+		emit.Error("PR not verified", fmt.Sprintf("The agent reported a PR URL, but GitHub did not verify it for branch `%s`. Sandbox `%s` is left running for debugging — check the transcript and server logs for details.", rec.Branch, sb.ID))
+	} else {
+		emit.Error("Agent failed", fmt.Sprintf("Something went wrong while running the agent. Sandbox `%s` is left running for debugging — check the server logs for details.", sb.ID))
+	}
+	appendBlocksAsNewTurn(rec, text, recorder.Snapshot())
+	if uerr := b.convs.Upsert(ctx, *rec); uerr != nil {
+		b.log.Error("convstore upsert (follow-up agent fail)", "error", uerr)
+	}
+	b.markRunState(ctx, runstore.StateFailed, err)
+	b.deleteSandboxSession(sb, b.currentAgentRunSessionID(ctx, "followup-"+requestID))
 }
 
 func noPullRequestResultBody(followup bool) string {
