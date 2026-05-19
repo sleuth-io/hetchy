@@ -14,8 +14,8 @@
 #   CLAUDE_CODE_OAUTH_TOKEN  long-lived token from `claude setup-token`,
 #                            backed by the user's Pro/Max subscription
 # Or, for GPT models via OpenAI Codex:
-#   HETCHY_CODEX_AUTH_KIND   api_key or access_token
-#   HETCHY_CODEX_AUTH_VALUE  OpenAI API key or Codex subscription token
+#   HETCHY_CODEX_AUTH_KIND   api_key, auth_json, or agent_identity
+#   HETCHY_CODEX_AUTH_VALUE  OpenAI API key, Codex auth.json, or agent identity
 #
 # Optional env:
 #   HETCHY_AGENT_SX_BOT          sx bot identity for the selected Hetchy agent

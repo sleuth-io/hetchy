@@ -2,6 +2,7 @@ package bot
 
 import (
 	"encoding/base64"
+	"strings"
 
 	"github.com/hetchyhq/hetchy/internal/agents"
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
@@ -32,7 +33,10 @@ func hasOpenAICredentials(oc orgcfg.Config) bool {
 
 func openAICodexAuth(oc orgcfg.Config) (kind, value string) {
 	if oc.OpenAICodexOAuthToken != "" {
-		return "access_token", oc.OpenAICodexOAuthToken
+		if strings.HasPrefix(strings.TrimSpace(oc.OpenAICodexOAuthToken), "{") {
+			return "auth_json", oc.OpenAICodexOAuthToken
+		}
+		return "agent_identity", oc.OpenAICodexOAuthToken
 	}
 	return "api_key", oc.OpenAIAPIKey
 }

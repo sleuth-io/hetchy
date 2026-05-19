@@ -460,6 +460,8 @@ func TestSettingsIntegrationsTemplate_OpenAICard(t *testing.T) {
 			`data-cred-tab="subscription"`,
 			`platform.openai.com`,
 			`codex login`,
+			`jq -c . ~/.codex/auth.json`,
+			`Codex auth.json`,
 		} {
 			if !strings.Contains(body, want) {
 				t.Errorf("openai card missing %q", want)

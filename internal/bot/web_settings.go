@@ -465,9 +465,9 @@ func errorMessage(s string) string {
 	case "openai_api_key_unverified":
 		return "Couldn't reach OpenAI to verify that API key. The key wasn't saved - please try again in a moment."
 	case "openai_oauth_invalid":
-		return "OpenAI rejected that subscription token. Re-run `codex login` and paste the fresh value."
+		return "That Codex subscription auth is not usable. Re-run `codex login` and paste `jq -c . ~/.codex/auth.json`."
 	case "openai_oauth_unverified":
-		return "Couldn't reach OpenAI to verify that subscription token. The token wasn't saved - please try again in a moment."
+		return "Couldn't verify that Codex subscription auth. The value wasn't saved - please try again in a moment."
 	default:
 		return ""
 	}
@@ -1095,8 +1095,8 @@ func applyAnthropicCredsChange(r *http.Request, current *orgcfg.Config) (newKind
 
 // applyOpenAICredsChange mirrors applyAnthropicCredsChange for the
 // OpenAI Codex integration: a fresh value in one credential field
-// clears the other so the Codex CLI doesn't see both an API key and a
-// subscription token on the same run. The mutex matters because
+// clears the other so the Codex CLI doesn't see both an API key and
+// ChatGPT subscription auth on the same run. The mutex matters because
 // `codex` resolves its credential from a single source (env var or
 // the on-disk auth file) — leaving both stored would mask which one
 // is actually winning when a user reports "I rotated the API key but
@@ -1183,8 +1183,9 @@ var credLineBreakStripper = strings.NewReplacer("\r", "", "\n", "")
 // paste in some browsers but not all, and a token with an embedded
 // newline silently fails downstream — Anthropic returns "Invalid bearer
 // token" for the partial value, or claude rejects it locally as an
-// invalid HTTP header. None of the credentials we store have legitimate
-// internal whitespace, so stripping it is safe and saves the user a
+// invalid HTTP header. The Codex auth.json value may contain spaces,
+// but it has no meaningful CR/LF characters when compacted with
+// `jq -c`, so stripping line breaks is safe and saves the user a
 // confusing round of 401s.
 func applyTokenChange(r *http.Request, field, existing string) string {
 	if r.PostFormValue(field+"_action") == "remove" {

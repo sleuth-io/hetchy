@@ -48,9 +48,9 @@ type Config struct {
 	// OpenAICodexOAuthToken so the chosen credential is the one Codex
 	// actually picks up.
 	OpenAIAPIKey string
-	// OpenAICodexOAuthToken is a long-lived token minted by
-	// `codex login` against a ChatGPT subscription, parallel to the
-	// Claude Code OAuth flow. Stored encrypted; never logged.
+	// OpenAICodexOAuthToken stores the Codex auth JSON from
+	// `~/.codex/auth.json`, or an agent-identity JWT accepted by
+	// `codex login --with-access-token`. Stored encrypted; never logged.
 	OpenAICodexOAuthToken string
 	SlackBotToken         string
 	SlackSocketToken      string

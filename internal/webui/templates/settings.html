@@ -450,7 +450,7 @@
       <div class="integration-title">
         <strong>OpenAI Codex</strong>
         <span class="tag">AI</span>
-        <p>Add GPT-powered models to the chat composer via the OpenAI Codex CLI. Authenticate with an OpenAI API key or a ChatGPT subscription token.</p>
+        <p>Add GPT-powered models to the chat composer via the OpenAI Codex CLI. Authenticate with an OpenAI API key or ChatGPT subscription auth.</p>
       </div>
       <div class="integration-status">
         {{if $enabled}}
@@ -470,20 +470,20 @@
         <form method="POST" action="/settings/org?tab=integrations">
           <div class="cred-tabs" role="tablist">
             <button type="button" class="cred-tab{{if eq $activeTab "api-key"}} active{{end}}" data-cred-tab="api-key" role="tab" aria-selected="{{if eq $activeTab "api-key"}}true{{else}}false{{end}}">API key</button>
-            <button type="button" class="cred-tab{{if eq $activeTab "subscription"}} active{{end}}" data-cred-tab="subscription" role="tab" aria-selected="{{if eq $activeTab "subscription"}}true{{else}}false{{end}}">Subscription key</button>
+            <button type="button" class="cred-tab{{if eq $activeTab "subscription"}} active{{end}}" data-cred-tab="subscription" role="tab" aria-selected="{{if eq $activeTab "subscription"}}true{{else}}false{{end}}">Subscription auth</button>
           </div>
           <div class="cred-panel{{if eq $activeTab "api-key"}} active{{end}}" data-cred-panel="api-key">
             <p class="cred-help">Generate at <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">platform.openai.com</a> — billed per usage.</p>
             {{template "secret" dict "Field" "openai_api_key" "Label" "OpenAI API key" "Preview" .OpenAIAPIKeyPreview "Placeholder" "sk-…" "Required" false}}
           </div>
           <div class="cred-panel{{if eq $activeTab "subscription"}} active{{end}}" data-cred-panel="subscription">
-            <p class="cred-help">Run <code>codex login</code> on your machine, complete the browser login, and paste <code>tokens.access_token</code> from <code>~/.codex/auth.json</code> here.</p>
-            {{template "secret" dict "Field" "openai_codex_oauth_token" "Label" "Subscription token" "Preview" .OpenAICodexOAuthTokenPreview "Placeholder" "ey…" "Required" false}}
+            <p class="cred-help">Run <code>codex login</code>, then paste the compact auth file from <code>jq -c . ~/.codex/auth.json</code>. This contains refresh credentials; treat it like a password.</p>
+            {{template "secret" dict "Field" "openai_codex_oauth_token" "Label" "Codex auth.json" "Preview" .OpenAICodexOAuthTokenPreview "Placeholder" `{"auth_mode":"chatgpt",…}` "Required" false}}
           </div>
           <button class="primary" type="submit">Save</button>
         </form>
         {{else if $enabled}}
-          <p class="hint">{{if $hasKey}}API key{{else}}Subscription key{{end}} configured.</p>
+          <p class="hint">{{if $hasKey}}API key{{else}}Subscription auth{{end}} configured.</p>
         {{end}}
       </div>
     </div>

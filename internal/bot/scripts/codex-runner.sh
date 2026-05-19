@@ -22,7 +22,11 @@ run_codex_exec() {
     api_key)
       printf '%s' "$HETCHY_CODEX_AUTH_VALUE" | codex login --with-api-key >"$login_log" 2>&1
       ;;
-    access_token)
+    auth_json)
+      printf '%s' "$HETCHY_CODEX_AUTH_VALUE" >"$CODEX_HOME/auth.json"
+      chmod 600 "$CODEX_HOME/auth.json"
+      ;;
+    agent_identity|access_token)
       printf '%s' "$HETCHY_CODEX_AUTH_VALUE" | codex login --with-access-token >"$login_log" 2>&1
       ;;
     *)

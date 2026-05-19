@@ -72,15 +72,15 @@ func TestOpenAICodexAuthAndModelMapping(t *testing.T) {
 			wantValue: "sk-openai",
 		},
 		{
-			name:      "subscription token",
-			oc:        orgcfg.Config{OpenAICodexOAuthToken: "ey-token"},
-			wantKind:  "access_token",
-			wantValue: "ey-token",
+			name:      "subscription auth json",
+			oc:        orgcfg.Config{OpenAICodexOAuthToken: `{"auth_mode":"chatgpt"}`},
+			wantKind:  "auth_json",
+			wantValue: `{"auth_mode":"chatgpt"}`,
 		},
 		{
-			name:      "subscription token wins",
+			name:      "agent identity token wins",
 			oc:        orgcfg.Config{OpenAIAPIKey: "sk-openai", OpenAICodexOAuthToken: "ey-token"},
-			wantKind:  "access_token",
+			wantKind:  "agent_identity",
 			wantValue: "ey-token",
 		},
 	}

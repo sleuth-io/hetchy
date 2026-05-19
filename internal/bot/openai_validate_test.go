@@ -34,14 +34,27 @@ func TestValidateOpenAICredential(t *testing.T) {
 		}
 	})
 
-	t.Run("oauth accepted without platform request", func(t *testing.T) {
+	t.Run("codex auth json accepted without platform request", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-			t.Fatal("validator called OpenAI Platform for Codex token")
+			t.Fatal("validator called OpenAI Platform for Codex auth")
 		}))
 		defer srv.Close()
 		withOpenAIBase(t, srv.URL)
 
-		token := testJWT(t, map[string]any{"exp": time.Now().Add(time.Hour).Unix()})
+		authJSON := testCodexAuthJSON(t)
+		if err := validateOpenAICredential(context.Background(), openaiCredOAuthToken, authJSON); err != nil {
+			t.Fatalf("validateOpenAICredential: %v", err)
+		}
+	})
+
+	t.Run("agent identity jwt accepted", func(t *testing.T) {
+		token := testJWT(t, map[string]any{
+			"agent_runtime_id":  "runtime-id",
+			"agent_private_key": "private-key",
+			"account_id":        "account-id",
+			"chatgpt_user_id":   "user-id",
+			"exp":               time.Now().Add(time.Hour).Unix(),
+		})
 		if err := validateOpenAICredential(context.Background(), openaiCredOAuthToken, token); err != nil {
 			t.Fatalf("validateOpenAICredential: %v", err)
 		}
@@ -73,9 +86,9 @@ func TestValidateOpenAICredential(t *testing.T) {
 		}
 	})
 
-	t.Run("oauth rejects malformed token", func(t *testing.T) {
+	t.Run("codex auth rejects malformed token", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-			t.Fatal("validator called OpenAI Platform for malformed Codex token")
+			t.Fatal("validator called OpenAI Platform for malformed Codex auth")
 		}))
 		defer srv.Close()
 		withOpenAIBase(t, srv.URL)
@@ -86,9 +99,37 @@ func TestValidateOpenAICredential(t *testing.T) {
 		}
 	})
 
-	t.Run("oauth rejects expired token", func(t *testing.T) {
-		token := testJWT(t, map[string]any{"exp": time.Now().Add(-time.Minute).Unix()})
+	t.Run("codex auth rejects chatgpt access token alone", func(t *testing.T) {
+		token := testJWT(t, map[string]any{
+			"exp": time.Now().Add(time.Hour).Unix(),
+			"https://api.openai.com/auth": map[string]any{
+				"chatgpt_account_id": "acct",
+				"chatgpt_plan_type":  "pro",
+			},
+		})
 		err := validateOpenAICredential(context.Background(), openaiCredOAuthToken, token)
+		if !errors.Is(err, errOpenAIInvalidCredential) {
+			t.Fatalf("error = %v, want errOpenAIInvalidCredential", err)
+		}
+	})
+
+	t.Run("codex auth rejects expired agent identity", func(t *testing.T) {
+		token := testJWT(t, map[string]any{
+			"agent_runtime_id":  "runtime-id",
+			"agent_private_key": "private-key",
+			"account_id":        "account-id",
+			"chatgpt_user_id":   "user-id",
+			"exp":               time.Now().Add(-time.Minute).Unix(),
+		})
+		err := validateOpenAICredential(context.Background(), openaiCredOAuthToken, token)
+		if !errors.Is(err, errOpenAIInvalidCredential) {
+			t.Fatalf("error = %v, want errOpenAIInvalidCredential", err)
+		}
+	})
+
+	t.Run("codex auth json rejects missing refresh token", func(t *testing.T) {
+		authJSON := testCodexAuthJSONWithoutRefresh(t)
+		err := validateOpenAICredential(context.Background(), openaiCredOAuthToken, authJSON)
 		if !errors.Is(err, errOpenAIInvalidCredential) {
 			t.Fatalf("error = %v, want errOpenAIInvalidCredential", err)
 		}
@@ -144,4 +185,35 @@ func testJWT(t *testing.T, claims map[string]any) string {
 		return base64.RawURLEncoding.EncodeToString(b)
 	}
 	return encode(map[string]string{"alg": "none", "typ": "JWT"}) + "." + encode(claims) + ".sig"
+}
+
+func testCodexAuthJSON(t *testing.T) string {
+	t.Helper()
+	return testCodexAuthJSONWithRefresh(t, true)
+}
+
+func testCodexAuthJSONWithoutRefresh(t *testing.T) string {
+	t.Helper()
+	return testCodexAuthJSONWithRefresh(t, false)
+}
+
+func testCodexAuthJSONWithRefresh(t *testing.T, includeRefresh bool) string {
+	t.Helper()
+	tokens := map[string]any{
+		"id_token":     testJWT(t, map[string]any{"email": "user@example.com"}),
+		"access_token": testJWT(t, map[string]any{"exp": time.Now().Add(time.Hour).Unix()}),
+		"account_id":   "acct-test",
+	}
+	if includeRefresh {
+		tokens["refresh_token"] = "rt-test"
+	}
+	b, err := json.Marshal(map[string]any{
+		"auth_mode":    "chatgpt",
+		"tokens":       tokens,
+		"last_refresh": "2026-05-19T20:00:00Z",
+	})
+	if err != nil {
+		t.Fatalf("marshal auth json: %v", err)
+	}
+	return string(b)
 }
