@@ -17,6 +17,9 @@ func TestParseClaudeModel(t *testing.T) {
 		{"Opus", ClaudeModelOpus, true},
 		{" sonnet ", ClaudeModelSonnet, true},
 		{"haiku", ClaudeModelHaiku, true},
+		{"gpt-frontier", ModelGPTFrontier, true},
+		{"GPT-Balanced", ModelGPTBalanced, true},
+		{"gpt-fastest", ModelGPTFastest, true},
 		{"claude-sonnet-4-6", "", false},
 		{"bad", "", false},
 	}
@@ -25,6 +28,47 @@ func TestParseClaudeModel(t *testing.T) {
 			got, ok := parseClaudeModel(tc.in)
 			if ok != tc.ok || got != tc.want {
 				t.Fatalf("parseClaudeModel(%q) = (%q, %v), want (%q, %v)", tc.in, got, ok, tc.want, tc.ok)
+			}
+		})
+	}
+}
+
+func TestConversationModelForAPI(t *testing.T) {
+	cases := map[string]string{
+		"":             "opus",
+		"opus":         "opus",
+		"sonnet":       "sonnet",
+		"haiku":        "haiku",
+		"gpt-frontier": "gpt-frontier",
+		"gpt-balanced": "gpt-balanced",
+		"gpt-fastest":  "gpt-fastest",
+		"bad":          "opus",
+	}
+	for in, want := range cases {
+		t.Run(in, func(t *testing.T) {
+			if got := conversationModelForAPI(in); got != want {
+				t.Fatalf("conversationModelForAPI(%q) = %q, want %q", in, got, want)
+			}
+		})
+	}
+}
+
+func TestModelProvider(t *testing.T) {
+	cases := []struct {
+		in   ClaudeModel
+		want modelProviderKind
+	}{
+		{ClaudeModelOpus, modelProviderAnthropic},
+		{ClaudeModelSonnet, modelProviderAnthropic},
+		{ClaudeModelHaiku, modelProviderAnthropic},
+		{ModelGPTFrontier, modelProviderOpenAI},
+		{ModelGPTBalanced, modelProviderOpenAI},
+		{ModelGPTFastest, modelProviderOpenAI},
+	}
+	for _, tc := range cases {
+		t.Run(string(tc.in), func(t *testing.T) {
+			if got := modelProvider(tc.in); got != tc.want {
+				t.Fatalf("modelProvider(%q) = %d, want %d", tc.in, got, tc.want)
 			}
 		})
 	}

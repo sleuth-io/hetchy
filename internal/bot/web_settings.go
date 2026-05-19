@@ -50,25 +50,27 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 			b.log.Warn("workos: org name lookup failed", "org", p.OrgID, "error", err)
 		}
 		data := map[string]any{
-			"OrgID":                       p.OrgID,
-			"OrgName":                     orgName,
-			"Email":                       p.Email,
-			"PrincipalUserID":             p.UserID,
-			"IsAdmin":                     isAdmin(p),
-			"Tab":                         tab,
-			"Saved":                       r.URL.Query().Get("saved") == "1",
-			"SavedMessage":                savedMessage(r.URL.Query().Get("saved")),
-			"ErrorMessage":                errorMessage(r.URL.Query().Get("error")),
-			"AnthropicAPIKeyPreview":      previewSecret(current.AnthropicAPIKey),
-			"ClaudeCodeOAuthTokenPreview": previewSecret(current.ClaudeCodeOAuthToken),
-			"SlackBotTokenPreview":        previewSecret(current.SlackBotToken),
-			"SlackSocketTokenPreview":     previewSecret(current.SlackSocketToken),
-			"SlackTeamID":                 current.SlackTeamID,
-			"SlackOAuthEnabled":           b.slackOAuthConfigured(),
-			"IsDev":                       b.cfg.Env == "dev",
-			"SXKeyPreview":                previewSecret(current.SXKey),
-			"GitHubAppEnabled":            b.app != nil,
-			"DefaultRepoSlug":             defaultRepoSlug,
+			"OrgID":                        p.OrgID,
+			"OrgName":                      orgName,
+			"Email":                        p.Email,
+			"PrincipalUserID":              p.UserID,
+			"IsAdmin":                      isAdmin(p),
+			"Tab":                          tab,
+			"Saved":                        r.URL.Query().Get("saved") == "1",
+			"SavedMessage":                 savedMessage(r.URL.Query().Get("saved")),
+			"ErrorMessage":                 errorMessage(r.URL.Query().Get("error")),
+			"AnthropicAPIKeyPreview":       previewSecret(current.AnthropicAPIKey),
+			"ClaudeCodeOAuthTokenPreview":  previewSecret(current.ClaudeCodeOAuthToken),
+			"OpenAIAPIKeyPreview":          previewSecret(current.OpenAIAPIKey),
+			"OpenAICodexOAuthTokenPreview": previewSecret(current.OpenAICodexOAuthToken),
+			"SlackBotTokenPreview":         previewSecret(current.SlackBotToken),
+			"SlackSocketTokenPreview":      previewSecret(current.SlackSocketToken),
+			"SlackTeamID":                  current.SlackTeamID,
+			"SlackOAuthEnabled":            b.slackOAuthConfigured(),
+			"IsDev":                        b.cfg.Env == "dev",
+			"SXKeyPreview":                 previewSecret(current.SXKey),
+			"GitHubAppEnabled":             b.app != nil,
+			"DefaultRepoSlug":              defaultRepoSlug,
 		}
 		if err := b.populateSettingsTabData(r.Context(), p.OrgID, tab, data); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -146,6 +148,13 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	newOpenAIKind, newOpenAIValue := applyOpenAICredsChange(r, &current)
+	if newOpenAIValue != "" {
+		if err := validateOpenAICredential(r.Context(), newOpenAIKind, newOpenAIValue); err != nil {
+			b.redirectOpenAIValidationError(w, r, tab, newOpenAIKind, err)
+			return
+		}
+	}
 
 	saved, err := b.orgs.Upsert(r.Context(), current)
 	if err != nil {
@@ -162,6 +171,8 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 		"has_sx", saved.SXKey != "",
 		"has_anthropic", saved.AnthropicAPIKey != "",
 		"has_claude_code_oauth", saved.ClaudeCodeOAuthToken != "",
+		"has_openai", saved.OpenAIAPIKey != "",
+		"has_openai_codex_oauth", saved.OpenAICodexOAuthToken != "",
 	)
 	// Slack creds may have changed; rebuild that org's connection.
 	b.slack.RestartOrg(r.Context(), p.OrgID)
@@ -459,6 +470,14 @@ func errorMessage(s string) string {
 		return "Anthropic rejected that subscription token. Re-run `claude setup-token` and paste the fresh value."
 	case "anthropic_oauth_unverified":
 		return "Couldn't reach Anthropic to verify that subscription token. The token wasn't saved - please try again in a moment."
+	case "openai_api_key_invalid":
+		return "OpenAI rejected that API key. Double-check you copied it from platform.openai.com and try again."
+	case "openai_api_key_unverified":
+		return "Couldn't reach OpenAI to verify that API key. The key wasn't saved - please try again in a moment."
+	case "openai_oauth_invalid":
+		return "That Codex subscription auth is not usable. Re-run `codex login` and paste `jq -c . ~/.codex/auth.json`."
+	case "openai_oauth_unverified":
+		return "Couldn't verify that Codex subscription auth. The value wasn't saved - please try again in a moment."
 	default:
 		return ""
 	}
@@ -698,6 +717,56 @@ func applyAnthropicCredsChange(r *http.Request, current *orgcfg.Config) (newKind
 	return anthropicCredAPIKey, ""
 }
 
+// applyOpenAICredsChange mirrors applyAnthropicCredsChange for the
+// OpenAI Codex integration: a fresh value in one credential field
+// clears the other so the Codex CLI doesn't see both an API key and
+// ChatGPT subscription auth on the same run. The mutex matters because
+// `codex` resolves its credential from a single source (env var or
+// the on-disk auth file) — leaving both stored would mask which one
+// is actually winning when a user reports "I rotated the API key but
+// it still uses the old subscription".
+func applyOpenAICredsChange(r *http.Request, current *orgcfg.Config) (newKind openaiCredKind, newValue string) {
+	beforeAPI := current.OpenAIAPIKey
+	beforeOAuth := current.OpenAICodexOAuthToken
+	current.OpenAIAPIKey = applyTokenChange(r, "openai_api_key", current.OpenAIAPIKey)
+	current.OpenAICodexOAuthToken = applyTokenChange(r, "openai_codex_oauth_token", current.OpenAICodexOAuthToken)
+	apiNew := current.OpenAIAPIKey != "" && current.OpenAIAPIKey != beforeAPI
+	oauthNew := current.OpenAICodexOAuthToken != "" && current.OpenAICodexOAuthToken != beforeOAuth
+	switch {
+	case apiNew && oauthNew:
+		current.OpenAIAPIKey = ""
+		return openaiCredOAuthToken, current.OpenAICodexOAuthToken
+	case apiNew:
+		current.OpenAICodexOAuthToken = ""
+		return openaiCredAPIKey, current.OpenAIAPIKey
+	case oauthNew:
+		current.OpenAIAPIKey = ""
+		return openaiCredOAuthToken, current.OpenAICodexOAuthToken
+	}
+	return openaiCredAPIKey, ""
+}
+
+func (b *Bot) redirectOpenAIValidationError(w http.ResponseWriter, r *http.Request, tab string, kind openaiCredKind, err error) {
+	rejected := errors.Is(err, errOpenAIInvalidCredential)
+	var sentinel string
+	switch {
+	case kind == openaiCredOAuthToken && rejected:
+		sentinel = "openai_oauth_invalid"
+	case kind == openaiCredOAuthToken:
+		sentinel = "openai_oauth_unverified"
+	case rejected:
+		sentinel = "openai_api_key_invalid"
+	default:
+		sentinel = "openai_api_key_unverified"
+	}
+	b.log.Warn("openai credential validation failed",
+		"sentinel", sentinel,
+		"rejected", rejected,
+		"error", err,
+	)
+	http.Redirect(w, r, "/settings/org?tab="+url.QueryEscape(tab)+"&error="+sentinel, http.StatusFound)
+}
+
 func (b *Bot) redirectAnthropicValidationError(w http.ResponseWriter, r *http.Request, tab string, kind anthropicCredKind, err error) {
 	rejected := errors.Is(err, errAnthropicInvalidCredential)
 	var sentinel string
@@ -738,8 +807,9 @@ var credLineBreakStripper = strings.NewReplacer("\r", "", "\n", "")
 // paste in some browsers but not all, and a token with an embedded
 // newline silently fails downstream — Anthropic returns "Invalid bearer
 // token" for the partial value, or claude rejects it locally as an
-// invalid HTTP header. None of the credentials we store have legitimate
-// internal whitespace, so stripping it is safe and saves the user a
+// invalid HTTP header. The Codex auth.json value may contain spaces,
+// but it has no meaningful CR/LF characters when compacted with
+// `jq -c`, so stripping line breaks is safe and saves the user a
 // confusing round of 401s.
 func applyTokenChange(r *http.Request, field, existing string) string {
 	if r.PostFormValue(field+"_action") == "remove" {

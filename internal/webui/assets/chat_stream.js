@@ -63,6 +63,21 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+function renderLocalRequestError(message) {
+  const turn = startBotTurn();
+  const now = new Date().toISOString();
+  renderBlock(turn, {
+    id: 'local-request-error-' + Date.now(),
+    kind: 'error',
+    title: 'Request failed',
+    body: message || 'The chat request failed before a run was started.',
+    status: 'error',
+    started_at: now,
+    ended_at: now,
+  }, { open: true });
+  log.scrollTop = log.scrollHeight;
+}
+
 async function openChatStream(afterSeq = 0) {
   const params = new URLSearchParams();
   if (afterSeq > 0) params.set('after_seq', String(afterSeq));
@@ -399,6 +414,8 @@ async function send() {
 
   const taskOptions = currentTaskOptions();
 
+  const previousConversationHasServerState = conversationHasServerState;
+  const previousLastDetail = lastDetail ? JSON.parse(JSON.stringify(lastDetail)) : null;
   const willCreateConversation = !conversationHasServerState;
   const isFirstTurn = log.querySelectorAll('.msg').length === 0;
   addUserMsg(displayText, attachmentsForTurn.map(file => ({
@@ -409,6 +426,8 @@ async function send() {
   if (lastDetail) lastDetail.task_options = taskOptions;
   if (isFirstTurn || agentChoiceApplies) {
     setModelPickerLocked(true);
+    setRepoPickerLocked(true);
+    setAgentPickerLocked(true);
     renderPendingMetadata(displayText, attachmentsForTurn);
   }
 
@@ -448,6 +467,14 @@ async function send() {
     await streamTurnWithReconnect(res, {
       onFirstEvent: isFirstTurn ? () => { loadSidebar(); refreshMetadata(); } : null
     });
+  } catch (e) {
+    const message = (e && e.message ? e.message : 'Chat request failed').trim();
+    showToast('chat-request-failed', message, 'error', 7000);
+    renderLocalRequestError(message);
+    conversationHasServerState = previousConversationHasServerState;
+    lastDetail = previousLastDetail;
+    renderMetadata(lastDetail);
+    if (isFirstTurn || agentChoiceApplies) setModelPickerLocked(false);
   } finally {
     stopRequested = false;
     setRunState(false);

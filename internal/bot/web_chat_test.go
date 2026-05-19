@@ -12,6 +12,7 @@ import (
 
 	"github.com/hetchyhq/hetchy/internal/auth"
 	"github.com/hetchyhq/hetchy/internal/blocks"
+	"github.com/hetchyhq/hetchy/internal/orgcfg"
 	"github.com/hetchyhq/hetchy/internal/runstore"
 	"github.com/hetchyhq/hetchy/internal/webui"
 )
@@ -20,10 +21,11 @@ func TestChatTemplate_ComposerControls(t *testing.T) {
 	b := newBypassBot(t)
 	rec := httptest.NewRecorder()
 	b.renderTemplate(rec, webui.Chat, map[string]any{
-		"Email":       "u@x",
-		"DisplayName": "Test User",
-		"GravatarURL": "https://example.com/avatar.png",
-		"UserID":      "user_test",
+		"Email":         "u@x",
+		"DisplayName":   "Test User",
+		"GravatarURL":   "https://example.com/avatar.png",
+		"UserID":        "user_test",
+		"OpenAIEnabled": true,
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
@@ -54,6 +56,7 @@ func TestChatTemplate_ComposerControls(t *testing.T) {
 		`src="/assets/chat_stream.js`,
 		`src="/assets/chat_init.js`,
 		`data-current-user-id="user_test"`,
+		`data-openai-enabled="1"`,
 		`id="toast-stack"`,
 	} {
 		if !strings.Contains(body, w) {
@@ -106,9 +109,19 @@ func TestChatTemplate_ComposerControls(t *testing.T) {
 		`value: 'opus'`,
 		`value: 'sonnet'`,
 		`value: 'haiku'`,
+		`value: 'gpt-frontier'`,
+		`value: 'gpt-balanced'`,
+		`value: 'gpt-fastest'`,
+		`openAIEnabled`,
+		`document.body.dataset.openaiEnabled`,
 		`model: selectedModel`,
 		`applyConversationModel(detail)`,
 		`setModelPickerLocked(true)`,
+		`setRepoPickerLocked(true)`,
+		`setAgentPickerLocked(true)`,
+		`setRepoPickerLocked(hasTurns)`,
+		`setAgentPickerLocked(hasTurns)`,
+		`(set for this chat)`,
 		`attachFilesBtn.addEventListener('mouseenter'`,
 	} {
 		if !strings.Contains(script, w) {
@@ -319,6 +332,60 @@ func TestChatTemplate_LoadsSplitScriptsInOrder(t *testing.T) {
 	}
 	if strings.Contains(body, `src="/assets/chat.js`) {
 		t.Fatal("chat template still references removed chat.js")
+	}
+}
+
+// TestChatHandlerRoutesGPTModelsBasedOnOpenAIConfig covers the GPT
+// credential gate: missing OpenAI config is still a clean 400, while a
+// configured org is allowed through to the normal chat state machine.
+func TestChatHandlerRoutesGPTModelsBasedOnOpenAIConfig(t *testing.T) {
+	cases := []struct {
+		name      string
+		orgConfig orgcfg.Config
+		body      string
+		wantStat  int
+		wantSub   string
+	}{
+		{
+			name:      "gpt rejected when openai unconfigured",
+			orgConfig: orgcfg.Config{OrgID: "org_test"},
+			body:      `{"text":"hi","session_id":"t1","model":"gpt-frontier"}`,
+			wantStat:  http.StatusBadRequest,
+			wantSub:   "OpenAI Codex isn't configured yet",
+		},
+		{
+			name:      "gpt accepted when openai configured",
+			orgConfig: orgcfg.Config{OrgID: "org_test", OpenAIAPIKey: "sk-stub"},
+			body:      `{"text":"hi","session_id":"t2","model":"gpt-balanced"}`,
+			wantStat:  http.StatusOK,
+			wantSub:   "Which repository",
+		},
+		{
+			name:      "unknown model rejected",
+			orgConfig: orgcfg.Config{OrgID: "org_test"},
+			body:      `{"text":"hi","session_id":"t3","model":"bogus"}`,
+			wantStat:  http.StatusBadRequest,
+			wantSub:   "invalid model",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			b := newBypassOrgBot(t, "admin")
+			b.orgs = &fakeOrgStore{getConfig: tc.orgConfig}
+			handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				b.conversationCollectionHandler(r.Context(), w, r)
+			})))
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/conversations", strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			handler.ServeHTTP(rec, req)
+			if rec.Code != tc.wantStat {
+				t.Fatalf("status = %d body=%q, want %d", rec.Code, rec.Body.String(), tc.wantStat)
+			}
+			if !strings.Contains(rec.Body.String(), tc.wantSub) {
+				t.Fatalf("body = %q, want substring %q", rec.Body.String(), tc.wantSub)
+			}
+		})
 	}
 }
 

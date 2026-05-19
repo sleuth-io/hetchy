@@ -42,12 +42,22 @@ type Config struct {
 	OrgID                string
 	AnthropicAPIKey      string
 	ClaudeCodeOAuthToken string
-	SlackBotToken        string
-	SlackSocketToken     string
-	SlackTeamID          string
-	SXKey                string
-	DefaultGitHubOwner   string
-	DefaultGitHubRepo    string
+	// OpenAIAPIKey is an OpenAI Platform API key (sk-...) used by the
+	// Codex CLI when the user picks a GPT model. Like the Anthropic
+	// pair above, the form handler enforces mutual exclusion with
+	// OpenAICodexOAuthToken so the chosen credential is the one Codex
+	// actually picks up.
+	OpenAIAPIKey string
+	// OpenAICodexOAuthToken stores the Codex auth JSON from
+	// `~/.codex/auth.json`, or an agent-identity JWT accepted by
+	// `codex login --with-access-token`. Stored encrypted; never logged.
+	OpenAICodexOAuthToken string
+	SlackBotToken         string
+	SlackSocketToken      string
+	SlackTeamID           string
+	SXKey                 string
+	DefaultGitHubOwner    string
+	DefaultGitHubRepo     string
 }
 
 // Store wires a *db.Store to a *secrets.Cipher and exposes plaintext
@@ -137,21 +147,31 @@ func (s *Store) Upsert(ctx context.Context, c Config) (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("encrypt claude code oauth token: %w", err)
 	}
+	oai, err := s.cipher.Encrypt(c.OpenAIAPIKey)
+	if err != nil {
+		return Config{}, fmt.Errorf("encrypt openai api key: %w", err)
+	}
+	oct, err := s.cipher.Encrypt(c.OpenAICodexOAuthToken)
+	if err != nil {
+		return Config{}, fmt.Errorf("encrypt openai codex oauth token: %w", err)
+	}
 	var teamID *string
 	if c.SlackTeamID != "" {
 		t := c.SlackTeamID
 		teamID = &t
 	}
 	row, err := s.db.Queries.UpsertOrgConfig(ctx, sqlc.UpsertOrgConfigParams{
-		OrgID:                         c.OrgID,
-		SlackBotTokenEncrypted:        sb,
-		SlackSocketTokenEncrypted:     ss,
-		SxKeyEncrypted:                sx,
-		AnthropicApiKeyEncrypted:      ak,
-		ClaudeCodeOauthTokenEncrypted: cc,
-		SlackTeamID:                   teamID,
-		DefaultGithubOwner:            c.DefaultGitHubOwner,
-		DefaultGithubRepo:             c.DefaultGitHubRepo,
+		OrgID:                          c.OrgID,
+		SlackBotTokenEncrypted:         sb,
+		SlackSocketTokenEncrypted:      ss,
+		SxKeyEncrypted:                 sx,
+		AnthropicApiKeyEncrypted:       ak,
+		ClaudeCodeOauthTokenEncrypted:  cc,
+		OpenaiApiKeyEncrypted:          oai,
+		OpenaiCodexOauthTokenEncrypted: oct,
+		SlackTeamID:                    teamID,
+		DefaultGithubOwner:             c.DefaultGitHubOwner,
+		DefaultGithubRepo:              c.DefaultGitHubRepo,
 	})
 	if err != nil {
 		return Config{}, fmt.Errorf("upsert org config: %w", err)
@@ -227,19 +247,29 @@ func (s *Store) decrypt(row sqlc.OrgConfig) (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("decrypt claude code oauth token: %w", err)
 	}
+	oai, err := s.cipher.Decrypt(row.OpenaiApiKeyEncrypted)
+	if err != nil {
+		return Config{}, fmt.Errorf("decrypt openai api key: %w", err)
+	}
+	oct, err := s.cipher.Decrypt(row.OpenaiCodexOauthTokenEncrypted)
+	if err != nil {
+		return Config{}, fmt.Errorf("decrypt openai codex oauth token: %w", err)
+	}
 	teamID := ""
 	if row.SlackTeamID != nil {
 		teamID = *row.SlackTeamID
 	}
 	return Config{
-		OrgID:                row.OrgID,
-		SlackBotToken:        sb,
-		SlackSocketToken:     ss,
-		SlackTeamID:          teamID,
-		SXKey:                sx,
-		AnthropicAPIKey:      ak,
-		ClaudeCodeOAuthToken: cc,
-		DefaultGitHubOwner:   row.DefaultGithubOwner,
-		DefaultGitHubRepo:    row.DefaultGithubRepo,
+		OrgID:                 row.OrgID,
+		SlackBotToken:         sb,
+		SlackSocketToken:      ss,
+		SlackTeamID:           teamID,
+		SXKey:                 sx,
+		AnthropicAPIKey:       ak,
+		ClaudeCodeOAuthToken:  cc,
+		OpenAIAPIKey:          oai,
+		OpenAICodexOAuthToken: oct,
+		DefaultGitHubOwner:    row.DefaultGithubOwner,
+		DefaultGitHubRepo:     row.DefaultGithubRepo,
 	}, nil
 }

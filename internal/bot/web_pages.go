@@ -41,14 +41,25 @@ func (b *Bot) indexHandler(w http.ResponseWriter, r *http.Request) {
 	} else {
 		b.log.Warn("profile fetch for chat header failed", "error", err, "user", p.UserID)
 	}
+	// openaiEnabled gates the GPT model block in the composer dropdown
+	// — we look it up once on chat-page render so the picker JS doesn't
+	// have to round-trip back to the server before painting. Errors are
+	// swallowed (treated as "not enabled") since a transient orgcfg
+	// hiccup shouldn't pull down the chat UI.
+	openaiEnabled := false
 	defaultRepoSlug := ""
 	if b.orgs != nil {
-		if oc, err := b.orgs.Get(r.Context(), p.OrgID); err == nil {
-			if oc.DefaultGitHubOwner != "" && oc.DefaultGitHubRepo != "" {
-				defaultRepoSlug = oc.DefaultGitHubOwner + "/" + oc.DefaultGitHubRepo
+		if cfg, err := b.orgs.Get(r.Context(), p.OrgID); err == nil {
+			openaiEnabled = cfg.OpenAIAPIKey != "" || cfg.OpenAICodexOAuthToken != ""
+			if cfg.DefaultGitHubOwner != "" && cfg.DefaultGitHubRepo != "" {
+				defaultRepoSlug = cfg.DefaultGitHubOwner + "/" + cfg.DefaultGitHubRepo
 			}
 		} else if !errors.Is(err, orgcfg.ErrNotFound) {
-			b.log.Warn("org config fetch for chat default repo failed", "error", err, "org", p.OrgID)
+			// Log transient errors so an org that briefly loses its
+			// integration/default repo block in the dropdown leaves a
+			// trail in the server logs. ErrNotFound is the common "first
+			// chat for a brand-new org" case and isn't worth a warn.
+			b.log.Warn("org config fetch for chat page failed", "error", err, "org", p.OrgID)
 		}
 	}
 	b.renderTemplate(w, webui.Chat, map[string]any{
@@ -56,6 +67,7 @@ func (b *Bot) indexHandler(w http.ResponseWriter, r *http.Request) {
 		"DisplayName":     displayName,
 		"GravatarURL":     webui.GravatarURL(p.Email),
 		"UserID":          p.UserID,
+		"OpenAIEnabled":   openaiEnabled,
 		"DefaultRepoSlug": defaultRepoSlug,
 	})
 }

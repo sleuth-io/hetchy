@@ -46,6 +46,10 @@ func TestErrorMessage(t *testing.T) {
 		"anthropic_api_key_unverified": "Couldn't reach Anthropic to verify that API key.",
 		"anthropic_oauth_invalid":      "Anthropic rejected that subscription token.",
 		"anthropic_oauth_unverified":   "Couldn't reach Anthropic to verify that subscription token.",
+		"openai_api_key_invalid":       "OpenAI rejected that API key.",
+		"openai_api_key_unverified":    "Couldn't reach OpenAI to verify that API key.",
+		"openai_oauth_invalid":         "That Codex subscription auth is not usable.",
+		"openai_oauth_unverified":      "Couldn't verify that Codex subscription auth.",
 	}
 	for in, wantSubstr := range cases {
 		got := errorMessage(in)

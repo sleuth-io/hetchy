@@ -60,3 +60,5 @@ state.json.old
 /GEMINI.md
 /.cursor/*
 /.playwright-mcp/*
+/.agents/*
+/.gemini/*

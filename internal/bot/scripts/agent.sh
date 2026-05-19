@@ -9,10 +9,13 @@
 #   SF_PROMPT_B64 or SF_PROMPT_B64_FILE    base64-encoded prompt, inline or file
 #   GITHUB_TOKEN     (sandbox env)
 #
-# Plus exactly one Claude credential — the bot picks which to inject:
+# Plus exactly one runtime credential family — the bot picks which to inject:
 #   ANTHROPIC_API_KEY        Anthropic Console API key (usage-billed), OR
 #   CLAUDE_CODE_OAUTH_TOKEN  long-lived token from `claude setup-token`,
 #                            backed by the user's Pro/Max subscription
+# Or, for GPT models via OpenAI Codex:
+#   HETCHY_CODEX_AUTH_KIND   api_key, auth_json, or agent_identity
+#   HETCHY_CODEX_AUTH_VALUE  OpenAI API key, Codex auth.json, or agent identity
 #
 # Optional env:
 #   HETCHY_AGENT_SX_BOT          sx bot identity for the selected Hetchy agent
@@ -24,6 +27,7 @@
 #   SF_SPEC_START_B64 or SF_SPEC_START_B64_FILE    base64-encoded start.sh from the saved bootstrap spec
 #   SF_SPEC_HEALTH_B64 or SF_SPEC_HEALTH_B64_FILE  base64-encoded health.sh from the saved bootstrap spec
 #   HETCHY_CLAUDE_MODEL  Claude Code model alias: opus, sonnet, or haiku
+#   HETCHY_CODEX_MODEL   Codex model id, e.g. gpt-5.4
 #   HETCHY_ARTIFACT_SLOTS      JSON proof-artifact upload slots
 #   HETCHY_ARTIFACT_SLOT_URL   endpoint for requesting more upload slots
 #   HETCHY_ARTIFACT_SLOT_TOKEN bearer token for that endpoint
@@ -39,9 +43,16 @@ set -euo pipefail
 : "${SF_WORKDIR:?required}"
 : "${SF_BASE_BRANCH:?required}"
 : "${GITHUB_TOKEN:?required}"
-if [[ -z "${ANTHROPIC_API_KEY:-}" && -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
-  echo "[hetchy] neither ANTHROPIC_API_KEY nor CLAUDE_CODE_OAUTH_TOKEN is set" >&2
-  exit 1
+if [[ -n "${HETCHY_CODEX_MODEL:-}" ]]; then
+  if [[ -z "${HETCHY_CODEX_AUTH_KIND:-}" || -z "${HETCHY_CODEX_AUTH_VALUE:-}" ]]; then
+    echo "[hetchy] HETCHY_CODEX_AUTH_KIND and HETCHY_CODEX_AUTH_VALUE are required for Codex" >&2
+    exit 1
+  fi
+else
+  if [[ -z "${ANTHROPIC_API_KEY:-}" && -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
+    echo "[hetchy] neither ANTHROPIC_API_KEY nor CLAUDE_CODE_OAUTH_TOKEN is set" >&2
+    exit 1
+  fi
 fi
 
 has_b64_input() {
@@ -91,32 +102,38 @@ require_b64_input SF_PROMPT_B64
 # or some other layer would silently win over the OAuth token we want.
 # We unset every Anthropic-flavored variable that isn't the one the bot
 # chose, so the precedence stack only has one entry.
-if [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
-  unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN
+if [[ -n "${HETCHY_CODEX_MODEL:-}" ]]; then
+  unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN CLAUDE_CODE_OAUTH_TOKEN
+  echo "[hetchy] auth: HETCHY_CODEX_AUTH_KIND=${HETCHY_CODEX_AUTH_KIND} length=${#HETCHY_CODEX_AUTH_VALUE}"
+  echo "[hetchy] env scan: $(env | { grep -E '^(OPENAI_|CODEX_|HETCHY_CODEX_)' || true; } | cut -d= -f1 | sort | tr '\n' ' ')"
 else
-  unset CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_AUTH_TOKEN
-fi
+  if [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
+    unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN
+  else
+    unset CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_AUTH_TOKEN
+  fi
 
-# One-line auth diagnostic. Logs only the prefix + length so an
-# "Invalid bearer token" rejection from Anthropic can be traced back to
-# what actually reached the sandbox (e.g. a token pasted into the wrong
-# tab is easy to spot by prefix; a truncated token by length). Also
-# dumps any *other* Anthropic-flavored env vars still set, since those
-# are what would silently take precedence over our injection.
-if [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
-  echo "[hetchy] auth: CLAUDE_CODE_OAUTH_TOKEN prefix=${CLAUDE_CODE_OAUTH_TOKEN:0:12}… length=${#CLAUDE_CODE_OAUTH_TOKEN}"
-else
-  echo "[hetchy] auth: ANTHROPIC_API_KEY prefix=${ANTHROPIC_API_KEY:0:12}… length=${#ANTHROPIC_API_KEY}"
+  # One-line auth diagnostic. Logs only the prefix + length so an
+  # "Invalid bearer token" rejection from Anthropic can be traced back to
+  # what actually reached the sandbox (e.g. a token pasted into the wrong
+  # tab is easy to spot by prefix; a truncated token by length). Also
+  # dumps any *other* Anthropic-flavored env vars still set, since those
+  # are what would silently take precedence over our injection.
+  if [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
+    echo "[hetchy] auth: CLAUDE_CODE_OAUTH_TOKEN prefix=${CLAUDE_CODE_OAUTH_TOKEN:0:12}… length=${#CLAUDE_CODE_OAUTH_TOKEN}"
+  else
+    echo "[hetchy] auth: ANTHROPIC_API_KEY prefix=${ANTHROPIC_API_KEY:0:12}… length=${#ANTHROPIC_API_KEY}"
+  fi
+  # Wrap grep in `{ ...; }` so `|| true` only swallows grep's exit
+  # status, not the rest of the pipeline. Without the brace group, shell
+  # parses this as `(env | grep) || (true | cut | sort | tr)` — when
+  # grep matches (it always does, since we just set one of these vars),
+  # the LHS succeeds and the RHS is skipped, so cut never runs and the
+  # raw KEY=VALUE pairs (including the actual token) end up in the log.
+  # That's how the previous version of this line leaked the bearer
+  # token to the setup block and on into persisted conversation state.
+  echo "[hetchy] env scan: $(env | { grep -E '^(ANTHROPIC_|CLAUDE_)' || true; } | cut -d= -f1 | sort | tr '\n' ' ')"
 fi
-# Wrap grep in `{ ...; }` so `|| true` only swallows grep's exit
-# status, not the rest of the pipeline. Without the brace group, shell
-# parses this as `(env | grep) || (true | cut | sort | tr)` — when
-# grep matches (it always does, since we just set one of these vars),
-# the LHS succeeds and the RHS is skipped, so cut never runs and the
-# raw KEY=VALUE pairs (including the actual token) end up in the log.
-# That's how the previous version of this line leaked the bearer
-# token to the setup block and on into persisted conversation state.
-echo "[hetchy] env scan: $(env | { grep -E '^(ANTHROPIC_|CLAUDE_)' || true; } | cut -d= -f1 | sort | tr '\n' ' ')"
 
 echo "[hetchy] setting up git auth"
 hetchy_configure_git_auth
@@ -353,7 +370,6 @@ if has_b64_input SF_SPEC_SETUP_B64 && has_b64_input SF_SPEC_START_B64 && has_b64
   fi
 fi
 
-echo "[hetchy] running claude"
 decode_b64_input SF_PROMPT_B64 /tmp/sf-prompt-base.txt
 agent_persona_file=""
 if [[ -n "${HETCHY_AGENT_PERSONA_ASSET:-}" && -f "$HOME/.claude/agents/${HETCHY_AGENT_PERSONA_ASSET}.md" ]]; then
@@ -377,10 +393,18 @@ if [[ -n "$agent_persona_file" ]]; then
 else
   cp /tmp/sf-prompt-base.txt /tmp/sf-prompt.txt
 fi
-# stream-json + verbose emits one NDJSON event per assistant chunk and
-# tool call so the bot can render typed Block updates in real time.
-# The PR URL is parsed out of the final assistant text by the bot.
-# run_claude_with_watchdog wraps claude to reap orphaned background-task
-# children that would otherwise pin the process alive after the agent's
-# turn ends — see scripts/claude-watchdog.sh for the full rationale.
-run_claude_with_watchdog /tmp/sf-prompt.txt
+if [[ -n "${HETCHY_CODEX_MODEL:-}" ]]; then
+  echo "[hetchy] verifying codex"
+  which codex
+  echo "[hetchy] initializing codex auth"
+  run_codex_exec /tmp/sf-prompt.txt
+else
+  echo "[hetchy] running claude"
+  # stream-json + verbose emits one NDJSON event per assistant chunk and
+  # tool call so the bot can render typed Block updates in real time.
+  # The PR URL is parsed out of the final assistant text by the bot.
+  # run_claude_with_watchdog wraps claude to reap orphaned background-task
+  # children that would otherwise pin the process alive after the agent's
+  # turn ends — see scripts/claude-watchdog.sh for the full rationale.
+  run_claude_with_watchdog /tmp/sf-prompt.txt
+fi

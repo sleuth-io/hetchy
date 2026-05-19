@@ -58,6 +58,53 @@ func TestClaudeAuthEnv(t *testing.T) {
 	}
 }
 
+func TestOpenAICodexAuthAndModelMapping(t *testing.T) {
+	authCases := []struct {
+		name      string
+		oc        orgcfg.Config
+		wantKind  string
+		wantValue string
+	}{
+		{
+			name:      "api key",
+			oc:        orgcfg.Config{OpenAIAPIKey: "sk-openai"},
+			wantKind:  "api_key",
+			wantValue: "sk-openai",
+		},
+		{
+			name:      "subscription auth json",
+			oc:        orgcfg.Config{OpenAICodexOAuthToken: `{"auth_mode":"chatgpt"}`},
+			wantKind:  "auth_json",
+			wantValue: `{"auth_mode":"chatgpt"}`,
+		},
+		{
+			name:      "agent identity token wins",
+			oc:        orgcfg.Config{OpenAIAPIKey: "sk-openai", OpenAICodexOAuthToken: "ey-token"},
+			wantKind:  "agent_identity",
+			wantValue: "ey-token",
+		},
+	}
+	for _, tc := range authCases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotKind, gotValue := openAICodexAuth(tc.oc)
+			if gotKind != tc.wantKind || gotValue != tc.wantValue {
+				t.Fatalf("openAICodexAuth = (%q, %q), want (%q, %q)", gotKind, gotValue, tc.wantKind, tc.wantValue)
+			}
+		})
+	}
+
+	modelCases := map[ClaudeModel]string{
+		ModelGPTFrontier: codexModelFrontier,
+		ModelGPTBalanced: codexModelBalanced,
+		ModelGPTFastest:  codexModelFastest,
+	}
+	for model, want := range modelCases {
+		if got := codexModelForCLI(model); got != want {
+			t.Errorf("codexModelForCLI(%q) = %q, want %q", model, got, want)
+		}
+	}
+}
+
 func TestAgentLineRouter_GroupsSetupThenSwitchesToParser(t *testing.T) {
 	emit := newCaptureEmitter()
 	r := newAgentLineRouter(emit)
@@ -95,6 +142,25 @@ func TestAgentLineRouter_GroupsSetupThenSwitchesToParser(t *testing.T) {
 	text := emit.Blocks[1]
 	if text.Kind != blocks.KindClaudeText || text.Body.String() != "Hi" {
 		t.Errorf("claude_text block wrong: %+v", text)
+	}
+}
+
+func TestAgentLineRouter_SwitchesToCodexParser(t *testing.T) {
+	emit := newCaptureEmitter()
+	r := newAgentLineRouter(emit)
+	r.Line("[hetchy] verifying codex")
+	r.Line("[hetchy] running codex")
+	r.Line(`{"type":"agent_message","message":"Done: https://github.com/o/r/pull/10"}`)
+
+	prURL := r.Finish()
+	if prURL != "https://github.com/o/r/pull/10" {
+		t.Errorf("want PR URL extracted, got %q", prURL)
+	}
+	if len(emit.Blocks) != 2 {
+		t.Fatalf("want 2 blocks (setup + codex text), got %d", len(emit.Blocks))
+	}
+	if emit.Blocks[1].Kind != blocks.KindClaudeText || !strings.Contains(emit.Blocks[1].Body.String(), "Done:") {
+		t.Fatalf("codex text block wrong: %+v", emit.Blocks[1])
 	}
 }
 

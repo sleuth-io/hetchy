@@ -564,7 +564,7 @@ func (b *Bot) conversationDetailResponse(ctx context.Context, orgID string, rec 
 		CreatorID:   rec.CreatorID,
 		AgentSlug:   agentSlug,
 		AgentName:   agentName,
-		Model:       string(normalizeClaudeModel(ClaudeModel(rec.Model))),
+		Model:       conversationModelForAPI(rec.Model),
 		TaskOptions: rec.TaskOptions,
 		Attachments: attachments,
 		CreatedAt:   createdAt,
