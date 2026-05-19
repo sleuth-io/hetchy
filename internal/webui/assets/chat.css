@@ -218,6 +218,10 @@
                          font-size: .72rem; font-weight: 600;
                          text-transform: uppercase; letter-spacing: .05em;
                          color: #777; }
+  .model-provider-heading { padding: .45rem .55rem .2rem;
+                            font-size: .68rem; font-weight: 600;
+                            text-transform: uppercase; letter-spacing: .04em;
+                            color: #888; }
   .tools-menu-item { width: 100%; min-height: 2.45rem; padding: .55rem .65rem;
                      border: 0; border-radius: .45rem; background: transparent;
                      color: #222; display: flex; align-items: center; gap: .6rem;
@@ -611,6 +615,7 @@
            font-size: .9rem; line-height: 1.35; pointer-events: auto; }
   .toast-warn { border-color: #f5c26b; background: #fff8e8; color: #5f3f04; }
   .toast-success { border-color: #8fd19e; background: #f0fbf2; color: #20592b; }
+  .toast-error { border-color: #ee9a9a; background: #fff1f1; color: #7a2020; }
 
   /* Dark theme — applied via html.is-dark by the bootstrap script. Kept
      as overrides on top of the light defaults so the light path stays
@@ -701,6 +706,7 @@
   html.is-dark .composer-popover { background: #232327; border-color: #2e2e33;
                                    box-shadow: 0 10px 28px rgba(0,0,0,.45); }
   html.is-dark .model-popover-title { color: #9a9aa0; }
+  html.is-dark .model-provider-heading { color: #9a9aa0; }
   html.is-dark .tools-menu-item { color: #e7e7e9; }
   html.is-dark .tools-menu-item:hover,
   html.is-dark .tools-menu-item[aria-expanded="true"] { background: #1f3a5c; }
@@ -800,6 +806,7 @@
                          box-shadow: 0 12px 36px rgba(0,0,0,.45); }
   html.is-dark .toast-warn { background: #332713; border-color: #805f1d; color: #ffd991; }
   html.is-dark .toast-success { background: #17301e; border-color: #2d7040; color: #9ee6ad; }
+  html.is-dark .toast-error { background: #351919; border-color: #8a3535; color: #ffb4b4; }
 
   /* Sidebar toggle — hidden on desktop, visible on mobile to slide
      #sidebar in. The button styling mirrors #meta-toggle so the two

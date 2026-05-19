@@ -433,6 +433,98 @@ func TestSettingsIntegrationsTemplate_DisconnectActionsUseDangerButton(t *testin
 	}
 }
 
+// TestSettingsIntegrationsTemplate_OpenAICard verifies the new
+// OpenAI Codex integration card renders with both credential tabs and
+// the right form-field names. The errorMessage sentinels for OpenAI
+// are covered by TestErrorMessageSentinels.
+func TestSettingsIntegrationsTemplate_OpenAICard(t *testing.T) {
+	b := newBypassBot(t)
+
+	t.Run("disabled - enable button + both tabs", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		b.renderTemplate(rec, webui.Settings, map[string]any{
+			"OrgID": "org_x", "OrgName": "Acme", "Email": "u@x", "Tab": "integrations",
+			"IsAdmin":                      true,
+			"GitHubAppEnabled":             true,
+			"SlackOAuthEnabled":            true,
+			"OpenAIAPIKeyPreview":          "",
+			"OpenAICodexOAuthTokenPreview": "",
+		})
+		body := rec.Body.String()
+		for _, want := range []string{
+			`<strong>OpenAI Codex</strong>`,
+			`data-focus-field="openai_api_key"`,
+			`name="openai_api_key"`,
+			`name="openai_codex_oauth_token"`,
+			`data-cred-tab="api-key"`,
+			`data-cred-tab="subscription"`,
+			`platform.openai.com`,
+			`codex login`,
+			`jq -c . ~/.codex/auth.json`,
+			`Codex auth.json`,
+		} {
+			if !strings.Contains(body, want) {
+				t.Errorf("openai card missing %q", want)
+			}
+		}
+	})
+
+	t.Run("enabled with api key shows enabled pill, subscription tab inactive", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		b.renderTemplate(rec, webui.Settings, map[string]any{
+			"OrgID": "org_x", "OrgName": "Acme", "Email": "u@x", "Tab": "integrations",
+			"IsAdmin":                      true,
+			"GitHubAppEnabled":             true,
+			"SlackOAuthEnabled":            true,
+			"OpenAIAPIKeyPreview":          "sk-...tail",
+			"OpenAICodexOAuthTokenPreview": "",
+		})
+		body := rec.Body.String()
+		// Locate the openai article block so we don't pick up the
+		// Anthropic card's "enabled" pill by accident.
+		start := strings.Index(body, `data-integration="openai"`)
+		if start < 0 {
+			t.Fatalf("openai card not rendered")
+		}
+		end := strings.Index(body[start:], `</article>`)
+		if end < 0 {
+			t.Fatalf("openai card not closed")
+		}
+		card := body[start : start+end]
+		if !strings.Contains(card, `class="btn-enabled">✓ Enabled`) {
+			t.Errorf("openai card should show enabled pill when api key set")
+		}
+		if !strings.Contains(card, `cred-tab active" data-cred-tab="api-key"`) {
+			t.Errorf("openai card should default to api-key tab when api key set")
+		}
+	})
+
+	t.Run("non-admin shows hint instead of save form", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		b.renderTemplate(rec, webui.Settings, map[string]any{
+			"OrgID": "org_x", "OrgName": "Acme", "Email": "u@x", "Tab": "integrations",
+			"IsAdmin":                      false,
+			"GitHubAppEnabled":             true,
+			"SlackOAuthEnabled":            true,
+			"OpenAIAPIKeyPreview":          "sk-...tail",
+			"OpenAICodexOAuthTokenPreview": "",
+		})
+		body := rec.Body.String()
+		start := strings.Index(body, `data-integration="openai"`)
+		if start < 0 {
+			t.Fatalf("openai card not rendered")
+		}
+		end := strings.Index(body[start:], `</article>`)
+		card := body[start : start+end]
+		if strings.Contains(card, `name="openai_api_key"`) {
+			t.Errorf("non-admin openai card should not render the save form")
+		}
+		if !strings.Contains(card, "API key configured.") {
+			t.Errorf("non-admin openai card should surface configured hint")
+		}
+	})
+}
+
 func TestSettingsIntegrationsTemplate_SlackDevSaveAndDisconnectShareActionRow(t *testing.T) {
 	b := newBypassBot(t)
 	rec := httptest.NewRecorder()

@@ -109,8 +109,17 @@ func (b *Bot) startConversationTurn(parentCtx context.Context, w http.ResponseWr
 	}
 	model, ok := parseClaudeModel(body.Model)
 	if !ok {
-		http.Error(w, "invalid model: choose opus, sonnet, or haiku", http.StatusBadRequest)
+		http.Error(w, "invalid model: pick one from the model dropdown", http.StatusBadRequest)
 		return
+	}
+	if modelProvider(model) == modelProviderOpenAI {
+		// Saved-credentials check happens up front so the user gets a
+		// clean 400 instead of the runtime tripping over a missing
+		// Codex credential mid-stream.
+		if !hasOpenAICredentials(oc) {
+			http.Error(w, "OpenAI Codex isn't configured yet — paste an API key or subscription token in /settings/org?tab=integrations.", http.StatusBadRequest)
+			return
+		}
 	}
 
 	flusher, ok := w.(http.Flusher)

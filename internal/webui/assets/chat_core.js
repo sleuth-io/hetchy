@@ -84,11 +84,25 @@ let repoOptions = [];
 let repoOptionsLoaded = false;
 let repoSearchQuery = '';
 let repoLoadToken = 0;
+const openAIEnabled = document.body.dataset.openaiEnabled === '1';
+// The GPT block is appended only when the OpenAI Codex integration is
+// configured on the org. The provider tag drives an optional section
+// header in the dropdown so users can tell at a glance which family
+// they're picking from — sticking the GPT options at the bottom keeps
+// the Anthropic defaults in their familiar order for orgs that don't
+// use OpenAI.
 const modelOptions = [
-  { value: 'opus', label: 'Opus', description: 'Most capable' },
-  { value: 'sonnet', label: 'Sonnet', description: 'Balanced everyday work' },
-  { value: 'haiku', label: 'Haiku', description: 'Fastest' },
+  { value: 'opus', label: 'Opus', description: 'Most capable', provider: 'anthropic' },
+  { value: 'sonnet', label: 'Sonnet', description: 'Balanced everyday work', provider: 'anthropic' },
+  { value: 'haiku', label: 'Haiku', description: 'Fastest', provider: 'anthropic' },
 ];
+if (openAIEnabled) {
+  modelOptions.push(
+    { value: 'gpt-frontier', label: 'GPT Frontier', description: 'Most capable GPT', provider: 'openai' },
+    { value: 'gpt-balanced', label: 'GPT Balanced', description: 'Balanced everyday work', provider: 'openai' },
+    { value: 'gpt-fastest', label: 'GPT Fastest', description: 'Fastest', provider: 'openai' },
+  );
+}
 const modelStorageKey = 'hetchy.model';
 let selectedModel = (function () {
   try {

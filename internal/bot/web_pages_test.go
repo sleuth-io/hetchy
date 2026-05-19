@@ -92,6 +92,24 @@ func TestIndexHandler_RendersDefaultRepoSlug(t *testing.T) {
 	}
 }
 
+func TestIndexHandler_OpenAIEnabled(t *testing.T) {
+	b := newBypassOrgBot(t, "admin")
+	b.orgs = &fakeOrgStore{getConfig: orgcfg.Config{
+		OrgID:        "org_test",
+		OpenAIAPIKey: "sk-stub",
+	}}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	b.auth.Middleware(http.HandlerFunc(b.indexHandler)).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), `data-openai-enabled="1"`) {
+		t.Fatalf("chat template missing OpenAI enabled flag, body=%s", rec.Body.String())
+	}
+}
+
 func TestRequireSameOrigin(t *testing.T) {
 	cases := []struct {
 		name    string

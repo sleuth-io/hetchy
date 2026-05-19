@@ -218,6 +218,35 @@ func TestHandleRequest_SubscriptionTokenSatisfiesCredCheck(t *testing.T) {
 	}
 }
 
+func TestHandleRequest_MissingOpenAICodexCredentials(t *testing.T) {
+	b := &Bot{log: discardLogger(), convs: convstore.New(nil), retryBackoff: 0}
+	b.createFn = func(context.Context, any) (*daytona.Sandbox, error) {
+		t.Fatal("sandbox should not be created when OpenAI config is incomplete")
+		return nil, errors.New("unreachable")
+	}
+	emit := newCaptureEmitter()
+	b.HandleRequest(context.Background(), orgcfg.Config{OrgID: "o", AnthropicAPIKey: "sk-ant-…"}, "do something", "req", "thread", "", chatTaskOptionPatch{}, nil, nil, ModelGPTFrontier, emit)
+	if !emit.hasCall("error", "Missing OpenAI Codex credentials") {
+		t.Errorf("expected missing OpenAI error, got Calls=%v", emit.Calls)
+	}
+}
+
+func TestHandleRequest_OpenAICodexCredentialsSatisfyGPTCheck(t *testing.T) {
+	b := &Bot{log: discardLogger(), convs: convstore.New(nil), retryBackoff: 0}
+	b.createFn = func(context.Context, any) (*daytona.Sandbox, error) {
+		t.Fatal("sandbox should not be created when no default repo is set")
+		return nil, errors.New("unreachable")
+	}
+	emit := newCaptureEmitter()
+	b.HandleRequest(context.Background(), orgcfg.Config{OrgID: "o", OpenAICodexOAuthToken: "ey-token"}, "do something", "req", "thread", "", chatTaskOptionPatch{}, nil, nil, ModelGPTFrontier, emit)
+	if emit.hasCall("error", "Missing OpenAI Codex credentials") {
+		t.Errorf("subscription token alone should satisfy GPT cred check, got Calls=%v", emit.Calls)
+	}
+	if !emit.hasCall("notify", "Which repository") {
+		t.Errorf("expected to advance to repo prompt, got Calls=%v", emit.Calls)
+	}
+}
+
 func TestHandleRequest_UnknownAgent(t *testing.T) {
 	b := &Bot{log: discardLogger(), convs: convstore.New(nil), retryBackoff: 0}
 	b.createFn = func(context.Context, any) (*daytona.Sandbox, error) {

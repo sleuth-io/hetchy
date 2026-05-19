@@ -160,6 +160,7 @@ type Bot struct {
 	ensureSandboxStartedFn   sandboxStartCheckFunc
 	commandLogSnapshotFn     commandLogSnapshotFunc
 	sessionCommandStatusFn   sessionCommandStatusFunc
+	downloadSandboxFileFn    func(context.Context, *daytona.Sandbox, string) ([]byte, error)
 	usersOnlyInOrgFn         func(context.Context, string) ([]string, error)
 	deleteWorkOSOrgFn        func(context.Context, string) error
 	// branchNameFn lets tests bypass the LLM round-trip in
@@ -526,13 +527,6 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 	}
 	emit := blocks.Tee(emitters...)
 
-	if oc.AnthropicAPIKey == "" && oc.ClaudeCodeOAuthToken == "" {
-		b.log.Warn("org missing claude credentials", "org", oc.OrgID)
-		emit.Error("Missing Claude credentials", "This organization has neither a Claude API key nor a subscription token set. Add one at /settings/org → Integrations → Claude (Anthropic).")
-		b.markRunState(ctx, runstore.StateFailed, errors.New("missing claude credentials"))
-		return
-	}
-
 	rec, err := b.convs.Get(ctx, oc.OrgID, threadID)
 	var opts chatTaskOptions
 	var taskOptions map[string]bool
@@ -549,6 +543,12 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		}
 	} else {
 		opts, taskOptions = resolveChatTaskOptions(nil, optionPatch)
+	}
+	if title, body, missing := missingCredentialError(model, oc); missing {
+		b.log.Warn("org missing agent credentials", "org", oc.OrgID, "model", model, "provider", modelProvider(model))
+		emit.Error(title, body)
+		b.markRunState(ctx, runstore.StateFailed, errors.New("missing agent credentials"))
+		return
 	}
 	switch {
 	case err == nil && rec.SandboxID != "" && rec.PRURL != "":
@@ -982,7 +982,7 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 	}
 	b.log.Info("sandbox created", "id", sb.ID, "request_id", requestID)
 	sandboxReadyID := emit.Start(blocks.KindNotify, "Sandbox ready", map[string]any{"tag": sandboxReadySSETag})
-	emit.Append(sandboxReadyID, fmt.Sprintf("`%s` is up — cloning repo and starting Claude Code.", sb.ID))
+	emit.Append(sandboxReadyID, fmt.Sprintf("`%s` is up — cloning repo and starting %s.", sb.ID, agentRuntimeDisplayName(model)))
 	emit.Done(sandboxReadyID, "")
 
 	agentRequest, err := b.promptWithSandboxAttachments(ctx, sb, rec.OrgID, rec.ThreadID, 0, requestID, userRequest, emit)

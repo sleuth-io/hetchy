@@ -158,6 +158,7 @@
     {{/* Anthropic first because it's required for any chat to work;
          the others are optional and ordered by visibility/usefulness. */}}
     {{template "integration_anthropic" .}}
+    {{template "integration_openai" .}}
     {{template "integration_github" .}}
     {{template "integration_slack" .}}
     {{template "integration_sx" .}}
@@ -424,6 +425,65 @@
         </form>
         {{else if $enabled}}
           <p class="hint">{{if $hasKey}}API key{{else}}Subscription key{{end}} configured.</p>
+        {{end}}
+      </div>
+    </div>
+  </article>
+{{end}}
+
+{{define "integration_openai"}}
+  {{$hasKey := ne .OpenAIAPIKeyPreview ""}}
+  {{$hasSub := ne .OpenAICodexOAuthTokenPreview ""}}
+  {{$enabled := or $hasKey $hasSub}}
+  {{/* Default tab: subscription if that's the only one set; else API key.
+       Mirrors the Anthropic card so users with subscription auth land on
+       their own credential on every page load. */}}
+  {{$activeTab := "api-key"}}
+  {{if and (not $hasKey) $hasSub}}{{$activeTab = "subscription"}}{{end}}
+  <article class="integration{{if $enabled}} enabled{{end}}" data-integration="openai">
+    <div class="integration-head">
+      <div class="integration-icon">
+        <svg viewBox="0 0 16 16" fill="#10a37f" aria-hidden="true">
+          <path d="M14.7 6.5a3.6 3.6 0 0 0-.3-3 3.7 3.7 0 0 0-4-1.8 3.7 3.7 0 0 0-6.3 1.3A3.7 3.7 0 0 0 1.7 4.6a3.6 3.6 0 0 0 .4 4.4 3.6 3.6 0 0 0 .3 3 3.7 3.7 0 0 0 4 1.8 3.7 3.7 0 0 0 6.3-1.3 3.7 3.7 0 0 0 2.4-1.8 3.6 3.6 0 0 0-.4-4.2zm-5.5 7.7a2.7 2.7 0 0 1-1.8-.7l.1-.1 3-1.7a.5.5 0 0 0 .2-.4V7l1.3.7v3.5a2.7 2.7 0 0 1-2.8 3zM3.3 11a2.7 2.7 0 0 1-.3-1.8l.1.1 3 1.8c.2.1.4.1.5 0L10 9v1.5l-3 1.8a2.7 2.7 0 0 1-3.7-1.3zm-.8-6.8c.4-.6 1-1.1 1.7-1.3v3.6a.5.5 0 0 0 .2.5l3.6 2L6.7 9.7l-3-1.7a2.7 2.7 0 0 1-1.2-3.6zm10.2 2.4-3.6-2L11.3 4l3 1.8a2.7 2.7 0 0 1-.4 4.9V7a.5.5 0 0 0-.2-.5zm1.3-2-.1-.1-3-1.8a.5.5 0 0 0-.5 0L7 4.4V3l3-1.8a2.7 2.7 0 0 1 4 2.9zM6.3 7.4l-1.3-.7V3.2a2.7 2.7 0 0 1 4.4-2.1l-.1.1-3 1.7a.5.5 0 0 0-.2.5zm.7-1.5L8.5 5l1.5.9V7.6L8.5 8.5 7 7.6z"/>
+        </svg>
+      </div>
+      <div class="integration-title">
+        <strong>OpenAI Codex</strong>
+        <span class="tag">AI</span>
+        <p>Add GPT-powered models to the chat composer via the OpenAI Codex CLI. Authenticate with an OpenAI API key or ChatGPT subscription auth.</p>
+      </div>
+      <div class="integration-status">
+        {{if $enabled}}
+          <span class="btn-enabled">✓ Enabled</span>
+        {{else if .IsAdmin}}
+          <button class="btn-enable" type="button" data-toggle-card data-focus-field="openai_api_key">Enable</button>
+        {{end}}
+        <button class="caret" type="button" aria-label="Toggle details">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><polyline points="4,6 8,10 12,6"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="integration-body">
+      <div class="body-section">
+        <legend>Credentials</legend>
+        {{if .IsAdmin}}
+        <form method="POST" action="/settings/org?tab=integrations">
+          <div class="cred-tabs" role="tablist">
+            <button type="button" class="cred-tab{{if eq $activeTab "api-key"}} active{{end}}" data-cred-tab="api-key" role="tab" aria-selected="{{if eq $activeTab "api-key"}}true{{else}}false{{end}}">API key</button>
+            <button type="button" class="cred-tab{{if eq $activeTab "subscription"}} active{{end}}" data-cred-tab="subscription" role="tab" aria-selected="{{if eq $activeTab "subscription"}}true{{else}}false{{end}}">Subscription auth</button>
+          </div>
+          <div class="cred-panel{{if eq $activeTab "api-key"}} active{{end}}" data-cred-panel="api-key">
+            <p class="cred-help">Generate at <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">platform.openai.com</a> — billed per usage.</p>
+            {{template "secret" dict "Field" "openai_api_key" "Label" "OpenAI API key" "Preview" .OpenAIAPIKeyPreview "Placeholder" "sk-…" "Required" false}}
+          </div>
+          <div class="cred-panel{{if eq $activeTab "subscription"}} active{{end}}" data-cred-panel="subscription">
+            <p class="cred-help">Run <code>codex login</code>, then paste the compact auth file from <code>jq -c . ~/.codex/auth.json</code>. Hetchy saves Codex refreshes after runs; treat this like a password.</p>
+            {{template "secret" dict "Field" "openai_codex_oauth_token" "Label" "Codex auth.json" "Preview" .OpenAICodexOAuthTokenPreview "Placeholder" `{"auth_mode":"chatgpt",…}` "Required" false}}
+          </div>
+          <button class="primary" type="submit">Save</button>
+        </form>
+        {{else if $enabled}}
+          <p class="hint">{{if $hasKey}}API key{{else}}Subscription auth{{end}} configured.</p>
         {{end}}
       </div>
     </div>

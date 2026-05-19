@@ -177,6 +177,12 @@ func TestAgentScript_EmbeddedAndWellFormed(t *testing.T) {
 		"local -a claude_args=(",
 		"--dangerously-skip-permissions",
 		`claude_args+=(--model "$HETCHY_CLAUDE_MODEL")`,
+		"run_codex_exec()",
+		"codex login --with-api-key",
+		"auth_json)",
+		"codex login --with-access-token",
+		"--output-last-message",
+		`--model "$HETCHY_CODEX_MODEL"`,
 		`if [[ -n "${SX_KEY:-}" ]]; then`,
 		"sx install",
 		`(cd "$SF_WORKDIR" && \`,
@@ -223,6 +229,12 @@ func TestFollowupScript_EmbeddedAndWellFormed(t *testing.T) {
 		"local -a claude_args=(",
 		"--dangerously-skip-permissions",
 		`claude_args+=(--model "$HETCHY_CLAUDE_MODEL")`,
+		"run_codex_exec()",
+		"codex login --with-api-key",
+		"auth_json)",
+		"codex login --with-access-token",
+		"--output-last-message",
+		`--model "$HETCHY_CODEX_MODEL"`,
 		`(cd "$SF_WORKDIR" && \`,
 		"emit_installed_skills",
 		"[hetchy:sx-skills]",
@@ -734,6 +746,39 @@ func TestRunAgentAllowsAnswerOnlyNoPR(t *testing.T) {
 	}
 	if captured.sessionID != "agent-req-1" {
 		t.Fatalf("run script was not invoked correctly: %+v", captured)
+	}
+}
+
+func TestRunAgentBuildsCodexRuntimeEnvironment(t *testing.T) {
+	restore := stubPRLookup(t, "acme/repo", "feature/sf-req-1", "main", "https://github.com/acme/repo/pull/7")
+	defer restore()
+
+	var captured capturedScriptRun
+	b := &Bot{
+		log: discardLogger(),
+		runScriptFn: func(_ context.Context, sb *daytona.Sandbox, sessionID, label, scriptBody string, env map[string]string, _ blocks.Emitter) (string, error) {
+			captured = captureScriptRun(sb, sessionID, label, scriptBody, env)
+			return "https://github.com/acme/repo/pull/7", nil
+		},
+	}
+	repo := repoCtx{Slug: "acme/repo", BaseBranch: "main", GitHubToken: "ghs_token"}
+	oc := orgcfg.Config{OrgID: "org_1", OpenAIAPIKey: "sk-openai"}
+
+	_, err := b.runAgent(context.Background(), &daytona.Sandbox{ID: "sandbox-1"}, repo, oc, agents.Profile{}, "ship feature", "req-1", "feature/sf-req-1", chatTaskOptions{ValidateChanges: false}, ModelGPTBalanced, newCaptureEmitter())
+	if err != nil {
+		t.Fatalf("runAgent: %v", err)
+	}
+	if captured.env["HETCHY_CODEX_AUTH_KIND"] != "api_key" || captured.env["HETCHY_CODEX_AUTH_VALUE"] != "sk-openai" {
+		t.Fatalf("codex auth env = kind:%q value:%q", captured.env["HETCHY_CODEX_AUTH_KIND"], captured.env["HETCHY_CODEX_AUTH_VALUE"])
+	}
+	if captured.env["HETCHY_CODEX_MODEL"] != codexModelBalanced {
+		t.Fatalf("HETCHY_CODEX_MODEL = %q, want %q", captured.env["HETCHY_CODEX_MODEL"], codexModelBalanced)
+	}
+	if _, ok := captured.env["HETCHY_CLAUDE_MODEL"]; ok {
+		t.Fatalf("Claude model env should not be set for Codex: %#v", captured.env)
+	}
+	if _, ok := captured.env["ANTHROPIC_API_KEY"]; ok {
+		t.Fatalf("Anthropic key should not be set for Codex: %#v", captured.env)
 	}
 }
 
