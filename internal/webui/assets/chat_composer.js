@@ -541,9 +541,11 @@ if (repoSearchEl) {
   });
   repoSearchEl.addEventListener('keydown', e => {
     if (e.key === 'Escape') {
+      // Escape on a top-level chip popover should return focus to the
+      // chip so keyboard users don't lose their place in the composer.
       e.preventDefault();
       closeRepoPopover();
-      closeToolsPopover();
+      if (repoSelectorBtn) repoSelectorBtn.focus();
       return;
     }
     if (e.key === 'Enter') {
