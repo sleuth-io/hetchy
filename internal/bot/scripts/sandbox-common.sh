@@ -85,6 +85,9 @@ hetchy_unset_stale_github_token_rewrites() {
   local key
   while IFS= read -r key; do
     [[ -n "$key" ]] || continue
+    # Hetchy injects GitHub App installation tokens exclusively via
+    # x-access-token: URL rewrites; other credential schemes are not
+    # written by these sandbox scripts.
     case "$key" in
       url.https://x-access-token:*@github.com/.insteadof|url.https://x-access-token:*@github.com/.insteadOf)
         if [[ -n "$workdir" ]]; then

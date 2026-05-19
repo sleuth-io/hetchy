@@ -173,6 +173,7 @@ func TestAgentScript_EmbeddedAndWellFormed(t *testing.T) {
 		`: "${SF_BASE_BRANCH:?required}"`,
 		"require_b64_input SF_PROMPT_B64",
 		"git clone",
+		"hetchy_configure_git_auth",
 		"local -a claude_args=(",
 		"--dangerously-skip-permissions",
 		`claude_args+=(--model "$HETCHY_CLAUDE_MODEL")`,
@@ -216,6 +217,7 @@ func TestFollowupScript_EmbeddedAndWellFormed(t *testing.T) {
 		`: "${SF_WORKDIR:?required}"`,
 		`: "${SF_BRANCH:?required}"`,
 		"require_b64_input SF_PROMPT_B64",
+		"hetchy_configure_git_auth",
 		"git fetch --prune origin",
 		"git pull --rebase --autostash origin",
 		"local -a claude_args=(",
@@ -265,6 +267,7 @@ func TestFollowupScript_EmbeddedAndWellFormed(t *testing.T) {
 
 func TestFollowupScript_SyncsBranchBeforeClaude(t *testing.T) {
 	wantOrder := []string{
+		`hetchy_configure_git_auth`,
 		`git fetch --prune origin`,
 		`git checkout "${SF_BRANCH}"`,
 		`git pull --rebase --autostash origin "${SF_BRANCH}"`,
