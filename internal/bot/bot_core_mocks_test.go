@@ -253,6 +253,52 @@ func TestHandleRequestFreshRunSuccessUsesMocks(t *testing.T) {
 	}
 }
 
+func TestHandleRequestFreshRunAnswerOnlyNoPR(t *testing.T) {
+	convs := &fakeConversationStore{getErr: convstore.ErrNotFound}
+	b := testCoreBot(convs)
+	b.resolveRepoFn = func(context.Context, string, string, string) (repoCtx, error) {
+		return repoCtx{Slug: "hetchyhq/hetchy", BaseBranch: "main", GitHubToken: "token"}, nil
+	}
+	b.createFn = func(context.Context, any) (*daytona.Sandbox, error) {
+		return &daytona.Sandbox{ID: "sandbox-1"}, nil
+	}
+	b.runAgentFn = func(_ context.Context, _ *daytona.Sandbox, _ repoCtx, _ orgcfg.Config, _ agents.Profile, _ string, _ string, _ string, _ chatTaskOptions, _ ClaudeModel, emit blocks.Emitter) (string, error) {
+		emit.Notify("Agent answered", "no code changes needed")
+		return "", nil
+	}
+	var deletedSession, archivedSandbox string
+	b.deleteSandboxSessionFn = func(sb *daytona.Sandbox, sessionID string) {
+		deletedSession = sessionID
+		archivedSandbox = sb.ID
+	}
+	b.stopAndArchiveFn = func(_ context.Context, sb *daytona.Sandbox) {
+		archivedSandbox = sb.ID
+	}
+	emit := newCaptureEmitter()
+
+	b.HandleRequest(context.Background(),
+		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant", DefaultGitHubOwner: "hetchyhq", DefaultGitHubRepo: "hetchy"},
+		"can I switch repo here?", "req-1", "thread-1", "user-1",
+		chatTaskOptionPatch{}, nil, nil, ClaudeModelOpus, emit)
+
+	if emit.hasCall("error", "Agent failed") {
+		t.Fatalf("answer-only run should not emit failure, got calls=%v", emit.Calls)
+	}
+	if !emit.hasCall("result", "No pull request was created") {
+		t.Fatalf("expected answer-only result, got calls=%v", emit.Calls)
+	}
+	if deletedSession != "agent-req-1" {
+		t.Fatalf("deleted session = %q, want agent-req-1", deletedSession)
+	}
+	if archivedSandbox != "sandbox-1" {
+		t.Fatalf("archived sandbox = %q, want sandbox-1", archivedSandbox)
+	}
+	rec := convs.lastUpsert(t)
+	if rec.PRURL != "" || rec.SandboxID != "" || rec.Branch != "" {
+		t.Fatalf("answer-only run should not persist PR/sandbox state: %+v", rec)
+	}
+}
+
 func TestHandleRequestRetryAfterFailureUsesNewRequest(t *testing.T) {
 	convs := &fakeConversationStore{
 		rec: convstore.Record{
@@ -464,6 +510,64 @@ func TestHandleRequestFollowUpSuccessUsesMocks(t *testing.T) {
 	}
 	if got := rec.History; len(got) != 2 || got[1] != "follow up" {
 		t.Fatalf("follow-up should append new turn, history=%#v", got)
+	}
+}
+
+func TestHandleRequestFollowUpAnswerOnlyKeepsExistingPR(t *testing.T) {
+	convs := &fakeConversationStore{
+		rec: convstore.Record{
+			OrgID:       "org_test",
+			ThreadID:    "thread-1",
+			SandboxID:   "sandbox-1",
+			Branch:      "feature/sf-old",
+			PRURL:       "https://github.com/hetchyhq/hetchy/pull/1",
+			GitHubOwner: "hetchyhq",
+			GitHubRepo:  "hetchy",
+			History:     []string{"first request"},
+		},
+	}
+	b := testCoreBot(convs)
+	b.resolveRepoFn = func(context.Context, string, string, string) (repoCtx, error) {
+		return repoCtx{Slug: "hetchyhq/hetchy", BaseBranch: "main", GitHubToken: "token"}, nil
+	}
+	b.getSandboxFn = func(_ context.Context, id string) (*daytona.Sandbox, error) {
+		return &daytona.Sandbox{ID: id}, nil
+	}
+	b.resumeSandboxFn = func(context.Context, *daytona.Sandbox, blocks.Emitter) error { return nil }
+	b.runFollowUpFn = func(_ context.Context, _ *daytona.Sandbox, _ repoCtx, _ orgcfg.Config, _ convstore.Record, _ agents.Profile, _ string, _ string, _ chatTaskOptions, _ ClaudeModel, emit blocks.Emitter) (string, error) {
+		emit.Notify("Follow-up answered", "no new changes needed")
+		return "", nil
+	}
+	var deletedSession, archivedSandbox string
+	b.deleteSandboxSessionFn = func(sb *daytona.Sandbox, sessionID string) {
+		deletedSession = sessionID
+		archivedSandbox = sb.ID
+	}
+	b.stopAndArchiveFn = func(_ context.Context, sb *daytona.Sandbox) {
+		archivedSandbox = sb.ID
+	}
+	emit := newCaptureEmitter()
+
+	b.HandleRequest(context.Background(),
+		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant"},
+		"how many endpoints remain?", "req-2", "thread-1", "user-1",
+		chatTaskOptionPatch{}, nil, nil, ClaudeModelOpus, emit)
+
+	if emit.hasCall("error", "Agent failed") {
+		t.Fatalf("answer-only follow-up should not emit failure, got calls=%v", emit.Calls)
+	}
+	if !emit.hasCall("result", "keeping the existing PR") {
+		t.Fatalf("expected answer-only follow-up result, got calls=%v", emit.Calls)
+	}
+	if deletedSession != "followup-req-2" {
+		t.Fatalf("deleted session = %q, want followup-req-2", deletedSession)
+	}
+	if archivedSandbox != "sandbox-1" {
+		t.Fatalf("archived sandbox = %q, want sandbox-1", archivedSandbox)
+	}
+	rec := convs.lastUpsert(t)
+	if rec.PRURL != "https://github.com/hetchyhq/hetchy/pull/1" {
+		t.Fatalf("follow-up should keep existing PR URL, got %+v", rec)
 	}
 }
 

@@ -73,6 +73,46 @@ restore_hetchy_cache_archive() {
   esac
 }
 
+hetchy_unset_stale_github_token_rewrites() {
+  local workdir="${1:-}"
+  local keys
+  if [[ -n "$workdir" ]]; then
+    keys="$(git -C "$workdir" config --local --name-only --get-regexp '^url\..*\.insteadof$' 2>/dev/null || true)"
+  else
+    keys="$(git config --global --name-only --get-regexp '^url\..*\.insteadof$' 2>/dev/null || true)"
+  fi
+
+  local key
+  while IFS= read -r key; do
+    [[ -n "$key" ]] || continue
+    case "$key" in
+      url.https://x-access-token:*@github.com/.insteadof|url.https://x-access-token:*@github.com/.insteadOf)
+        if [[ -n "$workdir" ]]; then
+          git -C "$workdir" config --local --unset-all "$key" >/dev/null 2>&1 || true
+          git -C "$workdir" config --local --remove-section "${key%.*}" >/dev/null 2>&1 || true
+        else
+          git config --global --unset-all "$key" >/dev/null 2>&1 || true
+          git config --global --remove-section "${key%.*}" >/dev/null 2>&1 || true
+        fi
+        ;;
+    esac
+  done <<< "$keys"
+}
+
+hetchy_configure_git_auth() {
+  : "${GITHUB_TOKEN:?GITHUB_TOKEN required}"
+
+  hetchy_unset_stale_github_token_rewrites ""
+  if [[ -n "${SF_WORKDIR:-}" && -d "${SF_WORKDIR}/.git" ]]; then
+    hetchy_unset_stale_github_token_rewrites "$SF_WORKDIR"
+    if [[ -n "${SF_REPO:-}" ]]; then
+      git -C "$SF_WORKDIR" remote set-url origin "https://github.com/${SF_REPO}.git" >/dev/null 2>&1 || true
+    fi
+  fi
+
+  git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+}
+
 save_hetchy_cache_archive() {
   local local_cache_dir="$1"
   local archive="$2"
@@ -556,6 +596,7 @@ hetchy_sync_workdir_to_base() {
   : "${SF_REPO:?SF_REPO required}"
   (
     cd "$workdir" &&
+    hetchy_unset_stale_github_token_rewrites "$workdir" &&
     git remote set-url origin "https://github.com/${SF_REPO}.git" &&
     git fetch --prune origin &&
     git checkout -B "$base_branch" "origin/${base_branch}" &&
