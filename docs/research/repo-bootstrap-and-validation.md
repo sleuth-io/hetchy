@@ -190,7 +190,7 @@ Implemented in `internal/bootstrap/detect.go`. Pure Go, no LLM. Output is a `Hin
 
 Cascade, in priority order:
 
-1. `.devcontainer/devcontainer.json` (or `.devcontainer/<name>/devcontainer.json`) — parse `image`, `build.dockerfile`, `postCreateCommand`, `postStartCommand`, `forwardPorts`, `containerEnv`. The most authoritative signal a repo can give us.
+1. Dev Container specs from `.devcontainer/devcontainer.json`, `.devcontainer.json`, or `.devcontainer/<name>/devcontainer.json` — parse `image`, `build`, `dockerComposeFile`, `features`, lifecycle commands, ports, and env. The most authoritative signal a repo can give us.
 2. `AGENTS.md` — extract code blocks under headings matching `/setup|install|run|dev|start|test/i`. Pass the file verbatim into the prompt; treat the code blocks as suggested commands.
 3. `docker-compose.yml` / `compose.yml` / `compose.yaml` — list services and exposed ports. Present `docker compose up -d` as a likely start command.
 4. `Dockerfile` — capture `EXPOSE`, `CMD`, `ENTRYPOINT` for context.
@@ -301,32 +301,38 @@ Already-supplied secrets in this sandbox env: {{names only, no values}}.
 
 Process:
 
-  0. Read the README and any docs/ contributor guides. They are written
+  0. If the hints include a Dev Container spec, try the reference
+     `devcontainer` CLI first. If the sandbox cannot run the container
+     shape because of nested-Docker, privilege, mount, or network limits,
+     translate the spec into ordinary setup/start scripts and declare the
+     unsupported container capability in `manifest.json`.
+
+  1. Read the README and any docs/ contributor guides. They are written
      for humans on dev workstations — INTERPRET, don't execute literally.
      Skip developer-only tooling (Doppler, dev hostnames, live-reload
      watchers). Look for AUTH_BYPASS / CI / TEST flags that elide
      external dependencies; for bootstrap purposes, prefer those paths.
 
-  1. Find the source of truth for required env vars. The README's list
+  2. Find the source of truth for required env vars. The README's list
      is a superset for the dev experience; the actual binary often
      requires fewer. Grep the codebase for `os.Getenv`, `process.env`,
      `ENV[`, `os.environ`, etc. and find the function that decides
      "fail to start" — that is the authoritative list.
 
-  2. Inspect the repo structure beyond the hints. Do not assume the
+  3. Inspect the repo structure beyond the hints. Do not assume the
      hints are complete.
 
-  3. Write setup.sh and run it from a clean checkout. It must be
+  4. Write setup.sh and run it from a clean checkout. It must be
      idempotent — every future task re-runs it.
 
-  4. Write start.sh and run it. Record what URL the app is on. If the
+  5. Write start.sh and run it. Record what URL the app is on. If the
      binary needs values you can mint safely (random session secrets,
-     internal-only DB passwords), put their generation in setup.sh. If
-     it needs real third-party credentials, see step 6.
+     internal-only DB passwords), put their generation in setup.sh. If it
+     needs real third-party credentials, see step 7.
 
-  5. Write health.sh and run it. Iterate until it passes.
+  6. Write health.sh and run it. Iterate until it passes.
 
-  6. Real third-party credentials handling:
+  7. Real third-party credentials handling:
      - If a credential has a documented test-mode bypass
        (AUTH_BYPASS=1, NODE_ENV=test, etc.) that lets the app boot, use it.
        Bootstrap succeeds with reduced functionality.
@@ -338,11 +344,11 @@ Process:
        services (e.g. fake Stripe sk_test_… keys). The app will appear
        to start and then fail later in confusing ways.
 
-  7. For every UI service, navigate to its root URL with Playwright and
+  8. For every UI service, navigate to its root URL with Playwright and
      take a screenshot. The screenshot must show real content (not an
      error page or blank screen).
 
-  8. Populate `suggested_repo_changes` in the manifest if you hit
+  9. Populate `suggested_repo_changes` in the manifest if you hit
      friction that a small repo change would have eliminated (e.g.
      "add a `make bootstrap` target", "expose required env vars via a
      `--print-required-env` flag", "add a docker-compose profile that

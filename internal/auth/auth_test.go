@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"slices"
 	"strings"
 	"testing"
@@ -103,6 +104,41 @@ func TestCallbackRejectsMissingState(t *testing.T) {
 	}
 	if loc := rec.Header().Get("Location"); loc != "/login?error=callback_failed" {
 		t.Fatalf("expected redirect to /login?error=callback_failed, got %q", loc)
+	}
+}
+
+func TestCallbackWithoutQueryStartsStatefulAuthFlow(t *testing.T) {
+	s := newTestService(t, "test-cookie-password-keep-it-long")
+	s.cfg.RedirectURI = "https://app.example.com/callback"
+	s.client = workos.NewClient("sk_test", workos.WithClientID("client_test"), workos.WithBaseURL("https://api.workos.test"))
+
+	req := httptest.NewRequest(http.MethodGet, "/callback", nil)
+	rec := httptest.NewRecorder()
+	s.CallbackHandler(rec, req)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("expected empty callback to redirect into AuthKit, got %d", rec.Code)
+	}
+	loc := rec.Header().Get("Location")
+	if !strings.HasPrefix(loc, "https://api.workos.test/user_management/authorize?") {
+		t.Fatalf("unexpected AuthKit redirect target: %s", loc)
+	}
+	u, err := url.Parse(loc)
+	if err != nil {
+		t.Fatalf("parse redirect location %q: %v", loc, err)
+	}
+	if got := u.Query().Get("prompt"); got != "login" {
+		t.Fatalf("prompt = %q, want login", got)
+	}
+	var stateCookie *http.Cookie
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == oauthStateCookieName {
+			stateCookie = c
+			break
+		}
+	}
+	if stateCookie == nil {
+		t.Fatal("expected oauth state cookie to be set")
 	}
 }
 

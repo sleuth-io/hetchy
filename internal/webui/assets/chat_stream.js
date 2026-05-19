@@ -64,9 +64,10 @@ function sleep(ms) {
 }
 
 async function openChatStream(afterSeq = 0) {
-  const params = new URLSearchParams({ session: sessionId });
+  const params = new URLSearchParams();
   if (afterSeq > 0) params.set('after_seq', String(afterSeq));
-  return fetch('/chat/stream?' + params.toString(), {
+  const suffix = params.toString() ? '?' + params.toString() : '';
+  return fetch('/api/v1/conversations/' + encodeURIComponent(sessionId) + '/events' + suffix, {
     headers: { 'Accept': 'text/event-stream' },
   });
 }
@@ -160,7 +161,7 @@ async function streamTurnWithReconnect(initialRes, options = {}) {
 
 // consumeSSEResponse reads a server-sent-event stream from `res` and
 // renders blocks into a bot turn render state. Used by both the original
-// POST-/chat send() flow and the GET-/chat/stream reload reattach
+// POST-/api/v1/conversations send() flow and the conversation events reload reattach
 // flow — the event shape is identical, only the source URL differs.
 //
 // onFirstEvent (optional) fires exactly once, the first time we
@@ -379,44 +380,61 @@ async function consumeSSEResponse(res, onFirstEvent, state = null) {
 async function send() {
   if (isRunning) return;
   const text = inp.value.trim();
-  if (!text) return;
+  const attachmentsForTurn = pendingAttachments.slice();
+  if (!text && attachmentsForTurn.length === 0) return;
+  const displayText = text || 'Use the attached file(s) as context.';
+  const agentChoiceApplies = conversationAgentIsMutable();
+  const repoChoiceApplies = conversationRepoIsMutable();
+  if (repoChoiceApplies && !selectedRepoSlug) {
+    showToast('repo-required', 'Choose a repository before sending this chat.', 'warn', 4500);
+    openRepoPopover();
+    return;
+  }
   stopRequested = false;
   inp.value = '';
+  pendingAttachments = [];
+  renderPendingAttachments();
   autosizeInput();
   setRunState(true);
 
   const taskOptions = currentTaskOptions();
 
-  const agentChoiceApplies = conversationAgentIsMutable();
-  const repoChoiceApplies = conversationRepoIsMutable();
+  const willCreateConversation = !conversationHasServerState;
   const isFirstTurn = log.querySelectorAll('.msg').length === 0;
-  addUserMsg(text);
+  addUserMsg(displayText, attachmentsForTurn.map(file => ({
+    filename: attachmentDisplayName(file),
+    size_bytes: file.size || 0,
+    content_type: file.type || 'application/octet-stream',
+  })));
   if (lastDetail) lastDetail.task_options = taskOptions;
   if (isFirstTurn || agentChoiceApplies) {
     setModelPickerLocked(true);
-    renderPendingMetadata(text);
+    renderPendingMetadata(displayText, attachmentsForTurn);
   }
 
-  const payload = { text, session_id: sessionId, model: selectedModel };
-  payload.validate = taskOptions[taskOptionKeys.validate];
-  payload.review_code_before_push = taskOptions[taskOptionKeys.reviewBeforePush];
-  payload.action_pr_checks_for_done = taskOptions[taskOptionKeys.actionPRChecks];
-  if (agentChoiceApplies) {
-    payload.agent_slug = selectedAgentSlug;
-  }
-  // Only send `repository` on turns where the conversation hasn't
-  // locked one in yet. Sending it on follow-ups would be a no-op
-  // server-side (HandleRequest pins the repo at sandbox creation), but
-  // the explicit guard keeps the wire payload honest about what the
-  // server will actually use.
-  if (repoChoiceApplies && selectedRepoSlug) {
-    payload.repository = selectedRepoSlug;
+  const hasAttachments = attachmentsForTurn.length > 0;
+  const requestPayload = {
+    id: sessionId,
+    message: displayText,
+    model: selectedModel,
+    task_options: taskOptions,
+  };
+  if (agentChoiceApplies) requestPayload.agent = selectedAgentSlug;
+  if (repoChoiceApplies && selectedRepoSlug) requestPayload.repository = selectedRepoSlug;
+  const payload = hasAttachments ? new FormData() : requestPayload;
+  if (hasAttachments) {
+    payload.append('payload', JSON.stringify(requestPayload));
+    attachmentsForTurn.forEach(file => payload.append('attachments', file, file.name || 'attachment'));
   }
   try {
-    const res = await fetch('/chat', {
+    const headers = hasAttachments ? {} : { 'Content-Type': 'application/json' };
+    const endpoint = willCreateConversation
+      ? '/api/v1/conversations'
+      : '/api/v1/conversations/' + encodeURIComponent(sessionId) + '/turns';
+    const res = await fetch(endpoint, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+      headers,
+      body: hasAttachments ? payload : JSON.stringify(payload)
     });
     if (!res.ok) {
       const body = await res.text().catch(() => '');
@@ -450,10 +468,10 @@ async function stopRun() {
   stopRequested = true;
   setRunState(true, true);
   try {
-    const res = await fetch('/chat/cancel', {
+    const res = await fetch('/api/v1/conversations/' + encodeURIComponent(sessionId) + '/cancel', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session_id: sessionId })
+      body: JSON.stringify({})
     });
     if (!res.ok) {
       stopRequested = false;

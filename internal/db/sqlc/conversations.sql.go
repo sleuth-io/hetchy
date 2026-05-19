@@ -25,6 +25,22 @@ func (q *Queries) DeleteConversation(ctx context.Context, arg DeleteConversation
 	return err
 }
 
+const deleteConversationAttachmentsForTurn = `-- name: DeleteConversationAttachmentsForTurn :exec
+DELETE FROM conversation_attachments
+WHERE org_id = $1 AND thread_id = $2 AND turn_index = $3
+`
+
+type DeleteConversationAttachmentsForTurnParams struct {
+	OrgID     string `json:"org_id"`
+	ThreadID  string `json:"thread_id"`
+	TurnIndex int32  `json:"turn_index"`
+}
+
+func (q *Queries) DeleteConversationAttachmentsForTurn(ctx context.Context, arg DeleteConversationAttachmentsForTurnParams) error {
+	_, err := q.db.Exec(ctx, deleteConversationAttachmentsForTurn, arg.OrgID, arg.ThreadID, arg.TurnIndex)
+	return err
+}
+
 const getConversation = `-- name: GetConversation :one
 SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, response_blocks,
        github_owner, github_repo, custom_title, creator_id, agent_slug, model, task_options
@@ -80,6 +96,140 @@ func (q *Queries) GetConversation(ctx context.Context, arg GetConversationParams
 	return i, err
 }
 
+const getConversationAttachment = `-- name: GetConversationAttachment :one
+SELECT id, org_id, thread_id, turn_index, filename, content_type,
+       size_bytes, data, source, slack_file_id, created_at
+FROM conversation_attachments
+WHERE org_id = $1 AND id = $2
+`
+
+type GetConversationAttachmentParams struct {
+	OrgID string `json:"org_id"`
+	ID    string `json:"id"`
+}
+
+func (q *Queries) GetConversationAttachment(ctx context.Context, arg GetConversationAttachmentParams) (ConversationAttachment, error) {
+	row := q.db.QueryRow(ctx, getConversationAttachment, arg.OrgID, arg.ID)
+	var i ConversationAttachment
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ThreadID,
+		&i.TurnIndex,
+		&i.Filename,
+		&i.ContentType,
+		&i.SizeBytes,
+		&i.Data,
+		&i.Source,
+		&i.SlackFileID,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const listConversationAttachments = `-- name: ListConversationAttachments :many
+SELECT id, org_id, thread_id, turn_index, filename, content_type,
+       size_bytes, source, slack_file_id, created_at
+FROM conversation_attachments
+WHERE org_id = $1 AND thread_id = $2
+ORDER BY turn_index ASC, created_at ASC, id ASC
+`
+
+type ListConversationAttachmentsParams struct {
+	OrgID    string `json:"org_id"`
+	ThreadID string `json:"thread_id"`
+}
+
+type ListConversationAttachmentsRow struct {
+	ID          string             `json:"id"`
+	OrgID       string             `json:"org_id"`
+	ThreadID    string             `json:"thread_id"`
+	TurnIndex   int32              `json:"turn_index"`
+	Filename    string             `json:"filename"`
+	ContentType string             `json:"content_type"`
+	SizeBytes   int64              `json:"size_bytes"`
+	Source      string             `json:"source"`
+	SlackFileID string             `json:"slack_file_id"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) ListConversationAttachments(ctx context.Context, arg ListConversationAttachmentsParams) ([]ListConversationAttachmentsRow, error) {
+	rows, err := q.db.Query(ctx, listConversationAttachments, arg.OrgID, arg.ThreadID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListConversationAttachmentsRow
+	for rows.Next() {
+		var i ListConversationAttachmentsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.ThreadID,
+			&i.TurnIndex,
+			&i.Filename,
+			&i.ContentType,
+			&i.SizeBytes,
+			&i.Source,
+			&i.SlackFileID,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listConversationAttachmentsForTurn = `-- name: ListConversationAttachmentsForTurn :many
+SELECT id, org_id, thread_id, turn_index, filename, content_type,
+       size_bytes, data, source, slack_file_id, created_at
+FROM conversation_attachments
+WHERE org_id = $1 AND thread_id = $2 AND turn_index = $3
+ORDER BY created_at ASC, id ASC
+`
+
+type ListConversationAttachmentsForTurnParams struct {
+	OrgID     string `json:"org_id"`
+	ThreadID  string `json:"thread_id"`
+	TurnIndex int32  `json:"turn_index"`
+}
+
+func (q *Queries) ListConversationAttachmentsForTurn(ctx context.Context, arg ListConversationAttachmentsForTurnParams) ([]ConversationAttachment, error) {
+	rows, err := q.db.Query(ctx, listConversationAttachmentsForTurn, arg.OrgID, arg.ThreadID, arg.TurnIndex)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ConversationAttachment
+	for rows.Next() {
+		var i ConversationAttachment
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.ThreadID,
+			&i.TurnIndex,
+			&i.Filename,
+			&i.ContentType,
+			&i.SizeBytes,
+			&i.Data,
+			&i.Source,
+			&i.SlackFileID,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const renameConversation = `-- name: RenameConversation :execrows
 UPDATE conversations SET custom_title = $3
 WHERE org_id = $1 AND thread_id = $2
@@ -97,6 +247,60 @@ func (q *Queries) RenameConversation(ctx context.Context, arg RenameConversation
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const saveConversationAttachment = `-- name: SaveConversationAttachment :one
+INSERT INTO conversation_attachments (
+    id, org_id, thread_id, turn_index, filename, content_type,
+    size_bytes, data, source, slack_file_id
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+)
+RETURNING id, org_id, thread_id, turn_index, filename, content_type,
+          size_bytes, data, source, slack_file_id, created_at
+`
+
+type SaveConversationAttachmentParams struct {
+	ID          string `json:"id"`
+	OrgID       string `json:"org_id"`
+	ThreadID    string `json:"thread_id"`
+	TurnIndex   int32  `json:"turn_index"`
+	Filename    string `json:"filename"`
+	ContentType string `json:"content_type"`
+	SizeBytes   int64  `json:"size_bytes"`
+	Data        []byte `json:"data"`
+	Source      string `json:"source"`
+	SlackFileID string `json:"slack_file_id"`
+}
+
+func (q *Queries) SaveConversationAttachment(ctx context.Context, arg SaveConversationAttachmentParams) (ConversationAttachment, error) {
+	row := q.db.QueryRow(ctx, saveConversationAttachment,
+		arg.ID,
+		arg.OrgID,
+		arg.ThreadID,
+		arg.TurnIndex,
+		arg.Filename,
+		arg.ContentType,
+		arg.SizeBytes,
+		arg.Data,
+		arg.Source,
+		arg.SlackFileID,
+	)
+	var i ConversationAttachment
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ThreadID,
+		&i.TurnIndex,
+		&i.Filename,
+		&i.ContentType,
+		&i.SizeBytes,
+		&i.Data,
+		&i.Source,
+		&i.SlackFileID,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const saveConversationProgress = `-- name: SaveConversationProgress :exec

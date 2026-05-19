@@ -20,6 +20,9 @@ const modelOptionsEl = document.getElementById('model-options');
 const validateBox = document.getElementById('validate-checkbox');
 const reviewBeforePushBox = document.getElementById('review-before-push-checkbox');
 const actionPRChecksBox = document.getElementById('action-pr-checks-checkbox');
+const attachmentInput = document.getElementById('attachment-input');
+const attachmentListEl = document.getElementById('attachment-list');
+const attachFilesBtn = document.getElementById('attach-files-btn');
 const qualityOptionBoxes = [validateBox, reviewBeforePushBox, actionPRChecksBox].filter(Boolean);
 const qualityOptionRows = document.querySelectorAll('.tools-checkbox-row');
 const helpIcons = document.querySelectorAll('.tools-help');
@@ -49,22 +52,31 @@ let selectedAgentSlug = readStoredAgentSlug();
 
 // Repository picker state. Persisted per user so a fresh chat in the
 // same browser starts on the last repo the user worked on, matching the
-// Agent picker. The selection is a plain "owner/name" slug — the empty
-// string means "use the org default" (or fall back to the bot's repo
-// question if no default is set).
+// Agent picker. The selection is a plain "owner/name" slug. Empty means
+// no web selection yet; the composer blocks submit until one is chosen.
 const repoStorageKey = 'hetchy.repo.' + currentUserID;
+const orgDefaultRepoSlug = (document.body.dataset.defaultRepoSlug || '').trim();
 
 function readStoredRepoSlug() {
   try {
     const saved = localStorage.getItem(repoStorageKey);
-    return saved === null ? '' : saved.trim();
+    if (saved === null) return null;
+    const trimmed = saved.trim();
+    if (!trimmed) return null;
+    if (trimmed === '__hetchy_no_repository__') return null;
+    return trimmed;
   } catch (e) {
-    return '';
+    return null;
   }
 }
 
-let selectedRepoSlug = readStoredRepoSlug();
-// repoOptions is the most-recent /api/repositories response. The picker
+function initialRepoSlug() {
+  const stored = readStoredRepoSlug();
+  return stored === null ? orgDefaultRepoSlug : stored;
+}
+
+let selectedRepoSlug = initialRepoSlug();
+// repoOptions is the most-recent /api/v1/repositories response. The picker
 // also injects the currently selected repo even when it falls outside
 // that page, so a chat that was started against a rare repo still shows
 // it in the dropdown after reload.
@@ -103,6 +115,9 @@ let modelLocked = false;
 let isRunning = false;
 let isStopping = false;
 let stopRequested = false;
+let pendingAttachments = [];
+const maxPromptAttachments = 5;
+const maxPromptAttachmentBytes = 10 * 1024 * 1024;
 
 function setRunState(running, stopping = false) {
   isRunning = running;
@@ -210,16 +225,36 @@ inp.addEventListener('keydown', e => {
   send();
 });
 
-function addUserMsg(text) {
+function addUserMsg(text, attachments = []) {
   // Replace the empty-state placeholder the first time we add a message
   // so the welcome card disappears as the conversation begins.
   const empty = document.getElementById('empty-state');
   if (empty) empty.remove();
   const d = document.createElement('div');
   d.className = 'msg user';
-  d.textContent = text;
+  if (Array.isArray(attachments) && attachments.length > 0) {
+    const body = document.createElement('div');
+    body.className = 'msg-text';
+    body.textContent = text;
+    d.appendChild(body);
+    const list = document.createElement('div');
+    list.className = 'msg-attachments';
+    for (const attachment of attachments) {
+      const name = attachment.filename || attachment.name || 'attachment';
+      const item = document.createElement(attachment.download_url ? 'a' : 'span');
+      item.className = 'msg-attachment';
+      item.textContent = name;
+      if (attachment.download_url) {
+        item.href = attachment.download_url;
+        item.download = name;
+      }
+      list.appendChild(item);
+    }
+    d.appendChild(list);
+  } else {
+    d.textContent = text;
+  }
   log.appendChild(d);
   log.scrollTop = log.scrollHeight;
   return d;
 }
-

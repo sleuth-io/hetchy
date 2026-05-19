@@ -14,7 +14,7 @@ function addOption(sel, value, text) {
 async function loadMembers() {
   const sel = document.getElementById('user-filter');
   try {
-    const res = await fetch('/api/members', { headers: { 'Accept': 'application/json' } });
+    const res = await fetch('/api/v1/members', { headers: { 'Accept': 'application/json' } });
     if (!res.ok) throw new Error('members fetch failed: ' + res.status);
     const members = (await res.json()) || [];
     sel.innerHTML = '';

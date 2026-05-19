@@ -1,7 +1,9 @@
 package bot
 
 import (
+	"bytes"
 	"context"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -72,7 +74,7 @@ func TestChatTemplate_ComposerControls(t *testing.T) {
 	for _, w := range []string{
 		`is-checked`,
 		`function stopRun()`,
-		`/chat/cancel`,
+		`/api/v1/conversations/`,
 		`setRunState(true)`,
 		`streamTurnWithReconnect`,
 		`after_seq`,
@@ -82,22 +84,25 @@ func TestChatTemplate_ComposerControls(t *testing.T) {
 		`waitingTitle: 'Reconnecting'`,
 		`stopRequested`,
 		`conversationHasServerState`,
-		`renderPendingMetadata(text)`,
+		`renderPendingMetadata(displayText, attachmentsForTurn)`,
 		`conversationAgentIsMutable()`,
-		`payload.agent_slug = selectedAgentSlug`,
+		`requestPayload.agent = selectedAgentSlug`,
 		`document.body.dataset.currentUserId`,
 		`taskOptionKeys`,
 		`applyConversationTaskOptions(detail)`,
-		`payload.review_code_before_push = taskOptions[taskOptionKeys.reviewBeforePush]`,
-		`payload.action_pr_checks_for_done = taskOptions[taskOptionKeys.actionPRChecks]`,
+		`task_options: taskOptions`,
+		`'/api/v1/conversations'`,
+		`'/api/v1/conversations/' + encodeURIComponent(sessionId) + '/cancel'`,
 		`agentStorageKey`,
 		`localStorage.setItem(agentStorageKey`,
 		`applyConversationAgent(detail)`,
 		`applyConversationRepo(detail)`,
 		`loadRepos`,
 		`repoStorageKey`,
+		`initialRepoSlug`,
 		`localStorage.setItem(repoStorageKey`,
-		`payload.repository = selectedRepoSlug`,
+		`showToast('repo-required'`,
+		`requestPayload.repository = selectedRepoSlug`,
 		`blk-awaiting-next`,
 		`markBlockAwaitingNext(ref.el)`,
 		`payload.meta.tag === 'sandbox_ready'`,
@@ -112,10 +117,185 @@ func TestChatTemplate_ComposerControls(t *testing.T) {
 		`model: selectedModel`,
 		`applyConversationModel(detail)`,
 		`setModelPickerLocked(true)`,
+		`attachFilesBtn.addEventListener('mouseenter'`,
 	} {
 		if !strings.Contains(script, w) {
 			t.Errorf("chat asset missing %q", w)
 		}
+	}
+}
+
+func TestParseMultipartChatPostBodyReadsAttachments(t *testing.T) {
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	fields := map[string]string{
+		"text":                      "use this log",
+		"session_id":                "thread-1",
+		"model":                     "sonnet",
+		"validate":                  "false",
+		"review_code_before_push":   "true",
+		"action_pr_checks_for_done": "false",
+		"agent_slug":                "bob",
+		"repository":                "hetchyhq/hetchy",
+	}
+	for k, v := range fields {
+		if err := writer.WriteField(k, v); err != nil {
+			t.Fatalf("write field: %v", err)
+		}
+	}
+	part, err := writer.CreateFormFile("attachments", "logs.json")
+	if err != nil {
+		t.Fatalf("create file: %v", err)
+	}
+	if _, err := part.Write([]byte(`{"ok":true}`)); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/chat", &buf)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	rec := httptest.NewRecorder()
+	body, ok := parseChatPostBody(rec, req)
+	if !ok {
+		t.Fatalf("parse failed with status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	if body.Text != "use this log" || body.SessionID != "thread-1" || body.Model != "sonnet" {
+		t.Fatalf("unexpected parsed body: %+v", body)
+	}
+	if body.AgentSlug == nil || *body.AgentSlug != "bob" {
+		t.Fatalf("agent slug = %v, want bob", body.AgentSlug)
+	}
+	if body.Repository == nil || *body.Repository != "hetchyhq/hetchy" {
+		t.Fatalf("repository = %v, want hetchyhq/hetchy", body.Repository)
+	}
+	if body.Validate == nil || *body.Validate {
+		t.Fatalf("validate = %v, want false", body.Validate)
+	}
+	if body.ReviewCodeBeforePush == nil || !*body.ReviewCodeBeforePush {
+		t.Fatalf("review = %v, want true", body.ReviewCodeBeforePush)
+	}
+	if body.ActionPRChecksForDone == nil || *body.ActionPRChecksForDone {
+		t.Fatalf("checks = %v, want false", body.ActionPRChecksForDone)
+	}
+	if len(body.Attachments) != 1 {
+		t.Fatalf("attachments len = %d, want 1", len(body.Attachments))
+	}
+	a := body.Attachments[0]
+	if a.Filename != "logs.json" || string(a.Data) != `{"ok":true}` || a.Source != "web" {
+		t.Fatalf("attachment = %+v data=%q", a, string(a.Data))
+	}
+	if a.ContentType == "" || a.SizeBytes != int64(len(a.Data)) {
+		t.Fatalf("attachment metadata = %+v", a)
+	}
+}
+
+func TestParseJSONChatPostBody(t *testing.T) {
+	bodyJSON := []byte(`{
+		"text":"ship it",
+		"session_id":"thread-json",
+		"model":"haiku",
+		"validate":true,
+		"review_code_before_push":false,
+		"action_pr_checks_for_done":true,
+		"agent_slug":"alice",
+		"repository":"hetchyhq/hetchy"
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/chat", bytes.NewReader(bodyJSON))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	body, ok := parseChatPostBody(rec, req)
+	if !ok {
+		t.Fatalf("parse failed with status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	if body.Text != "ship it" || body.SessionID != "thread-json" || body.Model != "haiku" {
+		t.Fatalf("unexpected parsed body: %+v", body)
+	}
+	if body.AgentSlug == nil || *body.AgentSlug != "alice" {
+		t.Fatalf("agent slug = %v, want alice", body.AgentSlug)
+	}
+	if body.Repository == nil || *body.Repository != "hetchyhq/hetchy" {
+		t.Fatalf("repository = %v, want hetchyhq/hetchy", body.Repository)
+	}
+	if body.Validate == nil || !*body.Validate {
+		t.Fatalf("validate = %v, want true", body.Validate)
+	}
+	if body.ReviewCodeBeforePush == nil || *body.ReviewCodeBeforePush {
+		t.Fatalf("review = %v, want false", body.ReviewCodeBeforePush)
+	}
+	if body.ActionPRChecksForDone == nil || !*body.ActionPRChecksForDone {
+		t.Fatalf("checks = %v, want true", body.ActionPRChecksForDone)
+	}
+	if len(body.Attachments) != 0 {
+		t.Fatalf("attachments len = %d, want 0", len(body.Attachments))
+	}
+}
+
+func TestParseConversationAPIJSONBody(t *testing.T) {
+	bodyJSON := []byte(`{
+		"id":"thread-json",
+		"message":"ship with context",
+		"model":"sonnet",
+		"agent":"bob",
+		"repository":"hetchyhq/hetchy",
+		"task_options":{
+			"validate":false,
+			"review_code_before_push":true,
+			"action_pr_checks_for_done":false
+		},
+		"attachments":[{
+			"filename":"notes.txt",
+			"content_type":"text/plain",
+			"data_base64":"aGVsbG8="
+		}]
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/conversations", bytes.NewReader(bodyJSON))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	body, ok := parseChatPostBody(rec, req)
+	if !ok {
+		t.Fatalf("parse failed with status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	if body.Message != "ship with context" || body.ID != "thread-json" || body.Model != "sonnet" {
+		t.Fatalf("unexpected parsed body: %+v", body)
+	}
+	if body.Agent == nil || *body.Agent != "bob" {
+		t.Fatalf("agent = %v, want bob", body.Agent)
+	}
+	if body.Validate == nil || *body.Validate {
+		t.Fatalf("validate = %v, want false", body.Validate)
+	}
+	if body.ReviewCodeBeforePush == nil || !*body.ReviewCodeBeforePush {
+		t.Fatalf("review = %v, want true", body.ReviewCodeBeforePush)
+	}
+	if body.ActionPRChecksForDone == nil || *body.ActionPRChecksForDone {
+		t.Fatalf("checks = %v, want false", body.ActionPRChecksForDone)
+	}
+	if len(body.Attachments) != 1 {
+		t.Fatalf("attachments len = %d, want 1", len(body.Attachments))
+	}
+	a := body.Attachments[0]
+	if a.Filename != "notes.txt" || a.ContentType != "text/plain" || string(a.Data) != "hello" || a.Source != "api" {
+		t.Fatalf("attachment = %+v data=%q", a, string(a.Data))
+	}
+}
+
+func TestParseChatPostBodyRejectsInvalidJSON(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/chat", strings.NewReader(`{"text":`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	if _, ok := parseChatPostBody(rec, req); ok {
+		t.Fatal("parseChatPostBody returned ok for invalid JSON")
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+	if !strings.Contains(rec.Body.String(), "invalid JSON") {
+		t.Fatalf("body = %q, want invalid JSON error", rec.Body.String())
 	}
 }
 
@@ -191,10 +371,10 @@ func TestChatHandlerRejectsGPTModelsBasedOnOpenAIConfig(t *testing.T) {
 			b := newBypassOrgBot(t, "admin")
 			b.orgs = &fakeOrgStore{getConfig: tc.orgConfig}
 			handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				b.chatHandler(r.Context(), w, r)
+				b.conversationCollectionHandler(r.Context(), w, r)
 			})))
 			rec := httptest.NewRecorder()
-			req := httptest.NewRequest(http.MethodPost, "/chat", strings.NewReader(tc.body))
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/conversations", strings.NewReader(tc.body))
 			req.Header.Set("Content-Type", "application/json")
 			handler.ServeHTTP(rec, req)
 			if rec.Code != tc.wantStat {
@@ -248,6 +428,54 @@ func TestChatStreamHandlerReplaysClosedLiveRun(t *testing.T) {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Fatalf("stream response missing %q: %q", want, rec.Body.String())
 		}
+	}
+}
+
+func TestConversationResourceEventsRouteReplaysLiveRun(t *testing.T) {
+	b := newBypassOrgBot(t, "member")
+	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b.conversationResourceHandler(context.Background(), w, r)
+	})))
+
+	run, ok := b.live.RegisterIfAbsent(context.Background(), "org_test", "thread-1")
+	if !ok {
+		t.Fatal("expected live run registration")
+	}
+	run.Emit(liveEvent{Event: "notify", Data: []byte(`{"text":"hello"}`), Seq: 3})
+	run.Close()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/conversations/thread-1/events?after_seq=2", nil)
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	for _, want := range []string{
+		"id: 3\n",
+		"event: notify\n",
+		`data: {"text":"hello"}`,
+	} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Fatalf("stream response missing %q: %q", want, rec.Body.String())
+		}
+	}
+}
+
+func TestConversationResourceTurnsRouteRejectsWrongMethodWithAllow(t *testing.T) {
+	b := newBypassOrgBot(t, "member")
+	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b.conversationResourceHandler(context.Background(), w, r)
+	})))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/conversations/thread-1/turns", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
+	}
+	if got := rec.Header().Get("Allow"); got != "POST" {
+		t.Fatalf("Allow = %q, want POST", got)
 	}
 }
 
@@ -400,6 +628,49 @@ func TestChatCancelHandlerCancelsRunAndSchedulesCleanup(t *testing.T) {
 	case got := <-cleanupCh:
 		t.Fatalf("follow-up cancel should not cleanup sandbox, got %+v", got)
 	case <-time.After(20 * time.Millisecond):
+	}
+}
+
+func TestConversationResourceCancelRouteCancelsLiveRun(t *testing.T) {
+	b := newBypassOrgBot(t, "member")
+	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b.conversationResourceHandler(context.Background(), w, r)
+	})))
+
+	run, ok := b.live.RegisterIfAbsent(context.Background(), "org_test", "thread-1")
+	if !ok {
+		t.Fatal("expected live run registration")
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/conversations/thread-1/cancel", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("missing origin status = %d, want %d", rec.Code, http.StatusForbidden)
+	}
+	if run.Cancelled() {
+		t.Fatal("run should not be cancelled without same-origin proof")
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "http://example.com/api/v1/conversations/thread-1/cancel", nil)
+	req.Header.Set("Origin", "http://example.com")
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d; body=%q", rec.Code, http.StatusAccepted, rec.Body.String())
+	}
+	if !run.Cancelled() {
+		t.Fatal("run should be cancelled")
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/conversations/thread-1/cancel", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("wrong method status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
+	}
+	if got := rec.Header().Get("Allow"); got != "POST" {
+		t.Fatalf("Allow = %q, want POST", got)
 	}
 }
 

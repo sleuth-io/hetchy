@@ -7,8 +7,12 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/hetchyhq/hetchy/internal/agents"
+	"github.com/hetchyhq/hetchy/internal/apikeys"
 	"github.com/hetchyhq/hetchy/internal/auth"
 	"github.com/hetchyhq/hetchy/internal/db/sqlc"
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
@@ -28,8 +32,8 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 		if tab == "" {
 			tab = "general"
 		}
-		// Non-admins clicking the (now-hidden) Members tab fall back to General.
-		if tab == "members" && !isAdmin(p) {
+		// Non-admins clicking admin-only tabs fall back to General.
+		if (tab == "members" || tab == "api-keys") && !isAdmin(p) {
 			tab = "general"
 		}
 		defaultRepoSlug := ""
@@ -286,6 +290,15 @@ type agentSettingsView struct {
 	Default      bool
 }
 
+type apiKeySettingsView struct {
+	ID         string
+	Name       string
+	Prefix     string
+	CreatedBy  string
+	CreatedAt  string
+	LastUsedAt string
+}
+
 // populateSettingsTabData fetches the per-tab data the template needs
 // and writes it into data. Pulled out of settingsHandler so the GET
 // path stays under the gocyclo threshold as more tabs land — each new
@@ -349,6 +362,28 @@ func (b *Bot) populateSettingsTabData(ctx context.Context, orgID, tab string, da
 		}
 		data["Agents"] = out
 
+	case "api-keys":
+		var keys []apikeys.Key
+		if b.apiKeys != nil {
+			listed, err := b.apiKeys.List(ctx, orgID)
+			if err != nil {
+				return fmt.Errorf("load api keys: %w", err)
+			}
+			keys = listed
+		}
+		out := make([]apiKeySettingsView, 0, len(keys))
+		for _, key := range keys {
+			out = append(out, apiKeySettingsView{
+				ID:         key.ID,
+				Name:       key.Name,
+				Prefix:     key.Prefix,
+				CreatedBy:  key.CreatedBy,
+				CreatedAt:  formatSettingsTime(key.CreatedAt),
+				LastUsedAt: formatSettingsTime(key.LastUsedAt),
+			})
+		}
+		data["APIKeys"] = out
+
 	case "members":
 		members, err := b.auth.ListMembers(ctx, orgID)
 		if err != nil {
@@ -362,6 +397,13 @@ func (b *Bot) populateSettingsTabData(ctx context.Context, orgID, tab string, da
 		data["Invitations"] = invites
 	}
 	return nil
+}
+
+func formatSettingsTime(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
 }
 
 // loadIntegrationsView pulls the org's GitHub App installations and the
@@ -467,9 +509,89 @@ func savedMessage(s string) string {
 		return "Agent saved."
 	case "agent_deleted":
 		return "Agent deleted."
+	case "api_key_revoked":
+		return "API key revoked."
 	default:
 		return ""
 	}
+}
+
+func (b *Bot) apiKeySettingsActionHandler(w http.ResponseWriter, r *http.Request) {
+	p, _ := auth.FromContext(r.Context())
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !isAdmin(p) {
+		http.Error(w, "admin role required", http.StatusForbidden)
+		return
+	}
+	if err := requireSameOrigin(r); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	rest := strings.TrimPrefix(r.URL.Path, "/settings/org/api-keys/")
+	switch rest {
+	case "create":
+		if b.apiKeys == nil {
+			http.Error(w, "api keys are not configured", http.StatusInternalServerError)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "bad form", http.StatusBadRequest)
+			return
+		}
+		name := strings.TrimSpace(r.FormValue("name"))
+		created, err := b.apiKeys.Create(r.Context(), p.OrgID, name, p.UserID)
+		if err != nil {
+			http.Error(w, "create api key: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		b.log.Info("api key created", "org", p.OrgID, "key", created.ID, "actor", p.UserID)
+		b.renderAPIKeysSettings(w, r, p, created.Token, "API key created.")
+	default:
+		if b.apiKeys == nil {
+			http.Error(w, "api keys are not configured", http.StatusInternalServerError)
+			return
+		}
+		id, action, ok := splitIDAction(r.URL.Path, "/settings/org/api-keys/")
+		if !ok || action != "revoke" {
+			http.NotFound(w, r)
+			return
+		}
+		if err := b.apiKeys.Revoke(r.Context(), p.OrgID, id); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				http.NotFound(w, r)
+				return
+			}
+			http.Error(w, "revoke api key: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		b.log.Info("api key revoked", "org", p.OrgID, "key", id, "actor", p.UserID)
+		http.Redirect(w, r, "/settings/org?tab=api-keys&saved=api_key_revoked", http.StatusFound)
+	}
+}
+
+func (b *Bot) renderAPIKeysSettings(w http.ResponseWriter, r *http.Request, p auth.Principal, token, message string) {
+	orgName := p.OrgID
+	if name, err := b.auth.GetOrganizationName(r.Context(), p.OrgID); err == nil && name != "" {
+		orgName = name
+	}
+	data := map[string]any{
+		"OrgID":           p.OrgID,
+		"OrgName":         orgName,
+		"Email":           p.Email,
+		"PrincipalUserID": p.UserID,
+		"IsAdmin":         isAdmin(p),
+		"Tab":             "api-keys",
+		"SavedMessage":    message,
+		"CreatedAPIKey":   token,
+	}
+	if err := b.populateSettingsTabData(r.Context(), p.OrgID, "api-keys", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	b.renderTemplate(w, webui.Settings, data)
 }
 
 func (b *Bot) agentSettingsActionHandler(w http.ResponseWriter, r *http.Request) {

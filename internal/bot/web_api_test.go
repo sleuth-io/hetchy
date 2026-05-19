@@ -1,13 +1,16 @@
 package bot
 
 import (
+	"context"
 	"encoding/json"
 	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/hetchyhq/hetchy/internal/auth"
 	"github.com/hetchyhq/hetchy/internal/blocks"
 	"github.com/hetchyhq/hetchy/internal/convstore"
 	"github.com/hetchyhq/hetchy/internal/db/sqlc"
@@ -213,12 +216,38 @@ func TestIsSafeThreadID(t *testing.T) {
 	}
 }
 
+func TestIsSafeAttachmentID(t *testing.T) {
+	valid := []string{
+		"att_123",
+		"file-ABC_123",
+		strings.Repeat("a", 128),
+	}
+	for _, in := range valid {
+		if !isSafeAttachmentID(in) {
+			t.Errorf("isSafeAttachmentID(%q) = false, want true", in)
+		}
+	}
+	invalid := []string{
+		"",
+		strings.Repeat("a", 129),
+		"../secret",
+		"att.123",
+		"att/123",
+		"att 123",
+	}
+	for _, in := range invalid {
+		if isSafeAttachmentID(in) {
+			t.Errorf("isSafeAttachmentID(%q) = true, want false", in)
+		}
+	}
+}
+
 func TestAgentsHandlerListsFallbackProfiles(t *testing.T) {
 	b := newBypassOrgBot(t, "member")
 	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.agentsHandler)))
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/agents", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/agents", nil)
 	handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -236,7 +265,7 @@ func TestAgentsHandlerListsFallbackProfiles(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPut, "/api/agents", nil)
+	req = httptest.NewRequest(http.MethodPut, "/api/v1/agents", nil)
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("wrong method status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
@@ -292,7 +321,7 @@ func TestRepositoriesHandlerNilStoreReturnsEmptyList(t *testing.T) {
 	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.repositoriesHandler)))
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/repositories?limit=5&q=anything", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/repositories?limit=5&q=anything", nil)
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
@@ -302,10 +331,81 @@ func TestRepositoriesHandlerNilStoreReturnsEmptyList(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/api/repositories", nil)
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/repositories", nil)
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("wrong method status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
+	}
+}
+
+func TestAPIAuthMiddlewareFallsBackToCookieAuthAndRejectsUnconfiguredKeys(t *testing.T) {
+	b := newBypassOrgBot(t, "member")
+	called := false
+	handler := b.apiAuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		p, ok := auth.FromContext(r.Context())
+		if !ok || p.OrgID != "org_test" || p.IsAPIKey {
+			t.Fatalf("principal = %+v ok=%v", p, ok)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/conversations", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent || !called {
+		t.Fatalf("cookie auth status=%d called=%v body=%q", rec.Code, called, rec.Body.String())
+	}
+
+	called = false
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/conversations", nil)
+	req.Header.Set("Authorization", "Bearer hetchy_missing")
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("api key status = %d, want %d; body=%q", rec.Code, http.StatusUnauthorized, rec.Body.String())
+	}
+	if called {
+		t.Fatal("next handler should not run for rejected API key")
+	}
+	if got := rec.Header().Get("Content-Type"); got != "application/json; charset=utf-8" {
+		t.Fatalf("Content-Type = %q", got)
+	}
+}
+
+func TestAPIBearerTokenParsing(t *testing.T) {
+	cases := []struct {
+		name   string
+		header string
+		want   string
+	}{
+		{name: "empty"},
+		{name: "bearer", header: "Bearer hetchy_123", want: "hetchy_123"},
+		{name: "case insensitive scheme", header: "bearer token", want: "token"},
+		{name: "trims token", header: "Bearer   token  ", want: "token"},
+		{name: "wrong scheme ignored", header: "Basic token"},
+		{name: "missing space ignored", header: "Bearer"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/conversations", nil)
+			req.Header.Set("Authorization", tc.header)
+			if got := apiBearerToken(req); got != tc.want {
+				t.Fatalf("apiBearerToken(%q) = %q, want %q", tc.header, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRequireSameOriginUnlessAPIKey(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "http://example.com/api/v1/conversations/thread-1/cancel", nil)
+	if err := requireSameOriginUnlessAPIKey(req); err == nil {
+		t.Fatal("browser request without Origin should fail same-origin check")
+	}
+
+	ctx := auth.WithPrincipal(req.Context(), auth.Principal{OrgID: "org_test", IsAPIKey: true})
+	if err := requireSameOriginUnlessAPIKey(req.WithContext(ctx)); err != nil {
+		t.Fatalf("api key request should bypass same-origin check: %v", err)
 	}
 }
 
@@ -314,7 +414,7 @@ func TestConversationsHandlerNilStoreReturnsEmptyList(t *testing.T) {
 	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.conversationsHandler)))
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/conversations?limit=999&offset=-5&q="+strings.Repeat("x", 300), nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/conversations?limit=999&offset=-5&q="+strings.Repeat("x", 300), nil)
 	handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -325,10 +425,58 @@ func TestConversationsHandlerNilStoreReturnsEmptyList(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/api/conversations", nil)
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/conversations", nil)
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("wrong method status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
+	}
+}
+
+func TestConversationsHandlerListUsesLiveStatusOnly(t *testing.T) {
+	b := newBypassOrgBot(t, "member")
+	b.convs = &fakeConversationStore{searchResult: []convstore.Record{
+		{OrgID: "org_test", ThreadID: "thread-running", History: []string{"running"}, UpdatedAt: time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)},
+		{OrgID: "org_test", ThreadID: "thread-idle", History: []string{"idle"}, UpdatedAt: time.Date(2026, 5, 18, 12, 1, 0, 0, time.UTC)},
+	}}
+	store := &fakeRunStore{enabled: true}
+	b.runs = store
+	if _, ok := b.live.RegisterIfAbsent(context.Background(), "org_test", "thread-running"); !ok {
+		t.Fatal("expected live run registration")
+	}
+	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.conversationsHandler)))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/conversations", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	var got []conversationSummary
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v body=%q", err, rec.Body.String())
+	}
+	if len(got) != 2 || got[0].Status != "running" || got[1].Status != "idle" {
+		t.Fatalf("statuses = %+v, want running/idle", got)
+	}
+	if store.latestCalls != 0 {
+		t.Fatalf("LatestForThread calls = %d, want 0 on list path", store.latestCalls)
+	}
+}
+
+func TestConversationCollectionHandlerMethodNotAllowedSetsAllow(t *testing.T) {
+	b := newBypassOrgBot(t, "member")
+	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b.conversationCollectionHandler(context.Background(), w, r)
+	})))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/conversations", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
+	}
+	if got := rec.Header().Get("Allow"); got != "GET, POST" {
+		t.Fatalf("Allow = %q, want GET, POST", got)
 	}
 }
 
@@ -337,7 +485,7 @@ func TestMembersHandlerBypassMemberList(t *testing.T) {
 	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.membersHandler)))
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/members", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/members", nil)
 	handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -357,9 +505,11 @@ func TestMembersHandlerBypassMemberList(t *testing.T) {
 	}
 }
 
-func TestConversationDetailHandlerRejectsUnsafeAndMissingRecords(t *testing.T) {
+func TestConversationResourceHandlerRejectsUnsafeAndMissingRecords(t *testing.T) {
 	b := newBypassOrgBot(t, "member")
-	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.conversationDetailHandler)))
+	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b.conversationResourceHandler(context.Background(), w, r)
+	})))
 
 	cases := []struct {
 		name   string
@@ -368,11 +518,11 @@ func TestConversationDetailHandlerRejectsUnsafeAndMissingRecords(t *testing.T) {
 		want   int
 		header map[string]string
 	}{
-		{name: "slash in id", method: http.MethodGet, path: "/api/conversations/thread/extra", want: http.StatusNotFound},
-		{name: "unsafe id", method: http.MethodGet, path: "/api/conversations/thread%20bad", want: http.StatusNotFound},
-		{name: "nil store get", method: http.MethodGet, path: "/api/conversations/thread-1", want: http.StatusNotFound},
-		{name: "patch requires same origin", method: http.MethodPatch, path: "/api/conversations/thread-1", want: http.StatusForbidden},
-		{name: "unsupported method", method: http.MethodPost, path: "/api/conversations/thread-1", want: http.StatusMethodNotAllowed},
+		{name: "slash in id", method: http.MethodGet, path: "/api/v1/conversations/thread/extra", want: http.StatusNotFound},
+		{name: "unsafe id", method: http.MethodGet, path: "/api/v1/conversations/thread%20bad", want: http.StatusNotFound},
+		{name: "nil store get", method: http.MethodGet, path: "/api/v1/conversations/thread-1", want: http.StatusNotFound},
+		{name: "patch requires same origin", method: http.MethodPatch, path: "/api/v1/conversations/thread-1", want: http.StatusForbidden},
+		{name: "unsupported method", method: http.MethodPost, path: "/api/v1/conversations/thread-1", want: http.StatusMethodNotAllowed},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -385,28 +535,164 @@ func TestConversationDetailHandlerRejectsUnsafeAndMissingRecords(t *testing.T) {
 			if rec.Code != tc.want {
 				t.Fatalf("status = %d, want %d body=%q", rec.Code, tc.want, rec.Body.String())
 			}
+			if tc.want == http.StatusMethodNotAllowed {
+				if got := rec.Header().Get("Allow"); got != "GET, DELETE, PATCH" {
+					t.Fatalf("Allow = %q, want GET, DELETE, PATCH", got)
+				}
+			}
 		})
 	}
 }
 
-func TestConversationDownloadHandlerNilStoreAndMethods(t *testing.T) {
+func TestConversationTurnIDIsStable(t *testing.T) {
+	cases := []struct {
+		threadID string
+		index    int
+		message  string
+		want     string
+	}{
+		{threadID: "thread-1", index: 0, message: "first", want: "turn_38ffa1ef00ff295158e543fa"},
+		{threadID: "thread-1", index: 1, message: "second", want: "turn_861e946f4a75f41ade313ae7"},
+	}
+	for _, tc := range cases {
+		if got := conversationTurnID(tc.threadID, tc.index, tc.message); got != tc.want {
+			t.Fatalf("conversationTurnID(%q, %d, %q) = %q, want %q",
+				tc.threadID, tc.index, tc.message, got, tc.want)
+		}
+	}
+}
+
+func TestConversationDetailResponseUsesTurnsAndOptionalAttachments(t *testing.T) {
 	b := newBypassOrgBot(t, "member")
-	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.conversationDownloadHandler)))
+	b.convs = &fakeConversationStore{attachments: []convstore.Attachment{{
+		ID:          "att_1",
+		OrgID:       "org_test",
+		ThreadID:    "thread-1",
+		TurnIndex:   1,
+		Filename:    "notes.txt",
+		ContentType: "text/plain",
+		SizeBytes:   5,
+		Source:      "web",
+	}}}
+	rec := convstore.Record{
+		OrgID:     "org_test",
+		ThreadID:  "thread-1",
+		History:   []string{"first", "second"},
+		CreatedAt: time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC),
+		UpdatedAt: time.Date(2026, 5, 18, 12, 1, 0, 0, time.UTC),
+		ResponseBlocks: [][]blocks.Block{
+			{{Kind: blocks.KindNotify, Title: "setup"}},
+			{{Kind: blocks.KindResult, Title: "done"}},
+		},
+	}
+
+	withoutAttachments := b.conversationDetailResponse(context.Background(), "org_test", rec, conversationIncludeOptions{Turns: true})
+	if withoutAttachments.ID != "thread-1" || len(withoutAttachments.Turns) != 2 {
+		t.Fatalf("unexpected detail: %+v", withoutAttachments)
+	}
+	if withoutAttachments.Turns[1].Message != "second" || len(withoutAttachments.Turns[1].Blocks) != 1 {
+		t.Fatalf("unexpected turn response: %+v", withoutAttachments.Turns[1])
+	}
+	if len(withoutAttachments.Turns[1].Attachments) != 0 || len(withoutAttachments.Attachments) != 0 {
+		t.Fatalf("attachments should be omitted unless requested: %+v", withoutAttachments)
+	}
+
+	withAttachments := b.conversationDetailResponse(context.Background(), "org_test", rec, conversationIncludeOptions{Turns: true, Attachments: true})
+	if len(withAttachments.Attachments) != 1 {
+		t.Fatalf("detail attachments len = %d, want 1", len(withAttachments.Attachments))
+	}
+	if len(withAttachments.Turns[1].Attachments) != 1 || withAttachments.Turns[1].Attachments[0].ID != "att_1" {
+		t.Fatalf("turn attachments not grouped: %+v", withAttachments.Turns[1].Attachments)
+	}
+}
+
+func TestAttachmentInfosReturnsDownloadMetadata(t *testing.T) {
+	b := newBypassOrgBot(t, "member")
+	createdAt := time.Date(2026, 5, 18, 12, 30, 0, 0, time.UTC)
+	b.convs = &fakeConversationStore{attachments: []convstore.Attachment{
+		{
+			ID:          "att_keep",
+			OrgID:       "org_test",
+			ThreadID:    "thread-1",
+			TurnIndex:   1,
+			Filename:    "logs.json",
+			ContentType: "application/json",
+			SizeBytes:   17,
+			Source:      "web",
+			CreatedAt:   createdAt,
+		},
+		{ID: "att_other", OrgID: "org_test", ThreadID: "thread-2", Filename: "other.txt"},
+	}}
+
+	got := b.attachmentInfos(context.Background(), "org_test", "thread-1")
+	if len(got) != 1 {
+		t.Fatalf("len = %d, want 1: %+v", len(got), got)
+	}
+	a := got[0]
+	if a.ID != "att_keep" || a.Filename != "logs.json" || a.ContentType != "application/json" {
+		t.Fatalf("unexpected attachment metadata: %+v", a)
+	}
+	if a.SizeBytes != 17 || a.TurnIndex != 1 || a.Source != "web" {
+		t.Fatalf("unexpected attachment details: %+v", a)
+	}
+	if a.CreatedAt != "2026-05-18T12:30:00Z" {
+		t.Fatalf("CreatedAt = %q, want RFC3339 UTC", a.CreatedAt)
+	}
+	if a.DownloadURL != "/api/v1/conversations/thread-1/attachments/att_keep" {
+		t.Fatalf("DownloadURL = %q", a.DownloadURL)
+	}
+}
+
+func TestConversationAttachmentDownloadHandler(t *testing.T) {
+	b := newBypassOrgBot(t, "member")
+	b.convs = &fakeConversationStore{attachments: []convstore.Attachment{{
+		ID:          "att_123",
+		OrgID:       "org_test",
+		ThreadID:    "thread-1",
+		Filename:    "report.csv",
+		ContentType: "text/html",
+		Data:        []byte("a,b\n1,2\n"),
+	}}}
+	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b.conversationResourceHandler(context.Background(), w, r)
+	})))
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/conversations/download/thread-1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/conversations/thread-1/attachments/att_123", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); got != defaultAttachmentMimeType {
+		t.Fatalf("Content-Type = %q, want %s", got, defaultAttachmentMimeType)
+	}
+	if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Fatalf("X-Content-Type-Options = %q, want nosniff", got)
+	}
+	if got := rec.Header().Get("Content-Length"); got != "8" {
+		t.Fatalf("Content-Length = %q, want 8", got)
+	}
+	if got := rec.Header().Get("Content-Disposition"); !strings.Contains(got, `filename=report.csv`) {
+		t.Fatalf("Content-Disposition = %q", got)
+	}
+	if got := rec.Body.String(); got != "a,b\n1,2\n" {
+		t.Fatalf("body = %q", got)
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/conversations/thread-1/attachments/att_123", nil)
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("wrong method status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
+		t.Fatalf("method status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
 	}
 	if got := rec.Header().Get("Allow"); got != "GET" {
 		t.Fatalf("Allow = %q, want GET", got)
 	}
 
 	rec = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodGet, "/api/conversations/download/thread-1", nil)
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/conversations/thread-1/attachments/../secret", nil)
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
-		t.Fatalf("nil store status = %d, want %d", rec.Code, http.StatusNotFound)
+		t.Fatalf("unsafe id status = %d, want %d", rec.Code, http.StatusNotFound)
 	}
 }

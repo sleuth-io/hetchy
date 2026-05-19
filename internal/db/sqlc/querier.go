@@ -15,12 +15,15 @@ type Querier interface {
 	ClaimAgentRunForCancel(ctx context.Context, arg ClaimAgentRunForCancelParams) (AgentRun, error)
 	ClaimAgentRunLease(ctx context.Context, arg ClaimAgentRunLeaseParams) (AgentRun, error)
 	ClaimAgentRunLeaseFromOwner(ctx context.Context, arg ClaimAgentRunLeaseFromOwnerParams) (AgentRun, error)
+	ClaimStaleAgentRunLease(ctx context.Context, arg ClaimStaleAgentRunLeaseParams) (AgentRun, error)
 	CountAgentProfilesByOrg(ctx context.Context, orgID string) (int64, error)
 	CreateAgentRun(ctx context.Context, arg CreateAgentRunParams) (AgentRun, error)
+	CreateOrgAPIKey(ctx context.Context, arg CreateOrgAPIKeyParams) (OrgApiKey, error)
 	DeleteAgentProfilesByOrg(ctx context.Context, orgID string) error
 	// agent_run_events cascade-deletes via FK ON DELETE CASCADE.
 	DeleteAgentRunsByOrg(ctx context.Context, orgID string) error
 	DeleteConversation(ctx context.Context, arg DeleteConversationParams) error
+	DeleteConversationAttachmentsForTurn(ctx context.Context, arg DeleteConversationAttachmentsForTurnParams) error
 	DeleteConversationsByOrg(ctx context.Context, orgID string) error
 	DeleteGithubInstallation(ctx context.Context, installationID int64) error
 	// github_repos / github_teams / github_team_members cascade via FK.
@@ -31,6 +34,7 @@ type Querier interface {
 	DeleteGithubReposByInstallationExcept(ctx context.Context, arg DeleteGithubReposByInstallationExceptParams) error
 	DeleteGithubTeamMembersForTeam(ctx context.Context, arg DeleteGithubTeamMembersForTeamParams) error
 	DeleteGithubTeamsByInstallationExcept(ctx context.Context, arg DeleteGithubTeamsByInstallationExceptParams) error
+	DeleteOrgAPIKeysByOrg(ctx context.Context, orgID string) error
 	DeleteOrgConfig(ctx context.Context, orgID string) error
 	DeleteRepoSecretValue(ctx context.Context, arg DeleteRepoSecretValueParams) error
 	DeleteRepoSecretValuesByOrg(ctx context.Context, orgID string) error
@@ -45,6 +49,7 @@ type Querier interface {
 	GetAgentRun(ctx context.Context, id string) (AgentRun, error)
 	GetAgentRunByRequest(ctx context.Context, arg GetAgentRunByRequestParams) (AgentRun, error)
 	GetConversation(ctx context.Context, arg GetConversationParams) (GetConversationRow, error)
+	GetConversationAttachment(ctx context.Context, arg GetConversationAttachmentParams) (ConversationAttachment, error)
 	GetGithubInstallation(ctx context.Context, installationID int64) (GithubAppInstallation, error)
 	// Resolves an (owner, name) the user typed in chat to a concrete
 	// (installation_id, repo_id, default_branch) for this org. If the same
@@ -54,6 +59,7 @@ type Querier interface {
 	// stays warm).
 	GetGithubRepoForOrg(ctx context.Context, arg GetGithubRepoForOrgParams) (GithubRepo, error)
 	GetLatestAgentRunForThread(ctx context.Context, arg GetLatestAgentRunForThreadParams) (AgentRun, error)
+	GetOrgAPIKeyByHash(ctx context.Context, keyHash []byte) (OrgApiKey, error)
 	GetOrgConfig(ctx context.Context, orgID string) (OrgConfig, error)
 	GetOrgConfigBySlackTeamID(ctx context.Context, slackTeamID *string) (OrgConfig, error)
 	GetRepoSecretValue(ctx context.Context, arg GetRepoSecretValueParams) (RepoSecretValue, error)
@@ -69,6 +75,8 @@ type Querier interface {
 	ListActiveAgentRunsForLeaseOwnerPrefix(ctx context.Context, arg ListActiveAgentRunsForLeaseOwnerPrefixParams) ([]AgentRun, error)
 	ListAgentProfilesByOrg(ctx context.Context, orgID string) ([]ListAgentProfilesByOrgRow, error)
 	ListAgentRunEventsFromSeq(ctx context.Context, arg ListAgentRunEventsFromSeqParams) ([]AgentRunEvent, error)
+	ListConversationAttachments(ctx context.Context, arg ListConversationAttachmentsParams) ([]ListConversationAttachmentsRow, error)
+	ListConversationAttachmentsForTurn(ctx context.Context, arg ListConversationAttachmentsForTurnParams) ([]ConversationAttachment, error)
 	ListExpiredAgentRuns(ctx context.Context, limit int32) ([]AgentRun, error)
 	ListGithubInstallationsByOrg(ctx context.Context, orgID string) ([]GithubAppInstallation, error)
 	ListGithubReposByInstallation(ctx context.Context, installationID int64) ([]GithubRepo, error)
@@ -78,6 +86,7 @@ type Querier interface {
 	ListGithubReposByOrg(ctx context.Context, orgID string) ([]GithubRepo, error)
 	ListGithubTeamMembers(ctx context.Context, arg ListGithubTeamMembersParams) ([]GithubTeamMember, error)
 	ListGithubTeamsByInstallation(ctx context.Context, installationID int64) ([]GithubTeam, error)
+	ListOrgAPIKeys(ctx context.Context, orgID string) ([]OrgApiKey, error)
 	// Lists Socket-Mode-installed orgs only. The slackManager iterates
 	// this on startup to open one socket per org.
 	//
@@ -95,7 +104,10 @@ type Querier interface {
 	// where the user can see every target Hetchy has bootstrapped under
 	// one repository.
 	ListRepoSetupSpecs(ctx context.Context, arg ListRepoSetupSpecsParams) ([]RepoSetupSpec, error)
+	ListStaleAgentRuns(ctx context.Context, arg ListStaleAgentRunsParams) ([]AgentRun, error)
 	RenameConversation(ctx context.Context, arg RenameConversationParams) (int64, error)
+	RevokeOrgAPIKey(ctx context.Context, arg RevokeOrgAPIKeyParams) (int64, error)
+	SaveConversationAttachment(ctx context.Context, arg SaveConversationAttachmentParams) (ConversationAttachment, error)
 	// Periodic mid-run snapshot used by chatPersister. Only writes the
 	// handful of fields that change progressively as the agent emits
 	// blocks (history + response_blocks + creator_id). The fields that
@@ -153,6 +165,7 @@ type Querier interface {
 	SearchConversations(ctx context.Context, arg SearchConversationsParams) ([]SearchConversationsRow, error)
 	SeedDefaultAgentProfilesForOrg(ctx context.Context, orgID string) error
 	TouchAgentRunLease(ctx context.Context, arg TouchAgentRunLeaseParams) error
+	TouchOrgAPIKeyLastUsed(ctx context.Context, id string) error
 	UpdateAgentProfileName(ctx context.Context, arg UpdateAgentProfileNameParams) (UpdateAgentProfileNameRow, error)
 	UpdateAgentRunBranch(ctx context.Context, arg UpdateAgentRunBranchParams) error
 	UpdateAgentRunCommand(ctx context.Context, arg UpdateAgentRunCommandParams) error

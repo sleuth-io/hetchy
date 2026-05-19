@@ -144,7 +144,8 @@ func TestHandleRequestAwaitingRepoValidReplyRunsOriginalRequest(t *testing.T) {
 	b.HandleRequest(context.Background(),
 		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant"},
 		"hetchyhq/hetchy", "req-2", "thread-1", "user-1",
-		chatTaskOptionPatch{}, nil, nil, ClaudeModelOpus, emit)
+		chatTaskOptionPatch{}, nil, nil, ClaudeModelOpus, emit,
+		convstore.Attachment{Filename: "repo-context.txt", Data: []byte("use this after repo selection")})
 
 	if !emit.hasCall("error", "Repo not accessible") {
 		t.Fatalf("expected repo access error, got calls=%v", emit.Calls)
@@ -155,6 +156,13 @@ func TestHandleRequestAwaitingRepoValidReplyRunsOriginalRequest(t *testing.T) {
 	}
 	if rec.GitHubOwner != "" || rec.GitHubRepo != "" {
 		t.Fatalf("failed repo resolution should return to awaiting-repo state: %+v", rec)
+	}
+	attachments, err := convs.ListAttachmentsForTurn(context.Background(), "org_test", "thread-1", 0)
+	if err != nil {
+		t.Fatalf("ListAttachmentsForTurn: %v", err)
+	}
+	if len(attachments) != 1 || attachments[0].Filename != "repo-context.txt" {
+		t.Fatalf("awaiting-repo reply attachments = %+v", attachments)
 	}
 }
 
@@ -245,6 +253,52 @@ func TestHandleRequestFreshRunSuccessUsesMocks(t *testing.T) {
 	}
 }
 
+func TestHandleRequestFreshRunAnswerOnlyNoPR(t *testing.T) {
+	convs := &fakeConversationStore{getErr: convstore.ErrNotFound}
+	b := testCoreBot(convs)
+	b.resolveRepoFn = func(context.Context, string, string, string) (repoCtx, error) {
+		return repoCtx{Slug: "hetchyhq/hetchy", BaseBranch: "main", GitHubToken: "token"}, nil
+	}
+	b.createFn = func(context.Context, any) (*daytona.Sandbox, error) {
+		return &daytona.Sandbox{ID: "sandbox-1"}, nil
+	}
+	b.runAgentFn = func(_ context.Context, _ *daytona.Sandbox, _ repoCtx, _ orgcfg.Config, _ agents.Profile, _ string, _ string, _ string, _ chatTaskOptions, _ ClaudeModel, emit blocks.Emitter) (string, error) {
+		emit.Notify("Agent answered", "no code changes needed")
+		return "", nil
+	}
+	var deletedSession, archivedSandbox string
+	b.deleteSandboxSessionFn = func(sb *daytona.Sandbox, sessionID string) {
+		deletedSession = sessionID
+		archivedSandbox = sb.ID
+	}
+	b.stopAndArchiveFn = func(_ context.Context, sb *daytona.Sandbox) {
+		archivedSandbox = sb.ID
+	}
+	emit := newCaptureEmitter()
+
+	b.HandleRequest(context.Background(),
+		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant", DefaultGitHubOwner: "hetchyhq", DefaultGitHubRepo: "hetchy"},
+		"can I switch repo here?", "req-1", "thread-1", "user-1",
+		chatTaskOptionPatch{}, nil, nil, ClaudeModelOpus, emit)
+
+	if emit.hasCall("error", "Agent failed") {
+		t.Fatalf("answer-only run should not emit failure, got calls=%v", emit.Calls)
+	}
+	if !emit.hasCall("result", "No pull request was created") {
+		t.Fatalf("expected answer-only result, got calls=%v", emit.Calls)
+	}
+	if deletedSession != "agent-req-1" {
+		t.Fatalf("deleted session = %q, want agent-req-1", deletedSession)
+	}
+	if archivedSandbox != "sandbox-1" {
+		t.Fatalf("archived sandbox = %q, want sandbox-1", archivedSandbox)
+	}
+	rec := convs.lastUpsert(t)
+	if rec.PRURL != "" || rec.SandboxID != "" || rec.Branch != "" {
+		t.Fatalf("answer-only run should not persist PR/sandbox state: %+v", rec)
+	}
+}
+
 func TestHandleRequestRetryAfterFailureUsesNewRequest(t *testing.T) {
 	convs := &fakeConversationStore{
 		rec: convstore.Record{
@@ -253,6 +307,10 @@ func TestHandleRequestRetryAfterFailureUsesNewRequest(t *testing.T) {
 			GitHubOwner: "hetchyhq",
 			GitHubRepo:  "hetchy",
 			History:     []string{"old failed request"},
+		},
+		attachments: []convstore.Attachment{
+			{ID: "old", OrgID: "org_test", ThreadID: "thread-1", TurnIndex: 0, Filename: "old.txt", Data: []byte("old")},
+			{ID: "later", OrgID: "org_test", ThreadID: "thread-1", TurnIndex: 1, Filename: "later.txt", Data: []byte("later")},
 		},
 	}
 	b := testCoreBot(convs)
@@ -271,7 +329,8 @@ func TestHandleRequestRetryAfterFailureUsesNewRequest(t *testing.T) {
 	b.HandleRequest(context.Background(),
 		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant"},
 		"retry with better prompt", "req-2", "thread-1", "user-1",
-		chatTaskOptionPatch{}, nil, nil, ClaudeModelOpus, emit)
+		chatTaskOptionPatch{}, nil, nil, ClaudeModelOpus, emit,
+		convstore.Attachment{Filename: "new.txt", Data: []byte("new")})
 
 	if !emit.hasCall("error", "Repo not accessible") {
 		t.Fatalf("expected repo access error, got calls=%v", emit.Calls)
@@ -282,6 +341,20 @@ func TestHandleRequestRetryAfterFailureUsesNewRequest(t *testing.T) {
 	}
 	if rec.GitHubOwner != "" || rec.GitHubRepo != "" {
 		t.Fatalf("failed retry repo resolution should return to awaiting-repo state: %+v", rec)
+	}
+	turn0, err := convs.ListAttachmentsForTurn(context.Background(), "org_test", "thread-1", 0)
+	if err != nil {
+		t.Fatalf("ListAttachmentsForTurn turn 0: %v", err)
+	}
+	if len(turn0) != 1 || turn0[0].Filename != "new.txt" {
+		t.Fatalf("retry should replace turn-0 attachments, got %+v", turn0)
+	}
+	turn1, err := convs.ListAttachmentsForTurn(context.Background(), "org_test", "thread-1", 1)
+	if err != nil {
+		t.Fatalf("ListAttachmentsForTurn turn 1: %v", err)
+	}
+	if len(turn1) != 1 || turn1[0].Filename != "later.txt" {
+		t.Fatalf("retry should leave later attachments alone, got %+v", turn1)
 	}
 }
 
@@ -440,6 +513,64 @@ func TestHandleRequestFollowUpSuccessUsesMocks(t *testing.T) {
 	}
 }
 
+func TestHandleRequestFollowUpAnswerOnlyKeepsExistingPR(t *testing.T) {
+	convs := &fakeConversationStore{
+		rec: convstore.Record{
+			OrgID:       "org_test",
+			ThreadID:    "thread-1",
+			SandboxID:   "sandbox-1",
+			Branch:      "feature/sf-old",
+			PRURL:       "https://github.com/hetchyhq/hetchy/pull/1",
+			GitHubOwner: "hetchyhq",
+			GitHubRepo:  "hetchy",
+			History:     []string{"first request"},
+		},
+	}
+	b := testCoreBot(convs)
+	b.resolveRepoFn = func(context.Context, string, string, string) (repoCtx, error) {
+		return repoCtx{Slug: "hetchyhq/hetchy", BaseBranch: "main", GitHubToken: "token"}, nil
+	}
+	b.getSandboxFn = func(_ context.Context, id string) (*daytona.Sandbox, error) {
+		return &daytona.Sandbox{ID: id}, nil
+	}
+	b.resumeSandboxFn = func(context.Context, *daytona.Sandbox, blocks.Emitter) error { return nil }
+	b.runFollowUpFn = func(_ context.Context, _ *daytona.Sandbox, _ repoCtx, _ orgcfg.Config, _ convstore.Record, _ agents.Profile, _ string, _ string, _ chatTaskOptions, _ ClaudeModel, emit blocks.Emitter) (string, error) {
+		emit.Notify("Follow-up answered", "no new changes needed")
+		return "", nil
+	}
+	var deletedSession, archivedSandbox string
+	b.deleteSandboxSessionFn = func(sb *daytona.Sandbox, sessionID string) {
+		deletedSession = sessionID
+		archivedSandbox = sb.ID
+	}
+	b.stopAndArchiveFn = func(_ context.Context, sb *daytona.Sandbox) {
+		archivedSandbox = sb.ID
+	}
+	emit := newCaptureEmitter()
+
+	b.HandleRequest(context.Background(),
+		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant"},
+		"how many endpoints remain?", "req-2", "thread-1", "user-1",
+		chatTaskOptionPatch{}, nil, nil, ClaudeModelOpus, emit)
+
+	if emit.hasCall("error", "Agent failed") {
+		t.Fatalf("answer-only follow-up should not emit failure, got calls=%v", emit.Calls)
+	}
+	if !emit.hasCall("result", "keeping the existing PR") {
+		t.Fatalf("expected answer-only follow-up result, got calls=%v", emit.Calls)
+	}
+	if deletedSession != "followup-req-2" {
+		t.Fatalf("deleted session = %q, want followup-req-2", deletedSession)
+	}
+	if archivedSandbox != "sandbox-1" {
+		t.Fatalf("archived sandbox = %q, want sandbox-1", archivedSandbox)
+	}
+	rec := convs.lastUpsert(t)
+	if rec.PRURL != "https://github.com/hetchyhq/hetchy/pull/1" {
+		t.Fatalf("follow-up should keep existing PR URL, got %+v", rec)
+	}
+}
+
 // TestHandleRequestRequestedRepoOverridesOrgDefault pins that the
 // composer's repo picker selection wins over the org-level default
 // repo on a fresh conversation. Without this guard the picker would
@@ -468,6 +599,26 @@ func TestHandleRequestRequestedRepoOverridesOrgDefault(t *testing.T) {
 
 	if gotOwner != "team" || gotName != "api" {
 		t.Fatalf("resolveRepo received %s/%s, want team/api — composer picker selection must override org default", gotOwner, gotName)
+	}
+}
+
+func TestHandleRequestEmptyRequestedRepoSuppressesOrgDefault(t *testing.T) {
+	convs := &fakeConversationStore{getErr: convstore.ErrNotFound}
+	b := testCoreBot(convs)
+	b.resolveRepoFn = func(_ context.Context, _ string, owner, name string) (repoCtx, error) {
+		t.Fatalf("resolveRepo should not run for explicit no-repository selection, got %s/%s", owner, name)
+		return repoCtx{}, errors.New("unreachable")
+	}
+	emit := newCaptureEmitter()
+
+	requested := ""
+	b.HandleRequest(context.Background(),
+		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant", DefaultGitHubOwner: "default-owner", DefaultGitHubRepo: "default-repo"},
+		"ship it", "req-1", "thread-1", "user-1",
+		chatTaskOptionPatch{}, nil, &requested, ClaudeModelOpus, emit)
+
+	if !emit.hasCall("notify", "Which repository") {
+		t.Fatalf("explicit no-repository selection should ask for a repo, got calls=%v", emit.Calls)
 	}
 }
 

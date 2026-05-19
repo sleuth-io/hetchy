@@ -131,10 +131,8 @@ services:
       # production, leave empty so session cookies require TLS.
       COOKIE_INSECURE: ${COOKIE_INSECURE:-}
     healthcheck:
-      # CMD (not CMD-SHELL) because Okteto converts compose healthchecks into
-      # Kubernetes exec probes, which run the array directly without a shell.
-      # Shell redirections (>/dev/null) would be passed as literal arguments
-      # to wget and fail. -O /dev/null discards output without needing a shell.
+      # CMD avoids shell redirection; -O /dev/null discards output without
+      # requiring a shell.
       test: ["CMD", "wget", "-qO", "/dev/null", "http://localhost:8080/healthz"]
       interval: 30s
       timeout: 10s

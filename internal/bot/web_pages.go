@@ -47,21 +47,28 @@ func (b *Bot) indexHandler(w http.ResponseWriter, r *http.Request) {
 	// swallowed (treated as "not enabled") since a transient orgcfg
 	// hiccup shouldn't pull down the chat UI.
 	openaiEnabled := false
-	if cfg, err := b.orgs.Get(r.Context(), p.OrgID); err == nil {
-		openaiEnabled = cfg.OpenAIAPIKey != "" || cfg.OpenAICodexOAuthToken != ""
-	} else if !errors.Is(err, orgcfg.ErrNotFound) {
-		// Log transient errors so an org that briefly loses its
-		// integration block in the dropdown leaves a trail in the
-		// server logs. ErrNotFound is the common "first chat for a
-		// brand-new org" case and isn't worth a warn.
-		b.log.Warn("orgcfg lookup for chat page", "org", p.OrgID, "error", err)
+	defaultRepoSlug := ""
+	if b.orgs != nil {
+		if cfg, err := b.orgs.Get(r.Context(), p.OrgID); err == nil {
+			openaiEnabled = cfg.OpenAIAPIKey != "" || cfg.OpenAICodexOAuthToken != ""
+			if cfg.DefaultGitHubOwner != "" && cfg.DefaultGitHubRepo != "" {
+				defaultRepoSlug = cfg.DefaultGitHubOwner + "/" + cfg.DefaultGitHubRepo
+			}
+		} else if !errors.Is(err, orgcfg.ErrNotFound) {
+			// Log transient errors so an org that briefly loses its
+			// integration/default repo block in the dropdown leaves a
+			// trail in the server logs. ErrNotFound is the common "first
+			// chat for a brand-new org" case and isn't worth a warn.
+			b.log.Warn("org config fetch for chat page failed", "error", err, "org", p.OrgID)
+		}
 	}
 	b.renderTemplate(w, webui.Chat, map[string]any{
-		"Email":         p.Email,
-		"DisplayName":   displayName,
-		"GravatarURL":   webui.GravatarURL(p.Email),
-		"UserID":        p.UserID,
-		"OpenAIEnabled": openaiEnabled,
+		"Email":           p.Email,
+		"DisplayName":     displayName,
+		"GravatarURL":     webui.GravatarURL(p.Email),
+		"UserID":          p.UserID,
+		"OpenAIEnabled":   openaiEnabled,
+		"DefaultRepoSlug": defaultRepoSlug,
 	})
 }
 

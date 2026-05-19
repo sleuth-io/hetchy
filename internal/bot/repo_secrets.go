@@ -24,9 +24,9 @@ import (
 //
 // Routes:
 //
-//	GET  /api/repo-secrets?owner=X&name=Y[&path=Z]
-//	PUT  /api/repo-secrets   body {owner, name, path, secret_name, value}
-//	DELETE /api/repo-secrets?owner=X&name=Y&secret_name=K[&path=Z]
+//	GET  /api/v1/repo-secrets?owner=X&name=Y[&path=Z]
+//	PUT  /api/v1/repo-secrets   body {owner, name, path, secret_name, value}
+//	DELETE /api/v1/repo-secrets?owner=X&name=Y&secret_name=K[&path=Z]
 type repoSecretEntry struct {
 	Name   string `json:"name"`
 	Filled bool   `json:"filled"`
@@ -184,7 +184,7 @@ func (b *Bot) lookupRepoForOrg(ctx context.Context, orgID, owner, name string) (
 // editing a saved spec in place, so resetting + re-running on the
 // next task is the cheapest way to refresh.
 //
-// DELETE /api/repo-bootstrap?owner=X&name=Y[&path=Z]
+// DELETE /api/v1/repo-bootstrap?owner=X&name=Y[&path=Z]
 //
 // Per-secret values are deliberately preserved — they cost the user
 // time to enter and the new bootstrap will declare the same set

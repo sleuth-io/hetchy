@@ -36,6 +36,7 @@ type Run struct {
 	UserRequest     string
 	SessionID       string
 	CommandID       string
+	CommandStep     string
 	CommandStartSeq int64
 	State           string
 	LogCursor       int64
@@ -83,7 +84,7 @@ func (s *Store) Create(ctx context.Context, r Run, leaseOwner string, leaseDurat
 		LeaseDuration: interval(leaseDuration),
 	})
 	if err == nil {
-		return fromRunRow(row), true, nil
+		return fromRunRow(sqlc.AgentRun(row)), true, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return Run{}, false, fmt.Errorf("create run: %w", err)
@@ -93,7 +94,7 @@ func (s *Store) Create(ctx context.Context, r Run, leaseOwner string, leaseDurat
 		RequestID: r.RequestID,
 	})
 	if err == nil {
-		return fromRunRow(existing), false, nil
+		return fromRunRow(sqlc.AgentRun(existing)), false, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return Run{}, false, fmt.Errorf("get existing run: %w", err)
@@ -108,7 +109,7 @@ func (s *Store) Create(ctx context.Context, r Run, leaseOwner string, leaseDurat
 		}
 		return Run{}, false, fmt.Errorf("get active run: %w", err)
 	}
-	return fromRunRow(active), false, nil
+	return fromRunRow(sqlc.AgentRun(active)), false, nil
 }
 
 func (s *Store) Get(ctx context.Context, id string) (Run, error) {
@@ -119,7 +120,7 @@ func (s *Store) Get(ctx context.Context, id string) (Run, error) {
 	if err != nil {
 		return Run{}, err
 	}
-	return fromRunRow(row), nil
+	return fromRunRow(sqlc.AgentRun(row)), nil
 }
 
 func (s *Store) LatestForThread(ctx context.Context, orgID, threadID string) (Run, error) {
@@ -133,7 +134,7 @@ func (s *Store) LatestForThread(ctx context.Context, orgID, threadID string) (Ru
 	if err != nil {
 		return Run{}, err
 	}
-	return fromRunRow(row), nil
+	return fromRunRow(sqlc.AgentRun(row)), nil
 }
 
 func (s *Store) ActiveForThread(ctx context.Context, orgID, threadID string) (Run, error) {
@@ -147,7 +148,7 @@ func (s *Store) ActiveForThread(ctx context.Context, orgID, threadID string) (Ru
 	if err != nil {
 		return Run{}, err
 	}
-	return fromRunRow(row), nil
+	return fromRunRow(sqlc.AgentRun(row)), nil
 }
 
 func (s *Store) UpdateKind(ctx context.Context, id, kind, leaseOwner string) {
@@ -178,7 +179,7 @@ func (s *Store) UpdateSession(ctx context.Context, id, sessionID, leaseOwner str
 	_ = s.db.Queries.UpdateAgentRunSession(ctx, sqlc.UpdateAgentRunSessionParams{ID: id, SessionID: sessionID, LeaseOwner: leaseOwner})
 }
 
-func (s *Store) UpdateCommand(ctx context.Context, id, sessionID, commandID, leaseOwner string, leaseDuration time.Duration) {
+func (s *Store) UpdateCommand(ctx context.Context, id, sessionID, commandID, commandStep, leaseOwner string, leaseDuration time.Duration) {
 	if !s.Enabled() || id == "" {
 		return
 	}
@@ -186,6 +187,7 @@ func (s *Store) UpdateCommand(ctx context.Context, id, sessionID, commandID, lea
 		ID:            id,
 		SessionID:     sessionID,
 		CommandID:     commandID,
+		CommandStep:   commandStep,
 		LeaseOwner:    leaseOwner,
 		LeaseDuration: interval(leaseDuration),
 	})
@@ -226,7 +228,25 @@ func (s *Store) ListExpired(ctx context.Context, limit int32) ([]Run, error) {
 	}
 	out := make([]Run, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, fromRunRow(row))
+		out = append(out, fromRunRow(sqlc.AgentRun(row)))
+	}
+	return out, nil
+}
+
+func (s *Store) ListStale(ctx context.Context, limit int32, staleAfter time.Duration) ([]Run, error) {
+	if !s.Enabled() {
+		return nil, nil
+	}
+	rows, err := s.db.Queries.ListStaleAgentRuns(ctx, sqlc.ListStaleAgentRunsParams{
+		StaleAfter: interval(staleAfter),
+		LimitCount: limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Run, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, fromRunRow(sqlc.AgentRun(row)))
 	}
 	return out, nil
 }
@@ -244,7 +264,7 @@ func (s *Store) ListActiveForLeaseOwnerPrefix(ctx context.Context, prefix string
 	}
 	out := make([]Run, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, fromRunRow(row))
+		out = append(out, fromRunRow(sqlc.AgentRun(row)))
 	}
 	return out, nil
 }
@@ -261,7 +281,7 @@ func (s *Store) Claim(ctx context.Context, id, leaseOwner string, leaseDuration 
 	if err != nil {
 		return Run{}, err
 	}
-	return fromRunRow(row), nil
+	return fromRunRow(sqlc.AgentRun(row)), nil
 }
 
 func (s *Store) ClaimFromOwner(ctx context.Context, id, leaseOwner, previousLeaseOwner string, leaseDuration time.Duration) (Run, error) {
@@ -277,7 +297,23 @@ func (s *Store) ClaimFromOwner(ctx context.Context, id, leaseOwner, previousLeas
 	if err != nil {
 		return Run{}, err
 	}
-	return fromRunRow(row), nil
+	return fromRunRow(sqlc.AgentRun(row)), nil
+}
+
+func (s *Store) ClaimStale(ctx context.Context, id, leaseOwner string, leaseDuration, staleAfter time.Duration) (Run, error) {
+	if !s.Enabled() {
+		return Run{}, pgx.ErrNoRows
+	}
+	row, err := s.db.Queries.ClaimStaleAgentRunLease(ctx, sqlc.ClaimStaleAgentRunLeaseParams{
+		ID:            id,
+		LeaseOwner:    leaseOwner,
+		LeaseDuration: interval(leaseDuration),
+		StaleAfter:    interval(staleAfter),
+	})
+	if err != nil {
+		return Run{}, err
+	}
+	return fromRunRow(sqlc.AgentRun(row)), nil
 }
 
 func (s *Store) Cancel(ctx context.Context, id, lastErr, leaseOwner string, leaseDuration time.Duration, events []PendingEvent) (Run, error) {
@@ -294,7 +330,7 @@ func (s *Store) Cancel(ctx context.Context, id, lastErr, leaseOwner string, leas
 		if err != nil {
 			return err
 		}
-		run = fromRunRow(row)
+		run = fromRunRow(sqlc.AgentRun(row))
 		for _, ev := range events {
 			if _, err := q.AppendAgentRunEvent(ctx, sqlc.AppendAgentRunEventParams{
 				RunID:      id,
@@ -415,6 +451,7 @@ func fromRunRow(row sqlc.AgentRun) Run {
 		UserRequest:     row.UserRequest,
 		SessionID:       row.SessionID,
 		CommandID:       row.CommandID,
+		CommandStep:     row.CommandStep,
 		CommandStartSeq: row.CommandStartSeq,
 		State:           row.State,
 		LogCursor:       row.LogCursor,

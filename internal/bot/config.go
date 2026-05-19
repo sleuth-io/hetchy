@@ -66,8 +66,7 @@ type Config struct {
 	SlackClientSecret string
 	// SlackOAuthRedirectURI must match one of the redirect URLs
 	// registered on the Slack app. Per-env: e.g.
-	// https://hetchy-hetchy-staging.demo.okteto.dev/slack/oauth/callback
-	// for staging, https://app.hetchy.ai/slack/oauth/callback for prod.
+	// https://app.hetchy.ai/slack/oauth/callback for prod.
 	SlackOAuthRedirectURI string
 
 	// GitHubAppID / GitHubAppSlug / GitHubAppPrivateKey / GitHubAppWebhookSecret

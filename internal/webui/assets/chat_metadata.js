@@ -88,6 +88,7 @@ function renderMetadata(detail) {
   const agent = detail.agent_name || detail.agent_slug || '';
   const model = detail.model || '';
   const created = fmtDate(detail.created_at || detail.updated_at);
+  const attachments = Array.isArray(detail.attachments) ? detail.attachments : [];
 
   const repoSlug = (owner && repo) ? owner + '/' + repo : '';
   const repoLink = repoSlug
@@ -126,6 +127,7 @@ function renderMetadata(detail) {
   // completes.
   const skills = Array.isArray(detail.sx_skills) ? detail.sx_skills : [];
   const skillsHTML = buildSkillsCell(skills);
+  const attachmentsHTML = buildAttachmentsCell(attachments);
 
   // Build rows. Each row is wrapped in is-empty class when the value
   // is missing so the dashes look intentionally placeholdered rather
@@ -140,6 +142,7 @@ function renderMetadata(detail) {
     { label: 'Repo',    html: repoLink,                 empty: !repoSlug },
     { label: 'Branch',  html: branchLink,               empty: !branch },
     { label: 'PR',      html: prCell,                   empty: !prURL },
+    { label: 'Attachments', html: attachmentsHTML,       empty: attachments.length === 0 },
     { label: 'Skills',  html: skillsHTML,               empty: skills.length === 0 },
     { label: 'Sandbox', html: sandbox
         ? '<span class="meta-mono">' + esc(sandbox) + '</span>'
@@ -177,6 +180,22 @@ function renderMetadata(detail) {
 
   setupMetaMenu();
   setupSkillsTrigger(skills);
+}
+
+function buildAttachmentsCell(attachments) {
+  if (!Array.isArray(attachments) || attachments.length === 0) {
+    return '<span>—</span>';
+  }
+  return '<span class="meta-attachment-list">' + attachments.map(a => {
+    const name = a.filename || 'attachment';
+    const url = a.download_url || ('/api/v1/conversations/' + encodeURIComponent(sessionId) + '/attachments/' + encodeURIComponent(a.id || ''));
+    const size = a.size_bytes ? ' <span class="meta-attachment-size">' + esc(formatAttachmentSize(a.size_bytes)) + '</span>' : '';
+    if (!a.download_url) {
+      return '<span class="meta-attachment-link">' + esc(name) + size + '</span>';
+    }
+    return '<a class="meta-attachment-link" href="' + esc(url) + '" download="' + esc(name) + '">'
+      + esc(name) + size + '</a>';
+  }).join('') + '</span>';
 }
 
 // MAX_SKILL_PREVIEW caps how many skill chips render inline in the
@@ -329,13 +348,16 @@ async function downloadConversation() {
   closeMetaDropdown();
 
   try {
-    const res = await fetch('/api/conversations/download/' + encodeURIComponent(sessionId));
+    const res = await fetch('/api/v1/conversations/' + encodeURIComponent(sessionId) + '?include=turns,attachments', {
+      headers: { 'Accept': 'application/json' },
+    });
     if (!res.ok) {
       alert('Failed to download conversation');
       return;
     }
 
-    const blob = await res.blob();
+    const data = await res.json();
+    const blob = new Blob([JSON.stringify(data, null, 2) + '\n'], { type: 'application/json' });
     const filename = (lastDetail?.title || 'conversation').replace(/[^a-z0-9_\-. ]/gi, '_') + '.json';
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -358,14 +380,25 @@ async function downloadConversation() {
 // without forcing a second fetch when nothing has changed.
 let lastDetail = null;
 
-function renderPendingMetadata(text) {
+function renderPendingMetadata(text, attachments = []) {
   conversationHasServerState = true;
   const existing = lastDetail || {};
   const now = new Date().toISOString();
   const repoParts = parseRepoSlug(selectedRepoSlug);
+  const existingAttachments = Array.isArray(existing.attachments) ? existing.attachments : [];
+  const existingTurns = Array.isArray(existing.turns) ? existing.turns : [];
+  const pendingTurnIndex = existingTurns.length;
+  const pending = Array.isArray(attachments) ? attachments.map((file, index) => ({
+    id: 'pending-' + index,
+    filename: attachmentDisplayName(file),
+    content_type: file.type || 'application/octet-stream',
+    size_bytes: file.size || 0,
+    turn_index: pendingTurnIndex,
+    source: 'web',
+  })) : [];
   lastDetail = {
     ...existing,
-    thread_id: sessionId,
+    id: sessionId,
     title: text || existing.title || 'New chat',
     agent_slug: selectedAgentSlug || '',
     agent_name: selectedAgentSlug ? selectedAgentName() : '',
@@ -376,8 +409,8 @@ function renderPendingMetadata(text) {
     creator_id: existing.creator_id || currentUserID,
     created_at: existing.created_at || now,
     updated_at: now,
-    history: text ? [text] : (existing.history || []),
-    response_blocks: existing.response_blocks || [],
+    turns: text ? existingTurns.concat([{ id: 'turn_' + pendingTurnIndex, index: pendingTurnIndex, message: text, attachments: pending }]) : existingTurns,
+    attachments: existingAttachments.concat(pending),
   };
   renderMetadata(lastDetail);
 }
@@ -422,9 +455,8 @@ function updateLiveSXSkills(skills) {
   const existing = lastDetail || {};
   lastDetail = {
     ...existing,
-    thread_id: existing.thread_id || sessionId,
-    history: existing.history || [],
-    response_blocks: existing.response_blocks || [],
+    id: existing.id || sessionId,
+    turns: existing.turns || [],
     sx_skills: skills.slice(),
   };
   renderMetadata(lastDetail);
@@ -436,7 +468,7 @@ async function refreshMetadata() {
     return;
   }
   try {
-    const res = await fetch('/api/conversations/' + encodeURIComponent(sessionId),
+    const res = await fetch('/api/v1/conversations/' + encodeURIComponent(sessionId) + '?include=turns,attachments',
                             { headers: { 'Accept': 'application/json' } });
     if (!res.ok) return;
     const detail = await res.json();
@@ -455,7 +487,7 @@ async function loadHistory(opts) {
   // still has isFreshChat=true, but the server conversation now exists.
   if (!conversationHasServerState) { showEmptyState(); renderMetadata(null); return; }
   try {
-    const res = await fetch('/api/conversations/' + encodeURIComponent(sessionId),
+    const res = await fetch('/api/v1/conversations/' + encodeURIComponent(sessionId) + '?include=turns,attachments',
                             { headers: { 'Accept': 'application/json' } });
     if (res.status === 404) {
       // Session id is in the URL but no conversation has been persisted yet
@@ -471,11 +503,12 @@ async function loadHistory(opts) {
     lastDetail = detail;
     renderMetadata(detail);
     log.innerHTML = '';
-    const history = detail.history || [];
-    const turns = detail.response_blocks || [];
-    for (let i = 0; i < history.length; i++) {
-      addUserMsg(history[i]);
-      const isLastTurn = i === history.length - 1;
+    const turns = Array.isArray(detail.turns) ? detail.turns : [];
+    const attachmentsByTurn = attachmentsGroupedByTurn(detail.attachments);
+    for (let i = 0; i < turns.length; i++) {
+      const turnData = turns[i] || {};
+      addUserMsg(turnData.message || '', turnData.attachments || attachmentsByTurn.get(i) || []);
+      const isLastTurn = i === turns.length - 1;
       // skipLastBotResponse is set when we know a live SSE stream is
       // about to take over rendering for the active turn — leave the
       // user message in place but don't paint the (possibly stale)
@@ -484,7 +517,7 @@ async function loadHistory(opts) {
       if (isLastTurn && skipLastBotResponse) {
         continue;
       }
-      const blocks = turns[i] || [];
+      const blocks = Array.isArray(turnData.blocks) ? turnData.blocks : [];
       const turn = startBotTurn();
       // Reconstruct the live phase grouping from the persisted block
       // sequence. The streamed turn paints the same phase boxes as
@@ -531,4 +564,15 @@ async function loadHistory(opts) {
   } catch (e) {
     // Leave the log empty on error; the user can still type a message.
   }
+}
+
+function attachmentsGroupedByTurn(attachments) {
+  const grouped = new Map();
+  if (!Array.isArray(attachments)) return grouped;
+  for (const attachment of attachments) {
+    const index = Number.isInteger(attachment.turn_index) ? attachment.turn_index : 0;
+    if (!grouped.has(index)) grouped.set(index, []);
+    grouped.get(index).push(attachment);
+  }
+  return grouped;
 }

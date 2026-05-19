@@ -228,3 +228,9 @@
       if (!confirm('Revoke invitation to ' + email + '?')) e.preventDefault();
     });
   });
+  document.querySelectorAll('.api-key-revoke-form').forEach(f => {
+    f.addEventListener('submit', e => {
+      const name = f.dataset.name || 'this API key';
+      if (!confirm('Revoke ' + name + '?')) e.preventDefault();
+    });
+  });

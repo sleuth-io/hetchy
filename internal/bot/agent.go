@@ -28,7 +28,7 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, o
 	// testing" opt-out from the new-chat UI. We honour it by not
 	// running bootstrap (which can take minutes on a fresh repo) and
 	// not merging the validation prompt.
-	if opts.ValidateChanges && b.bootstrap != nil && repo.InstallID != 0 && repo.RepoID != 0 {
+	if opts.ValidateChanges && !bootstrapSkippedFromContext(ctx) && b.bootstrap != nil && repo.InstallID != 0 && repo.RepoID != 0 {
 		s, err := b.ensureBootstrapSpec(ctx, sb, repo, oc, requestID, emit)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -117,11 +117,11 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, o
 	}
 	sessionID := "agent-" + requestID
 	prURL, err := b.runScriptForRequest(ctx, sb, sessionID, "agent", agentScript, env, emit)
-	if err == nil {
+	if err == nil && prURL != "" {
 		b.markRunFinalizing(ctx)
 		prURL, err = b.validateReportedPR(ctx, repo, branch, repo.BaseBranch, prURL)
 	}
-	if err == nil && spec != nil {
+	if err == nil && prURL != "" && spec != nil {
 		// Post-success reflection: read /tmp/hetchy-spec/improved/ to
 		// see if the agent flagged any setup/start/health changes that
 		// would help future tasks. Best-effort — failures here never
@@ -252,24 +252,15 @@ func (b *Bot) ensureBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo
 		return nil, errors.New("bootstrap produced no spec")
 	}
 
-	res.Spec.InstallationID = repo.InstallID
-	res.Spec.RepoID = repo.RepoID
-	res.Spec.BootstrapLog = truncateLogTail(res.Log)
-	if err := b.bootstrap.SaveSpec(ctx, res.Spec); err != nil {
+	spec, err = b.saveBootstrapSpecResult(ctx, res, repo)
+	if err != nil {
 		return nil, fmt.Errorf("save spec: %w", err)
-	}
-
-	for _, sec := range res.Spec.RequiredSecrets {
-		if err := b.bootstrap.DeclareRequiredSecret(ctx, repo.InstallID, repo.RepoID, "", sec.Name); err != nil {
-			b.log.Warn("declare required secret",
-				"repo", repo.Slug, "name", sec.Name, "error", err)
-		}
 	}
 
 	emit.Notify("Bootstrap complete",
 		fmt.Sprintf("Saved a `%s` setup for `%s` (status: %s). The agent will now run with end-to-end validation.",
-			res.Spec.Kind, repo.Slug, res.Spec.ValidationStatus))
-	return res.Spec, nil
+			spec.Kind, repo.Slug, spec.ValidationStatus))
+	return spec, nil
 }
 
 func (b *Bot) createBootstrapSession(ctx context.Context, sb *daytona.Sandbox, sessionID string) error {
@@ -428,6 +419,7 @@ func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx
 
 	wd := repoWorkdir(repo.Slug)
 	env := map[string]string{
+		"SF_REPO":             repo.Slug,
 		"SF_WORKDIR":          wd,
 		"SF_BRANCH":           rec.Branch,
 		"GITHUB_TOKEN":        repo.GitHubToken,
@@ -478,6 +470,9 @@ func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx
 	if err != nil {
 		return "", err
 	}
+	if prURL == "" {
+		return "", nil
+	}
 	b.markRunFinalizing(ctx)
 	return b.validateReportedPR(ctx, repo, rec.Branch, "", prURL)
 }
@@ -494,7 +489,8 @@ func (b *Bot) runScriptForRequest(ctx context.Context, sb *daytona.Sandbox, sess
 // streams Block-shaped updates via emit (sandbox bootstrap goes into a
 // "setup" block; the Claude stream-json output is parsed line-by-line
 // into typed blocks). Returns the PR URL extracted from the final
-// assistant message in the Claude stream.
+// assistant message in the Claude stream, or an empty string when Claude
+// completed successfully but answered without creating a pull request.
 func (b *Bot) runScript(ctx context.Context, sb *daytona.Sandbox, sessionID, label, scriptBody string, env map[string]string, emit blocks.Emitter) (string, error) {
 	if err := sb.Process.CreateSession(ctx, sessionID); err != nil {
 		if b.log != nil {
@@ -592,7 +588,7 @@ func (b *Bot) runScript(ctx context.Context, sb *daytona.Sandbox, sessionID, lab
 		if !router.ReachedAgent() {
 			return "", fmt.Errorf("setup script for %s exited before invoking claude — check the sandbox setup block for the failing step", label)
 		}
-		return "", fmt.Errorf("claude finished the %s run without posting a PR URL — check the agent transcript blocks", label)
+		return "", nil
 	}
 	return prURL, nil
 }

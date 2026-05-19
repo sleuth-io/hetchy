@@ -185,3 +185,25 @@ func TestShLines(t *testing.T) {
 		})
 	}
 }
+
+func TestRecoverableSandboxStepKeepsTerminalCommand(t *testing.T) {
+	if !recoverableSandboxStep("run-script") {
+		t.Fatal(`recoverableSandboxStep("run-script") = false, want true`)
+	}
+	if unframedRecoverableStep("run-script") {
+		t.Fatal(`unframedRecoverableStep("run-script") = true, want false`)
+	}
+	for step := range preAgentRecoverableSandboxSteps {
+		if !recoverableSandboxStep(step) {
+			t.Fatalf("recoverableSandboxStep(%q) = false, want true", step)
+		}
+		if !unframedRecoverableStep(step) {
+			t.Fatalf("unframedRecoverableStep(%q) = false, want true for persisted pre-agent command", step)
+		}
+	}
+	for _, step := range []string{"bootstrap-read", "spec-read", "test-step", ""} {
+		if recoverableSandboxStep(step) {
+			t.Fatalf("recoverableSandboxStep(%q) = true, want false", step)
+		}
+	}
+}

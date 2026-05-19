@@ -20,8 +20,9 @@ type fakeRunStore struct {
 	getRun runstore.Run
 	getErr error
 
-	latestRun runstore.Run
-	latestErr error
+	latestRun   runstore.Run
+	latestErr   error
+	latestCalls int
 
 	activeRun runstore.Run
 	activeErr error
@@ -30,6 +31,10 @@ type fakeRunStore struct {
 	expiredErr   error
 	expiredCalls []int32
 
+	staleRuns  []runstore.Run
+	staleErr   error
+	staleCalls []fakeRunStaleCall
+
 	activePrefixRuns  []runstore.Run
 	activePrefixErr   error
 	activePrefixCalls []fakeRunActivePrefixCall
@@ -37,6 +42,10 @@ type fakeRunStore struct {
 	claimRun   runstore.Run
 	claimErr   error
 	claimCalls []fakeRunClaim
+
+	claimStaleRun   runstore.Run
+	claimStaleErr   error
+	claimStaleCalls []fakeRunClaimStale
 
 	claimFromOwnerRun   runstore.Run
 	claimFromOwnerErr   error
@@ -91,10 +100,22 @@ type fakeRunActivePrefixCall struct {
 	limit  int32
 }
 
+type fakeRunStaleCall struct {
+	limit      int32
+	staleAfter time.Duration
+}
+
 type fakeRunClaim struct {
 	runID      string
 	leaseOwner string
 	duration   time.Duration
+}
+
+type fakeRunClaimStale struct {
+	runID      string
+	leaseOwner string
+	duration   time.Duration
+	staleAfter time.Duration
 }
 
 type fakeRunClaimFromOwner struct {
@@ -107,6 +128,7 @@ type fakeRunClaimFromOwner struct {
 type fakeRunCommandUpdate struct {
 	sessionID  string
 	commandID  string
+	step       string
 	leaseOwner string
 	duration   time.Duration
 }
@@ -142,6 +164,7 @@ func (f *fakeRunStore) Get(context.Context, string) (runstore.Run, error) {
 func (f *fakeRunStore) LatestForThread(context.Context, string, string) (runstore.Run, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.latestCalls++
 	return f.latestRun, f.latestErr
 }
 
@@ -175,10 +198,10 @@ func (f *fakeRunStore) UpdateSession(_ context.Context, _, sessionID, _ string) 
 	f.updateSessions = append(f.updateSessions, sessionID)
 }
 
-func (f *fakeRunStore) UpdateCommand(_ context.Context, _, sessionID, commandID, leaseOwner string, d time.Duration) {
+func (f *fakeRunStore) UpdateCommand(_ context.Context, _, sessionID, commandID, step, leaseOwner string, d time.Duration) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.updateCommands = append(f.updateCommands, fakeRunCommandUpdate{sessionID: sessionID, commandID: commandID, leaseOwner: leaseOwner, duration: d})
+	f.updateCommands = append(f.updateCommands, fakeRunCommandUpdate{sessionID: sessionID, commandID: commandID, step: step, leaseOwner: leaseOwner, duration: d})
 }
 
 func (f *fakeRunStore) UpdateState(_ context.Context, _, state, lastErr, leaseOwner string) {
@@ -206,6 +229,13 @@ func (f *fakeRunStore) ListExpired(_ context.Context, limit int32) ([]runstore.R
 	return append([]runstore.Run(nil), f.expiredRuns...), f.expiredErr
 }
 
+func (f *fakeRunStore) ListStale(_ context.Context, limit int32, staleAfter time.Duration) ([]runstore.Run, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.staleCalls = append(f.staleCalls, fakeRunStaleCall{limit: limit, staleAfter: staleAfter})
+	return append([]runstore.Run(nil), f.staleRuns...), f.staleErr
+}
+
 func (f *fakeRunStore) ListActiveForLeaseOwnerPrefix(_ context.Context, prefix string, limit int32) ([]runstore.Run, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -221,6 +251,23 @@ func (f *fakeRunStore) Claim(_ context.Context, id, leaseOwner string, d time.Du
 		return runstore.Run{}, f.claimErr
 	}
 	out := f.claimRun
+	if out.ID == "" {
+		out.ID = id
+	}
+	if out.LeaseOwner == "" {
+		out.LeaseOwner = leaseOwner
+	}
+	return out, nil
+}
+
+func (f *fakeRunStore) ClaimStale(_ context.Context, id, leaseOwner string, d, staleAfter time.Duration) (runstore.Run, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.claimStaleCalls = append(f.claimStaleCalls, fakeRunClaimStale{runID: id, leaseOwner: leaseOwner, duration: d, staleAfter: staleAfter})
+	if f.claimStaleErr != nil {
+		return runstore.Run{}, f.claimStaleErr
+	}
+	out := f.claimStaleRun
 	if out.ID == "" {
 		out.ID = id
 	}

@@ -73,13 +73,15 @@ function renderSidebar() {
   }
   more.hidden = !sidebarHasMore;
   for (const c of display) {
+    if (!c.id) continue;
     const wrap = document.createElement('div');
-    const isActive = c.thread_id === sessionId;
+    const conversationID = c.id;
+    const isActive = conversationID === sessionId;
     wrap.className = 'chat-item-wrap' + (isActive ? ' wrap-active' : '');
 
     const a = document.createElement('a');
     a.className = 'chat-item' + (isActive ? ' active' : '');
-    a.href = '/?session=' + encodeURIComponent(c.thread_id);
+    a.href = '/?session=' + encodeURIComponent(conversationID);
     a.title = c.title;
     a.textContent = c.title;
     wrap.appendChild(a);
@@ -93,7 +95,7 @@ function renderSidebar() {
     menuBtn.addEventListener('click', e => {
       e.preventDefault();
       e.stopPropagation();
-      toggleChatMenu(menuBtn, c.thread_id, c.title);
+      toggleChatMenu(menuBtn, conversationID, c.title);
     });
     wrap.appendChild(menuBtn);
 
@@ -183,7 +185,7 @@ async function saveRename() {
   if (!newTitle) return;
   let res;
   try {
-    res = await fetch('/api/conversations/' + encodeURIComponent(threadId), {
+    res = await fetch('/api/v1/conversations/' + encodeURIComponent(threadId), {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ title: newTitle }),
@@ -215,7 +217,7 @@ async function confirmDelete() {
   const threadId = deleteDialog.dataset.threadId;
   let res;
   try {
-    res = await fetch('/api/conversations/' + encodeURIComponent(threadId), { method: 'DELETE' });
+    res = await fetch('/api/v1/conversations/' + encodeURIComponent(threadId), { method: 'DELETE' });
   } catch (_) {
     alert('Could not delete: network error. Try again.');
     return;
@@ -232,7 +234,7 @@ async function confirmDelete() {
   }
 }
 
-// fetchSidebarPage hits /api/conversations with the current filter +
+// fetchSidebarPage hits /api/v1/conversations with the current filter +
 // search + offset. Returns the JSON array on success, null on
 // transport failure (the caller renders a generic error in that case).
 async function fetchSidebarPage(offset) {
@@ -241,7 +243,7 @@ async function fetchSidebarPage(offset) {
   if (searchQuery) params.set('q', searchQuery);
   params.set('limit', String(SIDEBAR_PAGE_SIZE));
   params.set('offset', String(offset));
-  const res = await fetch('/api/conversations?' + params.toString(),
+  const res = await fetch('/api/v1/conversations?' + params.toString(),
                           { headers: { 'Accept': 'application/json' } });
   if (!res.ok) return null;
   return (await res.json()) || [];

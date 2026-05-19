@@ -22,6 +22,7 @@ import (
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/types"
 
 	"github.com/hetchyhq/hetchy/internal/agents"
+	"github.com/hetchyhq/hetchy/internal/apikeys"
 	"github.com/hetchyhq/hetchy/internal/artifacts"
 	"github.com/hetchyhq/hetchy/internal/auth"
 	"github.com/hetchyhq/hetchy/internal/blocks"
@@ -92,6 +93,7 @@ type Bot struct {
 	convs     conversationStore
 	runs      runStore
 	agents    *agents.Store
+	apiKeys   *apikeys.Store
 	auth      *auth.Service
 	slack     *slackManager
 	bootstrap bootstrapStore
@@ -102,7 +104,7 @@ type Bot struct {
 	// artifactSlots tracks run-scoped bearer tokens for in-sandbox
 	// requests that need more slots than the default batch.
 	artifactSlots *artifactSlotBroker
-	// live tracks in-flight chat turns so the /chat/stream
+	// live tracks in-flight chat turns so the conversation events API
 	// reattach endpoint can find them and replay buffered
 	// SSE events to a reloading tab. Goroutine-safe.
 	live *liveRegistry
@@ -248,6 +250,7 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 		convs:            convstore.New(store),
 		runs:             runstore.New(store),
 		agents:           agents.NewStore(store),
+		apiKeys:          apikeys.New(store),
 		bootstrap:        bootstrap.New(store, cipher),
 		artifacts:        artifactSigner,
 		artifactSlots:    newArtifactSlotBroker(artifactSigner),
@@ -483,7 +486,7 @@ func (b *Bot) prepareAgentRun(ctx context.Context, orgID, threadID, requestID, t
 	return ctx, run, true
 }
 
-func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, requestID, threadID, userID string, optionPatch chatTaskOptionPatch, requestedAgent *string, requestedRepo *string, model ClaudeModel, out blocks.Emitter) {
+func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, requestID, threadID, userID string, optionPatch chatTaskOptionPatch, requestedAgent *string, requestedRepo *string, model ClaudeModel, out blocks.Emitter, incomingAttachments ...convstore.Attachment) {
 	model = normalizeClaudeModel(model)
 	// Belt-and-braces invariant: the chat HTTP handler already 400s on
 	// GPT model picks until the Codex runtime swap lands, but other
@@ -503,6 +506,7 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		}
 		return
 	}
+	requestedRepoExplicit := requestedRepo != nil
 	requestedOwner, requestedName, requestedRepoOK := parseRequestedRepo(requestedRepo)
 	b.log.Info("request received",
 		"org", oc.OrgID,
@@ -512,6 +516,7 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		"requested_repo", requestedRepoSlug(requestedOwner, requestedName),
 		"model", model,
 		"text_len", len(text),
+		"attachments", len(incomingAttachments),
 		"text_preview", truncate(text, 200),
 	)
 
@@ -571,6 +576,12 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 			b.markRunState(ctx, runstore.StateFailed, errors.New("unknown agent"))
 			return
 		}
+		if err := b.saveIncomingAttachments(ctx, oc.OrgID, threadID, len(rec.History), incomingAttachments); err != nil {
+			b.log.Error("save prompt attachments", "error", err, "org", oc.OrgID, "thread", threadID)
+			emit.Error("Attachment upload failed", "Hetchy could not save the attached files for this turn. Try again.")
+			b.markRunState(ctx, runstore.StateFailed, err)
+			return
+		}
 		b.handleFollowUp(ctx, oc, rec, agent, text, requestID, opts, model, recorder, emit)
 		return
 	case err == nil && rec.SandboxID != "":
@@ -581,9 +592,25 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 			b.markRunState(ctx, runstore.StateFailed, errors.New("unknown agent"))
 			return
 		}
+		if err := b.replaceIncomingAttachmentsForTurn(ctx, oc.OrgID, threadID, 0, incomingAttachments); err != nil {
+			b.log.Error("save prompt attachments", "error", err, "org", oc.OrgID, "thread", threadID)
+			emit.Error("Attachment upload failed", "Hetchy could not save the attached files for this turn. Try again.")
+			b.markRunState(ctx, runstore.StateFailed, err)
+			return
+		}
 		b.handleRetryAfterFailure(ctx, oc, rec, agent, text, requestID, opts, model, recorder, emit)
 		return
 	case err == nil:
+		saveAttachments := b.saveIncomingAttachments
+		if rec.GitHubOwner != "" && rec.GitHubRepo != "" {
+			saveAttachments = b.replaceIncomingAttachmentsForTurn
+		}
+		if err := saveAttachments(ctx, oc.OrgID, threadID, 0, incomingAttachments); err != nil {
+			b.log.Error("save prompt attachments", "error", err, "org", oc.OrgID, "thread", threadID)
+			emit.Error("Attachment upload failed", "Hetchy could not save the attached files for this turn. Try again.")
+			b.markRunState(ctx, runstore.StateFailed, err)
+			return
+		}
 		b.handlePendingConversation(ctx, oc, rec, text, requestID, requestedAgent, requestedOwner, requestedName, requestedRepoOK, opts, model, recorder, emit)
 		return
 	case errors.Is(err, convstore.ErrNotFound):
@@ -604,7 +631,7 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		b.markRunState(ctx, runstore.StateFailed, errors.New("unknown agent"))
 		return
 	}
-	owner, name, ok := resolveRequestedOrDefaultRepo(requestedOwner, requestedName, requestedRepoOK, oc.DefaultGitHubOwner, oc.DefaultGitHubRepo)
+	owner, name, ok := resolveRequestedOrDefaultRepo(requestedOwner, requestedName, requestedRepoOK, requestedRepoExplicit, oc.DefaultGitHubOwner, oc.DefaultGitHubRepo)
 	if !ok {
 		emit.Notify("Which repository?", "Reply with `owner/name`.\n(You can save a default at /settings/org → Integrations.)")
 		partial := convstore.Record{
@@ -619,6 +646,12 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		}
 		if err := b.convs.Upsert(ctx, partial); err != nil {
 			b.log.Error("convstore upsert (awaiting repo)", "error", err, "org", oc.OrgID, "thread", threadID)
+		}
+		if err := b.saveIncomingAttachments(ctx, oc.OrgID, threadID, 0, incomingAttachments); err != nil {
+			b.log.Error("save prompt attachments", "error", err, "org", oc.OrgID, "thread", threadID)
+			emit.Error("Attachment upload failed", "Hetchy could not save the attached files for this turn. Try again.")
+			b.markRunState(ctx, runstore.StateFailed, err)
+			return
 		}
 		b.markRunState(ctx, runstore.StateSucceeded, nil)
 		return
@@ -636,12 +669,18 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		TaskOptions: taskOptions,
 	}
 	// Persist the row immediately — before we spend 10–30s creating the
-	// sandbox — so the LHN sidebar and /api/conversations both see this
+	// sandbox — so the LHN sidebar and /api/v1/conversations both see this
 	// chat as soon as the user clicks Send. Without this, a reload during
 	// sandbox creation finds nothing and the chat disappears from the
 	// list until the first persister tick fires inside runFreshAgent.
 	if err := b.convs.Upsert(ctx, rec); err != nil {
 		b.log.Error("convstore upsert (new chat)", "error", err, "org", oc.OrgID, "thread", threadID)
+	}
+	if err := b.saveIncomingAttachments(ctx, oc.OrgID, threadID, 0, incomingAttachments); err != nil {
+		b.log.Error("save prompt attachments", "error", err, "org", oc.OrgID, "thread", threadID)
+		emit.Error("Attachment upload failed", "Hetchy could not save the attached files for this turn. Try again.")
+		b.markRunState(ctx, runstore.StateFailed, err)
+		return
 	}
 	b.runFreshAgent(ctx, oc, rec, agent, text, requestID, opts, model, recorder, emit)
 }
@@ -723,15 +762,15 @@ func requestedRepoSlug(owner, name string) string {
 
 // resolveRequestedOrDefaultRepo returns the repo to use for a new
 // conversation. An explicit composer-picker selection wins outright;
-// otherwise the org's saved default is used. Returns ok=false when
-// neither is available so the caller can fall back to asking the
-// user. The empty-string guard on each branch keeps the function
-// correct by construction: even if a future direct caller bypasses
-// parseRequestedRepo and passes hasReq=true with empty strings, we
-// don't write an empty owner/name into the conversation row.
-func resolveRequestedOrDefaultRepo(reqOwner, reqName string, hasReq bool, defOwner, defName string) (owner, name string, ok bool) {
+// when the picker explicitly sends an empty repository, skip the org
+// default so the caller can ask the user which repo to use. Older
+// clients that omit the field still fall back to the org default.
+func resolveRequestedOrDefaultRepo(reqOwner, reqName string, hasReq, explicitRepoField bool, defOwner, defName string) (owner, name string, ok bool) {
 	if hasReq && reqOwner != "" && reqName != "" {
 		return reqOwner, reqName, true
+	}
+	if explicitRepoField {
+		return "", "", false
 	}
 	if defOwner != "" && defName != "" {
 		return defOwner, defName, true
@@ -949,7 +988,7 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 		return
 	}
 	// Mark this fresh-run sandbox as owned by the current turn. The
-	// /chat/cancel handler uses this only as an opportunistic cleanup path;
+	// conversation cancel handler uses this only as an opportunistic cleanup path;
 	// the agent goroutine below remains the authoritative cleanup owner
 	// because a cancel can arrive in the small window before this ID is set.
 	setLiveRunSandboxID(ctx, sb.ID, true)
@@ -963,6 +1002,19 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 	sandboxReadyID := emit.Start(blocks.KindNotify, "Sandbox ready", map[string]any{"tag": sandboxReadySSETag})
 	emit.Append(sandboxReadyID, fmt.Sprintf("`%s` is up — cloning repo and starting Claude Code.", sb.ID))
 	emit.Done(sandboxReadyID, "")
+
+	agentRequest, err := b.promptWithSandboxAttachments(ctx, sb, rec.OrgID, rec.ThreadID, 0, requestID, userRequest, emit)
+	if err != nil {
+		b.log.Error("sandbox attachment upload failed", "sandbox", sb.ID, "request_id", requestID, "error", err)
+		emit.Error("Attachment upload failed", fmt.Sprintf("Could not copy the attached files into sandbox `%s`. Try again.", sb.ID))
+		appendBlocksToFirstTurn(&rec, recorder.Snapshot())
+		if uerr := b.convs.Upsert(context.Background(), rec); uerr != nil {
+			b.log.Error("convstore upsert (attachment upload fail)", "error", uerr)
+		}
+		b.markRunState(ctx, runstore.StateFailed, err)
+		b.cleanupSandboxWithTimeout(sb, "attachment upload failed")
+		return
+	}
 
 	// Persist progress every 2 s for the rest of the run so a
 	// reload (or bot crash) doesn't lose blocks. The persister
@@ -981,7 +1033,7 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 		persister.Stop()
 	}()
 
-	prURL, runErr := b.runAgentForRequest(ctx, sb, repo, oc, agent, userRequest, requestID, branch, opts, model, emit)
+	prURL, runErr := b.runAgentForRequest(ctx, sb, repo, oc, agent, agentRequest, requestID, branch, opts, model, emit)
 	if runErr != nil {
 		if liveRunCancelled(ctx) {
 			b.log.Info("agent run stopped", "sandbox", sb.ID, "request_id", requestID, "error", runErr)
@@ -1018,6 +1070,27 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 			b.log.Error("convstore upsert (agent fail)", "error", err)
 		}
 		b.markRunState(ctx, runstore.StateFailed, runErr)
+		return
+	}
+
+	if prURL == "" {
+		emit.Result("Done!", noPullRequestResultBody(false))
+		if err := agentRunDurabilityErr(ctx); err != nil {
+			b.markRunState(ctx, runstore.StateRecovering, err)
+			return
+		}
+		rec.SandboxID = ""
+		rec.Branch = ""
+		rec.PRURL = ""
+		appendBlocksToFirstTurn(&rec, recorder.Snapshot())
+		if err := b.convs.Upsert(ctx, rec); err != nil {
+			b.log.Error("convstore upsert (agent answer-only)", "error", err)
+			b.markRunState(ctx, runstore.StateFailed, err)
+			return
+		}
+		b.markRunState(ctx, runstore.StateSucceeded, nil)
+		b.deleteSandboxSession(sb, b.currentAgentRunSessionID(ctx, "agent-"+requestID))
+		b.stopAndArchiveSandbox(ctx, sb)
 		return
 	}
 
@@ -1127,6 +1200,18 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 		return
 	}
 
+	agentText, err := b.promptWithSandboxAttachments(ctx, sb, rec.OrgID, rec.ThreadID, len(rec.History), requestID, text, emit)
+	if err != nil {
+		b.log.Error("sandbox attachment upload failed", "sandbox", sb.ID, "request_id", requestID, "error", err)
+		emit.Error("Attachment upload failed", fmt.Sprintf("Could not copy the attached files into sandbox `%s`. Try again.", sb.ID))
+		appendBlocksAsNewTurn(&rec, text, recorder.Snapshot())
+		if uerr := b.convs.Upsert(context.Background(), rec); uerr != nil {
+			b.log.Error("convstore upsert (follow-up attachment upload fail)", "error", uerr)
+		}
+		b.markRunState(ctx, runstore.StateFailed, err)
+		return
+	}
+
 	// Persister sees a forward-looking rec where the new user turn's
 	// text is already in history — otherwise a mid-run reload would
 	// render the user's message back in the previous turn instead of
@@ -1142,7 +1227,7 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 		persister.Stop()
 	}()
 
-	prURL, err := b.runFollowUpForRequest(ctx, sb, repo, oc, rec, agent, text, requestID, opts, model, emit)
+	prURL, err := b.runFollowUpForRequest(ctx, sb, repo, oc, rec, agent, agentText, requestID, opts, model, emit)
 	if err != nil {
 		if liveRunCancelled(ctx) {
 			b.log.Info("follow-up stopped", "sandbox", sb.ID, "request_id", requestID, "error", err)
@@ -1177,13 +1262,19 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 
 	// Result first so the recorded snapshot includes the closing block,
 	// then upsert with the new user turn + this turn's blocks.
-	emit.Result("Done!", prURL)
+	resultBody := prURL
+	if resultBody == "" {
+		resultBody = noPullRequestResultBody(true)
+	}
+	emit.Result("Done!", resultBody)
 	if err := agentRunDurabilityErr(ctx); err != nil {
 		b.markRunState(ctx, runstore.StateRecovering, err)
 		return
 	}
 
-	rec.PRURL = prURL
+	if prURL != "" {
+		rec.PRURL = prURL
+	}
 	appendBlocksAsNewTurn(&rec, text, recorder.Snapshot())
 	if err := b.convs.Upsert(ctx, rec); err != nil {
 		b.log.Error("convstore upsert", "error", err)
@@ -1193,6 +1284,13 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 	b.markRunState(ctx, runstore.StateSucceeded, nil)
 	b.deleteSandboxSession(sb, b.currentAgentRunSessionID(ctx, "followup-"+requestID))
 	b.stopAndArchiveSandbox(ctx, sb)
+}
+
+func noPullRequestResultBody(followup bool) string {
+	if followup {
+		return "No new pull request URL was reported; keeping the existing PR."
+	}
+	return "No pull request was created."
 }
 
 func (b *Bot) resolveRepoForRun(ctx context.Context, orgID, owner, name string) (repoCtx, error) {

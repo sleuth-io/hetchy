@@ -45,6 +45,30 @@ func TestRenderChatTemplate(t *testing.T) {
 	if strings.Contains(body, `?v=dev`) {
 		t.Fatalf("rendered chat template should not use a deploy-wide dev asset version")
 	}
+	// The repository selector now lives as a top-level chip next to the +
+	// menu rather than buried inside the tools popover. Verify the chip
+	// markup is in place and that the picker isn't styled as a tools-menu
+	// row anymore (the old shape used class="tools-menu-item").
+	if !strings.Contains(body, `id="repo-selector-btn" class="repo-chip"`) {
+		t.Fatalf("rendered chat template missing top-level .repo-chip selector button")
+	}
+	if !strings.Contains(body, `id="composer-controls-left"`) {
+		t.Fatalf("rendered chat template missing #composer-controls-left wrapper")
+	}
+	if strings.Contains(body, `id="repo-selector-btn" class="tools-menu-item"`) {
+		t.Fatalf("repo selector still rendered as a tools-menu row; should be a chip")
+	}
+	// Structural assertion: the chip must render AFTER every item that
+	// lives inside #tools-popover — i.e. it's a sibling of #tools-picker,
+	// not nested inside it. We pin to the last checkbox row inside the
+	// tools popover because regressions that move the chip back inside
+	// the popover would put it before that row.
+	chipIdx := strings.Index(body, `id="repo-selector-btn"`)
+	lastToolsRowIdx := strings.Index(body, `id="action-pr-checks-checkbox"`)
+	if chipIdx <= 0 || lastToolsRowIdx <= 0 || chipIdx <= lastToolsRowIdx {
+		t.Fatalf("repo chip must render after the tools popover content "+
+			"(chip=%d, lastToolsRow=%d)", chipIdx, lastToolsRowIdx)
+	}
 }
 
 func TestAssetHandlerServesEmbeddedAssets(t *testing.T) {

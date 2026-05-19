@@ -216,6 +216,9 @@ func (s *Store) Delete(ctx context.Context, orgID string) error {
 		if err := q.DeleteConversationsByOrg(ctx, orgID); err != nil {
 			return fmt.Errorf("delete conversations: %w", err)
 		}
+		if err := q.DeleteOrgAPIKeysByOrg(ctx, orgID); err != nil {
+			return fmt.Errorf("delete api keys: %w", err)
+		}
 		if err := q.DeleteOrgConfig(ctx, orgID); err != nil {
 			return fmt.Errorf("delete org config: %w", err)
 		}
