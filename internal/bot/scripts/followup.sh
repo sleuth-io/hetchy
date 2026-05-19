@@ -2,6 +2,7 @@
 # followup.sh — re-enters an existing sandbox to continue work on the same PR.
 #
 # Required env (set by the bot before invocation):
+#   SF_REPO          e.g. "owner/repo"
 #   SF_WORKDIR       repo path inside the sandbox (already cloned)
 #   SF_BRANCH        existing PR branch to update
 #   SF_PROMPT_B64 or SF_PROMPT_B64_FILE    base64-encoded prompt with conversation history, inline or file
@@ -25,6 +26,7 @@
 
 set -euo pipefail
 
+: "${SF_REPO:?required}"
 : "${SF_WORKDIR:?required}"
 : "${SF_BRANCH:?required}"
 : "${GITHUB_TOKEN:?required}"
@@ -93,10 +95,11 @@ echo "[hetchy] env scan: $(env | { grep -E '^(ANTHROPIC_|CLAUDE_)' || true; } | 
 
 echo "[hetchy] refreshing git credential"
 # The sandbox may have been archived/unarchived across multiple requests,
-# so the token agent.sh baked into ~/.gitconfig is likely expired (tokens
-# live ~1 hour). Re-run the same url.insteadOf rewrite with the fresh
-# installation token the bot minted for this follow-up run.
-git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+# so the token agent.sh baked into git config or origin may be expired
+# (tokens live ~1 hour). Remove stale token rewrites, reset origin to a
+# plain GitHub URL, then add the fresh installation token rewrite minted
+# for this follow-up run.
+hetchy_configure_git_auth
 
 echo "[hetchy] checking out branch"
 cd "${SF_WORKDIR}"

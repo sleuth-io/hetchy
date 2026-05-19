@@ -65,6 +65,7 @@ type Principal struct {
 	OrgID     string
 	Role      string
 	SessionID string
+	IsAPIKey  bool
 }
 
 // HasOrg reports whether the principal currently has an active
@@ -83,6 +84,13 @@ func FromContext(ctx context.Context) (Principal, bool) {
 // withPrincipal returns a derived context carrying p.
 func withPrincipal(ctx context.Context, p Principal) context.Context {
 	return context.WithValue(ctx, ctxKey{}, p)
+}
+
+// WithPrincipal returns a derived context carrying p. It is exported for
+// non-cookie authenticators, such as org API keys, that need to enter the
+// same downstream auth context as WorkOS sessions.
+func WithPrincipal(ctx context.Context, p Principal) context.Context {
+	return withPrincipal(ctx, p)
 }
 
 // Config holds everything the auth service needs at construction time.

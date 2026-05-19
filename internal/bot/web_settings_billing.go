@@ -94,8 +94,8 @@ func (b *Bot) loadBillingOverview(ctx context.Context, orgID string) (billingOve
 		PlanCode:          acct.PlanCode,
 		CurrentPlanLabel:  billingPlanLabel(acct.PlanCode),
 		Status:            acct.Status,
-		PeriodStart:       formatSettingsTime(acct.CurrentPeriodStart),
-		PeriodEnd:         formatSettingsTime(acct.CurrentPeriodEnd),
+		PeriodStart:       formatBillingTime(acct.CurrentPeriodStart),
+		PeriodEnd:         formatBillingTime(acct.CurrentPeriodEnd),
 		PendingPlanCode:   pendingPlanCode,
 		PendingPlanLabel:  pendingPlanLabel,
 		PendingPlanAt:     pendingPlanAt,
@@ -118,7 +118,7 @@ func (b *Bot) loadBillingOverview(ctx context.Context, orgID string) (billingOve
 		StripeConfigured:  b.stripeConfigured(),
 		HasStripeCustomer: acct.StripeCustomerID != "",
 		HasSubscription:   acct.StripeSubscriptionID != "",
-		PlanOptions:       b.billingPlanOptions(acct.PlanCode, pendingPlanCode, acct.StripeSubscriptionID != "", formatSettingsTime(acct.CurrentPeriodEnd)),
+		PlanOptions:       b.billingPlanOptions(acct.PlanCode, pendingPlanCode, acct.StripeSubscriptionID != "", formatBillingTime(acct.CurrentPeriodEnd)),
 	}
 	for _, meter := range overview.RecentMeters {
 		out.RecentMeters = append(out.RecentMeters, billingMeterView{
@@ -127,7 +127,7 @@ func (b *Bot) loadBillingOverview(ctx context.Context, orgID string) (billingOve
 			BillableMinutes: meter.BillableMinutes,
 			CapturedCredits: meter.CapturedCredits,
 			TerminalState:   meter.TerminalState,
-			StartedAt:       formatSettingsTime(meter.StartedAt),
+			StartedAt:       formatBillingTime(meter.StartedAt),
 		})
 	}
 	return out, nil
@@ -165,7 +165,7 @@ func billingPendingPlanChange(acct billing.Account) (string, string, string, boo
 	if code == "" || code == acct.PlanCode {
 		return "", "", "", false
 	}
-	return code, billingPlanLabel(code), formatSettingsTime(acct.PendingPlanEffectiveAt), true
+	return code, billingPlanLabel(code), formatBillingTime(acct.PendingPlanEffectiveAt), true
 }
 
 func billingPlanActionLabel(current, scheduled, hasSubscription bool) string {
@@ -260,7 +260,7 @@ func (b *Bot) repoBillingViewData(ctx context.Context, orgID string) (map[string
 	return settings, allowed
 }
 
-func formatSettingsTime(t time.Time) string {
+func formatBillingTime(t time.Time) string {
 	if t.IsZero() {
 		return ""
 	}

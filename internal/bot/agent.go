@@ -117,11 +117,11 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, o
 	}
 	sessionID := "agent-" + requestID
 	prURL, err := b.runScriptForRequest(ctx, sb, sessionID, "agent", agentScript, env, emit)
-	if err == nil {
+	if err == nil && prURL != "" {
 		b.markRunFinalizing(ctx)
 		prURL, err = b.validateReportedPR(ctx, repo, branch, repo.BaseBranch, prURL)
 	}
-	if err == nil && spec != nil {
+	if err == nil && prURL != "" && spec != nil {
 		// Post-success reflection: read /tmp/hetchy-spec/improved/ to
 		// see if the agent flagged any setup/start/health changes that
 		// would help future tasks. Best-effort — failures here never
@@ -419,6 +419,7 @@ func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx
 
 	wd := repoWorkdir(repo.Slug)
 	env := map[string]string{
+		"SF_REPO":             repo.Slug,
 		"SF_WORKDIR":          wd,
 		"SF_BRANCH":           rec.Branch,
 		"GITHUB_TOKEN":        repo.GitHubToken,
@@ -469,6 +470,9 @@ func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx
 	if err != nil {
 		return "", err
 	}
+	if prURL == "" {
+		return "", nil
+	}
 	b.markRunFinalizing(ctx)
 	return b.validateReportedPR(ctx, repo, rec.Branch, "", prURL)
 }
@@ -485,7 +489,8 @@ func (b *Bot) runScriptForRequest(ctx context.Context, sb *daytona.Sandbox, sess
 // streams Block-shaped updates via emit (sandbox bootstrap goes into a
 // "setup" block; the Claude stream-json output is parsed line-by-line
 // into typed blocks). Returns the PR URL extracted from the final
-// assistant message in the Claude stream.
+// assistant message in the Claude stream, or an empty string when Claude
+// completed successfully but answered without creating a pull request.
 func (b *Bot) runScript(ctx context.Context, sb *daytona.Sandbox, sessionID, label, scriptBody string, env map[string]string, emit blocks.Emitter) (string, error) {
 	if err := sb.Process.CreateSession(ctx, sessionID); err != nil {
 		if b.log != nil {
@@ -583,7 +588,7 @@ func (b *Bot) runScript(ctx context.Context, sb *daytona.Sandbox, sessionID, lab
 		if !router.ReachedAgent() {
 			return "", fmt.Errorf("setup script for %s exited before invoking claude — check the sandbox setup block for the failing step", label)
 		}
-		return "", fmt.Errorf("claude finished the %s run without posting a PR URL — check the agent transcript blocks", label)
+		return "", nil
 	}
 	return prURL, nil
 }

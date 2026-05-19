@@ -2,10 +2,13 @@ package bot
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"mime"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -19,20 +22,20 @@ import (
 	"github.com/hetchyhq/hetchy/internal/db/sqlc"
 )
 
-// conversationSummary is the shape returned by GET /api/conversations.
+// conversationSummary is the shape returned by GET /api/v1/conversations.
 // `Title` is derived from the first user turn so the sidebar has a
 // human-readable label without us needing a dedicated DB column.
 type conversationSummary struct {
-	ThreadID  string `json:"thread_id"`
+	ID        string `json:"id"`
 	Title     string `json:"title"`
+	Status    string `json:"status"`
 	PRURL     string `json:"pr_url,omitempty"`
 	UpdatedAt string `json:"updated_at"`
 }
 
-// conversationDetail is the shape returned by GET /api/conversations/{id}.
-// History and ResponseBlocks are paired by index: history[i] is the
-// user turn and response_blocks[i] is the typed-block transcript the
-// user saw streamed back for it.
+// conversationDetail is the shape returned by GET /api/v1/conversations/{id}.
+// Turns are the public transcript surface: each user turn carries its message,
+// typed response blocks, and optional attachment metadata.
 //
 // Branch / GitHubOwner / GitHubRepo / SandboxID / CreatorID power the
 // chat-detail metadata sidebar. They're populated lazily during the
@@ -40,22 +43,22 @@ type conversationSummary struct {
 // PR URL only lands when Claude finishes the first turn) so any of
 // them may be empty mid-conversation.
 type conversationDetail struct {
-	ThreadID       string           `json:"thread_id"`
-	Title          string           `json:"title"`
-	PRURL          string           `json:"pr_url,omitempty"`
-	Branch         string           `json:"branch,omitempty"`
-	GitHubOwner    string           `json:"github_owner,omitempty"`
-	GitHubRepo     string           `json:"github_repo,omitempty"`
-	SandboxID      string           `json:"sandbox_id,omitempty"`
-	CreatorID      string           `json:"creator_id,omitempty"`
-	AgentSlug      string           `json:"agent_slug,omitempty"`
-	AgentName      string           `json:"agent_name,omitempty"`
-	Model          string           `json:"model,omitempty"`
-	TaskOptions    map[string]bool  `json:"task_options,omitempty"`
-	Attachments    []attachmentInfo `json:"attachments,omitempty"`
-	CreatedAt      string           `json:"created_at,omitempty"`
-	History        []string         `json:"history"`
-	ResponseBlocks [][]blocks.Block `json:"response_blocks"`
+	ID          string             `json:"id"`
+	Title       string             `json:"title"`
+	Status      string             `json:"status"`
+	PRURL       string             `json:"pr_url,omitempty"`
+	Branch      string             `json:"branch,omitempty"`
+	GitHubOwner string             `json:"github_owner,omitempty"`
+	GitHubRepo  string             `json:"github_repo,omitempty"`
+	SandboxID   string             `json:"sandbox_id,omitempty"`
+	CreatorID   string             `json:"creator_id,omitempty"`
+	AgentSlug   string             `json:"agent_slug,omitempty"`
+	AgentName   string             `json:"agent_name,omitempty"`
+	Model       string             `json:"model,omitempty"`
+	TaskOptions map[string]bool    `json:"task_options,omitempty"`
+	Attachments []attachmentInfo   `json:"attachments,omitempty"`
+	CreatedAt   string             `json:"created_at,omitempty"`
+	Turns       []conversationTurn `json:"turns,omitempty"`
 	// SXSkills is the de-duplicated list of skill names sx installed
 	// for the most recent turn that ran sx. Derived server-side from
 	// the persisted response_blocks (rather than stored in its own
@@ -64,6 +67,14 @@ type conversationDetail struct {
 	// keeps the right-hand details panel showing the current state.
 	SXSkills  []string `json:"sx_skills,omitempty"`
 	UpdatedAt string   `json:"updated_at"`
+}
+
+type conversationTurn struct {
+	ID          string           `json:"id"`
+	Index       int              `json:"index"`
+	Message     string           `json:"message"`
+	Blocks      []blocks.Block   `json:"blocks,omitempty"`
+	Attachments []attachmentInfo `json:"attachments,omitempty"`
 }
 
 type attachmentInfo struct {
@@ -232,8 +243,9 @@ func (b *Bot) conversationsHandler(w http.ResponseWriter, r *http.Request) {
 	out := make([]conversationSummary, 0, len(recs))
 	for _, rec := range recs {
 		out = append(out, conversationSummary{
-			ThreadID:  rec.ThreadID,
+			ID:        rec.ThreadID,
 			Title:     conversationTitle(rec),
+			Status:    b.conversationListStatus(p.OrgID, rec.ThreadID),
 			PRURL:     rec.PRURL,
 			UpdatedAt: rec.UpdatedAt.UTC().Format(time.RFC3339),
 		})
@@ -262,9 +274,9 @@ func parseClampedInt(s string, def, min, max int) int {
 	return n
 }
 
-// repositorySummary is the shape returned by GET /api/repositories. The
+// repositorySummary is the shape returned by GET /api/v1/repositories. The
 // composer repo picker reads owner/name to build the "owner/name" label
-// shown in the chip and to round-trip the selection back to /chat as the
+// shown in the chip and to round-trip the selection back to the conversation API as the
 // `repository` field. Default branch is surfaced so a future "branch:"
 // hint can render alongside without a second fetch.
 type repositorySummary struct {
@@ -348,7 +360,7 @@ func filterRepositoriesForPicker(rows []sqlc.GithubRepo, query string, limit int
 	return out
 }
 
-// memberSummary is the shape returned by GET /api/members.
+// memberSummary is the shape returned by GET /api/v1/members.
 type memberSummary struct {
 	UserID      string `json:"user_id"`
 	DisplayName string `json:"display_name"`
@@ -392,16 +404,7 @@ func (b *Bot) membersHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out)
 }
 
-func (b *Bot) conversationDetailHandler(w http.ResponseWriter, r *http.Request) {
-	threadID := strings.TrimPrefix(r.URL.Path, "/api/conversations/")
-	if threadID == "" || strings.Contains(threadID, "/") {
-		http.NotFound(w, r)
-		return
-	}
-	if !isSafeThreadID(threadID) {
-		http.NotFound(w, r)
-		return
-	}
+func (b *Bot) serveConversationDetail(w http.ResponseWriter, r *http.Request, threadID string) {
 	p, _ := auth.FromContext(r.Context())
 
 	switch r.Method {
@@ -416,35 +419,10 @@ func (b *Bot) conversationDetailHandler(w http.ResponseWriter, r *http.Request) 
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
-		var createdAt string
-		if !rec.CreatedAt.IsZero() {
-			createdAt = rec.CreatedAt.UTC().Format(time.RFC3339)
-		}
-		agentSlug, agentName := b.resolveAgent(r.Context(), p.OrgID, rec.AgentSlug)
-		attachments := b.attachmentInfos(r.Context(), p.OrgID, rec.ThreadID)
-		writeJSON(w, conversationDetail{
-			ThreadID:       rec.ThreadID,
-			Title:          conversationTitle(rec),
-			PRURL:          rec.PRURL,
-			Branch:         rec.Branch,
-			GitHubOwner:    rec.GitHubOwner,
-			GitHubRepo:     rec.GitHubRepo,
-			SandboxID:      rec.SandboxID,
-			CreatorID:      rec.CreatorID,
-			AgentSlug:      agentSlug,
-			AgentName:      agentName,
-			Model:          string(normalizeClaudeModel(ClaudeModel(rec.Model))),
-			TaskOptions:    rec.TaskOptions,
-			Attachments:    attachments,
-			CreatedAt:      createdAt,
-			History:        rec.History,
-			ResponseBlocks: rec.ResponseBlocks,
-			SXSkills:       extractSXSkills(rec.ResponseBlocks),
-			UpdatedAt:      rec.UpdatedAt.UTC().Format(time.RFC3339),
-		})
+		writeJSON(w, b.conversationDetailResponse(r.Context(), p.OrgID, rec, conversationIncludesFromQuery(r.URL.Query())))
 
 	case http.MethodDelete:
-		if err := requireSameOrigin(r); err != nil {
+		if err := requireSameOriginUnlessAPIKey(r); err != nil {
 			http.Error(w, err.Error(), http.StatusForbidden)
 			return
 		}
@@ -482,7 +460,7 @@ func (b *Bot) conversationDetailHandler(w http.ResponseWriter, r *http.Request) 
 		w.WriteHeader(http.StatusNoContent)
 
 	case http.MethodPatch:
-		if err := requireSameOrigin(r); err != nil {
+		if err := requireSameOriginUnlessAPIKey(r); err != nil {
 			http.Error(w, err.Error(), http.StatusForbidden)
 			return
 		}
@@ -517,6 +495,7 @@ func (b *Bot) conversationDetailHandler(w http.ResponseWriter, r *http.Request) 
 		w.WriteHeader(http.StatusNoContent)
 
 	default:
+		w.Header().Set("Allow", "GET, DELETE, PATCH")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
@@ -536,77 +515,132 @@ func (b *Bot) resolveAgent(ctx context.Context, orgID, slug string) (resolvedSlu
 	return
 }
 
-func (b *Bot) conversationDownloadHandler(w http.ResponseWriter, r *http.Request) {
-	threadID := strings.TrimPrefix(r.URL.Path, "/api/conversations/download/")
-	if threadID == "" || strings.Contains(threadID, "/") {
-		http.NotFound(w, r)
-		return
-	}
-	if !isSafeThreadID(threadID) {
-		http.NotFound(w, r)
-		return
-	}
-	if r.Method != http.MethodGet {
-		w.Header().Set("Allow", "GET")
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	p, _ := auth.FromContext(r.Context())
+type conversationIncludeOptions struct {
+	Turns       bool
+	Attachments bool
+}
 
-	rec, err := b.convs.Get(r.Context(), p.OrgID, threadID)
-	if err != nil {
-		if errors.Is(err, convstore.ErrNotFound) {
-			http.NotFound(w, r)
-			return
+func conversationIncludesFromQuery(q url.Values) conversationIncludeOptions {
+	values := q["include"]
+	if len(values) == 0 {
+		return conversationIncludeOptions{Turns: true}
+	}
+	opts := conversationIncludeOptions{}
+	for _, raw := range values {
+		for part := range strings.SplitSeq(raw, ",") {
+			switch strings.TrimSpace(strings.ToLower(part)) {
+			case "all":
+				opts.Turns = true
+				opts.Attachments = true
+			case "turns":
+				opts.Turns = true
+			case "attachments":
+				opts.Attachments = true
+			}
 		}
-		b.log.Error("get conversation for download", "error", err, "org", p.OrgID, "thread", threadID)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
-		return
 	}
+	return opts
+}
 
+func (b *Bot) conversationDetailResponse(ctx context.Context, orgID string, rec convstore.Record, include conversationIncludeOptions) conversationDetail {
 	var createdAt string
 	if !rec.CreatedAt.IsZero() {
 		createdAt = rec.CreatedAt.UTC().Format(time.RFC3339)
 	}
-	agentSlug, agentName := b.resolveAgent(r.Context(), p.OrgID, rec.AgentSlug)
-	attachments := b.attachmentInfos(r.Context(), p.OrgID, rec.ThreadID)
-
-	downloadData := conversationDetail{
-		ThreadID:       rec.ThreadID,
-		Title:          conversationTitle(rec),
-		PRURL:          rec.PRURL,
-		Branch:         rec.Branch,
-		GitHubOwner:    rec.GitHubOwner,
-		GitHubRepo:     rec.GitHubRepo,
-		SandboxID:      rec.SandboxID,
-		CreatorID:      rec.CreatorID,
-		AgentSlug:      agentSlug,
-		AgentName:      agentName,
-		Model:          string(normalizeClaudeModel(ClaudeModel(rec.Model))),
-		TaskOptions:    rec.TaskOptions,
-		Attachments:    attachments,
-		CreatedAt:      createdAt,
-		History:        rec.History,
-		ResponseBlocks: rec.ResponseBlocks,
-		SXSkills:       extractSXSkills(rec.ResponseBlocks),
-		UpdatedAt:      rec.UpdatedAt.UTC().Format(time.RFC3339),
+	agentSlug, agentName := b.resolveAgent(ctx, orgID, rec.AgentSlug)
+	var attachments []attachmentInfo
+	if include.Attachments {
+		attachments = b.attachmentInfos(ctx, orgID, rec.ThreadID)
 	}
-
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	filename := "conversation-" + threadID + ".json"
-	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
-
-	if err := json.NewEncoder(w).Encode(downloadData); err != nil {
-		b.log.Error("encode conversation for download", "error", err, "org", p.OrgID, "thread", threadID)
+	detail := conversationDetail{
+		ID:          rec.ThreadID,
+		Title:       conversationTitle(rec),
+		Status:      b.conversationStatus(ctx, orgID, rec.ThreadID),
+		PRURL:       rec.PRURL,
+		Branch:      rec.Branch,
+		GitHubOwner: rec.GitHubOwner,
+		GitHubRepo:  rec.GitHubRepo,
+		SandboxID:   rec.SandboxID,
+		CreatorID:   rec.CreatorID,
+		AgentSlug:   agentSlug,
+		AgentName:   agentName,
+		Model:       string(normalizeClaudeModel(ClaudeModel(rec.Model))),
+		TaskOptions: rec.TaskOptions,
+		Attachments: attachments,
+		CreatedAt:   createdAt,
+		SXSkills:    extractSXSkills(rec.ResponseBlocks),
+		UpdatedAt:   rec.UpdatedAt.UTC().Format(time.RFC3339),
 	}
+	if include.Turns {
+		detail.Turns = conversationTurns(rec, attachments, include.Attachments)
+	}
+	return detail
 }
 
-func (b *Bot) conversationAttachmentDownloadHandler(w http.ResponseWriter, r *http.Request) {
-	attachmentID := strings.TrimPrefix(r.URL.Path, "/api/conversations/attachments/")
-	if attachmentID == "" || strings.Contains(attachmentID, "/") || !isSafeAttachmentID(attachmentID) {
-		http.NotFound(w, r)
-		return
+func conversationTurns(rec convstore.Record, attachments []attachmentInfo, includeAttachments bool) []conversationTurn {
+	if len(rec.History) == 0 {
+		return nil
 	}
+	attachmentsByTurn := map[int][]attachmentInfo{}
+	if includeAttachments {
+		for _, a := range attachments {
+			attachmentsByTurn[a.TurnIndex] = append(attachmentsByTurn[a.TurnIndex], a)
+		}
+	}
+	turns := make([]conversationTurn, 0, len(rec.History))
+	for i, message := range rec.History {
+		var blocksForTurn []blocks.Block
+		if i < len(rec.ResponseBlocks) {
+			blocksForTurn = rec.ResponseBlocks[i]
+		}
+		turn := conversationTurn{
+			ID:      conversationTurnID(rec.ThreadID, i, message),
+			Index:   i,
+			Message: message,
+			Blocks:  blocksForTurn,
+		}
+		if includeAttachments {
+			turn.Attachments = attachmentsByTurn[i]
+		}
+		turns = append(turns, turn)
+	}
+	return turns
+}
+
+func conversationTurnID(threadID string, index int, message string) string {
+	h := sha256.New()
+	_, _ = h.Write([]byte(threadID))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write([]byte(strconv.Itoa(index)))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write([]byte(message))
+	return "turn_" + hex.EncodeToString(h.Sum(nil)[:12])
+}
+
+func (b *Bot) conversationListStatus(orgID, threadID string) string {
+	if b.live != nil && b.live.Get(orgID, threadID) != nil {
+		return "running"
+	}
+	return "idle"
+}
+
+func (b *Bot) conversationStatus(ctx context.Context, orgID, threadID string) string {
+	if b.live != nil && b.live.Get(orgID, threadID) != nil {
+		return "running"
+	}
+	if b.runs != nil && b.runs.Enabled() {
+		latest, err := b.runs.LatestForThread(ctx, orgID, threadID)
+		if err == nil {
+			return latest.State
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			b.log.Warn("latest run lookup for conversation status", "org", orgID, "thread", threadID, "error", err)
+		}
+	}
+	return "idle"
+}
+
+func (b *Bot) serveConversationAttachmentDownload(w http.ResponseWriter, r *http.Request, threadID, attachmentID string) {
 	if r.Method != http.MethodGet {
 		w.Header().Set("Allow", "GET")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -621,6 +655,10 @@ func (b *Bot) conversationAttachmentDownloadHandler(w http.ResponseWriter, r *ht
 		}
 		b.log.Error("get conversation attachment", "error", err, "org", p.OrgID, "attachment", attachmentID)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+	if threadID != "" && attachment.ThreadID != threadID {
+		http.NotFound(w, r)
 		return
 	}
 	contentType := normalizeAttachmentContentType(attachment.ContentType)
@@ -653,7 +691,7 @@ func (b *Bot) attachmentInfos(ctx context.Context, orgID, threadID string) []att
 			TurnIndex:   a.TurnIndex,
 			Source:      a.Source,
 			CreatedAt:   createdAt,
-			DownloadURL: "/api/conversations/attachments/" + a.ID,
+			DownloadURL: "/api/v1/conversations/" + url.PathEscape(threadID) + "/attachments/" + url.PathEscape(a.ID),
 		})
 	}
 	return out

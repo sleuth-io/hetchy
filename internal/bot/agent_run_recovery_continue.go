@@ -332,7 +332,9 @@ func (b *Bot) continueRecoveredRun(ctx context.Context, sb *daytona.Sandbox, run
 	}
 
 	body := prURL
-	if run.RunKind != "followup" {
+	if body == "" {
+		body = noPullRequestResultBody(run.RunKind == "followup")
+	} else if run.RunKind != "followup" {
 		body += "\n\nReply here to make further changes to this PR."
 	}
 	em.Result("Done!", body)

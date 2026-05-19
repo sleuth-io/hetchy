@@ -1,5 +1,5 @@
 // init paints the sidebar, populates the user filter, and renders the
-// chat. On a reload, it first probes /chat/stream to see if a turn
+// chat. On a reload, it first probes the conversation events API to see if a turn
 // is currently in flight: if so, it loads persisted prior turns AND
 // attaches to the live SSE stream so the user sees the in-progress
 // turn updating in real time. If no turn is in flight, it falls

@@ -28,7 +28,7 @@ set -euo pipefail
 : "${GITHUB_TOKEN:?required}"
 
 echo "[hetchy] setting up git auth"
-git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+hetchy_configure_git_auth
 
 hetchy_prepare_repo_workdir
 cd "${SF_WORKDIR}"

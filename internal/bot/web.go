@@ -62,25 +62,23 @@ func (b *Bot) runWeb(ctx context.Context) error {
 	mux.Handle("/billing/checkout", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.billingCheckoutHandler))))
 	mux.Handle("/billing/topup", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.billingTopupHandler))))
 	mux.Handle("/billing/portal", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.billingPortalHandler))))
+	mux.Handle("/settings/org/api-keys/", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.apiKeySettingsActionHandler))))
 	mux.Handle("/settings/org/invite", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.inviteHandler))))
 	mux.Handle("/settings/org/invitations/", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.invitationActionHandler))))
 	mux.Handle("/settings/org/members/", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.memberActionHandler))))
 	mux.Handle("/settings/profile", b.auth.Middleware(b.auth.RequireAuth(http.HandlerFunc(b.profileHandler))))
 	mux.Handle("/settings/profile/password-reset", b.auth.Middleware(b.auth.RequireAuth(http.HandlerFunc(b.passwordResetHandler))))
-	mux.Handle("/chat", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		b.chatHandler(ctx, w, r)
-	}))))
-	mux.Handle("/chat/cancel", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.chatCancelHandler))))
-	mux.Handle("/chat/stream", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.chatStreamHandler))))
-	mux.Handle("/api/repo-secrets", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.repoSecretsHandler))))
-	mux.Handle("/api/repo-bootstrap", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.repoBootstrapResetHandler))))
-	mux.Handle("/api/conversations", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.conversationsHandler))))
-	mux.Handle("/api/conversations/download/", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.conversationDownloadHandler))))
-	mux.Handle("/api/conversations/attachments/", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.conversationAttachmentDownloadHandler))))
-	mux.Handle("/api/conversations/", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.conversationDetailHandler))))
-	mux.Handle("/api/agents", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.agentsHandler))))
-	mux.Handle("/api/repositories", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.repositoriesHandler))))
-	mux.Handle("/api/members", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.membersHandler))))
+	mux.Handle("/api/v1/conversations", b.apiAuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b.conversationCollectionHandler(ctx, w, r)
+	})))
+	mux.Handle("/api/v1/conversations/", b.apiAuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b.conversationResourceHandler(ctx, w, r)
+	})))
+	mux.Handle("/api/v1/repo-secrets", b.apiAuthMiddleware(http.HandlerFunc(b.repoSecretsHandler)))
+	mux.Handle("/api/v1/repo-bootstrap", b.apiAuthMiddleware(http.HandlerFunc(b.repoBootstrapResetHandler)))
+	mux.Handle("/api/v1/agents", b.apiAuthMiddleware(http.HandlerFunc(b.agentsHandler)))
+	mux.Handle("/api/v1/repositories", b.apiAuthMiddleware(http.HandlerFunc(b.repositoriesHandler)))
+	mux.Handle("/api/v1/members", b.apiAuthMiddleware(http.HandlerFunc(b.membersHandler)))
 
 	addr := ":" + b.cfg.WebPort
 	srv := &http.Server{

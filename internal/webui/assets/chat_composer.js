@@ -6,7 +6,7 @@
 // newer query the user just typed.
 async function loadRepos(query) {
   const token = ++repoLoadToken;
-  const url = new URL('/api/repositories', window.location.origin);
+  const url = new URL('/api/v1/repositories', window.location.origin);
   if (query) url.searchParams.set('q', query);
   try {
     const res = await fetch(url.pathname + url.search, {
@@ -165,7 +165,7 @@ function applyConversationRepo(detail) {
 async function loadAgents() {
   agentOptionsLoaded = false;
   try {
-    const res = await fetch('/api/agents', { headers: { 'Accept': 'application/json' } });
+    const res = await fetch('/api/v1/agents', { headers: { 'Accept': 'application/json' } });
     if (!res.ok) throw new Error('agents fetch failed: ' + res.status);
     agentOptions = await res.json();
     agentOptionsLoaded = true;
@@ -371,7 +371,7 @@ function setModelPickerLocked(locked) {
 }
 
 function applyConversationModel(detail) {
-  const hasTurns = !!(detail && Array.isArray(detail.history) && detail.history.length);
+  const hasTurns = !!(detail && Array.isArray(detail.turns) && detail.turns.length);
   if (detail && modelOptions.some(model => model.value === detail.model)) {
     selectedModel = detail.model;
     populateModelPicker();

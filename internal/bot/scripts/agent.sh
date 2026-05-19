@@ -119,7 +119,7 @@ fi
 echo "[hetchy] env scan: $(env | { grep -E '^(ANTHROPIC_|CLAUDE_)' || true; } | cut -d= -f1 | sort | tr '\n' ' ')"
 
 echo "[hetchy] setting up git auth"
-git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+hetchy_configure_git_auth
 
 # The shared prepare step handles cache restore + sync-to-base,
 # falling back to a fresh clone when the cache is unavailable or

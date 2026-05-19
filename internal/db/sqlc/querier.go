@@ -19,6 +19,7 @@ type Querier interface {
 	ClearBillingPendingPlanChange(ctx context.Context, orgID string) (BillingAccount, error)
 	CountAgentProfilesByOrg(ctx context.Context, orgID string) (int64, error)
 	CreateAgentRun(ctx context.Context, arg CreateAgentRunParams) (AgentRun, error)
+	CreateOrgAPIKey(ctx context.Context, arg CreateOrgAPIKeyParams) (OrgApiKey, error)
 	DeleteAgentProfilesByOrg(ctx context.Context, orgID string) error
 	// agent_run_events cascade-deletes via FK ON DELETE CASCADE.
 	DeleteAgentRunsByOrg(ctx context.Context, orgID string) error
@@ -34,6 +35,7 @@ type Querier interface {
 	DeleteGithubReposByInstallationExcept(ctx context.Context, arg DeleteGithubReposByInstallationExceptParams) error
 	DeleteGithubTeamMembersForTeam(ctx context.Context, arg DeleteGithubTeamMembersForTeamParams) error
 	DeleteGithubTeamsByInstallationExcept(ctx context.Context, arg DeleteGithubTeamsByInstallationExceptParams) error
+	DeleteOrgAPIKeysByOrg(ctx context.Context, orgID string) error
 	DeleteOrgConfig(ctx context.Context, orgID string) error
 	DeleteRepoBillingSetting(ctx context.Context, arg DeleteRepoBillingSettingParams) error
 	DeleteRepoSecretValue(ctx context.Context, arg DeleteRepoSecretValueParams) error
@@ -68,6 +70,7 @@ type Querier interface {
 	// stays warm).
 	GetGithubRepoForOrg(ctx context.Context, arg GetGithubRepoForOrgParams) (GithubRepo, error)
 	GetLatestAgentRunForThread(ctx context.Context, arg GetLatestAgentRunForThreadParams) (AgentRun, error)
+	GetOrgAPIKeyByHash(ctx context.Context, keyHash []byte) (OrgApiKey, error)
 	GetOrgConfig(ctx context.Context, orgID string) (OrgConfig, error)
 	GetOrgConfigBySlackTeamID(ctx context.Context, slackTeamID *string) (OrgConfig, error)
 	GetRepoBillingSetting(ctx context.Context, arg GetRepoBillingSettingParams) (RepoBillingSetting, error)
@@ -100,6 +103,7 @@ type Querier interface {
 	ListGithubReposByOrg(ctx context.Context, orgID string) ([]GithubRepo, error)
 	ListGithubTeamMembers(ctx context.Context, arg ListGithubTeamMembersParams) ([]GithubTeamMember, error)
 	ListGithubTeamsByInstallation(ctx context.Context, installationID int64) ([]GithubTeam, error)
+	ListOrgAPIKeys(ctx context.Context, orgID string) ([]OrgApiKey, error)
 	// Lists Socket-Mode-installed orgs only. The slackManager iterates
 	// this on startup to open one socket per org.
 	//
@@ -123,6 +127,7 @@ type Querier interface {
 	LockBillingTopupSettingsForUpdate(ctx context.Context, orgID string) (BillingTopupSetting, error)
 	RenameConversation(ctx context.Context, arg RenameConversationParams) (int64, error)
 	ResetBillingTopupMonthlyUsage(ctx context.Context, arg ResetBillingTopupMonthlyUsageParams) (BillingTopupSetting, error)
+	RevokeOrgAPIKey(ctx context.Context, arg RevokeOrgAPIKeyParams) (int64, error)
 	SaveConversationAttachment(ctx context.Context, arg SaveConversationAttachmentParams) (ConversationAttachment, error)
 	// Periodic mid-run snapshot used by chatPersister. Only writes the
 	// handful of fields that change progressively as the agent emits
@@ -183,6 +188,7 @@ type Querier interface {
 	SetBillingLastPaymentError(ctx context.Context, arg SetBillingLastPaymentErrorParams) error
 	SetBillingPendingPlanChange(ctx context.Context, arg SetBillingPendingPlanChangeParams) (BillingAccount, error)
 	TouchAgentRunLease(ctx context.Context, arg TouchAgentRunLeaseParams) error
+	TouchOrgAPIKeyLastUsed(ctx context.Context, id string) error
 	UpdateAgentProfileName(ctx context.Context, arg UpdateAgentProfileNameParams) (UpdateAgentProfileNameRow, error)
 	UpdateAgentRunBranch(ctx context.Context, arg UpdateAgentRunBranchParams) error
 	UpdateAgentRunCommand(ctx context.Context, arg UpdateAgentRunCommandParams) error

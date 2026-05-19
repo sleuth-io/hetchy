@@ -118,8 +118,8 @@ func TestBillingSettingsFormattingHelpers(t *testing.T) {
 	if got := parseBillingCents("bad", 9); got != 9 {
 		t.Fatalf("parseBillingCents bad = %d, want 9", got)
 	}
-	if got := formatSettingsTime(time.Time{}); got != "" {
-		t.Fatalf("formatSettingsTime zero = %q, want empty", got)
+	if got := formatBillingTime(time.Time{}); got != "" {
+		t.Fatalf("formatBillingTime zero = %q, want empty", got)
 	}
 }
 
