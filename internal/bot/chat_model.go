@@ -103,15 +103,16 @@ func normalizeClaudeModel(model ClaudeModel) ClaudeModel {
 
 func codexModelForCLI(model ClaudeModel) string {
 	switch normalizeClaudeModel(model) {
+	case ClaudeModelOpus, ClaudeModelSonnet, ClaudeModelHaiku:
+		return codexModelBalanced
 	case ModelGPTFrontier:
 		return codexModelFrontier
 	case ModelGPTBalanced:
 		return codexModelBalanced
 	case ModelGPTFastest:
 		return codexModelFastest
-	default:
-		return codexModelBalanced
 	}
+	return codexModelBalanced
 }
 
 func agentRuntimeDisplayName(model ClaudeModel) string {

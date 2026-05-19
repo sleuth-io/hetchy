@@ -24,32 +24,11 @@ import (
 func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, agent agents.Profile, userRequest, requestID, branch string, opts chatTaskOptions, model ClaudeModel, emit blocks.Emitter) (string, error) {
 	model = normalizeClaudeModel(model)
 	provider := modelProvider(model)
-	var spec *bootstrap.Spec
-	// ValidateChanges=false is the user's explicit "skip end-to-end
-	// testing" opt-out from the new-chat UI. We honour it by not
-	// running bootstrap (which can take minutes on a fresh repo) and
-	// not merging the validation prompt.
-	canRunBootstrap := provider == modelProviderAnthropic || hasAnthropicCredentials(oc)
-	if opts.ValidateChanges && !bootstrapSkippedFromContext(ctx) && b.bootstrap != nil && repo.InstallID != 0 && repo.RepoID != 0 && canRunBootstrap {
-		s, err := b.ensureBootstrapSpec(ctx, sb, repo, oc, requestID, emit)
-		if err != nil {
-			if ctx.Err() != nil {
-				return "", err
-			}
-			// Bootstrap is best-effort: a failure here logs + continues
-			// with the unmodified prompt. Future tasks against this repo
-			// will retry. Hard-failing would block users on every repo
-			// we don't yet have a spec for, even when the change in
-			// flight has nothing to do with running the app.
-			b.log.Warn("bootstrap failed; proceeding without spec",
-				"request_id", requestID, "repo", repo.Slug, "error", err)
-			emit.Notify("Bootstrap skipped", bootstrapSkippedMessage(err))
-		} else {
-			spec = s
-		}
-	} else if opts.ValidateChanges && provider == modelProviderOpenAI && !canRunBootstrap && b.bootstrap != nil && repo.InstallID != 0 && repo.RepoID != 0 {
-		emit.Notify("Bootstrap skipped", "Claude credentials are not configured, so Codex will validate the change without the saved repo bootstrap step.")
+	bootstrapResult, err := b.agentBootstrapSpec(ctx, sb, repo, oc, requestID, opts, provider, emit)
+	if err != nil {
+		return "", err
 	}
+	spec := bootstrapResult.spec
 
 	wd := repoWorkdir(repo.Slug)
 	env := map[string]string{
@@ -146,6 +125,41 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, o
 		}
 	}
 	return prURL, err
+}
+
+type agentBootstrapResult struct {
+	spec *bootstrap.Spec
+}
+
+func (b *Bot) agentBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, requestID string, opts chatTaskOptions, provider modelProviderKind, emit blocks.Emitter) (agentBootstrapResult, error) {
+	// ValidateChanges=false is the user's explicit "skip end-to-end
+	// testing" opt-out from the new-chat UI. We honour it by not
+	// running bootstrap (which can take minutes on a fresh repo) and
+	// not merging the validation prompt.
+	var out agentBootstrapResult
+	if !opts.ValidateChanges || bootstrapSkippedFromContext(ctx) || b.bootstrap == nil || repo.InstallID == 0 || repo.RepoID == 0 {
+		return out, nil
+	}
+	canRunBootstrap := provider == modelProviderAnthropic || hasAnthropicCredentials(oc)
+	if !canRunBootstrap {
+		if provider == modelProviderOpenAI {
+			emit.Notify("Bootstrap skipped", "Claude credentials are not configured, so Codex will validate the change without the saved repo bootstrap step.")
+		}
+		return out, nil
+	}
+	spec, err := b.ensureBootstrapSpec(ctx, sb, repo, oc, requestID, emit)
+	if err == nil {
+		return agentBootstrapResult{spec: spec}, nil
+	}
+	if ctx.Err() != nil {
+		return out, err
+	}
+	// Bootstrap is best-effort: a failure here logs + continues with the
+	// unmodified prompt. Future tasks against this repo will retry.
+	b.log.Warn("bootstrap failed; proceeding without spec",
+		"request_id", requestID, "repo", repo.Slug, "error", err)
+	emit.Notify("Bootstrap skipped", bootstrapSkippedMessage(err))
+	return out, nil
 }
 
 // ensureBootstrapSpec returns the saved spec for repo, running the

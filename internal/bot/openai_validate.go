@@ -2,6 +2,8 @@ package bot
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -42,16 +44,17 @@ const (
 
 var errOpenAIInvalidCredential = errors.New("openai: credential rejected")
 
-// validateOpenAICredential issues a cheap GET against the models
-// endpoint to confirm OpenAI accepts the supplied credential before we
-// persist it. Mirrors validateAnthropicCredential: 2xx → ok, 401/403 →
-// rejected, anything else → unverified (so the user gets the
-// "couldn't reach OpenAI" banner instead of a misleading "invalid key"
-// when the failure is upstream).
+// validateOpenAICredential checks the credential before we persist it.
+// API keys are validated with a cheap OpenAI Platform request. Codex
+// subscription tokens come from ChatGPT/Codex login, not the Platform
+// API, so using /v1/models would incorrectly reject valid tokens.
 func validateOpenAICredential(ctx context.Context, kind openaiCredKind, value string) error {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return errors.New("openai: empty credential")
+	}
+	if kind == openaiCredOAuthToken {
+		return validateOpenAICodexToken(value)
 	}
 
 	reqCtx, cancel := context.WithTimeout(ctx, openaiValidateTimeout)
@@ -82,17 +85,36 @@ func validateOpenAICredential(ctx context.Context, kind openaiCredKind, value st
 	}
 }
 
+func validateOpenAICodexToken(value string) error {
+	parts := strings.Split(value, ".")
+	if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
+		return errOpenAIInvalidCredential
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return errOpenAIInvalidCredential
+	}
+	var claims struct {
+		ExpiresAt int64 `json:"exp"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return errOpenAIInvalidCredential
+	}
+	if claims.ExpiresAt != 0 && claims.ExpiresAt <= time.Now().Unix() {
+		return errOpenAIInvalidCredential
+	}
+	return nil
+}
+
 // applyOpenAIAuth attaches the credential-specific headers for an
-// outbound OpenAI call. Both kinds use Bearer auth today (the Codex
-// subscription token is also a bearer JWT), but routing through one
-// function keeps the call site honest: when OpenAI introduces a
-// different header for subscription tokens we only have to change
-// here.
+// outbound OpenAI Platform call.
 func applyOpenAIAuth(req *http.Request, kind openaiCredKind, value string) bool {
 	switch kind {
-	case openaiCredAPIKey, openaiCredOAuthToken:
+	case openaiCredAPIKey:
 		req.Header.Set("Authorization", "Bearer "+value)
 		return true
+	case openaiCredOAuthToken:
+		return false
 	default:
 		return false
 	}

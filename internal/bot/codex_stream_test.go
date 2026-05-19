@@ -32,6 +32,24 @@ func TestCodexStreamParser_TextCommandAndFinal(t *testing.T) {
 	}
 }
 
+func TestCodexStreamParser_CommandDoneFinalEventFallsThrough(t *testing.T) {
+	emit := newCaptureEmitter()
+	p := newCodexStreamParser(emit)
+
+	p.Line(`{"type":"exec_complete","last_agent_message":"Done: https://github.com/hetchyhq/hetchy/pull/43"}`)
+
+	prURL := p.Finish()
+	if prURL != "https://github.com/hetchyhq/hetchy/pull/43" {
+		t.Fatalf("PR URL = %q", prURL)
+	}
+	if len(emit.Blocks) != 1 {
+		t.Fatalf("blocks = %d, want 1: %+v", len(emit.Blocks), emit.Blocks)
+	}
+	if !strings.Contains(emit.Blocks[0].Body.String(), "Done:") {
+		t.Fatalf("final message not surfaced: %+v", emit.Blocks[0])
+	}
+}
+
 func TestCodexStreamParser_SuppressesReasoning(t *testing.T) {
 	emit := newCaptureEmitter()
 	p := newCodexStreamParser(emit)

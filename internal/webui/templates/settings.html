@@ -477,7 +477,7 @@
             {{template "secret" dict "Field" "openai_api_key" "Label" "OpenAI API key" "Preview" .OpenAIAPIKeyPreview "Placeholder" "sk-…" "Required" false}}
           </div>
           <div class="cred-panel{{if eq $activeTab "subscription"}} active{{end}}" data-cred-panel="subscription">
-            <p class="cred-help">Run <code>codex login</code> on your machine, complete the browser login, and paste the token from <code>~/.codex/auth.json</code> here.</p>
+            <p class="cred-help">Run <code>codex login</code> on your machine, complete the browser login, and paste <code>tokens.access_token</code> from <code>~/.codex/auth.json</code> here.</p>
             {{template "secret" dict "Field" "openai_codex_oauth_token" "Label" "Subscription token" "Preview" .OpenAICodexOAuthTokenPreview "Placeholder" "ey…" "Required" false}}
           </div>
           <button class="primary" type="submit">Save</button>

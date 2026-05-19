@@ -2,11 +2,14 @@ package bot
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestValidateOpenAICredential(t *testing.T) {
@@ -31,20 +34,16 @@ func TestValidateOpenAICredential(t *testing.T) {
 		}
 	})
 
-	t.Run("oauth accepted", func(t *testing.T) {
-		var gotAuth string
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			gotAuth = r.Header.Get("Authorization")
-			w.WriteHeader(http.StatusOK)
+	t.Run("oauth accepted without platform request", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			t.Fatal("validator called OpenAI Platform for Codex token")
 		}))
 		defer srv.Close()
 		withOpenAIBase(t, srv.URL)
 
-		if err := validateOpenAICredential(context.Background(), openaiCredOAuthToken, "ey-abc"); err != nil {
+		token := testJWT(t, map[string]any{"exp": time.Now().Add(time.Hour).Unix()})
+		if err := validateOpenAICredential(context.Background(), openaiCredOAuthToken, token); err != nil {
 			t.Fatalf("validateOpenAICredential: %v", err)
-		}
-		if gotAuth != "Bearer ey-abc" {
-			t.Fatalf("Authorization = %q, want Bearer ey-abc", gotAuth)
 		}
 	})
 
@@ -68,7 +67,28 @@ func TestValidateOpenAICredential(t *testing.T) {
 		defer srv.Close()
 		withOpenAIBase(t, srv.URL)
 
-		err := validateOpenAICredential(context.Background(), openaiCredOAuthToken, "ey-bad")
+		err := validateOpenAICredential(context.Background(), openaiCredAPIKey, "sk-forbidden")
+		if !errors.Is(err, errOpenAIInvalidCredential) {
+			t.Fatalf("error = %v, want errOpenAIInvalidCredential", err)
+		}
+	})
+
+	t.Run("oauth rejects malformed token", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			t.Fatal("validator called OpenAI Platform for malformed Codex token")
+		}))
+		defer srv.Close()
+		withOpenAIBase(t, srv.URL)
+
+		err := validateOpenAICredential(context.Background(), openaiCredOAuthToken, "not-a-jwt")
+		if !errors.Is(err, errOpenAIInvalidCredential) {
+			t.Fatalf("error = %v, want errOpenAIInvalidCredential", err)
+		}
+	})
+
+	t.Run("oauth rejects expired token", func(t *testing.T) {
+		token := testJWT(t, map[string]any{"exp": time.Now().Add(-time.Minute).Unix()})
+		err := validateOpenAICredential(context.Background(), openaiCredOAuthToken, token)
 		if !errors.Is(err, errOpenAIInvalidCredential) {
 			t.Fatalf("error = %v, want errOpenAIInvalidCredential", err)
 		}
@@ -112,4 +132,16 @@ func withOpenAIBase(t *testing.T, url string) {
 	override := url
 	openaiAPIBaseRef.Store(&override)
 	t.Cleanup(func() { openaiAPIBaseRef.Store(prev) })
+}
+
+func testJWT(t *testing.T, claims map[string]any) string {
+	t.Helper()
+	encode := func(v any) string {
+		b, err := json.Marshal(v)
+		if err != nil {
+			t.Fatalf("marshal jwt part: %v", err)
+		}
+		return base64.RawURLEncoding.EncodeToString(b)
+	}
+	return encode(map[string]string{"alg": "none", "typ": "JWT"}) + "." + encode(claims) + ".sig"
 }

@@ -135,6 +135,7 @@ func (p *codexStreamParser) handleCommandEvent(eventType string, raw map[string]
 	id := codexString(raw, "id", "call_id", "item_id", "command_id")
 	command := codexContent(raw, "command", "cmd")
 	output := codexContent(raw, "output", "chunk", "delta", "text")
+	handled := command != "" || output != ""
 	if command != "" {
 		p.closeText("")
 		blockID := p.emit.Start(blocks.KindToolUse, "Running "+truncate(strings.Split(command, "\n")[0], 80), map[string]any{
@@ -169,9 +170,10 @@ func (p *codexStreamParser) handleCommandEvent(eventType string, raw map[string]
 		if blockID := p.tools[id]; blockID != "" {
 			p.emit.Done(blockID, codexCommandSummary(raw))
 			delete(p.tools, id)
+			handled = true
 		}
 	}
-	return command != "" || output != "" || codexCommandDoneEvent(eventType)
+	return handled
 }
 
 func codexAssistantEvent(eventType string) bool {

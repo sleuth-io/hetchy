@@ -47,7 +47,7 @@ func (b *Bot) addRuntimeEnv(env map[string]string, oc orgcfg.Config, model Claud
 		env["HETCHY_CODEX_AUTH_KIND"] = kind
 		env["HETCHY_CODEX_AUTH_VALUE"] = value
 		env["HETCHY_CODEX_MODEL"] = codexModelForCLI(model)
-	default:
+	case modelProviderAnthropic:
 		authKey, authVal := claudeAuthEnv(oc)
 		if b != nil && b.log != nil {
 			b.log.Info("claude auth", "method", authKey, "token", maskToken(authVal), "request_id", requestID)
@@ -64,12 +64,13 @@ func missingCredentialError(model ClaudeModel, oc orgcfg.Config) (title, body st
 			return "", "", false
 		}
 		return "Missing OpenAI Codex credentials", "This organization has neither an OpenAI API key nor a Codex subscription token set. Add one at /settings/org -> Integrations -> OpenAI Codex.", true
-	default:
+	case modelProviderAnthropic:
 		if hasAnthropicCredentials(oc) {
 			return "", "", false
 		}
 		return "Missing Claude credentials", "This organization has neither a Claude API key nor a subscription token set. Add one at /settings/org -> Integrations -> Claude (Anthropic).", true
 	}
+	return "", "", false
 }
 
 // maskToken returns exactly 8 asterisks so logs confirm a token is set without
