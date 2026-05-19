@@ -173,6 +173,7 @@ func TestAgentScript_EmbeddedAndWellFormed(t *testing.T) {
 		`: "${SF_BASE_BRANCH:?required}"`,
 		"require_b64_input SF_PROMPT_B64",
 		"git clone",
+		"hetchy_configure_git_auth",
 		"local -a claude_args=(",
 		"--dangerously-skip-permissions",
 		`claude_args+=(--model "$HETCHY_CLAUDE_MODEL")`,
@@ -216,6 +217,7 @@ func TestFollowupScript_EmbeddedAndWellFormed(t *testing.T) {
 		`: "${SF_WORKDIR:?required}"`,
 		`: "${SF_BRANCH:?required}"`,
 		"require_b64_input SF_PROMPT_B64",
+		"hetchy_configure_git_auth",
 		"git fetch --prune origin",
 		"git pull --rebase --autostash origin",
 		"local -a claude_args=(",
@@ -265,6 +267,7 @@ func TestFollowupScript_EmbeddedAndWellFormed(t *testing.T) {
 
 func TestFollowupScript_SyncsBranchBeforeClaude(t *testing.T) {
 	wantOrder := []string{
+		`hetchy_configure_git_auth`,
 		`git fetch --prune origin`,
 		`git checkout "${SF_BRANCH}"`,
 		`git pull --rebase --autostash origin "${SF_BRANCH}"`,
@@ -335,6 +338,82 @@ func TestSandboxCommon_RewriteLegacySavedSpecWorkdir(t *testing.T) {
 	health := mustReadFile(t, filepath.Join(specDir, "health.sh"))
 	if strings.Contains(health, "/home/daytona/work/hetchy/hetchy") {
 		t.Fatalf("health.sh should not be double-rewritten:\n%s", health)
+	}
+}
+
+func TestSandboxCommon_ConfiguresGitAuthWithoutStaleRepoToken(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skipf("bash not available: %v", err)
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skipf("git not available: %v", err)
+	}
+
+	home := t.TempDir()
+	env := func() []string {
+		out := make([]string, 0, len(os.Environ())+1)
+		for _, kv := range os.Environ() {
+			if strings.HasPrefix(kv, "HOME=") || strings.HasPrefix(kv, "GIT_CONFIG_GLOBAL=") {
+				continue
+			}
+			out = append(out, kv)
+		}
+		return append(out, "HOME="+home, "GIT_CONFIG_GLOBAL="+filepath.Join(home, ".gitconfig"))
+	}
+	workdir := filepath.Join(t.TempDir(), "repo")
+	cmd := exec.Command("git", "init", workdir)
+	cmd.Env = env()
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	runGit := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Env = env()
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	runGit("-C", workdir, "remote", "add", "origin", "https://x-access-token:old-token@github.com/acme/repo.git")
+	runGit("-C", workdir, "config", `url.https://x-access-token:old-token@github.com/.insteadOf`, "https://github.com/")
+	runGit("config", "--global", `url.https://x-access-token:older-token@github.com/.insteadOf`, "https://github.com/")
+
+	harness := "#!/bin/bash\nset -euo pipefail\n" + sandboxCommonScript + "\nhetchy_configure_git_auth\n"
+	cmd = exec.Command("bash", "-c", harness)
+	cmd.Env = append(env(),
+		"SF_REPO=acme/repo",
+		"SF_WORKDIR="+workdir,
+		"GITHUB_TOKEN=fresh-token",
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("hetchy_configure_git_auth failed: %v\n%s", err, out)
+	}
+
+	remoteCmd := exec.Command("git", "-C", workdir, "config", "--get", "remote.origin.url")
+	remoteCmd.Env = env()
+	remoteOut, err := remoteCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("remote get-url: %v\n%s", err, remoteOut)
+	}
+	if got := strings.TrimSpace(string(remoteOut)); got != "https://github.com/acme/repo.git" {
+		t.Fatalf("origin remote = %q, want plain github URL", got)
+	}
+
+	localConfig := exec.Command("git", "-C", workdir, "config", "--local", "--get-regexp", `^url\..*\.insteadOf$`)
+	localConfig.Env = env()
+	localOut, err := localConfig.CombinedOutput()
+	if err == nil {
+		t.Fatalf("local token rewrite was not removed:\n%s", localOut)
+	}
+	globalConfig := exec.Command("git", "config", "--global", "--get-regexp", `^url\..*\.insteadOf$`)
+	globalConfig.Env = env()
+	globalOut, err := globalConfig.CombinedOutput()
+	if err != nil {
+		t.Fatalf("global token rewrite missing: %v\n%s", err, globalOut)
+	}
+	global := string(globalOut)
+	if !strings.Contains(global, "fresh-token") || strings.Contains(global, "older-token") {
+		t.Fatalf("global token rewrite = %q, want only fresh token", global)
 	}
 }
 
@@ -635,6 +714,29 @@ func TestRunAgentBuildsScriptEnvironmentWithFakeRunner(t *testing.T) {
 	}
 }
 
+func TestRunAgentAllowsAnswerOnlyNoPR(t *testing.T) {
+	var captured capturedScriptRun
+	b := &Bot{
+		log: discardLogger(),
+		runScriptFn: func(_ context.Context, sb *daytona.Sandbox, sessionID, label, scriptBody string, env map[string]string, _ blocks.Emitter) (string, error) {
+			captured = captureScriptRun(sb, sessionID, label, scriptBody, env)
+			return "", nil
+		},
+	}
+	repo := repoCtx{Slug: "acme/repo", BaseBranch: "main", GitHubToken: "ghs_token"}
+
+	prURL, err := b.runAgent(context.Background(), &daytona.Sandbox{ID: "sandbox-1"}, repo, orgcfg.Config{OrgID: "org_1", AnthropicAPIKey: "sk-ant"}, agents.Profile{}, "answer a repo question", "req-1", "feature/sf-req-1", chatTaskOptions{ValidateChanges: false}, ClaudeModelSonnet, newCaptureEmitter())
+	if err != nil {
+		t.Fatalf("runAgent should allow answer-only completion: %v", err)
+	}
+	if prURL != "" {
+		t.Fatalf("prURL = %q, want empty", prURL)
+	}
+	if captured.sessionID != "agent-req-1" {
+		t.Fatalf("run script was not invoked correctly: %+v", captured)
+	}
+}
+
 func TestRunAgentMintsArtifactSlotsWhenBootstrapFails(t *testing.T) {
 	restore := stubPRLookup(t, "acme/repo", "feature/sf-req-1", "main", "https://github.com/acme/repo/pull/7")
 	defer restore()
@@ -721,6 +823,9 @@ func TestRunFollowUpBuildsScriptEnvironmentWithFakeRunner(t *testing.T) {
 	}
 	if captured.env["SF_BRANCH"] != "feature/sf-req-1" || captured.env["GITHUB_TOKEN"] != "ghs_token" {
 		t.Fatalf("captured env = %#v", captured.env)
+	}
+	if captured.env["SF_REPO"] != "acme/repo" {
+		t.Fatalf("SF_REPO = %q, want acme/repo", captured.env["SF_REPO"])
 	}
 	if captured.env["CLAUDE_CODE_OAUTH_TOKEN"] != "oauth-token" {
 		t.Fatalf("oauth token env = %q", captured.env["CLAUDE_CODE_OAUTH_TOKEN"])

@@ -1054,6 +1054,27 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 		return
 	}
 
+	if prURL == "" {
+		emit.Result("Done!", noPullRequestResultBody(false))
+		if err := agentRunDurabilityErr(ctx); err != nil {
+			b.markRunState(ctx, runstore.StateRecovering, err)
+			return
+		}
+		rec.SandboxID = ""
+		rec.Branch = ""
+		rec.PRURL = ""
+		appendBlocksToFirstTurn(&rec, recorder.Snapshot())
+		if err := b.convs.Upsert(ctx, rec); err != nil {
+			b.log.Error("convstore upsert (agent answer-only)", "error", err)
+			b.markRunState(ctx, runstore.StateFailed, err)
+			return
+		}
+		b.markRunState(ctx, runstore.StateSucceeded, nil)
+		b.deleteSandboxSession(sb, b.currentAgentRunSessionID(ctx, "agent-"+requestID))
+		b.stopAndArchiveSandbox(ctx, sb)
+		return
+	}
+
 	emit.Result("Done!", prURL+"\n\nReply here to make further changes to this PR.")
 	if err := agentRunDurabilityErr(ctx); err != nil {
 		b.markRunState(ctx, runstore.StateRecovering, err)
@@ -1222,13 +1243,19 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 
 	// Result first so the recorded snapshot includes the closing block,
 	// then upsert with the new user turn + this turn's blocks.
-	emit.Result("Done!", prURL)
+	resultBody := prURL
+	if resultBody == "" {
+		resultBody = noPullRequestResultBody(true)
+	}
+	emit.Result("Done!", resultBody)
 	if err := agentRunDurabilityErr(ctx); err != nil {
 		b.markRunState(ctx, runstore.StateRecovering, err)
 		return
 	}
 
-	rec.PRURL = prURL
+	if prURL != "" {
+		rec.PRURL = prURL
+	}
 	appendBlocksAsNewTurn(&rec, text, recorder.Snapshot())
 	if err := b.convs.Upsert(ctx, rec); err != nil {
 		b.log.Error("convstore upsert", "error", err)
@@ -1238,6 +1265,13 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 	b.markRunState(ctx, runstore.StateSucceeded, nil)
 	b.deleteSandboxSession(sb, b.currentAgentRunSessionID(ctx, "followup-"+requestID))
 	b.stopAndArchiveSandbox(ctx, sb)
+}
+
+func noPullRequestResultBody(followup bool) string {
+	if followup {
+		return "No new pull request URL was reported; keeping the existing PR."
+	}
+	return "No pull request was created."
 }
 
 func (b *Bot) resolveRepoForRun(ctx context.Context, orgID, owner, name string) (repoCtx, error) {

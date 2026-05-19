@@ -268,30 +268,28 @@ func (b *Bot) finalizeRecoveredRun(ctx context.Context, sb *daytona.Sandbox, run
 		b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
 		return
 	}
-	if prURL == "" {
-		err := errors.New("recovered agent command finished without a PR URL")
-		b.finishRecoveredFailure(ctx, run, live, "Agent failed", "The recovered agent command finished without posting a PR URL.", err)
-		return
-	}
 
 	b.runs.UpdateState(context.Background(), run.ID, runstore.StateFinalizing, "", b.workerID)
-	validatedPR, branch, err := b.validateRecoveredPR(ctx, run, prURL)
-	if err != nil {
-		body := fmt.Sprintf("The recovered agent command reported a PR URL, but GitHub did not verify it for branch `%s`.", branch)
-		if !errors.Is(err, errReportedPRNotVerified) {
-			body = "The recovered agent command reported a PR URL, but Hetchy could not validate it: `" + err.Error() + "`"
+	body := noPullRequestResultBody(run.RunKind == "followup")
+	if prURL != "" {
+		validatedPR, branch, err := b.validateRecoveredPR(ctx, run, prURL)
+		if err != nil {
+			body := fmt.Sprintf("The recovered agent command reported a PR URL, but GitHub did not verify it for branch `%s`.", branch)
+			if !errors.Is(err, errReportedPRNotVerified) {
+				body = "The recovered agent command reported a PR URL, but Hetchy could not validate it: `" + err.Error() + "`"
+			}
+			b.finishRecoveredFailure(ctx, run, live, "PR not verified", body, err)
+			return
 		}
-		b.finishRecoveredFailure(ctx, run, live, "PR not verified", body, err)
-		return
-	}
 
-	body := prURL
-	if validatedPR != "" {
-		body = validatedPR
-		prURL = validatedPR
-	}
-	if run.RunKind != "followup" {
-		body += "\n\nReply here to make further changes to this PR."
+		body = prURL
+		if validatedPR != "" {
+			body = validatedPR
+			prURL = validatedPR
+		}
+		if run.RunKind != "followup" {
+			body += "\n\nReply here to make further changes to this PR."
+		}
 	}
 	events, err := b.runs.EventsAfter(ctx, run.ID, 0)
 	if err != nil {
