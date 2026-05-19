@@ -2,8 +2,11 @@ package billing
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -281,17 +284,64 @@ func (e autoTopupPaymentError) Unwrap() error {
 	return e.err
 }
 
-func (s *Store) AutoTopup(ctx context.Context, orgID string, reserveCredits int, purchase func(context.Context, Account) (string, error)) (Account, error) {
+type autoTopupAttempt struct {
+	account        Account
+	idempotencyKey string
+	target         int
+	topupUnitCents int
+	shouldPurchase bool
+}
+
+func (s *Store) AutoTopup(ctx context.Context, orgID string, reserveCredits int, purchase func(context.Context, Account, string) (string, error)) (Account, error) {
 	if !s.Enabled() {
 		return Account{}, pgx.ErrNoRows
 	}
 	var account Account
+	triggered := false
+	target := 0
+	for {
+		attempt, err := s.prepareAutoTopupAttempt(ctx, orgID, reserveCredits, triggered, target)
+		if err != nil {
+			return Account{}, err
+		}
+		account = attempt.account
+		if !attempt.shouldPurchase {
+			if account.Balance() < reserveCredits {
+				return Account{}, InsufficientCreditsError{Needed: reserveCredits, Available: account.Balance()}
+			}
+			return account, nil
+		}
+		if purchase == nil {
+			return Account{}, ErrAutoTopupNotConfigured
+		}
+		triggered = true
+		target = attempt.target
+		invoiceID, err := purchase(ctx, attempt.account, attempt.idempotencyKey)
+		if err != nil {
+			return Account{}, autoTopupPaymentError{err: err}
+		}
+		grantKey := strings.TrimSpace(invoiceID)
+		if grantKey == "" {
+			grantKey = attempt.idempotencyKey
+		}
+		updated, err := s.completeAutoTopupAttempt(ctx, orgID, grantKey, attempt.topupUnitCents)
+		if err != nil {
+			return Account{}, err
+		}
+		if updated.Balance() >= target {
+			return updated, nil
+		}
+	}
+}
+
+func (s *Store) prepareAutoTopupAttempt(ctx context.Context, orgID string, reserveCredits int, triggered bool, target int) (autoTopupAttempt, error) {
+	var attempt autoTopupAttempt
 	err := s.db.WithTx(ctx, func(q *sqlc.Queries) error {
 		row, err := q.LockBillingAccountForUpdate(ctx, orgID)
 		if err != nil {
 			return err
 		}
-		account = accountFromRow(row)
+		attempt.account = accountFromRow(row)
 		settings, err := ensureTopupSettings(ctx, q, orgID)
 		if err != nil {
 			return err
@@ -301,34 +351,58 @@ func (s *Store) AutoTopup(ctx context.Context, orgID string, reserveCredits int,
 			return err
 		}
 		settings = topupSettingsFromRow(settingsRow)
-		if !settings.AutoTopupEnabled || account.Balance() > settings.TriggerThreshold {
+		if !settings.AutoTopupEnabled || (!triggered && attempt.account.Balance() > settings.TriggerThreshold) {
 			return nil
 		}
-		if purchase == nil {
-			return ErrAutoTopupNotConfigured
+
+		if target <= 0 {
+			target = max(settings.TargetBalance, reserveCredits)
+		}
+		topupUnitCents := topupUnitCentsForPlan(attempt.account.PlanCode)
+		if attempt.account.Balance() >= target ||
+			(settings.MonthlyMaxCents > 0 && settings.MonthlySpendCentsUsed+topupUnitCents > settings.MonthlyMaxCents) {
+			return nil
 		}
 
-		target := max(settings.TargetBalance, reserveCredits)
-		topupUnitCents := topupUnitCentsForPlan(account.PlanCode)
-		for account.Balance() < target {
-			if settings.MonthlyMaxCents > 0 && settings.MonthlySpendCentsUsed+topupUnitCents > settings.MonthlyMaxCents {
-				break
-			}
-			invoiceID, err := purchase(ctx, account)
-			if err != nil {
-				return autoTopupPaymentError{err: err}
-			}
-			account, err = grantTopupCreditsForInvoice(ctx, q, strings.TrimSpace(invoiceID), orgID, TopupUnitCredits)
-			if err != nil {
-				return err
-			}
-			settings, err = incrementTopupMonthlyUsage(ctx, q, orgID, 1, topupUnitCents)
-			if err != nil {
-				return err
-			}
+		attempt.target = target
+		attempt.topupUnitCents = topupUnitCents
+		attempt.idempotencyKey = autoTopupIdempotencyKey(
+			orgID,
+			attempt.account.PlanCode,
+			settings.MonthlyAnchorMonth,
+			settings.MonthlyUnitsUsed+1,
+			topupUnitCents,
+		)
+		attempt.shouldPurchase = true
+		return nil
+	})
+	if err != nil {
+		return autoTopupAttempt{}, err
+	}
+	return attempt, nil
+}
+
+func (s *Store) completeAutoTopupAttempt(ctx context.Context, orgID, invoiceID string, topupUnitCents int) (Account, error) {
+	var account Account
+	err := s.db.WithTx(ctx, func(q *sqlc.Queries) error {
+		if _, err := q.LockBillingAccountForUpdate(ctx, orgID); err != nil {
+			return err
 		}
-		if account.Balance() < reserveCredits {
-			return InsufficientCreditsError{Needed: reserveCredits, Available: account.Balance()}
+		if _, err := ensureTopupSettings(ctx, q, orgID); err != nil {
+			return err
+		}
+		if _, err := q.LockBillingTopupSettingsForUpdate(ctx, orgID); err != nil {
+			return err
+		}
+		updated, processed, err := grantTopupCreditsForInvoice(ctx, q, strings.TrimSpace(invoiceID), orgID, TopupUnitCredits)
+		if err != nil {
+			return err
+		}
+		account = updated
+		if processed {
+			if _, err := incrementTopupMonthlyUsage(ctx, q, orgID, 1, topupUnitCents); err != nil {
+				return err
+			}
 		}
 		return nil
 	})
@@ -338,7 +412,12 @@ func (s *Store) AutoTopup(ctx context.Context, orgID string, reserveCredits int,
 	return account, nil
 }
 
-func grantTopupCreditsForInvoice(ctx context.Context, q *sqlc.Queries, invoiceID, orgID string, credits int) (Account, error) {
+func autoTopupIdempotencyKey(orgID, planCode, billingMonth string, nextUnit, topupUnitCents int) string {
+	sum := sha256.Sum256([]byte(orgID + "|" + planCode + "|" + billingMonth + "|" + strconv.Itoa(nextUnit) + "|" + strconv.Itoa(topupUnitCents)))
+	return "hetchy-auto-topup-" + hex.EncodeToString(sum[:16])
+}
+
+func grantTopupCreditsForInvoice(ctx context.Context, q *sqlc.Queries, invoiceID, orgID string, credits int) (Account, bool, error) {
 	if invoiceID != "" {
 		inserted, err := q.InsertBillingStripeEvent(ctx, sqlc.InsertBillingStripeEventParams{
 			EventID:   invoiceID,
@@ -346,14 +425,14 @@ func grantTopupCreditsForInvoice(ctx context.Context, q *sqlc.Queries, invoiceID
 			OrgID:     orgID,
 		})
 		if err != nil {
-			return Account{}, err
+			return Account{}, false, err
 		}
 		if !inserted {
 			row, err := q.GetBillingAccount(ctx, orgID)
 			if err != nil {
-				return Account{}, err
+				return Account{}, false, err
 			}
-			return accountFromRow(row), nil
+			return accountFromRow(row), false, nil
 		}
 	}
 	row, err := q.GrantBillingTopupCredits(ctx, sqlc.GrantBillingTopupCreditsParams{
@@ -361,9 +440,9 @@ func grantTopupCreditsForInvoice(ctx context.Context, q *sqlc.Queries, invoiceID
 		TopupCredits: int32(credits),
 	})
 	if err != nil {
-		return Account{}, err
+		return Account{}, false, err
 	}
-	return accountFromRow(row), nil
+	return accountFromRow(row), true, nil
 }
 
 func (s *Store) IncrementTopupMonthlyUsage(ctx context.Context, orgID string, units, cents int) (TopupSettings, error) {

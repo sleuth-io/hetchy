@@ -439,7 +439,7 @@ type stripeAutoTopupper struct {
 	topupPriceIDs map[string]string
 }
 
-func (s stripeAutoTopupper) PurchaseTopupUnit(ctx context.Context, account billing.Account) (string, error) {
+func (s stripeAutoTopupper) PurchaseTopupUnit(ctx context.Context, account billing.Account, idempotencyKey string) (string, error) {
 	if strings.TrimSpace(account.StripeCustomerID) == "" {
 		return "", billing.ErrAutoTopupNotConfigured
 	}
@@ -448,7 +448,10 @@ func (s stripeAutoTopupper) PurchaseTopupUnit(ctx context.Context, account billi
 		return "", billing.ErrAutoTopupNotConfigured
 	}
 	client := stripe.NewClient(s.secretKey)
-	idempotencySuffix := account.OrgID + "-" + time.Now().UTC().Format("20060102150405.000000000")
+	idempotencySuffix := strings.TrimSpace(idempotencyKey)
+	if idempotencySuffix == "" {
+		idempotencySuffix = account.OrgID + "-" + time.Now().UTC().Format("20060102150405.000000000")
+	}
 	created, err := client.V1Invoices.Create(ctx, &stripe.InvoiceCreateParams{
 		Params: stripe.Params{
 			IdempotencyKey: stripe.String("hetchy-auto-topup-invoice-" + idempotencySuffix),
@@ -485,6 +488,9 @@ func (s stripeAutoTopupper) PurchaseTopupUnit(ctx context.Context, account billi
 		return "", err
 	}
 	finalized, err := client.V1Invoices.FinalizeInvoice(ctx, created.ID, &stripe.InvoiceFinalizeInvoiceParams{
+		Params: stripe.Params{
+			IdempotencyKey: stripe.String("hetchy-auto-topup-finalize-" + idempotencySuffix),
+		},
 		AutoAdvance: stripe.Bool(false),
 	})
 	if err != nil {
@@ -493,7 +499,11 @@ func (s stripeAutoTopupper) PurchaseTopupUnit(ctx context.Context, account billi
 	if finalized.Status == stripe.InvoiceStatusPaid {
 		return finalized.ID, nil
 	}
-	paid, err := client.V1Invoices.Pay(ctx, finalized.ID, &stripe.InvoicePayParams{})
+	paid, err := client.V1Invoices.Pay(ctx, finalized.ID, &stripe.InvoicePayParams{
+		Params: stripe.Params{
+			IdempotencyKey: stripe.String("hetchy-auto-topup-pay-" + idempotencySuffix),
+		},
+	})
 	if err != nil {
 		return "", err
 	}

@@ -28,7 +28,7 @@ func (e FlavorNotAllowedError) Error() string {
 }
 
 type AutoTopupper interface {
-	PurchaseTopupUnit(context.Context, Account) (string, error)
+	PurchaseTopupUnit(context.Context, Account, string) (string, error)
 }
 
 type Service struct {
@@ -93,7 +93,7 @@ func (s *Service) AdmitRun(ctx context.Context, req AdmissionRequest) (Admission
 }
 
 func (s *Service) maybeAutoTopup(ctx context.Context, account Account, reserveCredits int) (Account, error) {
-	var purchase func(context.Context, Account) (string, error)
+	var purchase func(context.Context, Account, string) (string, error)
 	if s.topupper != nil {
 		purchase = s.topupper.PurchaseTopupUnit
 	}
