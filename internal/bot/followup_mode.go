@@ -25,7 +25,7 @@ const (
 
 const (
 	followUpModeModel          = "claude-haiku-4-5-20251001"
-	followUpModeTimeout        = 3 * time.Second
+	followUpModeTimeout        = 8 * time.Second
 	minNonChangeModeConfidence = 0.6
 )
 
@@ -107,7 +107,16 @@ func isPriorWorkRemediationRequest(userRequest string) bool {
 		"didn't",
 		"did not",
 		"forgot to",
-		"missing",
+		"is missing",
+		"are missing",
+		"was missing",
+		"were missing",
+		"missing proof",
+		"missing evidence",
+		"missing screenshot",
+		"missing recording",
+		"missing artifact",
+		"missing validation",
 		"lacks",
 		"no proof",
 		"no evidence",
@@ -128,7 +137,6 @@ func isPriorWorkRemediationRequest(userRequest string) bool {
 		"pr description",
 		"pull request",
 		"checks",
-		"commit",
 		"push",
 	}
 

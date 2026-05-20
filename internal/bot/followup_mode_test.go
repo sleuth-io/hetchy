@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hetchyhq/hetchy/internal/convstore"
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
@@ -66,6 +67,21 @@ func TestDecideFollowUpModeForcesChangeForMissingProofRemediation(t *testing.T) 
 	}
 	if !strings.Contains(decision.Reason, "remediation") {
 		t.Fatalf("reason = %q, want remediation override", decision.Reason)
+	}
+}
+
+func TestPriorWorkRemediationRequestAvoidsCommitInspectFalsePositive(t *testing.T) {
+	if isPriorWorkRemediationRequest("what's missing in this commit message?") {
+		t.Fatal("commit inspection question should not force change mode")
+	}
+	if !isPriorWorkRemediationRequest("the PR body is missing proof") {
+		t.Fatal("missing proof in PR body should force change mode")
+	}
+}
+
+func TestFollowUpModeTimeoutAllowsRoutineLLMLatency(t *testing.T) {
+	if followUpModeTimeout < 8*time.Second {
+		t.Fatalf("followUpModeTimeout = %s, want at least 8s", followUpModeTimeout)
 	}
 }
 
