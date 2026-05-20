@@ -1356,6 +1356,7 @@ func (b *Bot) stopAndArchiveSandbox(ctx context.Context, sb *daytona.Sandbox) {
 			"duration", time.Since(started).Round(time.Millisecond),
 			"error", err,
 		)
+		b.stopAndArchiveImmediately(ctx, sb, "stop failed after auto-archive configuration")
 		return
 	}
 	b.log.Info("sandbox stopped; auto-archive scheduled",

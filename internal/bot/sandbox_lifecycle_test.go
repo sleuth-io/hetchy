@@ -98,3 +98,26 @@ func TestSuccessfulCleanupArchivesImmediatelyWhenAutoArchiveSetFails(t *testing.
 		t.Fatalf("calls = %v, want %v", calls, want)
 	}
 }
+
+func TestSuccessfulCleanupArchivesImmediatelyWhenStopFails(t *testing.T) {
+	b := &Bot{log: discardLogger(), cfg: Config{DaytonaAutoArchiveMinutes: 60}}
+	var calls []string
+	b.setAutoArchiveIntervalFn = func(context.Context, *daytona.Sandbox, *int) error {
+		calls = append(calls, "set")
+		return nil
+	}
+	b.stopSandboxFn = func(context.Context, *daytona.Sandbox) error {
+		calls = append(calls, "stop")
+		return errors.New("stop failed")
+	}
+	b.archiveSandboxFn = func(context.Context, *daytona.Sandbox) error {
+		calls = append(calls, "archive")
+		return nil
+	}
+
+	b.stopAndArchiveSandbox(context.Background(), &daytona.Sandbox{ID: "sandbox-1"})
+
+	if want := []string{"set", "stop", "stop", "archive"}; !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls = %v, want %v", calls, want)
+	}
+}
