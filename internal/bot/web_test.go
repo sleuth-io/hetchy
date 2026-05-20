@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/hetchyhq/hetchy/internal/auth"
 	"github.com/hetchyhq/hetchy/internal/convstore"
+	"github.com/hetchyhq/hetchy/internal/orgcfg"
 	"github.com/hetchyhq/hetchy/internal/webui"
 )
 
@@ -61,7 +63,16 @@ func newBypassOrgBot(t *testing.T, role string) *Bot {
 	if err != nil {
 		t.Fatalf("auth: %v", err)
 	}
-	return &Bot{log: discardLogger(), cfg: Config{WebPort: "0"}, auth: a, convs: convstore.New(nil), live: newLiveRegistry()}
+	return &Bot{
+		log:   discardLogger(),
+		cfg:   Config{WebPort: "0"},
+		auth:  a,
+		convs: convstore.New(nil),
+		live:  newLiveRegistry(),
+		followUpModeFn: func(context.Context, orgcfg.Config, convstore.Record, string) followUpModeDecision {
+			return followUpModeDecision{Mode: followUpModeChange, Confidence: 1, Reason: "test default"}
+		},
+	}
 }
 
 func readWebUIAsset(t *testing.T, name string) string {

@@ -70,17 +70,39 @@ required. Where you can't get there without real third-party credentials,
 do partial bootstrap (auth bypassed, external services skipped or mocked)
 and declare what's missing in manifest.json.
 
-You must produce four artifacts at fixed paths:
+You must produce six artifacts at fixed paths:
 
   /tmp/hetchy-spec/setup.sh      — idempotent. Installs deps, runs
-                                   migrations, seeds dev data. Safe to
-                                   re-run on every task.
-  /tmp/hetchy-spec/start.sh      — starts the app and any supporting
-                                   services in the background. Returns
-                                   when the app is reachable, NOT when
-                                   it has terminated.
+                                   migrations, seeds dev data, and
+                                   prepares durable build/runtime state.
+                                   Safe to re-run on every task. It may
+                                   start services needed for provisioning,
+                                   but runtime services must not live only
+                                   here; start.sh must be able to restore
+                                   them after a sandbox stop/resume.
+  /tmp/hetchy-spec/start.sh      — re-runnable runtime bring-up. Starts
+                                   required runtime dependencies and makes
+                                   the current checkout/build the active
+                                   app. Safe to call before the agent works,
+                                   after the agent rebuilds, and after
+                                   sandbox resume. It should recover from
+                                   stale app-owned processes, usually by
+                                   calling or duplicating stop.sh logic. It
+                                   must start long-lived services in the
+                                   background/daemon mode and then return.
+                                   Do not leave a foreground dev server,
+                                   foreground nginx, or watch command as the
+                                   final process.
+  /tmp/hetchy-spec/stop.sh       — idempotently stops app-owned runtime
+                                   processes. Usually leave shared services
+                                   like Postgres running unless this repo
+                                   specifically owns them.
   /tmp/hetchy-spec/health.sh     — exits 0 iff the app is healthy.
                                    Typically: curl -fsS <url>
+  /tmp/hetchy-spec/lessons.md    — concise repo-specific operational
+                                   memory. Include only concrete commands,
+                                   dependencies, ordering requirements, and
+                                   failure modes future runs must remember.
   /tmp/hetchy-spec/manifest.json — JSON manifest, schema below.
 
 Manifest schema:
@@ -115,11 +137,11 @@ Process:
 
        devcontainer up --workspace-folder "$PWD" --config <path>
 
-     If it works, base setup/start/health on that environment using
+     If it works, base setup/start/stop/health/lessons on that environment using
      devcontainer exec and forwarded ports. If it fails because nested
      Docker, privileges, mounts, or networking are unavailable in the
      sandbox, translate the spec's image/build/dockerComposeFile/features
-     and lifecycle commands into ordinary setup/start scripts, then
+     and lifecycle commands into ordinary setup/start/stop/health scripts, then
      declare the unsupported container capability in manifest.json.
 
   1. Read the README and any docs/ contributor guides. They are written
@@ -152,13 +174,25 @@ Process:
      starting points, not a complete inventory.
 
   4. Write setup.sh and run it from a clean checkout. It must be
-     idempotent — every future task re-runs it.
+     idempotent and limited to durable provisioning/build/migration work.
 
-  5. Write start.sh and run it. Record the URL the app is on.
+  5. Write stop.sh and start.sh. start.sh must be safe to run multiple
+     times in the same sandbox and must make the current checkout/build
+     active. If the app needs a restart after code changes before E2E
+     validation, encode that in start.sh instead of relying on a future
+     agent to remember it. start.sh must return after launching services;
+     health.sh is the readiness oracle. When you test it manually, run it
+     with a timeout so a foreground server cannot burn minutes unnoticed.
 
-  6. Write health.sh and run it. Iterate until it passes.
+  6. Run stop.sh, run start.sh, then run health.sh. Iterate until health
+     passes. Record the URL the app is on.
 
-  7. Real third-party credentials handling:
+  7. Write lessons.md with the operational facts your scripts encode and
+     future validation must obey. Keep it short and repo-specific. Good:
+     "After rebuilding ./dist/foo, run start.sh before HTTP validation."
+     Bad: generic advice like "run tests before committing."
+
+  8. Real third-party credentials handling:
      - If a credential has a documented test-mode bypass
        (AUTH_BYPASS=1, NODE_ENV=test, etc.) that lets the app boot, USE it.
        Bootstrap succeeds with reduced functionality.
@@ -170,11 +204,18 @@ Process:
        services (e.g. fake Stripe sk_test_… keys). The app will appear
        to start and then fail later in confusing ways.
 
-  8. For every UI service, navigate to its root URL with Playwright and
-     take a screenshot. The screenshot must show real content — not an
-     error page or blank screen.
+  9. For every UI service, navigate to its root URL with Playwright and
+     take a screenshot. The sandbox already provides Playwright and
+     Chromium. Use ordinary Playwright APIs from scripts under
+     /tmp/hetchy-validate; browser binaries live at
+     $PLAYWRIGHT_BROWSERS_PATH, normally /opt/ms-playwright. Do not run
+     'playwright install' just to capture proof. If a repo-local
+     Playwright package reports a missing browser, use the sandbox
+     Playwright package from /tmp/hetchy-validate rather than waiting on
+     browser installation. The screenshot must show real content — not
+     an error page or blank screen.
 
-  9. Populate suggested_repo_changes if you hit friction that a small
+  10. Populate suggested_repo_changes if you hit friction that a small
      repo change would have eliminated. Examples: add a 'make bootstrap'
      target; expose required env vars via a --print-required-env flag;
      add a docker-compose profile that starts with bypass flags. ~3 max.
@@ -183,7 +224,8 @@ Be concise in your shell scripts. No comments unless they explain a
 non-obvious choice. The scripts run on every future task — keep them
 fast and idempotent. Echo before long-running dependency or migration
 steps so future runs show useful progress while package managers are
-downloading quietly.
+downloading quietly. Use set -euo pipefail (or at least set -o pipefail)
+before pipelines where the exit status matters.
 
 `,
 		args.OwnerRepo, pathSuffix,

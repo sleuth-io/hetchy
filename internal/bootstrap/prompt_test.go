@@ -73,8 +73,21 @@ func TestBuildPromptContent(t *testing.T) {
 		"BYPASS_*",
 		// Step 2 — name the grep pattern
 		"os.Getenv",
-		// Step 7 — the explicit "do not fabricate" line
+		// Step 8 — the explicit "do not fabricate" line
 		"NEVER fabricate",
+		// Runtime contract — setup prepares, start restores current
+		// runtime, stop cleans app-owned processes, lessons captures
+		// repo-specific operational memory.
+		"/tmp/hetchy-spec/stop.sh",
+		"/tmp/hetchy-spec/lessons.md",
+		"re-runnable runtime bring-up",
+		"current checkout/build",
+		"start.sh must return after launching services",
+		"foreground dev server",
+		"/tmp/hetchy-validate",
+		"PLAYWRIGHT_BROWSERS_PATH",
+		"'playwright install' just to capture proof",
+		"set -o pipefail",
 		// Manifest schema sentinel
 		`"deferred_capabilities"`,
 		// Already-supplied list

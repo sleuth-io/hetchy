@@ -284,4 +284,5 @@ type RepoSetupSpec struct {
 	BootstrapLog         *string            `json:"bootstrap_log"`
 	CreatedAt            pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+	LessonsMd            string             `json:"lessons_md"`
 }

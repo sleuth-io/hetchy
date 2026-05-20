@@ -113,10 +113,11 @@ CREATE TABLE repo_setup_specs (
 
     -- Executable scripts written by the agent. UTF-8 text, run as the
     -- 'daytona' user inside the sandbox at /home/daytona/work/<path>.
-    setup_script    TEXT   NOT NULL,  -- idempotent install/migrate
-    start_script    TEXT   NOT NULL,  -- starts the app + supporting services
+    setup_script    TEXT   NOT NULL,  -- idempotent durable install/migrate/build
+    start_script    TEXT   NOT NULL,  -- re-runnable runtime bring-up/restart
     health_check    TEXT   NOT NULL,  -- shell command, exit 0 = healthy
-    stop_script     TEXT,             -- optional, for clean teardown
+    stop_script     TEXT,             -- app-owned runtime teardown
+    lessons_md      TEXT   NOT NULL DEFAULT '',
 
     -- JSON: [{ "name": "web", "port": 3000, "url": "http://localhost:3000",
     --          "kind": "ui" | "api" | "admin" }, ...]
@@ -218,15 +219,18 @@ Loop:
 1. Build the bootstrap prompt (see below).
 2. Spawn a Claude Code session in the sandbox with full tool access
    (file edit, bash, Playwright MCP).
-3. The agent's job is to produce three artifacts at fixed paths:
+3. The agent's job is to produce six artifacts at fixed paths:
        /tmp/hetchy-spec/setup.sh
        /tmp/hetchy-spec/start.sh
+       /tmp/hetchy-spec/stop.sh
        /tmp/hetchy-spec/health.sh
-   ...and a JSON manifest at /tmp/hetchy-spec/manifest.json describing
-   services and required secrets.
+       /tmp/hetchy-spec/lessons.md
+       /tmp/hetchy-spec/manifest.json
+   The manifest describes services and required secrets; lessons.md
+   captures concise repo-specific runtime memory.
 4. The agent must demonstrate the spec works end to end:
      - Run setup.sh from a clean checkout. Must exit 0.
-     - Run start.sh in the background.
+     - Run stop.sh, then run start.sh.
      - Run health.sh. Must exit 0.
      - Take a Playwright screenshot of each service URL marked kind=ui.
        Must produce a non-blank PNG.
@@ -252,17 +256,29 @@ is NOT required. Where you can't get there without real third-party
 credentials, do partial bootstrap (auth bypassed, external services
 skipped or mocked) and declare what's missing in manifest.json.
 
-You must produce three executable scripts and a manifest:
+You must produce setup/start/stop/health scripts, lessons.md, and a manifest:
 
   /tmp/hetchy-spec/setup.sh      — idempotent. Installs deps, runs
-                                   migrations, seeds dev data. Safe to
-                                   re-run on every task.
-  /tmp/hetchy-spec/start.sh      — starts the app and any supporting
-                                   services in the background. Returns
-                                   when the app is reachable, NOT when
-                                   it has terminated.
+                                   migrations, seeds dev data, and
+                                   prepares durable state. It may start
+                                   services needed for provisioning, but
+                                   runtime services must not live only here.
+  /tmp/hetchy-spec/start.sh      — re-runnable runtime bring-up. Starts
+                                   required runtime dependencies and makes
+                                   the current checkout/build the active app.
+                                   Safe before work, after rebuilds, and
+                                   after sandbox resume. It must start
+                                   long-lived services in the background or
+                                   daemon mode and then return; health.sh is
+                                   the readiness oracle.
+  /tmp/hetchy-spec/stop.sh       — idempotently stops app-owned runtime
+                                   processes. Usually leave shared services
+                                   such as Postgres running.
   /tmp/hetchy-spec/health.sh     — exits 0 iff the app is healthy.
                                    Typically `curl -fsS <url>`.
+  /tmp/hetchy-spec/lessons.md    — concise repo-specific operational memory:
+                                   commands, dependencies, ordering
+                                   requirements, and failure modes.
   /tmp/hetchy-spec/manifest.json — see schema below.
 
 Manifest schema:
@@ -304,7 +320,7 @@ Process:
   0. If the hints include a Dev Container spec, try the reference
      `devcontainer` CLI first. If the sandbox cannot run the container
      shape because of nested-Docker, privilege, mount, or network limits,
-     translate the spec into ordinary setup/start scripts and declare the
+     translate the spec into ordinary setup/start/stop/health scripts and declare the
      unsupported container capability in `manifest.json`.
 
   1. Read the README and any docs/ contributor guides. They are written
@@ -323,16 +339,22 @@ Process:
      hints are complete.
 
   4. Write setup.sh and run it from a clean checkout. It must be
-     idempotent — every future task re-runs it.
+     idempotent and limited to durable provisioning/build/migration work.
 
-  5. Write start.sh and run it. Record what URL the app is on. If the
-     binary needs values you can mint safely (random session secrets,
-     internal-only DB passwords), put their generation in setup.sh. If it
-     needs real third-party credentials, see step 7.
+  5. Write stop.sh and start.sh. start.sh must be safe to call before
+     agent work, after the agent rebuilds, and after sandbox resume. If
+     the app needs a restart after code changes before E2E validation,
+     encode that in start.sh rather than relying on a future agent to
+     remember it. start.sh must return after launching services; do not
+     leave a foreground dev server or `nginx daemon off` process attached.
 
-  6. Write health.sh and run it. Iterate until it passes.
+  6. Run stop.sh, run start.sh, then run health.sh. Iterate until it
+     passes. Record what URL the app is on.
 
-  7. Real third-party credentials handling:
+  7. Write lessons.md with the operational facts your scripts encode and
+     future validation must obey. Keep it short and repo-specific.
+
+  8. Real third-party credentials handling:
      - If a credential has a documented test-mode bypass
        (AUTH_BYPASS=1, NODE_ENV=test, etc.) that lets the app boot, use it.
        Bootstrap succeeds with reduced functionality.
@@ -344,11 +366,14 @@ Process:
        services (e.g. fake Stripe sk_test_… keys). The app will appear
        to start and then fail later in confusing ways.
 
-  8. For every UI service, navigate to its root URL with Playwright and
-     take a screenshot. The screenshot must show real content (not an
+  9. For every UI service, navigate to its root URL with Playwright and
+     take a screenshot. The sandbox image already ships Playwright and
+     Chromium; validation scripts should live under `/tmp/hetchy-validate`
+     and use `$PLAYWRIGHT_BROWSERS_PATH` rather than running
+     `playwright install`. The screenshot must show real content (not an
      error page or blank screen).
 
-  9. Populate `suggested_repo_changes` in the manifest if you hit
+  10. Populate `suggested_repo_changes` in the manifest if you hit
      friction that a small repo change would have eliminated (e.g.
      "add a `make bootstrap` target", "expose required env vars via a
      `--print-required-env` flag", "add a docker-compose profile that
@@ -363,7 +388,7 @@ them fast and idempotent.
 
 After the loop's checks pass, `internal/bootstrap/persist.go`:
 
-1. Reads the four artifact files.
+1. Reads the artifact files.
 2. Computes `source_fingerprint` from the detection-relevant file set.
 3. Inserts/updates `repo_setup_specs` row keyed `(installation_id, repo_id, path)`.
 4. For each entry in `manifest.required_secrets`, inserts a row in `repo_secret_values` with empty ciphertext if not already present (so the UI knows to prompt).
@@ -399,7 +424,7 @@ if err := bootstrap.Apply(ctx, sandbox, spec); err != nil {
 agent.Run(ctx, spec, userTask)
 ```
 
-`bootstrap.Apply` materializes the scripts, injects user-supplied secrets as env vars, runs `setup.sh`, runs `start.sh` in the background, and polls `health.sh` until it passes (timeout: 90s). Service URLs become part of the agent prompt context.
+`bootstrap.Apply` materializes the scripts and lessons, injects user-supplied secrets as env vars, runs `setup.sh`, runs `stop.sh`, runs `start.sh` with a bounded return timeout, and polls `health.sh` until it passes (timeout: 90s). A `start.sh` that foregrounds a long-lived server is treated as a broken spec instead of being left to burn minutes. Service URLs and lessons become part of the agent prompt context. Validation prompts also require the agent to refresh runtime with `stop.sh` + `start.sh` + `health.sh` after rebuilding so E2E checks hit the changed code.
 
 ## Secrets
 

@@ -17,7 +17,7 @@ import (
 // Hints is intentionally a *prompt context payload*, not a final spec.
 // The spec design (docs/research/repo-bootstrap-and-validation.md)
 // requires the LLM to read these as starting points and verify them
-// before committing to a setup/start/health script set.
+// before committing to a setup/start/stop/health script set.
 type Hints struct {
 	Path          string         `json:"path"`
 	DevContainer  *DevContainer  `json:"devcontainer,omitempty"`

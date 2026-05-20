@@ -4,7 +4,7 @@
 INSERT INTO repo_setup_specs (
     installation_id, repo_id, path,
     spec_version, kind,
-    setup_script, start_script, health_check, stop_script,
+    setup_script, start_script, health_check, stop_script, lessons_md,
     services, required_secrets, deferred_capabilities, suggested_repo_changes,
     source_fingerprint,
     validation_status, last_validated_at,
@@ -13,11 +13,11 @@ INSERT INTO repo_setup_specs (
 ) VALUES (
     $1, $2, $3,
     $4, $5,
-    $6, $7, $8, $9,
-    $10, $11, $12, $13,
-    $14,
-    $15, $16,
-    $17, $18, $19,
+    $6, $7, $8, $9, $10,
+    $11, $12, $13, $14,
+    $15,
+    $16, $17,
+    $18, $19, $20,
     NOW()
 )
 ON CONFLICT (installation_id, repo_id, path) DO UPDATE SET
@@ -27,6 +27,7 @@ ON CONFLICT (installation_id, repo_id, path) DO UPDATE SET
     start_script           = EXCLUDED.start_script,
     health_check           = EXCLUDED.health_check,
     stop_script            = EXCLUDED.stop_script,
+    lessons_md             = EXCLUDED.lessons_md,
     services               = EXCLUDED.services,
     required_secrets       = EXCLUDED.required_secrets,
     deferred_capabilities  = EXCLUDED.deferred_capabilities,
@@ -51,7 +52,7 @@ RETURNING *;
 INSERT INTO repo_setup_specs (
     installation_id, repo_id, path,
     spec_version, kind,
-    setup_script, start_script, health_check, stop_script,
+    setup_script, start_script, health_check, stop_script, lessons_md,
     services, required_secrets, deferred_capabilities, suggested_repo_changes,
     source_fingerprint,
     validation_status, last_validated_at,
@@ -60,11 +61,11 @@ INSERT INTO repo_setup_specs (
 ) VALUES (
     $1, $2, $3,
     $4, $5,
-    $6, $7, $8, $9,
-    $10, $11, $12, $13,
-    $14,
-    $15, NULL,
-    0, 1, $16,
+    $6, $7, $8, $9, $10,
+    $11, $12, $13, $14,
+    $15,
+    $16, NULL,
+    0, 1, $17,
     NOW()
 )
 ON CONFLICT (installation_id, repo_id, path) DO UPDATE SET
@@ -74,6 +75,7 @@ ON CONFLICT (installation_id, repo_id, path) DO UPDATE SET
     start_script           = EXCLUDED.start_script,
     health_check           = EXCLUDED.health_check,
     stop_script            = EXCLUDED.stop_script,
+    lessons_md             = EXCLUDED.lessons_md,
     services               = EXCLUDED.services,
     required_secrets       = EXCLUDED.required_secrets,
     deferred_capabilities  = EXCLUDED.deferred_capabilities,

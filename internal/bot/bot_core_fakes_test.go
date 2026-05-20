@@ -201,5 +201,8 @@ func testCoreBot(convs conversationStore) *Bot {
 		branchNameFn: func(_ context.Context, _ orgcfg.Config, _ string) string {
 			return "feature/sf-req-1"
 		},
+		followUpModeFn: func(context.Context, orgcfg.Config, convstore.Record, string) followUpModeDecision {
+			return followUpModeDecision{Mode: followUpModeChange, Confidence: 1, Reason: "test default"}
+		},
 	}
 }

@@ -138,8 +138,8 @@ func TestRecoverAgentRunReadyReplaysCommandLogToSuccess(t *testing.T) {
 		deleteSandboxSessionFn: func(_ *daytona.Sandbox, sessionID string) {
 			deletedSession = sessionID
 		},
-		cleanupSandboxFn: func(_ context.Context, sb *daytona.Sandbox, reason string) {
-			cleanupCall = sb.ID + "|" + reason
+		stopAndArchiveFn: func(_ context.Context, sb *daytona.Sandbox) {
+			cleanupCall = sb.ID + "|stopped"
 		},
 	}
 
@@ -179,7 +179,7 @@ func TestRecoverAgentRunReadyReplaysCommandLogToSuccess(t *testing.T) {
 	if deletedSession != "session-1" {
 		t.Fatalf("deleted session = %q", deletedSession)
 	}
-	if cleanupCall != "sandbox-1|recovered successful run" {
+	if cleanupCall != "sandbox-1|stopped" {
 		t.Fatalf("cleanup call = %q", cleanupCall)
 	}
 }
@@ -388,8 +388,8 @@ func TestFinalizeRecoveredRunSuccessProjectsConversationAndCleansUp(t *testing.T
 		deleteSandboxSessionFn: func(_ *daytona.Sandbox, sessionID string) {
 			deletedSession = sessionID
 		},
-		cleanupSandboxFn: func(_ context.Context, sb *daytona.Sandbox, reason string) {
-			cleanupCall = sb.ID + "|" + reason
+		stopAndArchiveFn: func(_ context.Context, sb *daytona.Sandbox) {
+			cleanupCall = sb.ID + "|stopped"
 		},
 	}
 	run := runstore.Run{
@@ -434,7 +434,7 @@ func TestFinalizeRecoveredRunSuccessProjectsConversationAndCleansUp(t *testing.T
 	if deletedSession != "session-1" {
 		t.Fatalf("deleted session = %q", deletedSession)
 	}
-	if cleanupCall != "sandbox-1|recovered successful run" {
+	if cleanupCall != "sandbox-1|stopped" {
 		t.Fatalf("cleanup call = %q", cleanupCall)
 	}
 }

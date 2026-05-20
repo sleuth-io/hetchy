@@ -20,6 +20,11 @@
 #   HETCHY_AGENT_PROMPT_B64      fallback persona prompt when the sx asset is unavailable
 #   HETCHY_SX_PUBLIC_VAULT_URL   git sx vault for Hetchy-managed agent assets
 #   SX_KEY                       optional org skills.new bot key
+#   SF_SPEC_SETUP_B64 or SF_SPEC_SETUP_B64_FILE      base64-encoded setup.sh from the saved bootstrap spec
+#   SF_SPEC_START_B64 or SF_SPEC_START_B64_FILE      base64-encoded start.sh from the saved bootstrap spec
+#   SF_SPEC_STOP_B64 or SF_SPEC_STOP_B64_FILE        base64-encoded stop.sh from the saved bootstrap spec
+#   SF_SPEC_HEALTH_B64 or SF_SPEC_HEALTH_B64_FILE    base64-encoded health.sh from the saved bootstrap spec
+#   SF_SPEC_LESSONS_B64 or SF_SPEC_LESSONS_B64_FILE  base64-encoded lessons.md from the saved bootstrap spec
 #   HETCHY_CLAUDE_MODEL          Claude Code model alias: opus, sonnet, or haiku
 #   HETCHY_CODEX_MODEL           Codex model id, e.g. gpt-5.4
 #   HETCHY_ARTIFACT_SLOTS        JSON proof-artifact upload slots
@@ -128,7 +133,7 @@ git pull --rebase --autostash origin "${SF_BRANCH}"
 # Same pre-create as agent.sh — the Playwright MCP server requires
 # this directory to exist before the first screenshot, and follow-ups
 # typically include another round of UI validation.
-mkdir -p "${SF_WORKDIR}/.playwright-mcp"
+ensure_playwright_mcp_dir
 
 # And the spec-improvements drop-zone so post-success reflection can
 # patch the saved spec without an extra mkdir round-trip.
@@ -172,6 +177,36 @@ write_sx_config() {
   fi
 }
 
+sx_install_fingerprint() {
+  local label="$1"
+  local config_dir="$2"
+  local sx_bot="${3:-}"
+  local sx_bot_key="${4:-}"
+  local config_hash=""
+  local key_hash=""
+  local remote=""
+
+  if [[ -f "${config_dir}/config.json" ]]; then
+    config_hash="$(hetchy_file_sha256 "${config_dir}/config.json" 2>/dev/null || true)"
+  fi
+  if [[ -n "$sx_bot_key" ]]; then
+    key_hash="$(printf '%s' "$sx_bot_key" | hetchy_stdin_sha256 2>/dev/null || true)"
+  fi
+  remote="$(git -C "$SF_WORKDIR" remote get-url origin 2>/dev/null || true)"
+  remote="${remote/x-access-token:*@github.com/x-access-token:REDACTED@github.com}"
+
+  {
+    printf 'v=1\n'
+    printf 'label=%s\n' "$label"
+    printf 'config_hash=%s\n' "$config_hash"
+    printf 'agent_slug=%s\n' "${HETCHY_AGENT_SLUG:-default}"
+    printf 'sx_bot=%s\n' "$sx_bot"
+    printf 'sx_bot_key_hash=%s\n' "$key_hash"
+    printf 'repo=%s\n' "${SF_REPO:-}"
+    printf 'remote=%s\n' "$remote"
+  } | hetchy_stdin_sha256
+}
+
 run_sx_install() {
   local label="$1"
   local config_dir="$2"
@@ -179,9 +214,21 @@ run_sx_install() {
   local profile="$4"
   local sx_bot="${5:-}"
   local sx_bot_key="${6:-}"
+  local marker_dir="${HETCHY_SX_MARKER_DIR:-/tmp/hetchy-sx/markers}"
+  local fingerprint=""
+  local marker=""
 
-  echo "[hetchy] running sx install (${label})"
-  mkdir -p "$cache_dir" "$HOME/.claude"
+  mkdir -p "$cache_dir" "$HOME/.claude" "$marker_dir"
+  fingerprint="$(sx_install_fingerprint "$label" "$config_dir" "$sx_bot" "$sx_bot_key" 2>/dev/null || true)"
+  if [[ -n "$fingerprint" ]]; then
+    marker="${marker_dir}/${label}.${fingerprint}.succeeded"
+    if [[ -f "$marker" ]]; then
+      echo "[hetchy] sx skills already refreshed (${label}) for fingerprint ${fingerprint}; skipping"
+      return 0
+    fi
+  fi
+
+  echo "[hetchy] refreshing sx skills (${label})"
   # See agent.sh for the rationale on running sx inside the checkout:
   # the target dir's git remote URL is what scopes per-repo skills,
   # and a follow-up run starts in $HOME for some daytona images so a
@@ -193,6 +240,11 @@ run_sx_install() {
     SX_BOT="$sx_bot" \
     SX_BOT_KEY="$sx_bot_key" \
       sx install --profile "$profile" --client=claude-code --target "$SF_WORKDIR")
+  if [[ -n "$marker" ]]; then
+    find "$marker_dir" -maxdepth 1 -type f -name "${label}.*.succeeded" ! -name "$(basename "$marker")" -delete 2>/dev/null || true
+    : > "$marker"
+    echo "[hetchy] sx skills marker written (${label}) for fingerprint ${fingerprint}"
+  fi
 }
 
 # Mirror of agent.sh's emit_installed_skills — see that script for the
@@ -217,26 +269,30 @@ emit_installed_skills() {
   echo "[hetchy:sx-skills] ${joined}"
 }
 
-if [[ -n "${HETCHY_SX_PUBLIC_VAULT_URL:-}" || -n "${SX_KEY:-}" ]]; then
-  ensure_sx
-fi
+if [[ "${HETCHY_SKIP_SX_INSTALL:-}" == "1" ]]; then
+  echo "[hetchy] skipping sx install for ${HETCHY_FOLLOWUP_MODE:-non-change} follow-up"
+else
+  if [[ -n "${HETCHY_SX_PUBLIC_VAULT_URL:-}" || -n "${SX_KEY:-}" ]]; then
+    ensure_sx
+  fi
 
-if [[ -n "${HETCHY_SX_PUBLIC_VAULT_URL:-}" ]]; then
-  public_profile="hetchy-public"
-  public_config="/tmp/hetchy-sx/public-${HETCHY_AGENT_SLUG:-default}/config"
-  public_cache="/tmp/hetchy-sx/public-${HETCHY_AGENT_SLUG:-default}/cache"
-  echo "[hetchy] writing public sx config"
-  write_sx_config "$public_config" "$public_profile" "git" "$HETCHY_SX_PUBLIC_VAULT_URL"
-  run_sx_install "hetchy-public" "$public_config" "$public_cache" "$public_profile" "${HETCHY_AGENT_SX_BOT:-}" ""
-fi
+  if [[ -n "${HETCHY_SX_PUBLIC_VAULT_URL:-}" ]]; then
+    public_profile="hetchy-public"
+    public_config="/tmp/hetchy-sx/public-${HETCHY_AGENT_SLUG:-default}/config"
+    public_cache="/tmp/hetchy-sx/public-${HETCHY_AGENT_SLUG:-default}/cache"
+    echo "[hetchy] writing public sx config"
+    write_sx_config "$public_config" "$public_profile" "git" "$HETCHY_SX_PUBLIC_VAULT_URL"
+    run_sx_install "hetchy-public" "$public_config" "$public_cache" "$public_profile" "${HETCHY_AGENT_SX_BOT:-}" ""
+  fi
 
-if [[ -n "${SX_KEY:-}" ]]; then
-  org_profile="org-skills"
-  org_config="/tmp/hetchy-sx/org-${HETCHY_AGENT_SLUG:-default}/config"
-  org_cache="/tmp/hetchy-sx/org-${HETCHY_AGENT_SLUG:-default}/cache"
-  echo "[hetchy] writing org sx config"
-  write_sx_config "$org_config" "$org_profile" "sleuth" "https://app.skills.new" "$SX_KEY"
-  run_sx_install "org-skills" "$org_config" "$org_cache" "$org_profile" "${HETCHY_AGENT_SX_BOT:-}" "$SX_KEY"
+  if [[ -n "${SX_KEY:-}" ]]; then
+    org_profile="org-skills"
+    org_config="/tmp/hetchy-sx/org-${HETCHY_AGENT_SLUG:-default}/config"
+    org_cache="/tmp/hetchy-sx/org-${HETCHY_AGENT_SLUG:-default}/cache"
+    echo "[hetchy] writing org sx config"
+    write_sx_config "$org_config" "$org_profile" "sleuth" "https://app.skills.new" "$SX_KEY"
+    run_sx_install "org-skills" "$org_config" "$org_cache" "$org_profile" "${HETCHY_AGENT_SX_BOT:-}" "$SX_KEY"
+  fi
 fi
 
 # Emit the marker unconditionally — see the matching note in agent.sh.
@@ -256,7 +312,7 @@ export REPO="$SF_WORKDIR"
 # Re-apply the saved bootstrap spec, if attached. The follow-up lands
 # in an unarchived sandbox where the original `start.sh &` background
 # process is gone, so the validation prompt's "the app is running"
-# assertion is false unless we re-run setup → start (bg) → poll
+# assertion is false unless we re-run setup → stop → start → poll
 # health here. Mirrors the block in agent.sh and applies the same
 # soft-fail discipline so a broken spec doesn't tear down the run
 # before claude gets to do anything useful.
@@ -264,43 +320,35 @@ if has_b64_input SF_SPEC_SETUP_B64 && has_b64_input SF_SPEC_START_B64 && has_b64
   echo "[hetchy] applying saved repo setup spec"
   mkdir -p /tmp/hetchy-spec
   rm -f /tmp/hetchy-spec/UNHEALTHY
-  echo "[hetchy] saved spec payload sizes: setup=$(b64_input_size SF_SPEC_SETUP_B64)B start=$(b64_input_size SF_SPEC_START_B64)B health=$(b64_input_size SF_SPEC_HEALTH_B64)B"
+  echo "[hetchy] saved spec payload sizes: setup=$(b64_input_size SF_SPEC_SETUP_B64)B start=$(b64_input_size SF_SPEC_START_B64)B stop=$(b64_input_size SF_SPEC_STOP_B64)B health=$(b64_input_size SF_SPEC_HEALTH_B64)B lessons=$(b64_input_size SF_SPEC_LESSONS_B64)B"
   echo "[hetchy] writing saved setup.sh"
   decode_b64_input SF_SPEC_SETUP_B64 /tmp/hetchy-spec/setup.sh
   echo "[hetchy] writing saved start.sh"
   decode_b64_input SF_SPEC_START_B64 /tmp/hetchy-spec/start.sh
+  if has_b64_input SF_SPEC_STOP_B64; then
+    echo "[hetchy] writing saved stop.sh"
+    decode_b64_input SF_SPEC_STOP_B64 /tmp/hetchy-spec/stop.sh
+  else
+    rm -f /tmp/hetchy-spec/stop.sh
+  fi
   echo "[hetchy] writing saved health.sh"
   decode_b64_input SF_SPEC_HEALTH_B64 /tmp/hetchy-spec/health.sh
+  if has_b64_input SF_SPEC_LESSONS_B64; then
+    echo "[hetchy] writing saved lessons.md"
+    decode_b64_input SF_SPEC_LESSONS_B64 /tmp/hetchy-spec/lessons.md
+  else
+    rm -f /tmp/hetchy-spec/lessons.md
+  fi
   rewrite_legacy_saved_spec_workdir
   echo "[hetchy] making saved setup scripts executable"
   chmod +x /tmp/hetchy-spec/setup.sh /tmp/hetchy-spec/start.sh /tmp/hetchy-spec/health.sh
+  if [[ -f /tmp/hetchy-spec/stop.sh ]]; then
+    chmod +x /tmp/hetchy-spec/stop.sh
+  fi
 
   run_saved_setup
-
-  echo "[hetchy] starting app via start.sh (background)"
-  # See agent.sh for the rationale: keep start.sh's noise out of the
-  # chat block stream and into a log the agent can grep on demand.
-  /tmp/hetchy-spec/start.sh > /tmp/hetchy-spec/start.log 2>&1 &
-  SF_SPEC_START_PID=$!
-
-  echo "[hetchy] polling health.sh (90s budget)"
-  spec_healthy=0
-  for i in {1..90}; do
-    if ! kill -0 "${SF_SPEC_START_PID}" 2>/dev/null; then
-      echo "[hetchy] start.sh exited early (pid ${SF_SPEC_START_PID})"
-      break
-    fi
-    if /tmp/hetchy-spec/health.sh >/dev/null 2>&1; then
-      echo "[hetchy] healthy after ${i}s"
-      spec_healthy=1
-      break
-    fi
-    sleep 1
-  done
-  if [[ ${spec_healthy} -ne 1 ]]; then
-    echo "[hetchy] WARNING: spec health check never passed; agent will see a non-running app"
-    : > /tmp/hetchy-spec/UNHEALTHY
-  fi
+  run_saved_stop
+  start_saved_app_and_poll_health
 fi
 
 decode_b64_input SF_PROMPT_B64 /tmp/sf-prompt-base.txt

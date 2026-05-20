@@ -322,7 +322,8 @@ func (b *Bot) continueRecoveredRun(ctx context.Context, sb *daytona.Sandbox, run
 
 	var prURL string
 	if run.RunKind == "followup" {
-		prURL, err = b.runFollowUpForRequest(runCtx, sb, inputs.repo, inputs.oc, inputs.rec, inputs.agent, run.UserRequest, run.RequestID, inputs.opts, inputs.model, em)
+		mode := b.decideFollowUpMode(runCtx, inputs.oc, inputs.rec, run.UserRequest).Mode
+		prURL, err = b.runFollowUpForRequest(runCtx, sb, inputs.repo, inputs.oc, inputs.rec, inputs.agent, run.UserRequest, run.RequestID, inputs.opts, inputs.model, mode, em)
 	} else {
 		prURL, err = b.runAgentForRequest(runCtx, sb, inputs.repo, inputs.oc, inputs.agent, run.UserRequest, run.RequestID, inputs.branch, inputs.opts, inputs.model, em)
 	}
@@ -360,7 +361,7 @@ func (b *Bot) continueRecoveredRun(ctx context.Context, sb *daytona.Sandbox, run
 		"pr_url", prURL,
 	)
 	b.deleteSandboxSession(sb, b.currentAgentRunSessionID(runCtx, "agent-"+run.RequestID))
-	b.cleanupSandbox(ctx, sb, "recovered successful run")
+	b.stopAndArchiveSandbox(ctx, sb)
 }
 
 func (b *Bot) finishContinuedRecoveredError(ctx context.Context, run runstore.Run, live *liveRun, err error) {

@@ -37,7 +37,11 @@ type Config struct {
 	// dependency cache files inside the local staging cache before it is
 	// archived back to the mounted repo subpath.
 	DaytonaCachePruneDays int
-	DatabaseURL           string
+	// DaytonaAutoArchiveMinutes controls Daytona's auto-archive timer.
+	// Successful runs stop the sandbox immediately and rely on Daytona to
+	// archive it after this many continuously-stopped minutes.
+	DaytonaAutoArchiveMinutes int
+	DatabaseURL               string
 	// DatabaseMaxConns caps the pgx connection pool. Zero leaves the
 	// pgx default (max(4, NumCPU)) — fine for `make bot`, but in
 	// staging/prod set DATABASE_MAX_CONNS so the pool doesn't starve
@@ -194,6 +198,14 @@ func LoadConfig() (Config, error) {
 	if cacheVolumePrefix == "" {
 		cacheVolumePrefix = defaultCacheVolumePrefix
 	}
+	autoArchiveMinutes := defaultDaytonaAutoArchiveMinutes
+	if v := strings.TrimSpace(os.Getenv("DAYTONA_AUTO_ARCHIVE_MINUTES")); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			return Config{}, fmt.Errorf("DAYTONA_AUTO_ARCHIVE_MINUTES must be a positive integer (got %q)", v)
+		}
+		autoArchiveMinutes = n
+	}
 
 	return Config{
 		Env:                         getenvDefault("HETCHY_ENV", "prod"),
@@ -202,6 +214,7 @@ func LoadConfig() (Config, error) {
 		DaytonaCacheVolumesDisabled: strings.TrimSpace(os.Getenv("DAYTONA_CACHE_VOLUMES_DISABLED")) == "1",
 		DaytonaCacheVolumePrefix:    cacheVolumePrefix,
 		DaytonaCachePruneDays:       cachePruneDays,
+		DaytonaAutoArchiveMinutes:   autoArchiveMinutes,
 		DatabaseURL:                 os.Getenv("DATABASE_URL"),
 		DatabaseMaxConns:            dbMaxConns,
 		WebPort:                     port,
