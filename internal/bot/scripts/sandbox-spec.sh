@@ -105,6 +105,9 @@ start_saved_app_and_poll_health() {
       echo "[hetchy] start.sh exited non-zero (${start_code}); see ${start_log}"
     fi
     : > "$unhealthy_path"
+    # Saved-spec application is intentionally soft-fail. agent.sh and
+    # followup.sh must continue so the validation prompt can inspect
+    # UNHEALTHY/start.log instead of aborting before the LLM runs.
     return 0
   fi
 

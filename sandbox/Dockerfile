@@ -166,7 +166,7 @@ RUN for pkg in poetry uv ruff black mypy pytest conan; do \
 # ---------------------------------------------------------------------------
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
     HETCHY_PLAYWRIGHT_VALIDATE_DIR=/tmp/hetchy-validate \
-    NODE_PATH=/usr/local/nvm/versions/node/v22.14.0/lib/node_modules
+    NODE_PATH=/usr/local/nvm/versions/node/v${NODE_VERSION}/lib/node_modules
 RUN npm install -g \
         pnpm yarn bun \
         eslint prettier chromedriver \
@@ -175,6 +175,7 @@ RUN npm install -g \
         @openai/codex \
         @google/gemini-cli \
         playwright \
+ && test -d "$NODE_PATH" \
  && npx --yes playwright install chromium \
  && CHROMIUM_BIN="$(find "$PLAYWRIGHT_BROWSERS_PATH" \( -path '*/chrome-linux/chrome' -o -path '*/chrome-linux64/chrome' \) -type f | sort | tail -1)" \
  && test -x "$CHROMIUM_BIN" \
@@ -184,9 +185,6 @@ RUN npm install -g \
  && chmod -R a+rwX "$PLAYWRIGHT_BROWSERS_PATH" \
  && chmod -R a+rX /opt/google/chrome \
  && NODE_BIN=$(dirname "$(readlink -f "$(command -v node)")") \
- && NODE_MODULES="$(npm root -g)" \
- && mkdir -p /usr/local/nvm/v22.14.0/lib \
- && ln -sfn "$NODE_MODULES" /usr/local/nvm/v22.14.0/lib/node_modules \
  && for f in "$NODE_BIN"/*; do ln -sf "$f" "/usr/local/bin/$(basename "$f")"; done
 
 # Note: the Playwright MCP server we ship in the agent expects a
@@ -216,8 +214,11 @@ RUN usermod -aG docker daytona
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY hetchy-record-screen /usr/local/bin/hetchy-record-screen
 COPY hetchy-playwright-smoke /usr/local/bin/hetchy-playwright-smoke
+# Intentional build-time browser smoke. It requires a builder that can
+# launch headless Chromium with --no-sandbox; failing here means the
+# pushed Daytona snapshot would not be able to capture proof screenshots.
 RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/hetchy-record-screen /usr/local/bin/hetchy-playwright-smoke \
- && su daytona -c 'export PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright; export NODE_PATH="$(npm root -g)"; hetchy-playwright-smoke'
+ && su daytona -c 'hetchy-playwright-smoke'
 
 USER daytona
 WORKDIR /home/daytona

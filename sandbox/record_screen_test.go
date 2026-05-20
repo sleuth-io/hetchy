@@ -43,13 +43,12 @@ func TestDockerfileAvoidsPlaywrightChromeAptInstall(t *testing.T) {
 	for _, want := range []string{
 		"PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright",
 		"HETCHY_PLAYWRIGHT_VALIDATE_DIR=/tmp/hetchy-validate",
-		"NODE_PATH=/usr/local/nvm/versions/node/v22.14.0/lib/node_modules",
+		"NODE_PATH=/usr/local/nvm/versions/node/v${NODE_VERSION}/lib/node_modules",
+		"test -d \"$NODE_PATH\"",
 		"playwright install chromium",
 		"/opt/google/chrome/chrome",
 		"-path '*/chrome-linux/chrome'",
 		"-path '*/chrome-linux64/chrome'",
-		"NODE_MODULES=\"$(npm root -g)\"",
-		"ln -sfn \"$NODE_MODULES\" /usr/local/nvm/v22.14.0/lib/node_modules",
 		"chown -R daytona:daytona \"$PLAYWRIGHT_BROWSERS_PATH\"",
 		"chmod -R a+rwX \"$PLAYWRIGHT_BROWSERS_PATH\"",
 		"hetchy-playwright-smoke",
@@ -66,6 +65,7 @@ func TestDockerfileAvoidsPlaywrightChromeAptInstall(t *testing.T) {
 	for _, bad := range []string{
 		"playwright install --with-deps",
 		"playwright install chrome",
+		"/usr/local/nvm/v22.14.0/lib/node_modules",
 	} {
 		if strings.Contains(got, bad) {
 			t.Errorf("Dockerfile should not contain %q\n%s", bad, got)
