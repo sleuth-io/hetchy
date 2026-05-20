@@ -6,6 +6,7 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -161,6 +162,33 @@ func TestParseClampedInt(t *testing.T) {
 			if got != tc.want {
 				t.Fatalf("parseClampedInt(%q, %d, %d, %d) = %d, want %d",
 					tc.in, tc.def, tc.min, tc.max, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestConversationIncludesFromQuery(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want conversationIncludeOptions
+	}{
+		{name: "default includes turns", raw: "", want: conversationIncludeOptions{Turns: true}},
+		{name: "turns only", raw: "include=turns", want: conversationIncludeOptions{Turns: true}},
+		{name: "attachments only", raw: "include=attachments", want: conversationIncludeOptions{Attachments: true}},
+		{name: "all expands both", raw: "include=all", want: conversationIncludeOptions{Turns: true, Attachments: true}},
+		{name: "comma separated and trimmed", raw: "include=turns,%20attachments", want: conversationIncludeOptions{Turns: true, Attachments: true}},
+		{name: "repeated values are merged", raw: "include=turns&include=attachments", want: conversationIncludeOptions{Turns: true, Attachments: true}},
+		{name: "unknown values ignored", raw: "include=summary", want: conversationIncludeOptions{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			values, err := url.ParseQuery(tc.raw)
+			if err != nil {
+				t.Fatalf("ParseQuery: %v", err)
+			}
+			if got := conversationIncludesFromQuery(values); got != tc.want {
+				t.Fatalf("conversationIncludesFromQuery(%q) = %+v, want %+v", tc.raw, got, tc.want)
 			}
 		})
 	}
