@@ -134,7 +134,10 @@ func TestHandleSlackEvent_ThreadReplyRoutesAsFollowUp(t *testing.T) {
 			return &daytona.Sandbox{ID: sandboxID}, nil
 		},
 		resumeSandboxFn: func(context.Context, *daytona.Sandbox, blocks.Emitter) error { return nil },
-		runFollowUpFn: func(_ context.Context, _ *daytona.Sandbox, _ repoCtx, _ orgcfg.Config, rec convstore.Record, _ agents.Profile, text, requestID string, _ chatTaskOptions, _ ClaudeModel, _ blocks.Emitter) (string, error) {
+		followUpModeFn: func(context.Context, orgcfg.Config, convstore.Record, string) followUpModeDecision {
+			return followUpModeDecision{Mode: followUpModeChange, Confidence: 1, Reason: "test"}
+		},
+		runFollowUpFn: func(_ context.Context, _ *daytona.Sandbox, _ repoCtx, _ orgcfg.Config, rec convstore.Record, _ agents.Profile, text, requestID string, _ chatTaskOptions, _ ClaudeModel, _ followUpMode, _ blocks.Emitter) (string, error) {
 			capturedText = text
 			capturedRequestID = requestID
 			capturedThreadID = rec.ThreadID

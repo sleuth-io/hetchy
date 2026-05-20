@@ -19,11 +19,12 @@ import (
 )
 
 const (
-	daytonaCacheMountPath     = "/home/daytona/.hetchy-cache"
-	defaultCacheVolumePrefix  = "hetchy-cache"
-	defaultCachePruneDays     = 30
-	daytonaCacheVolumeTimeout = 60 * time.Second
-	daytonaCacheVolumeNameMax = 63
+	daytonaCacheMountPath            = "/home/daytona/.hetchy-cache"
+	defaultCacheVolumePrefix         = "hetchy-cache"
+	defaultCachePruneDays            = 30
+	defaultDaytonaAutoArchiveMinutes = 60
+	daytonaCacheVolumeTimeout        = 60 * time.Second
+	daytonaCacheVolumeNameMax        = 63
 
 	daytonaCacheDevVolumeCount  = 10
 	daytonaCacheStgVolumeCount  = 10

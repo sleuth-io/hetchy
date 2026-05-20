@@ -324,7 +324,7 @@ func (b *Bot) finalizeRecoveredRun(ctx context.Context, sb *daytona.Sandbox, run
 		"pr_url", prURL,
 	)
 	b.deleteSandboxSession(sb, run.SessionID)
-	b.cleanupSandbox(ctx, sb, "recovered successful run")
+	b.stopAndArchiveSandbox(ctx, sb)
 }
 
 func (b *Bot) finishRecoveredFailure(ctx context.Context, run runstore.Run, live *liveRun, title, body string, cause error) {

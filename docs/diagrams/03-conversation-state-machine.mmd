@@ -18,10 +18,10 @@ stateDiagram-v2
     FreshAgentRunning --> FailedWithSandbox : setup/agent timeout,\nagent error, or PR not verified
     FailedWithSandbox --> FreshPreparing : next message archives\norphan sandbox first
 
-    FreshAgentRunning --> PRReady : PR verified\nconversation saved\nsandbox archived
+    FreshAgentRunning --> PRReady : PR verified\nconversation saved\nsandbox stopped
 
     PRReady --> FollowUpRunning : user sends follow-up\nsame thread/session
-    FollowUpRunning --> PRReady : follow-up PR verified\nnew turn saved\nsandbox archived
+    FollowUpRunning --> PRReady : follow-up PR verified\nnew turn saved\nsandbox stopped
     FollowUpRunning --> FollowUpFailed : resume, agent, or PR validation failed
     FollowUpFailed --> FollowUpRunning : next message continues\nsame PR conversation
 
@@ -51,8 +51,9 @@ stateDiagram-v2
     note right of PRReady
         Successful conversation:
         SandboxID, Branch, PRURL are set.
-        The Daytona sandbox is archived, not destroyed,
-        so follow-ups resume the same filesystem.
+        The Daytona sandbox is stopped immediately,
+        then auto-archived after the configured
+        continuously-stopped grace window.
     end note
 
     note left of FreshAgentRunning

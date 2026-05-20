@@ -33,7 +33,7 @@ type repoResolveFunc func(context.Context, string, string, string) (repoCtx, err
 
 type agentRunFunc func(context.Context, *daytona.Sandbox, repoCtx, orgcfg.Config, agents.Profile, string, string, string, chatTaskOptions, ClaudeModel, blocks.Emitter) (string, error)
 
-type followUpRunFunc func(context.Context, *daytona.Sandbox, repoCtx, orgcfg.Config, convstore.Record, agents.Profile, string, string, chatTaskOptions, ClaudeModel, blocks.Emitter) (string, error)
+type followUpRunFunc func(context.Context, *daytona.Sandbox, repoCtx, orgcfg.Config, convstore.Record, agents.Profile, string, string, chatTaskOptions, ClaudeModel, followUpMode, blocks.Emitter) (string, error)
 
 type scriptRunFunc func(context.Context, *daytona.Sandbox, string, string, string, map[string]string, blocks.Emitter) (string, error)
 

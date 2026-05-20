@@ -21,9 +21,9 @@ import (
 const specImprovementsDir = "/tmp/hetchy-spec/improved"
 
 // applySpecImprovements reads /tmp/hetchy-spec/improved/{setup,start,
-// health}.sh from the sandbox after a successful agent run, and if
-// any are present saves a new spec version with those scripts patched
-// in. The agent's reflection prompt also lets it drop a `none.txt`
+// stop,health}.sh and lessons.md from the sandbox after a successful
+// agent run, and if any are present saves a new spec version with
+// those artifacts patched in. The agent's reflection prompt also lets it drop a `none.txt`
 // marker — we read that too so the persisted bootstrap_log can record
 // "agent considered improvements and chose none".
 //
@@ -81,10 +81,12 @@ func (b *Bot) applySpecImprovements(ctx context.Context, sb *daytona.Sandbox, se
 
 	improvedSetup, hasSetup := read(specImprovementsDir + "/setup.sh")
 	improvedStart, hasStart := read(specImprovementsDir + "/start.sh")
+	improvedStop, hasStop := read(specImprovementsDir + "/stop.sh")
 	improvedHealth, hasHealth := read(specImprovementsDir + "/health.sh")
+	improvedLessons, hasLessons := read(specImprovementsDir + "/lessons.md")
 	reason, _ := read(specImprovementsDir + "/reason.md")
 
-	if !hasSetup && !hasStart && !hasHealth {
+	if !hasSetup && !hasStart && !hasStop && !hasHealth && !hasLessons {
 		// Agent didn't write a none.txt and didn't write any improved
 		// scripts — silent skip. Either the prompt section was dropped
 		// (model regression) or the model decided to skip the entire
@@ -136,9 +138,17 @@ func (b *Bot) applySpecImprovements(ctx context.Context, sb *daytona.Sandbox, se
 		patched.StartScript = improvedStart
 		changed = append(changed, "start.sh")
 	}
+	if hasStop {
+		patched.StopScript = improvedStop
+		changed = append(changed, "stop.sh")
+	}
 	if hasHealth {
 		patched.HealthCheck = improvedHealth
 		changed = append(changed, "health.sh")
+	}
+	if hasLessons {
+		patched.LessonsMD = improvedLessons
+		changed = append(changed, "lessons.md")
 	}
 	// Append the agent's reason to the bootstrap_log so a future
 	// AutoHeal / debugging session has the rationale alongside the

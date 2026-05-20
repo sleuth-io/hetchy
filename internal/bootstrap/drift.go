@@ -115,7 +115,13 @@ Prior setup.sh:
 Prior start.sh:
 %s
 
+Prior stop.sh:
+%s
+
 Prior health.sh:
+%s
+
+Prior lessons.md:
 %s
 
 Last failure (truncated to last %d lines):
@@ -128,7 +134,8 @@ diff to prior shows a fundamental shift in the repo's stack.
 `,
 		prior.Kind, prior.ValidationStatus,
 		prior.SuccessCount, prior.FailureCount,
-		prior.SetupScript, prior.StartScript, prior.HealthCheck,
+		prior.SetupScript, prior.StartScript, prior.StopScript,
+		prior.HealthCheck, prior.LessonsMD,
 		200, truncate(failureLog, 4000),
 	)
 }

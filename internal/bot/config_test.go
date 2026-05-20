@@ -53,7 +53,7 @@ func TestLoadConfig_AllRequiredSet(t *testing.T) {
 
 func TestLoadConfig_AppliesDefaults(t *testing.T) {
 	clearEnv(t, "AUTH_BYPASS", "WEB_PORT", "DAYTONA_API_URL", "LOGOUT_RETURN_TO", "HETCHY_SX_PUBLIC_VAULT_URL",
-		"DAYTONA_CACHE_VOLUMES_DISABLED", "DAYTONA_CACHE_VOLUME_PREFIX", "DAYTONA_CACHE_PRUNE_DAYS")
+		"DAYTONA_CACHE_VOLUMES_DISABLED", "DAYTONA_CACHE_VOLUME_PREFIX", "DAYTONA_CACHE_PRUNE_DAYS", "DAYTONA_AUTO_ARCHIVE_MINUTES")
 	setEnv(t, requiredEnv())
 
 	cfg, err := LoadConfig()
@@ -77,6 +77,9 @@ func TestLoadConfig_AppliesDefaults(t *testing.T) {
 	}
 	if cfg.DaytonaCachePruneDays != 30 {
 		t.Errorf("DaytonaCachePruneDays default = %d", cfg.DaytonaCachePruneDays)
+	}
+	if cfg.DaytonaAutoArchiveMinutes != 60 {
+		t.Errorf("DaytonaAutoArchiveMinutes default = %d", cfg.DaytonaAutoArchiveMinutes)
 	}
 }
 
@@ -113,6 +116,33 @@ func TestLoadConfig_DaytonaCachePruneDaysRejectsInvalid(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestLoadConfig_DaytonaAutoArchiveMinutes(t *testing.T) {
+	t.Run("parses_positive_int", func(t *testing.T) {
+		clearEnv(t, "AUTH_BYPASS")
+		setEnv(t, requiredEnv())
+		t.Setenv("DAYTONA_AUTO_ARCHIVE_MINUTES", "90")
+		cfg, err := LoadConfig()
+		if err != nil {
+			t.Fatalf("LoadConfig: %v", err)
+		}
+		if cfg.DaytonaAutoArchiveMinutes != 90 {
+			t.Errorf("DaytonaAutoArchiveMinutes = %d, want 90", cfg.DaytonaAutoArchiveMinutes)
+		}
+	})
+	t.Run("rejects_invalid", func(t *testing.T) {
+		for _, value := range []string{"0", "-1", "abc"} {
+			t.Run(value, func(t *testing.T) {
+				clearEnv(t, "AUTH_BYPASS")
+				setEnv(t, requiredEnv())
+				t.Setenv("DAYTONA_AUTO_ARCHIVE_MINUTES", value)
+				if _, err := LoadConfig(); err == nil {
+					t.Fatalf("expected DAYTONA_AUTO_ARCHIVE_MINUTES=%q to fail", value)
+				}
+			})
+		}
+	})
 }
 
 func TestLoadConfig_SXPublicVaultOverride(t *testing.T) {
@@ -199,6 +229,7 @@ func TestComposeForwardsArtifactUploadEnv(t *testing.T) {
 		"DAYTONA_CACHE_VOLUMES_DISABLED",
 		"DAYTONA_CACHE_VOLUME_PREFIX",
 		"DAYTONA_CACHE_PRUNE_DAYS",
+		"DAYTONA_AUTO_ARCHIVE_MINUTES",
 	} {
 		want := key + ": ${" + key + ":-}"
 		if !strings.Contains(compose, want) {

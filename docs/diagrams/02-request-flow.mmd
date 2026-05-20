@@ -35,7 +35,7 @@ sequenceDiagram
             alt Spec not found
                 Bot->>Daytona: Bootstrap session: clone, detect hints, run bootstrap loop
                 Daytona->>Claude: Opus/high bootstrap prompt
-                Claude-->>Daytona: manifest.json, setup.sh, start.sh, health.sh
+                Claude-->>Daytona: manifest.json, setup.sh, start.sh, stop.sh, health.sh, lessons.md
                 Bot->>DB: Save validated/partial spec or failing partial spec
             else Spec exists
                 Bot->>Bot: Reuse saved spec as-is
@@ -58,9 +58,9 @@ sequenceDiagram
         GH-->>Bot: Verified PR
         Bot->>DB: Persist conversation turn and response_blocks
         Bot->>DB: Mark agent_run succeeded
-        Bot->>Daytona: Delete session, stop sandbox, archive sandbox
+        Bot->>Daytona: Delete session, set auto-archive interval, stop sandbox
         Bot-->>Transport: Done block with PR URL
         Transport-->>User: Final result
     end
 
-    Note over Bot,DB: For follow-ups, the existing conversation has sandbox_id + pr_url. Hetchy starts the archived sandbox, mints a fresh GitHub token, runs followup.sh on the same branch, appends a new turn, then archives again on success.
+    Note over Bot,DB: For follow-ups, the existing conversation has sandbox_id + pr_url. Hetchy starts the stopped or archived sandbox, mints a fresh GitHub token, runs followup.sh on the same branch, appends a new turn, then stops it again so Daytona auto-archives after the grace window.

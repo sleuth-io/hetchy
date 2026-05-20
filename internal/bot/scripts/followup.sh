@@ -20,6 +20,11 @@
 #   HETCHY_AGENT_PROMPT_B64      fallback persona prompt when the sx asset is unavailable
 #   HETCHY_SX_PUBLIC_VAULT_URL   git sx vault for Hetchy-managed agent assets
 #   SX_KEY                       optional org skills.new bot key
+#   SF_SPEC_SETUP_B64 or SF_SPEC_SETUP_B64_FILE      base64-encoded setup.sh from the saved bootstrap spec
+#   SF_SPEC_START_B64 or SF_SPEC_START_B64_FILE      base64-encoded start.sh from the saved bootstrap spec
+#   SF_SPEC_STOP_B64 or SF_SPEC_STOP_B64_FILE        base64-encoded stop.sh from the saved bootstrap spec
+#   SF_SPEC_HEALTH_B64 or SF_SPEC_HEALTH_B64_FILE    base64-encoded health.sh from the saved bootstrap spec
+#   SF_SPEC_LESSONS_B64 or SF_SPEC_LESSONS_B64_FILE  base64-encoded lessons.md from the saved bootstrap spec
 #   HETCHY_CLAUDE_MODEL          Claude Code model alias: opus, sonnet, or haiku
 #   HETCHY_CODEX_MODEL           Codex model id, e.g. gpt-5.4
 #   HETCHY_ARTIFACT_SLOTS        JSON proof-artifact upload slots
@@ -256,7 +261,7 @@ export REPO="$SF_WORKDIR"
 # Re-apply the saved bootstrap spec, if attached. The follow-up lands
 # in an unarchived sandbox where the original `start.sh &` background
 # process is gone, so the validation prompt's "the app is running"
-# assertion is false unless we re-run setup → start (bg) → poll
+# assertion is false unless we re-run setup → stop → start → poll
 # health here. Mirrors the block in agent.sh and applies the same
 # soft-fail discipline so a broken spec doesn't tear down the run
 # before claude gets to do anything useful.
@@ -264,43 +269,35 @@ if has_b64_input SF_SPEC_SETUP_B64 && has_b64_input SF_SPEC_START_B64 && has_b64
   echo "[hetchy] applying saved repo setup spec"
   mkdir -p /tmp/hetchy-spec
   rm -f /tmp/hetchy-spec/UNHEALTHY
-  echo "[hetchy] saved spec payload sizes: setup=$(b64_input_size SF_SPEC_SETUP_B64)B start=$(b64_input_size SF_SPEC_START_B64)B health=$(b64_input_size SF_SPEC_HEALTH_B64)B"
+  echo "[hetchy] saved spec payload sizes: setup=$(b64_input_size SF_SPEC_SETUP_B64)B start=$(b64_input_size SF_SPEC_START_B64)B stop=$(b64_input_size SF_SPEC_STOP_B64)B health=$(b64_input_size SF_SPEC_HEALTH_B64)B lessons=$(b64_input_size SF_SPEC_LESSONS_B64)B"
   echo "[hetchy] writing saved setup.sh"
   decode_b64_input SF_SPEC_SETUP_B64 /tmp/hetchy-spec/setup.sh
   echo "[hetchy] writing saved start.sh"
   decode_b64_input SF_SPEC_START_B64 /tmp/hetchy-spec/start.sh
+  if has_b64_input SF_SPEC_STOP_B64; then
+    echo "[hetchy] writing saved stop.sh"
+    decode_b64_input SF_SPEC_STOP_B64 /tmp/hetchy-spec/stop.sh
+  else
+    rm -f /tmp/hetchy-spec/stop.sh
+  fi
   echo "[hetchy] writing saved health.sh"
   decode_b64_input SF_SPEC_HEALTH_B64 /tmp/hetchy-spec/health.sh
+  if has_b64_input SF_SPEC_LESSONS_B64; then
+    echo "[hetchy] writing saved lessons.md"
+    decode_b64_input SF_SPEC_LESSONS_B64 /tmp/hetchy-spec/lessons.md
+  else
+    rm -f /tmp/hetchy-spec/lessons.md
+  fi
   rewrite_legacy_saved_spec_workdir
   echo "[hetchy] making saved setup scripts executable"
   chmod +x /tmp/hetchy-spec/setup.sh /tmp/hetchy-spec/start.sh /tmp/hetchy-spec/health.sh
+  if [[ -f /tmp/hetchy-spec/stop.sh ]]; then
+    chmod +x /tmp/hetchy-spec/stop.sh
+  fi
 
   run_saved_setup
-
-  echo "[hetchy] starting app via start.sh (background)"
-  # See agent.sh for the rationale: keep start.sh's noise out of the
-  # chat block stream and into a log the agent can grep on demand.
-  /tmp/hetchy-spec/start.sh > /tmp/hetchy-spec/start.log 2>&1 &
-  SF_SPEC_START_PID=$!
-
-  echo "[hetchy] polling health.sh (90s budget)"
-  spec_healthy=0
-  for i in {1..90}; do
-    if ! kill -0 "${SF_SPEC_START_PID}" 2>/dev/null; then
-      echo "[hetchy] start.sh exited early (pid ${SF_SPEC_START_PID})"
-      break
-    fi
-    if /tmp/hetchy-spec/health.sh >/dev/null 2>&1; then
-      echo "[hetchy] healthy after ${i}s"
-      spec_healthy=1
-      break
-    fi
-    sleep 1
-  done
-  if [[ ${spec_healthy} -ne 1 ]]; then
-    echo "[hetchy] WARNING: spec health check never passed; agent will see a non-running app"
-    : > /tmp/hetchy-spec/UNHEALTHY
-  fi
+  run_saved_stop
+  start_saved_app_and_poll_health
 fi
 
 decode_b64_input SF_PROMPT_B64 /tmp/sf-prompt-base.txt

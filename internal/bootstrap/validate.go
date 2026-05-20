@@ -27,7 +27,7 @@ type ValidationArgs struct {
 
 // BuildValidationPrompt produces the post-task validation prompt — the
 // instructions an agent receives after it has made a change but before
-// the PR is finalized. It tells the agent to run the saved start.sh,
+// the PR is finalized. It tells the agent to refresh the saved runtime,
 // exercise the affected feature, and produce evidence artifacts.
 //
 // The prompt deliberately delegates *what to validate* to the agent:
@@ -55,6 +55,7 @@ WHETHER IT SUCCEEDED before assuming you can hit a live URL:
     check never passed within the 90s budget. The app is NOT running.
     Look at /tmp/hetchy-spec/setup.log for stderr/stdout from setup.sh
     and /tmp/hetchy-spec/start.log for stderr/stdout from start.sh
+    (and /tmp/hetchy-spec/stop.log if stop.sh failed)
     (timeouts, port conflicts, missing deps), record what you see in
     summary.md as "Validation: incomplete - <specific reason>", and skip the
     end-to-end probing below. Do NOT spend tool calls poking dead
@@ -79,6 +80,11 @@ WHETHER IT SUCCEEDED before assuming you can hit a live URL:
 		}
 		b.WriteString("\n")
 	}
+	if strings.TrimSpace(spec.LessonsMD) != "" {
+		b.WriteString("Repo-specific bootstrap lessons you must obey:\n\n")
+		b.WriteString(truncate(spec.LessonsMD, 2500))
+		b.WriteString("\n\n")
+	}
 
 	fmt.Fprintf(&b, `The diff you just produced:
 
@@ -89,6 +95,19 @@ The PR description you drafted:
 %s
 
 Your job: produce proof the change works and include that proof in the PR.
+
+Before doing HTTP, browser, or other end-to-end validation against a
+long-running service, refresh the runtime so it serves the code you just
+changed:
+
+  1. Run any required build/test commands for the changed code.
+  2. Run /tmp/hetchy-spec/stop.sh if it exists.
+  3. Run /tmp/hetchy-spec/start.sh.
+  4. Run /tmp/hetchy-spec/health.sh and do not start E2E validation until
+     it passes.
+
+This restart step is required even if the host started the app before
+you began editing: that baseline process may still be serving old code.
 
 Choose proof based on the change:
 
@@ -169,7 +188,10 @@ you'd actually change — leave the rest absent. Allowed paths:
 
   /tmp/hetchy-spec/improved/setup.sh
   /tmp/hetchy-spec/improved/start.sh
+  /tmp/hetchy-spec/improved/stop.sh
   /tmp/hetchy-spec/improved/health.sh
+  /tmp/hetchy-spec/improved/lessons.md  (concise repo-specific runtime
+                                         notes and ordering requirements)
   /tmp/hetchy-spec/improved/reason.md   (one paragraph: what changed
                                          and why — for the audit log)
 
@@ -180,9 +202,11 @@ single marker file to acknowledge you considered it:
 
 The bot will pick up whichever files exist, persist them as a new spec
 version (preserving secrets and capabilities), and the next task on
-this repo will benefit. Do NOT rewrite scripts speculatively — only
-capture changes that addressed concrete friction you hit during THIS
-task. Producing a "none" marker is a perfectly valid outcome.
+this repo will benefit. Prefer executable script changes over lessons
+when the fix is procedural. Do NOT rewrite scripts or lessons
+speculatively — only capture changes that addressed concrete friction
+you hit during THIS task. Producing a "none" marker is a perfectly
+valid outcome.
 `)
 
 	return b.String()

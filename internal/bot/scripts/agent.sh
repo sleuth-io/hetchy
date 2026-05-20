@@ -25,7 +25,9 @@
 #   SX_KEY  if set, install org skills.new assets after clone, before claude
 #   SF_SPEC_SETUP_B64 or SF_SPEC_SETUP_B64_FILE    base64-encoded setup.sh from the saved bootstrap spec
 #   SF_SPEC_START_B64 or SF_SPEC_START_B64_FILE    base64-encoded start.sh from the saved bootstrap spec
+#   SF_SPEC_STOP_B64 or SF_SPEC_STOP_B64_FILE      base64-encoded stop.sh from the saved bootstrap spec
 #   SF_SPEC_HEALTH_B64 or SF_SPEC_HEALTH_B64_FILE  base64-encoded health.sh from the saved bootstrap spec
+#   SF_SPEC_LESSONS_B64 or SF_SPEC_LESSONS_B64_FILE base64-encoded lessons.md from the saved bootstrap spec
 #   HETCHY_CLAUDE_MODEL  Claude Code model alias: opus, sonnet, or haiku
 #   HETCHY_CODEX_MODEL   Codex model id, e.g. gpt-5.4
 #   HETCHY_ARTIFACT_SLOTS      JSON proof-artifact upload slots
@@ -33,8 +35,8 @@
 #   HETCHY_ARTIFACT_SLOT_TOKEN bearer token for that endpoint
 #   HETCHY_CACHE_DIR           mounted dependency cache archive subpath
 #   HETCHY_CACHE_PRUNE_DAYS    best-effort local cache file pruning threshold
-# When all three are set, agent.sh runs setup → starts the app in the
-# background → polls health.sh BEFORE invoking claude, so the validation
+# When setup/start/health are set, agent.sh runs setup → stop (if present)
+# → start → polls health.sh BEFORE invoking claude, so the validation
 # prompt's claim that "the app is running" is actually true.
 
 set -euo pipefail
@@ -298,9 +300,10 @@ emit_installed_skills
 export REPO="$SF_WORKDIR"
 
 # Apply the saved bootstrap spec, if one was attached. We deploy the
-# four scripts to /tmp/hetchy-spec/, run setup.sh (idempotent), launch
-# start.sh in the background, and poll health.sh until it passes — the
-# validation prompt assumes this work has already been done.
+# saved artifacts to /tmp/hetchy-spec/, run setup.sh (idempotent), run
+# stop.sh if present, launch start.sh, and poll health.sh until it
+# passes — the validation prompt assumes this baseline work has already
+# been done.
 if has_b64_input SF_SPEC_SETUP_B64 && has_b64_input SF_SPEC_START_B64 && has_b64_input SF_SPEC_HEALTH_B64; then
   echo "[hetchy] applying saved repo setup spec"
   mkdir -p /tmp/hetchy-spec
@@ -308,16 +311,31 @@ if has_b64_input SF_SPEC_SETUP_B64 && has_b64_input SF_SPEC_START_B64 && has_b64
   # sandbox; the spec-apply block below will re-create UNHEALTHY only
   # if THIS run's health poll fails.
   rm -f /tmp/hetchy-spec/UNHEALTHY
-  echo "[hetchy] saved spec payload sizes: setup=$(b64_input_size SF_SPEC_SETUP_B64)B start=$(b64_input_size SF_SPEC_START_B64)B health=$(b64_input_size SF_SPEC_HEALTH_B64)B"
+  echo "[hetchy] saved spec payload sizes: setup=$(b64_input_size SF_SPEC_SETUP_B64)B start=$(b64_input_size SF_SPEC_START_B64)B stop=$(b64_input_size SF_SPEC_STOP_B64)B health=$(b64_input_size SF_SPEC_HEALTH_B64)B lessons=$(b64_input_size SF_SPEC_LESSONS_B64)B"
   echo "[hetchy] writing saved setup.sh"
   decode_b64_input SF_SPEC_SETUP_B64 /tmp/hetchy-spec/setup.sh
   echo "[hetchy] writing saved start.sh"
   decode_b64_input SF_SPEC_START_B64 /tmp/hetchy-spec/start.sh
+  if has_b64_input SF_SPEC_STOP_B64; then
+    echo "[hetchy] writing saved stop.sh"
+    decode_b64_input SF_SPEC_STOP_B64 /tmp/hetchy-spec/stop.sh
+  else
+    rm -f /tmp/hetchy-spec/stop.sh
+  fi
   echo "[hetchy] writing saved health.sh"
   decode_b64_input SF_SPEC_HEALTH_B64 /tmp/hetchy-spec/health.sh
+  if has_b64_input SF_SPEC_LESSONS_B64; then
+    echo "[hetchy] writing saved lessons.md"
+    decode_b64_input SF_SPEC_LESSONS_B64 /tmp/hetchy-spec/lessons.md
+  else
+    rm -f /tmp/hetchy-spec/lessons.md
+  fi
   rewrite_legacy_saved_spec_workdir
   echo "[hetchy] making saved setup scripts executable"
   chmod +x /tmp/hetchy-spec/setup.sh /tmp/hetchy-spec/start.sh /tmp/hetchy-spec/health.sh
+  if [[ -f /tmp/hetchy-spec/stop.sh ]]; then
+    chmod +x /tmp/hetchy-spec/stop.sh
+  fi
 
   # Soft-fail setup.sh: a non-zero exit from the saved spec must not
   # abort the agent run. Under `set -euo pipefail` an unguarded call
@@ -328,46 +346,8 @@ if has_b64_input SF_SPEC_SETUP_B64 && has_b64_input SF_SPEC_START_B64 && has_b64
   # actually up", and the agent still has a working repo to work in
   # even when bootstrap is broken.
   run_saved_setup
-
-  echo "[hetchy] starting app via start.sh (background)"
-  # Redirect to a captured log instead of inheriting agent.sh's
-  # stdout/stderr — otherwise framework banners, request logs, and
-  # migration noise from the user's app interleave with claude's
-  # stream-json events in the chat block stream. The validation
-  # prompt tells the agent to read /tmp/hetchy-spec/start.log when
-  # it needs to triage why the app isn't responding.
-  /tmp/hetchy-spec/start.sh > /tmp/hetchy-spec/start.log 2>&1 &
-  SF_SPEC_START_PID=$!
-
-  echo "[hetchy] polling health.sh (90s budget)"
-  spec_healthy=0
-  for i in {1..90}; do
-    # Bail fast if start.sh died — keeps us from polling for 90s
-    # against a dead process when the user's spec broke.
-    if ! kill -0 "${SF_SPEC_START_PID}" 2>/dev/null; then
-      echo "[hetchy] start.sh exited early (pid ${SF_SPEC_START_PID})"
-      break
-    fi
-    if /tmp/hetchy-spec/health.sh >/dev/null 2>&1; then
-      echo "[hetchy] healthy after ${i}s"
-      spec_healthy=1
-      break
-    fi
-    sleep 1
-  done
-  if [[ ${spec_healthy} -ne 1 ]]; then
-    echo "[hetchy] WARNING: spec health check never passed; agent will see a non-running app"
-    # Sentinel for the validation prompt: when this file exists the
-    # agent knows the spec couldn't bring the app up and should write
-    # "Validation: incomplete — <reason>" rather than burn time poking
-    # a dead port. The prompt always reads "the app is running"
-    # because it's templated server-side before agent.sh runs; this
-    # in-sandbox marker is the truth-source the agent checks at the
-    # start of validation. Cleared at the top of the spec-apply block
-    # to make sure a stale marker from a prior run can't poison this
-    # one.
-    : > /tmp/hetchy-spec/UNHEALTHY
-  fi
+  run_saved_stop
+  start_saved_app_and_poll_health
 fi
 
 decode_b64_input SF_PROMPT_B64 /tmp/sf-prompt-base.txt

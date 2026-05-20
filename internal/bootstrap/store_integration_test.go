@@ -103,6 +103,7 @@ func TestSpecRoundTrip(t *testing.T) {
 		StartScript:    "#!/usr/bin/env bash\nexec ./dist/hetchy\n",
 		HealthCheck:    "curl -fsS http://localhost:8080/",
 		StopScript:     "pkill -f dist/hetchy",
+		LessonsMD:      "- Restart the app after rebuilding before HTTP validation.\n",
 		Services: []Service{{
 			Name: "web", Port: 8080, URL: "http://localhost:8080", Kind: "ui",
 		}},
@@ -148,6 +149,9 @@ func TestSpecRoundTrip(t *testing.T) {
 	}
 	if read.StopScript != original.StopScript {
 		t.Error("stop_script mismatch")
+	}
+	if read.LessonsMD != original.LessonsMD {
+		t.Error("lessons_md mismatch")
 	}
 	if len(read.Services) != 1 || read.Services[0].Port != 8080 {
 		t.Errorf("services: %+v", read.Services)

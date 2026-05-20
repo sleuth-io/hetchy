@@ -106,8 +106,12 @@ func TestRecoverAgentRunReadyBootstrapCommandSavesSpecAndContinues(t *testing.T)
 				return "npm install\n", nil
 			case strings.Contains(cmd, "start.sh"):
 				return "npm run dev\n", nil
+			case strings.Contains(cmd, "stop.sh"):
+				return "pkill -f npm || true\n", nil
 			case strings.Contains(cmd, "health.sh"):
 				return "curl -f http://localhost:3000\n", nil
+			case strings.Contains(cmd, "lessons.md"):
+				return "- Run start.sh after rebuilding.\n", nil
 			default:
 				t.Fatalf("unexpected bootstrap read cmd %q", cmd)
 				return "", nil
@@ -123,8 +127,8 @@ func TestRecoverAgentRunReadyBootstrapCommandSavesSpecAndContinues(t *testing.T)
 		deleteSandboxSessionFn: func(_ *daytona.Sandbox, sessionID string) {
 			deletedSessions = append(deletedSessions, sessionID)
 		},
-		cleanupSandboxFn: func(_ context.Context, sb *daytona.Sandbox, reason string) {
-			cleanupCall = sb.ID + "|" + reason
+		stopAndArchiveFn: func(_ context.Context, sb *daytona.Sandbox) {
+			cleanupCall = sb.ID + "|stopped"
 		},
 	}
 
@@ -143,7 +147,7 @@ func TestRecoverAgentRunReadyBootstrapCommandSavesSpecAndContinues(t *testing.T)
 	if rec.PRURL != "https://github.com/acme/repo/pull/9" || rec.SandboxID != "sandbox-1" {
 		t.Fatalf("projected conversation = %+v", rec)
 	}
-	if cleanupCall != "sandbox-1|recovered successful run" {
+	if cleanupCall != "sandbox-1|stopped" {
 		t.Fatalf("cleanup call = %q", cleanupCall)
 	}
 	if len(deletedSessions) == 0 || deletedSessions[0] != "bootstrap-req-1" {

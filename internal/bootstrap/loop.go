@@ -67,14 +67,16 @@ type LoopResult struct {
 	Log            string
 }
 
-// PartialScripts holds whichever of setup.sh/start.sh/health.sh the
-// agent managed to write before the bootstrap loop failed. All three
-// are independently optional — a script that didn't get written is an
-// empty string.
+// PartialScripts holds whichever of setup.sh/start.sh/stop.sh/health.sh
+// and lessons.md the agent managed to write before the bootstrap loop
+// failed. All fields are independently optional — a file that didn't
+// get written is an empty string.
 type PartialScripts struct {
-	Setup  string
-	Start  string
-	Health string
+	Setup   string
+	Start   string
+	Stop    string
+	Health  string
+	Lessons string
 }
 
 // ErrLoopFailed signals that bootstrap exhausted its iteration budget
@@ -83,10 +85,11 @@ type PartialScripts struct {
 // the spec doc's "When bootstrap can't fully succeed" section.
 var ErrLoopFailed = errors.New("bootstrap: loop failed")
 
-// bootstrapOutDir is where BootstrapScript writes the four artifacts
-// (setup.sh, start.sh, health.sh, manifest.json). The same path is
-// passed to the script via HETCHY_BOOTSTRAP_OUT_DIR — keeping it as a
-// const here keeps the host- and sandbox-side reads from drifting.
+// bootstrapOutDir is where BootstrapScript writes the bootstrap
+// artifacts (setup.sh, start.sh, stop.sh, health.sh, lessons.md,
+// manifest.json). The same path is passed to the script via
+// HETCHY_BOOTSTRAP_OUT_DIR — keeping it as a const here keeps the
+// host- and sandbox-side reads from drifting.
 const bootstrapOutDir = "/tmp/hetchy-spec"
 
 // Run drives the bootstrap loop end to end:
@@ -94,7 +97,7 @@ const bootstrapOutDir = "/tmp/hetchy-spec"
 //  1. Render the bootstrap prompt from hints + args.
 //  2. Drop the prompt + bootstrap.sh into the sandbox.
 //  3. Invoke bootstrap.sh, which calls Claude Code, runs the agent's
-//     setup/start/health, and emits the four artifacts at known paths.
+//     setup/start/stop/health/lessons, and emits the artifacts at known paths.
 //  4. Read back the artifacts, parse the manifest, decide validation
 //     status (validated vs. partial vs. failing).
 //  5. Compute the source fingerprint from the host-side hints.
@@ -174,9 +177,17 @@ func ResultFromArtifacts(ctx context.Context, runner Runner, in LoopInput, log s
 	if err != nil {
 		return nil, fmt.Errorf("bootstrap: read start.sh: %w", err)
 	}
+	stop, err := runner.ReadFile(ctx, bootstrapOutDir+"/stop.sh")
+	if err != nil {
+		return nil, fmt.Errorf("bootstrap: read stop.sh: %w", err)
+	}
 	health, err := runner.ReadFile(ctx, bootstrapOutDir+"/health.sh")
 	if err != nil {
 		return nil, fmt.Errorf("bootstrap: read health.sh: %w", err)
+	}
+	lessons, err := runner.ReadFile(ctx, bootstrapOutDir+"/lessons.md")
+	if err != nil {
+		return nil, fmt.Errorf("bootstrap: read lessons.md: %w", err)
 	}
 
 	status := StatusValidated
@@ -191,6 +202,8 @@ func ResultFromArtifacts(ctx context.Context, runner Runner, in LoopInput, log s
 		SetupScript:          string(setup),
 		StartScript:          string(start),
 		HealthCheck:          string(health),
+		StopScript:           string(stop),
+		LessonsMD:            string(lessons),
 		Services:             manifest.Services,
 		RequiredSecrets:      manifest.RequiredSecrets,
 		DeferredCapabilities: manifest.DeferredCapabilities,
@@ -228,9 +241,11 @@ func readArtifactsBestEffort(ctx context.Context, runner Runner, outDir string) 
 		return string(data)
 	}
 	return manifest, PartialScripts{
-		Setup:  read("setup.sh"),
-		Start:  read("start.sh"),
-		Health: read("health.sh"),
+		Setup:   read("setup.sh"),
+		Start:   read("start.sh"),
+		Stop:    read("stop.sh"),
+		Health:  read("health.sh"),
+		Lessons: read("lessons.md"),
 	}
 }
 
@@ -294,7 +309,8 @@ func sortedNames(m map[string]string) []string {
 //
 // It is deliberately defensive: every artifact path must exist with
 // non-empty content; setup.sh must be idempotent (runs twice in a
-// row); start.sh is backgrounded and we wait for health.sh to pass
+// row); stop.sh must be idempotent; start.sh is launched and we wait
+// for health.sh to pass
 // before returning success.
 //
 // The script writes its own log to stderr so a non-zero exit's tail
@@ -340,7 +356,7 @@ printf '{"hasCompletedOnboarding":true}\n' > "$HOME/.claude.json"
 echo "[hetchy-bootstrap] invoking claude" >&2
 # stream-json + verbose mirrors agent.sh — gives the bot typed Block
 # updates in real time. The agent is told (in the prompt) to write
-# its four artifacts to ${HETCHY_BOOTSTRAP_OUT_DIR}; we just verify
+# its artifacts to ${HETCHY_BOOTSTRAP_OUT_DIR}; we just verify
 # they show up. run_claude_with_watchdog is provided by the watchdog
 # prelude that the bot prepends to this script before writing it to
 # the sandbox; see internal/bot/scripts/claude-watchdog.sh. The bot
@@ -349,7 +365,7 @@ echo "[hetchy-bootstrap] invoking claude" >&2
 run_claude_with_watchdog "${HETCHY_BOOTSTRAP_PROMPT_FILE}"
 
 echo "[hetchy-bootstrap] verifying artifacts" >&2
-for f in setup.sh start.sh health.sh manifest.json; do
+for f in setup.sh start.sh stop.sh health.sh lessons.md manifest.json; do
   path="${HETCHY_BOOTSTRAP_OUT_DIR}/${f}"
   if [[ ! -s "$path" ]]; then
     echo "[hetchy-bootstrap] missing or empty: $path" >&2
@@ -359,25 +375,33 @@ done
 
 chmod +x "${HETCHY_BOOTSTRAP_OUT_DIR}/setup.sh" \
          "${HETCHY_BOOTSTRAP_OUT_DIR}/start.sh" \
+         "${HETCHY_BOOTSTRAP_OUT_DIR}/stop.sh" \
          "${HETCHY_BOOTSTRAP_OUT_DIR}/health.sh"
 
 echo "[hetchy-bootstrap] running setup.sh (idempotency check: run twice)" >&2
 "${HETCHY_BOOTSTRAP_OUT_DIR}/setup.sh"
 "${HETCHY_BOOTSTRAP_OUT_DIR}/setup.sh"
 
+echo "[hetchy-bootstrap] stopping stale app runtime" >&2
+"${HETCHY_BOOTSTRAP_OUT_DIR}/stop.sh" > "${HETCHY_BOOTSTRAP_OUT_DIR}/stop.log" 2>&1 || true
+
 echo "[hetchy-bootstrap] starting app in background" >&2
-"${HETCHY_BOOTSTRAP_OUT_DIR}/start.sh" &
+"${HETCHY_BOOTSTRAP_OUT_DIR}/start.sh" > "${HETCHY_BOOTSTRAP_OUT_DIR}/start.log" 2>&1 &
 START_PID=$!
-trap 'kill ${START_PID} 2>/dev/null || true' EXIT
+START_DONE=0
+trap '"${HETCHY_BOOTSTRAP_OUT_DIR}/stop.sh" > "${HETCHY_BOOTSTRAP_OUT_DIR}/stop.log" 2>&1 || true; if [[ "${START_DONE:-0}" != "1" ]]; then kill ${START_PID} 2>/dev/null || true; fi' EXIT
 
 echo "[hetchy-bootstrap] polling health.sh (90s budget)" >&2
 for i in {1..90}; do
-  # Bail fast if start.sh died — without this, a process that exits in
-  # the first second (missing dependency, port conflict, bad env var)
-  # still burns the full 90s polling against a never-ready endpoint.
-  if ! kill -0 "${START_PID}" 2>/dev/null; then
-    echo "[hetchy-bootstrap] start.sh exited early (pid ${START_PID})" >&2
-    exit 71
+  if [[ "${START_DONE}" != "1" ]] && ! kill -0 "${START_PID}" 2>/dev/null; then
+    if wait "${START_PID}"; then
+      echo "[hetchy-bootstrap] start.sh exited successfully; continuing health poll" >&2
+      START_DONE=1
+    else
+      code=$?
+      echo "[hetchy-bootstrap] start.sh exited non-zero (${code})" >&2
+      exit 71
+    fi
   fi
   if "${HETCHY_BOOTSTRAP_OUT_DIR}/health.sh" >/dev/null 2>&1; then
     echo "[hetchy-bootstrap] healthy after ${i}s" >&2

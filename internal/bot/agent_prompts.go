@@ -48,6 +48,35 @@ When you are done implementing the change:
   5. If you edit the PR body (e.g. to add a Validation section), write each paragraph or bullet as one long line — do NOT insert hard line breaks; let GitHub reflow the text for the reader's viewport.
   6. The very last line of your output MUST be just the PR URL — no other text on that line.`
 
+const agentFollowUpInspectPromptTemplate = `You are continuing context in %s on branch %s.
+The existing pull request is at %s.
+
+Conversation so far:
+%s
+
+USER REQUEST:
+%s
+
+This follow-up is an inspection turn. You may inspect repository files,
+git state, logs, and existing PR state as needed to answer the user.
+Do not edit files, stage, commit, push, update the PR title/body, run
+write-oriented formatters, or wait on PR checks. Finish with your
+findings and any recommended next steps. Do not end with a PR URL.`
+
+const agentFollowUpAnswerOnlyPromptTemplate = `You are continuing this conversation about %s.
+The existing pull request is at %s.
+
+Conversation so far:
+%s
+
+USER REQUEST:
+%s
+
+This follow-up is answer-only. Answer the user directly from the
+conversation context. Do not inspect the repository, run commands,
+start the app, validate, edit files, stage, commit, push, update the PR,
+or wait on PR checks. Do not end with a PR URL.`
+
 func conditionalTasksPrompt(opts chatTaskOptions) string {
 	var tasks []string
 	if opts.ReviewCodeBeforePush {
@@ -62,8 +91,20 @@ func conditionalTasksPrompt(opts chatTaskOptions) string {
 	return "\n\nADDITIONAL CHAT TASKS ENABLED FOR THIS RUN:\n" + strings.Join(tasks, "\n")
 }
 
-func buildFollowUpPrompt(ownerRepo string, rec convstore.Record, userRequest string, spec *bootstrap.Spec, artifactSlotCount int, opts chatTaskOptions) string {
+func buildFollowUpPrompt(ownerRepo string, rec convstore.Record, userRequest string, spec *bootstrap.Spec, artifactSlotCount int, opts chatTaskOptions, mode followUpMode) string {
 	history := strings.Join(rec.History, "\n---\n")
+	switch mode {
+	case followUpModeAnswerOnly:
+		return fmt.Sprintf(agentFollowUpAnswerOnlyPromptTemplate,
+			ownerRepo, rec.PRURL,
+			history, userRequest,
+		)
+	case followUpModeInspect:
+		return fmt.Sprintf(agentFollowUpInspectPromptTemplate,
+			repoWorkdir(ownerRepo), rec.Branch, rec.PRURL,
+			history, userRequest,
+		)
+	}
 	prompt := fmt.Sprintf(agentFollowUpPromptTemplate,
 		repoWorkdir(ownerRepo), rec.Branch, rec.PRURL,
 		history, userRequest, conditionalTasksPrompt(opts),

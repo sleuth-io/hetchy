@@ -75,14 +75,18 @@ func TestAutoHealBumpsSpecVersion(t *testing.T) {
 	runner := newFakeRunner()
 	runner.files["/tmp/hetchy-spec/setup.sh"] = []byte("#!/bin/bash\n")
 	runner.files["/tmp/hetchy-spec/start.sh"] = []byte("#!/bin/bash\n")
+	runner.files["/tmp/hetchy-spec/stop.sh"] = []byte("#!/bin/bash\n")
 	runner.files["/tmp/hetchy-spec/health.sh"] = []byte("#!/bin/bash\n")
+	runner.files["/tmp/hetchy-spec/lessons.md"] = []byte("- Restart after rebuild.\n")
 	runner.files["/tmp/hetchy-spec/manifest.json"] = []byte(`{"kind":"x","services":[],"required_secrets":[]}`)
 
 	prior := &Spec{
 		SpecVersion:  3,
 		SetupScript:  "old setup",
 		StartScript:  "old start",
+		StopScript:   "old stop",
 		HealthCheck:  "old health",
+		LessonsMD:    "old lessons",
 		Kind:         "old",
 		SuccessCount: 10,
 		FailureCount: 2,
@@ -108,7 +112,7 @@ func TestAutoHealBumpsSpecVersion(t *testing.T) {
 	// guidance is never delivered. The fakeRunner records the prompt
 	// at /tmp/hetchy-bootstrap-prompt.txt — assert on its content.
 	prompt := string(runner.written["/tmp/hetchy-bootstrap-prompt.txt"])
-	for _, want := range []string{"AUTO-HEAL run", "old setup", "old start", "exit 1"} {
+	for _, want := range []string{"AUTO-HEAL run", "old setup", "old start", "old stop", "old lessons", "exit 1"} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("auto-heal prompt missing %q\n%s", want, prompt)
 		}
@@ -120,7 +124,9 @@ func TestAutoHealPreamblePreservesPriorContext(t *testing.T) {
 		Kind:        "go-web",
 		SetupScript: "go build ./...",
 		StartScript: "./dist/foo",
+		StopScript:  "pkill -f ./dist/foo",
 		HealthCheck: "curl http://localhost:8080/",
+		LessonsMD:   "Restart after rebuilding.",
 	}
 	preamble := AutoHealPromptPreamble(prior, "FATAL: missing KAFKA_BROKERS")
 	for _, want := range []string{
@@ -128,6 +134,8 @@ func TestAutoHealPreamblePreservesPriorContext(t *testing.T) {
 		"go-web",
 		"go build ./...",
 		"./dist/foo",
+		"pkill -f ./dist/foo",
+		"Restart after rebuilding.",
 		"FATAL: missing KAFKA_BROKERS",
 	} {
 		if !strings.Contains(preamble, want) {

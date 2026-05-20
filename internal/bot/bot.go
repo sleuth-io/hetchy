@@ -156,6 +156,9 @@ type Bot struct {
 	resumeSandboxFn          func(context.Context, *daytona.Sandbox, blocks.Emitter) error
 	deleteSandboxSessionFn   func(*daytona.Sandbox, string)
 	stopAndArchiveFn         func(context.Context, *daytona.Sandbox)
+	setAutoArchiveIntervalFn func(context.Context, *daytona.Sandbox, *int) error
+	stopSandboxFn            func(context.Context, *daytona.Sandbox) error
+	archiveSandboxFn         func(context.Context, *daytona.Sandbox) error
 	cleanupSandboxFn         sandboxCleanupFunc
 	ensureSandboxStartedFn   sandboxStartCheckFunc
 	commandLogSnapshotFn     commandLogSnapshotFunc
@@ -167,6 +170,7 @@ type Bot struct {
 	// branchNameFor. Production code leaves this nil; the default
 	// path calls Anthropic and falls back to "sf" on any failure.
 	branchNameFn        func(context.Context, orgcfg.Config, string) string
+	followUpModeFn      followUpModeFunc
 	deleteWorkOSUsersFn func(context.Context, []string) error
 	lookupRepoFn        func(context.Context, string, string, string) (sqlc.GithubRepo, error)
 	// cleanupSandboxByIDFn is called by chatCancelHandler for opportunistic
@@ -279,6 +283,7 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 		"env", cfg.Env,
 		"web_port", cfg.WebPort,
 		"cookie_secure", cfg.CookieSecure,
+		"daytona_auto_archive_minutes", cfg.DaytonaAutoArchiveMinutes,
 	)
 
 	// GitHub App is optional in dev — without env vars the integrations
@@ -858,12 +863,7 @@ func clearRepoOnFailure(rec *convstore.Record) {
 func (b *Bot) handleRetryAfterFailure(ctx context.Context, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, text, requestID string, opts chatTaskOptions, model ClaudeModel, recorder *blocks.Recorder, emit blocks.Emitter) {
 	if rec.SandboxID != "" {
 		if sb, err := b.getSandbox(ctx, rec.SandboxID); err == nil {
-			if err := sb.Stop(ctx); err != nil {
-				b.log.Warn("orphan sandbox stop failed", "sandbox", rec.SandboxID, "error", err)
-			}
-			if err := sb.Archive(ctx); err != nil {
-				b.log.Warn("orphan sandbox archive failed", "sandbox", rec.SandboxID, "error", err)
-			}
+			b.cleanupSandbox(ctx, sb, "orphan retry")
 		} else {
 			b.log.Warn("orphan sandbox lookup failed; assuming already gone", "sandbox", rec.SandboxID, "error", err)
 		}
@@ -936,9 +936,15 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 	}
 	addDaytonaCacheEnv(envVars, b.cfg, oc, repo, repo.CacheMounted)
 	labels := daytonaSandboxLabels(b.cfg, oc, cacheVolumeID)
+	autoArchiveMinutes := b.daytonaAutoArchiveMinutes()
 	sb, err := b.createSandboxWithRetry(ctx, types.SnapshotParams{
-		SandboxBaseParams: types.SandboxBaseParams{EnvVars: envVars, Labels: labels, Volumes: volumes},
-		Snapshot:          b.cfg.Snapshot,
+		SandboxBaseParams: types.SandboxBaseParams{
+			EnvVars:             envVars,
+			Labels:              labels,
+			Volumes:             volumes,
+			AutoArchiveInterval: &autoArchiveMinutes,
+		},
+		Snapshot: b.cfg.Snapshot,
 	})
 	if err != nil {
 		if liveRunCancelled(ctx) {
@@ -980,7 +986,7 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 	if err := b.convs.Upsert(context.Background(), rec); err != nil {
 		b.log.Error("convstore upsert (sandbox ready)", "error", err)
 	}
-	b.log.Info("sandbox created", "id", sb.ID, "request_id", requestID)
+	b.log.Info("sandbox created", "id", sb.ID, "request_id", requestID, "auto_archive_minutes", autoArchiveMinutes, "state", sb.State)
 	sandboxReadyID := emit.Start(blocks.KindNotify, "Sandbox ready", map[string]any{"tag": sandboxReadySSETag})
 	emit.Append(sandboxReadyID, fmt.Sprintf("`%s` is up — cloning repo and starting %s.", sb.ID, agentRuntimeDisplayName(model)))
 	emit.Done(sandboxReadyID, "")
@@ -1098,7 +1104,9 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 
 func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, text, requestID string, opts chatTaskOptions, model ClaudeModel, recorder *blocks.Recorder, emit blocks.Emitter) {
 	model = modelForConversation(rec, model)
-	b.log.Info("follow-up received", "org", oc.OrgID, "sandbox", rec.SandboxID, "branch", rec.Branch, "pr", rec.PRURL, "agent", agent.Slug, "model", model)
+	modeDecision := b.decideFollowUpMode(ctx, oc, rec, text)
+	mode := modeDecision.Mode
+	b.log.Info("follow-up received", "org", oc.OrgID, "sandbox", rec.SandboxID, "branch", rec.Branch, "pr", rec.PRURL, "agent", agent.Slug, "model", model, "mode", mode, "mode_confidence", modeDecision.Confidence, "mode_reason", modeDecision.Reason)
 	b.markRunKind(ctx, "followup")
 	b.markRunBranch(ctx, rec.Branch)
 	b.markRunSandbox(ctx, rec.SandboxID)
@@ -1209,7 +1217,7 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 		persister.Stop()
 	}()
 
-	prURL, err := b.runFollowUpForRequest(ctx, sb, repo, oc, rec, agent, agentText, requestID, opts, model, emit)
+	prURL, err := b.runFollowUpForRequest(ctx, sb, repo, oc, rec, agent, agentText, requestID, opts, model, mode, emit)
 	if err != nil {
 		if liveRunCancelled(ctx) {
 			b.log.Info("follow-up stopped", "sandbox", sb.ID, "request_id", requestID, "error", err)
@@ -1289,11 +1297,11 @@ func (b *Bot) runAgentForRequest(ctx context.Context, sb *daytona.Sandbox, repo 
 	return b.runAgent(ctx, sb, repo, oc, agent, userRequest, requestID, branch, opts, model, emit)
 }
 
-func (b *Bot) runFollowUpForRequest(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, text, requestID string, opts chatTaskOptions, model ClaudeModel, emit blocks.Emitter) (string, error) {
+func (b *Bot) runFollowUpForRequest(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, text, requestID string, opts chatTaskOptions, model ClaudeModel, mode followUpMode, emit blocks.Emitter) (string, error) {
 	if b.runFollowUpFn != nil {
-		return b.runFollowUpFn(ctx, sb, repo, oc, rec, agent, text, requestID, opts, model, emit)
+		return b.runFollowUpFn(ctx, sb, repo, oc, rec, agent, text, requestID, opts, model, mode, emit)
 	}
-	return b.runFollowUp(ctx, sb, repo, oc, rec, agent, text, requestID, opts, model, emit)
+	return b.runFollowUp(ctx, sb, repo, oc, rec, agent, text, requestID, opts, model, mode, emit)
 }
 
 func (b *Bot) getSandbox(ctx context.Context, sandboxID string) (*daytona.Sandbox, error) {
@@ -1313,6 +1321,13 @@ func (b *Bot) resumeSandboxForRun(ctx context.Context, sb *daytona.Sandbox, emit
 	return b.resumeSandbox(ctx, sb, emit)
 }
 
+func (b *Bot) daytonaAutoArchiveMinutes() int {
+	if b.cfg.DaytonaAutoArchiveMinutes > 0 {
+		return b.cfg.DaytonaAutoArchiveMinutes
+	}
+	return defaultDaytonaAutoArchiveMinutes
+}
+
 func (b *Bot) stopAndArchiveSandbox(ctx context.Context, sb *daytona.Sandbox) {
 	if sb == nil {
 		return
@@ -1321,11 +1336,91 @@ func (b *Bot) stopAndArchiveSandbox(ctx context.Context, sb *daytona.Sandbox) {
 		b.stopAndArchiveFn(ctx, sb)
 		return
 	}
-	if err := sb.Stop(ctx); err != nil {
-		b.log.Error("sandbox stop failed", "sandbox", sb.ID, "error", err)
+	autoArchiveMinutes := b.daytonaAutoArchiveMinutes()
+	if err := b.setSandboxAutoArchiveInterval(ctx, sb, autoArchiveMinutes); err != nil {
+		b.log.Error("sandbox auto-archive configuration failed; archiving immediately",
+			"sandbox", sb.ID,
+			"state", sb.State,
+			"auto_archive_minutes", autoArchiveMinutes,
+			"error", err,
+		)
+		b.stopAndArchiveImmediately(ctx, sb, "auto-archive configuration failed")
+		return
 	}
-	if err := sb.Archive(ctx); err != nil {
-		b.log.Error("sandbox archive failed", "sandbox", sb.ID, "error", err)
+	started := time.Now()
+	if err := b.stopSandbox(ctx, sb); err != nil {
+		b.log.Error("sandbox stop failed",
+			"sandbox", sb.ID,
+			"state", sb.State,
+			"auto_archive_minutes", autoArchiveMinutes,
+			"duration", time.Since(started).Round(time.Millisecond),
+			"error", err,
+		)
+		return
+	}
+	b.log.Info("sandbox stopped; auto-archive scheduled",
+		"sandbox", sb.ID,
+		"state", sb.State,
+		"auto_archive_minutes", autoArchiveMinutes,
+		"duration", time.Since(started).Round(time.Millisecond),
+	)
+}
+
+func (b *Bot) setSandboxAutoArchiveInterval(ctx context.Context, sb *daytona.Sandbox, minutes int) error {
+	if b.setAutoArchiveIntervalFn != nil {
+		return b.setAutoArchiveIntervalFn(ctx, sb, &minutes)
+	}
+	return sb.SetAutoArchiveInterval(ctx, &minutes)
+}
+
+func (b *Bot) stopSandbox(ctx context.Context, sb *daytona.Sandbox) error {
+	if b.stopSandboxFn != nil {
+		return b.stopSandboxFn(ctx, sb)
+	}
+	return sb.Stop(ctx)
+}
+
+func (b *Bot) archiveSandbox(ctx context.Context, sb *daytona.Sandbox) error {
+	if b.archiveSandboxFn != nil {
+		return b.archiveSandboxFn(ctx, sb)
+	}
+	return sb.Archive(ctx)
+}
+
+func (b *Bot) stopAndArchiveImmediately(ctx context.Context, sb *daytona.Sandbox, reason string) {
+	started := time.Now()
+	if err := b.stopSandbox(ctx, sb); err != nil {
+		b.log.Warn("sandbox immediate archive stop failed",
+			"sandbox", sb.ID,
+			"reason", reason,
+			"state", sb.State,
+			"duration", time.Since(started).Round(time.Millisecond),
+			"error", err,
+		)
+	} else {
+		b.log.Info("sandbox stopped before immediate archive",
+			"sandbox", sb.ID,
+			"reason", reason,
+			"state", sb.State,
+			"duration", time.Since(started).Round(time.Millisecond),
+		)
+	}
+	archiveStarted := time.Now()
+	if err := b.archiveSandbox(ctx, sb); err != nil {
+		b.log.Warn("sandbox immediate archive failed",
+			"sandbox", sb.ID,
+			"reason", reason,
+			"state", sb.State,
+			"duration", time.Since(archiveStarted).Round(time.Millisecond),
+			"error", err,
+		)
+	} else {
+		b.log.Info("sandbox immediate archive ok",
+			"sandbox", sb.ID,
+			"reason", reason,
+			"state", sb.State,
+			"duration", time.Since(archiveStarted).Round(time.Millisecond),
+		)
 	}
 }
 
@@ -1717,15 +1812,8 @@ func (b *Bot) cleanupSandbox(ctx context.Context, sb *daytona.Sandbox, reason st
 		b.cleanupSandboxFn(ctx, sb, reason)
 		return
 	}
-	b.log.Info("sandbox cleanup start", "sandbox", sb.ID, "reason", reason)
-	if err := sb.Stop(ctx); err != nil {
-		b.log.Warn("sandbox cleanup stop failed", "sandbox", sb.ID, "reason", reason, "error", err)
-	}
-	if err := sb.Archive(ctx); err != nil {
-		b.log.Warn("sandbox cleanup archive failed", "sandbox", sb.ID, "reason", reason, "error", err)
-	} else {
-		b.log.Info("sandbox cleanup ok", "sandbox", sb.ID, "reason", reason)
-	}
+	b.log.Info("sandbox cleanup start", "sandbox", sb.ID, "reason", reason, "state", sb.State)
+	b.stopAndArchiveImmediately(ctx, sb, reason)
 }
 
 func (b *Bot) cleanupSandboxWithTimeout(sb *daytona.Sandbox, reason string) {
@@ -1764,6 +1852,12 @@ func (b *Bot) resumeSandbox(ctx context.Context, sb *daytona.Sandbox, emit block
 
 	setupID := emit.Start(blocks.KindSetup, "Resuming sandbox", nil)
 	emit.Append(setupID, "[hetchy] starting sandbox "+sb.ID+"\n")
+	started := time.Now()
+	b.log.Info("sandbox resume start",
+		"sandbox", sb.ID,
+		"state", sb.State,
+		"auto_archive_minutes", sb.AutoArchiveInterval,
+	)
 
 	// Heartbeat goroutine: append elapsed time periodically so the user
 	// sees a live indicator rather than a frozen spinner.
@@ -1799,10 +1893,22 @@ func (b *Bot) resumeSandbox(ctx context.Context, sb *daytona.Sandbox, emit block
 	<-heartbeatDone
 
 	if startErr != nil {
+		b.log.Warn("sandbox resume failed",
+			"sandbox", sb.ID,
+			"state", sb.State,
+			"auto_archive_minutes", sb.AutoArchiveInterval,
+			"duration", time.Since(started).Round(time.Millisecond),
+			"error", startErr,
+		)
 		emit.Fail(setupID, "Failed to start")
 		return startErr
 	}
-	b.log.Info("sandbox resumed", "sandbox", sb.ID)
+	b.log.Info("sandbox resumed",
+		"sandbox", sb.ID,
+		"state", sb.State,
+		"auto_archive_minutes", sb.AutoArchiveInterval,
+		"duration", time.Since(started).Round(time.Millisecond),
+	)
 	emit.Done(setupID, "Sandbox ready")
 	return nil
 }

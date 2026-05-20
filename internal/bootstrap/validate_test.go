@@ -12,6 +12,7 @@ func TestBuildValidationPromptCoversThreeFlows(t *testing.T) {
 			{Name: "api", Port: 9090, URL: "http://localhost:9090", Kind: "api"},
 		},
 		DeferredCapabilities: []string{"Real authentication (AUTH_BYPASS=1)"},
+		LessonsMD:            "- Restart the app after rebuilding before HTTP validation.\n",
 	}
 	args := ValidationArgs{
 		OwnerRepo: "hetchyhq/hetchy",
@@ -42,12 +43,19 @@ func TestBuildValidationPromptCoversThreeFlows(t *testing.T) {
 		"feature/sf-abc123",
 		"/tmp/hetchy-validate/",
 		"summary.md",
+		"Repo-specific bootstrap lessons",
+		"Restart the app after rebuilding",
+		"/tmp/hetchy-spec/stop.sh",
+		"/tmp/hetchy-spec/start.sh",
+		"/tmp/hetchy-spec/health.sh",
 		// Post-success reflection: ask the agent to write back any
-		// improved setup/start/health scripts. Drift on these phrases
+		// improved setup/start/stop/health scripts and lessons. Drift on these phrases
 		// silently turns the self-learning loop off, so they're load-
 		// bearing.
 		"BOOTSTRAP SPEC IMPROVEMENT",
 		"/tmp/hetchy-spec/improved/",
+		"/tmp/hetchy-spec/improved/stop.sh",
+		"/tmp/hetchy-spec/improved/lessons.md",
 		"none.txt",
 		// Health-check sentinel + start.log triage path. If these
 		// strings drift the validation prompt would silently stop

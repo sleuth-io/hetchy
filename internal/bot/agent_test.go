@@ -87,7 +87,7 @@ func TestBuildFollowUpPromptAddsValidationWhenSpecPresent(t *testing.T) {
 			{Name: "web", URL: "http://localhost:3000", Kind: "ui"},
 		},
 	}
-	prompt := buildFollowUpPrompt("owner/repo", rec, "please adjust the flow", spec, 3, defaultChatTaskOptions())
+	prompt := buildFollowUpPrompt("owner/repo", rec, "please adjust the flow", spec, 3, defaultChatTaskOptions(), followUpModeChange)
 
 	wants := []string{
 		"POST-CHANGE VALIDATION",
@@ -112,7 +112,7 @@ func TestBuildFollowUpPromptWithoutSpecAddsProofInstructionsWhenSlotsPresent(t *
 		PRURL:   "https://github.com/owner/repo/pull/42",
 		History: []string{"first turn"},
 	}
-	prompt := buildFollowUpPrompt("owner/repo", rec, "please adjust the flow", nil, 3, defaultChatTaskOptions())
+	prompt := buildFollowUpPrompt("owner/repo", rec, "please adjust the flow", nil, 3, defaultChatTaskOptions(), followUpModeChange)
 
 	if strings.Contains(prompt, "POST-CHANGE VALIDATION") {
 		t.Fatalf("follow-up prompt without spec should not include bootstrap validation\n%s", prompt)
@@ -189,9 +189,13 @@ func TestAgentScript_EmbeddedAndWellFormed(t *testing.T) {
 		"emit_installed_skills",
 		"[hetchy:sx-skills]",
 		"run_saved_setup",
+		"run_saved_stop",
+		"start_saved_app_and_poll_health",
 		"rewrite_legacy_saved_spec_workdir",
 		"setup.sh still running",
-		"setup.sh output is being written to /tmp/hetchy-spec/setup.log",
+		"setup.sh output is being written to ${setup_log}",
+		"setup.sh success marker written for fingerprint",
+		"start.sh exited successfully; continuing health poll",
 		"configure_hetchy_cache",
 		"cache_supports_basic_write",
 		"restore_hetchy_cache_archive",
@@ -239,9 +243,13 @@ func TestFollowupScript_EmbeddedAndWellFormed(t *testing.T) {
 		"emit_installed_skills",
 		"[hetchy:sx-skills]",
 		"run_saved_setup",
+		"run_saved_stop",
+		"start_saved_app_and_poll_health",
 		"rewrite_legacy_saved_spec_workdir",
 		"setup.sh still running",
-		"setup.sh output is being written to /tmp/hetchy-spec/setup.log",
+		"setup.sh output is being written to ${setup_log}",
+		"setup.sh success marker written for fingerprint",
+		"start.sh exited successfully; continuing health poll",
 		"configure_hetchy_cache",
 		"cache_supports_basic_write",
 		"restore_hetchy_cache_archive",
@@ -353,6 +361,130 @@ func TestSandboxCommon_RewriteLegacySavedSpecWorkdir(t *testing.T) {
 	}
 }
 
+func TestSandboxCommon_RunSavedSetupSkipsWhenMarkerMatches(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skipf("bash not available: %v", err)
+	}
+	specDir := filepath.Join(t.TempDir(), "hetchy-spec")
+	mustMkdir(t, specDir)
+	counter := filepath.Join(specDir, "setup-count")
+	writeSetup := func(extra string) {
+		mustWriteFile(t, filepath.Join(specDir, "setup.sh"), strings.Join([]string{
+			"#!/usr/bin/env bash",
+			"set -euo pipefail",
+			`count="${HETCHY_SPEC_DIR}/setup-count"`,
+			`n=0`,
+			`[[ -f "$count" ]] && n="$(cat "$count")"`,
+			`printf '%s\n' "$((n + 1))" > "$count"`,
+			extra,
+		}, "\n"))
+	}
+	writeSetup("")
+
+	out1 := runSandboxCommonForTest(t, specDir, "run_saved_setup")
+	if !strings.Contains(out1, "setup.sh success marker written for fingerprint") {
+		t.Fatalf("first setup run did not write marker:\n%s", out1)
+	}
+	if got := strings.TrimSpace(mustReadFile(t, counter)); got != "1" {
+		t.Fatalf("setup count after first run = %q, want 1", got)
+	}
+
+	out2 := runSandboxCommonForTest(t, specDir, "run_saved_setup")
+	if !strings.Contains(out2, "setup.sh already succeeded for fingerprint") {
+		t.Fatalf("second setup run did not skip:\n%s", out2)
+	}
+	if got := strings.TrimSpace(mustReadFile(t, counter)); got != "1" {
+		t.Fatalf("setup count after skip = %q, want 1", got)
+	}
+
+	writeSetup("# changed setup content")
+	out3 := runSandboxCommonForTest(t, specDir, "run_saved_setup")
+	if !strings.Contains(out3, "has no success marker; running") {
+		t.Fatalf("changed setup did not rerun:\n%s", out3)
+	}
+	if got := strings.TrimSpace(mustReadFile(t, counter)); got != "2" {
+		t.Fatalf("setup count after changed script = %q, want 2", got)
+	}
+}
+
+func TestSandboxCommon_RunSavedSetupRerunsAfterFailure(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skipf("bash not available: %v", err)
+	}
+	specDir := filepath.Join(t.TempDir(), "hetchy-spec")
+	mustMkdir(t, specDir)
+	counter := filepath.Join(specDir, "setup-count")
+	mustWriteFile(t, filepath.Join(specDir, "setup.sh"), strings.Join([]string{
+		"#!/usr/bin/env bash",
+		"set -euo pipefail",
+		`count="${HETCHY_SPEC_DIR}/setup-count"`,
+		`n=0`,
+		`[[ -f "$count" ]] && n="$(cat "$count")"`,
+		`printf '%s\n' "$((n + 1))" > "$count"`,
+		"exit 2",
+	}, "\n"))
+
+	out1 := runSandboxCommonForTest(t, specDir, "run_saved_setup")
+	if !strings.Contains(out1, "setup.sh exited non-zero (2)") {
+		t.Fatalf("failed setup did not log soft failure:\n%s", out1)
+	}
+	out2 := runSandboxCommonForTest(t, specDir, "run_saved_setup")
+	if !strings.Contains(out2, "has no success marker; running") {
+		t.Fatalf("failed setup should rerun without marker:\n%s", out2)
+	}
+	if got := strings.TrimSpace(mustReadFile(t, counter)); got != "2" {
+		t.Fatalf("failed setup count = %q, want 2", got)
+	}
+	matches, err := filepath.Glob(filepath.Join(specDir, "setup.*.succeeded"))
+	if err != nil {
+		t.Fatalf("glob setup markers: %v", err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("failed setup should not leave success markers: %v", matches)
+	}
+}
+
+func TestSandboxCommon_StartSavedAppContinuesAfterZeroExitStart(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skipf("bash not available: %v", err)
+	}
+	specDir := filepath.Join(t.TempDir(), "hetchy-spec")
+	mustMkdir(t, specDir)
+	mustWriteFile(t, filepath.Join(specDir, "start.sh"), strings.Join([]string{
+		"#!/usr/bin/env bash",
+		"set -euo pipefail",
+		`touch "${HETCHY_SPEC_DIR}/ready"`,
+		"exit 0",
+	}, "\n"))
+	mustWriteFile(t, filepath.Join(specDir, "health.sh"), strings.Join([]string{
+		"#!/usr/bin/env bash",
+		"set -euo pipefail",
+		`count="${HETCHY_SPEC_DIR}/health-count"`,
+		`if [[ ! -f "$count" ]]; then`,
+		`  : > "$count"`,
+		`  exit 1`,
+		`fi`,
+		`test -f "${HETCHY_SPEC_DIR}/ready"`,
+	}, "\n"))
+	if err := os.Chmod(filepath.Join(specDir, "start.sh"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(specDir, "health.sh"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	out := runSandboxCommonForTest(t, specDir, "start_saved_app_and_poll_health")
+	if !strings.Contains(out, "start.sh exited successfully; continuing health poll") {
+		t.Fatalf("start success exit was not handled:\n%s", out)
+	}
+	if !strings.Contains(out, "healthy after") {
+		t.Fatalf("health did not pass after zero-exit start:\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Join(specDir, "UNHEALTHY")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("UNHEALTHY should not exist, stat err=%v", err)
+	}
+}
+
 func TestSandboxCommon_ConfiguresGitAuthWithoutStaleRepoToken(t *testing.T) {
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skipf("bash not available: %v", err)
@@ -427,6 +559,21 @@ func TestSandboxCommon_ConfiguresGitAuthWithoutStaleRepoToken(t *testing.T) {
 	if !strings.Contains(global, "fresh-token") || strings.Contains(global, "older-token") {
 		t.Fatalf("global token rewrite = %q, want only fresh token", global)
 	}
+}
+
+func runSandboxCommonForTest(t *testing.T, specDir, command string) string {
+	t.Helper()
+	harness := "#!/bin/bash\nset -euo pipefail\n" + sandboxCommonScript + "\n" + command + "\n"
+	cmd := exec.Command("bash", "-c", harness)
+	cmd.Env = append(os.Environ(),
+		"HETCHY_SPEC_DIR="+specDir,
+		"SF_WORKDIR=/home/daytona/work/repo",
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("sandbox-common harness failed: %v\noutput:\n%s", err, string(out))
+	}
+	return string(out)
 }
 
 // TestAgentScript_EmitInstalledSkillsCollectsBothScopes runs the
@@ -856,7 +1003,7 @@ func TestRunFollowUpBuildsScriptEnvironmentWithFakeRunner(t *testing.T) {
 	repo := repoCtx{Slug: "acme/repo", GitHubToken: "ghs_token"}
 	oc := orgcfg.Config{OrgID: "org_1", ClaudeCodeOAuthToken: "oauth-token"}
 
-	prURL, err := b.runFollowUp(context.Background(), &daytona.Sandbox{ID: "sandbox-1"}, repo, oc, rec, agents.Profile{Slug: "helper", DisplayName: "Helper"}, "tighten it", "req-2", chatTaskOptions{}, ClaudeModelSonnet, newCaptureEmitter())
+	prURL, err := b.runFollowUp(context.Background(), &daytona.Sandbox{ID: "sandbox-1"}, repo, oc, rec, agents.Profile{Slug: "helper", DisplayName: "Helper"}, "tighten it", "req-2", chatTaskOptions{}, ClaudeModelSonnet, followUpModeChange, newCaptureEmitter())
 	if err != nil {
 		t.Fatalf("runFollowUp: %v", err)
 	}
@@ -880,6 +1027,58 @@ func TestRunFollowUpBuildsScriptEnvironmentWithFakeRunner(t *testing.T) {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("follow-up prompt missing %q:\n%s", want, prompt)
 		}
+	}
+}
+
+func TestRunFollowUpAnswerOnlySkipsSpecAndPRValidation(t *testing.T) {
+	var captured capturedScriptRun
+	boot := &fakeBootstrapStore{
+		spec: &bootstrap.Spec{
+			SetupScript:  "setup",
+			StartScript:  "start",
+			StopScript:   "stop",
+			HealthCheck:  "health",
+			LessonsMD:    "lessons",
+			Services:     []bootstrap.Service{{Name: "web", URL: "http://localhost:8080", Kind: "ui"}},
+			SuccessCount: 1,
+		},
+	}
+	b := &Bot{
+		log:       discardLogger(),
+		bootstrap: boot,
+		runScriptFn: func(_ context.Context, sb *daytona.Sandbox, sessionID, label, scriptBody string, env map[string]string, _ blocks.Emitter) (string, error) {
+			captured = captureScriptRun(sb, sessionID, label, scriptBody, env)
+			return "https://github.com/acme/repo/pull/8", nil
+		},
+	}
+	rec := convstore.Record{
+		ThreadID: "thread-1",
+		Branch:   "feature/sf-req-1",
+		PRURL:    "https://github.com/acme/repo/pull/7",
+		History:  []string{"first request"},
+	}
+	repo := repoCtx{Slug: "acme/repo", GitHubToken: "ghs_token", InstallID: 11, RepoID: 22}
+
+	prURL, err := b.runFollowUp(context.Background(), &daytona.Sandbox{ID: "sandbox-1"}, repo, orgcfg.Config{OrgID: "org_1", ClaudeCodeOAuthToken: "oauth-token"}, rec, agents.Profile{}, "just say hi", "req-2", defaultChatTaskOptions(), ClaudeModelSonnet, followUpModeAnswerOnly, newCaptureEmitter())
+	if err != nil {
+		t.Fatalf("runFollowUp: %v", err)
+	}
+	if prURL != "" {
+		t.Fatalf("answer-only follow-up should ignore reported PR URL, got %q", prURL)
+	}
+	for _, key := range []string{"SF_SPEC_SETUP_B64", "SF_SPEC_START_B64", "SF_SPEC_STOP_B64", "SF_SPEC_HEALTH_B64", "SF_SPEC_LESSONS_B64", artifacts.EnvSlots} {
+		if captured.env[key] != "" {
+			t.Fatalf("answer-only env[%s] = %q, want empty", key, captured.env[key])
+		}
+	}
+	prompt := mustDecodeBase64Env(t, captured.env, "SF_PROMPT_B64")
+	for _, bad := range []string{"When you are done implementing", "POST-CHANGE VALIDATION", "Review code before push", "Action PR checks"} {
+		if strings.Contains(prompt, bad) {
+			t.Fatalf("answer-only prompt contains %q:\n%s", bad, prompt)
+		}
+	}
+	if boot.markAppliedCalls != nil {
+		t.Fatalf("answer-only follow-up should not mark bootstrap applied: %+v", boot.markAppliedCalls)
 	}
 }
 
