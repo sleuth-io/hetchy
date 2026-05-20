@@ -11,6 +11,9 @@ export PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-/opt/ms-playwright}
 if command -v npm >/dev/null 2>&1; then
   global_node_modules="$(npm root -g 2>/dev/null || true)"
   if [[ -n "$global_node_modules" ]]; then
+    # Keep this NODE_PATH setup in sync with ensure_playwright_runtime
+    # in internal/bot/scripts/sandbox-common.sh and BootstrapScript
+    # in internal/bootstrap/loop.go.
     case ":${NODE_PATH:-}:" in
       *":${global_node_modules}:"*) ;;
       *)

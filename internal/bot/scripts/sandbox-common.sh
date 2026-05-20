@@ -290,7 +290,8 @@ hetchy_run_with_timeout() {
 }
 
 # Keep this Playwright runtime preparation in sync with the inline
-# bootstrap setup in internal/bootstrap/loop.go.
+# bootstrap setup in internal/bootstrap/loop.go and
+# sandbox/hetchy-playwright-smoke.
 ensure_playwright_runtime() {
   local browsers_path="${PLAYWRIGHT_BROWSERS_PATH:-/opt/ms-playwright}"
   local validate_dir="${HETCHY_PLAYWRIGHT_VALIDATE_DIR:-/tmp/hetchy-validate}"

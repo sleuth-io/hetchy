@@ -84,6 +84,7 @@ func TestPlaywrightSmokeUsesOrdinaryPlaywrightAPIs(t *testing.T) {
 		"NODE_PATH",
 		"npm root -g",
 		"global_node_modules",
+		"Keep this NODE_PATH setup in sync",
 		"require('playwright')",
 		"chromium.launch",
 		"page.screenshot",
