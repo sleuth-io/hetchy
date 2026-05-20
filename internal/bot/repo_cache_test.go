@@ -597,6 +597,9 @@ func TestEnsurePlaywrightMCPDirRepairsBadPath(t *testing.T) {
 	workdir := t.TempDir()
 	mustWriteFile(t, filepath.Join(workdir, ".playwright-mcp"), "not a directory\n")
 	userDataDir := filepath.Join(t.TempDir(), "pw-user-data")
+	browsersDir := filepath.Join(t.TempDir(), "ms-playwright")
+	validateDir := filepath.Join(t.TempDir(), "hetchy-validate")
+	mustMkdir(t, browsersDir)
 
 	script := "set -euo pipefail\n" + sandboxRepoCacheHelpersScript + `
 ensure_playwright_mcp_dir
@@ -604,13 +607,17 @@ printf 'output=%s\n' "$PLAYWRIGHT_MCP_OUTPUT_DIR"
 printf 'user_data=%s\n' "$PLAYWRIGHT_MCP_USER_DATA_DIR"
 printf 'headless=%s\n' "$PLAYWRIGHT_MCP_HEADLESS"
 printf 'no_sandbox=%s\n' "$PLAYWRIGHT_MCP_NO_SANDBOX"
+printf 'browsers=%s\n' "$PLAYWRIGHT_BROWSERS_PATH"
+printf 'validate=%s\n' "$HETCHY_PLAYWRIGHT_VALIDATE_DIR"
 `
 	out, err := runBashScript(t, script, map[string]string{
-		"SF_WORKDIR":                   workdir,
-		"PLAYWRIGHT_MCP_USER_DATA_DIR": userDataDir,
-		"PLAYWRIGHT_MCP_OUTPUT_DIR":    filepath.Join(workdir, ".playwright-mcp"),
-		"PLAYWRIGHT_MCP_HEADLESS":      "0",
-		"PLAYWRIGHT_MCP_NO_SANDBOX":    "0",
+		"SF_WORKDIR":                     workdir,
+		"PLAYWRIGHT_MCP_USER_DATA_DIR":   userDataDir,
+		"PLAYWRIGHT_MCP_OUTPUT_DIR":      filepath.Join(workdir, ".playwright-mcp"),
+		"PLAYWRIGHT_MCP_HEADLESS":        "0",
+		"PLAYWRIGHT_MCP_NO_SANDBOX":      "0",
+		"PLAYWRIGHT_BROWSERS_PATH":       browsersDir,
+		"HETCHY_PLAYWRIGHT_VALIDATE_DIR": validateDir,
 	})
 	if err != nil {
 		t.Fatalf("ensure playwright mcp dir: %v\n%s", err, out)
@@ -630,6 +637,8 @@ printf 'no_sandbox=%s\n' "$PLAYWRIGHT_MCP_NO_SANDBOX"
 		"user_data=" + userDataDir,
 		"headless=0",
 		"no_sandbox=0",
+		"browsers=" + browsersDir,
+		"validate=" + validateDir,
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("ensure playwright output missing %q:\n%s", want, out)

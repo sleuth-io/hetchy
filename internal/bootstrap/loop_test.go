@@ -146,6 +146,24 @@ func TestLoopRunFailureWrapsError(t *testing.T) {
 	}
 }
 
+func TestBootstrapScriptEnforcesStartReturnAndPlaywrightRuntime(t *testing.T) {
+	for _, want := range []string{
+		"PLAYWRIGHT_BROWSERS_PATH",
+		"HETCHY_PLAYWRIGHT_VALIDATE_DIR",
+		"/tmp/hetchy-validate",
+		"node_modules/playwright",
+		"run_with_timeout",
+		"HETCHY_START_TIMEOUT_SECONDS:-120",
+		"start.sh must return after launching services",
+		"start.sh timed out after",
+		"start.sh completed; polling health.sh",
+	} {
+		if !strings.Contains(BootstrapScript, want) {
+			t.Errorf("BootstrapScript missing %q\n%s", want, BootstrapScript)
+		}
+	}
+}
+
 func TestFingerprintStableAcrossRuns(t *testing.T) {
 	tmp := t.TempDir()
 	if err := writeFile(tmp+"/Makefile", "all:\n\techo hi\n"); err != nil {

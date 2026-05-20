@@ -309,12 +309,14 @@ func sortedNames(m map[string]string) []string {
 //
 // It is deliberately defensive: every artifact path must exist with
 // non-empty content; setup.sh must be idempotent (runs twice in a
-// row); stop.sh must be idempotent; start.sh is launched and we wait
-// for health.sh to pass
+// row); stop.sh must be idempotent; start.sh must return after
+// launching runtime services, and then we wait for health.sh to pass
 // before returning success.
 //
 // The script writes its own log to stderr so a non-zero exit's tail
 // is what the bot persists into bootstrap_log for auto-heal context.
+//
+//nolint:dupword // The embedded shell script naturally has repeated "fi" tokens.
 const BootstrapScript = `#!/bin/bash
 set -euo pipefail
 
@@ -340,6 +342,65 @@ export PLAYWRIGHT_MCP_HEADLESS="${PLAYWRIGHT_MCP_HEADLESS:-1}"
 export PLAYWRIGHT_MCP_NO_SANDBOX="${PLAYWRIGHT_MCP_NO_SANDBOX:-1}"
 mkdir -p "$PLAYWRIGHT_MCP_OUTPUT_DIR" "$PLAYWRIGHT_MCP_USER_DATA_DIR"
 chmod u+rwx "$PLAYWRIGHT_MCP_OUTPUT_DIR" "$PLAYWRIGHT_MCP_USER_DATA_DIR" 2>/dev/null || true
+# Keep this Playwright runtime preparation in sync with
+# ensure_playwright_runtime in internal/bot/scripts/sandbox-common.sh
+# and sandbox/hetchy-playwright-smoke.
+export PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-/opt/ms-playwright}"
+export HETCHY_PLAYWRIGHT_VALIDATE_DIR="${HETCHY_PLAYWRIGHT_VALIDATE_DIR:-/tmp/hetchy-validate}"
+mkdir -p "$HETCHY_PLAYWRIGHT_VALIDATE_DIR" 2>/dev/null || true
+if command -v npm >/dev/null 2>&1; then
+  GLOBAL_NODE_MODULES="$(npm root -g 2>/dev/null || true)"
+  if [[ -n "$GLOBAL_NODE_MODULES" ]]; then
+    case ":${NODE_PATH:-}:" in
+      *":${GLOBAL_NODE_MODULES}:"*) ;;
+      *)
+        if [[ -n "${NODE_PATH:-}" ]]; then
+          export NODE_PATH="${GLOBAL_NODE_MODULES}:${NODE_PATH}"
+        else
+          export NODE_PATH="${GLOBAL_NODE_MODULES}"
+        fi
+        ;;
+    esac
+    mkdir -p "${HETCHY_PLAYWRIGHT_VALIDATE_DIR}/node_modules" 2>/dev/null || true
+    if [[ -d "${GLOBAL_NODE_MODULES}/playwright" ]]; then
+      rm -rf "${HETCHY_PLAYWRIGHT_VALIDATE_DIR}/node_modules/playwright" 2>/dev/null || true
+      ln -s "${GLOBAL_NODE_MODULES}/playwright" "${HETCHY_PLAYWRIGHT_VALIDATE_DIR}/node_modules/playwright" 2>/dev/null || true
+    fi
+    if [[ -d "${GLOBAL_NODE_MODULES}/playwright-core" ]]; then
+      rm -rf "${HETCHY_PLAYWRIGHT_VALIDATE_DIR}/node_modules/playwright-core" 2>/dev/null || true
+      ln -s "${GLOBAL_NODE_MODULES}/playwright-core" "${HETCHY_PLAYWRIGHT_VALIDATE_DIR}/node_modules/playwright-core" 2>/dev/null || true
+    fi
+  fi
+fi
+
+# Keep this fallback behavior in sync with hetchy_run_with_timeout in
+# internal/bot/scripts/sandbox-common.sh.
+run_with_timeout() {
+  local seconds="$1"
+  shift
+  if [[ ! "$seconds" =~ ^[0-9]+$ || "$seconds" -le 0 ]]; then
+    seconds=120
+  fi
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "${seconds}s" "$@"
+    return $?
+  fi
+  "$@" &
+  local child_pid=$!
+  local elapsed=0
+  while kill -0 "$child_pid" 2>/dev/null; do
+    if [[ "$elapsed" -ge "$seconds" ]]; then
+      kill "$child_pid" 2>/dev/null || true
+      sleep 1
+      kill -KILL "$child_pid" 2>/dev/null || true
+      wait "$child_pid" >/dev/null 2>&1 || true
+      return 124
+    fi
+    sleep 1
+    elapsed=$((elapsed + 1))
+  done
+  wait "$child_pid"
+}
 
 # Strip out the alternate credential — claude's auth precedence puts
 # ANTHROPIC_API_KEY ahead of CLAUDE_CODE_OAUTH_TOKEN, so a stray value
@@ -388,25 +449,27 @@ echo "[hetchy-bootstrap] running setup.sh (idempotency check: run twice)" >&2
 echo "[hetchy-bootstrap] stopping stale app runtime" >&2
 "${HETCHY_BOOTSTRAP_OUT_DIR}/stop.sh" > "${HETCHY_BOOTSTRAP_OUT_DIR}/stop.log" 2>&1 || true
 
-echo "[hetchy-bootstrap] starting app in background" >&2
-"${HETCHY_BOOTSTRAP_OUT_DIR}/start.sh" > "${HETCHY_BOOTSTRAP_OUT_DIR}/start.log" 2>&1 &
-START_PID=$!
-START_DONE=0
-trap '"${HETCHY_BOOTSTRAP_OUT_DIR}/stop.sh" > "${HETCHY_BOOTSTRAP_OUT_DIR}/stop.log" 2>&1 || true; if [[ "${START_DONE:-0}" != "1" ]]; then kill ${START_PID} 2>/dev/null || true; fi' EXIT
+START_TIMEOUT="${HETCHY_START_TIMEOUT_SECONDS:-120}"
+if [[ ! "$START_TIMEOUT" =~ ^[0-9]+$ || "$START_TIMEOUT" -le 0 ]]; then
+  START_TIMEOUT=120
+fi
+trap '"${HETCHY_BOOTSTRAP_OUT_DIR}/stop.sh" > "${HETCHY_BOOTSTRAP_OUT_DIR}/stop.log" 2>&1 || true' EXIT
+
+echo "[hetchy-bootstrap] running start.sh (${START_TIMEOUT}s timeout; start.sh must return after launching services)" >&2
+if run_with_timeout "$START_TIMEOUT" "${HETCHY_BOOTSTRAP_OUT_DIR}/start.sh" > "${HETCHY_BOOTSTRAP_OUT_DIR}/start.log" 2>&1; then
+  echo "[hetchy-bootstrap] start.sh completed; polling health.sh" >&2
+else
+  code=$?
+  if [[ "$code" -eq 124 ]]; then
+    echo "[hetchy-bootstrap] start.sh timed out after ${START_TIMEOUT}s; it must background/daemonize long-lived services" >&2
+  else
+    echo "[hetchy-bootstrap] start.sh exited non-zero (${code})" >&2
+  fi
+  exit 71
+fi
 
 echo "[hetchy-bootstrap] polling health.sh (90s budget)" >&2
 for i in {1..90}; do
-  if [[ "${START_DONE}" != "1" ]] && ! kill -0 "${START_PID}" 2>/dev/null; then
-    if wait "${START_PID}"; then
-      echo "[hetchy-bootstrap] start.sh exited successfully; continuing health poll" >&2
-      START_DONE=1
-    else
-      code=$?
-      echo "[hetchy-bootstrap] start.sh exited non-zero (${code})" >&2
-      exit 71
-    fi
-    # start.sh exited; let health.sh get a final chance below.
-  fi
   if "${HETCHY_BOOTSTRAP_OUT_DIR}/health.sh" >/dev/null 2>&1; then
     echo "[hetchy-bootstrap] healthy after ${i}s" >&2
     exit 0

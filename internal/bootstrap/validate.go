@@ -108,12 +108,25 @@ changed:
 
   1. Run any required build/test commands for the changed code.
   2. Run /tmp/hetchy-spec/stop.sh if it exists.
-  3. Run /tmp/hetchy-spec/start.sh.
+  3. Run /tmp/hetchy-spec/start.sh with a 120s timeout.
   4. Run /tmp/hetchy-spec/health.sh and do not start E2E validation until
      it passes.
 
 This restart step is required even if the host started the app before
 you began editing: that baseline process may still be serving old code.
+start.sh must return after launching services; health.sh is the readiness
+oracle. If start.sh times out or keeps a foreground process attached,
+record "Validation: incomplete - start.sh does not return" and capture
+the relevant start.log excerpt rather than waiting for long timeouts.
+
+Playwright is already installed in the sandbox. For browser proof, write
+ordinary Playwright scripts under /tmp/hetchy-validate so they resolve
+the sandbox-provided package and browser binaries at
+$PLAYWRIGHT_BROWSERS_PATH (normally /opt/ms-playwright). Do not run
+'playwright install' just to capture proof; if a repo-local Playwright
+package reports a missing browser, use the sandbox Playwright package
+from /tmp/hetchy-validate or mark the validation tooling failure
+explicitly.
 
 Choose proof based on the change:
 
@@ -130,7 +143,7 @@ Choose proof based on the change:
   - UI/UX flow or interaction change: record the whole screen as MP4
     with H.264 encoding, then upload and link the recording. Use
     hetchy-record-screen when available. Recommended pattern: write a
-    headed Playwright automation script with
+    headed Playwright automation script under /tmp/hetchy-validate with
     chromium.launch({ headless: false }) and run it as:
     hetchy-record-screen 20 /tmp/hetchy-validate/recording-001.mp4 -- node /tmp/hetchy-validate/flow.mjs
     If hetchy-record-screen is unavailable or cannot capture the

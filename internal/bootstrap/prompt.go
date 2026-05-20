@@ -87,7 +87,12 @@ You must produce six artifacts at fixed paths:
                                    after the agent rebuilds, and after
                                    sandbox resume. It should recover from
                                    stale app-owned processes, usually by
-                                   calling or duplicating stop.sh logic.
+                                   calling or duplicating stop.sh logic. It
+                                   must start long-lived services in the
+                                   background/daemon mode and then return.
+                                   Do not leave a foreground dev server,
+                                   foreground nginx, or watch command as the
+                                   final process.
   /tmp/hetchy-spec/stop.sh       — idempotently stops app-owned runtime
                                    processes. Usually leave shared services
                                    like Postgres running unless this repo
@@ -175,7 +180,9 @@ Process:
      times in the same sandbox and must make the current checkout/build
      active. If the app needs a restart after code changes before E2E
      validation, encode that in start.sh instead of relying on a future
-     agent to remember it.
+     agent to remember it. start.sh must return after launching services;
+     health.sh is the readiness oracle. When you test it manually, run it
+     with a timeout so a foreground server cannot burn minutes unnoticed.
 
   6. Run stop.sh, run start.sh, then run health.sh. Iterate until health
      passes. Record the URL the app is on.
@@ -198,8 +205,15 @@ Process:
        to start and then fail later in confusing ways.
 
   9. For every UI service, navigate to its root URL with Playwright and
-     take a screenshot. The screenshot must show real content — not an
-     error page or blank screen.
+     take a screenshot. The sandbox already provides Playwright and
+     Chromium. Use ordinary Playwright APIs from scripts under
+     /tmp/hetchy-validate; browser binaries live at
+     $PLAYWRIGHT_BROWSERS_PATH, normally /opt/ms-playwright. Do not run
+     'playwright install' just to capture proof. If a repo-local
+     Playwright package reports a missing browser, use the sandbox
+     Playwright package from /tmp/hetchy-validate rather than waiting on
+     browser installation. The screenshot must show real content — not
+     an error page or blank screen.
 
   10. Populate suggested_repo_changes if you hit friction that a small
      repo change would have eliminated. Examples: add a 'make bootstrap'
@@ -210,7 +224,8 @@ Be concise in your shell scripts. No comments unless they explain a
 non-obvious choice. The scripts run on every future task — keep them
 fast and idempotent. Echo before long-running dependency or migration
 steps so future runs show useful progress while package managers are
-downloading quietly.
+downloading quietly. Use set -euo pipefail (or at least set -o pipefail)
+before pipelines where the exit status matters.
 
 `,
 		args.OwnerRepo, pathSuffix,

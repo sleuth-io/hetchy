@@ -82,6 +82,12 @@ func TestBuildPromptContent(t *testing.T) {
 		"/tmp/hetchy-spec/lessons.md",
 		"re-runnable runtime bring-up",
 		"current checkout/build",
+		"start.sh must return after launching services",
+		"foreground dev server",
+		"/tmp/hetchy-validate",
+		"PLAYWRIGHT_BROWSERS_PATH",
+		"'playwright install' just to capture proof",
+		"set -o pipefail",
 		// Manifest schema sentinel
 		`"deferred_capabilities"`,
 		// Already-supplied list

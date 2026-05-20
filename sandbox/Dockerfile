@@ -164,7 +164,9 @@ RUN for pkg in poetry uv ruff black mypy pytest conan; do \
 # bin into /usr/local/bin so the daytona user (login shell with reset PATH)
 # can find every tool.
 # ---------------------------------------------------------------------------
-ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
+    HETCHY_PLAYWRIGHT_VALIDATE_DIR=/tmp/hetchy-validate \
+    NODE_PATH=/usr/local/nvm/versions/node/v${NODE_VERSION}/lib/node_modules
 RUN npm install -g \
         pnpm yarn bun \
         eslint prettier chromedriver \
@@ -173,12 +175,15 @@ RUN npm install -g \
         @openai/codex \
         @google/gemini-cli \
         playwright \
+ && test -d "$NODE_PATH" \
  && npx --yes playwright install chromium \
  && CHROMIUM_BIN="$(find "$PLAYWRIGHT_BROWSERS_PATH" \( -path '*/chrome-linux/chrome' -o -path '*/chrome-linux64/chrome' \) -type f | sort | tail -1)" \
  && test -x "$CHROMIUM_BIN" \
  && mkdir -p /opt/google/chrome \
  && ln -sf "$CHROMIUM_BIN" /opt/google/chrome/chrome \
- && chmod -R a+rX "$PLAYWRIGHT_BROWSERS_PATH" /opt/google/chrome \
+ && chown -R daytona:daytona "$PLAYWRIGHT_BROWSERS_PATH" \
+ && chmod -R a+rX "$PLAYWRIGHT_BROWSERS_PATH" \
+ && chmod -R a+rX /opt/google/chrome \
  && NODE_BIN=$(dirname "$(readlink -f "$(command -v node)")") \
  && for f in "$NODE_BIN"/*; do ln -sf "$f" "/usr/local/bin/$(basename "$f")"; done
 
@@ -208,7 +213,12 @@ RUN usermod -aG docker daytona
 # ---------------------------------------------------------------------------
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY hetchy-record-screen /usr/local/bin/hetchy-record-screen
-RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/hetchy-record-screen
+COPY hetchy-playwright-smoke /usr/local/bin/hetchy-playwright-smoke
+# Intentional build-time browser smoke. It requires a builder that can
+# launch headless Chromium with --no-sandbox; failing here means the
+# pushed Daytona snapshot would not be able to capture proof screenshots.
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/hetchy-record-screen /usr/local/bin/hetchy-playwright-smoke \
+ && su daytona -c 'hetchy-playwright-smoke'
 
 USER daytona
 WORKDIR /home/daytona

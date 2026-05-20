@@ -257,10 +257,88 @@ configure_hetchy_cache() {
   trap sync_hetchy_cache_on_exit EXIT
 }
 
+# Keep this fallback behavior in sync with run_with_timeout in
+# internal/bootstrap/loop.go's embedded BootstrapScript.
+hetchy_run_with_timeout() {
+  local seconds="$1"
+  shift
+
+  if [[ ! "$seconds" =~ ^[0-9]+$ || "$seconds" -le 0 ]]; then
+    seconds=120
+  fi
+
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "${seconds}s" "$@"
+    return $?
+  fi
+
+  "$@" &
+  local child_pid=$!
+  local elapsed=0
+  while kill -0 "$child_pid" 2>/dev/null; do
+    if [[ "$elapsed" -ge "$seconds" ]]; then
+      kill "$child_pid" 2>/dev/null || true
+      sleep 1
+      kill -KILL "$child_pid" 2>/dev/null || true
+      wait "$child_pid" >/dev/null 2>&1 || true
+      return 124
+    fi
+    sleep 1
+    elapsed=$((elapsed + 1))
+  done
+  wait "$child_pid"
+}
+
+# Keep this Playwright runtime preparation in sync with the inline
+# bootstrap setup in internal/bootstrap/loop.go and
+# sandbox/hetchy-playwright-smoke.
+ensure_playwright_runtime() {
+  local browsers_path="${PLAYWRIGHT_BROWSERS_PATH:-/opt/ms-playwright}"
+  local validate_dir="${HETCHY_PLAYWRIGHT_VALIDATE_DIR:-/tmp/hetchy-validate}"
+  local global_node_modules=""
+
+  export PLAYWRIGHT_BROWSERS_PATH="$browsers_path"
+  export HETCHY_PLAYWRIGHT_VALIDATE_DIR="$validate_dir"
+
+  mkdir -p "$validate_dir" 2>/dev/null || true
+
+  if command -v npm >/dev/null 2>&1; then
+    global_node_modules="$(npm root -g 2>/dev/null || true)"
+  fi
+  if [[ -n "$global_node_modules" ]]; then
+    case ":${NODE_PATH:-}:" in
+      *":${global_node_modules}:"*) ;;
+      *)
+        if [[ -n "${NODE_PATH:-}" ]]; then
+          export NODE_PATH="${global_node_modules}:${NODE_PATH}"
+        else
+          export NODE_PATH="${global_node_modules}"
+        fi
+        ;;
+    esac
+
+    mkdir -p "${validate_dir}/node_modules" 2>/dev/null || true
+    if [[ -d "${global_node_modules}/playwright" ]]; then
+      rm -rf "${validate_dir}/node_modules/playwright" 2>/dev/null || true
+      ln -s "${global_node_modules}/playwright" "${validate_dir}/node_modules/playwright" 2>/dev/null || true
+    fi
+    if [[ -d "${global_node_modules}/playwright-core" ]]; then
+      rm -rf "${validate_dir}/node_modules/playwright-core" 2>/dev/null || true
+      ln -s "${global_node_modules}/playwright-core" "${validate_dir}/node_modules/playwright-core" 2>/dev/null || true
+    fi
+  fi
+
+  if [[ ! -d "$PLAYWRIGHT_BROWSERS_PATH" ]]; then
+    echo "[hetchy] WARNING: PLAYWRIGHT_BROWSERS_PATH=${PLAYWRIGHT_BROWSERS_PATH} does not exist; browser screenshots may fail"
+  fi
+}
+
 ensure_playwright_mcp_dir() {
   local output_dir="${PLAYWRIGHT_MCP_OUTPUT_DIR:-${SF_WORKDIR}/.playwright-mcp}"
   local user_data_dir="${PLAYWRIGHT_MCP_USER_DATA_DIR:-/tmp/hetchy-playwright-mcp/user-data}"
   local d
+
+  ensure_playwright_runtime
 
   export PLAYWRIGHT_MCP_OUTPUT_DIR="$output_dir"
   export PLAYWRIGHT_MCP_USER_DATA_DIR="$user_data_dir"
