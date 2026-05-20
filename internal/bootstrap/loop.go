@@ -329,14 +329,17 @@ mkdir -p "${HETCHY_BOOTSTRAP_OUT_DIR}"
 # tools (Read/Edit/Bash) operate on the cloned repo by default.
 cd "${HETCHY_BOOTSTRAP_REPO_DIR}"
 
-# Same pre-create as agent.sh / followup.sh — the Playwright MCP
-# server's allowed-roots check rejects screenshot writes if the dir
-# doesn't exist yet, and step 7 of the bootstrap prompt tells the
-# agent to take a screenshot of every UI service. Without this line
-# the bootstrap LLM hits "File access denied" on its first
-# browser_take_screenshot and recovers by mkdir-ing the dir itself,
-# wasting a round-trip.
-mkdir -p .playwright-mcp
+# Same pre-create as agent.sh / followup.sh — the Playwright MCP server
+# needs a writable output dir and a writable browser profile dir before
+# the first screenshot. Some snapshots keep browser binaries under
+# root-owned /opt/ms-playwright, so pin the MCP profile under /tmp
+# instead of letting it try to create /opt/ms-playwright/mcp-chrome-*.
+export PLAYWRIGHT_MCP_OUTPUT_DIR="${PLAYWRIGHT_MCP_OUTPUT_DIR:-${HETCHY_BOOTSTRAP_REPO_DIR}/.playwright-mcp}"
+export PLAYWRIGHT_MCP_USER_DATA_DIR="${PLAYWRIGHT_MCP_USER_DATA_DIR:-/tmp/hetchy-playwright-mcp/user-data}"
+export PLAYWRIGHT_MCP_HEADLESS="${PLAYWRIGHT_MCP_HEADLESS:-1}"
+export PLAYWRIGHT_MCP_NO_SANDBOX="${PLAYWRIGHT_MCP_NO_SANDBOX:-1}"
+mkdir -p "$PLAYWRIGHT_MCP_OUTPUT_DIR" "$PLAYWRIGHT_MCP_USER_DATA_DIR"
+chmod u+rwx "$PLAYWRIGHT_MCP_OUTPUT_DIR" "$PLAYWRIGHT_MCP_USER_DATA_DIR" 2>/dev/null || true
 
 # Strip out the alternate credential — claude's auth precedence puts
 # ANTHROPIC_API_KEY ahead of CLAUDE_CODE_OAUTH_TOKEN, so a stray value

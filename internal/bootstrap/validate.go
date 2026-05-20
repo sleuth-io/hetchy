@@ -122,7 +122,11 @@ Choose proof based on the change:
     support debugging, but it does not prove rendered UI appearance; if
     screenshot capture is blocked, say so explicitly and mark
     validation incomplete unless you can attach another reviewer-visible
-    visual proof.
+    visual proof. The host sets PLAYWRIGHT_MCP_USER_DATA_DIR and
+    PLAYWRIGHT_MCP_OUTPUT_DIR to writable sandbox paths; if Playwright
+    still fails with profile/output/permission errors, record that as
+    validation-tooling friction in summary.md and the bootstrap
+    reflection below.
   - UI/UX flow or interaction change: record the whole screen as MP4
     with H.264 encoding, then upload and link the recording. Use
     hetchy-record-screen when available. Recommended pattern: write a
@@ -189,12 +193,20 @@ NOT the user's feature work. Examples:
   - Creating a directory that the spec assumed already existed
   - Setting an env var to bypass auth, onboarding, or first-run flows
   - Rebuilding and restarting the running app to pick up your changes
+  - Validation tooling friction, especially Playwright MCP/browser
+    failures caused by unwritable profile or output dirs, missing
+    browser binaries, missing xvfb, or screenshot/recording tools
   - Anything else that took more than one step to recover from before
     you could even start exercising the change
 
 If you encountered any of that, write the IMPROVED versions of the
 affected scripts to /tmp/hetchy-spec/improved/. Only include the files
-you'd actually change — leave the rest absent. Allowed paths:
+you'd actually change — leave the rest absent. If the fix is an
+environment/tooling lesson rather than a repo runtime script change,
+write /tmp/hetchy-spec/improved/lessons.md with the new lesson appended
+to the prior lessons. Do NOT write none.txt if Playwright MCP,
+screenshot, recording, browser, or other validation tooling failed and
+you had to recover manually. Allowed paths:
 
   /tmp/hetchy-spec/improved/setup.sh
   /tmp/hetchy-spec/improved/start.sh

@@ -702,6 +702,73 @@ func TestAgentScript_EmitInstalledSkillsEmpty(t *testing.T) {
 	}
 }
 
+func TestAgentScript_SXInstallMarkerSkipsRepeatRefresh(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skipf("bash not available: %v", err)
+	}
+	workdir := t.TempDir()
+	configDir := filepath.Join(t.TempDir(), "config")
+	cacheDir := filepath.Join(t.TempDir(), "cache")
+	markerDir := filepath.Join(t.TempDir(), "markers")
+	binDir := filepath.Join(t.TempDir(), "bin")
+	home := t.TempDir()
+	mustMkdir(t, configDir)
+	mustMkdir(t, binDir)
+	mustWriteFile(t, filepath.Join(configDir, "config.json"), `{"defaultProfile":"test"}`)
+	mustWriteFile(t, filepath.Join(binDir, "sx"), strings.Join([]string{
+		"#!/usr/bin/env bash",
+		`printf 'run\n' >> "$SX_COUNT_FILE"`,
+		`mkdir -p "$HOME/.claude/skills/from-sx"`,
+	}, "\n"))
+	if err := os.Chmod(filepath.Join(binDir, "sx"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	const startAnchor = "sx_install_fingerprint() {"
+	const endAnchor = "\n# emit_installed_skills"
+	startIdx := strings.Index(agentScriptBody, startAnchor)
+	if startIdx < 0 {
+		t.Fatalf("sx_install_fingerprint function not found in agent.sh")
+	}
+	endIdx := strings.Index(agentScriptBody[startIdx:], endAnchor)
+	if endIdx < 0 {
+		t.Fatalf("sx helper block end not found in agent.sh")
+	}
+	fn := agentScriptBody[startIdx : startIdx+endIdx]
+
+	script := "#!/bin/bash\nset -euo pipefail\n" + sandboxRuntimeHelpersScript + "\n" + fn + `
+run_sx_install "hetchy-public" "$SX_CONFIG" "$SX_CACHE" "test" "" ""
+run_sx_install "hetchy-public" "$SX_CONFIG" "$SX_CACHE" "test" "" ""
+printf 'count=%s\n' "$(wc -l < "$SX_COUNT_FILE" | tr -d ' ')"
+`
+	cmd := exec.Command("bash", "-c", script)
+	cmd.Env = append(os.Environ(),
+		"HOME="+home,
+		"PATH="+binDir+":"+os.Getenv("PATH"),
+		"SF_WORKDIR="+workdir,
+		"SF_REPO=owner/repo",
+		"HETCHY_AGENT_SLUG=bob",
+		"HETCHY_SX_MARKER_DIR="+markerDir,
+		"SX_CONFIG="+configDir,
+		"SX_CACHE="+cacheDir,
+		"SX_COUNT_FILE="+filepath.Join(t.TempDir(), "sx-count"),
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("sx marker harness failed: %v\n%s", err, out)
+	}
+	got := string(out)
+	for _, want := range []string{
+		"sx skills marker written (hetchy-public)",
+		"sx skills already refreshed (hetchy-public)",
+		"count=1",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("sx marker output missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func mustMkdir(t *testing.T, dir string) {
 	t.Helper()
 	if err := os.MkdirAll(dir, 0o755); err != nil {

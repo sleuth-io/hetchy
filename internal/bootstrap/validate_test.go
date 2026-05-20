@@ -29,6 +29,9 @@ func TestBuildValidationPromptCoversThreeFlows(t *testing.T) {
 		"Playwright MCP",
 		"Static UI change",
 		"does not prove rendered UI appearance",
+		"PLAYWRIGHT_MCP_USER_DATA_DIR",
+		"PLAYWRIGHT_MCP_OUTPUT_DIR",
+		"validation-tooling friction",
 		"whole screen as MP4",
 		"H.264",
 		"hetchy-record-screen 20 /tmp/hetchy-validate/recording-001.mp4 -- node",
@@ -60,6 +63,7 @@ func TestBuildValidationPromptCoversThreeFlows(t *testing.T) {
 		"/tmp/hetchy-spec/improved/",
 		"/tmp/hetchy-spec/improved/stop.sh",
 		"/tmp/hetchy-spec/improved/lessons.md",
+		"Do NOT write none.txt if Playwright MCP",
 		"none.txt",
 		// Health-check sentinel + start.log triage path. If these
 		// strings drift the validation prompt would silently stop

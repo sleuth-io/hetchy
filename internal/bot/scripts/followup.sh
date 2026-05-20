@@ -177,6 +177,36 @@ write_sx_config() {
   fi
 }
 
+sx_install_fingerprint() {
+  local label="$1"
+  local config_dir="$2"
+  local sx_bot="${3:-}"
+  local sx_bot_key="${4:-}"
+  local config_hash=""
+  local key_hash=""
+  local remote=""
+
+  if [[ -f "${config_dir}/config.json" ]]; then
+    config_hash="$(hetchy_file_sha256 "${config_dir}/config.json" 2>/dev/null || true)"
+  fi
+  if [[ -n "$sx_bot_key" ]]; then
+    key_hash="$(printf '%s' "$sx_bot_key" | hetchy_stdin_sha256 2>/dev/null || true)"
+  fi
+  remote="$(git -C "$SF_WORKDIR" remote get-url origin 2>/dev/null || true)"
+  remote="${remote/x-access-token:*@github.com/x-access-token:REDACTED@github.com}"
+
+  {
+    printf 'v=1\n'
+    printf 'label=%s\n' "$label"
+    printf 'config_hash=%s\n' "$config_hash"
+    printf 'agent_slug=%s\n' "${HETCHY_AGENT_SLUG:-default}"
+    printf 'sx_bot=%s\n' "$sx_bot"
+    printf 'sx_bot_key_hash=%s\n' "$key_hash"
+    printf 'repo=%s\n' "${SF_REPO:-}"
+    printf 'remote=%s\n' "$remote"
+  } | hetchy_stdin_sha256
+}
+
 run_sx_install() {
   local label="$1"
   local config_dir="$2"
@@ -184,9 +214,21 @@ run_sx_install() {
   local profile="$4"
   local sx_bot="${5:-}"
   local sx_bot_key="${6:-}"
+  local marker_dir="${HETCHY_SX_MARKER_DIR:-/tmp/hetchy-sx/markers}"
+  local fingerprint=""
+  local marker=""
+
+  mkdir -p "$cache_dir" "$HOME/.claude" "$marker_dir"
+  fingerprint="$(sx_install_fingerprint "$label" "$config_dir" "$sx_bot" "$sx_bot_key" 2>/dev/null || true)"
+  if [[ -n "$fingerprint" ]]; then
+    marker="${marker_dir}/${label}.${fingerprint}.succeeded"
+    if [[ -f "$marker" ]]; then
+      echo "[hetchy] sx skills already refreshed (${label}) for fingerprint ${fingerprint}; skipping"
+      return 0
+    fi
+  fi
 
   echo "[hetchy] refreshing sx skills (${label})"
-  mkdir -p "$cache_dir" "$HOME/.claude"
   # See agent.sh for the rationale on running sx inside the checkout:
   # the target dir's git remote URL is what scopes per-repo skills,
   # and a follow-up run starts in $HOME for some daytona images so a
@@ -198,6 +240,11 @@ run_sx_install() {
     SX_BOT="$sx_bot" \
     SX_BOT_KEY="$sx_bot_key" \
       sx install --profile "$profile" --client=claude-code --target "$SF_WORKDIR")
+  if [[ -n "$marker" ]]; then
+    find "$marker_dir" -maxdepth 1 -type f -name "${label}.*.succeeded" ! -name "$(basename "$marker")" -delete 2>/dev/null || true
+    : > "$marker"
+    echo "[hetchy] sx skills marker written (${label}) for fingerprint ${fingerprint}"
+  fi
 }
 
 # Mirror of agent.sh's emit_installed_skills — see that script for the

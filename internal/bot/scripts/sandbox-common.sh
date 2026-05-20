@@ -258,13 +258,48 @@ configure_hetchy_cache() {
 }
 
 ensure_playwright_mcp_dir() {
-  local dir="${SF_WORKDIR}/.playwright-mcp"
-  if [[ -e "$dir" && ! -d "$dir" ]]; then
-    rm -f "$dir" 2>/dev/null || true
-  fi
-  if mkdir -p "$dir" 2>/dev/null; then
-    chmod u+rwx "$dir" 2>/dev/null || true
+  local output_dir="${PLAYWRIGHT_MCP_OUTPUT_DIR:-${SF_WORKDIR}/.playwright-mcp}"
+  local user_data_dir="${PLAYWRIGHT_MCP_USER_DATA_DIR:-/tmp/hetchy-playwright-mcp/user-data}"
+  local d
+
+  export PLAYWRIGHT_MCP_OUTPUT_DIR="$output_dir"
+  export PLAYWRIGHT_MCP_USER_DATA_DIR="$user_data_dir"
+  export PLAYWRIGHT_MCP_HEADLESS="${PLAYWRIGHT_MCP_HEADLESS:-1}"
+  export PLAYWRIGHT_MCP_NO_SANDBOX="${PLAYWRIGHT_MCP_NO_SANDBOX:-1}"
+
+  for d in "$PLAYWRIGHT_MCP_OUTPUT_DIR" "$PLAYWRIGHT_MCP_USER_DATA_DIR"; do
+    if [[ -e "$d" && ! -d "$d" ]]; then
+      rm -f "$d" 2>/dev/null || true
+    fi
+    if mkdir -p "$d" 2>/dev/null; then
+      chmod u+rwx "$d" 2>/dev/null || true
+    else
+      echo "[hetchy] WARNING: could not prepare ${d}; Playwright MCP screenshots may fail"
+    fi
+  done
+}
+
+hetchy_stdin_sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 | awk '{print $1}'
+  elif command -v openssl >/dev/null 2>&1; then
+    openssl dgst -sha256 | awk '{print $NF}'
   else
-    echo "[hetchy] WARNING: could not prepare ${dir}; Playwright MCP screenshots may fail"
+    return 1
+  fi
+}
+
+hetchy_file_sha256() {
+  local file="$1"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$file" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$file" | awk '{print $1}'
+  elif command -v openssl >/dev/null 2>&1; then
+    openssl dgst -sha256 "$file" | awk '{print $NF}'
+  else
+    return 1
   fi
 }

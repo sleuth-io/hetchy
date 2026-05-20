@@ -596,12 +596,21 @@ configure_hetchy_cache
 func TestEnsurePlaywrightMCPDirRepairsBadPath(t *testing.T) {
 	workdir := t.TempDir()
 	mustWriteFile(t, filepath.Join(workdir, ".playwright-mcp"), "not a directory\n")
+	userDataDir := filepath.Join(t.TempDir(), "pw-user-data")
 
 	script := "set -euo pipefail\n" + sandboxRepoCacheHelpersScript + `
 ensure_playwright_mcp_dir
+printf 'output=%s\n' "$PLAYWRIGHT_MCP_OUTPUT_DIR"
+printf 'user_data=%s\n' "$PLAYWRIGHT_MCP_USER_DATA_DIR"
+printf 'headless=%s\n' "$PLAYWRIGHT_MCP_HEADLESS"
+printf 'no_sandbox=%s\n' "$PLAYWRIGHT_MCP_NO_SANDBOX"
 `
 	out, err := runBashScript(t, script, map[string]string{
-		"SF_WORKDIR": workdir,
+		"SF_WORKDIR":                   workdir,
+		"PLAYWRIGHT_MCP_USER_DATA_DIR": userDataDir,
+		"PLAYWRIGHT_MCP_OUTPUT_DIR":    filepath.Join(workdir, ".playwright-mcp"),
+		"PLAYWRIGHT_MCP_HEADLESS":      "0",
+		"PLAYWRIGHT_MCP_NO_SANDBOX":    "0",
 	})
 	if err != nil {
 		t.Fatalf("ensure playwright mcp dir: %v\n%s", err, out)
@@ -612,6 +621,19 @@ ensure_playwright_mcp_dir
 	}
 	if !info.IsDir() {
 		t.Fatalf(".playwright-mcp should be repaired to a directory")
+	}
+	if info, err := os.Stat(userDataDir); err != nil || !info.IsDir() {
+		t.Fatalf("user data dir should exist as a directory, info=%v err=%v\noutput:\n%s", info, err, out)
+	}
+	for _, want := range []string{
+		"output=" + filepath.Join(workdir, ".playwright-mcp"),
+		"user_data=" + userDataDir,
+		"headless=0",
+		"no_sandbox=0",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("ensure playwright output missing %q:\n%s", want, out)
+		}
 	}
 }
 
