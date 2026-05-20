@@ -298,7 +298,7 @@ func (b *Bot) recoveredRunInputs(ctx context.Context, run runstore.Run, emit blo
 func (b *Bot) continueRecoveredRun(ctx context.Context, sb *daytona.Sandbox, run runstore.Run, live *liveRun, skipBootstrap bool) {
 	events, err := b.runs.EventsAfter(ctx, run.ID, 0)
 	if err != nil {
-		b.deferRecoveryForRetry(run, "load events (continue)", err)
+		b.deferRecoveryForRetry(run, "load events: continue", err)
 		return
 	}
 	em := newAgentRunEmitterAfterEvents(b.runs, run.ID, b.workerID, live, events)
@@ -344,11 +344,11 @@ func (b *Bot) continueRecoveredRun(ctx context.Context, sb *daytona.Sandbox, run
 	}
 	events, err = b.runs.EventsAfter(ctx, run.ID, 0)
 	if err != nil {
-		b.deferRecoveryForRetry(run, "reload events (continue)", err)
+		b.deferRecoveryForRetry(run, "reload events: continue", err)
 		return
 	}
 	if err := b.projectRecoveredConversation(ctx, run, prURL, events); err != nil {
-		b.deferRecoveryForRetry(run, "project conversation (continue)", err)
+		b.deferRecoveryForRetry(run, "project conversation: continue", err)
 		return
 	}
 	b.runs.UpdateState(context.Background(), run.ID, runstore.StateSucceeded, "", b.workerID)

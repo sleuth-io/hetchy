@@ -31,8 +31,8 @@ func (b *Bot) handleRecoverySetupError(ctx context.Context, run runstore.Run, li
 
 // deferRecoveryForRetry logs a transient failure that keeps a run in
 // StateRecovering so the next recovery sweep can pick it up, then writes the
-// state update. Operators rely on this Warn to see how often upstream outages
-// are deferring retries; previously these sites were silent.
+// state update. The Warn log gives operators visibility into upstream outages
+// that defer agent run retries.
 func (b *Bot) deferRecoveryForRetry(run runstore.Run, reason string, err error) {
 	b.log.Warn("agent run recovery deferred by transient outage",
 		"run_id", run.ID,
