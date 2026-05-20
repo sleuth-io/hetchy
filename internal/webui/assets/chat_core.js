@@ -239,11 +239,11 @@ function addUserMsg(text, attachments = []) {
   if (empty) empty.remove();
   const d = document.createElement('div');
   d.className = 'msg user';
+  const body = document.createElement('div');
+  body.className = 'msg-text';
+  body.textContent = text;
+  d.appendChild(body);
   if (Array.isArray(attachments) && attachments.length > 0) {
-    const body = document.createElement('div');
-    body.className = 'msg-text';
-    body.textContent = text;
-    d.appendChild(body);
     const list = document.createElement('div');
     list.className = 'msg-attachments';
     for (const attachment of attachments) {
@@ -258,8 +258,6 @@ function addUserMsg(text, attachments = []) {
       list.appendChild(item);
     }
     d.appendChild(list);
-  } else {
-    d.textContent = text;
   }
   log.appendChild(d);
   log.scrollTop = log.scrollHeight;

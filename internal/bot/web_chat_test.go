@@ -6,12 +6,14 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/hetchyhq/hetchy/internal/auth"
 	"github.com/hetchyhq/hetchy/internal/blocks"
+	"github.com/hetchyhq/hetchy/internal/convstore"
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
 	"github.com/hetchyhq/hetchy/internal/runstore"
 	"github.com/hetchyhq/hetchy/internal/webui"
@@ -235,6 +237,31 @@ func TestParseJSONChatPostBody(t *testing.T) {
 	}
 	if len(body.Attachments) != 0 {
 		t.Fatalf("attachments len = %d, want 0", len(body.Attachments))
+	}
+}
+
+func TestConversationPostPreservesMessageFormatting(t *testing.T) {
+	convs := &fakeConversationStore{getErr: convstore.ErrNotFound}
+	b := newBypassOrgBot(t, "admin")
+	b.convs = convs
+	b.orgs = &fakeOrgStore{getConfig: orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant"}}
+	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b.conversationCollectionHandler(r.Context(), w, r)
+	})))
+
+	const message = "  Step 1:\n  - keep indentation\n\nStep 2:\n  - keep the blank line  "
+	bodyJSON := `{"message":` + strconv.Quote(message) + `,"id":"thread-format","model":"sonnet"}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/conversations", strings.NewReader(bodyJSON))
+	req.Header.Set("Content-Type", "application/json")
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	recData := convs.lastUpsert(t)
+	if got := recData.History; len(got) != 1 || got[0] != message {
+		t.Fatalf("history = %#v, want exact formatted message %q", got, message)
 	}
 }
 

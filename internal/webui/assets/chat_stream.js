@@ -394,10 +394,10 @@ async function consumeSSEResponse(res, onFirstEvent, state = null) {
 
 async function send() {
   if (isRunning) return;
-  const text = inp.value.trim();
+  const text = inp.value;
   const attachmentsForTurn = pendingAttachments.slice();
-  if (!text && attachmentsForTurn.length === 0) return;
-  const displayText = text || 'Use the attached file(s) as context.';
+  if (!text.trim() && attachmentsForTurn.length === 0) return;
+  const displayText = text.trim() ? text : 'Use the attached file(s) as context.';
   const agentChoiceApplies = conversationAgentIsMutable();
   const repoChoiceApplies = conversationRepoIsMutable();
   if (repoChoiceApplies && !selectedRepoSlug) {
