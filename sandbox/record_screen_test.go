@@ -50,7 +50,7 @@ func TestDockerfileAvoidsPlaywrightChromeAptInstall(t *testing.T) {
 		"-path '*/chrome-linux/chrome'",
 		"-path '*/chrome-linux64/chrome'",
 		"chown -R daytona:daytona \"$PLAYWRIGHT_BROWSERS_PATH\"",
-		"chmod -R a+rwX \"$PLAYWRIGHT_BROWSERS_PATH\"",
+		"chmod -R a+rX \"$PLAYWRIGHT_BROWSERS_PATH\"",
 		"hetchy-playwright-smoke",
 		"su daytona -c",
 		"ffmpeg xvfb xauth x11-utils",

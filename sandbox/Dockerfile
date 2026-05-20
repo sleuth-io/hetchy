@@ -182,7 +182,7 @@ RUN npm install -g \
  && mkdir -p /opt/google/chrome \
  && ln -sf "$CHROMIUM_BIN" /opt/google/chrome/chrome \
  && chown -R daytona:daytona "$PLAYWRIGHT_BROWSERS_PATH" \
- && chmod -R a+rwX "$PLAYWRIGHT_BROWSERS_PATH" \
+ && chmod -R a+rX "$PLAYWRIGHT_BROWSERS_PATH" \
  && chmod -R a+rX /opt/google/chrome \
  && NODE_BIN=$(dirname "$(readlink -f "$(command -v node)")") \
  && for f in "$NODE_BIN"/*; do ln -sf "$f" "/usr/local/bin/$(basename "$f")"; done

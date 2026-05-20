@@ -316,13 +316,12 @@ ensure_playwright_runtime() {
         ;;
     esac
 
+    mkdir -p "${validate_dir}/node_modules" 2>/dev/null || true
     if [[ -d "${global_node_modules}/playwright" ]]; then
-      mkdir -p "${validate_dir}/node_modules" 2>/dev/null || true
       rm -rf "${validate_dir}/node_modules/playwright" 2>/dev/null || true
       ln -s "${global_node_modules}/playwright" "${validate_dir}/node_modules/playwright" 2>/dev/null || true
     fi
     if [[ -d "${global_node_modules}/playwright-core" ]]; then
-      mkdir -p "${validate_dir}/node_modules" 2>/dev/null || true
       rm -rf "${validate_dir}/node_modules/playwright-core" 2>/dev/null || true
       ln -s "${global_node_modules}/playwright-core" "${validate_dir}/node_modules/playwright-core" 2>/dev/null || true
     fi
