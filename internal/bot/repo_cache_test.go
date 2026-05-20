@@ -568,6 +568,54 @@ save_hetchy_cache_archive "$LOCAL_CACHE" "$ARCHIVE"
 	}
 }
 
+func TestConfigureHetchyCache_SkipSaveOnExit(t *testing.T) {
+	localCache := filepath.Join(t.TempDir(), "local-cache")
+	cacheMount := t.TempDir()
+	mustMkdir(t, localCache)
+	mustWriteFile(t, filepath.Join(localCache, "gomod.txt"), "cached\n")
+
+	script := "set -euo pipefail\n" + sandboxCommonScript + `
+configure_hetchy_cache
+`
+	out, err := runBashScript(t, script, map[string]string{
+		"HETCHY_CACHE_STATUS":    "mounted",
+		"HETCHY_CACHE_DIR":       cacheMount,
+		"HETCHY_LOCAL_CACHE_DIR": localCache,
+		"HETCHY_SKIP_CACHE_SAVE": "1",
+	})
+	if err != nil {
+		t.Fatalf("configure cache with skip save: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "dependency cache archive save skipped for non-mutating follow-up") {
+		t.Fatalf("cache skip output missing expected line:\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Join(cacheMount, "cache.tar.gz")); !os.IsNotExist(err) {
+		t.Fatalf("cache archive should not be written when save is skipped: %v", err)
+	}
+}
+
+func TestEnsurePlaywrightMCPDirRepairsBadPath(t *testing.T) {
+	workdir := t.TempDir()
+	mustWriteFile(t, filepath.Join(workdir, ".playwright-mcp"), "not a directory\n")
+
+	script := "set -euo pipefail\n" + sandboxCommonScript + `
+ensure_playwright_mcp_dir
+`
+	out, err := runBashScript(t, script, map[string]string{
+		"SF_WORKDIR": workdir,
+	})
+	if err != nil {
+		t.Fatalf("ensure playwright mcp dir: %v\n%s", err, out)
+	}
+	info, err := os.Stat(filepath.Join(workdir, ".playwright-mcp"))
+	if err != nil {
+		t.Fatalf("stat .playwright-mcp: %v", err)
+	}
+	if !info.IsDir() {
+		t.Fatalf(".playwright-mcp should be repaired to a directory")
+	}
+}
+
 func TestRestoreRepoCheckoutFromCache_RejectsUnsafeWorkdir(t *testing.T) {
 	cacheRepo := filepath.Join(t.TempDir(), "repo")
 	mustMkdir(t, filepath.Join(cacheRepo, ".git"))

@@ -39,7 +39,9 @@ type followUpModeFunc func(context.Context, orgcfg.Config, convstore.Record, str
 
 func (b *Bot) decideFollowUpMode(ctx context.Context, oc orgcfg.Config, rec convstore.Record, userRequest string) followUpModeDecision {
 	if b != nil && b.followUpModeFn != nil {
-		return enforceFollowUpModeConfidence(normalizeFollowUpModeDecision(b.followUpModeFn(ctx, oc, rec, userRequest)))
+		decision := normalizeFollowUpModeDecision(b.followUpModeFn(ctx, oc, rec, userRequest))
+		decision = applyFollowUpModeSafeguards(decision, userRequest)
+		return enforceFollowUpModeConfidence(decision)
 	}
 	decision, err := requestFollowUpMode(ctx, oc, rec, userRequest)
 	if err != nil {
@@ -49,8 +51,9 @@ func (b *Bot) decideFollowUpMode(ctx context.Context, oc orgcfg.Config, rec conv
 		}
 		return followUpModeDecision{Mode: followUpModeChange, Confidence: 0, Reason: "classifier failed; defaulted to change"}
 	}
-	decision = enforceFollowUpModeConfidence(normalizeFollowUpModeDecision(decision))
-	return decision
+	decision = normalizeFollowUpModeDecision(decision)
+	decision = applyFollowUpModeSafeguards(decision, userRequest)
+	return enforceFollowUpModeConfidence(decision)
 }
 
 func enforceFollowUpModeConfidence(decision followUpModeDecision) followUpModeDecision {
@@ -78,6 +81,69 @@ func normalizeFollowUpModeDecision(decision followUpModeDecision) followUpModeDe
 	}
 	decision.Reason = strings.TrimSpace(decision.Reason)
 	return decision
+}
+
+func applyFollowUpModeSafeguards(decision followUpModeDecision, userRequest string) followUpModeDecision {
+	if decision.Mode != followUpModeChange && isPriorWorkRemediationRequest(userRequest) {
+		return followUpModeDecision{
+			Mode:       followUpModeChange,
+			Confidence: decision.Confidence,
+			Reason:     "latest request appears to ask for remediation of a missing prior-run deliverable; forcing change mode",
+		}
+	}
+	return decision
+}
+
+func isPriorWorkRemediationRequest(userRequest string) bool {
+	s := strings.ToLower(strings.TrimSpace(userRequest))
+	if s == "" {
+		return false
+	}
+
+	defectSignals := []string{
+		"you didn't",
+		"you did not",
+		"you forgot",
+		"didn't",
+		"did not",
+		"forgot to",
+		"missing",
+		"lacks",
+		"no proof",
+		"no evidence",
+		"not attached",
+		"not attach",
+		"wasn't attached",
+		"was not attached",
+		"failed to",
+	}
+	deliverableSignals := []string{
+		"proof",
+		"evidence",
+		"screenshot",
+		"recording",
+		"artifact",
+		"validation",
+		"pr body",
+		"pr description",
+		"pull request",
+		"checks",
+		"commit",
+		"push",
+	}
+
+	hasDefect := containsAnySubstring(s, defectSignals)
+	hasDeliverable := containsAnySubstring(s, deliverableSignals)
+	return hasDefect && hasDeliverable
+}
+
+func containsAnySubstring(s string, needles []string) bool {
+	for _, needle := range needles {
+		if strings.Contains(s, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func requestFollowUpMode(ctx context.Context, oc orgcfg.Config, rec convstore.Record, userRequest string) (followUpModeDecision, error) {
@@ -189,7 +255,7 @@ Return only a strict JSON object with this schema:
 {"mode":"change|inspect|answer_only","confidence":0.0,"reason":"short explanation"}
 
 Modes:
-- change: the user wants code, files, commits, pushes, PR updates, validation, or fixes. Use this for any ambiguous request.
+- change: the user wants code, files, commits, pushes, PR updates, validation, or fixes. Also use change for complaints or corrections about missing prior-run deliverables, such as "you didn't attach proof", "the PR body lacks evidence", "you forgot to wait for checks", "rerun validation", or "add the screenshot". These require remediation, not just inspection. Use change for any ambiguous request.
 - inspect: the user wants investigation, logs, status, review, explanation grounded in repo/runtime state, or anomaly analysis, but did not ask to modify code or PR state.
 - answer_only: the user wants a simple conversational answer and does not need repo inspection, validation, git, or PR work.
 

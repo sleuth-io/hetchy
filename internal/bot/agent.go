@@ -474,6 +474,10 @@ func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx
 	prompt := buildFollowUpPrompt(repo.Slug, rec, userRequest, spec, artifactSlotCount, opts, mode)
 	env["SF_PROMPT_B64"] = base64.StdEncoding.EncodeToString([]byte(prompt))
 	env["HETCHY_FOLLOWUP_MODE"] = string(mode)
+	if !changeMode {
+		env["HETCHY_SKIP_CACHE_SAVE"] = "1"
+		env["HETCHY_SKIP_SX_INSTALL"] = "1"
+	}
 	b.addRuntimeEnv(env, oc, model, requestID)
 	if oc.SXKey != "" {
 		env["SX_KEY"] = oc.SXKey

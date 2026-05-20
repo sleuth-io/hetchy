@@ -46,7 +46,8 @@ When you are done implementing the change:
   4. DO NOT update the PR title — it should remain consistent with the original
      user request shown in "Conversation so far" above, not this latest change.
   5. If you edit the PR body (e.g. to add a Validation section), write each paragraph or bullet as one long line — do NOT insert hard line breaks; let GitHub reflow the text for the reader's viewport.
-  6. The very last line of your output MUST be just the PR URL — no other text on that line.`
+  6. If the latest request only repairs validation/proof/PR metadata and no repository files changed, do not create an empty commit; update the PR body as needed and continue to the final PR URL.
+  7. The very last line of your output MUST be just the PR URL — no other text on that line.`
 
 const agentFollowUpInspectPromptTemplate = `You are continuing context in %s on branch %s.
 The existing pull request is at %s.

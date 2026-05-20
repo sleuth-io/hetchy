@@ -27,7 +27,7 @@ func TestExtractSXSkillsSurvivesPersistenceRoundTrip(t *testing.T) {
 	original := [][]blocks.Block{{
 		{
 			Kind:  blocks.KindNotify,
-			Title: "3 skills installed",
+			Title: "3 skills available",
 			Meta:  map[string]any{SXSkillsMetaKey: []string{"a", "b", "c"}},
 		},
 	}}
@@ -64,8 +64,8 @@ func TestExtractSXSkillsSurvivesPersistenceRoundTrip(t *testing.T) {
 // Meta carries the SXSkillsMetaKey.
 func TestExtractSXSkillsWalksNewestTurnFirst(t *testing.T) {
 	turns := [][]blocks.Block{
-		{{Kind: blocks.KindNotify, Title: "1 skills installed", Meta: map[string]any{SXSkillsMetaKey: []string{"alpha"}}}},
-		{{Kind: blocks.KindNotify, Title: "2 skills installed", Meta: map[string]any{SXSkillsMetaKey: []string{"beta", "gamma"}}}},
+		{{Kind: blocks.KindNotify, Title: "1 skills available", Meta: map[string]any{SXSkillsMetaKey: []string{"alpha"}}}},
+		{{Kind: blocks.KindNotify, Title: "2 skills available", Meta: map[string]any{SXSkillsMetaKey: []string{"beta", "gamma"}}}},
 	}
 	got := extractSXSkills(turns)
 	want := []string{"beta", "gamma"}

@@ -28,6 +28,7 @@ func TestBuildValidationPromptCoversThreeFlows(t *testing.T) {
 	mustContain := []string{
 		"Playwright MCP",
 		"Static UI change",
+		"does not prove rendered UI appearance",
 		"whole screen as MP4",
 		"H.264",
 		"hetchy-record-screen 20 /tmp/hetchy-validate/recording-001.mp4 -- node",
@@ -43,6 +44,9 @@ func TestBuildValidationPromptCoversThreeFlows(t *testing.T) {
 		"feature/sf-abc123",
 		"/tmp/hetchy-validate/",
 		"summary.md",
+		"Do not merely claim validation",
+		"reviewer-visible evidence",
+		"Local /tmp paths",
 		"Repo-specific bootstrap lessons",
 		"Restart the app after rebuilding",
 		"/tmp/hetchy-spec/stop.sh",

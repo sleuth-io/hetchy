@@ -160,7 +160,7 @@ printf '{"hasCompletedOnboarding":true}\n' > "$HOME/.claude.json"
 # first browser_take_screenshot fails with a confusing "File access
 # denied" before the agent recovers by mkdir-ing the path itself. Pre-
 # creating it removes that detour.
-mkdir -p "${SF_WORKDIR}/.playwright-mcp"
+ensure_playwright_mcp_dir
 
 # Post-success reflection drop-zone: claude writes /tmp/hetchy-spec/
 # improved/{setup,start,health}.sh here when it identifies bootstrap-
@@ -215,7 +215,7 @@ run_sx_install() {
   local sx_bot="${5:-}"
   local sx_bot_key="${6:-}"
 
-  echo "[hetchy] running sx install (${label})"
+  echo "[hetchy] refreshing sx skills (${label})"
   mkdir -p "$cache_dir" "$HOME/.claude"
   # cd into the cloned repo so sx walks the right .git for repo
   # detection. sx reads the target dir's git remote URL to scope

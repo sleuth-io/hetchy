@@ -133,7 +133,7 @@ git pull --rebase --autostash origin "${SF_BRANCH}"
 # Same pre-create as agent.sh — the Playwright MCP server requires
 # this directory to exist before the first screenshot, and follow-ups
 # typically include another round of UI validation.
-mkdir -p "${SF_WORKDIR}/.playwright-mcp"
+ensure_playwright_mcp_dir
 
 # And the spec-improvements drop-zone so post-success reflection can
 # patch the saved spec without an extra mkdir round-trip.
@@ -185,7 +185,7 @@ run_sx_install() {
   local sx_bot="${5:-}"
   local sx_bot_key="${6:-}"
 
-  echo "[hetchy] running sx install (${label})"
+  echo "[hetchy] refreshing sx skills (${label})"
   mkdir -p "$cache_dir" "$HOME/.claude"
   # See agent.sh for the rationale on running sx inside the checkout:
   # the target dir's git remote URL is what scopes per-repo skills,
@@ -222,26 +222,30 @@ emit_installed_skills() {
   echo "[hetchy:sx-skills] ${joined}"
 }
 
-if [[ -n "${HETCHY_SX_PUBLIC_VAULT_URL:-}" || -n "${SX_KEY:-}" ]]; then
-  ensure_sx
-fi
+if [[ "${HETCHY_SKIP_SX_INSTALL:-}" == "1" ]]; then
+  echo "[hetchy] skipping sx install for ${HETCHY_FOLLOWUP_MODE:-non-change} follow-up"
+else
+  if [[ -n "${HETCHY_SX_PUBLIC_VAULT_URL:-}" || -n "${SX_KEY:-}" ]]; then
+    ensure_sx
+  fi
 
-if [[ -n "${HETCHY_SX_PUBLIC_VAULT_URL:-}" ]]; then
-  public_profile="hetchy-public"
-  public_config="/tmp/hetchy-sx/public-${HETCHY_AGENT_SLUG:-default}/config"
-  public_cache="/tmp/hetchy-sx/public-${HETCHY_AGENT_SLUG:-default}/cache"
-  echo "[hetchy] writing public sx config"
-  write_sx_config "$public_config" "$public_profile" "git" "$HETCHY_SX_PUBLIC_VAULT_URL"
-  run_sx_install "hetchy-public" "$public_config" "$public_cache" "$public_profile" "${HETCHY_AGENT_SX_BOT:-}" ""
-fi
+  if [[ -n "${HETCHY_SX_PUBLIC_VAULT_URL:-}" ]]; then
+    public_profile="hetchy-public"
+    public_config="/tmp/hetchy-sx/public-${HETCHY_AGENT_SLUG:-default}/config"
+    public_cache="/tmp/hetchy-sx/public-${HETCHY_AGENT_SLUG:-default}/cache"
+    echo "[hetchy] writing public sx config"
+    write_sx_config "$public_config" "$public_profile" "git" "$HETCHY_SX_PUBLIC_VAULT_URL"
+    run_sx_install "hetchy-public" "$public_config" "$public_cache" "$public_profile" "${HETCHY_AGENT_SX_BOT:-}" ""
+  fi
 
-if [[ -n "${SX_KEY:-}" ]]; then
-  org_profile="org-skills"
-  org_config="/tmp/hetchy-sx/org-${HETCHY_AGENT_SLUG:-default}/config"
-  org_cache="/tmp/hetchy-sx/org-${HETCHY_AGENT_SLUG:-default}/cache"
-  echo "[hetchy] writing org sx config"
-  write_sx_config "$org_config" "$org_profile" "sleuth" "https://app.skills.new" "$SX_KEY"
-  run_sx_install "org-skills" "$org_config" "$org_cache" "$org_profile" "${HETCHY_AGENT_SX_BOT:-}" "$SX_KEY"
+  if [[ -n "${SX_KEY:-}" ]]; then
+    org_profile="org-skills"
+    org_config="/tmp/hetchy-sx/org-${HETCHY_AGENT_SLUG:-default}/config"
+    org_cache="/tmp/hetchy-sx/org-${HETCHY_AGENT_SLUG:-default}/cache"
+    echo "[hetchy] writing org sx config"
+    write_sx_config "$org_config" "$org_profile" "sleuth" "https://app.skills.new" "$SX_KEY"
+    run_sx_install "org-skills" "$org_config" "$org_cache" "$org_profile" "${HETCHY_AGENT_SX_BOT:-}" "$SX_KEY"
+  fi
 fi
 
 # Emit the marker unconditionally — see the matching note in agent.sh.

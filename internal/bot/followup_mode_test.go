@@ -53,6 +53,35 @@ func TestDecideFollowUpModeDefaultsLowConfidenceNonChangeToChange(t *testing.T) 
 	}
 }
 
+func TestDecideFollowUpModeForcesChangeForMissingProofRemediation(t *testing.T) {
+	b := &Bot{
+		log: discardLogger(),
+		followUpModeFn: func(context.Context, orgcfg.Config, convstore.Record, string) followUpModeDecision {
+			return followUpModeDecision{Mode: followUpModeInspect, Confidence: 0.95, Reason: "looks like inspection"}
+		},
+	}
+	decision := b.decideFollowUpMode(context.Background(), orgcfg.Config{}, convstore.Record{}, "you didn't attach proof of your change to the PR")
+	if decision.Mode != followUpModeChange {
+		t.Fatalf("mode = %q, want change", decision.Mode)
+	}
+	if !strings.Contains(decision.Reason, "remediation") {
+		t.Fatalf("reason = %q, want remediation override", decision.Reason)
+	}
+}
+
+func TestFollowUpModeSystemPromptTreatsPriorDeliverableComplaintsAsChange(t *testing.T) {
+	for _, want := range []string{
+		"missing prior-run deliverables",
+		"you didn't attach proof",
+		"the PR body lacks evidence",
+		"rerun validation",
+	} {
+		if !strings.Contains(followUpModeSystemPrompt, want) {
+			t.Fatalf("follow-up mode system prompt missing %q\n%s", want, followUpModeSystemPrompt)
+		}
+	}
+}
+
 func TestBuildFollowUpPromptAnswerOnlyOmitsMutationInstructions(t *testing.T) {
 	prompt := buildFollowUpPrompt("owner/repo", convstore.Record{
 		Branch:  "feature/demo",

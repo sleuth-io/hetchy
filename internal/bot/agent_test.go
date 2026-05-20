@@ -98,6 +98,7 @@ func TestBuildFollowUpPromptAddsValidationWhenSpecPresent(t *testing.T) {
 		"feature/sf-1",
 		"Review code before push",
 		"Action PR checks for done",
+		"only repairs validation/proof/PR metadata",
 	}
 	for _, w := range wants {
 		if !strings.Contains(prompt, w) {
@@ -239,6 +240,7 @@ func TestFollowupScript_EmbeddedAndWellFormed(t *testing.T) {
 		"codex login --with-access-token",
 		"--output-last-message",
 		`--model "$HETCHY_CODEX_MODEL"`,
+		"HETCHY_SKIP_SX_INSTALL",
 		`(cd "$SF_WORKDIR" && \`,
 		"emit_installed_skills",
 		"[hetchy:sx-skills]",
@@ -670,7 +672,7 @@ func TestEmitInstalledSkills_AgentAndFollowupBodiesMatch(t *testing.T) {
 
 // TestAgentScript_EmitInstalledSkillsEmpty proves the empty-payload
 // path agent.sh relies on for "sx ran but installed nothing". The
-// bot's router emits a "0 skills installed" notify block in that
+// bot's router emits a "0 skills available" notify block in that
 // case (see agent_router_test.go); this test pins the shell side.
 func TestAgentScript_EmitInstalledSkillsEmpty(t *testing.T) {
 	if _, err := exec.LookPath("bash"); err != nil {
@@ -1070,6 +1072,12 @@ func TestRunFollowUpAnswerOnlySkipsSpecAndPRValidation(t *testing.T) {
 		if captured.env[key] != "" {
 			t.Fatalf("answer-only env[%s] = %q, want empty", key, captured.env[key])
 		}
+	}
+	if captured.env["HETCHY_SKIP_CACHE_SAVE"] != "1" {
+		t.Fatalf("answer-only follow-up should skip cache save, env = %#v", captured.env)
+	}
+	if captured.env["HETCHY_SKIP_SX_INSTALL"] != "1" {
+		t.Fatalf("answer-only follow-up should skip sx install, env = %#v", captured.env)
 	}
 	prompt := mustDecodeBase64Env(t, captured.env, "SF_PROMPT_B64")
 	for _, bad := range []string{"When you are done implementing", "POST-CHANGE VALIDATION", "Review code before push", "Action PR checks"} {

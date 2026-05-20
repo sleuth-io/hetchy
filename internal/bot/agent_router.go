@@ -59,9 +59,9 @@ const setupSwitchMarker = setupSwitchMarkerClaude
 
 // sxSkillsMarkerPrefix is the prefix agent.sh / followup.sh prints
 // after sx install completes. Body is a comma-separated list of
-// installed skill names (de-duplicated across the global and repo-
+// available skill names (de-duplicated across the global and repo-
 // scoped Claude dirs). Empty list still prints the prefix so the
-// router can distinguish "sx ran and installed nothing" from "sx
+// router can distinguish "sx ran and found no skills" from "sx
 // never ran at all" — useful when triaging why a repo's skills
 // didn't load.
 const sxSkillsMarkerPrefix = "[hetchy:sx-skills] "
@@ -126,7 +126,7 @@ func (r *agentLineRouter) Line(line string) {
 // skills] " line into a clean slice of names and emits a one-shot
 // notify block whose Meta carries the list. We always emit the block
 // (even when the list is empty) so the persisted transcript records
-// that sx install ran — the UI can then show "no skills installed"
+// that sx install ran — the UI can then show "no skills available"
 // rather than silently rendering an empty Skills row.
 func (r *agentLineRouter) emitSXSkills(payload string) {
 	raw := strings.Split(payload, ",")
@@ -138,7 +138,7 @@ func (r *agentLineRouter) emitSXSkills(payload string) {
 		}
 		skills = append(skills, name)
 	}
-	title := fmt.Sprintf("%d skills installed", len(skills))
+	title := fmt.Sprintf("%d skills available", len(skills))
 	body := strings.Join(skills, ", ")
 	id := r.emit.Start(blocks.KindNotify, title, map[string]any{
 		SXSkillsMetaKey: skills,

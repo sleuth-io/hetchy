@@ -154,6 +154,10 @@ sync_hetchy_cache_on_exit() {
   local exit_code=$?
   if [[ "${hetchy_cache_sync_registered:-0}" == "1" && "${hetchy_cache_synced:-0}" != "1" ]]; then
     hetchy_cache_synced=1
+    if [[ "${HETCHY_SKIP_CACHE_SAVE:-}" == "1" ]]; then
+      echo "[hetchy] dependency cache archive save skipped for non-mutating follow-up"
+      return "$exit_code"
+    fi
     local started
     started="$(hetchy_now_seconds)"
     echo "[hetchy] saving dependency cache archive to volume"
@@ -251,6 +255,18 @@ configure_hetchy_cache() {
   hetchy_cache_archive="$archive"
   hetchy_cache_sync_registered=1
   trap sync_hetchy_cache_on_exit EXIT
+}
+
+ensure_playwright_mcp_dir() {
+  local dir="${SF_WORKDIR}/.playwright-mcp"
+  if [[ -e "$dir" && ! -d "$dir" ]]; then
+    rm -f "$dir" 2>/dev/null || true
+  fi
+  if mkdir -p "$dir" 2>/dev/null; then
+    chmod u+rwx "$dir" 2>/dev/null || true
+  else
+    echo "[hetchy] WARNING: could not prepare ${dir}; Playwright MCP screenshots may fail"
+  fi
 }
 
 run_saved_setup() {

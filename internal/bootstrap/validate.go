@@ -96,6 +96,12 @@ The PR description you drafted:
 
 Your job: produce proof the change works and include that proof in the PR.
 
+Do not merely claim validation in the PR body. A successful Validation
+section must contain reviewer-visible evidence: expanded S3 get_url
+links/images, a concrete testing matrix with observed outputs, or
+relevant command/request/response excerpts. Local /tmp paths and
+phrases like "verified it works" are not proof.
+
 Before doing HTTP, browser, or other end-to-end validation against a
 long-running service, refresh the runtime so it serves the code you just
 changed:
@@ -112,7 +118,11 @@ you began editing: that baseline process may still be serving old code.
 Choose proof based on the change:
 
   - Static UI change: use Playwright MCP to navigate to the affected
-    feature and upload screenshot(s). PNG only.
+    feature and upload screenshot(s). PNG only. Curl/grep of HTML can
+    support debugging, but it does not prove rendered UI appearance; if
+    screenshot capture is blocked, say so explicitly and mark
+    validation incomplete unless you can attach another reviewer-visible
+    visual proof.
   - UI/UX flow or interaction change: record the whole screen as MP4
     with H.264 encoding, then upload and link the recording. Use
     hetchy-record-screen when available. Recommended pattern: write a
