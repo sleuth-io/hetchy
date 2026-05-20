@@ -105,6 +105,7 @@ func buildFollowUpPrompt(ownerRepo string, rec convstore.Record, userRequest str
 			repoWorkdir(ownerRepo), rec.Branch, rec.PRURL,
 			history, userRequest,
 		)
+	case followUpModeChange:
 	}
 	prompt := fmt.Sprintf(agentFollowUpPromptTemplate,
 		repoWorkdir(ownerRepo), rec.Branch, rec.PRURL,

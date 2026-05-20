@@ -402,6 +402,7 @@ for i in {1..90}; do
       echo "[hetchy-bootstrap] start.sh exited non-zero (${code})" >&2
       exit 71
     fi
+    # start.sh exited; let health.sh get a final chance below.
   fi
   if "${HETCHY_BOOTSTRAP_OUT_DIR}/health.sh" >/dev/null 2>&1; then
     echo "[hetchy-bootstrap] healthy after ${i}s" >&2
