@@ -428,7 +428,7 @@ func (b *Bot) runInlineScript(ctx context.Context, sb *daytona.Sandbox, sessionI
 // very next follow-up rather than only on a freshly-created sandbox.
 func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, userRequest, requestID string, opts chatTaskOptions, model ClaudeModel, mode followUpMode, emit blocks.Emitter) (string, error) {
 	model = normalizeClaudeModel(model)
-	mode = normalizeFollowUpModeDecision(followUpModeDecision{Mode: mode, Confidence: 1}).Mode
+	mode = normalizeFollowUpMode(mode)
 	changeMode := mode == followUpModeChange
 	var spec *bootstrap.Spec
 	if changeMode && opts.ValidateChanges && b.bootstrap != nil && repo.InstallID != 0 && repo.RepoID != 0 {
@@ -519,7 +519,7 @@ func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx
 	b.markRunFinalizing(ctx)
 	prURL, err = b.validateReportedPR(ctx, repo, rec.Branch, "", prURL)
 	if err == nil && prURL != "" && spec != nil {
-		sessionID := "followup-" + requestID
+		sessionID := "reflect-followup-" + requestID
 		b.applySpecImprovements(ctx, sb, sessionID, spec, repo, emit)
 		if mErr := b.bootstrap.MarkApplied(ctx, repo.InstallID, repo.RepoID, spec.Path,
 			bootstrap.StatusValidated, spec.SuccessCount+1, spec.FailureCount); mErr != nil {

@@ -38,14 +38,14 @@ type followUpModeDecision struct {
 type followUpModeFunc func(context.Context, orgcfg.Config, convstore.Record, string) followUpModeDecision
 
 func (b *Bot) decideFollowUpMode(ctx context.Context, oc orgcfg.Config, rec convstore.Record, userRequest string) followUpModeDecision {
-	if b != nil && b.followUpModeFn != nil {
+	if b.followUpModeFn != nil {
 		decision := normalizeFollowUpModeDecision(b.followUpModeFn(ctx, oc, rec, userRequest))
 		decision = applyFollowUpModeSafeguards(decision, userRequest)
 		return enforceFollowUpModeConfidence(decision)
 	}
 	decision, err := requestFollowUpMode(ctx, oc, rec, userRequest)
 	if err != nil {
-		if b != nil && b.log != nil {
+		if b.log != nil {
 			b.log.Warn("follow-up mode classification failed; defaulting to change",
 				"org", oc.OrgID, "thread", rec.ThreadID, "error", err)
 		}
@@ -68,11 +68,7 @@ func enforceFollowUpModeConfidence(decision followUpModeDecision) followUpModeDe
 }
 
 func normalizeFollowUpModeDecision(decision followUpModeDecision) followUpModeDecision {
-	switch decision.Mode {
-	case followUpModeChange, followUpModeInspect, followUpModeAnswerOnly:
-	default:
-		decision.Mode = followUpModeChange
-	}
+	decision.Mode = normalizeFollowUpMode(decision.Mode)
 	if decision.Confidence < 0 {
 		decision.Confidence = 0
 	}
@@ -81,6 +77,15 @@ func normalizeFollowUpModeDecision(decision followUpModeDecision) followUpModeDe
 	}
 	decision.Reason = strings.TrimSpace(decision.Reason)
 	return decision
+}
+
+func normalizeFollowUpMode(mode followUpMode) followUpMode {
+	switch mode {
+	case followUpModeChange, followUpModeInspect, followUpModeAnswerOnly:
+		return mode
+	default:
+		return followUpModeChange
+	}
 }
 
 func applyFollowUpModeSafeguards(decision followUpModeDecision, userRequest string) followUpModeDecision {
@@ -190,7 +195,10 @@ func requestFollowUpMode(ctx context.Context, oc orgcfg.Config, rec convstore.Re
 		return followUpModeDecision{}, fmt.Errorf("request: %w", err)
 	}
 	defer resp.Body.Close()
-	payload, _ := io.ReadAll(io.LimitReader(resp.Body, 8*1024))
+	payload, err := io.ReadAll(io.LimitReader(resp.Body, 8*1024))
+	if err != nil {
+		return followUpModeDecision{}, fmt.Errorf("read response body: %w", err)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return followUpModeDecision{}, fmt.Errorf("anthropic: status %d: %s", resp.StatusCode, strings.TrimSpace(string(payload)))
 	}
