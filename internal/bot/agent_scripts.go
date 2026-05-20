@@ -20,17 +20,27 @@ var codexRunnerScript string
 //go:embed scripts/sandbox-common.sh
 var sandboxCommonScript string
 
+//go:embed scripts/sandbox-repo-cache.sh
+var sandboxRepoCacheScript string
+
+//go:embed scripts/sandbox-spec.sh
+var sandboxSpecScript string
+
 // agentScript, followupScript, and setupCloneScript are the
 // on-the-wire script bodies the bot writes to the sandbox. Shared
 // helper scripts are prepended so their functions live in the same
 // shell scope as the user-visible scripts. We do the join here (vs.
 // having each script `source` a separately-deployed file) so runScript
 // only has to push one file per invocation and there's no chance of a
-// half-deployed set. setupCloneScript needs sandbox-common.sh too so
-// the bootstrap path can call hetchy_prepare_repo_workdir, which uses
+// half-deployed set. setupCloneScript needs the repo-cache helpers too
+// so the bootstrap path can call hetchy_prepare_repo_workdir, which uses
 // the volume-cached repo checkout to skip a full network clone.
-var agentScript = claudeWatchdogScript + "\n" + codexRunnerScript + "\n" + sandboxCommonScript + "\n" + agentScriptBody
+var sandboxRepoCacheHelpersScript = sandboxCommonScript + "\n" + sandboxRepoCacheScript
 
-var followupScript = claudeWatchdogScript + "\n" + codexRunnerScript + "\n" + sandboxCommonScript + "\n" + followupScriptBody
+var sandboxRuntimeHelpersScript = sandboxRepoCacheHelpersScript + "\n" + sandboxSpecScript
 
-var setupCloneScript = sandboxCommonScript + "\n" + setupCloneScriptBody
+var agentScript = claudeWatchdogScript + "\n" + codexRunnerScript + "\n" + sandboxRuntimeHelpersScript + "\n" + agentScriptBody
+
+var followupScript = claudeWatchdogScript + "\n" + codexRunnerScript + "\n" + sandboxRuntimeHelpersScript + "\n" + followupScriptBody
+
+var setupCloneScript = sandboxRepoCacheHelpersScript + "\n" + setupCloneScriptBody

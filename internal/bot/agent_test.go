@@ -336,7 +336,7 @@ func TestSandboxCommon_RewriteLegacySavedSpecWorkdir(t *testing.T) {
 		"curl -fsS http://localhost:8080/",
 	}, "\n"))
 
-	harness := "#!/bin/bash\nset -euo pipefail\n" + sandboxCommonScript + "\nrewrite_legacy_saved_spec_workdir\n"
+	harness := "#!/bin/bash\nset -euo pipefail\n" + sandboxRuntimeHelpersScript + "\nrewrite_legacy_saved_spec_workdir\n"
 	cmd := exec.Command("bash", "-c", harness)
 	cmd.Env = append(os.Environ(),
 		"HETCHY_SPEC_DIR="+specDir,
@@ -565,7 +565,7 @@ func TestSandboxCommon_ConfiguresGitAuthWithoutStaleRepoToken(t *testing.T) {
 
 func runSandboxCommonForTest(t *testing.T, specDir, command string) string {
 	t.Helper()
-	harness := "#!/bin/bash\nset -euo pipefail\n" + sandboxCommonScript + "\n" + command + "\n"
+	harness := "#!/bin/bash\nset -euo pipefail\n" + sandboxRuntimeHelpersScript + "\n" + command + "\n"
 	cmd := exec.Command("bash", "-c", harness)
 	cmd.Env = append(os.Environ(),
 		"HETCHY_SPEC_DIR="+specDir,
