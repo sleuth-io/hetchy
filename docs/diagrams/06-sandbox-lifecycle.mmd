@@ -15,9 +15,11 @@ stateDiagram-v2
         ClaudeRunning --> AgentFailed : non-zero exit,\nwall timeout, idle timeout,\nor PR not verified
     }
 
-    PRVerified --> Archiving : delete Daytona session
-    Archiving --> Archived : Stop + Archive
+    PRVerified --> StoppingGrace : delete Daytona session\nset auto-archive interval
+    StoppingGrace --> StoppedGrace : Stop
 
+    StoppedGrace --> Resuming : follow-up arrives\nbefore auto-archive
+    StoppedGrace --> Archived : no follow-up for configured\ncontinuously-stopped grace
     Archived --> Resuming : follow-up arrives
     Resuming --> RunningFollowUp : StartWithTimeout(5m)\nfresh installation token
     Resuming --> ResumeFailed : timeout or Daytona error
@@ -29,7 +31,7 @@ stateDiagram-v2
         FollowupClaude --> FollowupFailed : command or validation failed
     }
 
-    FollowupVerified --> Archiving
+    FollowupVerified --> StoppingGrace
 
     AgentFailed --> DebugRunning : fresh-run sandbox left\nfor debugging
     DebugRunning --> Creating : next message archives orphan\nthen creates a new sandbox
@@ -39,10 +41,8 @@ stateDiagram-v2
 
     FailedNoSandbox --> [*] : user can retry in same chat
     ResumeFailed --> [*] : user can retry or start fresh
-    Archived --> Archived : no follow-up\nfilesystem preserved
-
     RunningFresh --> CancelFresh : user cancels
-    CancelFresh --> Archived : cleanup stop/archive
+    CancelFresh --> Archived : cleanup stop/archive\nimmediate
     RunningFollowUp --> CancelFollowUp : user cancels
     CancelFollowUp --> FollowupDebug : session stops\nsandbox kept for next turn
 
@@ -59,15 +59,25 @@ stateDiagram-v2
         user heartbeat = every minute
     end note
 
+    note right of StoppedGrace
+        Stopped sandboxes keep the checkout
+        without running CPU/RAM. Follow-ups
+        inside the grace window start faster.
+        A follow-up start/stop resets the
+        continuously-stopped archive timer.
+    end note
+
     note right of Archived
-        Archived sandboxes keep the checkout,
+        Auto-archived sandboxes keep the checkout,
         branch, git history, caches, and generated files.
-        Follow-ups resume from this filesystem.
+        Follow-ups can still resume from this filesystem,
+        but restoring from archive is slower.
     end note
 
     note left of RunningFresh
         If the bot process dies mid-command, agent_run
         recovery claims the lease, replays Daytona command
         logs through the same line router, projects the
-        conversation, and archives on recovered success.
+        conversation, and stops with auto-archive
+        on recovered success.
     end note

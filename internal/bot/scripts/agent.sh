@@ -25,7 +25,9 @@
 #   SX_KEY  if set, install org skills.new assets after clone, before claude
 #   SF_SPEC_SETUP_B64 or SF_SPEC_SETUP_B64_FILE    base64-encoded setup.sh from the saved bootstrap spec
 #   SF_SPEC_START_B64 or SF_SPEC_START_B64_FILE    base64-encoded start.sh from the saved bootstrap spec
+#   SF_SPEC_STOP_B64 or SF_SPEC_STOP_B64_FILE      base64-encoded stop.sh from the saved bootstrap spec
 #   SF_SPEC_HEALTH_B64 or SF_SPEC_HEALTH_B64_FILE  base64-encoded health.sh from the saved bootstrap spec
+#   SF_SPEC_LESSONS_B64 or SF_SPEC_LESSONS_B64_FILE base64-encoded lessons.md from the saved bootstrap spec
 #   HETCHY_CLAUDE_MODEL  Claude Code model alias: opus, sonnet, or haiku
 #   HETCHY_CODEX_MODEL   Codex model id, e.g. gpt-5.4
 #   HETCHY_ARTIFACT_SLOTS      JSON proof-artifact upload slots
@@ -33,8 +35,8 @@
 #   HETCHY_ARTIFACT_SLOT_TOKEN bearer token for that endpoint
 #   HETCHY_CACHE_DIR           mounted dependency cache archive subpath
 #   HETCHY_CACHE_PRUNE_DAYS    best-effort local cache file pruning threshold
-# When all three are set, agent.sh runs setup → starts the app in the
-# background → polls health.sh BEFORE invoking claude, so the validation
+# When setup/start/health are set, agent.sh runs setup → stop (if present)
+# → start → polls health.sh BEFORE invoking claude, so the validation
 # prompt's claim that "the app is running" is actually true.
 
 set -euo pipefail
@@ -158,7 +160,7 @@ printf '{"hasCompletedOnboarding":true}\n' > "$HOME/.claude.json"
 # first browser_take_screenshot fails with a confusing "File access
 # denied" before the agent recovers by mkdir-ing the path itself. Pre-
 # creating it removes that detour.
-mkdir -p "${SF_WORKDIR}/.playwright-mcp"
+ensure_playwright_mcp_dir
 
 # Post-success reflection drop-zone: claude writes /tmp/hetchy-spec/
 # improved/{setup,start,health}.sh here when it identifies bootstrap-
@@ -205,6 +207,36 @@ write_sx_config() {
   fi
 }
 
+sx_install_fingerprint() {
+  local label="$1"
+  local config_dir="$2"
+  local sx_bot="${3:-}"
+  local sx_bot_key="${4:-}"
+  local config_hash=""
+  local key_hash=""
+  local remote=""
+
+  if [[ -f "${config_dir}/config.json" ]]; then
+    config_hash="$(hetchy_file_sha256 "${config_dir}/config.json" 2>/dev/null || true)"
+  fi
+  if [[ -n "$sx_bot_key" ]]; then
+    key_hash="$(printf '%s' "$sx_bot_key" | hetchy_stdin_sha256 2>/dev/null || true)"
+  fi
+  remote="$(git -C "$SF_WORKDIR" remote get-url origin 2>/dev/null || true)"
+  remote="${remote/x-access-token:*@github.com/x-access-token:REDACTED@github.com}"
+
+  {
+    printf 'v=1\n'
+    printf 'label=%s\n' "$label"
+    printf 'config_hash=%s\n' "$config_hash"
+    printf 'agent_slug=%s\n' "${HETCHY_AGENT_SLUG:-default}"
+    printf 'sx_bot=%s\n' "$sx_bot"
+    printf 'sx_bot_key_hash=%s\n' "$key_hash"
+    printf 'repo=%s\n' "${SF_REPO:-}"
+    printf 'remote=%s\n' "$remote"
+  } | hetchy_stdin_sha256
+}
+
 run_sx_install() {
   local label="$1"
   local config_dir="$2"
@@ -212,9 +244,21 @@ run_sx_install() {
   local profile="$4"
   local sx_bot="${5:-}"
   local sx_bot_key="${6:-}"
+  local marker_dir="${HETCHY_SX_MARKER_DIR:-/tmp/hetchy-sx/markers}"
+  local fingerprint=""
+  local marker=""
 
-  echo "[hetchy] running sx install (${label})"
-  mkdir -p "$cache_dir" "$HOME/.claude"
+  mkdir -p "$cache_dir" "$HOME/.claude" "$marker_dir"
+  fingerprint="$(sx_install_fingerprint "$label" "$config_dir" "$sx_bot" "$sx_bot_key" 2>/dev/null || true)"
+  if [[ -n "$fingerprint" ]]; then
+    marker="${marker_dir}/${label}.${fingerprint}.succeeded"
+    if [[ -f "$marker" ]]; then
+      echo "[hetchy] sx skills already refreshed (${label}) for fingerprint ${fingerprint}; skipping"
+      return 0
+    fi
+  fi
+
+  echo "[hetchy] refreshing sx skills (${label})"
   # cd into the cloned repo so sx walks the right .git for repo
   # detection. sx reads the target dir's git remote URL to scope
   # skills, so without a real checkout under cwd or --target the
@@ -227,6 +271,11 @@ run_sx_install() {
     SX_BOT="$sx_bot" \
     SX_BOT_KEY="$sx_bot_key" \
       sx install --profile "$profile" --client=claude-code --target "$SF_WORKDIR")
+  if [[ -n "$marker" ]]; then
+    find "$marker_dir" -maxdepth 1 -type f -name "${label}.*.succeeded" ! -name "$(basename "$marker")" -delete 2>/dev/null || true
+    : > "$marker"
+    echo "[hetchy] sx skills marker written (${label}) for fingerprint ${fingerprint}"
+  fi
 }
 
 # emit_installed_skills lists the skill names sx materialised under
@@ -298,9 +347,10 @@ emit_installed_skills
 export REPO="$SF_WORKDIR"
 
 # Apply the saved bootstrap spec, if one was attached. We deploy the
-# four scripts to /tmp/hetchy-spec/, run setup.sh (idempotent), launch
-# start.sh in the background, and poll health.sh until it passes — the
-# validation prompt assumes this work has already been done.
+# saved artifacts to /tmp/hetchy-spec/, run setup.sh (idempotent), run
+# stop.sh if present, launch start.sh, and poll health.sh until it
+# passes — the validation prompt assumes this baseline work has already
+# been done.
 if has_b64_input SF_SPEC_SETUP_B64 && has_b64_input SF_SPEC_START_B64 && has_b64_input SF_SPEC_HEALTH_B64; then
   echo "[hetchy] applying saved repo setup spec"
   mkdir -p /tmp/hetchy-spec
@@ -308,16 +358,31 @@ if has_b64_input SF_SPEC_SETUP_B64 && has_b64_input SF_SPEC_START_B64 && has_b64
   # sandbox; the spec-apply block below will re-create UNHEALTHY only
   # if THIS run's health poll fails.
   rm -f /tmp/hetchy-spec/UNHEALTHY
-  echo "[hetchy] saved spec payload sizes: setup=$(b64_input_size SF_SPEC_SETUP_B64)B start=$(b64_input_size SF_SPEC_START_B64)B health=$(b64_input_size SF_SPEC_HEALTH_B64)B"
+  echo "[hetchy] saved spec payload sizes: setup=$(b64_input_size SF_SPEC_SETUP_B64)B start=$(b64_input_size SF_SPEC_START_B64)B stop=$(b64_input_size SF_SPEC_STOP_B64)B health=$(b64_input_size SF_SPEC_HEALTH_B64)B lessons=$(b64_input_size SF_SPEC_LESSONS_B64)B"
   echo "[hetchy] writing saved setup.sh"
   decode_b64_input SF_SPEC_SETUP_B64 /tmp/hetchy-spec/setup.sh
   echo "[hetchy] writing saved start.sh"
   decode_b64_input SF_SPEC_START_B64 /tmp/hetchy-spec/start.sh
+  if has_b64_input SF_SPEC_STOP_B64; then
+    echo "[hetchy] writing saved stop.sh"
+    decode_b64_input SF_SPEC_STOP_B64 /tmp/hetchy-spec/stop.sh
+  else
+    rm -f /tmp/hetchy-spec/stop.sh
+  fi
   echo "[hetchy] writing saved health.sh"
   decode_b64_input SF_SPEC_HEALTH_B64 /tmp/hetchy-spec/health.sh
+  if has_b64_input SF_SPEC_LESSONS_B64; then
+    echo "[hetchy] writing saved lessons.md"
+    decode_b64_input SF_SPEC_LESSONS_B64 /tmp/hetchy-spec/lessons.md
+  else
+    rm -f /tmp/hetchy-spec/lessons.md
+  fi
   rewrite_legacy_saved_spec_workdir
   echo "[hetchy] making saved setup scripts executable"
   chmod +x /tmp/hetchy-spec/setup.sh /tmp/hetchy-spec/start.sh /tmp/hetchy-spec/health.sh
+  if [[ -f /tmp/hetchy-spec/stop.sh ]]; then
+    chmod +x /tmp/hetchy-spec/stop.sh
+  fi
 
   # Soft-fail setup.sh: a non-zero exit from the saved spec must not
   # abort the agent run. Under `set -euo pipefail` an unguarded call
@@ -328,46 +393,8 @@ if has_b64_input SF_SPEC_SETUP_B64 && has_b64_input SF_SPEC_START_B64 && has_b64
   # actually up", and the agent still has a working repo to work in
   # even when bootstrap is broken.
   run_saved_setup
-
-  echo "[hetchy] starting app via start.sh (background)"
-  # Redirect to a captured log instead of inheriting agent.sh's
-  # stdout/stderr — otherwise framework banners, request logs, and
-  # migration noise from the user's app interleave with claude's
-  # stream-json events in the chat block stream. The validation
-  # prompt tells the agent to read /tmp/hetchy-spec/start.log when
-  # it needs to triage why the app isn't responding.
-  /tmp/hetchy-spec/start.sh > /tmp/hetchy-spec/start.log 2>&1 &
-  SF_SPEC_START_PID=$!
-
-  echo "[hetchy] polling health.sh (90s budget)"
-  spec_healthy=0
-  for i in {1..90}; do
-    # Bail fast if start.sh died — keeps us from polling for 90s
-    # against a dead process when the user's spec broke.
-    if ! kill -0 "${SF_SPEC_START_PID}" 2>/dev/null; then
-      echo "[hetchy] start.sh exited early (pid ${SF_SPEC_START_PID})"
-      break
-    fi
-    if /tmp/hetchy-spec/health.sh >/dev/null 2>&1; then
-      echo "[hetchy] healthy after ${i}s"
-      spec_healthy=1
-      break
-    fi
-    sleep 1
-  done
-  if [[ ${spec_healthy} -ne 1 ]]; then
-    echo "[hetchy] WARNING: spec health check never passed; agent will see a non-running app"
-    # Sentinel for the validation prompt: when this file exists the
-    # agent knows the spec couldn't bring the app up and should write
-    # "Validation: incomplete — <reason>" rather than burn time poking
-    # a dead port. The prompt always reads "the app is running"
-    # because it's templated server-side before agent.sh runs; this
-    # in-sandbox marker is the truth-source the agent checks at the
-    # start of validation. Cleared at the top of the spec-apply block
-    # to make sure a stale marker from a prior run can't poison this
-    # one.
-    : > /tmp/hetchy-spec/UNHEALTHY
-  fi
+  run_saved_stop
+  start_saved_app_and_poll_health
 fi
 
 decode_b64_input SF_PROMPT_B64 /tmp/sf-prompt-base.txt

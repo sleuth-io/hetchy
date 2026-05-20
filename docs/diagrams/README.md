@@ -38,7 +38,7 @@ parallel durable run state. The important row conditions are:
 | `github_owner == ""` and `sandbox_id == ""` | Awaiting repo selection | Parse next message as repo |
 | `github_owner != ""` and `sandbox_id == ""` | Repo selected but no sandbox survived | Retry same repo as a new request |
 | `sandbox_id != ""` and `pr_url == ""` | Fresh run failed before a verified PR | Archive orphan sandbox, then retry fresh |
-| `sandbox_id != ""` and `pr_url != ""` | PR exists | Resume archived sandbox and run follow-up |
+| `sandbox_id != ""` and `pr_url != ""` | PR exists | Resume stopped or archived sandbox and run follow-up |
 
 Agent slug, model, and task options are persisted so follow-ups keep the
 same persona/model unless a path explicitly changes them.
@@ -61,8 +61,9 @@ assets live under `internal/webui`, while SQL access is generated into
 **What it shows:** The validation setup path used when the user leaves
 "Validate changes" enabled. On first encounter with a GitHub-App-resolved
 repo, Hetchy clones into the sandbox, detects repo hints, runs a Claude
-Code bootstrap loop, saves `setup.sh`, `start.sh`, and `health.sh`, and
-merges a post-change validation prompt into the coding agent prompt.
+Code bootstrap loop, saves `setup.sh`, `start.sh`, `stop.sh`,
+`health.sh`, and `lessons.md`, and merges a post-change validation
+prompt into the coding agent prompt.
 
 Current caveat: drift detection and AutoHeal helpers exist in
 `internal/bootstrap`, but the launch path does not call them yet. Today,
@@ -73,11 +74,13 @@ spec rows are reused directly.
 
 ![Sandbox Lifecycle](06-sandbox-lifecycle.png)
 
-**What it shows:** Fresh sandbox creation, follow-up resume, stop/archive,
-cancel, failure, and durable recovery behavior. Successful runs delete the
-Daytona session, stop the sandbox, and archive it so the filesystem is
-preserved for follow-ups. Fresh-run failures keep the sandbox ID on the
-conversation with an empty PR URL so the next message can archive the
+**What it shows:** Fresh sandbox creation, follow-up resume, stopped grace,
+auto-archive, cancel, failure, and durable recovery behavior. Successful
+runs delete the Daytona session, set the sandbox auto-archive interval,
+and stop the sandbox immediately. Daytona archives it only after the
+configured continuously-stopped grace window, so quick follow-ups can
+start from a stopped sandbox. Fresh-run failures keep the sandbox ID on
+the conversation with an empty PR URL so the next message can archive the
 orphan and start cleanly.
 
 Timeouts enforced per agent command:

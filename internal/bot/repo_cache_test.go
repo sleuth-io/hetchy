@@ -41,17 +41,16 @@ func initFakeOriginRepo(t *testing.T, branch, content string) string {
 	return bare
 }
 
-// repoCacheHarness returns a bash harness that loads sandbox-common.sh
-// and rewrites every "https://github.com/<slug>.git" URL the helpers
-// build to point at a local bare repo. The override lets the helpers
-// run end-to-end (clone, fetch, reset) without going through the
-// network or relying on the GITHUB_TOKEN insteadOf rewrite.
+// repoCacheHarness returns a bash harness that loads the repo-cache
+// helper stack and rewrites every "https://github.com/<slug>.git" URL
+// the helpers build to point at a local bare repo. The override lets the
+// helpers run end-to-end without hitting GitHub.
 func repoCacheHarness(originBare string) string {
 	// Override git so any clone of https://github.com/...git lands on
 	// the local bare repo. We can't use the insteadOf trick because
 	// our test runs without a writable global git config.
 	return `set -euo pipefail
-` + sandboxCommonScript + `
+` + sandboxRepoCacheHelpersScript + `
 
 # Stub git so any reference to https://github.com/<slug>.git
 # transparently points at the local bare repo. Other git subcommands
@@ -172,7 +171,7 @@ func TestHetchyRepoCacheArchive_RespectsMountStatus(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			script := "set -uo pipefail\n" + sandboxCommonScript + "\nhetchy_repo_cache_archive; echo \"EXIT=$?\"\n"
+			script := "set -uo pipefail\n" + sandboxRepoCacheHelpersScript + "\nhetchy_repo_cache_archive; echo \"EXIT=$?\"\n"
 			out, _ := runBashScript(t, script, tc.env)
 			marker := "EXIT="
 			idx := strings.LastIndex(out, marker)
@@ -203,7 +202,7 @@ func formatInt(n int) string {
 
 func TestCacheSupportsBasicWrite_UsesEphemeralProbeFile(t *testing.T) {
 	cacheMount := t.TempDir()
-	script := "set -euo pipefail\n" + sandboxCommonScript + `
+	script := "set -euo pipefail\n" + sandboxRepoCacheHelpersScript + `
 cache_supports_basic_write "$CACHE"
 if [[ -e "$CACHE/.hetchy-probe" ]]; then
   echo "fixed probe directory left behind"
@@ -362,7 +361,7 @@ func TestRepoCacheShouldRestore_AccountsForRestoreSyncCost(t *testing.T) {
 	mustWriteFile(t, cacheArchive, "archive placeholder\n")
 	mustWriteFile(t, cacheArchive+".meta", "clone_seconds=10\nrestore_sync_seconds=8\n")
 
-	script := "set -euo pipefail\n" + sandboxCommonScript + `
+	script := "set -euo pipefail\n" + sandboxRepoCacheHelpersScript + `
 if hetchy_repo_cache_should_restore "$CACHE"; then
   echo "unexpected restore"
   exit 1
@@ -451,7 +450,7 @@ func TestSaveRepoCheckoutToCache_AtomicReplace(t *testing.T) {
 	mustMkdir(t, filepath.Join(workdir, ".git"))
 	mustWriteFile(t, filepath.Join(workdir, "fresh.txt"), "v2\n")
 
-	script := "set -euo pipefail\n" + sandboxCommonScript +
+	script := "set -euo pipefail\n" + sandboxRepoCacheHelpersScript +
 		"\nsave_repo_checkout_to_cache \"$WORKDIR\" \"$CACHE\"\n"
 	out, err := runBashScript(t, script, map[string]string{
 		"WORKDIR": workdir,
@@ -488,7 +487,7 @@ func TestSaveRepoCheckoutToCache_DoesNotRequireRename(t *testing.T) {
 	mustMkdir(t, filepath.Join(workdir, ".git"))
 	mustWriteFile(t, filepath.Join(workdir, "fresh.txt"), "v2\n")
 
-	script := "set -euo pipefail\n" + sandboxCommonScript + `
+	script := "set -euo pipefail\n" + sandboxRepoCacheHelpersScript + `
 mv() {
   echo "mv should not be called" >&2
   return 99
@@ -520,7 +519,7 @@ func TestSaveRepoCheckoutToCache_ExcludesSecretFiles(t *testing.T) {
 	mustWriteFile(t, filepath.Join(workdir, "cargo", "credentials"), "secret\n")
 	mustWriteFile(t, filepath.Join(workdir, "cargo", "credentials.toml"), "secret\n")
 
-	script := "set -euo pipefail\n" + sandboxCommonScript + `
+	script := "set -euo pipefail\n" + sandboxRepoCacheHelpersScript + `
 save_repo_checkout_to_cache "$WORKDIR" "$CACHE"
 `
 	out, err := runBashScript(t, script, map[string]string{
@@ -547,7 +546,7 @@ func TestSaveHetchyCacheArchive_DoesNotRequireRename(t *testing.T) {
 	mustWriteFile(t, filepath.Join(localCache, "gomod.txt"), "cached\n")
 	archive := filepath.Join(t.TempDir(), "cache.tar.gz")
 
-	script := "set -euo pipefail\n" + sandboxCommonScript + `
+	script := "set -euo pipefail\n" + sandboxRepoCacheHelpersScript + `
 mv() {
   echo "mv should not be called" >&2
   return 99
@@ -568,6 +567,76 @@ save_hetchy_cache_archive "$LOCAL_CACHE" "$ARCHIVE"
 	}
 }
 
+func TestConfigureHetchyCache_SkipSaveOnExit(t *testing.T) {
+	localCache := filepath.Join(t.TempDir(), "local-cache")
+	cacheMount := t.TempDir()
+	mustMkdir(t, localCache)
+	mustWriteFile(t, filepath.Join(localCache, "gomod.txt"), "cached\n")
+
+	script := "set -euo pipefail\n" + sandboxRepoCacheHelpersScript + `
+configure_hetchy_cache
+`
+	out, err := runBashScript(t, script, map[string]string{
+		"HETCHY_CACHE_STATUS":    "mounted",
+		"HETCHY_CACHE_DIR":       cacheMount,
+		"HETCHY_LOCAL_CACHE_DIR": localCache,
+		"HETCHY_SKIP_CACHE_SAVE": "1",
+	})
+	if err != nil {
+		t.Fatalf("configure cache with skip save: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "dependency cache archive save skipped for non-mutating follow-up") {
+		t.Fatalf("cache skip output missing expected line:\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Join(cacheMount, "cache.tar.gz")); !os.IsNotExist(err) {
+		t.Fatalf("cache archive should not be written when save is skipped: %v", err)
+	}
+}
+
+func TestEnsurePlaywrightMCPDirRepairsBadPath(t *testing.T) {
+	workdir := t.TempDir()
+	mustWriteFile(t, filepath.Join(workdir, ".playwright-mcp"), "not a directory\n")
+	userDataDir := filepath.Join(t.TempDir(), "pw-user-data")
+
+	script := "set -euo pipefail\n" + sandboxRepoCacheHelpersScript + `
+ensure_playwright_mcp_dir
+printf 'output=%s\n' "$PLAYWRIGHT_MCP_OUTPUT_DIR"
+printf 'user_data=%s\n' "$PLAYWRIGHT_MCP_USER_DATA_DIR"
+printf 'headless=%s\n' "$PLAYWRIGHT_MCP_HEADLESS"
+printf 'no_sandbox=%s\n' "$PLAYWRIGHT_MCP_NO_SANDBOX"
+`
+	out, err := runBashScript(t, script, map[string]string{
+		"SF_WORKDIR":                   workdir,
+		"PLAYWRIGHT_MCP_USER_DATA_DIR": userDataDir,
+		"PLAYWRIGHT_MCP_OUTPUT_DIR":    filepath.Join(workdir, ".playwright-mcp"),
+		"PLAYWRIGHT_MCP_HEADLESS":      "0",
+		"PLAYWRIGHT_MCP_NO_SANDBOX":    "0",
+	})
+	if err != nil {
+		t.Fatalf("ensure playwright mcp dir: %v\n%s", err, out)
+	}
+	info, err := os.Stat(filepath.Join(workdir, ".playwright-mcp"))
+	if err != nil {
+		t.Fatalf("stat .playwright-mcp: %v", err)
+	}
+	if !info.IsDir() {
+		t.Fatalf(".playwright-mcp should be repaired to a directory")
+	}
+	if info, err := os.Stat(userDataDir); err != nil || !info.IsDir() {
+		t.Fatalf("user data dir should exist as a directory, info=%v err=%v\noutput:\n%s", info, err, out)
+	}
+	for _, want := range []string{
+		"output=" + filepath.Join(workdir, ".playwright-mcp"),
+		"user_data=" + userDataDir,
+		"headless=0",
+		"no_sandbox=0",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("ensure playwright output missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestRestoreRepoCheckoutFromCache_RejectsUnsafeWorkdir(t *testing.T) {
 	cacheRepo := filepath.Join(t.TempDir(), "repo")
 	mustMkdir(t, filepath.Join(cacheRepo, ".git"))
@@ -577,7 +646,7 @@ func TestRestoreRepoCheckoutFromCache_RejectsUnsafeWorkdir(t *testing.T) {
 
 	for _, unsafe := range []string{"", "/", "/home", "/home/ubuntu", "/tmp/work", "/etc", "/usr"} {
 		t.Run("workdir="+unsafe, func(t *testing.T) {
-			script := "set -uo pipefail\n" + sandboxCommonScript +
+			script := "set -uo pipefail\n" + sandboxRepoCacheHelpersScript +
 				"\nrestore_repo_checkout_from_cache \"$CACHE\" \"$WORK\"; echo EXIT=$?\n"
 			out, _ := runBashScript(t, script, map[string]string{
 				"CACHE": cacheArchive,
@@ -614,7 +683,7 @@ func TestSaveRepoCheckoutToCache_SerialisesUnderFlock(t *testing.T) {
 	// two markers — never a half-merged blend or a missing
 	// archive. Without flock, a parallel reader/writer could observe
 	// an overwrite in progress on less object-like filesystems.
-	script := "set -euo pipefail\n" + sandboxCommonScript + `
+	script := "set -euo pipefail\n" + sandboxRepoCacheHelpersScript + `
 save_repo_checkout_to_cache "$WORK_A" "$CACHE" 11 &
 PID_A=$!
 save_repo_checkout_to_cache "$WORK_B" "$CACHE" 22 &
@@ -665,7 +734,7 @@ func TestRestoreRepoCheckoutFromCache_RequiresGitDir(t *testing.T) {
 	tarDir(t, cacheRepo, cacheArchive)
 
 	workdir := filepath.Join(t.TempDir(), "dst", "hetchy")
-	script := "set -uo pipefail\n" + sandboxCommonScript +
+	script := "set -uo pipefail\n" + sandboxRepoCacheHelpersScript +
 		"\nrestore_repo_checkout_from_cache \"$CACHE\" \"$WORK\"; echo EXIT=$?\n"
 	out, _ := runBashScript(t, script, map[string]string{
 		"CACHE": cacheArchive,

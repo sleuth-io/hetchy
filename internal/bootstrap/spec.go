@@ -32,7 +32,7 @@ type ValidationStatus string
 
 const (
 	StatusValidated ValidationStatus = "validated"
-	// Partial = setup/start/health all pass, but the spec declared one
+	// Partial = setup/start/stop/health all pass, but the spec declared one
 	// or more deferred capabilities (auth bypassed, downstream services
 	// skipped, etc.). Tasks that touch a deferred capability cannot be
 	// fully validated.
@@ -80,6 +80,7 @@ type Spec struct {
 	StartScript string
 	HealthCheck string
 	StopScript  string
+	LessonsMD   string
 
 	Services             []Service
 	RequiredSecrets      []Secret

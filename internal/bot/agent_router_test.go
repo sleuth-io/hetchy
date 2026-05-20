@@ -209,7 +209,7 @@ func TestAgentLineRouter_AbortFailsOpenBlocks(t *testing.T) {
 func TestAgentLineRouter_CapturesSXSkillsMarker(t *testing.T) {
 	emit := newCaptureEmitter()
 	r := newAgentLineRouter(emit)
-	r.Line("[hetchy] running sx install (org-skills)")
+	r.Line("[hetchy] refreshing sx skills (org-skills)")
 	r.Line("[hetchy:sx-skills] writing-commit-messages,review,security-review,init,golang-pro")
 	r.Line("[hetchy] running claude")
 	r.Line(`{"type":"result","subtype":"success","result":"https://github.com/o/r/pull/1"}`)
@@ -228,7 +228,7 @@ func TestAgentLineRouter_CapturesSXSkillsMarker(t *testing.T) {
 	if skillsBlock.Status != blocks.StatusDone {
 		t.Errorf("skills block status = %s, want done", skillsBlock.Status)
 	}
-	if !strings.Contains(skillsBlock.Title, "5 skills installed") {
+	if !strings.Contains(skillsBlock.Title, "5 skills available") {
 		t.Errorf("skills block title = %q, want count in title", skillsBlock.Title)
 	}
 	gotMeta, ok := skillsBlock.Meta[SXSkillsMetaKey].([]string)
@@ -257,8 +257,8 @@ func TestAgentLineRouter_CapturesSXSkillsMarker(t *testing.T) {
 
 // TestAgentLineRouter_EmitsEmptySkillsMarker covers the
 // "[hetchy:sx-skills] " (no payload) case agent.sh emits when sx
-// install ran but installed nothing — the persisted block lets the
-// UI distinguish "no skills installed" from "sx install never ran".
+// install ran but found no skills — the persisted block lets the
+// UI distinguish "no skills available" from "sx install never ran".
 func TestAgentLineRouter_EmitsEmptySkillsMarker(t *testing.T) {
 	emit := newCaptureEmitter()
 	r := newAgentLineRouter(emit)
@@ -275,8 +275,8 @@ func TestAgentLineRouter_EmitsEmptySkillsMarker(t *testing.T) {
 	if skillsBlock == nil {
 		t.Fatalf("expected a notify block for the empty sx-skills marker, got blocks: %+v", emit.Blocks)
 	}
-	if !strings.Contains(skillsBlock.Title, "0 skills installed") {
-		t.Errorf("empty-payload title = %q, want \"0 skills installed\"", skillsBlock.Title)
+	if !strings.Contains(skillsBlock.Title, "0 skills available") {
+		t.Errorf("empty-payload title = %q, want \"0 skills available\"", skillsBlock.Title)
 	}
 	gotMeta, _ := skillsBlock.Meta[SXSkillsMetaKey].([]string)
 	if len(gotMeta) != 0 {

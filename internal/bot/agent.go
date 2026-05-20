@@ -79,9 +79,10 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, o
 	}
 
 	env["SF_PROMPT_B64"] = base64.StdEncoding.EncodeToString([]byte(finalPrompt))
-	// When we have a saved spec, ship its setup/start/health scripts
+	// When we have a saved spec, ship its setup/start/stop/health scripts
+	// and lessons.md
 	// to agent.sh as base64 env vars. agent.sh decodes them before
-	// invoking the agent and runs setup → start (bg) → poll health, so
+	// invoking the agent and runs setup → stop → start → poll health, so
 	// the validation prompt's "the app is running" assertion holds.
 	// Without this step the cached spec is loaded into the prompt
 	// but the agent finds a dead port and falls back to figuring out
@@ -90,6 +91,12 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, o
 		env["SF_SPEC_SETUP_B64"] = base64.StdEncoding.EncodeToString([]byte(spec.SetupScript))
 		env["SF_SPEC_START_B64"] = base64.StdEncoding.EncodeToString([]byte(spec.StartScript))
 		env["SF_SPEC_HEALTH_B64"] = base64.StdEncoding.EncodeToString([]byte(spec.HealthCheck))
+		if spec.StopScript != "" {
+			env["SF_SPEC_STOP_B64"] = base64.StdEncoding.EncodeToString([]byte(spec.StopScript))
+		}
+		if spec.LessonsMD != "" {
+			env["SF_SPEC_LESSONS_B64"] = base64.StdEncoding.EncodeToString([]byte(spec.LessonsMD))
+		}
 	}
 	b.addRuntimeEnv(env, oc, model, requestID)
 	if oc.SXKey != "" {
@@ -104,7 +111,7 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, o
 	}
 	if err == nil && prURL != "" && spec != nil {
 		// Post-success reflection: read /tmp/hetchy-spec/improved/ to
-		// see if the agent flagged any setup/start/health changes that
+		// see if the agent flagged any setup/start/stop/health/lessons changes that
 		// would help future tasks. Best-effort — failures here never
 		// affect the PR. Runs in a fresh session because runScript
 		// deleted the agent's session in its defer.
@@ -349,7 +356,9 @@ func (b *Bot) persistFailingBootstrap(ctx context.Context, res *bootstrap.LoopRe
 		Kind:                 kind,
 		SetupScript:          res.PartialScripts.Setup,
 		StartScript:          res.PartialScripts.Start,
+		StopScript:           res.PartialScripts.Stop,
 		HealthCheck:          res.PartialScripts.Health,
+		LessonsMD:            res.PartialScripts.Lessons,
 		RequiredSecrets:      requiredSecrets,
 		DeferredCapabilities: deferred,
 		SourceFingerprint:    bootstrap.Fingerprint(hints),
@@ -417,10 +426,12 @@ func (b *Bot) runInlineScript(ctx context.Context, sb *daytona.Sandbox, sessionI
 // token is freshly minted and passed per-run (not just at sandbox-create
 // time) so a token rotation or a re-installed App takes effect on the
 // very next follow-up rather than only on a freshly-created sandbox.
-func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, userRequest, requestID string, opts chatTaskOptions, model ClaudeModel, emit blocks.Emitter) (string, error) {
+func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, userRequest, requestID string, opts chatTaskOptions, model ClaudeModel, mode followUpMode, emit blocks.Emitter) (string, error) {
 	model = normalizeClaudeModel(model)
+	mode = normalizeFollowUpMode(mode)
+	changeMode := mode == followUpModeChange
 	var spec *bootstrap.Spec
-	if opts.ValidateChanges && b.bootstrap != nil && repo.InstallID != 0 && repo.RepoID != 0 {
+	if changeMode && opts.ValidateChanges && b.bootstrap != nil && repo.InstallID != 0 && repo.RepoID != 0 {
 		s, err := b.bootstrap.GetSpec(ctx, repo.InstallID, repo.RepoID, "")
 		switch {
 		case err == nil:
@@ -443,7 +454,7 @@ func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx
 	addAgentEnv(env, b.cfg, agent)
 
 	artifactSlotCount := 0
-	if opts.ValidateChanges && repo.RepoID != 0 {
+	if changeMode && opts.ValidateChanges && repo.RepoID != 0 {
 		// Follow-ups can still need fresh proof links. Issue a new
 		// run-scoped batch under a follow-up prefix so keys don't
 		// collide with the initial request.
@@ -460,35 +471,62 @@ func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx
 				"request_id", requestID, "error", err)
 		}
 	}
-	prompt := buildFollowUpPrompt(repo.Slug, rec, userRequest, spec, artifactSlotCount, opts)
+	prompt := buildFollowUpPrompt(repo.Slug, rec, userRequest, spec, artifactSlotCount, opts, mode)
 	env["SF_PROMPT_B64"] = base64.StdEncoding.EncodeToString([]byte(prompt))
+	env["HETCHY_FOLLOWUP_MODE"] = string(mode)
+	if !changeMode {
+		env["HETCHY_SKIP_CACHE_SAVE"] = "1"
+		env["HETCHY_SKIP_SX_INSTALL"] = "1"
+	}
 	b.addRuntimeEnv(env, oc, model, requestID)
 	if oc.SXKey != "" {
 		env["SX_KEY"] = oc.SXKey
 	}
-	// A follow-up lands in an unarchived sandbox where any background
-	// processes from the original run are gone — including the
+	// A follow-up lands in a stopped or archived sandbox where any
+	// background processes from the original run are gone — including the
 	// `start.sh &` invocation that brought the app up. Without this
 	// step the agent's validation prompt assumes "the app is running"
 	// against a dead port. Ship the saved spec so followup.sh can
-	// re-run setup → start → poll health, mirroring agent.sh. Errors
+	// re-run setup → stop → start → poll health, mirroring agent.sh. Errors
 	// here are best-effort: a missing spec just means the follow-up
 	// runs without a live app, same as before.
-	if spec != nil && spec.SetupScript != "" && spec.StartScript != "" && spec.HealthCheck != "" {
+	if changeMode && spec != nil && spec.SetupScript != "" && spec.StartScript != "" && spec.HealthCheck != "" {
 		env["SF_SPEC_SETUP_B64"] = base64.StdEncoding.EncodeToString([]byte(spec.SetupScript))
 		env["SF_SPEC_START_B64"] = base64.StdEncoding.EncodeToString([]byte(spec.StartScript))
 		env["SF_SPEC_HEALTH_B64"] = base64.StdEncoding.EncodeToString([]byte(spec.HealthCheck))
+		if spec.StopScript != "" {
+			env["SF_SPEC_STOP_B64"] = base64.StdEncoding.EncodeToString([]byte(spec.StopScript))
+		}
+		if spec.LessonsMD != "" {
+			env["SF_SPEC_LESSONS_B64"] = base64.StdEncoding.EncodeToString([]byte(spec.LessonsMD))
+		}
 	}
 	prURL, err := b.runScriptForRequest(ctx, sb, "followup-"+requestID, "followup", followupScript, env, emit)
 	b.writeBackOpenAICodexAuthJSON(ctx, sb, oc, requestID)
 	if err != nil {
 		return "", err
 	}
+	if !changeMode {
+		if prURL != "" {
+			b.log.Warn("non-change follow-up reported PR URL; ignoring for conversation result",
+				"request_id", requestID, "mode", mode, "pr", prURL)
+		}
+		return "", nil
+	}
 	if prURL == "" {
 		return "", nil
 	}
 	b.markRunFinalizing(ctx)
-	return b.validateReportedPR(ctx, repo, rec.Branch, "", prURL)
+	prURL, err = b.validateReportedPR(ctx, repo, rec.Branch, "", prURL)
+	if err == nil && prURL != "" && spec != nil {
+		sessionID := "reflect-followup-" + requestID
+		b.applySpecImprovements(ctx, sb, sessionID, spec, repo, emit)
+		if mErr := b.bootstrap.MarkApplied(ctx, repo.InstallID, repo.RepoID, spec.Path,
+			bootstrap.StatusValidated, spec.SuccessCount+1, spec.FailureCount); mErr != nil {
+			b.log.Warn("mark spec applied", "error", mErr, "repo", repo.Slug)
+		}
+	}
+	return prURL, err
 }
 
 func (b *Bot) runScriptForRequest(ctx context.Context, sb *daytona.Sandbox, sessionID, label, scriptBody string, env map[string]string, emit blocks.Emitter) (string, error) {

@@ -422,7 +422,7 @@ func TestHandleRequestFollowUpAgentFailureUsesMocks(t *testing.T) {
 		return &daytona.Sandbox{ID: id}, nil
 	}
 	b.resumeSandboxFn = func(context.Context, *daytona.Sandbox, blocks.Emitter) error { return nil }
-	b.runFollowUpFn = func(_ context.Context, sb *daytona.Sandbox, repo repoCtx, _ orgcfg.Config, rec convstore.Record, _ agents.Profile, text, requestID string, _ chatTaskOptions, _ ClaudeModel, emit blocks.Emitter) (string, error) {
+	b.runFollowUpFn = func(_ context.Context, sb *daytona.Sandbox, repo repoCtx, _ orgcfg.Config, rec convstore.Record, _ agents.Profile, text, requestID string, _ chatTaskOptions, _ ClaudeModel, _ followUpMode, emit blocks.Emitter) (string, error) {
 		if sb.ID != "sandbox-1" || repo.Slug != "hetchyhq/hetchy" || rec.PRURL == "" || text != "follow up" || requestID != "req-2" {
 			t.Fatalf("unexpected runFollowUp args: sandbox=%s repo=%s pr=%q text=%q requestID=%q", sb.ID, repo.Slug, rec.PRURL, text, requestID)
 		}
@@ -476,7 +476,7 @@ func TestHandleRequestFollowUpSuccessUsesMocks(t *testing.T) {
 		return &daytona.Sandbox{ID: id}, nil
 	}
 	b.resumeSandboxFn = func(context.Context, *daytona.Sandbox, blocks.Emitter) error { return nil }
-	b.runFollowUpFn = func(_ context.Context, _ *daytona.Sandbox, _ repoCtx, _ orgcfg.Config, _ convstore.Record, _ agents.Profile, _ string, _ string, _ chatTaskOptions, _ ClaudeModel, emit blocks.Emitter) (string, error) {
+	b.runFollowUpFn = func(_ context.Context, _ *daytona.Sandbox, _ repoCtx, _ orgcfg.Config, _ convstore.Record, _ agents.Profile, _ string, _ string, _ chatTaskOptions, _ ClaudeModel, _ followUpMode, emit blocks.Emitter) (string, error) {
 		emit.Notify("Follow-up started", "fake runner reached")
 		return "https://github.com/hetchyhq/hetchy/pull/2", nil
 	}
@@ -534,7 +534,7 @@ func TestHandleRequestFollowUpAnswerOnlyKeepsExistingPR(t *testing.T) {
 		return &daytona.Sandbox{ID: id}, nil
 	}
 	b.resumeSandboxFn = func(context.Context, *daytona.Sandbox, blocks.Emitter) error { return nil }
-	b.runFollowUpFn = func(_ context.Context, _ *daytona.Sandbox, _ repoCtx, _ orgcfg.Config, _ convstore.Record, _ agents.Profile, _ string, _ string, _ chatTaskOptions, _ ClaudeModel, emit blocks.Emitter) (string, error) {
+	b.runFollowUpFn = func(_ context.Context, _ *daytona.Sandbox, _ repoCtx, _ orgcfg.Config, _ convstore.Record, _ agents.Profile, _ string, _ string, _ chatTaskOptions, _ ClaudeModel, _ followUpMode, emit blocks.Emitter) (string, error) {
 		emit.Notify("Follow-up answered", "no new changes needed")
 		return "", nil
 	}

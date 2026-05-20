@@ -83,7 +83,7 @@ func (q *Queries) GetRepoSecretValue(ctx context.Context, arg GetRepoSecretValue
 }
 
 const getRepoSetupSpec = `-- name: GetRepoSetupSpec :one
-SELECT id, installation_id, repo_id, path, spec_version, kind, setup_script, start_script, health_check, stop_script, services, required_secrets, deferred_capabilities, suggested_repo_changes, source_fingerprint, validation_status, last_validated_at, success_count, failure_count, bootstrap_log, created_at, updated_at FROM repo_setup_specs
+SELECT id, installation_id, repo_id, path, spec_version, kind, setup_script, start_script, health_check, stop_script, services, required_secrets, deferred_capabilities, suggested_repo_changes, source_fingerprint, validation_status, last_validated_at, success_count, failure_count, bootstrap_log, created_at, updated_at, lessons_md FROM repo_setup_specs
 WHERE installation_id = $1 AND repo_id = $2 AND path = $3
 `
 
@@ -119,6 +119,7 @@ func (q *Queries) GetRepoSetupSpec(ctx context.Context, arg GetRepoSetupSpecPara
 		&i.BootstrapLog,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.LessonsMd,
 	)
 	return i, err
 }
@@ -200,7 +201,7 @@ func (q *Queries) ListRepoSecretValues(ctx context.Context, arg ListRepoSecretVa
 }
 
 const listRepoSetupSpecs = `-- name: ListRepoSetupSpecs :many
-SELECT id, installation_id, repo_id, path, spec_version, kind, setup_script, start_script, health_check, stop_script, services, required_secrets, deferred_capabilities, suggested_repo_changes, source_fingerprint, validation_status, last_validated_at, success_count, failure_count, bootstrap_log, created_at, updated_at FROM repo_setup_specs
+SELECT id, installation_id, repo_id, path, spec_version, kind, setup_script, start_script, health_check, stop_script, services, required_secrets, deferred_capabilities, suggested_repo_changes, source_fingerprint, validation_status, last_validated_at, success_count, failure_count, bootstrap_log, created_at, updated_at, lessons_md FROM repo_setup_specs
 WHERE installation_id = $1 AND repo_id = $2
 ORDER BY path
 `
@@ -245,6 +246,7 @@ func (q *Queries) ListRepoSetupSpecs(ctx context.Context, arg ListRepoSetupSpecs
 			&i.BootstrapLog,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.LessonsMd,
 		); err != nil {
 			return nil, err
 		}
@@ -297,7 +299,7 @@ const upsertFailingRepoSetupSpec = `-- name: UpsertFailingRepoSetupSpec :one
 INSERT INTO repo_setup_specs (
     installation_id, repo_id, path,
     spec_version, kind,
-    setup_script, start_script, health_check, stop_script,
+    setup_script, start_script, health_check, stop_script, lessons_md,
     services, required_secrets, deferred_capabilities, suggested_repo_changes,
     source_fingerprint,
     validation_status, last_validated_at,
@@ -306,11 +308,11 @@ INSERT INTO repo_setup_specs (
 ) VALUES (
     $1, $2, $3,
     $4, $5,
-    $6, $7, $8, $9,
-    $10, $11, $12, $13,
-    $14,
-    $15, NULL,
-    0, 1, $16,
+    $6, $7, $8, $9, $10,
+    $11, $12, $13, $14,
+    $15,
+    $16, NULL,
+    0, 1, $17,
     NOW()
 )
 ON CONFLICT (installation_id, repo_id, path) DO UPDATE SET
@@ -320,6 +322,7 @@ ON CONFLICT (installation_id, repo_id, path) DO UPDATE SET
     start_script           = EXCLUDED.start_script,
     health_check           = EXCLUDED.health_check,
     stop_script            = EXCLUDED.stop_script,
+    lessons_md             = EXCLUDED.lessons_md,
     services               = EXCLUDED.services,
     required_secrets       = EXCLUDED.required_secrets,
     deferred_capabilities  = EXCLUDED.deferred_capabilities,
@@ -329,7 +332,7 @@ ON CONFLICT (installation_id, repo_id, path) DO UPDATE SET
     failure_count          = repo_setup_specs.failure_count + 1,
     bootstrap_log          = EXCLUDED.bootstrap_log,
     updated_at             = NOW()
-RETURNING id, installation_id, repo_id, path, spec_version, kind, setup_script, start_script, health_check, stop_script, services, required_secrets, deferred_capabilities, suggested_repo_changes, source_fingerprint, validation_status, last_validated_at, success_count, failure_count, bootstrap_log, created_at, updated_at
+RETURNING id, installation_id, repo_id, path, spec_version, kind, setup_script, start_script, health_check, stop_script, services, required_secrets, deferred_capabilities, suggested_repo_changes, source_fingerprint, validation_status, last_validated_at, success_count, failure_count, bootstrap_log, created_at, updated_at, lessons_md
 `
 
 type UpsertFailingRepoSetupSpecParams struct {
@@ -342,6 +345,7 @@ type UpsertFailingRepoSetupSpecParams struct {
 	StartScript          string  `json:"start_script"`
 	HealthCheck          string  `json:"health_check"`
 	StopScript           *string `json:"stop_script"`
+	LessonsMd            string  `json:"lessons_md"`
 	Services             []byte  `json:"services"`
 	RequiredSecrets      []byte  `json:"required_secrets"`
 	DeferredCapabilities []byte  `json:"deferred_capabilities"`
@@ -369,6 +373,7 @@ func (q *Queries) UpsertFailingRepoSetupSpec(ctx context.Context, arg UpsertFail
 		arg.StartScript,
 		arg.HealthCheck,
 		arg.StopScript,
+		arg.LessonsMd,
 		arg.Services,
 		arg.RequiredSecrets,
 		arg.DeferredCapabilities,
@@ -401,6 +406,7 @@ func (q *Queries) UpsertFailingRepoSetupSpec(ctx context.Context, arg UpsertFail
 		&i.BootstrapLog,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.LessonsMd,
 	)
 	return i, err
 }
@@ -446,7 +452,7 @@ const upsertRepoSetupSpec = `-- name: UpsertRepoSetupSpec :one
 INSERT INTO repo_setup_specs (
     installation_id, repo_id, path,
     spec_version, kind,
-    setup_script, start_script, health_check, stop_script,
+    setup_script, start_script, health_check, stop_script, lessons_md,
     services, required_secrets, deferred_capabilities, suggested_repo_changes,
     source_fingerprint,
     validation_status, last_validated_at,
@@ -455,11 +461,11 @@ INSERT INTO repo_setup_specs (
 ) VALUES (
     $1, $2, $3,
     $4, $5,
-    $6, $7, $8, $9,
-    $10, $11, $12, $13,
-    $14,
-    $15, $16,
-    $17, $18, $19,
+    $6, $7, $8, $9, $10,
+    $11, $12, $13, $14,
+    $15,
+    $16, $17,
+    $18, $19, $20,
     NOW()
 )
 ON CONFLICT (installation_id, repo_id, path) DO UPDATE SET
@@ -469,6 +475,7 @@ ON CONFLICT (installation_id, repo_id, path) DO UPDATE SET
     start_script           = EXCLUDED.start_script,
     health_check           = EXCLUDED.health_check,
     stop_script            = EXCLUDED.stop_script,
+    lessons_md             = EXCLUDED.lessons_md,
     services               = EXCLUDED.services,
     required_secrets       = EXCLUDED.required_secrets,
     deferred_capabilities  = EXCLUDED.deferred_capabilities,
@@ -480,7 +487,7 @@ ON CONFLICT (installation_id, repo_id, path) DO UPDATE SET
     failure_count          = EXCLUDED.failure_count,
     bootstrap_log          = EXCLUDED.bootstrap_log,
     updated_at             = NOW()
-RETURNING id, installation_id, repo_id, path, spec_version, kind, setup_script, start_script, health_check, stop_script, services, required_secrets, deferred_capabilities, suggested_repo_changes, source_fingerprint, validation_status, last_validated_at, success_count, failure_count, bootstrap_log, created_at, updated_at
+RETURNING id, installation_id, repo_id, path, spec_version, kind, setup_script, start_script, health_check, stop_script, services, required_secrets, deferred_capabilities, suggested_repo_changes, source_fingerprint, validation_status, last_validated_at, success_count, failure_count, bootstrap_log, created_at, updated_at, lessons_md
 `
 
 type UpsertRepoSetupSpecParams struct {
@@ -493,6 +500,7 @@ type UpsertRepoSetupSpecParams struct {
 	StartScript          string             `json:"start_script"`
 	HealthCheck          string             `json:"health_check"`
 	StopScript           *string            `json:"stop_script"`
+	LessonsMd            string             `json:"lessons_md"`
 	Services             []byte             `json:"services"`
 	RequiredSecrets      []byte             `json:"required_secrets"`
 	DeferredCapabilities []byte             `json:"deferred_capabilities"`
@@ -517,6 +525,7 @@ func (q *Queries) UpsertRepoSetupSpec(ctx context.Context, arg UpsertRepoSetupSp
 		arg.StartScript,
 		arg.HealthCheck,
 		arg.StopScript,
+		arg.LessonsMd,
 		arg.Services,
 		arg.RequiredSecrets,
 		arg.DeferredCapabilities,
@@ -552,6 +561,7 @@ func (q *Queries) UpsertRepoSetupSpec(ctx context.Context, arg UpsertRepoSetupSp
 		&i.BootstrapLog,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.LessonsMd,
 	)
 	return i, err
 }

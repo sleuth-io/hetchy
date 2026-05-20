@@ -362,7 +362,7 @@ func TestRunAgentPassesCacheEnvAndFollowUpDoesNotOverride(t *testing.T) {
 
 	restoreFollowup := stubPRLookup(t, "acme/repo", "feature/sf-req-1", "", "https://github.com/acme/repo/pull/8")
 	defer restoreFollowup()
-	if _, err := b.runFollowUp(context.Background(), &daytona.Sandbox{ID: "sandbox-1"}, repo, oc, convstore.Record{Branch: "feature/sf-req-1", PRURL: "https://github.com/acme/repo/pull/7"}, agents.Profile{}, "tighten", "req-2", chatTaskOptions{}, ClaudeModelSonnet, newCaptureEmitter()); err != nil {
+	if _, err := b.runFollowUp(context.Background(), &daytona.Sandbox{ID: "sandbox-1"}, repo, oc, convstore.Record{Branch: "feature/sf-req-1", PRURL: "https://github.com/acme/repo/pull/7"}, agents.Profile{}, "tighten", "req-2", chatTaskOptions{}, ClaudeModelSonnet, followUpModeChange, newCaptureEmitter()); err != nil {
 		t.Fatalf("runFollowUp: %v", err)
 	}
 	if _, ok := captured.env["HETCHY_CACHE_DIR"]; ok {

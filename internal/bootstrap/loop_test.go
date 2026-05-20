@@ -49,7 +49,9 @@ func TestLoopSuccess(t *testing.T) {
 	runner := newFakeRunner()
 	runner.files["/tmp/hetchy-spec/setup.sh"] = []byte("#!/bin/bash\nmake build\n")
 	runner.files["/tmp/hetchy-spec/start.sh"] = []byte("#!/bin/bash\n./dist/foo\n")
+	runner.files["/tmp/hetchy-spec/stop.sh"] = []byte("#!/bin/bash\npkill -f ./dist/foo || true\n")
 	runner.files["/tmp/hetchy-spec/health.sh"] = []byte("#!/bin/bash\ncurl -fsS http://localhost:8080/\n")
+	runner.files["/tmp/hetchy-spec/lessons.md"] = []byte("- Run start.sh after rebuilding before HTTP validation.\n")
 	runner.files["/tmp/hetchy-spec/manifest.json"] = []byte(`{
 		"kind": "go-web",
 		"services": [{"name":"web","port":8080,"url":"http://localhost:8080","kind":"ui"}],
@@ -78,6 +80,12 @@ func TestLoopSuccess(t *testing.T) {
 	if !strings.Contains(res.Spec.SetupScript, "make build") {
 		t.Error("setup script not extracted")
 	}
+	if !strings.Contains(res.Spec.StopScript, "pkill") {
+		t.Error("stop script not extracted")
+	}
+	if !strings.Contains(res.Spec.LessonsMD, "Run start.sh") {
+		t.Error("lessons not extracted")
+	}
 	// Secret value MUST flow into the runner env so the spec's setup.sh
 	// can reach it. If we lost this propagation, the agent would write
 	// scripts that need GITHUB_TOKEN at run time but never get one.
@@ -95,7 +103,9 @@ func TestLoopPartialOnDeferred(t *testing.T) {
 	runner := newFakeRunner()
 	runner.files["/tmp/hetchy-spec/setup.sh"] = []byte("#!/bin/bash\n")
 	runner.files["/tmp/hetchy-spec/start.sh"] = []byte("#!/bin/bash\n")
+	runner.files["/tmp/hetchy-spec/stop.sh"] = []byte("#!/bin/bash\n")
 	runner.files["/tmp/hetchy-spec/health.sh"] = []byte("#!/bin/bash\n")
+	runner.files["/tmp/hetchy-spec/lessons.md"] = []byte("- No repo-specific lessons yet.\n")
 	runner.files["/tmp/hetchy-spec/manifest.json"] = []byte(`{
 		"kind": "rails",
 		"services": [],
