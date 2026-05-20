@@ -42,10 +42,18 @@ func TestDockerfileAvoidsPlaywrightChromeAptInstall(t *testing.T) {
 	got := string(body)
 	for _, want := range []string{
 		"PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright",
+		"HETCHY_PLAYWRIGHT_VALIDATE_DIR=/tmp/hetchy-validate",
+		"NODE_PATH=/usr/local/nvm/versions/node/v22.14.0/lib/node_modules",
 		"playwright install chromium",
 		"/opt/google/chrome/chrome",
 		"-path '*/chrome-linux/chrome'",
 		"-path '*/chrome-linux64/chrome'",
+		"NODE_MODULES=\"$(npm root -g)\"",
+		"ln -sfn \"$NODE_MODULES\" /usr/local/nvm/v22.14.0/lib/node_modules",
+		"chown -R daytona:daytona \"$PLAYWRIGHT_BROWSERS_PATH\"",
+		"chmod -R a+rwX \"$PLAYWRIGHT_BROWSERS_PATH\"",
+		"hetchy-playwright-smoke",
+		"su daytona -c",
 		"ffmpeg xvfb xauth x11-utils",
 		"xz-utils file",
 		"docker-compose-plugin",
@@ -61,6 +69,28 @@ func TestDockerfileAvoidsPlaywrightChromeAptInstall(t *testing.T) {
 	} {
 		if strings.Contains(got, bad) {
 			t.Errorf("Dockerfile should not contain %q\n%s", bad, got)
+		}
+	}
+}
+
+func TestPlaywrightSmokeUsesOrdinaryPlaywrightAPIs(t *testing.T) {
+	body, err := os.ReadFile("hetchy-playwright-smoke")
+	if err != nil {
+		t.Fatalf("read helper: %v", err)
+	}
+	got := string(body)
+	for _, want := range []string{
+		"PLAYWRIGHT_BROWSERS_PATH",
+		"NODE_PATH",
+		"npm root -g",
+		"global_node_modules",
+		"require('playwright')",
+		"chromium.launch",
+		"page.screenshot",
+		"--no-sandbox",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("smoke helper missing %q\n%s", want, got)
 		}
 	}
 }

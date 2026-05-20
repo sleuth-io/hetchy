@@ -81,32 +81,35 @@ start_saved_app_and_poll_health() {
   local health_path="${spec_dir}/health.sh"
   local start_log="${spec_dir}/start.log"
   local unhealthy_path="${spec_dir}/UNHEALTHY"
-  local start_pid=""
-  local start_done=0
+  local start_timeout="${HETCHY_SPEC_START_TIMEOUT_SECONDS:-120}"
   local spec_healthy=0
 
-  echo "[hetchy] starting app via start.sh (background)"
+  if [[ ! "$start_timeout" =~ ^[0-9]+$ || "$start_timeout" -le 0 ]]; then
+    start_timeout=120
+  fi
+
+  echo "[hetchy] running start.sh (${start_timeout}s timeout; start.sh must return after launching services)"
   # Redirect to a captured log instead of inheriting agent.sh's
   # stdout/stderr — otherwise framework banners, request logs, and
   # migration noise from the user's app interleave with the agent's
   # stream-json events in the chat block stream. The validation
   # prompt tells the agent to read /tmp/hetchy-spec/start.log when
   # it needs to triage why the app isn't responding.
-  "$start_path" > "$start_log" 2>&1 &
-  start_pid=$!
+  if hetchy_run_with_timeout "$start_timeout" "$start_path" > "$start_log" 2>&1; then
+    echo "[hetchy] start.sh completed; polling health"
+  else
+    local start_code=$?
+    if [[ "$start_code" -eq 124 ]]; then
+      echo "[hetchy] start.sh timed out after ${start_timeout}s; it must background/daemonize long-lived services; see ${start_log}"
+    else
+      echo "[hetchy] start.sh exited non-zero (${start_code}); see ${start_log}"
+    fi
+    : > "$unhealthy_path"
+    return 0
+  fi
 
   echo "[hetchy] polling health.sh (90s budget)"
   for i in {1..90}; do
-    if [[ "$start_done" != "1" ]] && ! kill -0 "$start_pid" 2>/dev/null; then
-      if wait "$start_pid"; then
-        echo "[hetchy] start.sh exited successfully; continuing health poll"
-        start_done=1
-      else
-        local start_code=$?
-        echo "[hetchy] start.sh exited non-zero (${start_code}); see ${start_log}"
-        break
-      fi
-    fi
     if "$health_path" >/dev/null 2>&1; then
       echo "[hetchy] healthy after ${i}s"
       spec_healthy=1

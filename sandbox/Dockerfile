@@ -164,7 +164,9 @@ RUN for pkg in poetry uv ruff black mypy pytest conan; do \
 # bin into /usr/local/bin so the daytona user (login shell with reset PATH)
 # can find every tool.
 # ---------------------------------------------------------------------------
-ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
+    HETCHY_PLAYWRIGHT_VALIDATE_DIR=/tmp/hetchy-validate \
+    NODE_PATH=/usr/local/nvm/versions/node/v22.14.0/lib/node_modules
 RUN npm install -g \
         pnpm yarn bun \
         eslint prettier chromedriver \
@@ -178,8 +180,13 @@ RUN npm install -g \
  && test -x "$CHROMIUM_BIN" \
  && mkdir -p /opt/google/chrome \
  && ln -sf "$CHROMIUM_BIN" /opt/google/chrome/chrome \
- && chmod -R a+rX "$PLAYWRIGHT_BROWSERS_PATH" /opt/google/chrome \
+ && chown -R daytona:daytona "$PLAYWRIGHT_BROWSERS_PATH" \
+ && chmod -R a+rwX "$PLAYWRIGHT_BROWSERS_PATH" \
+ && chmod -R a+rX /opt/google/chrome \
  && NODE_BIN=$(dirname "$(readlink -f "$(command -v node)")") \
+ && NODE_MODULES="$(npm root -g)" \
+ && mkdir -p /usr/local/nvm/v22.14.0/lib \
+ && ln -sfn "$NODE_MODULES" /usr/local/nvm/v22.14.0/lib/node_modules \
  && for f in "$NODE_BIN"/*; do ln -sf "$f" "/usr/local/bin/$(basename "$f")"; done
 
 # Note: the Playwright MCP server we ship in the agent expects a
@@ -208,7 +215,9 @@ RUN usermod -aG docker daytona
 # ---------------------------------------------------------------------------
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY hetchy-record-screen /usr/local/bin/hetchy-record-screen
-RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/hetchy-record-screen
+COPY hetchy-playwright-smoke /usr/local/bin/hetchy-playwright-smoke
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/hetchy-record-screen /usr/local/bin/hetchy-playwright-smoke \
+ && su daytona -c 'export PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright; export NODE_PATH="$(npm root -g)"; hetchy-playwright-smoke'
 
 USER daytona
 WORKDIR /home/daytona

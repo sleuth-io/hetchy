@@ -196,7 +196,10 @@ func TestAgentScript_EmbeddedAndWellFormed(t *testing.T) {
 		"setup.sh still running",
 		"setup.sh output is being written to ${setup_log}",
 		"setup.sh success marker written for fingerprint",
-		"start.sh exited successfully; continuing health poll",
+		"start.sh completed; polling health",
+		"start.sh timed out after",
+		"hetchy_run_with_timeout",
+		"ensure_playwright_runtime",
 		"configure_hetchy_cache",
 		"cache_supports_basic_write",
 		"restore_hetchy_cache_archive",
@@ -251,7 +254,10 @@ func TestFollowupScript_EmbeddedAndWellFormed(t *testing.T) {
 		"setup.sh still running",
 		"setup.sh output is being written to ${setup_log}",
 		"setup.sh success marker written for fingerprint",
-		"start.sh exited successfully; continuing health poll",
+		"start.sh completed; polling health",
+		"start.sh timed out after",
+		"hetchy_run_with_timeout",
+		"ensure_playwright_runtime",
 		"configure_hetchy_cache",
 		"cache_supports_basic_write",
 		"restore_hetchy_cache_archive",
@@ -476,7 +482,7 @@ func TestSandboxCommon_StartSavedAppContinuesAfterZeroExitStart(t *testing.T) {
 	}
 
 	out := runSandboxCommonForTest(t, specDir, "start_saved_app_and_poll_health")
-	if !strings.Contains(out, "start.sh exited successfully; continuing health poll") {
+	if !strings.Contains(out, "start.sh completed; polling health") {
 		t.Fatalf("start success exit was not handled:\n%s", out)
 	}
 	if !strings.Contains(out, "healthy after") {
@@ -484,6 +490,38 @@ func TestSandboxCommon_StartSavedAppContinuesAfterZeroExitStart(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(specDir, "UNHEALTHY")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("UNHEALTHY should not exist, stat err=%v", err)
+	}
+}
+
+func TestSandboxCommon_StartSavedAppTimesOutForegroundStart(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skipf("bash not available: %v", err)
+	}
+	specDir := filepath.Join(t.TempDir(), "hetchy-spec")
+	mustMkdir(t, specDir)
+	mustWriteFile(t, filepath.Join(specDir, "start.sh"), strings.Join([]string{
+		"#!/usr/bin/env bash",
+		"set -euo pipefail",
+		"sleep 5",
+	}, "\n"))
+	mustWriteFile(t, filepath.Join(specDir, "health.sh"), strings.Join([]string{
+		"#!/usr/bin/env bash",
+		"set -euo pipefail",
+		"exit 1",
+	}, "\n"))
+	if err := os.Chmod(filepath.Join(specDir, "start.sh"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(specDir, "health.sh"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	out := runSandboxCommonForTest(t, specDir, "HETCHY_SPEC_START_TIMEOUT_SECONDS=1 start_saved_app_and_poll_health")
+	if !strings.Contains(out, "start.sh timed out after 1s") {
+		t.Fatalf("foreground start timeout was not reported:\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Join(specDir, "UNHEALTHY")); err != nil {
+		t.Fatalf("UNHEALTHY should be written after start timeout: %v\noutput:\n%s", err, out)
 	}
 }
 

@@ -267,7 +267,10 @@ You must produce setup/start/stop/health scripts, lessons.md, and a manifest:
                                    required runtime dependencies and makes
                                    the current checkout/build the active app.
                                    Safe before work, after rebuilds, and
-                                   after sandbox resume.
+                                   after sandbox resume. It must start
+                                   long-lived services in the background or
+                                   daemon mode and then return; health.sh is
+                                   the readiness oracle.
   /tmp/hetchy-spec/stop.sh       — idempotently stops app-owned runtime
                                    processes. Usually leave shared services
                                    such as Postgres running.
@@ -342,7 +345,8 @@ Process:
      agent work, after the agent rebuilds, and after sandbox resume. If
      the app needs a restart after code changes before E2E validation,
      encode that in start.sh rather than relying on a future agent to
-     remember it.
+     remember it. start.sh must return after launching services; do not
+     leave a foreground dev server or `nginx daemon off` process attached.
 
   6. Run stop.sh, run start.sh, then run health.sh. Iterate until it
      passes. Record what URL the app is on.
@@ -363,7 +367,10 @@ Process:
        to start and then fail later in confusing ways.
 
   9. For every UI service, navigate to its root URL with Playwright and
-     take a screenshot. The screenshot must show real content (not an
+     take a screenshot. The sandbox image already ships Playwright and
+     Chromium; validation scripts should live under `/tmp/hetchy-validate`
+     and use `$PLAYWRIGHT_BROWSERS_PATH` rather than running
+     `playwright install`. The screenshot must show real content (not an
      error page or blank screen).
 
   10. Populate `suggested_repo_changes` in the manifest if you hit
@@ -417,7 +424,7 @@ if err := bootstrap.Apply(ctx, sandbox, spec); err != nil {
 agent.Run(ctx, spec, userTask)
 ```
 
-`bootstrap.Apply` materializes the scripts and lessons, injects user-supplied secrets as env vars, runs `setup.sh`, runs `stop.sh`, runs `start.sh`, and polls `health.sh` until it passes (timeout: 90s). Service URLs and lessons become part of the agent prompt context. Validation prompts also require the agent to refresh runtime with `stop.sh` + `start.sh` + `health.sh` after rebuilding so E2E checks hit the changed code.
+`bootstrap.Apply` materializes the scripts and lessons, injects user-supplied secrets as env vars, runs `setup.sh`, runs `stop.sh`, runs `start.sh` with a bounded return timeout, and polls `health.sh` until it passes (timeout: 90s). A `start.sh` that foregrounds a long-lived server is treated as a broken spec instead of being left to burn minutes. Service URLs and lessons become part of the agent prompt context. Validation prompts also require the agent to refresh runtime with `stop.sh` + `start.sh` + `health.sh` after rebuilding so E2E checks hit the changed code.
 
 ## Secrets
 

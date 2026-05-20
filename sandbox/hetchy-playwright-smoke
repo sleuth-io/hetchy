@@ -1,0 +1,51 @@
+#!/bin/bash
+# Smoke-test the sandbox-provided Playwright package and Chromium binary.
+#
+# This is a diagnostic/build check, not the interface agents should use
+# for validation. Agents can use ordinary Playwright APIs from scripts in
+# /tmp/hetchy-validate; this script proves that path is ready.
+
+set -euo pipefail
+
+export PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-/opt/ms-playwright}"
+if command -v npm >/dev/null 2>&1; then
+  global_node_modules="$(npm root -g 2>/dev/null || true)"
+  if [[ -n "$global_node_modules" ]]; then
+    case ":${NODE_PATH:-}:" in
+      *":${global_node_modules}:"*) ;;
+      *)
+        if [[ -n "${NODE_PATH:-}" ]]; then
+          export NODE_PATH="${global_node_modules}:${NODE_PATH}"
+        else
+          export NODE_PATH="${global_node_modules}"
+        fi
+        ;;
+    esac
+  fi
+fi
+
+work_dir="${1:-/tmp/hetchy-playwright-smoke}"
+mkdir -p "$work_dir"
+
+cat > "${work_dir}/smoke.cjs" <<'NODE'
+const { chromium } = require('playwright');
+
+(async () => {
+  const browser = await chromium.launch({
+    headless: true,
+    args: ['--no-sandbox'],
+  });
+  const page = await browser.newPage({ viewport: { width: 800, height: 600 } });
+  await page.goto('about:blank');
+  await page.screenshot({
+    path: process.env.HETCHY_PLAYWRIGHT_SMOKE_SCREENSHOT || '/tmp/hetchy-playwright-smoke/about-blank.png',
+  });
+  await browser.close();
+})().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
+NODE
+
+node "${work_dir}/smoke.cjs"
+printf 'Playwright smoke passed: %s\n' "${PLAYWRIGHT_BROWSERS_PATH}"
