@@ -342,6 +342,8 @@ export PLAYWRIGHT_MCP_HEADLESS="${PLAYWRIGHT_MCP_HEADLESS:-1}"
 export PLAYWRIGHT_MCP_NO_SANDBOX="${PLAYWRIGHT_MCP_NO_SANDBOX:-1}"
 mkdir -p "$PLAYWRIGHT_MCP_OUTPUT_DIR" "$PLAYWRIGHT_MCP_USER_DATA_DIR"
 chmod u+rwx "$PLAYWRIGHT_MCP_OUTPUT_DIR" "$PLAYWRIGHT_MCP_USER_DATA_DIR" 2>/dev/null || true
+# Keep this Playwright runtime preparation in sync with
+# ensure_playwright_runtime in internal/bot/scripts/sandbox-common.sh.
 export PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-/opt/ms-playwright}"
 export HETCHY_PLAYWRIGHT_VALIDATE_DIR="${HETCHY_PLAYWRIGHT_VALIDATE_DIR:-/tmp/hetchy-validate}"
 mkdir -p "$HETCHY_PLAYWRIGHT_VALIDATE_DIR" 2>/dev/null || true
@@ -370,6 +372,8 @@ if command -v npm >/dev/null 2>&1; then
   fi
 fi
 
+# Keep this fallback behavior in sync with hetchy_run_with_timeout in
+# internal/bot/scripts/sandbox-common.sh.
 run_with_timeout() {
   local seconds="$1"
   shift
