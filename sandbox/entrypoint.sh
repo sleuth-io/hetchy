@@ -2,17 +2,11 @@
 # Sandbox entrypoint. Starts dockerd in the background then becomes a
 # long-running process so Daytona keeps the sandbox alive.
 #
-# Daytona sandboxes don't run --privileged, which means kernel-level
-# overlay mounts (Docker's default container filesystem) return -EINVAL.
-# We pre-write a /etc/docker/daemon.json that:
-#   - disables Docker 29's containerd-snapshotter mode (the snapshotter
-#     ignores the storage-driver knob and still tries kernel overlayfs)
-#   - selects fuse-overlayfs as the storage driver (userspace overlay,
-#     works without CAP_SYS_ADMIN as long as /dev/fuse is exposed)
-# If fuse-overlayfs also fails — e.g. /dev/fuse isn't available — dockerd
-# still logs to /var/log/dockerd.log and the sandbox stays usable for
-# non-Docker workflows; Docker-dependent repos surface a clear error
-# at the bootstrap setup.sh layer instead of at sandbox-start time.
+# Daytona sandboxes don't run --privileged, and overlay/fuse-overlayfs has
+# been unreliable in Daytona Cloud for nested Docker workloads. Use Docker's
+# vfs storage driver: it is slower but only depends on ordinary filesystem
+# operations, and it is the path we have verified with `docker run hello-world`
+# inside a Daytona Cloud sandbox.
 #
 # We considered disabling iptables / bridge networking to sidestep
 # the "nf_tables permission denied" failure dockerd hits when run
@@ -27,31 +21,31 @@
 # individual repo can't get Docker to do useful work.
 set -uo pipefail
 
-if ! pgrep -x dockerd >/dev/null 2>&1; then
+docker_ready() {
+    [ -S /var/run/docker.sock ] && docker info >/dev/null 2>&1
+}
+
+if ! docker_ready; then
     sudo -n install -d -m 0755 /etc/docker
 
-    # Probe what storage driver we can actually run. fuse-overlayfs needs
-    # /dev/fuse plus a kernel that has the fuse module available; the
-    # vfs driver works anywhere (slower, but no syscalls beyond the
-    # ordinary filesystem). Fall back to vfs if the probe fails so a
-    # sandbox without working fuse still has a usable Docker daemon.
-    storage_driver=vfs
-    if [ -c /dev/fuse ] && command -v fuse-overlayfs >/dev/null 2>&1; then
-        probe_dir=$(mktemp -d -t fuse-probe-XXXX)
-        mkdir -p "${probe_dir}"/{lower,upper,work,merged}
-        if fuse-overlayfs \
-                -o "lowerdir=${probe_dir}/lower,upperdir=${probe_dir}/upper,workdir=${probe_dir}/work" \
-                "${probe_dir}/merged" >/dev/null 2>&1; then
-            fusermount -u "${probe_dir}/merged" 2>/dev/null || true
-            storage_driver=fuse-overlayfs
-        fi
-        rm -rf "${probe_dir}" 2>/dev/null || true
+    # A stopped/resumed sandbox can preserve /var/run/docker.pid and
+    # /var/run/docker.sock even though dockerd is gone. Docker refuses to
+    # start when the stale pid file references any live process, even if that
+    # process is not dockerd, so readiness is `docker info`, not pgrep.
+    if pgrep -x dockerd >/dev/null 2>&1; then
+        sudo -n pkill -TERM -x dockerd 2>/dev/null || true
+        for _ in $(seq 1 40); do
+            pgrep -x dockerd >/dev/null 2>&1 || break
+            sleep 0.25
+        done
+        sudo -n pkill -KILL -x dockerd 2>/dev/null || true
     fi
+    sudo -n rm -f /var/run/docker.pid /var/run/docker.sock
 
     sudo -n tee /etc/docker/daemon.json >/dev/null <<JSON
 {
   "features": { "containerd-snapshotter": false },
-  "storage-driver": "${storage_driver}"
+  "storage-driver": "vfs"
 }
 JSON
 
@@ -62,8 +56,8 @@ JSON
             > /var/log/dockerd.log 2>&1 &
     '
 
-    for _ in $(seq 1 60); do
-        if [ -S /var/run/docker.sock ] && docker info >/dev/null 2>&1; then
+    for _ in $(seq 1 80); do
+        if docker_ready; then
             break
         fi
         sleep 0.5
@@ -72,6 +66,10 @@ JSON
     if [ -S /var/run/docker.sock ]; then
         sudo -n chgrp docker /var/run/docker.sock 2>/dev/null || true
         sudo -n chmod 660 /var/run/docker.sock 2>/dev/null || true
+    fi
+
+    if ! docker_ready; then
+        echo "[hetchy-entrypoint] WARNING: dockerd did not become ready; see /var/log/dockerd.log" >&2
     fi
 fi
 

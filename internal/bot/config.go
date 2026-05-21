@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -47,11 +48,12 @@ type Config struct {
 	DatabaseMaxConns int32
 	WebPort          string
 
-	WorkOSAPIKey         string
-	WorkOSClientID       string
-	WorkOSCookiePassword string
-	WorkOSRedirectURI    string
-	LogoutReturnTo       string
+	WorkOSAPIKey          string
+	WorkOSClientID        string
+	WorkOSCookiePassword  string
+	WorkOSRedirectURI     string
+	LogoutReturnTo        string
+	PublicBaseURLOverride string
 	// CookieSecure is the Secure flag on the session cookie. Defaults to
 	// true; set COOKIE_INSECURE=1 to disable it for local HTTP dev.
 	CookieSecure bool
@@ -114,6 +116,14 @@ const DefaultSXPublicVaultURL = "https://github.com/hetchyhq/hetchy-sx-vault.git
 // skip the WorkOS round-trip for tests/CI.
 func LoadConfig() (Config, error) {
 	bypass := os.Getenv("AUTH_BYPASS") != ""
+	env := strings.TrimSpace(os.Getenv("HETCHY_ENV"))
+	if env == "" {
+		env = "prod"
+	}
+	publicBaseURLOverride := strings.TrimSpace(os.Getenv("HETCHY_PUBLIC_BASE_URL"))
+	if publicBaseURLOverride != "" && publicOrigin(publicBaseURLOverride) == "" {
+		return Config{}, errors.New("HETCHY_PUBLIC_BASE_URL must be an http(s) URL with scheme and host")
+	}
 
 	required := []string{
 		"DATABASE_URL",
@@ -127,6 +137,9 @@ func LoadConfig() (Config, error) {
 			"WORKOS_COOKIE_PASSWORD",
 			"WORKOS_REDIRECT_URI",
 		)
+		if env != "dev" {
+			required = append(required, "HETCHY_PUBLIC_BASE_URL")
+		}
 	}
 	var missing []string
 	for _, key := range required {
@@ -194,7 +207,7 @@ func LoadConfig() (Config, error) {
 	}
 
 	return Config{
-		Env:                         getenvDefault("HETCHY_ENV", "prod"),
+		Env:                         env,
 		DaytonaAPIURL:               strings.TrimSpace(os.Getenv("DAYTONA_API_URL")),
 		Snapshot:                    os.Getenv("DAYTONA_SNAPSHOT"),
 		DaytonaCacheVolumesDisabled: strings.TrimSpace(os.Getenv("DAYTONA_CACHE_VOLUMES_DISABLED")) == "1",
@@ -209,6 +222,7 @@ func LoadConfig() (Config, error) {
 		WorkOSCookiePassword:        strings.TrimSpace(os.Getenv("WORKOS_COOKIE_PASSWORD")),
 		WorkOSRedirectURI:           strings.TrimSpace(os.Getenv("WORKOS_REDIRECT_URI")),
 		LogoutReturnTo:              logout,
+		PublicBaseURLOverride:       publicBaseURLOverride,
 		CookieSecure:                cookieSecure,
 		SecretsEncryptionKey:        strings.TrimSpace(os.Getenv("SECRETS_ENCRYPTION_KEY")),
 		SlackSigningSecret:          strings.TrimSpace(os.Getenv("SLACK_SIGNING_SECRET")),
@@ -254,14 +268,49 @@ func getenvDefaultTrimAllowDisabled(key, def string) string {
 }
 
 // PublicBaseURL returns the externally-reachable base URL for the web
-// app (no trailing slash). LOGOUT_RETURN_TO is the canonical "public app
-// root" used for external link generation (e.g. Slack deep links) — it no
-// longer controls the post-logout redirect, which is derived from
-// WORKOS_REDIRECT_URI in auth.New(). Falls back to the local bind URL when
-// LOGOUT_RETURN_TO is unset.
+// app (no trailing slash). HETCHY_PUBLIC_BASE_URL is required outside dev and
+// is the only safe source for deployed callback URLs. LOGOUT_RETURN_TO is kept
+// as a legacy public-root source when set to an external URL. In dev only, if
+// it is unset and therefore defaulted to localhost, derive the public origin
+// from OAuth callback URLs before falling back to the local bind URL. This
+// matters for sandbox callbacks such as artifact-slot minting: a Daytona
+// sandbox cannot call the Hetchy process via localhost.
 func (c Config) PublicBaseURL() string {
-	if base := strings.TrimSuffix(c.LogoutReturnTo, "/"); base != "" {
+	if base := publicOrigin(c.PublicBaseURLOverride); base != "" {
 		return base
 	}
-	return "http://localhost:" + c.WebPort
+	port := c.WebPort
+	if port == "" {
+		port = "8080"
+	}
+	local := "http://localhost:" + port
+	if base := publicOrigin(c.LogoutReturnTo); base != "" && base != local {
+		return base
+	}
+	if c.Env == "dev" {
+		for _, raw := range []string{c.WorkOSRedirectURI, c.SlackOAuthRedirectURI} {
+			if base := publicOrigin(raw); base != "" {
+				return base
+			}
+		}
+	}
+	if base := publicOrigin(c.LogoutReturnTo); base != "" {
+		return base
+	}
+	return local
+}
+
+func publicOrigin(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return ""
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host
 }

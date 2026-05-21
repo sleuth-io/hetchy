@@ -93,6 +93,12 @@ You must produce six artifacts at fixed paths:
                                    Do not leave a foreground dev server,
                                    foreground nginx, or watch command as the
                                    final process.
+                                   Runtime scratch files (pid files, logs,
+                                   Redis dump.rdb, sqlite/dev DB files, etc.)
+                                   must live outside the git checkout, e.g.
+                                   under /tmp/hetchy-runtime/<repo>. Do not
+                                   pollute the repo with untracked runtime
+                                   artifacts.
   /tmp/hetchy-spec/stop.sh       — idempotently stops app-owned runtime
                                    processes. Usually leave shared services
                                    like Postgres running unless this repo
@@ -183,6 +189,9 @@ Process:
      agent to remember it. start.sh must return after launching services;
      health.sh is the readiness oracle. When you test it manually, run it
      with a timeout so a foreground server cannot burn minutes unnoticed.
+     Keep pid/log/db/runtime files out of the repo checkout; use /tmp or
+     another ignored runtime directory so future agents don't see dirty
+     untracked files from the app itself.
 
   6. Run stop.sh, run start.sh, then run health.sh. Iterate until health
      passes. Record the URL the app is on.

@@ -107,6 +107,7 @@ database, not in Doppler. Doppler only holds the *process-level* config:
 | `WORKOS_COOKIE_PASSWORD` | 32-byte secret for sealing session cookies |
 | `WORKOS_REDIRECT_URI` | OAuth callback URL — must match a Redirect URI in the WorkOS dashboard (use `http://dev.hetchy.ai:8080/callback` for local dev) |
 | `LOGOUT_RETURN_TO` | URL the browser lands on after WorkOS-side logout |
+| `HETCHY_PUBLIC_BASE_URL` | Required outside dev. Externally reachable `http(s)://host` app origin used for sandbox callbacks and generated links |
 | `SECRETS_ENCRYPTION_KEY` | 32-byte key used to encrypt per-org tokens at rest |
 | `DATABASE_URL` | Postgres connection string (required) |
 | `DAYTONA_API_URL` | Daytona API endpoint |
