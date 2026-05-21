@@ -81,12 +81,12 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		"text_preview", truncate(text, 200),
 	)
 
-	recorder := blocks.NewRecorder(maxBlocksPerTurn)
 	var run runstore.Run
 	var ok bool
 	if ctx, run, ok = b.prepareAgentRun(ctx, oc.OrgID, threadID, requestID, text, out); !ok {
 		return
 	}
+	recorder := blocks.NewRecorder(maxBlocksForRun(run))
 
 	// Wrap the transport emitter with a Recorder so every block streamed
 	// to the user is also captured for the legacy response_blocks
@@ -243,6 +243,13 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		return
 	}
 	b.runFreshAgent(ctx, oc, rec, agent, text, requestID, opts, model, recorder, emit)
+}
+
+func maxBlocksForRun(run runstore.Run) int {
+	if run.ID != "" {
+		return durableMaxBlocksPerTurn
+	}
+	return maxBlocksPerTurn
 }
 
 // handlePendingConversation routes the "row exists but no PR yet"

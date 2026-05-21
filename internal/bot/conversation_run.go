@@ -157,9 +157,10 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 		persister.Stop()
 	}()
 
-	prURL, runErr := b.runAgentForRequest(ctx, sb, repo, oc, agent, agentRequest, requestID, branch, opts, model, emit)
+	runEmit := newPRURLPersistingEmitter(b.log, b.convs, rec, emit)
+	prURL, runErr := b.runAgentForRequest(ctx, sb, repo, oc, agent, agentRequest, requestID, branch, opts, model, runEmit)
 	if runErr != nil {
-		b.handleFreshAgentRunError(ctx, sb, &rec, recorder, requestID, branch, runErr, emit)
+		b.handleFreshAgentRunError(ctx, sb, &rec, recorder, requestID, branch, runErr, runEmit)
 		return
 	}
 
@@ -338,9 +339,10 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 		persister.Stop()
 	}()
 
-	prURL, err := b.runFollowUpForRequest(ctx, sb, repo, oc, rec, agent, agentText, requestID, opts, model, mode, emit)
+	runEmit := newPRURLPersistingEmitter(b.log, b.convs, rec, emit)
+	prURL, err := b.runFollowUpForRequest(ctx, sb, repo, oc, rec, agent, agentText, requestID, opts, model, mode, runEmit)
 	if err != nil {
-		b.handleFollowUpRunError(ctx, sb, &rec, text, recorder, requestID, err, emit)
+		b.handleFollowUpRunError(ctx, sb, &rec, text, recorder, requestID, err, runEmit)
 		return
 	}
 

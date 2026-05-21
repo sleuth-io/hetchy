@@ -211,6 +211,26 @@ func (s *Store) SaveProgress(ctx context.Context, r Record) error {
 	return nil
 }
 
+// SaveRunMetadata writes run state discovered while a turn is still
+// streaming. It deliberately only fills non-empty sandbox/branch/PR
+// values so a best-effort mid-run save cannot erase metadata written
+// by a later terminal Upsert.
+func (s *Store) SaveRunMetadata(ctx context.Context, r Record) error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+	if err := s.db.Queries.SaveConversationRunMetadata(ctx, sqlc.SaveConversationRunMetadataParams{
+		OrgID:     r.OrgID,
+		ThreadID:  r.ThreadID,
+		SandboxID: r.SandboxID,
+		Branch:    r.Branch,
+		PrUrl:     r.PRURL,
+	}); err != nil {
+		return fmt.Errorf("save run metadata: %w", err)
+	}
+	return nil
+}
+
 // Upsert writes the supplied record. No-op when the store is nil.
 func (s *Store) Upsert(ctx context.Context, r Record) error {
 	if s == nil || s.db == nil {

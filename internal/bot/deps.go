@@ -18,6 +18,7 @@ type conversationStore interface {
 	Get(context.Context, string, string) (convstore.Record, error)
 	Search(context.Context, string, convstore.SearchOptions) ([]convstore.Record, error)
 	SaveProgress(context.Context, convstore.Record) error
+	SaveRunMetadata(context.Context, convstore.Record) error
 	SaveTaskOptions(context.Context, string, string, map[string]bool) error
 	SaveAttachments(context.Context, []convstore.Attachment) error
 	ListAttachments(context.Context, string, string) ([]convstore.Attachment, error)
@@ -91,6 +92,7 @@ type runStore interface {
 	AppendEvent(context.Context, string, string, []byte, string) (int64, error)
 	AppendEventsAndAdvanceCursor(context.Context, string, []runstore.PendingEvent, int64, string) ([]int64, error)
 	EventsAfter(context.Context, string, int64) ([]runstore.Event, error)
+	EventsAfterLimit(context.Context, string, int64, int32) ([]runstore.Event, error)
 }
 
 type bootstrapStore interface {

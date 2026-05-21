@@ -185,6 +185,13 @@ func isAgentTimeout(err error) bool {
 	return errors.Is(err, ErrStepWallTimeout) || errors.Is(err, ErrStepIdleTimeout)
 }
 
+func latestPRURLFromEmitter(emit blocks.Emitter) string {
+	if tracker, ok := emit.(interface{ Latest() string }); ok {
+		return tracker.Latest()
+	}
+	return ""
+}
+
 func (b *Bot) handleFreshSandboxCreateError(ctx context.Context, rec *convstore.Record, recorder *blocks.Recorder, requestID string, err error, emit blocks.Emitter) {
 	cancelled := liveRunCancelled(ctx)
 	if cancelled {
@@ -240,10 +247,12 @@ func (b *Bot) handleFreshAgentRunError(ctx context.Context, sb *daytona.Sandbox,
 		emit.Error("Agent failed", fmt.Sprintf("Something went wrong while running the agent. Sandbox `%s` is left running for debugging — reply here to retry (the orphan sandbox will be archived automatically) or check the server logs for details.", sb.ID))
 	}
 	// Persist sb.ID so handleRetryAfterFailure can archive the stale
-	// sandbox on the next user message. PRURL stays empty, which tells
-	// the dispatcher this is a retryable mid-run failure rather than a
-	// real follow-up.
+	// sandbox on the next user message. If a PR URL appeared before the
+	// failure, keep it so the chat can resume against the existing PR.
 	rec.SandboxID = sb.ID
+	if pr := latestPRURLFromEmitter(emit); pr != "" {
+		rec.PRURL = pr
+	}
 	appendBlocksToFirstTurn(rec, recorder.Snapshot())
 	if err := b.convs.Upsert(ctx, *rec); err != nil {
 		b.log.Error("convstore upsert (agent fail)", "error", err)
@@ -274,6 +283,9 @@ func (b *Bot) handleFollowUpRunError(ctx context.Context, sb *daytona.Sandbox, r
 		emit.Error("PR not verified", fmt.Sprintf("The agent reported a PR URL, but GitHub did not verify it for branch `%s`. Sandbox `%s` is left running for debugging — check the transcript and server logs for details.", rec.Branch, sb.ID))
 	} else {
 		emit.Error("Agent failed", fmt.Sprintf("Something went wrong while running the agent. Sandbox `%s` is left running for debugging — check the transcript and server logs for details.", sb.ID))
+	}
+	if pr := latestPRURLFromEmitter(emit); pr != "" {
+		rec.PRURL = pr
 	}
 	appendBlocksAsNewTurn(rec, text, recorder.Snapshot())
 	if uerr := b.convs.Upsert(ctx, *rec); uerr != nil {

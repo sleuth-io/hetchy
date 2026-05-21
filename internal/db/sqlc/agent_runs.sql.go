@@ -565,15 +565,17 @@ SELECT run_id, seq, event, data, created_at
 FROM agent_run_events
 WHERE run_id = $1 AND seq > $2
 ORDER BY seq ASC
+LIMIT $3
 `
 
 type ListAgentRunEventsFromSeqParams struct {
 	RunID string `json:"run_id"`
 	Seq   int64  `json:"seq"`
+	Limit int32  `json:"limit"`
 }
 
 func (q *Queries) ListAgentRunEventsFromSeq(ctx context.Context, arg ListAgentRunEventsFromSeqParams) ([]AgentRunEvent, error) {
-	rows, err := q.db.Query(ctx, listAgentRunEventsFromSeq, arg.RunID, arg.Seq)
+	rows, err := q.db.Query(ctx, listAgentRunEventsFromSeq, arg.RunID, arg.Seq, arg.Limit)
 	if err != nil {
 		return nil, err
 	}

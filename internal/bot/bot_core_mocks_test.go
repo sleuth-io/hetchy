@@ -207,6 +207,32 @@ func TestHandleRequestFreshRunAgentFailureUsesMocks(t *testing.T) {
 	}
 }
 
+func TestHandleRequestFreshRunFailureKeepsDiscoveredPR(t *testing.T) {
+	convs := &fakeConversationStore{getErr: convstore.ErrNotFound}
+	b := testCoreBot(convs)
+	b.resolveRepoFn = func(context.Context, string, string, string) (repoCtx, error) {
+		return repoCtx{Slug: "hetchyhq/hetchy", BaseBranch: "main", GitHubToken: "token"}, nil
+	}
+	b.createFn = func(context.Context, any) (*daytona.Sandbox, error) {
+		return &daytona.Sandbox{ID: "sandbox-1"}, nil
+	}
+	b.runAgentFn = func(_ context.Context, _ *daytona.Sandbox, _ repoCtx, _ orgcfg.Config, _ agents.Profile, _ string, _ string, _ string, _ chatTaskOptions, _ ClaudeModel, emit blocks.Emitter) (string, error) {
+		emit.Notify("PR opened", "https://github.com/hetchyhq/hetchy/pull/222")
+		return "", errors.New("timed out while waiting for review")
+	}
+	emit := newCaptureEmitter()
+
+	b.HandleRequest(context.Background(),
+		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant", DefaultGitHubOwner: "hetchyhq", DefaultGitHubRepo: "hetchy"},
+		"ship it", "req-1", "thread-1", "user-1",
+		chatTaskOptionPatch{}, nil, nil, ClaudeModelOpus, emit)
+
+	rec := convs.lastUpsert(t)
+	if rec.PRURL != "https://github.com/hetchyhq/hetchy/pull/222" {
+		t.Fatalf("PRURL = %q, want discovered PR", rec.PRURL)
+	}
+}
+
 func TestHandleRequestFreshRunSuccessUsesMocks(t *testing.T) {
 	convs := &fakeConversationStore{getErr: convstore.ErrNotFound}
 	b := testCoreBot(convs)

@@ -15,6 +15,7 @@ import (
 	"github.com/hetchyhq/hetchy/internal/blocks"
 	"github.com/hetchyhq/hetchy/internal/convstore"
 	"github.com/hetchyhq/hetchy/internal/db/sqlc"
+	"github.com/hetchyhq/hetchy/internal/runstore"
 )
 
 // TestExtractSXSkillsSurvivesPersistenceRoundTrip pins the contract
@@ -56,6 +57,159 @@ func TestExtractSXSkillsSurvivesPersistenceRoundTrip(t *testing.T) {
 			t.Errorf("got[%d] = %q, want %q", i, got[i], want[i])
 		}
 	}
+}
+
+func TestConversationDetailOverlaysDurableRunEvents(t *testing.T) {
+	events := []runstore.Event{
+		runEventForTest(t, "block_start", sseEvent{
+			ID:    "p1",
+			Kind:  blocks.KindNotify,
+			Title: "5 skills available",
+			Meta:  map[string]any{SXSkillsMetaKey: []string{"fix-pr", "golang-patterns"}},
+		}),
+		runEventForTest(t, "block_done", sseEvent{ID: "p1", Status: blocks.StatusDone}),
+		runEventForTest(t, "block_start", sseEvent{ID: "p2", Kind: blocks.KindResult, Title: "Done!"}),
+		runEventForTest(t, "block_append", sseEvent{ID: "p2", Delta: "https://github.com/hetchyhq/hetchy/pull/222"}),
+		runEventForTest(t, "block_done", sseEvent{ID: "p2", Status: blocks.StatusDone}),
+	}
+	for i := range events {
+		events[i].RunID = "run-1"
+		events[i].Seq = int64(i + 1)
+	}
+	b := &Bot{
+		log: discardLogger(),
+		runs: &fakeRunStore{
+			enabled: true,
+			latestRun: runstore.Run{
+				ID:          "run-1",
+				ThreadID:    "thread-1",
+				RunKind:     "fresh",
+				UserRequest: "ship it",
+				SandboxID:   "sandbox-1",
+				Branch:      "feature/pr",
+				State:       runstore.StateFailed,
+			},
+			events: events,
+		},
+	}
+	rec := convstore.Record{
+		OrgID:    "org-1",
+		ThreadID: "thread-1",
+		History:  []string{"ship it"},
+		ResponseBlocks: [][]blocks.Block{{
+			{ID: "old", Kind: blocks.KindError, Title: "truncated"},
+		}},
+	}
+
+	detail := b.conversationDetailResponse(context.Background(), "org-1", rec, conversationIncludeOptions{Turns: true})
+
+	if detail.PRURL != "https://github.com/hetchyhq/hetchy/pull/222" {
+		t.Fatalf("detail PRURL = %q", detail.PRURL)
+	}
+	if detail.SandboxID != "sandbox-1" || detail.Branch != "feature/pr" {
+		t.Fatalf("detail metadata sandbox=%q branch=%q", detail.SandboxID, detail.Branch)
+	}
+	if got := detail.SXSkills; len(got) != 2 || got[0] != "fix-pr" || got[1] != "golang-patterns" {
+		t.Fatalf("SXSkills = %+v", got)
+	}
+	if len(detail.Turns) != 1 || len(detail.Turns[0].Blocks) != 2 || detail.Turns[0].Blocks[0].Title != "5 skills available" {
+		t.Fatalf("turn blocks were not overlaid from run events: %+v", detail.Turns)
+	}
+	if rec.ResponseBlocks[0][0].Title != "truncated" {
+		t.Fatalf("input record response blocks mutated: %+v", rec.ResponseBlocks)
+	}
+}
+
+func TestConversationDetailOverlaysFollowUpDurableRunEvents(t *testing.T) {
+	cases := []struct {
+		name      string
+		history   []string
+		responses [][]blocks.Block
+		wantMsgs  []string
+	}{
+		{
+			name:    "replaces existing last turn blocks",
+			history: []string{"ship it", "tighten"},
+			responses: [][]blocks.Block{
+				{{ID: "old-1", Kind: blocks.KindNotify, Title: "First turn"}},
+				{{ID: "old-2", Kind: blocks.KindError, Title: "stale follow-up"}},
+			},
+			wantMsgs: []string{"ship it", "tighten"},
+		},
+		{
+			name:    "fills missing last turn blocks",
+			history: []string{"ship it", "tighten"},
+			responses: [][]blocks.Block{
+				{{ID: "old-1", Kind: blocks.KindNotify, Title: "First turn"}},
+			},
+			wantMsgs: []string{"ship it", "tighten"},
+		},
+		{
+			name:    "appends when request is not already last",
+			history: []string{"ship it"},
+			responses: [][]blocks.Block{
+				{{ID: "old-1", Kind: blocks.KindNotify, Title: "First turn"}},
+			},
+			wantMsgs: []string{"ship it", "tighten"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			events := durableResultEventsForTest(t, "run-1", "p1", "Follow-up done", "updated")
+			b := &Bot{
+				log: discardLogger(),
+				runs: &fakeRunStore{
+					enabled: true,
+					latestRun: runstore.Run{
+						ID:          "run-1",
+						ThreadID:    "thread-1",
+						RunKind:     "followup",
+						UserRequest: "tighten",
+						SandboxID:   "sandbox-1",
+						Branch:      "feature/pr",
+						State:       runstore.StateFailed,
+					},
+					events: events,
+				},
+			}
+			rec := convstore.Record{
+				OrgID:          "org-1",
+				ThreadID:       "thread-1",
+				History:        append([]string(nil), tc.history...),
+				ResponseBlocks: tc.responses,
+			}
+
+			detail := b.conversationDetailResponse(context.Background(), "org-1", rec, conversationIncludeOptions{Turns: true})
+
+			if len(detail.Turns) != len(tc.wantMsgs) {
+				t.Fatalf("turn count = %d, want %d: %+v", len(detail.Turns), len(tc.wantMsgs), detail.Turns)
+			}
+			for i, want := range tc.wantMsgs {
+				if detail.Turns[i].Message != want {
+					t.Fatalf("turn %d message = %q, want %q", i, detail.Turns[i].Message, want)
+				}
+			}
+			last := detail.Turns[len(detail.Turns)-1]
+			if len(last.Blocks) != 1 || last.Blocks[0].Title != "Follow-up done" || last.Blocks[0].Body != "updated" {
+				t.Fatalf("last turn blocks not overlaid: %+v", last.Blocks)
+			}
+		})
+	}
+}
+
+func durableResultEventsForTest(t *testing.T, runID, blockID, title, body string) []runstore.Event {
+	t.Helper()
+	events := []runstore.Event{
+		runEventForTest(t, "block_start", sseEvent{ID: blockID, Kind: blocks.KindResult, Title: title}),
+		runEventForTest(t, "block_append", sseEvent{ID: blockID, Delta: body}),
+		runEventForTest(t, "block_done", sseEvent{ID: blockID, Status: blocks.StatusDone}),
+	}
+	for i := range events {
+		events[i].RunID = runID
+		events[i].Seq = int64(i + 1)
+	}
+	return events
 }
 
 // TestExtractSXSkillsWalksNewestTurnFirst pins the order: when a
