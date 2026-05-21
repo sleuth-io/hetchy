@@ -129,7 +129,10 @@ ensure_existing_active() {
       ;;
     *)
       echo "→ snapshot '$SNAPSHOT_FULL_NAME' already exists in state '$state'; waiting for ACTIVE"
-      wait_until_active
+      if ! wait_until_active; then
+        echo "ERROR: snapshot '$SNAPSHOT_FULL_NAME' did not become active" >&2
+        return 2
+      fi
       return 0
       ;;
   esac
