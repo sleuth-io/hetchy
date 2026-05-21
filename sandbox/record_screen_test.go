@@ -83,6 +83,7 @@ func TestEntrypointStartsDockerWithDeterministicVFSDriver(t *testing.T) {
 		"docker_ready()",
 		"docker info >/dev/null 2>&1",
 		"sudo -n pkill -TERM -x dockerd",
+		"seq 1 40",
 		"sudo -n rm -f /var/run/docker.pid /var/run/docker.sock",
 		"\"containerd-snapshotter\": false",
 		"\"storage-driver\": \"vfs\"",

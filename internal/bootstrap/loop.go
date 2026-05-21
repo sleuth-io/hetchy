@@ -410,16 +410,16 @@ check_runtime_artifact_hygiene() {
     return 0
   fi
 
-  dirty="$(git -C "$repo" status --porcelain --untracked-files=normal 2>/dev/null | awk '
-    $1 == "??" {
-      p = substr($0, 4)
-      if (p == "dump.rdb" || p == "nohup.out") {
-        print p
-      } else if (p !~ /\// && (p ~ /^\.hetchy/ || p ~ /\.(log|pid)$/)) {
-        print p
-      }
-    }
-  ')"
+  while IFS= read -r -d "" entry; do
+    [[ "${entry:0:2}" == "??" ]] || continue
+    p="${entry:3}"
+    if [[ "$p" == "dump.rdb" || "$p" == "nohup.out" ]]; then
+      dirty+="${p}"$'\n'
+    elif [[ "$p" != */* && ( "$p" == .hetchy* || "$p" =~ \.(log|pid)$ ) ]]; then
+      dirty+="${p}"$'\n'
+    fi
+  done < <(git -C "$repo" status --porcelain=v1 -z --untracked-files=normal 2>/dev/null)
+  dirty="${dirty%$'\n'}"
   if [[ -z "$dirty" ]]; then
     return 0
   fi

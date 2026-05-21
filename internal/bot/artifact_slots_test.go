@@ -139,6 +139,7 @@ func TestAddArtifactRunEnvUsesExternalCallbackOrigin(t *testing.T) {
 	fake := &fakeArtifactMinter{}
 	b := &Bot{
 		cfg: Config{
+			Env:                   "dev",
 			WebPort:               "8080",
 			LogoutReturnTo:        "http://localhost:8080/",
 			WorkOSRedirectURI:     "https://app.hetchy.ai/callback",

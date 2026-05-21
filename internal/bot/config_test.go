@@ -25,6 +25,7 @@ func requiredEnv() map[string]string {
 		"DATABASE_URL":           "postgres://localhost/x",
 		"SECRETS_ENCRYPTION_KEY": strings.Repeat("k", 32),
 		"DAYTONA_SNAPSHOT":       "snap:1",
+		"HETCHY_PUBLIC_BASE_URL": "https://app.example.test",
 		"WORKOS_API_KEY":         "sk_test_x",
 		"WORKOS_CLIENT_ID":       "client_x",
 		"WORKOS_COOKIE_PASSWORD": strings.Repeat("p", 32),
@@ -49,12 +50,17 @@ func TestLoadConfig_AllRequiredSet(t *testing.T) {
 	if cfg.AuthBypass {
 		t.Error("AuthBypass should be false")
 	}
+	if cfg.PublicBaseURL() != "https://app.example.test" {
+		t.Errorf("PublicBaseURL override = %q", cfg.PublicBaseURL())
+	}
 }
 
 func TestLoadConfig_AppliesDefaults(t *testing.T) {
 	clearEnv(t, "AUTH_BYPASS", "WEB_PORT", "DAYTONA_API_URL", "LOGOUT_RETURN_TO", "HETCHY_PUBLIC_BASE_URL", "SLACK_OAUTH_REDIRECT_URI", "HETCHY_SX_PUBLIC_VAULT_URL",
 		"DAYTONA_CACHE_VOLUMES_DISABLED", "DAYTONA_CACHE_VOLUME_PREFIX", "DAYTONA_CACHE_PRUNE_DAYS", "DAYTONA_AUTO_ARCHIVE_MINUTES")
 	setEnv(t, requiredEnv())
+	t.Setenv("HETCHY_ENV", "dev")
+	t.Setenv("HETCHY_PUBLIC_BASE_URL", "")
 
 	cfg, err := LoadConfig()
 	if err != nil {
@@ -86,10 +92,12 @@ func TestLoadConfig_AppliesDefaults(t *testing.T) {
 	}
 }
 
-func TestPublicBaseURLDerivesExternalOrigin(t *testing.T) {
+func TestPublicBaseURLDevDerivesExternalOrigin(t *testing.T) {
 	clearEnv(t, "AUTH_BYPASS", "LOGOUT_RETURN_TO", "HETCHY_PUBLIC_BASE_URL")
 	env := requiredEnv()
+	env["HETCHY_ENV"] = "dev"
 	env["WORKOS_REDIRECT_URI"] = "https://app.hetchy.ai/callback"
+	delete(env, "HETCHY_PUBLIC_BASE_URL")
 	setEnv(t, env)
 
 	cfg, err := LoadConfig()
@@ -98,6 +106,60 @@ func TestPublicBaseURLDerivesExternalOrigin(t *testing.T) {
 	}
 	if got := cfg.PublicBaseURL(); got != "https://app.hetchy.ai" {
 		t.Fatalf("PublicBaseURL = %q, want external WorkOS origin", got)
+	}
+}
+
+func TestPublicBaseURLProdRequiresExplicitOrigin(t *testing.T) {
+	clearEnv(t, "AUTH_BYPASS", "LOGOUT_RETURN_TO", "HETCHY_PUBLIC_BASE_URL")
+	env := requiredEnv()
+	delete(env, "HETCHY_PUBLIC_BASE_URL")
+	env["HETCHY_ENV"] = "prod"
+	env["WORKOS_REDIRECT_URI"] = "https://auth.app.hetchy.ai/callback"
+	setEnv(t, env)
+
+	_, err := LoadConfig()
+	if err == nil {
+		t.Fatal("expected missing HETCHY_PUBLIC_BASE_URL to fail in prod")
+	}
+	if !strings.Contains(err.Error(), "HETCHY_PUBLIC_BASE_URL") {
+		t.Fatalf("error = %v, want HETCHY_PUBLIC_BASE_URL", err)
+	}
+}
+
+func TestPublicBaseURLProdDoesNotDeriveOAuthSubdomain(t *testing.T) {
+	cfg := Config{
+		Env:               "prod",
+		WebPort:           "8080",
+		LogoutReturnTo:    "http://localhost:8080/",
+		WorkOSRedirectURI: "https://auth.app.hetchy.ai/callback",
+	}
+	if got := cfg.PublicBaseURL(); got != "http://localhost:8080" {
+		t.Fatalf("PublicBaseURL = %q, want local fallback without OAuth derivation", got)
+	}
+}
+
+func TestPublicOriginRejectsInvalidOrigins(t *testing.T) {
+	for _, raw := range []string{"app.example.test", "/callback", "mailto:test@example.test", "://broken"} {
+		if got := publicOrigin(raw); got != "" {
+			t.Fatalf("publicOrigin(%q) = %q, want empty", raw, got)
+		}
+	}
+	if got := publicOrigin("https://app.example.test/root"); got != "https://app.example.test" {
+		t.Fatalf("publicOrigin valid URL = %q", got)
+	}
+}
+
+func TestLoadConfigRejectsInvalidPublicBaseURL(t *testing.T) {
+	clearEnv(t, "AUTH_BYPASS")
+	setEnv(t, requiredEnv())
+	t.Setenv("HETCHY_PUBLIC_BASE_URL", "app.example.test")
+
+	_, err := LoadConfig()
+	if err == nil {
+		t.Fatal("expected invalid HETCHY_PUBLIC_BASE_URL to fail")
+	}
+	if !strings.Contains(err.Error(), "HETCHY_PUBLIC_BASE_URL") {
+		t.Fatalf("error = %v, want HETCHY_PUBLIC_BASE_URL", err)
 	}
 }
 
@@ -262,6 +324,7 @@ func TestComposeForwardsArtifactUploadEnv(t *testing.T) {
 		"DAYTONA_CACHE_VOLUME_PREFIX",
 		"DAYTONA_CACHE_PRUNE_DAYS",
 		"DAYTONA_AUTO_ARCHIVE_MINUTES",
+		"HETCHY_PUBLIC_BASE_URL",
 	} {
 		want := key + ": ${" + key + ":-}"
 		if !strings.Contains(compose, want) {

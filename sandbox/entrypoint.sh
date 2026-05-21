@@ -34,7 +34,7 @@ if ! docker_ready; then
     # process is not dockerd, so readiness is `docker info`, not pgrep.
     if pgrep -x dockerd >/dev/null 2>&1; then
         sudo -n pkill -TERM -x dockerd 2>/dev/null || true
-        for _ in $(seq 1 20); do
+        for _ in $(seq 1 40); do
             pgrep -x dockerd >/dev/null 2>&1 || break
             sleep 0.25
         done
