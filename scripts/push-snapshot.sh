@@ -106,6 +106,8 @@ wait_until_active() {
 }
 
 ensure_existing_active() {
+  # Return codes are part of the caller contract:
+  #   0 = active/done, 1 = not found/build, 2 = bad state/abort, 3 = API failure/abort.
   local resp id state
   if ! resp=$(find_snapshot_json); then
     echo "ERROR: failed to query Daytona snapshots" >&2

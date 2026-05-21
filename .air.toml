@@ -10,7 +10,8 @@ tmp_dir = ".air-tmp"
   bin = "./.air-tmp/hetchy"
   # `html`, `css`, `js`, and `sh` are embedded by the Go binary, so Air
   # must rebuild on those changes too. Sandbox files affect the stamped
-  # Daytona snapshot version, so they also need to trigger rebuilds.
+  # Daytona snapshot version, so extensionless sandbox inputs not caught
+  # by include_ext must be listed in include_file.
   include_ext = ["go", "html", "css", "js", "sql", "sh"]
   include_file = [
     "sandbox/Dockerfile",
