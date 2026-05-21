@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -121,7 +122,7 @@ func LoadConfig() (Config, error) {
 	}
 	publicBaseURLOverride := strings.TrimSpace(os.Getenv("HETCHY_PUBLIC_BASE_URL"))
 	if publicBaseURLOverride != "" && publicOrigin(publicBaseURLOverride) == "" {
-		return Config{}, fmt.Errorf("HETCHY_PUBLIC_BASE_URL must be an http(s) URL with scheme and host")
+		return Config{}, errors.New("HETCHY_PUBLIC_BASE_URL must be an http(s) URL with scheme and host")
 	}
 
 	required := []string{
