@@ -126,7 +126,7 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 	if err := b.convs.Upsert(context.Background(), rec); err != nil {
 		b.log.Error("convstore upsert (sandbox ready)", "error", err)
 	}
-	b.log.Info("sandbox created", "id", sb.ID, "request_id", requestID, "auto_archive_minutes", autoArchiveMinutes, "state", sb.State)
+	b.log.Info("sandbox created", "id", sb.ID, "request_id", requestID, "daytona_snapshot", b.cfg.Snapshot, "auto_archive_minutes", autoArchiveMinutes, "state", sb.State)
 	sandboxReadyID := emit.Start(blocks.KindNotify, "Sandbox ready", map[string]any{"tag": sandboxReadySSETag})
 	emit.Append(sandboxReadyID, fmt.Sprintf("`%s` is up — cloning repo and starting %s.", sb.ID, agentRuntimeDisplayName(model)))
 	emit.Done(sandboxReadyID, "")

@@ -7,6 +7,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/hetchyhq/hetchy/internal/buildinfo"
 )
 
 // Config holds runtime configuration loaded from the environment.
@@ -24,7 +26,12 @@ type Config struct {
 	Env string
 
 	DaytonaAPIURL string
-	Snapshot      string
+	// SnapshotBase is the stable Daytona snapshot base name from
+	// DAYTONA_SNAPSHOT. Snapshot is the resolved versioned snapshot name used
+	// for sandbox creation.
+	SnapshotBase           string
+	Snapshot               string
+	SandboxSnapshotVersion string
 	// DaytonaCacheVolumesDisabled disables dependency cache volume
 	// mounting when DAYTONA_CACHE_VOLUMES_DISABLED=1.
 	DaytonaCacheVolumesDisabled bool
@@ -151,6 +158,13 @@ func LoadConfig() (Config, error) {
 		return Config{}, fmt.Errorf("missing required env vars: %v", missing)
 	}
 
+	snapshotBase := strings.TrimSpace(os.Getenv("DAYTONA_SNAPSHOT"))
+	sandboxSnapshotVersion := getenvDefaultTrim("HETCHY_SANDBOX_VERSION", buildinfo.SandboxSnapshotVersion)
+	resolvedSnapshot, err := resolveDaytonaSnapshot(env, snapshotBase, sandboxSnapshotVersion)
+	if err != nil {
+		return Config{}, err
+	}
+
 	port := getenvDefault("WEB_PORT", "8080")
 	logout := getenvDefault("LOGOUT_RETURN_TO", "http://localhost:"+port+"/")
 	// CookieSecure defaults to true (required for production HTTPS). It is
@@ -209,7 +223,9 @@ func LoadConfig() (Config, error) {
 	return Config{
 		Env:                         env,
 		DaytonaAPIURL:               strings.TrimSpace(os.Getenv("DAYTONA_API_URL")),
-		Snapshot:                    os.Getenv("DAYTONA_SNAPSHOT"),
+		SnapshotBase:                snapshotBase,
+		Snapshot:                    resolvedSnapshot,
+		SandboxSnapshotVersion:      sandboxSnapshotVersion,
 		DaytonaCacheVolumesDisabled: strings.TrimSpace(os.Getenv("DAYTONA_CACHE_VOLUMES_DISABLED")) == "1",
 		DaytonaCacheVolumePrefix:    cacheVolumePrefix,
 		DaytonaCachePruneDays:       cachePruneDays,
@@ -247,11 +263,33 @@ func LoadConfig() (Config, error) {
 	}, nil
 }
 
+func resolveDaytonaSnapshot(env, base, version string) (string, error) {
+	base = strings.TrimSpace(base)
+	version = strings.TrimSpace(version)
+	if base == "" {
+		return "", errors.New("DAYTONA_SNAPSHOT is required")
+	}
+	if env == "dev" && (version == "" || version == "dev" || version == "unknown") {
+		return base, nil
+	}
+	if version == "" || version == "dev" || version == "unknown" {
+		return "", errors.New("sandbox snapshot version is not set; build with internal/buildinfo.SandboxSnapshotVersion or set HETCHY_SANDBOX_VERSION")
+	}
+	return base + "-" + version, nil
+}
+
 func getenvDefault(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
 	}
 	return def
+}
+
+func getenvDefaultTrim(key, def string) string {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		return v
+	}
+	return strings.TrimSpace(def)
 }
 
 func getenvDefaultTrimAllowDisabled(key, def string) string {

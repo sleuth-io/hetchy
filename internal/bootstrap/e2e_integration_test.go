@@ -120,7 +120,7 @@ done
 export DATABASE_URL=postgresql://postgres:postgres@localhost:5433/hetchy?sslmode=disable
 export SECRETS_ENCRYPTION_KEY=$(openssl rand -base64 32)
 export DAYTONA_SNAPSHOT=universal-coding:1
-export AUTH_BYPASS=1
+export AUTH_BYPASS=1 HETCHY_ENV=dev
 /tmp/hetchy-bin --migrate
 `
 	hetchyStart := `#!/usr/bin/env bash
@@ -128,7 +128,7 @@ set -euo pipefail
 export DATABASE_URL=postgresql://postgres:postgres@localhost:5433/hetchy?sslmode=disable
 export SECRETS_ENCRYPTION_KEY=$(cat /tmp/hetchy-secrets-key)
 export DAYTONA_SNAPSHOT=universal-coding:1
-export AUTH_BYPASS=1 COOKIE_INSECURE=1 WEB_PORT=8080
+export AUTH_BYPASS=1 HETCHY_ENV=dev COOKIE_INSECURE=1 WEB_PORT=8080
 nohup /tmp/hetchy-bin > /tmp/hetchy.log 2>&1 &
 echo $! > /tmp/hetchy.pid
 for i in {1..60}; do curl -fsS http://localhost:8080/ >/dev/null && exit 0; sleep 1; done

@@ -279,6 +279,9 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 		"env", cfg.Env,
 		"web_port", cfg.WebPort,
 		"cookie_secure", cfg.CookieSecure,
+		"daytona_snapshot_base", cfg.SnapshotBase,
+		"daytona_snapshot", cfg.Snapshot,
+		"sandbox_snapshot_version", cfg.SandboxSnapshotVersion,
 		"daytona_auto_archive_minutes", cfg.DaytonaAutoArchiveMinutes,
 	)
 

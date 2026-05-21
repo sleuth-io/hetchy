@@ -38,6 +38,10 @@ make bot
 make logs
 ```
 
+`make bot` stamps the live-reload binary with the current `sandbox/` content
+version, so local sandbox creation uses the same versioned Daytona snapshot
+resolution as deployed builds.
+
 ## Database (Supabase)
 
 The bot uses Postgres (Supabase) via [pgx](https://github.com/jackc/pgx),

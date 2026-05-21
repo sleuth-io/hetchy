@@ -43,9 +43,9 @@ dist
 *.tmp
 *.log
 
-# Scripts and sandbox (if not needed for build)
-scripts
-sandbox
+# Scripts and sandbox metadata needed to stamp the Daytona snapshot version
+scripts/*
+!scripts/sandbox-version.sh
 
 # Documentation
 docs
@@ -59,4 +59,7 @@ okteto.yml
 state.json
 sqlc.yaml
 
-
+# The app Dockerfile hashes sandbox inputs so Railway builds use the same
+# Daytona snapshot version as make/CI, even though broad ignore rules above
+# exclude docs and *_test.go elsewhere.
+!sandbox/**

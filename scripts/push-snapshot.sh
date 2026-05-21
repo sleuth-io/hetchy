@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# push-snapshot.sh — build and register the sandbox image with Daytona.
+# push-snapshot.sh — ensure the content-addressed sandbox image exists in Daytona.
 #
 # Auto-detects local vs cloud Daytona via DAYTONA_API_URL:
 #   - Local (URL contains localhost or 127.0.0.1): docker-push to the bundled
@@ -14,17 +14,21 @@
 #   DAYTONA_API_URL   — empty/cloud URL or http://localhost:3000/api for local
 #
 # Optional env:
-#   SNAPSHOT_NAME             default: universal-coding
-#   SNAPSHOT_TAG              default: 1
+#   SNAPSHOT_NAME             base snapshot name, default: universal-coding
+#   SNAPSHOT_TAG              content version, default: scripts/sandbox-version.sh
+#   SNAPSHOT_FULL_NAME        default: $SNAPSHOT_NAME-$SNAPSHOT_TAG
 #   LOCAL_REGISTRY_HOST_PORT  default: localhost:6000
 #   LOCAL_REGISTRY_INTERNAL   default: registry:6000
 #   SNAPSHOT_CPU              default: 2 (vCPUs per sandbox)
 #   SNAPSHOT_MEMORY_GB        default: 6 (memory per sandbox, GB)
 #   SNAPSHOT_DISK_GB          default: 10 (disk per sandbox, GB)
+#   DAYTONA_CLI_LOGIN         set to 1 to run daytona login before cloud push
+#   DAYTONA_ORGANIZATION      optional org name/id for DAYTONA_CLI_LOGIN=1
 set -euo pipefail
 
 SNAPSHOT_NAME="${SNAPSHOT_NAME:-universal-coding}"
-SNAPSHOT_TAG="${SNAPSHOT_TAG:-1}"
+SNAPSHOT_TAG="${SNAPSHOT_TAG:-$(./scripts/sandbox-version.sh)}"
+SNAPSHOT_FULL_NAME="${SNAPSHOT_FULL_NAME:-$SNAPSHOT_NAME-$SNAPSHOT_TAG}"
 LOCAL_REGISTRY_HOST_PORT="${LOCAL_REGISTRY_HOST_PORT:-localhost:6000}"
 LOCAL_REGISTRY_INTERNAL="${LOCAL_REGISTRY_INTERNAL:-registry:6000}"
 API_URL="${DAYTONA_API_URL:-https://app.daytona.io/api}"
@@ -55,7 +59,9 @@ fi
 
 echo "doppler:         ${DOPPLER_PROJECT:-?}/${DOPPLER_CONFIG:-?}"
 echo "DAYTONA_API_URL: $API_URL"
-echo "snapshot:        $SNAPSHOT_NAME (from local image $SNAPSHOT_NAME:$SNAPSHOT_TAG)"
+echo "snapshot base:   $SNAPSHOT_NAME"
+echo "snapshot tag:    $SNAPSHOT_TAG"
+echo "snapshot name:   $SNAPSHOT_FULL_NAME (from local image $SNAPSHOT_NAME:$SNAPSHOT_TAG)"
 echo "resources:       cpu=${SNAPSHOT_CPU} memory=${SNAPSHOT_MEMORY_GB}GB disk=${SNAPSHOT_DISK_GB}GB"
 echo
 
@@ -66,30 +72,25 @@ api() {
     "$@"
 }
 
-# Find an existing snapshot by name. Returns the id, or empty string if none.
-find_snapshot_id() {
+# Find an existing snapshot by name.
+find_snapshot_json() {
   local resp
-  resp=$(api "$API_URL/snapshots?name=$SNAPSHOT_NAME") || return 1
-  python3 -c "import sys, json; d=json.loads(sys.stdin.read()); items=d.get('items', d if isinstance(d, list) else []); print(items[0]['id'] if items else '')" <<<"$resp"
+  resp=$(api "$API_URL/snapshots?name=$SNAPSHOT_FULL_NAME") || return 1
+  printf '%s' "$resp"
 }
 
-# Wait for a snapshot with $SNAPSHOT_NAME to disappear.
-wait_until_gone() {
-  for _ in $(seq 1 30); do
-    local id
-    id=$(find_snapshot_id || echo "")
-    [[ -z "$id" ]] && return 0
-    sleep 2
-  done
-  echo "ERROR: snapshot '$SNAPSHOT_NAME' did not disappear after delete" >&2
-  return 1
+snapshot_field() {
+  local field="$1"
+  local resp="$2"
+  python3 -c "import sys, json; field=sys.argv[1]; expected=sys.argv[2]; d=json.loads(sys.stdin.read() or '{}'); items=d.get('items', d if isinstance(d, list) else []); items=[i for i in items if i.get('name') == expected]; print(items[0].get(field, '') if items else '')" "$field" "$SNAPSHOT_FULL_NAME" <<<"$resp"
 }
 
 wait_until_active() {
   for i in $(seq 1 36); do
     local resp state
-    resp=$(api "$API_URL/snapshots?name=$SNAPSHOT_NAME") || return 1
-    state=$(python3 -c "import sys, json; d=json.loads(sys.stdin.read()); items=d.get('items', d if isinstance(d, list) else []); print(items[0]['state'] if items else '?')" <<<"$resp")
+    resp=$(find_snapshot_json) || return 1
+    state=$(snapshot_field state "$resp")
+    [[ -z "$state" ]] && state="?"
     printf "  t+%ds: state=%s\n" "$((i*5))" "$state"
     case "$state" in
       active|ACTIVE) return 0 ;;
@@ -101,44 +102,81 @@ wait_until_active() {
   return 1
 }
 
+ensure_existing_active() {
+  local resp id state
+  if ! resp=$(find_snapshot_json); then
+    echo "ERROR: failed to query Daytona snapshots" >&2
+    return 3
+  fi
+  id=$(snapshot_field id "$resp")
+  if [[ -z "$id" ]]; then
+    return 1
+  fi
+  state=$(snapshot_field state "$resp")
+  case "$state" in
+    active|ACTIVE)
+      echo "✓ Daytona snapshot '$SNAPSHOT_FULL_NAME' already active; skipping build."
+      return 0
+      ;;
+    error|ERROR|failed|FAILED)
+      echo "ERROR: snapshot '$SNAPSHOT_FULL_NAME' already exists in state '$state'" >&2
+      return 2
+      ;;
+    *)
+      echo "→ snapshot '$SNAPSHOT_FULL_NAME' already exists in state '$state'; waiting for ACTIVE"
+      wait_until_active
+      return 0
+      ;;
+  esac
+}
+
+if ensure_existing_active; then
+  exit 0
+else
+  existing_status=$?
+  if [[ "$existing_status" -ne 1 ]]; then
+    exit 1
+  fi
+fi
+
+echo "→ building local sandbox image $SNAPSHOT_NAME:$SNAPSHOT_TAG"
+docker build --platform=linux/amd64 -t "$SNAPSHOT_NAME:$SNAPSHOT_TAG" sandbox
+echo
+
 if $is_local; then
   echo "→ self-hosted/local Daytona detected; docker push + API register"
   docker tag "$SNAPSHOT_NAME:$SNAPSHOT_TAG" "$LOCAL_REGISTRY_HOST_PORT/$SNAPSHOT_NAME:$SNAPSHOT_TAG"
   docker push "$LOCAL_REGISTRY_HOST_PORT/$SNAPSHOT_NAME:$SNAPSHOT_TAG"
   echo
 
-  existing_id=$(find_snapshot_id || echo "")
-  if [[ -n "$existing_id" ]]; then
-    echo "→ deleting existing snapshot id=$existing_id"
-    api -X DELETE "$API_URL/snapshots/$existing_id" -o /dev/null
-    wait_until_gone
-  fi
-
   echo "→ registering snapshot via POST /snapshots"
   api -X POST "$API_URL/snapshots" \
-    -d "{\"name\":\"$SNAPSHOT_NAME\",\"imageName\":\"$LOCAL_REGISTRY_INTERNAL/$SNAPSHOT_NAME:$SNAPSHOT_TAG\",\"cpu\":${SNAPSHOT_CPU},\"memory\":${SNAPSHOT_MEMORY_GB},\"disk\":${SNAPSHOT_DISK_GB}}" \
+    -d "{\"name\":\"$SNAPSHOT_FULL_NAME\",\"imageName\":\"$LOCAL_REGISTRY_INTERNAL/$SNAPSHOT_NAME:$SNAPSHOT_TAG\",\"cpu\":${SNAPSHOT_CPU},\"memory\":${SNAPSHOT_MEMORY_GB},\"disk\":${SNAPSHOT_DISK_GB}}" \
     -o /dev/null
 
   wait_until_active
 else
   echo "→ cloud Daytona; using 'daytona snapshot push'"
+  if ! command -v daytona >/dev/null 2>&1; then
+    echo "ERROR: daytona CLI not found. Install it: curl -fsSL https://download.daytona.io/daytona/install.sh | bash" >&2
+    exit 1
+  fi
+  if [[ "${DAYTONA_CLI_LOGIN:-}" == "1" ]]; then
+    daytona login --api-key "$DAYTONA_API_KEY"
+    if [[ -n "${DAYTONA_ORGANIZATION:-}" ]]; then
+      daytona org use "$DAYTONA_ORGANIZATION"
+    fi
+  fi
   # `snapshot push` requires the keychain-stored creds from `daytona login
   # --api-key`. Unset DAYTONA_API_KEY/URL so the doppler-injected env
-  # doesn't shadow the CLI's persisted credentials. The CLI does not
-  # overwrite an existing snapshot name, so remove the old registration
-  # first and wait for the name to become available.
-  existing_id=$(find_snapshot_id || echo "")
-  if [[ -n "$existing_id" ]]; then
-    echo "→ deleting existing snapshot id=$existing_id"
-    api -X DELETE "$API_URL/snapshots/$existing_id" -o /dev/null
-    wait_until_gone
-  fi
-
+  # does not shadow the CLI's persisted credentials.
   env -u DAYTONA_API_KEY -u DAYTONA_API_URL \
-    daytona snapshot push "$SNAPSHOT_NAME:$SNAPSHOT_TAG" --name "$SNAPSHOT_NAME" \
+    daytona snapshot push "$SNAPSHOT_NAME:$SNAPSHOT_TAG" --name "$SNAPSHOT_FULL_NAME" \
       --cpu "$SNAPSHOT_CPU" --memory "$SNAPSHOT_MEMORY_GB" --disk "$SNAPSHOT_DISK_GB"
+
+  wait_until_active
 fi
 
 echo
-echo "✓ snapshot '$SNAPSHOT_NAME' ready."
-echo "  Set DAYTONA_SNAPSHOT=$SNAPSHOT_NAME in doppler so the bot uses it."
+echo "✓ snapshot '$SNAPSHOT_FULL_NAME' ready."
+echo "  Keep DAYTONA_SNAPSHOT=$SNAPSHOT_NAME in the app; the app appends buildinfo.SandboxSnapshotVersion."

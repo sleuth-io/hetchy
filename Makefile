@@ -12,12 +12,13 @@ BUILD_DIR=./dist
 VERSION?=$(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT?=$(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
 DATE?=$(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
-LDFLAGS=-ldflags "-X github.com/hetchyhq/hetchy/internal/buildinfo.Version=$(VERSION) -X github.com/hetchyhq/hetchy/internal/buildinfo.Commit=$(COMMIT) -X github.com/hetchyhq/hetchy/internal/buildinfo.Date=$(DATE)"
+SANDBOX_VERSION?=$(shell ./scripts/sandbox-version.sh 2>/dev/null || echo "dev")
+LDFLAGS=-ldflags "-X github.com/hetchyhq/hetchy/internal/buildinfo.Version=$(VERSION) -X github.com/hetchyhq/hetchy/internal/buildinfo.Commit=$(COMMIT) -X github.com/hetchyhq/hetchy/internal/buildinfo.Date=$(DATE) -X github.com/hetchyhq/hetchy/internal/buildinfo.SandboxSnapshotVersion=$(SANDBOX_VERSION)"
 
 # Local support services. Daytona runs in Daytona Cloud for dev/staging/prod;
 # the host-side bot only needs the local Postgres container from compose.
 SNAPSHOT_NAME    ?= universal-coding
-SNAPSHOT_TAG     ?= 1
+SNAPSHOT_TAG     ?= $(SANDBOX_VERSION)
 COMPOSE          = docker compose
 SERVICES         = postgres
 LOG_FILE         ?= /tmp/hetchy.log
@@ -201,14 +202,8 @@ snapshot: ## Build the custom sandbox image
 LOCAL_REGISTRY_HOST_PORT ?= localhost:6000
 LOCAL_REGISTRY_INTERNAL ?= registry:6000
 
-push-snapshot: snapshot ## Build the sandbox image and register it as a Daytona Cloud snapshot
+push-snapshot: ## Ensure the content-addressed Daytona sandbox snapshot exists
 	@which doppler > /dev/null 2>&1 || (echo "doppler CLI not found. Install: https://docs.doppler.com/docs/install-cli" && exit 1)
-	@which daytona > /dev/null 2>&1 || ( \
-	  echo "daytona CLI not found. Install it:"; \
-	  echo "  macOS:  brew install daytonaio/cli/daytona"; \
-	  echo "  Other:  curl -fsSL https://download.daytona.io/daytona/install.sh | bash"; \
-	  exit 1; \
-	)
 	@SNAPSHOT_NAME=$(SNAPSHOT_NAME) SNAPSHOT_TAG=$(SNAPSHOT_TAG) \
 	  LOCAL_REGISTRY_HOST_PORT=$(LOCAL_REGISTRY_HOST_PORT) \
 	  LOCAL_REGISTRY_INTERNAL=$(LOCAL_REGISTRY_INTERNAL) \
