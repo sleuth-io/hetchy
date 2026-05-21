@@ -228,9 +228,10 @@ Then build and push the sandbox snapshot:
 
 ```bash
 doppler run -- sh -c 'daytona login --api-key "$DAYTONA_API_KEY"'
-daytona org use <org-name-or-id>
 make push-snapshot
 ```
+
+Daytona API-key login uses the organization associated with the API key.
 
 `DAYTONA_SNAPSHOT` is a base name. Hetchy stamps a deterministic version
 from the `sandbox/` directory during local builds, GitHub sandbox workflow
@@ -243,7 +244,6 @@ In GitHub, configure these repository secrets for the sandbox workflow:
 
 - `DAYTONA_API_KEY`
 - `DAYTONA_API_URL` (optional for Daytona Cloud)
-- `DAYTONA_ORGANIZATION` (recommended when the key can access multiple orgs)
 
 In Railway production, enable GitHub "Wait for CI" so the workflow completes
 before Railway deploys the matching app revision.

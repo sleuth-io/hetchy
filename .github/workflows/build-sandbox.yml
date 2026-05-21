@@ -40,7 +40,6 @@ jobs:
           DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
           DAYTONA_API_URL: ${{ secrets.DAYTONA_API_URL }}
           DAYTONA_CLI_LOGIN: "1"
-          DAYTONA_ORGANIZATION: ${{ secrets.DAYTONA_ORGANIZATION }}
           SNAPSHOT_NAME: universal-coding
           SNAPSHOT_TAG: ${{ env.SANDBOX_VERSION }}
         run: ./scripts/push-snapshot.sh

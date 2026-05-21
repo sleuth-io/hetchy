@@ -23,7 +23,6 @@
 #   SNAPSHOT_MEMORY_GB        default: 6 (memory per sandbox, GB)
 #   SNAPSHOT_DISK_GB          default: 10 (disk per sandbox, GB)
 #   DAYTONA_CLI_LOGIN         set to 1 to run daytona login before cloud push
-#   DAYTONA_ORGANIZATION      optional org name/id for DAYTONA_CLI_LOGIN=1
 set -euo pipefail
 
 SNAPSHOT_NAME="${SNAPSHOT_NAME:-universal-coding}"
@@ -171,9 +170,6 @@ else
   fi
   if [[ "${DAYTONA_CLI_LOGIN:-}" == "1" ]]; then
     daytona login --api-key "$DAYTONA_API_KEY"
-    if [[ -n "${DAYTONA_ORGANIZATION:-}" ]]; then
-      daytona org use "$DAYTONA_ORGANIZATION"
-    fi
   fi
   # `snapshot push` requires the keychain-stored creds from `daytona login
   # --api-key`. Unset DAYTONA_API_KEY/URL so the doppler-injected env
