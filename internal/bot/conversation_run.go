@@ -161,7 +161,8 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 		persister.Stop()
 	}()
 
-	prURL, runErr := b.runAgentForRequest(ctx, sb, repo, oc, agent, agentRequest, requestID, branch, opts, model, emit)
+	runEmit := newPRURLPersistingEmitter(b.log, b.convs, rec, emit)
+	prURL, runErr := b.runAgentForRequest(ctx, sb, repo, oc, agent, agentRequest, requestID, branch, opts, model, runEmit)
 	if runErr != nil {
 		if liveRunCancelled(ctx) {
 			b.log.Info("agent run stopped", "sandbox", sb.ID, "request_id", requestID, "error", runErr)
@@ -188,11 +189,13 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 			emit.Error("Agent failed", fmt.Sprintf("Something went wrong while running the agent. Sandbox `%s` is left running for debugging — reply here to retry (the orphan sandbox will be archived automatically) or check the server logs for details.", sb.ID))
 		}
 		// Persist sb.ID so handleRetryAfterFailure can archive the
-		// stale sandbox on the next user message — without this we'd
-		// leak a sandbox per retry. PRURL stays empty, which is how
-		// the dispatcher tells "agent failed mid-run, clean up first"
-		// apart from a real follow-up.
+		// stale sandbox on the next user message. If a PR URL appeared
+		// before the failure, keep it so the chat can resume against the
+		// existing PR instead of starting over.
 		rec.SandboxID = sb.ID
+		if pr := runEmit.Latest(); pr != "" {
+			rec.PRURL = pr
+		}
 		appendBlocksToFirstTurn(&rec, recorder.Snapshot())
 		if err := b.convs.Upsert(ctx, rec); err != nil {
 			b.log.Error("convstore upsert (agent fail)", "error", err)
@@ -357,7 +360,8 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 		persister.Stop()
 	}()
 
-	prURL, err := b.runFollowUpForRequest(ctx, sb, repo, oc, rec, agent, agentText, requestID, opts, model, mode, emit)
+	runEmit := newPRURLPersistingEmitter(b.log, b.convs, rec, emit)
+	prURL, err := b.runFollowUpForRequest(ctx, sb, repo, oc, rec, agent, agentText, requestID, opts, model, mode, runEmit)
 	if err != nil {
 		if liveRunCancelled(ctx) {
 			b.log.Info("follow-up stopped", "sandbox", sb.ID, "request_id", requestID, "error", err)
@@ -380,6 +384,9 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 			emit.Error("PR not verified", fmt.Sprintf("The agent reported a PR URL, but GitHub did not verify it for branch `%s`. Sandbox `%s` is left running for debugging — check the transcript and server logs for details.", rec.Branch, sb.ID))
 		} else {
 			emit.Error("Agent failed", fmt.Sprintf("Something went wrong while running the agent. Sandbox `%s` is left running for debugging — check the server logs for details.", sb.ID))
+		}
+		if pr := runEmit.Latest(); pr != "" {
+			rec.PRURL = pr
 		}
 		appendBlocksAsNewTurn(&rec, text, recorder.Snapshot())
 		if err := b.convs.Upsert(ctx, rec); err != nil {

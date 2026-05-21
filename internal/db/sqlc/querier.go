@@ -126,6 +126,7 @@ type Querier interface {
 	// neither is desirable, and the persister has no business creating
 	// rows on its own.
 	SaveConversationProgress(ctx context.Context, arg SaveConversationProgressParams) error
+	SaveConversationRunMetadata(ctx context.Context, arg SaveConversationRunMetadataParams) error
 	SaveConversationTaskOptions(ctx context.Context, arg SaveConversationTaskOptionsParams) error
 	// Backs the sidebar list. Filters by optional creator_id and an
 	// optional case-insensitive substring match against either the

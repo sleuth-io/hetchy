@@ -361,6 +361,14 @@ func (f *fakeRunStore) appendBatchEventsLocked(runID string, events []runstore.P
 }
 
 func (f *fakeRunStore) EventsAfter(_ context.Context, runID string, afterSeq int64) ([]runstore.Event, error) {
+	return f.eventsAfter(runID, afterSeq, 0)
+}
+
+func (f *fakeRunStore) EventsAfterLimit(_ context.Context, runID string, afterSeq int64, limit int32) ([]runstore.Event, error) {
+	return f.eventsAfter(runID, afterSeq, limit)
+}
+
+func (f *fakeRunStore) eventsAfter(runID string, afterSeq int64, limit int32) ([]runstore.Event, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.eventsErr != nil {
@@ -381,6 +389,9 @@ func (f *fakeRunStore) EventsAfter(_ context.Context, runID string, afterSeq int
 				Data:  append([]byte(nil), ev.data...),
 			})
 		}
+	}
+	if limit > 0 && len(out) > int(limit) {
+		out = out[:limit]
 	}
 	return out, nil
 }

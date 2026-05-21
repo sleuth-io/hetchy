@@ -25,6 +25,8 @@ const (
 	StateCancelled  = "cancelled"
 )
 
+const agentRunEventPageLimit int32 = 5000
+
 type Run struct {
 	ID              string
 	OrgID           string
@@ -412,12 +414,32 @@ func (s *Store) AppendEventsAndAdvanceCursor(ctx context.Context, runID string, 
 }
 
 func (s *Store) EventsAfter(ctx context.Context, runID string, seq int64) ([]Event, error) {
+	var out []Event
+	cursor := seq
+	for {
+		batch, err := s.EventsAfterLimit(ctx, runID, cursor, agentRunEventPageLimit)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, batch...)
+		if len(batch) < int(agentRunEventPageLimit) {
+			return out, nil
+		}
+		cursor = batch[len(batch)-1].Seq
+	}
+}
+
+func (s *Store) EventsAfterLimit(ctx context.Context, runID string, seq int64, limit int32) ([]Event, error) {
 	if !s.Enabled() || runID == "" {
 		return nil, nil
+	}
+	if limit <= 0 {
+		limit = agentRunEventPageLimit
 	}
 	rows, err := s.db.Queries.ListAgentRunEventsFromSeq(ctx, sqlc.ListAgentRunEventsFromSeqParams{
 		RunID: runID,
 		Seq:   seq,
+		Limit: limit,
 	})
 	if err != nil {
 		return nil, err

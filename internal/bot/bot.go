@@ -32,12 +32,14 @@ import (
 	"github.com/hetchyhq/hetchy/internal/secrets"
 )
 
-// maxBlocksPerTurn caps how many blocks we persist per turn. The full
-// stream still reaches the user in real time via SSE; the persisted copy
-// only needs enough blocks for a reopened chat to be readable. A long
-// agent run with verbose tool output can otherwise easily push hundreds
-// of blocks into a single JSONB[] cell.
-const maxBlocksPerTurn = 200
+// maxBlocksPerTurn caps the legacy response_blocks projection when a
+// durable run row is not available. Durable runs use
+// durableMaxBlocksPerTurn so the conversation projection can replay the
+// full bootstrap/skills stream from run events after reload.
+const (
+	maxBlocksPerTurn        = 200
+	durableMaxBlocksPerTurn = 0
+)
 
 const (
 	maxRetries        = 3

@@ -240,4 +240,5 @@ RETURNING seq;
 SELECT run_id, seq, event, data, created_at
 FROM agent_run_events
 WHERE run_id = $1 AND seq > $2
-ORDER BY seq ASC;
+ORDER BY seq ASC
+LIMIT $3;
