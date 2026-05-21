@@ -3,6 +3,7 @@ package bot
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/hetchyhq/hetchy/internal/blocks"
 	"github.com/hetchyhq/hetchy/internal/convstore"
@@ -23,11 +24,18 @@ func TestPRURLPersistingEmitterFindsURLSplitAcrossAppends(t *testing.T) {
 	if got := emit.Latest(); got != want {
 		t.Fatalf("Latest() = %q, want %q", got, want)
 	}
-	rec, err := convs.Get(context.Background(), "org-1", "thread-1")
-	if err != nil {
-		t.Fatalf("Get(): %v", err)
-	}
-	if rec.PRURL != want {
-		t.Fatalf("persisted PRURL = %q, want %q", rec.PRURL, want)
+	deadline := time.Now().Add(time.Second)
+	for {
+		rec, err := convs.Get(context.Background(), "org-1", "thread-1")
+		if err == nil && rec.PRURL == want {
+			return
+		}
+		if time.Now().After(deadline) {
+			if err != nil {
+				t.Fatalf("Get(): %v", err)
+			}
+			t.Fatalf("persisted PRURL = %q, want %q", rec.PRURL, want)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

@@ -32,11 +32,14 @@ import (
 	"github.com/hetchyhq/hetchy/internal/secrets"
 )
 
-// maxBlocksPerTurn caps how many blocks we persist per turn. Zero means
-// no cap. Durable run events already carry the full stream, and the
-// conversation projection must not drop early bootstrap or skills
-// blocks after a long run.
-const maxBlocksPerTurn = 0
+// maxBlocksPerTurn caps the legacy response_blocks projection when a
+// durable run row is not available. Durable runs use
+// durableMaxBlocksPerTurn so the conversation projection can replay the
+// full bootstrap/skills stream from run events after reload.
+const (
+	maxBlocksPerTurn        = 200
+	durableMaxBlocksPerTurn = 0
+)
 
 const (
 	maxRetries        = 3

@@ -605,6 +605,8 @@ func (b *Bot) overlayDurableRunProjection(ctx context.Context, orgID string, rec
 	}
 
 	out := rec
+	out.History = append([]string(nil), rec.History...)
+	out.ResponseBlocks = append([][]blocks.Block(nil), rec.ResponseBlocks...)
 	if run.SandboxID != "" {
 		out.SandboxID = run.SandboxID
 	}
@@ -616,9 +618,15 @@ func (b *Bot) overlayDurableRunProjection(ctx context.Context, orgID string, rec
 	}
 	switch run.RunKind {
 	case "followup":
-		if len(out.History) > 0 && out.History[len(out.History)-1] == run.UserRequest && len(out.ResponseBlocks) == len(out.History) {
-			out.ResponseBlocks[len(out.ResponseBlocks)-1] = turnBlocks
-		} else if len(out.History) > 0 && run.UserRequest != "" {
+		if run.UserRequest == "" {
+			return out
+		}
+		if len(out.History) > 0 && out.History[len(out.History)-1] == run.UserRequest {
+			for len(out.ResponseBlocks) < len(out.History) {
+				out.ResponseBlocks = append(out.ResponseBlocks, nil)
+			}
+			out.ResponseBlocks[len(out.History)-1] = turnBlocks
+		} else {
 			appendBlocksAsNewTurn(&out, run.UserRequest, turnBlocks)
 		}
 	default:

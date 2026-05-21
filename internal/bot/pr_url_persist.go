@@ -107,6 +107,10 @@ func (e *prURLPersistingEmitter) persist(prURL string) {
 	rec.PRURL = prURL
 	e.mu.Unlock()
 
+	go e.saveMetadata(rec, prURL)
+}
+
+func (e *prURLPersistingEmitter) saveMetadata(rec convstore.Record, prURL string) {
 	ctx, cancel := context.WithTimeout(context.Background(), conversationMetadataSaveTimeout)
 	defer cancel()
 	if err := e.convs.SaveRunMetadata(ctx, rec); err != nil && e.log != nil {
