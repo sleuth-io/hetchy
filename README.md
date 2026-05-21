@@ -112,7 +112,7 @@ database, not in Doppler. Doppler only holds the *process-level* config:
 | `DATABASE_URL` | Postgres connection string (required) |
 | `DAYTONA_API_URL` | Daytona API endpoint |
 | `DAYTONA_API_KEY` | Daytona API key |
-| `DAYTONA_SNAPSHOT` | Sandbox snapshot image |
+| `DAYTONA_SNAPSHOT` | Daytona sandbox snapshot base name, e.g. `universal-coding`; the app appends its build-time sandbox version |
 | `DAYTONA_CACHE_VOLUMES_DISABLED` | Set to `1` to disable pooled dependency cache archive volumes |
 | `DAYTONA_CACHE_VOLUME_PREFIX` | Prefix for Daytona dependency cache archive pool volumes (default: `hetchy-cache`; creates up to 10 dev, 10 staging, and 80 prod volumes) |
 | `DAYTONA_CACHE_PRUNE_DAYS` | Best-effort local dependency cache pruning age before archiving in days (default: `30`) |
@@ -232,6 +232,22 @@ daytona org use <org-name-or-id>
 make push-snapshot
 ```
 
+`DAYTONA_SNAPSHOT` is a base name. Hetchy stamps a deterministic version
+from the `sandbox/` directory during local builds, GitHub sandbox workflow
+runs, and Railway Dockerfile builds, then creates sandboxes from
+`${DAYTONA_SNAPSHOT}-${version}`. `make push-snapshot` computes the same
+version and skips the Docker build when that Daytona snapshot is already
+active.
+
+In GitHub, configure these repository secrets for the sandbox workflow:
+
+- `DAYTONA_API_KEY`
+- `DAYTONA_API_URL` (optional for Daytona Cloud)
+- `DAYTONA_ORGANIZATION` (recommended when the key can access multiple orgs)
+
+In Railway production, enable GitHub "Wait for CI" so the workflow completes
+before Railway deploys the matching app revision.
+
 ### 5. Start the Database
 
 Hetchy requires a PostgreSQL database. For local development:
@@ -256,7 +272,9 @@ make bot
 `make bot` runs the single Hetchy binary with live-reload (via air) — it
 serves the web UI on `http://dev.hetchy.ai:8080` (or your configured
 `WEB_PORT`) and connects to Slack over Socket Mode using the tokens
-configured per-org at `/settings/org`.
+configured per-org at `/settings/org`. The live-reload build stamps the
+current sandbox content version automatically, matching the snapshot name used
+by deployed builds.
 
 ## Usage
 

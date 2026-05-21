@@ -33,6 +33,7 @@ services:
         VERSION: ${VERSION:-dev}
         COMMIT: ${COMMIT:-none}
         DATE: ${DATE:-unknown}
+        SANDBOX_VERSION: ${SANDBOX_VERSION:-}
     container_name: migration
     restart: "no"
     command: "--migrate"
@@ -52,6 +53,7 @@ services:
         VERSION: ${VERSION:-dev}
         COMMIT: ${COMMIT:-none}
         DATE: ${DATE:-unknown}
+        SANDBOX_VERSION: ${SANDBOX_VERSION:-}
     container_name: hetchy
     restart: unless-stopped
     ports:
@@ -91,7 +93,8 @@ services:
       # Daytona Cloud configuration.
       DAYTONA_API_URL: ${DAYTONA_API_URL:-https://app.daytona.io/api}
       DAYTONA_API_KEY: ${DAYTONA_API_KEY:-}
-      DAYTONA_SNAPSHOT: ${DAYTONA_SNAPSHOT:-universal-coding:1}
+      DAYTONA_SNAPSHOT: ${DAYTONA_SNAPSHOT:-universal-coding}
+      HETCHY_SANDBOX_VERSION: ${HETCHY_SANDBOX_VERSION:-}
       DAYTONA_CACHE_VOLUMES_DISABLED: ${DAYTONA_CACHE_VOLUMES_DISABLED:-}
       DAYTONA_CACHE_VOLUME_PREFIX: ${DAYTONA_CACHE_VOLUME_PREFIX:-}
       DAYTONA_CACHE_PRUNE_DAYS: ${DAYTONA_CACHE_PRUNE_DAYS:-}

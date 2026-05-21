@@ -9,7 +9,7 @@ This guide covers common issues and their solutions.
 **Solutions:**
 - Confirm `DAYTONA_API_URL` points at Daytona Cloud: `https://app.daytona.io/api`
 - Check `DAYTONA_API_KEY` is valid for the Daytona org that should own sandboxes
-- Verify `DAYTONA_SNAPSHOT` exists in that org
+- Verify the versioned snapshot `${DAYTONA_SNAPSHOT}-${sandbox_version}` exists and is active in that org
 - Check the bot startup log for `daytona configured` and the request log for the created sandbox ID
 
 ## No PR Created

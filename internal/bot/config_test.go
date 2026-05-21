@@ -24,7 +24,8 @@ func requiredEnv() map[string]string {
 	return map[string]string{
 		"DATABASE_URL":           "postgres://localhost/x",
 		"SECRETS_ENCRYPTION_KEY": strings.Repeat("k", 32),
-		"DAYTONA_SNAPSHOT":       "snap:1",
+		"DAYTONA_SNAPSHOT":       "snap",
+		"HETCHY_SANDBOX_VERSION": "abc123def456",
 		"HETCHY_PUBLIC_BASE_URL": "https://app.example.test",
 		"WORKOS_API_KEY":         "sk_test_x",
 		"WORKOS_CLIENT_ID":       "client_x",
@@ -52,6 +53,9 @@ func TestLoadConfig_AllRequiredSet(t *testing.T) {
 	}
 	if cfg.PublicBaseURL() != "https://app.example.test" {
 		t.Errorf("PublicBaseURL override = %q", cfg.PublicBaseURL())
+	}
+	if cfg.SnapshotBase != "snap" || cfg.Snapshot != "snap-abc123def456" || cfg.SandboxSnapshotVersion != "abc123def456" {
+		t.Errorf("snapshot config = base %q resolved %q version %q", cfg.SnapshotBase, cfg.Snapshot, cfg.SandboxSnapshotVersion)
 	}
 }
 
@@ -295,7 +299,8 @@ func TestLoadConfig_BypassRelaxesWorkOSRequirements(t *testing.T) {
 		"AUTH_BYPASS":            "1",
 		"DATABASE_URL":           "postgres://localhost/x",
 		"SECRETS_ENCRYPTION_KEY": strings.Repeat("k", 32),
-		"DAYTONA_SNAPSHOT":       "snap:1",
+		"DAYTONA_SNAPSHOT":       "snap",
+		"HETCHY_SANDBOX_VERSION": "abc123def456",
 	})
 
 	cfg, err := LoadConfig()
@@ -304,6 +309,35 @@ func TestLoadConfig_BypassRelaxesWorkOSRequirements(t *testing.T) {
 	}
 	if !cfg.AuthBypass {
 		t.Error("AuthBypass should be true")
+	}
+}
+
+func TestResolveDaytonaSnapshot(t *testing.T) {
+	cases := []struct {
+		name    string
+		env     string
+		base    string
+		version string
+		want    string
+		wantErr bool
+	}{
+		{name: "prod appends version", env: "prod", base: "universal-coding", version: "abc123def456", want: "universal-coding-abc123def456"},
+		{name: "staging appends version", env: "staging", base: "universal-coding", version: "abc123def456", want: "universal-coding-abc123def456"},
+		{name: "dev permits exact configured snapshot", env: "dev", base: "universal-coding:local", version: "dev", want: "universal-coding:local"},
+		{name: "prod rejects missing version", env: "prod", base: "universal-coding", version: "dev", wantErr: true},
+		{name: "prod rejects empty version", env: "prod", base: "universal-coding", version: "", wantErr: true},
+		{name: "empty base rejects", env: "prod", base: "", version: "abc123def456", wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := resolveDaytonaSnapshot(tc.env, tc.base, tc.version)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("resolveDaytonaSnapshot() err = %v, wantErr %v", err, tc.wantErr)
+			}
+			if got != tc.want {
+				t.Fatalf("resolveDaytonaSnapshot() = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -324,6 +358,7 @@ func TestComposeForwardsArtifactUploadEnv(t *testing.T) {
 		"DAYTONA_CACHE_VOLUME_PREFIX",
 		"DAYTONA_CACHE_PRUNE_DAYS",
 		"DAYTONA_AUTO_ARCHIVE_MINUTES",
+		"HETCHY_SANDBOX_VERSION",
 		"HETCHY_PUBLIC_BASE_URL",
 	} {
 		want := key + ": ${" + key + ":-}"
