@@ -52,7 +52,7 @@ func TestLoadConfig_AllRequiredSet(t *testing.T) {
 }
 
 func TestLoadConfig_AppliesDefaults(t *testing.T) {
-	clearEnv(t, "AUTH_BYPASS", "WEB_PORT", "DAYTONA_API_URL", "LOGOUT_RETURN_TO", "HETCHY_SX_PUBLIC_VAULT_URL",
+	clearEnv(t, "AUTH_BYPASS", "WEB_PORT", "DAYTONA_API_URL", "LOGOUT_RETURN_TO", "HETCHY_PUBLIC_BASE_URL", "SLACK_OAUTH_REDIRECT_URI", "HETCHY_SX_PUBLIC_VAULT_URL",
 		"DAYTONA_CACHE_VOLUMES_DISABLED", "DAYTONA_CACHE_VOLUME_PREFIX", "DAYTONA_CACHE_PRUNE_DAYS", "DAYTONA_AUTO_ARCHIVE_MINUTES")
 	setEnv(t, requiredEnv())
 
@@ -65,6 +65,9 @@ func TestLoadConfig_AppliesDefaults(t *testing.T) {
 	}
 	if cfg.LogoutReturnTo != "http://localhost:8080/" {
 		t.Errorf("LogoutReturnTo default = %q", cfg.LogoutReturnTo)
+	}
+	if cfg.PublicBaseURL() != "http://localhost:8080" {
+		t.Errorf("PublicBaseURL local default = %q", cfg.PublicBaseURL())
 	}
 	if cfg.SXPublicVaultURL != DefaultSXPublicVaultURL {
 		t.Errorf("SXPublicVaultURL default = %q", cfg.SXPublicVaultURL)
@@ -80,6 +83,35 @@ func TestLoadConfig_AppliesDefaults(t *testing.T) {
 	}
 	if cfg.DaytonaAutoArchiveMinutes != 60 {
 		t.Errorf("DaytonaAutoArchiveMinutes default = %d", cfg.DaytonaAutoArchiveMinutes)
+	}
+}
+
+func TestPublicBaseURLDerivesExternalOrigin(t *testing.T) {
+	clearEnv(t, "AUTH_BYPASS", "LOGOUT_RETURN_TO", "HETCHY_PUBLIC_BASE_URL")
+	env := requiredEnv()
+	env["WORKOS_REDIRECT_URI"] = "https://app.hetchy.ai/callback"
+	setEnv(t, env)
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if got := cfg.PublicBaseURL(); got != "https://app.hetchy.ai" {
+		t.Fatalf("PublicBaseURL = %q, want external WorkOS origin", got)
+	}
+}
+
+func TestPublicBaseURLExplicitOverrideWins(t *testing.T) {
+	clearEnv(t, "AUTH_BYPASS", "LOGOUT_RETURN_TO")
+	setEnv(t, requiredEnv())
+	t.Setenv("HETCHY_PUBLIC_BASE_URL", " https://app.example.test/root ")
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if got := cfg.PublicBaseURL(); got != "https://app.example.test" {
+		t.Fatalf("PublicBaseURL = %q, want explicit public origin", got)
 	}
 }
 

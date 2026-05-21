@@ -48,6 +48,9 @@ func TestProofInstructionsWithSlots(t *testing.T) {
 		".playwright-mcp/<name>.png",
 		"Do NOT stage, commit, push",
 		"GitHub blob/raw URLs",
+		"Keep app runtime scratch out of the repo",
+		"/tmp/hetchy-runtime",
+		"dump.rdb",
 		"HETCHY_ARTIFACT_SLOTS",
 		"curl -fSs -X PUT",
 	} {

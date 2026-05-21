@@ -73,6 +73,37 @@ func TestDockerfileAvoidsPlaywrightChromeAptInstall(t *testing.T) {
 	}
 }
 
+func TestEntrypointStartsDockerWithDeterministicVFSDriver(t *testing.T) {
+	body, err := os.ReadFile("entrypoint.sh")
+	if err != nil {
+		t.Fatalf("read entrypoint: %v", err)
+	}
+	got := string(body)
+	for _, want := range []string{
+		"docker_ready()",
+		"docker info >/dev/null 2>&1",
+		"sudo -n pkill -TERM -x dockerd",
+		"sudo -n rm -f /var/run/docker.pid /var/run/docker.sock",
+		"\"containerd-snapshotter\": false",
+		"\"storage-driver\": \"vfs\"",
+		"/var/log/dockerd.log",
+		"[hetchy-entrypoint] WARNING: dockerd did not become ready",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("entrypoint missing %q\n%s", want, got)
+		}
+	}
+	for _, bad := range []string{
+		"storage_driver=fuse-overlayfs",
+		"fuse-overlayfs \\",
+		"probe_dir=$(mktemp",
+	} {
+		if strings.Contains(got, bad) {
+			t.Errorf("entrypoint should not contain %q\n%s", bad, got)
+		}
+	}
+}
+
 func TestPlaywrightSmokeUsesOrdinaryPlaywrightAPIs(t *testing.T) {
 	body, err := os.ReadFile("hetchy-playwright-smoke")
 	if err != nil {

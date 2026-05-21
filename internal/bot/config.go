@@ -47,11 +47,12 @@ type Config struct {
 	DatabaseMaxConns int32
 	WebPort          string
 
-	WorkOSAPIKey         string
-	WorkOSClientID       string
-	WorkOSCookiePassword string
-	WorkOSRedirectURI    string
-	LogoutReturnTo       string
+	WorkOSAPIKey          string
+	WorkOSClientID        string
+	WorkOSCookiePassword  string
+	WorkOSRedirectURI     string
+	LogoutReturnTo        string
+	PublicBaseURLOverride string
 	// CookieSecure is the Secure flag on the session cookie. Defaults to
 	// true; set COOKIE_INSECURE=1 to disable it for local HTTP dev.
 	CookieSecure bool
@@ -209,6 +210,7 @@ func LoadConfig() (Config, error) {
 		WorkOSCookiePassword:        strings.TrimSpace(os.Getenv("WORKOS_COOKIE_PASSWORD")),
 		WorkOSRedirectURI:           strings.TrimSpace(os.Getenv("WORKOS_REDIRECT_URI")),
 		LogoutReturnTo:              logout,
+		PublicBaseURLOverride:       strings.TrimSpace(os.Getenv("HETCHY_PUBLIC_BASE_URL")),
 		CookieSecure:                cookieSecure,
 		SecretsEncryptionKey:        strings.TrimSpace(os.Getenv("SECRETS_ENCRYPTION_KEY")),
 		SlackSigningSecret:          strings.TrimSpace(os.Getenv("SLACK_SIGNING_SECRET")),
@@ -254,14 +256,42 @@ func getenvDefaultTrimAllowDisabled(key, def string) string {
 }
 
 // PublicBaseURL returns the externally-reachable base URL for the web
-// app (no trailing slash). LOGOUT_RETURN_TO is the canonical "public app
-// root" used for external link generation (e.g. Slack deep links) — it no
-// longer controls the post-logout redirect, which is derived from
-// WORKOS_REDIRECT_URI in auth.New(). Falls back to the local bind URL when
-// LOGOUT_RETURN_TO is unset.
+// app (no trailing slash). HETCHY_PUBLIC_BASE_URL is the explicit override.
+// LOGOUT_RETURN_TO is kept as a legacy public-root source when set to an
+// external URL. If it is unset and therefore defaulted to localhost, derive
+// the public origin from OAuth callback URLs before falling back to the local
+// bind URL. This matters for sandbox callbacks such as artifact-slot minting:
+// a Daytona sandbox cannot call the Hetchy process via localhost.
 func (c Config) PublicBaseURL() string {
-	if base := strings.TrimSuffix(c.LogoutReturnTo, "/"); base != "" {
+	if base := publicOrigin(c.PublicBaseURLOverride); base != "" {
 		return base
 	}
-	return "http://localhost:" + c.WebPort
+	local := "http://localhost:" + c.WebPort
+	if base := publicOrigin(c.LogoutReturnTo); base != "" && base != local {
+		return base
+	}
+	for _, raw := range []string{c.WorkOSRedirectURI, c.SlackOAuthRedirectURI} {
+		if base := publicOrigin(raw); base != "" {
+			return base
+		}
+	}
+	if base := publicOrigin(c.LogoutReturnTo); base != "" {
+		return base
+	}
+	return local
+}
+
+func publicOrigin(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return strings.TrimSuffix(raw, "/")
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host
 }

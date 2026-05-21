@@ -157,6 +157,10 @@ func TestBootstrapScriptEnforcesStartReturnAndPlaywrightRuntime(t *testing.T) {
 		"start.sh must return after launching services",
 		"start.sh timed out after",
 		"start.sh completed; polling health.sh",
+		"check_runtime_artifact_hygiene",
+		"setup/start left runtime scratch",
+		"dump.rdb",
+		"/tmp/hetchy-runtime",
 	} {
 		if !strings.Contains(BootstrapScript, want) {
 			t.Errorf("BootstrapScript missing %q\n%s", want, BootstrapScript)
