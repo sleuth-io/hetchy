@@ -7,7 +7,9 @@ This guide covers deploying Hetchy to production environments.
 ### Build Image
 
 ```bash
-docker build -t hetchy .
+docker build \
+  --build-arg SANDBOX_VERSION="$(./scripts/sandbox-version.sh)" \
+  -t hetchy .
 ```
 
 ### Run Container
@@ -41,7 +43,8 @@ The compose file reads environment variables from your shell (injected by Dopple
 | `DAYTONA_CACHE_PRUNE_DAYS` | Best-effort local dependency cache pruning age before archiving in days (default: `30`) |
 | `DAYTONA_AUTO_ARCHIVE_MINUTES` | Minutes a successful stopped sandbox remains unarchived before Daytona auto-archives it (default: `60`) |
 | `HETCHY_PUBLIC_BASE_URL` | Required outside dev. Externally reachable `http(s)://host` app origin used for sandbox callbacks and generated links |
-| `HETCHY_SANDBOX_VERSION` | Optional override for the content-addressed sandbox version; normally stamped by `Makefile`/`Dockerfile` |
+| `HETCHY_SANDBOX_VERSION` | Optional runtime override for the content-addressed sandbox version; normally stamped into the binary |
+| `SANDBOX_VERSION` | Build-time Docker arg used by Railway to stamp the sandbox version; the GitHub sandbox workflow updates this Railway variable before deploy |
 | `HETCHY_SX_PUBLIC_VAULT_URL` | Public git sx vault containing seeded agent personas and scoped role skills; defaults to `https://github.com/hetchyhq/hetchy-sx-vault.git`; set to `disabled`, `off`, `none`, or `-` to skip the public vault install |
 | `WEB_PORT` | Web UI port (default: 8080) |
 | `DISABLE_SLACK` | Set to 1 to run web UI only |

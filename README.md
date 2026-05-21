@@ -233,13 +233,24 @@ make push-snapshot
 ```
 
 `DAYTONA_SNAPSHOT` is a base name. Hetchy stamps a deterministic version
-from the `sandbox/` directory during both local `make build` and Railway
-Dockerfile builds, then creates sandboxes from
-`${DAYTONA_SNAPSHOT}-${version}`. `make push-snapshot` computes the same
-version and skips the Docker build when that Daytona snapshot is already
-active. In Railway production, enable GitHub "Wait for CI" so the
-`Ensure Daytona sandbox snapshot` workflow completes before Railway
-deploys the matching app revision.
+from the `sandbox/` directory during local builds and the GitHub sandbox
+workflow, then creates sandboxes from `${DAYTONA_SNAPSHOT}-${version}`.
+`make push-snapshot` computes the same version and skips the Docker build
+when that Daytona snapshot is already active.
+
+In GitHub, configure these repository secrets for the sandbox workflow:
+
+- `DAYTONA_API_KEY`
+- `DAYTONA_API_URL` (optional for Daytona Cloud)
+- `DAYTONA_ORGANIZATION` (recommended when the key can access multiple orgs)
+- `RAILWAY_TOKEN`
+- `RAILWAY_PROJECT_ID`
+- `RAILWAY_SERVICE`
+- `RAILWAY_ENVIRONMENT`
+
+The workflow writes the computed version to Railway as `SANDBOX_VERSION`
+with `--skip-deploys`. In Railway production, enable GitHub "Wait for CI" so
+the workflow completes before Railway deploys the matching app revision.
 
 ### 5. Start the Database
 

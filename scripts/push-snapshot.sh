@@ -90,7 +90,10 @@ wait_until_active() {
     local resp state
     resp=$(find_snapshot_json) || return 1
     state=$(snapshot_field state "$resp")
-    [[ -z "$state" ]] && state="?"
+    if [[ -z "$state" ]]; then
+      echo "ERROR: snapshot '$SNAPSHOT_FULL_NAME' disappeared during wait" >&2
+      return 1
+    fi
     printf "  t+%ds: state=%s\n" "$((i*5))" "$state"
     case "$state" in
       active|ACTIVE) return 0 ;;

@@ -654,7 +654,7 @@ The actual requirements per `internal/bot/config.go`:
 - Required only when `AUTH_BYPASS` is unset: 4 `WORKOS_*` vars.
 - Everything else (`GITHUB_APP_*`, `DAYTONA_API_*`, `SLACK_*`) is parsed if present, optional otherwise.
 
-The `.env.example` even documents `AUTH_BYPASS=1` for "TESTS / CI ONLY" — and that's exactly the bootstrap path. With `AUTH_BYPASS=1` plus three mintable values (`SECRETS_ENCRYPTION_KEY` from `openssl rand`, `DATABASE_URL` from the bundled compose Postgres, a literal `DAYTONA_SNAPSHOT=universal-coding:1`), Hetchy starts and serves its landing page. Validated by screenshot.
+The `.env.example` even documents `AUTH_BYPASS=1` for "TESTS / CI ONLY" — and that's exactly the bootstrap path. With `AUTH_BYPASS=1` plus three mintable values (`SECRETS_ENCRYPTION_KEY` from `openssl rand`, `DATABASE_URL` from the bundled compose Postgres, a literal `DAYTONA_SNAPSHOT=universal-coding`), Hetchy starts and serves its landing page. Validated by screenshot.
 
 **Implication for the spec:** the prompt's instruction to read the source-of-truth config-loading function isn't optional polish — without it, a literal reading of the README produces a "blocked on user secrets" outcome that should have been a "validated, partial" outcome.
 

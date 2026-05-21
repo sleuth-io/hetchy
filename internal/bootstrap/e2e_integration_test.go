@@ -119,7 +119,7 @@ for i in {1..30}; do
 done
 export DATABASE_URL=postgresql://postgres:postgres@localhost:5433/hetchy?sslmode=disable
 export SECRETS_ENCRYPTION_KEY=$(openssl rand -base64 32)
-export DAYTONA_SNAPSHOT=universal-coding:1
+export DAYTONA_SNAPSHOT=universal-coding
 export AUTH_BYPASS=1 HETCHY_ENV=dev
 /tmp/hetchy-bin --migrate
 `
@@ -127,7 +127,7 @@ export AUTH_BYPASS=1 HETCHY_ENV=dev
 set -euo pipefail
 export DATABASE_URL=postgresql://postgres:postgres@localhost:5433/hetchy?sslmode=disable
 export SECRETS_ENCRYPTION_KEY=$(cat /tmp/hetchy-secrets-key)
-export DAYTONA_SNAPSHOT=universal-coding:1
+export DAYTONA_SNAPSHOT=universal-coding
 export AUTH_BYPASS=1 HETCHY_ENV=dev COOKIE_INSECURE=1 WEB_PORT=8080
 nohup /tmp/hetchy-bin > /tmp/hetchy.log 2>&1 &
 echo $! > /tmp/hetchy.pid
