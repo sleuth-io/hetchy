@@ -25,10 +25,15 @@ jobs:
 
       - name: Install Daytona CLI
         run: |
-          curl -fsSL https://download.daytona.io/daytona/install.sh | bash
-          echo "$HOME/.daytona/bin" >> "$GITHUB_PATH"
+          install -d "$HOME/.local/bin"
+          curl -fsSL \
+            --retry 3 \
+            --retry-delay 2 \
+            -o "$HOME/.local/bin/daytona" \
+            https://github.com/daytonaio/daytona/releases/latest/download/daytona-linux-amd64
+          chmod +x "$HOME/.local/bin/daytona"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          echo "$HOME/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/daytona" version
 
       - name: Ensure Daytona snapshot
         env:
