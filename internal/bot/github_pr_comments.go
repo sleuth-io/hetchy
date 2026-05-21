@@ -485,7 +485,10 @@ func (e *prCommentEmitter) Error(title, body string) {
 	if e.log == nil {
 		return
 	}
-	e.log.Info("github pr comment: agent reached terminal error",
+	// Logged at Error so production log filters (typically >= Warn)
+	// surface broken PR-comment-driven runs. The Result path stays at
+	// Info — successful runs are noise.
+	e.log.Error("github pr comment: agent reached terminal error",
 		"org", e.orgID, "thread", e.threadID, "pr", e.prURL,
 		"source", e.source, "title", title, "body_len", len(body))
 }
