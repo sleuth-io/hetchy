@@ -145,6 +145,8 @@ func TestConditionalTasksPromptRespectsOptions(t *testing.T) {
 		"Set `PR_URL`",
 		`gh pr checks "$PR_URL" --watch --interval 10`,
 		"Do not append `|| true`",
+		"pipe through `head`/`tail`",
+		"set -o pipefail",
 		"GraphQL/API permission error",
 		`gh run list --branch "$BRANCH"`,
 		`gh pr view "$PR_URL" --json reviewDecision,latestReviews,statusCheckRollup`,

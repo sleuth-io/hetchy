@@ -135,6 +135,29 @@ func TestAddArtifactRunEnvInitialAndFollowup(t *testing.T) {
 	}
 }
 
+func TestAddArtifactRunEnvUsesExternalCallbackOrigin(t *testing.T) {
+	fake := &fakeArtifactMinter{}
+	b := &Bot{
+		cfg: Config{
+			Env:                   "dev",
+			WebPort:               "8080",
+			LogoutReturnTo:        "http://localhost:8080/",
+			WorkOSRedirectURI:     "https://app.hetchy.ai/callback",
+			SlackOAuthRedirectURI: "https://slack-other.example.test/callback",
+		},
+		artifacts:     fake,
+		artifactSlots: newArtifactSlotBroker(fake),
+	}
+
+	env := map[string]string{}
+	if _, err := b.addArtifactRunEnv(context.Background(), "org_abc/42/req_1", env); err != nil {
+		t.Fatalf("add env: %v", err)
+	}
+	if got, want := env[artifacts.EnvSlotURL], "https://app.hetchy.ai"+artifactSlotPath; got != want {
+		t.Fatalf("%s = %q, want %q", artifacts.EnvSlotURL, got, want)
+	}
+}
+
 func TestArtifactSlotsHandlerMintsMoreSlots(t *testing.T) {
 	fake := &fakeArtifactMinter{}
 	b := &Bot{

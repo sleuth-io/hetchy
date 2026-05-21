@@ -61,13 +61,12 @@ RUN install -d /usr/share/postgresql-common/pgdg \
 # Docker engine + CLI + compose plugin (Docker-in-Docker).
 #
 # The Daytona sandbox doesn't grant the kernel-level capabilities Docker's
-# default overlayfs storage driver needs: an overlay mount with `index=off`
-# from inside the sandbox returns -EINVAL. We work around it by installing
-# fuse-overlayfs (userspace overlay implementation) so dockerd can run
-# unprivileged. The entrypoint configures /etc/docker/daemon.json to
-# select fuse-overlayfs and disables Docker 29's containerd-snapshotter
-# mode, which still requires kernel overlay support even when a different
-# storage driver is selected.
+# default overlayfs storage driver needs, and fuse-overlayfs has proven
+# unreliable in Daytona Cloud nested-Docker runs. The entrypoint configures
+# dockerd to use the vfs storage driver and disables Docker 29's
+# containerd-snapshotter mode. vfs is slower, but it only depends on
+# ordinary filesystem operations and has been verified with
+# `docker run hello-world` inside Daytona Cloud.
 # ---------------------------------------------------------------------------
 RUN install -m 0755 -d /etc/apt/keyrings \
  && curl -fsSL https://download.docker.com/linux/debian/gpg \
@@ -84,11 +83,11 @@ RUN install -m 0755 -d /etc/apt/keyrings \
  && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb /var/cache/apt/archives/partial/*
 
 # Rootless-docker support packages (docker-ce-rootless-extras,
-# slirp4netns, uidmap, iproute2, dbus-user-session) are installed
-# eagerly so a future fallback path can launch dockerd-rootless.sh
-# without an extra apt-get. They cost ~50MB and don't run unless
-# something explicitly invokes them — the entrypoint today only
-# starts the rootful daemon.
+# fuse-overlayfs, slirp4netns, uidmap, iproute2, dbus-user-session)
+# are installed eagerly so a future fallback path can launch
+# dockerd-rootless.sh without an extra apt-get. They do not run unless
+# something explicitly invokes them; the entrypoint today only starts
+# the rootful daemon with the vfs storage driver.
 
 # ---------------------------------------------------------------------------
 # GitHub CLI — used by the agent to push branches and open PRs.
@@ -204,12 +203,12 @@ RUN usermod -aG docker daytona
 # Entrypoint that auto-starts dockerd in the background and then sleeps
 # forever — preserves Daytona's long-running-pid-1 requirement while
 # making Docker available out of the box. Daytona's sandbox runtime
-# does NOT require --privileged: the entrypoint probes for fuse-overlayfs
-# (when /dev/fuse is exposed) and falls back to vfs storage so dockerd
-# starts cleanly under Daytona's default cap set. Container-exec inside
-# the inner daemon is constrained by Daytona's own kernel/AppArmor
-# policy (a separate axis we can't influence from the image side); the
-# bootstrap loop captures any docker-unusability as a deferred capability.
+# does NOT require --privileged: the entrypoint uses the vfs storage
+# driver, removes stale daemon pid/socket files from stopped sandboxes,
+# and waits for `docker info` to succeed. Container-exec inside the
+# inner daemon is constrained by Daytona's own kernel/AppArmor policy
+# (a separate axis we can't influence from the image side); the bootstrap
+# loop captures any docker-unusability as a deferred capability.
 # ---------------------------------------------------------------------------
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY hetchy-record-screen /usr/local/bin/hetchy-record-screen

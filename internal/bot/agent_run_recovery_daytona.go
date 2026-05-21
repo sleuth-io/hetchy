@@ -26,6 +26,25 @@ func (b *Bot) handleRecoverySetupError(ctx context.Context, run runstore.Run, li
 		b.finishRecoveredFailure(ctx, run, live, title, body, err)
 		return
 	}
+	b.deferRecoveryForRetry(run, "sandbox setup", err)
+}
+
+// deferRecoveryForRetry logs a transient failure that keeps a run in
+// StateRecovering so the next recovery sweep can pick it up, then writes the
+// state update. The Warn log gives operators visibility into upstream outages
+// that defer agent run retries.
+func (b *Bot) deferRecoveryForRetry(run runstore.Run, reason string, err error) {
+	b.log.Warn("agent run recovery deferred by transient outage",
+		"run_id", run.ID,
+		"org", run.OrgID,
+		"thread", run.ThreadID,
+		"sandbox", run.SandboxID,
+		"session", run.SessionID,
+		"command", run.CommandID,
+		"command_step", run.CommandStep,
+		"reason", reason,
+		"error", err,
+	)
 	b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
 }
 

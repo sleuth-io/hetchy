@@ -82,7 +82,7 @@ func (b *Bot) recoverUnframedAgentRun(ctx context.Context, sb *daytona.Sandbox, 
 		if router != nil {
 			logText, err = b.replayRecoveredUnframedLogTail(ctx, sb, run, em, router, &replayCursor, done)
 			if err != nil {
-				b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
+				b.deferRecoveryForRetry(run, "replay unframed log", err)
 				return
 			}
 		}
@@ -155,7 +155,7 @@ func (b *Bot) finalizeRecoveredUnframedStep(ctx context.Context, sb *daytona.San
 			router.Fail("Recovered " + run.CommandStep + " failed")
 		}
 		if err := em.Err(); err != nil {
-			b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
+			b.deferRecoveryForRetry(run, "emit router done", err)
 			return
 		}
 	}
@@ -169,7 +169,7 @@ func (b *Bot) finalizeRecoveredUnframedStep(ctx context.Context, sb *daytona.San
 		err := fmt.Errorf("%s: command exited %d", run.CommandStep, exitCode)
 		em.Notify("Bootstrap skipped", bootstrapSkippedMessage(err))
 		if err := em.Err(); err != nil {
-			b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
+			b.deferRecoveryForRetry(run, "emit bootstrap skipped", err)
 			return
 		}
 		skipBootstrap = true
@@ -184,7 +184,7 @@ func (b *Bot) finalizeRecoveredUnframedStep(ctx context.Context, sb *daytona.San
 			)
 			em.Notify("Bootstrap skipped", bootstrapSkippedMessage(err))
 			if eErr := em.Err(); eErr != nil {
-				b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, eErr.Error(), b.workerID)
+				b.deferRecoveryForRetry(run, "emit bootstrap notify", eErr)
 				return
 			}
 			skipBootstrap = true
@@ -298,7 +298,7 @@ func (b *Bot) recoveredRunInputs(ctx context.Context, run runstore.Run, emit blo
 func (b *Bot) continueRecoveredRun(ctx context.Context, sb *daytona.Sandbox, run runstore.Run, live *liveRun, skipBootstrap bool) {
 	events, err := b.runs.EventsAfter(ctx, run.ID, 0)
 	if err != nil {
-		b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
+		b.deferRecoveryForRetry(run, "load events: continue", err)
 		return
 	}
 	em := newAgentRunEmitterAfterEvents(b.runs, run.ID, b.workerID, live, events)
@@ -340,16 +340,16 @@ func (b *Bot) continueRecoveredRun(ctx context.Context, sb *daytona.Sandbox, run
 	}
 	em.Result("Done!", body)
 	if err := em.Err(); err != nil {
-		b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
+		b.deferRecoveryForRetry(run, "emit continue result", err)
 		return
 	}
 	events, err = b.runs.EventsAfter(ctx, run.ID, 0)
 	if err != nil {
-		b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
+		b.deferRecoveryForRetry(run, "reload events: continue", err)
 		return
 	}
 	if err := b.projectRecoveredConversation(ctx, run, prURL, events); err != nil {
-		b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
+		b.deferRecoveryForRetry(run, "project conversation: continue", err)
 		return
 	}
 	b.runs.UpdateState(context.Background(), run.ID, runstore.StateSucceeded, "", b.workerID)
@@ -370,7 +370,7 @@ func (b *Bot) finishContinuedRecoveredError(ctx context.Context, run runstore.Ru
 		return
 	}
 	if errors.Is(err, errAgentRunDurability) {
-		b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
+		b.deferRecoveryForRetry(run, "durable run write failed", err)
 		return
 	}
 	title := "Agent failed"

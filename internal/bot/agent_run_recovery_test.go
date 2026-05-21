@@ -1,8 +1,10 @@
 package bot
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -550,9 +552,23 @@ func TestFinishRecoveredCancellationCancelsProjectsAndCleansUp(t *testing.T) {
 
 func TestHandleRecoverySetupErrorKeepsRetryableRunRecovering(t *testing.T) {
 	store := &fakeRunStore{enabled: true}
-	b := &Bot{log: discardLogger(), runs: store, workerID: "worker-1"}
+	var logBuf bytes.Buffer
+	b := &Bot{
+		log:      slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})),
+		runs:     store,
+		workerID: "worker-1",
+	}
 
-	b.handleRecoverySetupError(context.Background(), runstore.Run{ID: "run_retry"}, nil, "Agent failed", "retry later", errors.New("temporary daytona outage"))
+	run := runstore.Run{
+		ID:          "run_retry",
+		OrgID:       "org_1",
+		ThreadID:    "thread_1",
+		SandboxID:   "sandbox-1",
+		SessionID:   "session-1",
+		CommandID:   "command-1",
+		CommandStep: "run-script",
+	}
+	b.handleRecoverySetupError(context.Background(), run, nil, "Agent failed", "retry later", errors.New("temporary daytona outage"))
 
 	if len(store.updateStates) != 1 {
 		t.Fatalf("state updates = %+v", store.updateStates)
@@ -560,6 +576,25 @@ func TestHandleRecoverySetupErrorKeepsRetryableRunRecovering(t *testing.T) {
 	got := store.updateStates[0]
 	if got.state != runstore.StateRecovering || got.lastErr != "temporary daytona outage" || got.leaseOwner != "worker-1" {
 		t.Fatalf("state update = %+v", got)
+	}
+	logged := logBuf.String()
+	if !strings.Contains(logged, "level=WARN") || !strings.Contains(logged, "agent run recovery deferred by transient outage") {
+		t.Fatalf("expected transient outage warn log, got %q", logged)
+	}
+	for _, want := range []string{
+		`run_id=run_retry`,
+		`org=org_1`,
+		`thread=thread_1`,
+		`sandbox=sandbox-1`,
+		`session=session-1`,
+		`command=command-1`,
+		`command_step=run-script`,
+		`reason="sandbox setup"`,
+		`error="temporary daytona outage"`,
+	} {
+		if !strings.Contains(logged, want) {
+			t.Fatalf("log missing %q: %s", want, logged)
+		}
 	}
 }
 

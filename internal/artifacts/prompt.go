@@ -25,6 +25,13 @@ changes. Save them outside tracked source when possible:
 Do NOT stage, commit, push, or link to GitHub blob/raw URLs for
 generated proof artifacts unless the user explicitly asks to add that
 asset to the repository as source/docs content.
+
+Keep app runtime scratch out of the repo too. If your validation starts
+or restarts services, place pid files, logs, Redis dump.rdb files,
+temporary sqlite/dev DBs, and similar runtime outputs under /tmp
+(prefer /tmp/hetchy-runtime or /tmp/hetchy-validate). Before committing,
+run git status and remove any untracked runtime scratch created by the
+app; do not commit or leave those files as validation leftovers.
 `)
 	if slotCount > 0 {
 		b.WriteString(UploadInstructions(slotCount))

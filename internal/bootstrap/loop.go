@@ -402,6 +402,34 @@ run_with_timeout() {
   wait "$child_pid"
 }
 
+check_runtime_artifact_hygiene() {
+  local repo="${HETCHY_BOOTSTRAP_REPO_DIR}"
+  local dirty=""
+
+  if ! command -v git >/dev/null 2>&1 || ! git -C "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    return 0
+  fi
+
+  while IFS= read -r -d "" entry; do
+    [[ "${entry:0:2}" == "??" ]] || continue
+    p="${entry:3}"
+    if [[ "$p" == "dump.rdb" || "$p" == "nohup.out" ]]; then
+      dirty+="${p}"$'\n'
+    elif [[ "$p" != */* && ( "$p" == .hetchy* || "$p" =~ \.(log|pid)$ ) ]]; then
+      dirty+="${p}"$'\n'
+    fi
+  done < <(git -C "$repo" status --porcelain=v1 -z --untracked-files=normal 2>/dev/null)
+  dirty="${dirty%$'\n'}"
+  if [[ -z "$dirty" ]]; then
+    return 0
+  fi
+
+  echo "[hetchy-bootstrap] setup/start left runtime scratch in the repo checkout:" >&2
+  printf '%s\n' "$dirty" >&2
+  echo "[hetchy-bootstrap] move pid/log/db/runtime files under /tmp/hetchy-runtime and update setup/start/stop/lessons" >&2
+  return 1
+}
+
 # Strip out the alternate credential — claude's auth precedence puts
 # ANTHROPIC_API_KEY ahead of CLAUDE_CODE_OAUTH_TOKEN, so a stray value
 # inherited from a snapshot or sibling shell would silently win over the
@@ -472,6 +500,7 @@ echo "[hetchy-bootstrap] polling health.sh (90s budget)" >&2
 for i in {1..90}; do
   if "${HETCHY_BOOTSTRAP_OUT_DIR}/health.sh" >/dev/null 2>&1; then
     echo "[hetchy-bootstrap] healthy after ${i}s" >&2
+    check_runtime_artifact_hygiene || exit 72
     exit 0
   fi
   sleep 1
