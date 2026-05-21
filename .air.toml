@@ -6,18 +6,24 @@ root = "."
 tmp_dir = ".air-tmp"
 
 [build]
-  cmd = "go build -o ./.air-tmp/hetchy ./cmd/hetchy"
+  cmd = "./scripts/build-hetchy-dev.sh ./.air-tmp/hetchy"
   bin = "./.air-tmp/hetchy"
   # `html`, `css`, `js`, and `sh` are embedded by the Go binary, so Air
-  # must rebuild on those changes too. Otherwise the running server keeps
-  # serving whatever assets were embedded at the last `.go` rebuild.
+  # must rebuild on those changes too. Sandbox files affect the stamped
+  # Daytona snapshot version, so extensionless sandbox inputs not caught
+  # by include_ext must be listed in include_file.
   include_ext = ["go", "html", "css", "js", "sql", "sh"]
+  include_file = [
+    "sandbox/Dockerfile",
+    "sandbox/hetchy-playwright-smoke",
+    "sandbox/hetchy-record-screen",
+    "scripts/sandbox-version.sh",
+  ]
   exclude_dir = [
     "dist",
     ".air-tmp",
     "db/migrations",
     "internal/db/sqlc",
-    "sandbox",
     # Top-level scripts/ only (push-snapshot, create-slack-app) — the
     # embedded scripts at internal/bot/scripts/ MUST be watched.
     "./scripts",

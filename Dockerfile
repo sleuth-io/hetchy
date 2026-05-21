@@ -4,7 +4,7 @@ FROM golang:1.25.6-alpine AS builder
 WORKDIR /build
 
 # Install build dependencies
-RUN apk add --no-cache git make
+RUN apk add --no-cache bash git make
 
 # Copy go.mod and go.sum first for better caching
 COPY go.mod go.sum ./
@@ -14,15 +14,20 @@ RUN go mod download
 COPY cmd/ ./cmd/
 COPY internal/ ./internal/
 COPY db/ ./db/
+COPY scripts/sandbox-version.sh ./scripts/sandbox-version.sh
+COPY sandbox/ ./sandbox/
 
 # Build the binary
 ARG VERSION=dev
 ARG COMMIT=none
 ARG DATE=unknown
-RUN CGO_ENABLED=0 GOOS=linux go build \
+ARG SANDBOX_VERSION=
+RUN sandbox_version="${SANDBOX_VERSION:-$(./scripts/sandbox-version.sh)}" && \
+    CGO_ENABLED=0 GOOS=linux go build \
     -ldflags "-X github.com/hetchyhq/hetchy/internal/buildinfo.Version=${VERSION} \
               -X github.com/hetchyhq/hetchy/internal/buildinfo.Commit=${COMMIT} \
-              -X github.com/hetchyhq/hetchy/internal/buildinfo.Date=${DATE}" \
+              -X github.com/hetchyhq/hetchy/internal/buildinfo.Date=${DATE} \
+              -X github.com/hetchyhq/hetchy/internal/buildinfo.SandboxSnapshotVersion=${sandbox_version}" \
     -o hetchy \
     ./cmd/hetchy
 

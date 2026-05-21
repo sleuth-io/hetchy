@@ -43,9 +43,9 @@ dist
 *.tmp
 *.log
 
-# Scripts and sandbox (if not needed for build)
-scripts
-sandbox
+# Scripts
+scripts/*
+!scripts/sandbox-version.sh
 
 # Documentation
 docs
@@ -58,5 +58,3 @@ docs
 okteto.yml
 state.json
 sqlc.yaml
-
-

@@ -8,4 +8,7 @@ var (
 	Commit = "none"
 	// Date is set via ldflags at build time.
 	Date = "unknown"
+	// SandboxSnapshotVersion is the content-addressed Daytona sandbox
+	// snapshot version stamped at build time.
+	SandboxSnapshotVersion = "dev"
 )

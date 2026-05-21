@@ -64,6 +64,7 @@ func main() {
 		"version", buildinfo.Version,
 		"commit", buildinfo.Commit,
 		"date", buildinfo.Date,
+		"sandbox_snapshot_version", buildinfo.SandboxSnapshotVersion,
 		"log_level", level.String(),
 	)
 
