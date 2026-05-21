@@ -351,6 +351,44 @@ func (q *Queries) SaveConversationProgress(ctx context.Context, arg SaveConversa
 	return err
 }
 
+const saveConversationRunMetadata = `-- name: SaveConversationRunMetadata :exec
+UPDATE conversations
+   SET sandbox_id = CASE
+                        WHEN $3::text <> '' THEN $3
+                        ELSE sandbox_id
+                    END,
+       branch     = CASE
+                        WHEN $4::text <> '' THEN $4
+                        ELSE branch
+                    END,
+       pr_url     = CASE
+                        WHEN $5::text <> '' THEN $5
+                        ELSE pr_url
+                    END,
+       updated_at = NOW()
+WHERE org_id = $1
+  AND thread_id = $2
+`
+
+type SaveConversationRunMetadataParams struct {
+	OrgID     string `json:"org_id"`
+	ThreadID  string `json:"thread_id"`
+	SandboxID string `json:"sandbox_id"`
+	Branch    string `json:"branch"`
+	PrUrl     string `json:"pr_url"`
+}
+
+func (q *Queries) SaveConversationRunMetadata(ctx context.Context, arg SaveConversationRunMetadataParams) error {
+	_, err := q.db.Exec(ctx, saveConversationRunMetadata,
+		arg.OrgID,
+		arg.ThreadID,
+		arg.SandboxID,
+		arg.Branch,
+		arg.PrUrl,
+	)
+	return err
+}
+
 const saveConversationTaskOptions = `-- name: SaveConversationTaskOptions :exec
 UPDATE conversations
    SET task_options = $3,

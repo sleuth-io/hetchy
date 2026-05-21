@@ -18,6 +18,7 @@ type conversationStore interface {
 	Get(context.Context, string, string) (convstore.Record, error)
 	Search(context.Context, string, convstore.SearchOptions) ([]convstore.Record, error)
 	SaveProgress(context.Context, convstore.Record) error
+	SaveRunMetadata(context.Context, convstore.Record) error
 	SaveTaskOptions(context.Context, string, string, map[string]bool) error
 	SaveAttachments(context.Context, []convstore.Attachment) error
 	ListAttachments(context.Context, string, string) ([]convstore.Attachment, error)

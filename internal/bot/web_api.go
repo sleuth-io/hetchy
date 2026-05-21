@@ -543,6 +543,7 @@ func conversationIncludesFromQuery(q url.Values) conversationIncludeOptions {
 }
 
 func (b *Bot) conversationDetailResponse(ctx context.Context, orgID string, rec convstore.Record, include conversationIncludeOptions) conversationDetail {
+	rec = b.overlayDurableRunProjection(ctx, orgID, rec)
 	var createdAt string
 	if !rec.CreatedAt.IsZero() {
 		createdAt = rec.CreatedAt.UTC().Format(time.RFC3339)
@@ -575,6 +576,78 @@ func (b *Bot) conversationDetailResponse(ctx context.Context, orgID string, rec 
 		detail.Turns = conversationTurns(rec, attachments, include.Attachments)
 	}
 	return detail
+}
+
+func (b *Bot) overlayDurableRunProjection(ctx context.Context, orgID string, rec convstore.Record) convstore.Record {
+	if b.runs == nil || !b.runs.Enabled() {
+		return rec
+	}
+	run, err := b.runs.LatestForThread(ctx, orgID, rec.ThreadID)
+	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			b.log.Warn("latest run lookup for conversation projection",
+				"org", orgID, "thread", rec.ThreadID, "error", err)
+		}
+		return rec
+	}
+	events, err := b.runs.EventsAfter(ctx, run.ID, 0)
+	if err != nil {
+		b.log.Warn("list run events for conversation projection",
+			"org", orgID, "thread", rec.ThreadID, "run", run.ID, "error", err)
+		return rec
+	}
+	if len(events) == 0 {
+		return rec
+	}
+	turnBlocks := blocksFromRunEvents(events)
+	if len(turnBlocks) == 0 {
+		return rec
+	}
+
+	out := rec
+	if run.SandboxID != "" {
+		out.SandboxID = run.SandboxID
+	}
+	if run.Branch != "" {
+		out.Branch = run.Branch
+	}
+	if out.PRURL == "" {
+		out.PRURL = latestPRURLFromBlocks(turnBlocks)
+	}
+	switch run.RunKind {
+	case "followup":
+		if len(out.History) > 0 && out.History[len(out.History)-1] == run.UserRequest && len(out.ResponseBlocks) == len(out.History) {
+			out.ResponseBlocks[len(out.ResponseBlocks)-1] = turnBlocks
+		} else if len(out.History) > 0 && run.UserRequest != "" {
+			appendBlocksAsNewTurn(&out, run.UserRequest, turnBlocks)
+		}
+	default:
+		if len(out.History) == 0 && run.UserRequest != "" {
+			out.History = []string{run.UserRequest}
+		}
+		if len(out.ResponseBlocks) == 0 {
+			out.ResponseBlocks = [][]blocks.Block{turnBlocks}
+		} else {
+			out.ResponseBlocks[0] = turnBlocks
+		}
+	}
+	return out
+}
+
+func latestPRURLFromBlocks(turnBlocks []blocks.Block) string {
+	var latest string
+	for _, block := range turnBlocks {
+		if m := lastMatch(prURLRe, block.Title); m != "" {
+			latest = m
+		}
+		if m := lastMatch(prURLRe, block.Body); m != "" {
+			latest = m
+		}
+		if m := lastMatch(prURLRe, block.Summary); m != "" {
+			latest = m
+		}
+	}
+	return latest
 }
 
 func conversationTurns(rec convstore.Record, attachments []attachmentInfo, includeAttachments bool) []conversationTurn {

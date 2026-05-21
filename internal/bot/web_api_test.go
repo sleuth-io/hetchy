@@ -15,6 +15,7 @@ import (
 	"github.com/hetchyhq/hetchy/internal/blocks"
 	"github.com/hetchyhq/hetchy/internal/convstore"
 	"github.com/hetchyhq/hetchy/internal/db/sqlc"
+	"github.com/hetchyhq/hetchy/internal/runstore"
 )
 
 // TestExtractSXSkillsSurvivesPersistenceRoundTrip pins the contract
@@ -55,6 +56,64 @@ func TestExtractSXSkillsSurvivesPersistenceRoundTrip(t *testing.T) {
 		if got[i] != want[i] {
 			t.Errorf("got[%d] = %q, want %q", i, got[i], want[i])
 		}
+	}
+}
+
+func TestConversationDetailOverlaysDurableRunEvents(t *testing.T) {
+	events := []runstore.Event{
+		runEventForTest(t, "block_start", sseEvent{
+			ID:    "p1",
+			Kind:  blocks.KindNotify,
+			Title: "5 skills available",
+			Meta:  map[string]any{SXSkillsMetaKey: []string{"fix-pr", "golang-patterns"}},
+		}),
+		runEventForTest(t, "block_done", sseEvent{ID: "p1", Status: blocks.StatusDone}),
+		runEventForTest(t, "block_start", sseEvent{ID: "p2", Kind: blocks.KindResult, Title: "Done!"}),
+		runEventForTest(t, "block_append", sseEvent{ID: "p2", Delta: "https://github.com/hetchyhq/hetchy/pull/222"}),
+		runEventForTest(t, "block_done", sseEvent{ID: "p2", Status: blocks.StatusDone}),
+	}
+	for i := range events {
+		events[i].RunID = "run-1"
+		events[i].Seq = int64(i + 1)
+	}
+	b := &Bot{
+		log: discardLogger(),
+		runs: &fakeRunStore{
+			enabled: true,
+			latestRun: runstore.Run{
+				ID:          "run-1",
+				ThreadID:    "thread-1",
+				RunKind:     "fresh",
+				UserRequest: "ship it",
+				SandboxID:   "sandbox-1",
+				Branch:      "feature/pr",
+				State:       runstore.StateFailed,
+			},
+			events: events,
+		},
+	}
+	rec := convstore.Record{
+		OrgID:    "org-1",
+		ThreadID: "thread-1",
+		History:  []string{"ship it"},
+		ResponseBlocks: [][]blocks.Block{{
+			{ID: "old", Kind: blocks.KindError, Title: "truncated"},
+		}},
+	}
+
+	detail := b.conversationDetailResponse(context.Background(), "org-1", rec, conversationIncludeOptions{Turns: true})
+
+	if detail.PRURL != "https://github.com/hetchyhq/hetchy/pull/222" {
+		t.Fatalf("detail PRURL = %q", detail.PRURL)
+	}
+	if detail.SandboxID != "sandbox-1" || detail.Branch != "feature/pr" {
+		t.Fatalf("detail metadata sandbox=%q branch=%q", detail.SandboxID, detail.Branch)
+	}
+	if got := detail.SXSkills; len(got) != 2 || got[0] != "fix-pr" || got[1] != "golang-patterns" {
+		t.Fatalf("SXSkills = %+v", got)
+	}
+	if len(detail.Turns) != 1 || len(detail.Turns[0].Blocks) != 2 || detail.Turns[0].Blocks[0].Title != "5 skills available" {
+		t.Fatalf("turn blocks were not overlaid from run events: %+v", detail.Turns)
 	}
 }
 

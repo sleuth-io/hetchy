@@ -60,6 +60,21 @@ func (f *fakeConversationStore) SaveProgress(_ context.Context, rec convstore.Re
 	return nil
 }
 
+func (f *fakeConversationStore) SaveRunMetadata(_ context.Context, rec convstore.Record) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if rec.SandboxID != "" {
+		f.rec.SandboxID = rec.SandboxID
+	}
+	if rec.Branch != "" {
+		f.rec.Branch = rec.Branch
+	}
+	if rec.PRURL != "" {
+		f.rec.PRURL = rec.PRURL
+	}
+	return nil
+}
+
 func (f *fakeConversationStore) SaveTaskOptions(_ context.Context, _, _ string, opts map[string]bool) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

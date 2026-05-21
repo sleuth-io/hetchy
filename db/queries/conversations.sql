@@ -104,6 +104,24 @@ UPDATE conversations
        updated_at      = NOW()
 WHERE org_id = $1 AND thread_id = $2;
 
+-- name: SaveConversationRunMetadata :exec
+UPDATE conversations
+   SET sandbox_id = CASE
+                        WHEN sqlc.arg(sandbox_id)::text <> '' THEN sqlc.arg(sandbox_id)
+                        ELSE sandbox_id
+                    END,
+       branch     = CASE
+                        WHEN sqlc.arg(branch)::text <> '' THEN sqlc.arg(branch)
+                        ELSE branch
+                    END,
+       pr_url     = CASE
+                        WHEN sqlc.arg(pr_url)::text <> '' THEN sqlc.arg(pr_url)
+                        ELSE pr_url
+                    END,
+       updated_at = NOW()
+WHERE org_id = sqlc.arg(org_id)
+  AND thread_id = sqlc.arg(thread_id);
+
 -- name: SaveConversationTaskOptions :exec
 UPDATE conversations
    SET task_options = $3,
