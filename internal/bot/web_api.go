@@ -22,6 +22,8 @@ import (
 	"github.com/hetchyhq/hetchy/internal/db/sqlc"
 )
 
+const conversationProjectionRunEventLimit int32 = 5000
+
 // conversationSummary is the shape returned by GET /api/v1/conversations.
 // `Title` is derived from the first user turn so the sidebar has a
 // human-readable label without us needing a dedicated DB column.
@@ -590,7 +592,7 @@ func (b *Bot) overlayDurableRunProjection(ctx context.Context, orgID string, rec
 		}
 		return rec
 	}
-	events, err := b.runs.EventsAfter(ctx, run.ID, 0)
+	events, err := b.runs.EventsAfterLimit(ctx, run.ID, 0, conversationProjectionRunEventLimit)
 	if err != nil {
 		b.log.Warn("list run events for conversation projection",
 			"org", orgID, "thread", rec.ThreadID, "run", run.ID, "error", err)

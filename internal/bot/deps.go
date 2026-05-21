@@ -92,6 +92,7 @@ type runStore interface {
 	AppendEvent(context.Context, string, string, []byte, string) (int64, error)
 	AppendEventsAndAdvanceCursor(context.Context, string, []runstore.PendingEvent, int64, string) ([]int64, error)
 	EventsAfter(context.Context, string, int64) ([]runstore.Event, error)
+	EventsAfterLimit(context.Context, string, int64, int32) ([]runstore.Event, error)
 }
 
 type bootstrapStore interface {
