@@ -184,7 +184,9 @@ For local dev, create one App on the `hetchyhq` GitHub org:
 6. **Organization permissions**: Members (R).
 7. **Subscribe to events**: Installation target, Installation
    repositories, Member, Membership, Organization, Team, Team add,
-   Pull request, Push.
+   Pull request, Push, Issue comment, Pull request review, Pull
+   request review comment. (The last three drive the PR-comment →
+   follow-up turn flow.)
 8. **Where can this App be installed?**: Any account.
 9. After creation: copy the App ID, Client ID, slug; click "Generate a
    private key" and save the `.pem` file.

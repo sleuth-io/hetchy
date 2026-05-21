@@ -144,6 +144,12 @@ func (b *Bot) dispatchGithubEvent(ctx context.Context, event string, body []byte
 		b.handleInstallationReposEvent(ctx, body)
 	case "team", "team_add", "membership", "member", "organization":
 		b.handleOrgScopedEvent(ctx, event, body)
+	case "issue_comment":
+		b.handleIssueCommentEvent(ctx, body)
+	case "pull_request_review_comment":
+		b.handlePRReviewCommentEvent(ctx, body)
+	case "pull_request_review":
+		b.handlePRReviewEvent(ctx, body)
 	default:
 		b.log.Debug("github webhook: ignoring event", "event", event)
 	}

@@ -44,6 +44,17 @@ type Querier interface {
 	// org deletion has to clear them explicitly via the installation join.
 	DeleteRepoSetupSpecsByOrg(ctx context.Context, orgID string) error
 	DisableAgentProfile(ctx context.Context, arg DisableAgentProfileParams) (int64, error)
+	// Resolves a GitHub PR URL back to the conversation that opened it. The
+	// inbound webhook payload carries the installation_id, which we map to
+	// org_id before calling this, so the (org_id, pr_url) pair scopes the
+	// lookup to that org's data even though two different orgs could in
+	// principle have an installation that mirrors the same upstream repo.
+	//
+	// Newest-first ordering is a defensive tiebreak: a single PR URL should
+	// correspond to at most one conversation, but if a retry or rerun ever
+	// duplicated the URL we'd rather route the comment to the latest live
+	// thread than to a stale one.
+	FindConversationByPRURL(ctx context.Context, arg FindConversationByPRURLParams) (FindConversationByPRURLRow, error)
 	GetActiveAgentRunForThread(ctx context.Context, arg GetActiveAgentRunForThreadParams) (AgentRun, error)
 	GetAgentProfileBySlug(ctx context.Context, arg GetAgentProfileBySlugParams) (GetAgentProfileBySlugRow, error)
 	GetAgentRun(ctx context.Context, id string) (AgentRun, error)

@@ -120,6 +120,30 @@ func (s *Store) Get(ctx context.Context, orgID, threadID string) (Record, error)
 	return rec, nil
 }
 
+// FindByPRURL returns the conversation that opened the given GitHub PR
+// URL for orgID, or ErrNotFound if no conversation row matches. Callers
+// use this to route inbound GitHub PR comment webhooks back to the chat
+// that produced the PR.
+func (s *Store) FindByPRURL(ctx context.Context, orgID, prURL string) (Record, error) {
+	if s == nil || s.db == nil {
+		return Record{}, ErrNotFound
+	}
+	if prURL == "" {
+		return Record{}, ErrNotFound
+	}
+	row, err := s.db.Queries.FindConversationByPRURL(ctx, sqlc.FindConversationByPRURLParams{
+		OrgID: orgID,
+		PrUrl: prURL,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Record{}, ErrNotFound
+		}
+		return Record{}, fmt.Errorf("find conversation by pr_url: %w", err)
+	}
+	return recordFromFindByPRURLRow(row)
+}
+
 // SearchOptions filters and pages a sidebar list query. Empty CreatorID
 // and Query mean "no filter"; Limit/Offset drive the "Load more" pager.
 // Limit must be > 0; the handler clamps before calling.
@@ -516,6 +540,18 @@ func recordFromFields(f rowFields) (Record, error) {
 }
 
 func recordFromGetRow(row sqlc.GetConversationRow) (Record, error) {
+	return recordFromFields(rowFields{
+		OrgID: row.OrgID, ThreadID: row.ThreadID, SandboxID: row.SandboxID,
+		Branch: row.Branch, PrUrl: row.PrUrl, History: row.History,
+		ResponseBlocks: row.ResponseBlocks,
+		GithubOwner:    row.GithubOwner, GithubRepo: row.GithubRepo,
+		CustomTitle: row.CustomTitle, CreatorID: row.CreatorID, AgentSlug: row.AgentSlug, Model: row.Model,
+		TaskOptions: row.TaskOptions,
+		CreatedAt:   row.CreatedAt, UpdatedAt: row.UpdatedAt,
+	})
+}
+
+func recordFromFindByPRURLRow(row sqlc.FindConversationByPRURLRow) (Record, error) {
 	return recordFromFields(rowFields{
 		OrgID: row.OrgID, ThreadID: row.ThreadID, SandboxID: row.SandboxID,
 		Branch: row.Branch, PrUrl: row.PrUrl, History: row.History,

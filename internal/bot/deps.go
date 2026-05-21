@@ -16,6 +16,7 @@ import (
 
 type conversationStore interface {
 	Get(context.Context, string, string) (convstore.Record, error)
+	FindByPRURL(context.Context, string, string) (convstore.Record, error)
 	Search(context.Context, string, convstore.SearchOptions) ([]convstore.Record, error)
 	SaveProgress(context.Context, convstore.Record) error
 	SaveTaskOptions(context.Context, string, string, map[string]bool) error

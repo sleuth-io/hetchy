@@ -15,6 +15,8 @@ type fakeConversationStore struct {
 	mu              sync.Mutex
 	rec             convstore.Record
 	getErr          error
+	findByPRRec     convstore.Record
+	findByPRErr     error
 	searchResult    []convstore.Record
 	searchErr       error
 	saveProgressErr error
@@ -26,6 +28,7 @@ type fakeConversationStore struct {
 	progressSaves []convstore.Record
 	taskSaves     []map[string]bool
 	attachments   []convstore.Attachment
+	findByPRCalls []string
 }
 
 func (f *fakeConversationStore) Get(context.Context, string, string) (convstore.Record, error) {
@@ -35,6 +38,16 @@ func (f *fakeConversationStore) Get(context.Context, string, string) (convstore.
 		return convstore.Record{}, f.getErr
 	}
 	return cloneRecord(f.rec), nil
+}
+
+func (f *fakeConversationStore) FindByPRURL(_ context.Context, _, prURL string) (convstore.Record, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.findByPRCalls = append(f.findByPRCalls, prURL)
+	if f.findByPRErr != nil {
+		return convstore.Record{}, f.findByPRErr
+	}
+	return cloneRecord(f.findByPRRec), nil
 }
 
 func (f *fakeConversationStore) Search(context.Context, string, convstore.SearchOptions) ([]convstore.Record, error) {

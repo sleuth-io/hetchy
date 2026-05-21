@@ -41,6 +41,73 @@ func (q *Queries) DeleteConversationAttachmentsForTurn(ctx context.Context, arg 
 	return err
 }
 
+const findConversationByPRURL = `-- name: FindConversationByPRURL :one
+SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, response_blocks,
+       github_owner, github_repo, custom_title, creator_id, agent_slug, model, task_options
+FROM conversations
+WHERE org_id = $1 AND pr_url = $2
+ORDER BY updated_at DESC
+LIMIT 1
+`
+
+type FindConversationByPRURLParams struct {
+	OrgID string `json:"org_id"`
+	PrUrl string `json:"pr_url"`
+}
+
+type FindConversationByPRURLRow struct {
+	OrgID          string             `json:"org_id"`
+	ThreadID       string             `json:"thread_id"`
+	SandboxID      string             `json:"sandbox_id"`
+	Branch         string             `json:"branch"`
+	PrUrl          string             `json:"pr_url"`
+	History        []string           `json:"history"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	ResponseBlocks [][]byte           `json:"response_blocks"`
+	GithubOwner    string             `json:"github_owner"`
+	GithubRepo     string             `json:"github_repo"`
+	CustomTitle    string             `json:"custom_title"`
+	CreatorID      string             `json:"creator_id"`
+	AgentSlug      string             `json:"agent_slug"`
+	Model          string             `json:"model"`
+	TaskOptions    []byte             `json:"task_options"`
+}
+
+// Resolves a GitHub PR URL back to the conversation that opened it. The
+// inbound webhook payload carries the installation_id, which we map to
+// org_id before calling this, so the (org_id, pr_url) pair scopes the
+// lookup to that org's data even though two different orgs could in
+// principle have an installation that mirrors the same upstream repo.
+//
+// Newest-first ordering is a defensive tiebreak: a single PR URL should
+// correspond to at most one conversation, but if a retry or rerun ever
+// duplicated the URL we'd rather route the comment to the latest live
+// thread than to a stale one.
+func (q *Queries) FindConversationByPRURL(ctx context.Context, arg FindConversationByPRURLParams) (FindConversationByPRURLRow, error) {
+	row := q.db.QueryRow(ctx, findConversationByPRURL, arg.OrgID, arg.PrUrl)
+	var i FindConversationByPRURLRow
+	err := row.Scan(
+		&i.OrgID,
+		&i.ThreadID,
+		&i.SandboxID,
+		&i.Branch,
+		&i.PrUrl,
+		&i.History,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ResponseBlocks,
+		&i.GithubOwner,
+		&i.GithubRepo,
+		&i.CustomTitle,
+		&i.CreatorID,
+		&i.AgentSlug,
+		&i.Model,
+		&i.TaskOptions,
+	)
+	return i, err
+}
+
 const getConversation = `-- name: GetConversation :one
 SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, response_blocks,
        github_owner, github_repo, custom_title, creator_id, agent_slug, model, task_options

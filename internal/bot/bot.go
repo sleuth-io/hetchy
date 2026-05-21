@@ -177,6 +177,11 @@ type Bot struct {
 	// tests set it to 1 ms so the ticker fires without sleeping.
 	heartbeatInterval time.Duration
 	workerID          string
+	// resolveInstallationOrgFn is a test seam over the
+	// github_app_installations lookup that maps an inbound webhook's
+	// installation_id back to a Hetchy org id. Production code leaves
+	// this nil; the default implementation reads through b.store.
+	resolveInstallationOrgFn func(context.Context, int64) (string, bool)
 }
 
 // New constructs a Bot from config and a logger. It opens the database

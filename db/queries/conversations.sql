@@ -4,6 +4,24 @@ SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updat
 FROM conversations
 WHERE org_id = $1 AND thread_id = $2;
 
+-- name: FindConversationByPRURL :one
+-- Resolves a GitHub PR URL back to the conversation that opened it. The
+-- inbound webhook payload carries the installation_id, which we map to
+-- org_id before calling this, so the (org_id, pr_url) pair scopes the
+-- lookup to that org's data even though two different orgs could in
+-- principle have an installation that mirrors the same upstream repo.
+--
+-- Newest-first ordering is a defensive tiebreak: a single PR URL should
+-- correspond to at most one conversation, but if a retry or rerun ever
+-- duplicated the URL we'd rather route the comment to the latest live
+-- thread than to a stale one.
+SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, response_blocks,
+       github_owner, github_repo, custom_title, creator_id, agent_slug, model, task_options
+FROM conversations
+WHERE org_id = $1 AND pr_url = $2
+ORDER BY updated_at DESC
+LIMIT 1;
+
 -- name: SearchConversations :many
 -- Backs the sidebar list. Filters by optional creator_id and an
 -- optional case-insensitive substring match against either the
