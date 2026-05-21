@@ -79,7 +79,7 @@ func (b *Bot) recoverAgentRunReady(ctx context.Context, run runstore.Run, ready 
 
 	existingEvents, err := b.runs.EventsAfter(ctx, run.ID, 0)
 	if err != nil {
-		b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
+		b.deferRecoveryForRetry(run, "load existing events", err)
 		return
 	}
 	if unframedRecoverableStep(run.CommandStep) {
@@ -124,7 +124,7 @@ func (b *Bot) recoverFramedAgentRun(ctx context.Context, sb *daytona.Sandbox, ru
 
 		res, err := b.replayRecoveredLogTail(ctx, sb, &run, em, router, &frameState, &replayCursor)
 		if err != nil {
-			b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
+			b.deferRecoveryForRetry(run, "replay command log", err)
 			return
 		}
 		if !res.SeenBegin && resumeFrameState.seenBegin && replayCursor > 0 {
@@ -140,7 +140,7 @@ func (b *Bot) recoverFramedAgentRun(ctx context.Context, sb *daytona.Sandbox, ru
 			replayCursor = 0
 			res, err = b.replayRecoveredLogTail(ctx, sb, &run, em, router, &frameState, &replayCursor)
 			if err != nil {
-				b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
+				b.deferRecoveryForRetry(run, "replay command log: resume", err)
 				return
 			}
 		}
@@ -165,7 +165,7 @@ func (b *Bot) recoverFramedAgentRun(ctx context.Context, sb *daytona.Sandbox, ru
 				if code, done := sessionCommandExitCode(status); done {
 					finalRes, err := b.replayRecoveredLogTail(ctx, sb, &run, em, router, &frameState, &replayCursor)
 					if err != nil {
-						b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
+						b.deferRecoveryForRetry(run, "replay command log: pre-begin final", err)
 						return
 					}
 					if finalRes.SeenBegin {
@@ -198,7 +198,7 @@ func (b *Bot) recoverFramedAgentRun(ctx context.Context, sb *daytona.Sandbox, ru
 		if code, ok := sessionCommandExitCode(status); ok {
 			finalRes, err := b.replayRecoveredLogTail(ctx, sb, &run, em, router, &frameState, &replayCursor)
 			if err != nil {
-				b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
+				b.deferRecoveryForRetry(run, "replay command log: final", err)
 				return
 			}
 			if !finalRes.SeenBegin {
@@ -256,7 +256,7 @@ func (b *Bot) finalizeRecoveredRun(ctx context.Context, sb *daytona.Sandbox, run
 	if exitCode != 0 {
 		router.Abort()
 		if err := replayEm.Err(); err != nil {
-			b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
+			b.deferRecoveryForRetry(run, "replay emitter: exit nonzero", err)
 			return
 		}
 		err := fmt.Errorf("agent command exited %d during recovery", exitCode)
@@ -265,7 +265,7 @@ func (b *Bot) finalizeRecoveredRun(ctx context.Context, sb *daytona.Sandbox, run
 	}
 	prURL := router.Finish()
 	if err := replayEm.Err(); err != nil {
-		b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
+		b.deferRecoveryForRetry(run, "replay emitter: success", err)
 		return
 	}
 
@@ -293,24 +293,24 @@ func (b *Bot) finalizeRecoveredRun(ctx context.Context, sb *daytona.Sandbox, run
 	}
 	events, err := b.runs.EventsAfter(ctx, run.ID, 0)
 	if err != nil {
-		b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
+		b.deferRecoveryForRetry(run, "load events: finalize success", err)
 		return
 	}
 	if !recoveredRunHasTerminalBlock(events, blocks.KindResult) {
 		em := b.recoveredTerminalEmitter(run, live, events)
 		em.Result("Done!", body)
 		if err := em.Err(); err != nil {
-			b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
+			b.deferRecoveryForRetry(run, "emit terminal result", err)
 			return
 		}
 		events, err = b.runs.EventsAfter(ctx, run.ID, 0)
 		if err != nil {
-			b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
+			b.deferRecoveryForRetry(run, "reload events: finalize success", err)
 			return
 		}
 	}
 	if err := b.projectRecoveredConversation(ctx, run, prURL, events); err != nil {
-		b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
+		b.deferRecoveryForRetry(run, "project conversation: success", err)
 		return
 	}
 	b.runs.UpdateState(context.Background(), run.ID, runstore.StateSucceeded, "", b.workerID)
@@ -330,24 +330,24 @@ func (b *Bot) finalizeRecoveredRun(ctx context.Context, sb *daytona.Sandbox, run
 func (b *Bot) finishRecoveredFailure(ctx context.Context, run runstore.Run, live *liveRun, title, body string, cause error) {
 	events, err := b.runs.EventsAfter(ctx, run.ID, 0)
 	if err != nil {
-		b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
+		b.deferRecoveryForRetry(run, "load events: finalize failure", err)
 		return
 	}
 	if !recoveredRunHasTerminalBlock(events, blocks.KindError) {
 		em := b.recoveredTerminalEmitter(run, live, events)
 		em.Error(title, body)
 		if err := em.Err(); err != nil {
-			b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
+			b.deferRecoveryForRetry(run, "emit terminal error", err)
 			return
 		}
 		events, err = b.runs.EventsAfter(ctx, run.ID, 0)
 		if err != nil {
-			b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
+			b.deferRecoveryForRetry(run, "reload events: finalize failure", err)
 			return
 		}
 	}
 	if err := b.projectRecoveredConversation(ctx, run, "", events); err != nil {
-		b.runs.UpdateState(context.Background(), run.ID, runstore.StateRecovering, err.Error(), b.workerID)
+		b.deferRecoveryForRetry(run, "project conversation: failure", err)
 		return
 	}
 	lastErr := ""
