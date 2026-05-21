@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/hetchyhq/hetchy/internal/blocks"
 	"github.com/hetchyhq/hetchy/internal/convstore"
 )
@@ -239,13 +241,26 @@ func (b *Bot) routePRCommentToConversation(ctx context.Context, source prComment
 		"author", author, "request_id", requestID, "text_len", len(feedback))
 
 	emit := newPRCommentEmitter(b.log, orgID, rec.ThreadID, prURL, source)
-	b.HandleRequest(ctx, oc, feedback, requestID, rec.ThreadID, "", chatTaskOptionPatch{}, nil, nil, ClaudeModel(rec.Model), emit)
+	// Detach from the inbound webhook context before driving the agent.
+	// dispatchGithubEvent runs every handler under a 60 s
+	// webhookDispatchTimeout sized for sync-style work (paginated API +
+	// DB writes); a real PR-comment follow-up runs HandleRequest, which
+	// blocks on a full sandbox-bound agent run that can take minutes
+	// and has its own internal timeouts. Inheriting the 60 s deadline
+	// would cancel the run mid-flight every time.
+	b.HandleRequest(context.Background(), oc, feedback, requestID, rec.ThreadID, "", chatTaskOptionPatch{}, nil, nil, ClaudeModel(rec.Model), emit)
 }
 
 // resolveInstallationOrg maps a GitHub installation_id back to a
 // Hetchy org id by consulting github_app_installations. Wrapped here
 // (instead of inlined in routePRCommentToConversation) so tests can
 // override resolveInstallationOrgFn without standing up a real DB.
+//
+// A truly unknown installation (ErrNoRows) is silent — that's a
+// legitimate "not for this hetchy" case and we shouldn't log a noise
+// line per webhook delivery. Anything else (connection error, schema
+// drift) is logged at Error so a database outage doesn't silently drop
+// every inbound comment.
 func (b *Bot) resolveInstallationOrg(ctx context.Context, installationID int64) (string, bool) {
 	if b.resolveInstallationOrgFn != nil {
 		return b.resolveInstallationOrgFn(ctx, installationID)
@@ -255,6 +270,10 @@ func (b *Bot) resolveInstallationOrg(ctx context.Context, installationID int64) 
 	}
 	row, err := b.store.Queries.GetGithubInstallation(ctx, installationID)
 	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			b.log.Error("github pr comment: installation lookup failed",
+				"installation", installationID, "error", err)
+		}
 		return "", false
 	}
 	return row.OrgID, true
