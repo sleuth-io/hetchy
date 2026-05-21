@@ -39,23 +39,3 @@ jobs:
           SNAPSHOT_NAME: universal-coding
           SNAPSHOT_TAG: ${{ env.SANDBOX_VERSION }}
         run: ./scripts/push-snapshot.sh
-
-      - name: Install Railway CLI
-        run: npm install -g @railway/cli
-
-      - name: Set Railway sandbox build arg
-        env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
-          RAILWAY_SERVICE: ${{ secrets.RAILWAY_SERVICE }}
-          RAILWAY_ENVIRONMENT: ${{ secrets.RAILWAY_ENVIRONMENT }}
-        run: |
-          : "${RAILWAY_TOKEN:?missing RAILWAY_TOKEN secret}"
-          : "${RAILWAY_PROJECT_ID:?missing RAILWAY_PROJECT_ID secret}"
-          : "${RAILWAY_SERVICE:?missing RAILWAY_SERVICE secret}"
-          : "${RAILWAY_ENVIRONMENT:?missing RAILWAY_ENVIRONMENT secret}"
-          railway variable set "SANDBOX_VERSION=${SANDBOX_VERSION}" \
-            --project "$RAILWAY_PROJECT_ID" \
-            --service "$RAILWAY_SERVICE" \
-            --environment "$RAILWAY_ENVIRONMENT" \
-            --skip-deploys

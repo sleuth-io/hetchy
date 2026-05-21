@@ -33,7 +33,7 @@ services:
         VERSION: ${VERSION:-dev}
         COMMIT: ${COMMIT:-none}
         DATE: ${DATE:-unknown}
-        SANDBOX_VERSION: ${SANDBOX_VERSION:-dev}
+        SANDBOX_VERSION: ${SANDBOX_VERSION:-}
     container_name: migration
     restart: "no"
     command: "--migrate"
@@ -53,7 +53,7 @@ services:
         VERSION: ${VERSION:-dev}
         COMMIT: ${COMMIT:-none}
         DATE: ${DATE:-unknown}
-        SANDBOX_VERSION: ${SANDBOX_VERSION:-dev}
+        SANDBOX_VERSION: ${SANDBOX_VERSION:-}
     container_name: hetchy
     restart: unless-stopped
     ports:

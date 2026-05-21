@@ -45,6 +45,7 @@ dist
 
 # Scripts
 scripts/*
+!scripts/sandbox-version.sh
 
 # Documentation
 docs
