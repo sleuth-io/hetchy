@@ -71,6 +71,7 @@ customer.subscription.created
 customer.subscription.updated
 customer.subscription.deleted
 invoice.payment_failed
+invoice.paid
 ```
 
 Use snapshot events if Stripe asks you to choose between snapshot and thin events. The handler decodes the object included in the event payload.
@@ -174,6 +175,7 @@ customer.subscription.created
 customer.subscription.updated
 customer.subscription.deleted
 invoice.payment_failed
+invoice.paid
 ```
 
 After saving the endpoint:
@@ -217,7 +219,7 @@ stripe login
 
 ```bash
 stripe listen \
-  --events checkout.session.completed,customer.subscription.created,customer.subscription.updated,customer.subscription.deleted,invoice.payment_failed \
+  --events checkout.session.completed,customer.subscription.created,customer.subscription.updated,customer.subscription.deleted,invoice.payment_failed,invoice.paid \
   --forward-to localhost:8080/stripe/webhook
 ```
 
@@ -268,7 +270,7 @@ Store the stage webhook endpoint signing secret from Stripe Dashboard as `STRIPE
 https://<stage-host>/stripe/webhook
 ```
 
-6. Select the five required webhook events.
+6. Select the six required webhook events.
 7. Copy the endpoint signing secret.
 8. Set stage secrets:
 
@@ -308,7 +310,7 @@ The current Stripe CLI login is for `Hetchy.ai sandbox (acct_1TXZNrGbUsjCTHqj)` 
 https://app.hetchy.ai/stripe/webhook
 ```
 
-7. Select the five required webhook events.
+7. Select the six required webhook events.
 8. Copy the live endpoint signing secret.
 9. Store prod secrets:
 
@@ -348,7 +350,7 @@ Before enabling billing in any environment:
 
 - `STRIPE_SECRET_KEY` belongs to the same Stripe mode/account as every configured Price ID.
 - `STRIPE_WEBHOOK_SECRET` belongs to the webhook endpoint that points at that app environment.
-- The webhook endpoint includes all five required events.
+- The webhook endpoint includes all six required events.
 - Every price in `STRIPE_TOPUP_PRICE_IDS` is a one-time price for exactly 100 Hetchy credits.
 - Every price in `STRIPE_SUBSCRIPTION_PRICE_IDS` is a recurring price for the matching paid plan.
 - Customer Portal is configured in the same Stripe mode/account.

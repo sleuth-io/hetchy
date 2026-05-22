@@ -12,6 +12,7 @@ import (
 	"maps"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
@@ -168,6 +169,7 @@ type Bot struct {
 	usersOnlyInOrgFn          func(context.Context, string) ([]string, error)
 	deleteWorkOSOrgFn         func(context.Context, string) error
 	workOSOrgHasFeatureFlagFn func(context.Context, string, string) (bool, error)
+	workOSCompedBillingSyncs  sync.Map
 	// branchNameFn lets tests bypass the LLM round-trip in
 	// branchNameFor. Production code leaves this nil; the default
 	// path calls Anthropic and falls back to "sf" on any failure.

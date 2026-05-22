@@ -387,7 +387,7 @@ func (b *Bot) populateSettingsTabData(ctx context.Context, orgID, tab string, da
 		data["Invitations"] = invites
 
 	case "billing":
-		if _, err := b.syncWorkOSCompedBillingForOrg(ctx, orgID); err != nil {
+		if err := b.syncWorkOSCompedBillingForOrgCached(ctx, orgID); err != nil {
 			b.log.Warn("workos comped billing sync failed", "org", orgID, "error", err)
 		}
 		overview, err := b.loadBillingOverview(ctx, orgID)
