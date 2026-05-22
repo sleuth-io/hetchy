@@ -87,6 +87,7 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 	labels := daytonaSandboxLabels(b.cfg, oc, cacheVolumeID)
 	addBillingFlavorLabels(labels, flavor)
 	autoArchiveMinutes := b.daytonaAutoArchiveMinutes()
+	snapshot := b.sandboxSnapshotForBillingFlavor(flavor)
 	sb, err := b.createSandboxWithRetry(ctx, types.SnapshotParams{
 		SandboxBaseParams: types.SandboxBaseParams{
 			EnvVars:             envVars,
@@ -94,21 +95,10 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 			Volumes:             volumes,
 			AutoArchiveInterval: &autoArchiveMinutes,
 		},
-		Snapshot: b.cfg.Snapshot,
+		Snapshot: snapshot,
 	})
 	if err != nil {
 		b.handleFreshSandboxCreateError(ctx, &rec, recorder, requestID, err, emit)
-		return
-	}
-	if err := b.resizeSandboxForBillingFlavor(ctx, sb, flavor); err != nil {
-		b.log.Error("sandbox resize failed", "sandbox", sb.ID, "request_id", requestID, "flavor", flavor.Code, "error", err)
-		emit.Error("Sandbox failed", fmt.Sprintf("Couldn't apply the `%s` sandbox flavor before starting work. Try again or choose a smaller flavor in Organization settings.", flavor.Label))
-		b.cleanupSandboxWithTimeout(sb, "billing flavor resize failed")
-		appendBlocksToFirstTurn(&rec, recorder.Snapshot())
-		if uerr := b.convs.Upsert(context.Background(), rec); uerr != nil {
-			b.log.Error("convstore upsert (sandbox resize fail)", "error", uerr)
-		}
-		b.markRunState(ctx, runstore.StateFailed, err)
 		return
 	}
 	// Mark this fresh-run sandbox as owned by the current turn. The
@@ -122,7 +112,7 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 	if err := b.convs.Upsert(context.Background(), rec); err != nil {
 		b.log.Error("convstore upsert (sandbox ready)", "error", err)
 	}
-	b.log.Info("sandbox created", "id", sb.ID, "request_id", requestID, "daytona_snapshot", b.cfg.Snapshot, "auto_archive_minutes", autoArchiveMinutes, "state", sb.State)
+	b.log.Info("sandbox created", "id", sb.ID, "request_id", requestID, "daytona_snapshot", snapshot, "auto_archive_minutes", autoArchiveMinutes, "state", sb.State)
 	sandboxReadyID := emit.Start(blocks.KindNotify, "Sandbox ready", map[string]any{"tag": sandboxReadySSETag})
 	emit.Append(sandboxReadyID, fmt.Sprintf("`%s` is up — cloning repo and starting %s.", sb.ID, agentRuntimeDisplayName(model)))
 	emit.Done(sandboxReadyID, "")
@@ -242,7 +232,7 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 		return
 	}
 
-	flavor, ok := b.admitBillingForRun(ctx, oc.OrgID, rec.GitHubOwner, rec.GitHubRepo, emit)
+	_, ok := b.admitBillingForRun(ctx, oc.OrgID, rec.GitHubOwner, rec.GitHubRepo, emit)
 	if !ok {
 		appendBlocksAsNewTurn(&rec, text, recorder.Snapshot())
 		if err := b.convs.Upsert(ctx, rec); err != nil {
@@ -267,16 +257,6 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 		appendBlocksAsNewTurn(&rec, text, recorder.Snapshot())
 		if err := b.convs.Upsert(ctx, rec); err != nil {
 			b.log.Error("convstore upsert (follow-up sandbox missing)", "error", err)
-		}
-		b.markRunState(ctx, runstore.StateFailed, err)
-		return
-	}
-	if err := b.resizeSandboxForBillingFlavor(ctx, sb, flavor); err != nil {
-		b.log.Error("follow-up sandbox resize failed", "sandbox", sb.ID, "request_id", requestID, "flavor", flavor.Code, "error", err)
-		emit.Error("Sandbox resume failed", fmt.Sprintf("Couldn't apply the `%s` sandbox flavor before resuming work. Try again or choose a smaller flavor in Organization settings.", flavor.Label))
-		appendBlocksAsNewTurn(&rec, text, recorder.Snapshot())
-		if err := b.convs.Upsert(ctx, rec); err != nil {
-			b.log.Error("convstore upsert (follow-up sandbox resize)", "error", err)
 		}
 		b.markRunState(ctx, runstore.StateFailed, err)
 		return

@@ -154,7 +154,6 @@ type Bot struct {
 	validateRecoveredPRFn     recoveredPRValidationFunc
 	getSandboxFn              func(context.Context, string) (*daytona.Sandbox, error)
 	resumeSandboxFn           func(context.Context, *daytona.Sandbox, blocks.Emitter) error
-	resizeSandboxFn           func(context.Context, *daytona.Sandbox, billing.Flavor) error
 	deleteSandboxSessionFn    func(*daytona.Sandbox, string)
 	stopAndArchiveFn          func(context.Context, *daytona.Sandbox)
 	setAutoArchiveIntervalFn  func(context.Context, *daytona.Sandbox, *int) error

@@ -43,3 +43,15 @@ jobs:
           SNAPSHOT_NAME: universal-coding
           SNAPSHOT_TAG: ${{ env.SANDBOX_VERSION }}
         run: ./scripts/push-snapshot.sh
+
+      - name: Ensure Daytona plus snapshot
+        env:
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+          DAYTONA_API_URL: ${{ secrets.DAYTONA_API_URL }}
+          DAYTONA_CLI_LOGIN: "1"
+          SNAPSHOT_NAME: universal-coding-plus
+          SNAPSHOT_TAG: ${{ env.SANDBOX_VERSION }}
+          SNAPSHOT_CPU: "4"
+          SNAPSHOT_MEMORY_GB: "8"
+          SNAPSHOT_DISK_GB: "10"
+        run: ./scripts/push-snapshot.sh

@@ -1,12 +1,9 @@
 package bot
 
 import (
-	"context"
 	"errors"
 	"strings"
 	"testing"
-
-	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
 
 	"github.com/hetchyhq/hetchy/internal/billing"
 )
@@ -93,27 +90,21 @@ func TestAddBillingFlavorLabels(t *testing.T) {
 	}
 }
 
-func TestResizeSandboxForBillingFlavor(t *testing.T) {
-	if err := (&Bot{}).resizeSandboxForBillingFlavor(t.Context(), nil, billing.MustFlavor(billing.FlavorPlus)); err != nil {
-		t.Fatalf("nil sandbox resize returned error: %v", err)
+func TestSandboxSnapshotForBillingFlavor(t *testing.T) {
+	b := &Bot{cfg: Config{
+		SnapshotBase:           "universal-coding",
+		Snapshot:               "universal-coding-abc123",
+		SandboxSnapshotVersion: "abc123",
+	}}
+	if got := b.sandboxSnapshotForBillingFlavor(billing.MustFlavor(billing.FlavorStandard)); got != "universal-coding-abc123" {
+		t.Fatalf("standard snapshot = %q", got)
 	}
-	if err := (&Bot{}).resizeSandboxForBillingFlavor(t.Context(), &daytona.Sandbox{}, billing.MustFlavor(billing.FlavorStandard)); err != nil {
-		t.Fatalf("standard resize returned error: %v", err)
+	if got := b.sandboxSnapshotForBillingFlavor(billing.MustFlavor(billing.FlavorPlus)); got != "universal-coding-plus-abc123" {
+		t.Fatalf("plus snapshot = %q", got)
 	}
 
-	wantErr := errors.New("resize failed")
-	called := false
-	b := &Bot{resizeSandboxFn: func(_ context.Context, _ *daytona.Sandbox, flavor billing.Flavor) error {
-		called = true
-		if flavor.Code != billing.FlavorPlus {
-			t.Fatalf("resize flavor = %q, want plus", flavor.Code)
-		}
-		return wantErr
-	}}
-	if err := b.resizeSandboxForBillingFlavor(t.Context(), &daytona.Sandbox{}, billing.MustFlavor(billing.FlavorPlus)); !errors.Is(err, wantErr) {
-		t.Fatalf("resize error = %v, want %v", err, wantErr)
-	}
-	if !called {
-		t.Fatal("resizeSandboxFn was not called")
+	dev := &Bot{cfg: Config{Snapshot: "universal-coding:local", SnapshotBase: "universal-coding", SandboxSnapshotVersion: "dev"}}
+	if got := dev.sandboxSnapshotForBillingFlavor(billing.MustFlavor(billing.FlavorPlus)); got != "universal-coding:local" {
+		t.Fatalf("dev plus fallback snapshot = %q", got)
 	}
 }

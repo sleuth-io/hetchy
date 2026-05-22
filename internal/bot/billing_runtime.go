@@ -5,10 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
-
-	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
-	"github.com/daytonaio/daytona/libs/sdk-go/pkg/types"
 
 	"github.com/hetchyhq/hetchy/internal/billing"
 	"github.com/hetchyhq/hetchy/internal/blocks"
@@ -84,19 +82,14 @@ func addBillingFlavorLabels(labels map[string]string, flavor billing.Flavor) {
 	labels["hetchy_billing_multiplier"] = strconv.Itoa(flavor.Multiplier)
 }
 
-func (b *Bot) resizeSandboxForBillingFlavor(ctx context.Context, sb *daytona.Sandbox, flavor billing.Flavor) error {
-	if sb == nil {
-		return nil
+func (b *Bot) sandboxSnapshotForBillingFlavor(flavor billing.Flavor) string {
+	if flavor.Code == billing.FlavorStandard {
+		return b.cfg.Snapshot
 	}
-	if b.resizeSandboxFn != nil {
-		return b.resizeSandboxFn(ctx, sb, flavor)
+	base := strings.TrimSpace(b.cfg.SnapshotBase)
+	version := strings.TrimSpace(b.cfg.SandboxSnapshotVersion)
+	if base == "" || version == "" || version == "dev" || version == "unknown" {
+		return b.cfg.Snapshot
 	}
-	if b.daytona == nil {
-		return nil
-	}
-	return sb.ResizeWithTimeout(ctx, &types.Resources{
-		CPU:    flavor.VCPU,
-		Memory: flavor.MemoryGiB,
-		Disk:   flavor.DiskGiB,
-	}, 2*time.Minute)
+	return base + "-" + flavor.Code + "-" + version
 }
