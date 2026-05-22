@@ -1,0 +1,1459 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hetchy Generous Pricing Plan</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%231c6b5a'/%3E%3Cpath d='M4 11V5h2v2h4V5h2v6h-2V9H6v2H4z' fill='white'/%3E%3C/svg%3E">
+  <style>
+    :root {
+      --ink: #18211f;
+      --muted: #5c6b65;
+      --paper: #f8faf8;
+      --panel: #ffffff;
+      --line: #d7dfda;
+      --green: #1c6b5a;
+      --green-soft: #e4f3ed;
+      --blue: #345f93;
+      --blue-soft: #e9f0fb;
+      --gold: #7f641c;
+      --gold-soft: #fbf4dc;
+      --coral: #9b4d3f;
+      --coral-soft: #fae9e5;
+      --slate: #23302d;
+      --shadow: 0 16px 44px rgba(24, 33, 31, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      background: var(--paper);
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: linear-gradient(180deg, #f3f7f4 0%, #fbfcfb 34%, #f6f9f8 100%);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.5;
+    }
+
+    a {
+      color: var(--blue);
+      text-decoration-thickness: 1px;
+      text-underline-offset: 3px;
+    }
+
+    .page {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 38px 22px 64px;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.18fr) minmax(280px, 0.82fr);
+      gap: 24px;
+      align-items: stretch;
+      padding: 30px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+    }
+
+    .eyebrow {
+      margin: 0 0 10px;
+      color: var(--green);
+      font-size: 13px;
+      font-weight: 760;
+      letter-spacing: 0;
+      text-transform: uppercase;
+    }
+
+    h1,
+    h2,
+    h3 {
+      margin: 0;
+      letter-spacing: 0;
+    }
+
+    h1 {
+      max-width: 760px;
+      font-size: 58px;
+      line-height: 0.98;
+    }
+
+    h2 {
+      margin-bottom: 14px;
+      font-size: 34px;
+      line-height: 1.08;
+    }
+
+    h3 {
+      margin-bottom: 8px;
+      font-size: 19px;
+      line-height: 1.2;
+    }
+
+    p {
+      margin: 0;
+      color: var(--muted);
+    }
+
+    .lede {
+      max-width: 770px;
+      margin-top: 18px;
+      color: #3f4f49;
+      font-size: 18px;
+    }
+
+    .hero-metrics {
+      display: grid;
+      gap: 12px;
+      align-content: start;
+    }
+
+    .metric,
+    .panel,
+    .plan,
+    .stat {
+      min-width: 0;
+      border-radius: 8px;
+    }
+
+    .metric {
+      padding: 17px;
+      background: #f6faf7;
+      border: 1px solid var(--line);
+    }
+
+    .metric strong {
+      display: block;
+      font-size: 30px;
+      line-height: 1;
+    }
+
+    .metric span {
+      display: block;
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    section {
+      margin-top: 34px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .grid.two {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .panel {
+      padding: 22px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      box-shadow: 0 10px 30px rgba(24, 33, 31, 0.04);
+    }
+
+    .panel.green {
+      background: var(--green-soft);
+      border-color: #badbd1;
+    }
+
+    .panel.blue {
+      background: var(--blue-soft);
+      border-color: #c7d8ee;
+    }
+
+    .panel.gold {
+      background: var(--gold-soft);
+      border-color: #ebd99a;
+    }
+
+    .panel.coral {
+      background: var(--coral-soft);
+      border-color: #eac6be;
+    }
+
+    .stat-row {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    .stat {
+      padding: 14px;
+      background: rgba(255, 255, 255, 0.72);
+      border: 1px solid rgba(24, 33, 31, 0.12);
+    }
+
+    .stat .value {
+      display: block;
+      font-size: 24px;
+      font-weight: 820;
+      line-height: 1;
+    }
+
+    .stat .label {
+      display: block;
+      margin-top: 7px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      overflow: hidden;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: 0 10px 30px rgba(24, 33, 31, 0.04);
+    }
+
+    th,
+    td {
+      padding: 14px 15px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+      font-size: 14px;
+    }
+
+    th {
+      background: #eef4f1;
+      color: #2c3a36;
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0;
+      text-transform: uppercase;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .money {
+      color: #1f2c28;
+      font-variant-numeric: tabular-nums;
+      font-weight: 760;
+      white-space: nowrap;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      padding: 3px 9px;
+      border-radius: 999px;
+      background: #edf3f0;
+      color: #2b3935;
+      font-size: 12px;
+      font-weight: 780;
+      white-space: nowrap;
+    }
+
+    .plan-cards {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .plan {
+      padding: 20px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      box-shadow: 0 10px 30px rgba(24, 33, 31, 0.04);
+    }
+
+    .plan.featured {
+      border-color: #81b6a6;
+      box-shadow: 0 16px 36px rgba(28, 107, 90, 0.14);
+    }
+
+    .price {
+      margin-top: 8px;
+      font-size: 33px;
+      font-weight: 850;
+      letter-spacing: 0;
+    }
+
+    .price small {
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 650;
+    }
+
+    .savings {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      margin-top: 10px;
+      padding: 4px 9px;
+      border-radius: 8px;
+      background: #eef7f3;
+      color: #215748;
+      font-size: 13px;
+      font-weight: 780;
+      line-height: 1.25;
+    }
+
+    .savings.baseline {
+      background: #f1f4f3;
+      color: var(--muted);
+    }
+
+    ul {
+      margin: 15px 0 0;
+      padding-left: 19px;
+      color: var(--muted);
+    }
+
+    li {
+      margin: 7px 0;
+    }
+
+    .formula {
+      display: grid;
+      gap: 8px;
+      margin-top: 14px;
+      padding: 15px;
+      background: var(--slate);
+      color: #eff6f3;
+      border-radius: 8px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+      overflow-x: auto;
+    }
+
+    .formula span {
+      white-space: nowrap;
+    }
+
+    .calculator {
+      display: grid;
+      grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    label {
+      display: block;
+      margin: 0 0 8px;
+      color: #2c3d37;
+      font-size: 13px;
+      font-weight: 780;
+    }
+
+    input[type="range"] {
+      width: 100%;
+      accent-color: var(--green);
+    }
+
+    select {
+      width: 100%;
+      min-height: 40px;
+      padding: 8px 10px;
+      color: var(--ink);
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      font: inherit;
+    }
+
+    .control {
+      margin-top: 16px;
+    }
+
+    .result-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .callout {
+      padding: 18px;
+      border-left: 5px solid var(--green);
+      background: #f2f8f5;
+      border-radius: 8px;
+      color: #2c3d37;
+    }
+
+    .small {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .source-list {
+      display: grid;
+      gap: 8px;
+      margin-top: 12px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    @media (max-width: 940px) {
+      .hero,
+      .calculator,
+      .grid,
+      .grid.two,
+      .plan-cards {
+        grid-template-columns: 1fr;
+      }
+
+      .stat-row,
+      .result-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      h1 {
+        font-size: 42px;
+      }
+    }
+
+    @media (max-width: 560px) {
+      .page {
+        padding: 24px 14px 44px;
+      }
+
+      .hero,
+      .panel,
+      .plan {
+        padding: 18px;
+      }
+
+      .stat-row,
+      .result-grid {
+        grid-template-columns: 1fr;
+      }
+
+      h1 {
+        font-size: 36px;
+      }
+
+      h2 {
+        font-size: 27px;
+      }
+
+      th,
+      td {
+        padding: 11px 10px;
+        font-size: 13px;
+      }
+
+      table {
+        display: block;
+        max-width: 100%;
+        overflow-x: auto;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <div>
+        <p class="eyebrow">Generous pricing proposal - May 21, 2026</p>
+        <h1>Drop prices hard, but keep the meter honest.</h1>
+        <p class="lede">
+          The branch currently makes customers bring their own Claude or Codex credential. That means Hetchy's
+          billable cost floor is Daytona sandbox runtime plus product overhead, not Anthropic inference. On that
+          model we can make the plans meaningfully cheaper than the first draft while keeping gross margin near
+          the lower side of acceptable when customers fully use their included credits.
+        </p>
+      </div>
+      <div class="hero-metrics">
+        <div class="metric">
+          <strong>$0.050</strong>
+          <span>Live Daytona cost floor for one fully used 15-minute Standard credit.</span>
+        </div>
+        <div class="metric">
+          <strong>64</strong>
+          <span>Hetchy-labelled Daytona sandboxes found through the CLI.</span>
+        </div>
+        <div class="metric">
+          <strong>$19</strong>
+          <span>Lowest paid plan that still holds roughly 50% modeled gross margin at full burn.</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="grid">
+      <div class="panel green">
+        <h3>Recommended Move</h3>
+        <p>
+          Replace the current $49 / $199 / $499 ladder with $19 / $79 / $199. Keep Business at $499, but size
+          included credits against the live Daytona resource shape instead of the smaller branch meter.
+        </p>
+      </div>
+      <div class="panel blue">
+        <h3>Boundary</h3>
+        <p>
+          These prices are compute-only. If Hetchy starts bundling Claude API or Managed Agents usage, model
+          inference must be metered separately or passed through.
+        </p>
+      </div>
+      <div class="panel gold">
+        <h3>Control</h3>
+        <p>
+          Keep credits as 15-minute started blocks and launch with two sandbox flavors: Standard at 2 vCPU / 6 GiB
+          / 10 GiB, and Plus at the current Daytona account ceiling of 4 vCPU / 8 GiB / 10 GiB.
+        </p>
+      </div>
+    </section>
+
+    <section>
+      <h2>What Anthropic Charges</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Surface</th>
+            <th>Current public pricing signal</th>
+            <th>Pricing implication for Hetchy</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Claude Code on the web</strong></td>
+            <td>Research preview for Pro, Max, Team, and premium Enterprise seats. It runs on Anthropic-managed cloud infrastructure and shares rate limits with Claude Code usage.</td>
+            <td>Consumer pricing is subscription and rate-limit based, not transparent per-run COGS. Anthropic is hiding cloud and inference variance behind plan limits.</td>
+          </tr>
+          <tr>
+            <td><strong>Claude subscriptions</strong></td>
+            <td>Pro is $20 monthly, Max is $100 or $200 per person monthly, and Team Standard is $25 monthly or $20 annually per seat.</td>
+            <td>A $199 entry plan would feel expensive next to these, especially because Hetchy users still bring Claude/Codex credentials.</td>
+          </tr>
+          <tr>
+            <td><strong>Claude Code with API billing</strong></td>
+            <td>Anthropic says Claude Code API usage varies widely, averaging around $13 per active developer day and $150-250 per developer month across enterprise deployments.</td>
+            <td>If Hetchy ever pays inference, the plan must change. Those costs are too large to bundle into a $19-$79 flat compute plan.</td>
+          </tr>
+          <tr>
+            <td><strong>Claude Managed Agents API</strong></td>
+            <td>Managed Agents bill model tokens at normal API prices plus $0.08 per running session-hour. Anthropic's example one-hour Opus coding session totals $0.705.</td>
+            <td>The all-in cloud-agent floor is an order of magnitude above Daytona-only runtime. BYO credentials are what make generous Hetchy pricing viable.</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Competitive Read</h2>
+      <div class="grid two">
+        <div class="panel coral">
+          <h3>The market is moving away from subsidies</h3>
+          <p>
+            GitHub says Copilot is moving to usage-based billing on June 1, 2026 because agentic use now includes
+            long multi-step sessions and the old premium-request model no longer matched compute and inference cost.
+            That is the clearest public signal that flat-rate coding agents have been subsidizing heavy users.
+          </p>
+        </div>
+        <div class="panel green">
+          <h3>Hetchy can still be aggressive</h3>
+          <p>
+            Hetchy is not currently absorbing Anthropic token spend. The product can compete on low base price and
+            clear included sandbox credits, then let customers manage their own Claude/Codex plan or API bill.
+          </p>
+        </div>
+      </div>
+      <table style="margin-top: 16px;">
+        <thead>
+          <tr>
+            <th>Provider</th>
+            <th>Observed pricing</th>
+            <th>How to position Hetchy</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Claude</strong></td>
+            <td>Pro $20/mo; Max $100-$200/mo; Team Standard $25/mo or $20/mo annually.</td>
+            <td>Hetchy should not start above Claude Max unless it includes model usage, which it does not.</td>
+          </tr>
+          <tr>
+            <td><strong>Cursor</strong></td>
+            <td>Individual Pro $20/mo, Teams $40/user/mo, Cloud Agents included, on-demand model usage available.</td>
+            <td>A $19 Hetchy plan is necessary for the solo-developer comparison set.</td>
+          </tr>
+          <tr>
+            <td><strong>Windsurf</strong></td>
+            <td>Pro $20/mo, Max $200/mo, Teams $40/user/mo, extra usage at API price, cloud agents surfaced through Devin Cloud.</td>
+            <td>Match the $20 entry point, but be clearer about credits and sandbox runtime than "standard/heavy" allowance labels.</td>
+          </tr>
+          <tr>
+            <td><strong>GitHub Copilot</strong></td>
+            <td>Pro remains $10/mo, Pro+ $39/mo, Business $19/user/mo, Enterprise $39/user/mo, but usage converts to AI Credits from June 1.</td>
+            <td>Hetchy should use the same pattern: low plan price, explicit credits, budget caps, and paid usage when credits are exhausted.</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Margin Benchmark</h2>
+      <div class="grid two">
+        <div class="panel coral">
+          <h3>10-16% is not enough</h3>
+          <p>
+            The previous generous draft stayed positive, but only barely. That is closer to intentional subsidy
+            than a sustainable SaaS margin. It leaves almost nothing for customer support, failed-run cleanup,
+            onboarding, payment disputes, monitoring, or ordinary operating mistakes.
+          </p>
+        </div>
+        <div class="panel green">
+          <h3>Use 50% as the floor</h3>
+          <p>
+            Traditional SaaS aims much higher: 70-80% is the normal target and 75%+ is commonly considered good.
+            AI and infrastructure-heavy products can run lower, but the lower defensible anchor is still around
+            50% with a clear path to 60-70% as usage and infrastructure efficiency improve.
+          </p>
+        </div>
+      </div>
+      <table style="margin-top: 16px;">
+        <thead>
+          <tr>
+            <th>Benchmark signal</th>
+            <th>What the sources say</th>
+            <th>Hetchy pricing interpretation</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Traditional SaaS</td>
+            <td>Stripe describes 75%+ as good, below 70% as concerning, and 80%+ as top-performing.</td>
+            <td>Do not call a 10-20% product margin healthy just because it is positive.</td>
+          </tr>
+          <tr>
+            <td>Early-stage SaaS</td>
+            <td>Stripe says 50%+ can be acceptable early; CFO Pro says many early-stage SaaS companies sit around 50-60% before optimizing.</td>
+            <td>Use 50% as the lower-side floor for launch pricing, not as the long-term target.</td>
+          </tr>
+          <tr>
+            <td>AI startups</td>
+            <td>Bessemer reports AI Supernovas around 25% gross margin, often negative, while AI Shooting Stars average around 60%.</td>
+            <td>We should not copy the subsidy-heavy Supernova pattern unless the goal is explicitly to buy distribution with losses.</td>
+          </tr>
+          <tr>
+            <td>Infrastructure-heavy SaaS</td>
+            <td>Benchmarks still expect a credible path to 60-70% as scale improves and cloud costs are optimized.</td>
+            <td>Anchor the public plan on about 50% modeled gross margin and push overage pricing above that.</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Local And Daytona Run Data</h2>
+      <div class="stat-row">
+        <div class="stat">
+          <span class="value">35</span>
+          <span class="label">Local non-synthetic runs with Daytona sandbox IDs</span>
+        </div>
+        <div class="stat">
+          <span class="value">4.82h</span>
+          <span class="label">Actual local run-window hours repriced at current Standard</span>
+        </div>
+        <div class="stat">
+          <span class="value">$0.96</span>
+          <span class="label">Current-Standard raw Daytona COGS for those run windows</span>
+        </div>
+        <div class="stat">
+          <span class="value">$2.09</span>
+          <span class="label">Current-Standard COGS for the 42 billed credit blocks</span>
+        </div>
+      </div>
+      <table style="margin-top: 16px;">
+        <thead>
+          <tr>
+            <th>Subset</th>
+            <th>Runs</th>
+            <th>Average</th>
+            <th>Median</th>
+            <th>P90</th>
+            <th>Max</th>
+            <th>Pricing read</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>All non-synthetic runs</td>
+            <td>40</td>
+            <td>7.23 min</td>
+            <td>4.76 min</td>
+            <td>16.62 min</td>
+            <td>52.28 min</td>
+            <td>One 15-minute credit covers most runs; p90 spills into a second block.</td>
+          </tr>
+          <tr>
+            <td>Runs with a sandbox ID</td>
+            <td>35</td>
+            <td>8.26 min</td>
+            <td>5.10 min</td>
+            <td>17.41 min</td>
+            <td>52.28 min</td>
+            <td>Use 15 minutes as the unit, but show customers that long tasks consume more credits.</td>
+          </tr>
+          <tr>
+            <td>Succeeded</td>
+            <td>26</td>
+            <td>9.53 min</td>
+            <td>5.37 min</td>
+            <td>19.01 min</td>
+            <td>52.28 min</td>
+            <td>Successes are longer than failures and cancellations, so success-only averages understate risk less.</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="small" style="margin-top: 10px;">
+        The new `billing_run_meters` table is empty in local Postgres, so local run windows still use
+        `agent_runs.created_at` to `updated_at`. Historical rows include some old smaller sandboxes, but the cost
+        figures above reprice the observed run windows using the current minimum Standard shape of 2 vCPU / 6 GiB
+        / 10 GiB.
+      </p>
+    </section>
+
+    <section>
+      <h2>Daytona CLI Inventory</h2>
+      <div class="stat-row">
+        <div class="stat">
+          <span class="value">109</span>
+          <span class="label">Total sandboxes returned by `daytona list`</span>
+        </div>
+        <div class="stat">
+          <span class="value">64</span>
+          <span class="label">Hetchy-labelled sandboxes across dev, prod, and stg</span>
+        </div>
+        <div class="stat">
+          <span class="value">44</span>
+          <span class="label">Hetchy sandboxes at 2 vCPU / 6 GiB / 10 GiB</span>
+        </div>
+        <div class="stat">
+          <span class="value">5</span>
+          <span class="label">Ready Hetchy cache volumes</span>
+        </div>
+      </div>
+      <table style="margin-top: 16px;">
+        <thead>
+          <tr>
+            <th>Cut</th>
+            <th>Count</th>
+            <th>Observed hours</th>
+            <th>Estimated cost</th>
+            <th>Pricing read</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Local run rows repriced at current Standard</td>
+            <td>35 runs / 29 sandboxes</td>
+            <td>4.82 run hours</td>
+            <td class="money">$0.96 raw / $2.09 credit-block</td>
+            <td>Observed raw cost per charged Standard credit would be about $0.023, but margin tables use the full $0.04977 credit-block floor.</td>
+          </tr>
+          <tr>
+            <td>Hetchy-labelled CLI lifecycle: created to last activity</td>
+            <td>64 sandboxes</td>
+            <td>66.0 hours</td>
+            <td class="money">$12.37</td>
+            <td>This is a conservative lifecycle proxy, not exact billable work time; some sandboxes sit around for debug or archive transitions.</td>
+          </tr>
+          <tr>
+            <td>Historical Hetchy shape mix</td>
+            <td>20 small / 44 large</td>
+            <td>15.65h small / 50.37h large by CLI lifecycle</td>
+            <td>The old 2 vCPU / 3 GiB / 4 GiB shape is no longer usable; the product has moved to 2 vCPU / 6 GiB / 10 GiB as the minimum.</td>
+            <td>Treat 2 / 6 / 10 as Standard for all launch pricing.</td>
+          </tr>
+          <tr>
+            <td>Current Daytona org limits</td>
+            <td>4 vCPU / 8 GiB / 10 GiB max per sandbox</td>
+            <td>Not a usage total</td>
+            <td>This is the only one-size-up flavor we can offer on the current Daytona plan.</td>
+            <td>Launch with Standard and Plus only. Add Max later after paying Daytona for higher account limits.</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="small" style="margin-top: 10px;">
+        CLI status snapshot: 95 archived, 11 stopped, 2 error, 1 archiving. One errored sandbox still has
+        `desiredState=started`, so operational cleanup should be part of the billing control loop.
+      </p>
+    </section>
+
+    <section>
+      <h2>Cost Floor</h2>
+      <div class="grid two">
+        <div class="panel">
+          <h3>Direct sandbox cost</h3>
+          <p>
+            Daytona's public prices are $0.0504 per vCPU-hour, $0.0162 per GiB-hour of memory, and $0.000108
+            per GiB-hour of storage after the first 5 free GiB. Live Hetchy sandboxes are mostly 2 vCPU, 6 GiB
+            memory, and 10 GiB disk, so the direct Standard floor is higher than the first draft assumed.
+          </p>
+          <div class="formula">
+            <span>live_standard_hour = (2 * $0.0504) + (6 * $0.0162) + (10 * $0.000108) = $0.19908</span>
+            <span>live_standard_credit = live_standard_hour / 4 = $0.04977</span>
+            <span>billable_credits = ceil(minutes / 15) * flavor_multiplier</span>
+          </div>
+        </div>
+        <div class="panel">
+          <h3>Modeled payment overhead</h3>
+          <p>
+            Margin tables below include a conservative Stripe allowance of 3.6% plus $0.30 per transaction:
+            2.9% domestic card processing plus Stripe Billing pay-as-you-go at 0.7%. If Stripe Billing is on a
+            negotiated package, margins improve.
+          </p>
+          <div class="formula">
+            <span>modeled_fee = (price * 0.036) + $0.30</span>
+            <span>gross_margin = (price - fee - overhead - daytona_cogs) / price</span>
+          </div>
+        </div>
+      </div>
+      <div class="callout" style="margin-top: 16px;">
+        Update `internal/billing/flavor.go` before shipping these plan constants. Standard should be 2 vCPU /
+        6 GiB / 10 GiB. The higher launch flavor should be 4 vCPU / 8 GiB / 10 GiB and should cost 2 credits per
+        started 15-minute block. The old 2 / 3 / 4 Standard tuple and the old 8 / 16 / 25 Max tuple do not match
+        current operational reality.
+      </div>
+    </section>
+
+    <section>
+      <h2>Launch Sandbox Flavors</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Flavor</th>
+            <th>Resource tuple</th>
+            <th>Daytona cost/hour</th>
+            <th>Daytona cost/15 min</th>
+            <th>Credit multiplier</th>
+            <th>Launch read</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Standard</strong></td>
+            <td>2 vCPU / 6 GiB / 10 GiB</td>
+            <td class="money">$0.19908</td>
+            <td class="money">$0.04977</td>
+            <td>1x</td>
+            <td>Smallest usable container. All plan margin math uses this as the floor.</td>
+          </tr>
+          <tr>
+            <td><strong>Plus</strong></td>
+            <td>4 vCPU / 8 GiB / 10 GiB</td>
+            <td class="money">$0.33228</td>
+            <td class="money">$0.08307</td>
+            <td>2x</td>
+            <td>Fits the current Daytona account limit and leaves about 16.5% cost cushion versus two Standard credits.</td>
+          </tr>
+          <tr>
+            <td><strong>Max</strong></td>
+            <td>Not available on current Daytona limits</td>
+            <td>Depends on future limit raise</td>
+            <td>Depends on future limit raise</td>
+            <td>Later</td>
+            <td>Add this only after demand proves out and Daytona raises the account ceiling.</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Most Generous Sustainable Plans</h2>
+      <div class="plan-cards">
+        <article class="plan">
+          <span class="tag">Trial</span>
+          <h3>Free</h3>
+          <div class="price">$0</div>
+          <ul>
+            <li>25 credits once</li>
+            <li>1 connected repo</li>
+            <li>Standard sandbox only</li>
+            <li>Hard stop at included credits</li>
+          </ul>
+        </article>
+        <article class="plan featured">
+          <span class="tag">Entry</span>
+          <h3>Builder</h3>
+          <div class="price">$19 <small>/mo</small></div>
+          <p class="savings baseline">Entry baseline</p>
+          <ul>
+            <li>100 credits included</li>
+            <li>$25 per 100 extra credits</li>
+            <li>Standard sandbox only</li>
+            <li>Upgrade once usage is consistent</li>
+          </ul>
+        </article>
+        <article class="plan">
+          <span class="tag">Team</span>
+          <h3>Studio</h3>
+          <div class="price">$79 <small>/mo</small></div>
+          <p class="savings">33.6% less than Builder + top-ups</p>
+          <ul>
+            <li>500 credits included</li>
+            <li>$22 per 100 extra credits</li>
+            <li>Standard and Plus sandboxes</li>
+            <li>Shared org controls and repo defaults</li>
+          </ul>
+        </article>
+        <article class="plan">
+          <span class="tag">Scale</span>
+          <h3>Growth</h3>
+          <div class="price">$199 <small>/mo</small></div>
+          <p class="savings">28.2% less than Studio + top-ups</p>
+          <ul>
+            <li>1,400 credits included</li>
+            <li>$20 per 100 extra credits</li>
+            <li>Standard and Plus sandboxes now; Max after Daytona limit raise</li>
+            <li>Higher concurrency and support priority</li>
+          </ul>
+        </article>
+        <article class="plan">
+          <span class="tag">High volume</span>
+          <h3>Business</h3>
+          <div class="price">$499 <small>/mo</small></div>
+          <p class="savings">21.9% less than Growth + top-ups</p>
+          <ul>
+            <li>3,600 credits included</li>
+            <li>$16 per 100 extra credits</li>
+            <li>Standard and Plus sandboxes now; Max after Daytona limit raise</li>
+            <li>Priority support and higher org limits</li>
+          </ul>
+        </article>
+      </div>
+
+      <table style="margin-top: 16px;">
+        <thead>
+          <tr>
+            <th>Plan</th>
+            <th>Price</th>
+            <th>Included credits</th>
+            <th>Standard hours</th>
+            <th>Daytona COGS at full use</th>
+            <th>Modeled overhead</th>
+            <th>Payment fee</th>
+            <th>Profit at full use</th>
+            <th>Margin</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Builder</strong></td>
+            <td class="money">$19</td>
+            <td>100</td>
+            <td>25</td>
+            <td class="money">$4.98</td>
+            <td class="money">$2.50</td>
+            <td class="money">$0.98</td>
+            <td class="money">$10.54</td>
+            <td><span class="tag">55.5%</span></td>
+          </tr>
+          <tr>
+            <td><strong>Studio</strong></td>
+            <td class="money">$79</td>
+            <td>500</td>
+            <td>125</td>
+            <td class="money">$24.89</td>
+            <td class="money">$8.00</td>
+            <td class="money">$3.14</td>
+            <td class="money">$42.97</td>
+            <td><span class="tag">54.4%</span></td>
+          </tr>
+          <tr>
+            <td><strong>Growth</strong></td>
+            <td class="money">$199</td>
+            <td>1,400</td>
+            <td>350</td>
+            <td class="money">$69.68</td>
+            <td class="money">$18.00</td>
+            <td class="money">$7.46</td>
+            <td class="money">$103.86</td>
+            <td><span class="tag">52.2%</span></td>
+          </tr>
+          <tr>
+            <td><strong>Business</strong></td>
+            <td class="money">$499</td>
+            <td>3,600</td>
+            <td>900</td>
+            <td class="money">$179.17</td>
+            <td class="money">$45.00</td>
+            <td class="money">$18.26</td>
+            <td class="money">$256.56</td>
+            <td><span class="tag">51.4%</span></td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="small" style="margin-top: 10px;">
+        This is intentionally anchored near the lower side of acceptable SaaS margin. The fully-used scenario
+        assumes every credit is consumed on the live 2 vCPU / 6 GiB / 10 GiB Standard shape. Plus is slightly
+        cheaper per credit because its 2x multiplier is rounded above direct Daytona cost.
+      </p>
+    </section>
+
+    <section class="grid two">
+      <div class="panel green">
+        <h2>How Much We Can Drop</h2>
+        <p>
+          Relative to the current branch constants, the public entry price can drop from $49 to $19, Team from
+          $199 to $79, and Growth from $499 to $199. The live Daytona shape and margin benchmarks mean included
+          credits should drop materially from the first generous draft, while still giving customers a clear
+          monthly run budget.
+        </p>
+      </div>
+      <div class="panel blue">
+        <h2>Why This Still Works</h2>
+        <p>
+          At the live $0.04977 Standard credit cost, a $19 plan can carry 100 round credits and still hold
+          roughly a 55% gross margin after modeled payment fees and $2.50 of per-account overhead. That is still
+          low by traditional SaaS standards, but defensible for an early, infrastructure-heavy product.
+        </p>
+      </div>
+    </section>
+
+    <section>
+      <h2>Plan Floor Check</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Plan price</th>
+            <th>Overhead assumption</th>
+            <th>Maximum credits at 50% margin</th>
+            <th>Recommended credits</th>
+            <th>Distance from 50% floor</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="money">$19</td>
+            <td class="money">$2.50</td>
+            <td>120</td>
+            <td>100</td>
+            <td>+20 credits</td>
+          </tr>
+          <tr>
+            <td class="money">$79</td>
+            <td class="money">$8.00</td>
+            <td>569</td>
+            <td>500</td>
+            <td>+69 credits</td>
+          </tr>
+          <tr>
+            <td class="money">$199</td>
+            <td class="money">$18.00</td>
+            <td>1,487</td>
+            <td>1,400</td>
+            <td>+87 credits</td>
+          </tr>
+          <tr>
+            <td class="money">$499</td>
+            <td class="money">$45.00</td>
+            <td>3,741</td>
+            <td>3,600</td>
+            <td>+141 credits</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Extra Credits</h2>
+      <div class="callout">
+        Extra credits should be convenience overflow, not a cheaper substitute for upgrading. Price 100-credit
+        blocks so matching the next plan's included credits is at least 20% cheaper through the upgrade path.
+        Keep auto-top-up caps as an optional admin safety setting, not as a plan promise.
+      </div>
+      <table style="margin-top: 16px;">
+        <thead>
+          <tr>
+            <th>Plan</th>
+            <th>Suggested extra block</th>
+            <th>Revenue</th>
+            <th>Daytona COGS</th>
+            <th>Modeled fee</th>
+            <th>Profit</th>
+            <th>Margin</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Builder</td>
+            <td>100 credits</td>
+            <td class="money">$25</td>
+            <td class="money">$4.98</td>
+            <td class="money">$1.20</td>
+            <td class="money">$18.82</td>
+            <td>75.3%</td>
+          </tr>
+          <tr>
+            <td>Studio</td>
+            <td>100 credits</td>
+            <td class="money">$22</td>
+            <td class="money">$4.98</td>
+            <td class="money">$1.09</td>
+            <td class="money">$15.93</td>
+            <td>72.4%</td>
+          </tr>
+          <tr>
+            <td>Growth</td>
+            <td>100 credits</td>
+            <td class="money">$20</td>
+            <td class="money">$4.98</td>
+            <td class="money">$1.02</td>
+            <td class="money">$14.00</td>
+            <td>70.0%</td>
+          </tr>
+          <tr>
+            <td>Business</td>
+            <td>100 credits</td>
+            <td class="money">$16</td>
+            <td class="money">$4.98</td>
+            <td class="money">$0.88</td>
+            <td class="money">$10.15</td>
+            <td>63.4%</td>
+          </tr>
+        </tbody>
+      </table>
+      <table style="margin-top: 16px;">
+        <thead>
+          <tr>
+            <th>Upgrade comparison</th>
+            <th>Lower plan + top-ups</th>
+            <th>Higher plan</th>
+            <th>Result</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Builder to Studio credits</td>
+            <td class="money">$119</td>
+            <td class="money">$79</td>
+            <td>Upgrade saves $40, or 33.6%.</td>
+          </tr>
+          <tr>
+            <td>Studio to Growth credits</td>
+            <td class="money">$277</td>
+            <td class="money">$199</td>
+            <td>Upgrade saves $78, or 28.2%.</td>
+          </tr>
+          <tr>
+            <td>Growth to Business credits</td>
+            <td class="money">$639</td>
+            <td class="money">$499</td>
+            <td>Upgrade saves $140, or 21.9%.</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Internal Team Capacity</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Plan</th>
+            <th>Assumed active team size</th>
+            <th>Workday Standard credits</th>
+            <th>Observed-average Standard runs/workday</th>
+            <th>Runs per active user/workday</th>
+            <th>P90-ish runs per active user/workday</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Builder</td>
+            <td>1 user</td>
+            <td>4.5</td>
+            <td>3.8</td>
+            <td>3.8</td>
+            <td>2.3</td>
+          </tr>
+          <tr>
+            <td>Studio</td>
+            <td>3 users</td>
+            <td>22.7</td>
+            <td>18.9</td>
+            <td>6.3</td>
+            <td>3.8</td>
+          </tr>
+          <tr>
+            <td>Growth</td>
+            <td>8 users</td>
+            <td>63.6</td>
+            <td>53.0</td>
+            <td>6.6</td>
+            <td>4.0</td>
+          </tr>
+          <tr>
+            <td>Business</td>
+            <td>20 users</td>
+            <td>163.6</td>
+            <td>136.4</td>
+            <td>6.8</td>
+            <td>4.1</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="small" style="margin-top: 10px;">
+        This is internal positioning, not suggested public copy. It assumes 22 workdays per month, local
+        observed-average Standard usage of 1.20 credits per sandbox run, and a P90-ish Standard session cost of
+        2 credits. Plus sessions consume 2x these credits.
+      </p>
+    </section>
+
+    <section>
+      <h2>What 1,200 Credits Buys</h2>
+      <div class="stat-row">
+        <div class="stat">
+          <span class="value">300h</span>
+          <span class="label">Full-burn Standard sandbox time per month</span>
+        </div>
+        <div class="stat">
+          <span class="value">54.5</span>
+          <span class="label">Standard credits per workday on a 22-workday pacing budget</span>
+        </div>
+        <div class="stat">
+          <span class="value">45</span>
+          <span class="label">Observed-average Standard sessions per workday</span>
+        </div>
+        <div class="stat">
+          <span class="value">23</span>
+          <span class="label">Observed-average Plus sessions per workday</span>
+        </div>
+      </div>
+      <table style="margin-top: 16px;">
+        <thead>
+          <tr>
+            <th>Team size</th>
+            <th>Short Standard sessions</th>
+            <th>Observed-average Standard sessions</th>
+            <th>P90-ish Standard sessions</th>
+            <th>Practical read</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>1 active user</td>
+            <td>54/workday</td>
+            <td>45/workday</td>
+            <td>27/workday</td>
+            <td>Effectively solo-heavy usage if the user is mostly running Standard sessions.</td>
+          </tr>
+          <tr>
+            <td>3 active users</td>
+            <td>18/user/workday</td>
+            <td>15/user/workday</td>
+            <td>9/user/workday</td>
+            <td>Comfortable for a small team that uses agents repeatedly throughout the day.</td>
+          </tr>
+          <tr>
+            <td>5 active users</td>
+            <td>11/user/workday</td>
+            <td>9/user/workday</td>
+            <td>5-6/user/workday</td>
+            <td>Reasonable for daily use if sessions stay mostly Standard and mostly under 20 minutes.</td>
+          </tr>
+          <tr>
+            <td>10 active users</td>
+            <td>5-6/user/workday</td>
+            <td>4-5/user/workday</td>
+            <td>2-3/user/workday</td>
+            <td>Works as a team pool, but not for every developer running agents all day.</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="small" style="margin-top: 10px;">
+        Assumptions: 1 credit is one started 15-minute Standard block, 1,200 monthly credits pace to 54.5
+        Standard credits/workday over 22 workdays, and local observed usage averaged 1.20 Standard credits per
+        sandbox run. Plus multiplies credit burn by 2, so those same workday credits support about 23
+        observed-average Plus sessions/workday. Max should wait until Daytona raises the current account limits.
+      </p>
+    </section>
+
+    <section>
+      <h2>Interactive Pressure Test</h2>
+      <div class="calculator">
+        <div class="panel">
+          <p class="small">Change plan, credit usage, and overhead to see how close the recommendation is to the floor.</p>
+          <div class="control">
+            <label for="plan">Plan</label>
+            <select id="plan">
+              <option value="builder">Builder - $19, 100 credits</option>
+              <option value="studio">Studio - $79, 500 credits</option>
+              <option value="growth">Growth - $199, 1,400 credits</option>
+              <option value="business">Business - $499, 3,600 credits</option>
+            </select>
+          </div>
+          <div class="control">
+            <label for="usage">Credit usage: <span id="usageLabel">100</span>%</label>
+            <input id="usage" type="range" min="0" max="125" value="100" step="5">
+          </div>
+          <div class="control">
+            <label for="overhead">Monthly overhead override: <span id="overheadLabel">$2.50</span></label>
+            <input id="overhead" type="range" min="0" max="100" value="2.5" step="0.5">
+          </div>
+        </div>
+        <div class="panel">
+          <h3>Modeled outcome</h3>
+          <div class="result-grid">
+            <div class="stat">
+              <span class="value" id="calcCredits">100</span>
+              <span class="label">Credits consumed</span>
+            </div>
+            <div class="stat">
+              <span class="value" id="calcRevenue">$19.00</span>
+              <span class="label">Plan revenue</span>
+            </div>
+            <div class="stat">
+              <span class="value" id="calcDaytona">$4.98</span>
+              <span class="label">Daytona COGS</span>
+            </div>
+            <div class="stat">
+              <span class="value" id="calcFee">$0.98</span>
+              <span class="label">Modeled payment fee</span>
+            </div>
+            <div class="stat">
+              <span class="value" id="calcProfit">$10.54</span>
+              <span class="label">Gross profit</span>
+            </div>
+            <div class="stat">
+              <span class="value" id="calcMargin">55.5%</span>
+              <span class="label">Gross margin</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Implementation Changes</h2>
+      <div class="grid two">
+        <div class="panel">
+          <h3>Plan constants</h3>
+          <ul>
+            <li>Rename Starter to Builder, or keep the code `starter` and show "Builder" publicly.</li>
+            <li>Update paid plan constants to $19 / 100, $79 / 500, $199 / 1,400, $499 / 3,600.</li>
+            <li>Set 100-credit top-up prices to $25 / $22 / $20 / $16 across Builder, Studio, Growth, and Business.</li>
+            <li>Keep Standard-only for Builder; allow Plus at Studio; advertise Max only after Daytona sandbox limits are raised.</li>
+            <li>Set per-run maximums to control blast radius: Builder 4 credits, Studio 12, Growth 24, Business 48.</li>
+          </ul>
+        </div>
+        <div class="panel">
+          <h3>Billing mechanics</h3>
+          <ul>
+            <li>Change `TopupUnitCredits` from 10 to 100 if extra-credit prices are sold as low-cost overage blocks.</li>
+            <li>Pin Standard sandbox resources to 2 vCPU / 6 GiB / 10 GiB on create.</li>
+            <li>Replace the old Pro/Max flavor ladder with Plus at 4 vCPU / 8 GiB / 10 GiB and defer Max until Daytona account limits are raised.</li>
+            <li>Keep auto-top-up monthly caps configurable as a billing safety setting, not as plan packaging.</li>
+            <li>Keep failed and cancelled runs billable once a sandbox starts.</li>
+            <li>Add automated archive enforcement for failed debug sandboxes after a grace period.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Decision</h2>
+      <div class="callout">
+        Ship the generous ladder if Hetchy remains BYO Claude/Codex credentials. Do not market it as "unlimited."
+        Market it as "clear monthly cloud-agent capacity" with transparent credits, clear caps, and fair extra
+        blocks. Before launch, reconcile the Standard resource tuple so Daytona creation and billing meters agree.
+        If Hetchy later bundles Anthropic inference, add a separate model-usage meter or a much higher AI-included
+        plan.
+      </div>
+    </section>
+
+    <section>
+      <h2>Sources</h2>
+      <div class="source-list">
+        <span>Existing Hetchy pricing draft: <a href="./hetchy-pricing-plan.html">docs/research/hetchy-pricing-plan.html</a></span>
+        <span>Local Hetchy Postgres: `agent_runs`, excluding IDs matching `run_dev_%`; `billing_run_meters` currently empty.</span>
+        <span>Daytona CLI snapshot: `daytona list --format json --limit 100 --page 1/2`, `daytona info`, `daytona volume list --format json`, and `daytona organization list --format json`, captured May 21, 2026.</span>
+        <span>Daytona pricing: <a href="https://www.daytona.io/pricing">https://www.daytona.io/pricing</a></span>
+        <span>Daytona billing docs: <a href="https://www.daytona.io/docs/billing">https://www.daytona.io/docs/billing</a></span>
+        <span>SaaS gross margin benchmarks, Stripe: <a href="https://stripe.com/en-dk/resources/more/saas-gross-margin-explained-what-it-is-and-why-it-is-important">https://stripe.com/en-dk/resources/more/saas-gross-margin-explained-what-it-is-and-why-it-is-important</a></span>
+        <span>AI startup margin benchmarks, Bessemer State of AI 2025: <a href="https://www.bvp.com/atlas/the-state-of-ai-2025">https://www.bvp.com/atlas/the-state-of-ai-2025</a></span>
+        <span>SaaS gross margin targets by stage, CFO Pro Analytics: <a href="https://cfoproanalytics.com/cfo-wiki/saas/gross-margin-targets-for-saas-companies/">https://cfoproanalytics.com/cfo-wiki/saas/gross-margin-targets-for-saas-companies/</a></span>
+        <span>SaaS gross margin expectations by stage, Fiscallion: <a href="https://www.fiscallion.io/blog/saas-gross-margin-benchmark-what-investors-actually-expect-at-every-stage">https://www.fiscallion.io/blog/saas-gross-margin-benchmark-what-investors-actually-expect-at-every-stage</a></span>
+        <span>Claude Code on the web docs: <a href="https://code.claude.com/docs/en/web-quickstart">https://code.claude.com/docs/en/web-quickstart</a></span>
+        <span>Claude Code on the web announcement: <a href="https://claude.com/blog/claude-code-on-the-web">https://claude.com/blog/claude-code-on-the-web</a></span>
+        <span>Claude Code cost docs: <a href="https://code.claude.com/docs/en/costs">https://code.claude.com/docs/en/costs</a></span>
+        <span>Claude API and Managed Agents pricing: <a href="https://platform.claude.com/docs/en/about-claude/pricing">https://platform.claude.com/docs/en/about-claude/pricing</a></span>
+        <span>Claude Pro, Max, and Team pricing: <a href="https://claude.com/pricing">https://claude.com/pricing</a></span>
+        <span>Cursor pricing: <a href="https://cursor.com/pricing">https://cursor.com/pricing</a></span>
+        <span>Windsurf pricing: <a href="https://windsurf.com/pricing">https://windsurf.com/pricing</a></span>
+        <span>GitHub Copilot usage-based billing: <a href="https://github.blog/news-insights/company-news/github-copilot-is-moving-to-usage-based-billing/">https://github.blog/news-insights/company-news/github-copilot-is-moving-to-usage-based-billing/</a></span>
+        <span>Stripe pricing: <a href="https://stripe.com/pricing">https://stripe.com/pricing</a></span>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const creditCost = 0.04977;
+    const plans = {
+      builder: { price: 19, credits: 100, overhead: 2.5 },
+      studio: { price: 79, credits: 500, overhead: 8 },
+      growth: { price: 199, credits: 1400, overhead: 18 },
+      business: { price: 499, credits: 3600, overhead: 45 },
+    };
+    const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
+    const plan = document.getElementById("plan");
+    const usage = document.getElementById("usage");
+    const overhead = document.getElementById("overhead");
+    const usageLabel = document.getElementById("usageLabel");
+    const overheadLabel = document.getElementById("overheadLabel");
+    const calcCredits = document.getElementById("calcCredits");
+    const calcRevenue = document.getElementById("calcRevenue");
+    const calcDaytona = document.getElementById("calcDaytona");
+    const calcFee = document.getElementById("calcFee");
+    const calcProfit = document.getElementById("calcProfit");
+    const calcMargin = document.getElementById("calcMargin");
+
+    function paymentFee(price) {
+      return (price * 0.036) + 0.30;
+    }
+
+    function syncOverheadToPlan() {
+      overhead.value = plans[plan.value].overhead;
+    }
+
+    function updateCalculator() {
+      const selected = plans[plan.value];
+      const usagePct = Number(usage.value);
+      const overheadCost = Number(overhead.value);
+      const consumedCredits = Math.round(selected.credits * usagePct / 100);
+      const daytona = consumedCredits * creditCost;
+      const fee = paymentFee(selected.price);
+      const profit = selected.price - daytona - fee - overheadCost;
+      const margin = profit / selected.price;
+
+      usageLabel.textContent = String(usagePct);
+      overheadLabel.textContent = money.format(overheadCost);
+      calcCredits.textContent = consumedCredits.toLocaleString("en-US");
+      calcRevenue.textContent = money.format(selected.price);
+      calcDaytona.textContent = money.format(daytona);
+      calcFee.textContent = money.format(fee);
+      calcProfit.textContent = money.format(profit);
+      calcMargin.textContent = `${(margin * 100).toFixed(1)}%`;
+    }
+
+    plan.addEventListener("change", () => {
+      syncOverheadToPlan();
+      updateCalculator();
+    });
+    usage.addEventListener("input", updateCalculator);
+    overhead.addEventListener("input", updateCalculator);
+    syncOverheadToPlan();
+    updateCalculator();
+  </script>
+</body>
+</html>
