@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"strconv"
 	"strings"
@@ -25,9 +26,7 @@ const (
 
 func hetchyStripeMetadata(values map[string]string) map[string]string {
 	metadata := map[string]string{}
-	for key, value := range values {
-		metadata[key] = value
-	}
+	maps.Copy(metadata, values)
 	metadata[stripeMetadataAppKey] = stripeMetadataAppHetchy
 	return metadata
 }
