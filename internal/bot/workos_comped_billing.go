@@ -8,13 +8,11 @@ import (
 	"net/http"
 	"sort"
 	"strings"
-	"time"
 
 	workos "github.com/workos/workos-go/v7"
 )
 
 const workOSCompedBillingFlagSlug = "hetchy-billing-comped"
-const workOSCompedBillingSyncTTL = 5 * time.Minute
 
 func (b *Bot) syncWorkOSCompedBillingForOrg(ctx context.Context, orgID string) (bool, error) {
 	orgID = strings.TrimSpace(orgID)
@@ -29,24 +27,6 @@ func (b *Bot) syncWorkOSCompedBillingForOrg(ctx context.Context, orgID string) (
 		return false, err
 	}
 	return enabled, nil
-}
-
-func (b *Bot) syncWorkOSCompedBillingForOrgCached(ctx context.Context, orgID string) error {
-	orgID = strings.TrimSpace(orgID)
-	if orgID == "" {
-		return nil
-	}
-	now := time.Now()
-	if last, ok := b.workOSCompedBillingSyncs.Load(orgID); ok {
-		if lastSync, ok := last.(time.Time); ok && now.Sub(lastSync) < workOSCompedBillingSyncTTL {
-			return nil
-		}
-	}
-	if _, err := b.syncWorkOSCompedBillingForOrg(ctx, orgID); err != nil {
-		return err
-	}
-	b.workOSCompedBillingSyncs.Store(orgID, now)
-	return nil
 }
 
 func (b *Bot) workOSCompedSyncConfigured() bool {

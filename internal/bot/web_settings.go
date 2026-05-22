@@ -387,7 +387,10 @@ func (b *Bot) populateSettingsTabData(ctx context.Context, orgID, tab string, da
 		data["Invitations"] = invites
 
 	case "billing":
-		if err := b.syncWorkOSCompedBillingForOrgCached(ctx, orgID); err != nil {
+		// The billing page doubles as the manual refresh path in dev, where
+		// WorkOS webhooks may not be wired up. Query WorkOS directly so a flag
+		// change is visible on the next page load instead of after the cache TTL.
+		if _, err := b.syncWorkOSCompedBillingForOrg(ctx, orgID); err != nil {
 			b.log.Warn("workos comped billing sync failed", "org", orgID, "error", err)
 		}
 		overview, err := b.loadBillingOverview(ctx, orgID)

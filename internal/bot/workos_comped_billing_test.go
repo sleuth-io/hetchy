@@ -9,7 +9,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -92,34 +91,32 @@ func TestWorkOSFeatureFlagEventOrgIDsIgnoresMalformedTargets(t *testing.T) {
 	}
 }
 
-func TestSyncWorkOSCompedBillingForOrgCachedSkipsRecentSuccess(t *testing.T) {
+func TestSyncWorkOSCompedBillingForOrgMirrorsLatestFlagValue(t *testing.T) {
 	billingDB := &workOSBillingDB{}
 	b := newWorkOSBillingTestBot(billingDB)
+	enabled := true
 	featureCalls := 0
 	b.workOSOrgHasFeatureFlagFn = func(_ context.Context, orgID, slug string) (bool, error) {
 		featureCalls++
 		if orgID != "org_1" || slug != workOSCompedBillingFlagSlug {
 			t.Fatalf("feature flag lookup = (%q, %q), want org_1/%s", orgID, slug, workOSCompedBillingFlagSlug)
 		}
-		return true, nil
+		return enabled, nil
 	}
 
-	if err := b.syncWorkOSCompedBillingForOrgCached(t.Context(), "org_1"); err != nil {
-		t.Fatalf("first cached sync: %v", err)
+	if _, err := b.syncWorkOSCompedBillingForOrg(t.Context(), "org_1"); err != nil {
+		t.Fatalf("first sync: %v", err)
 	}
-	if err := b.syncWorkOSCompedBillingForOrgCached(t.Context(), "org_1"); err != nil {
-		t.Fatalf("second cached sync: %v", err)
-	}
-	if featureCalls != 1 || len(billingDB.setExemptCalls) != 1 {
-		t.Fatalf("recent cached sync calls = feature:%d set:%d, want 1/1", featureCalls, len(billingDB.setExemptCalls))
-	}
-
-	b.workOSCompedBillingSyncs.Store("org_1", time.Now().Add(-workOSCompedBillingSyncTTL-time.Second))
-	if err := b.syncWorkOSCompedBillingForOrgCached(t.Context(), "org_1"); err != nil {
-		t.Fatalf("expired cached sync: %v", err)
+	enabled = false
+	if _, err := b.syncWorkOSCompedBillingForOrg(t.Context(), "org_1"); err != nil {
+		t.Fatalf("second sync: %v", err)
 	}
 	if featureCalls != 2 || len(billingDB.setExemptCalls) != 2 {
-		t.Fatalf("expired cached sync calls = feature:%d set:%d, want 2/2", featureCalls, len(billingDB.setExemptCalls))
+		t.Fatalf("sync calls = feature:%d set:%d, want 2/2", featureCalls, len(billingDB.setExemptCalls))
+	}
+	want := []workOSSetExemptCall{{orgID: "org_1", exempt: true}, {orgID: "org_1", exempt: false}}
+	if !reflect.DeepEqual(billingDB.setExemptCalls, want) {
+		t.Fatalf("set exempt calls = %#v, want %#v", billingDB.setExemptCalls, want)
 	}
 }
 
