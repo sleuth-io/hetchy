@@ -16,7 +16,7 @@ Stripe owns:
 Hetchy owns:
 
 - Free and trial usage balances.
-- Comped orgs via `billing_accounts.billing_exempt`.
+- Comped org enforcement via `billing_accounts.billing_exempt`, with WorkOS Feature Flags as the operator-facing source of truth.
 - Local credit balance and real-time admission before Daytona starts.
 - Repo sandbox flavor defaults in `repo_billing_settings`.
 - Auto top-up reserve behavior and monthly max spend enforcement.
@@ -38,6 +38,13 @@ The app expects these environment variables:
 | `STRIPE_TOPUP_PRICE_ID` | Legacy fallback one-time top-up Price ID. Use only when a single top-up price is configured. |
 | `STRIPE_RETURN_TO` | Public app root used for Stripe Checkout and Customer Portal return URLs. |
 
+Comped orgs use WorkOS, not Stripe. Create a WorkOS Feature Flag with slug `hetchy-billing-comped`
+and target organizations from the WorkOS dashboard. For environments with a public HTTPS app URL,
+configure `WORKOS_WEBHOOK_SECRET` for the app's `POST /workos/webhook` endpoint. Local dev can omit
+that secret because there is no public HTTPS webhook target; the billing settings page refreshes that
+org's flag state from WorkOS before rendering, so dev and missed webhooks are repaired the next time
+an admin opens Billing / Usage.
+
 Also confirm `STRIPE_RETURN_TO` points at the public app root for the environment, because Checkout and Portal return URLs are built from `Config.StripeReturnBaseURL()`:
 
 | Environment | Example |
@@ -46,7 +53,7 @@ Also confirm `STRIPE_RETURN_TO` points at the public app root for the environmen
 | Stage | `https://<stage-host>/` |
 | Prod | `https://app.hetchy.ai/` |
 
-The app exposes these Stripe-facing routes:
+The app exposes these billing-facing routes:
 
 | Route | Purpose |
 | --- | --- |
@@ -54,8 +61,9 @@ The app exposes these Stripe-facing routes:
 | `POST /billing/topup` | Creates a Stripe Checkout Session in payment mode. Admin-only. |
 | `GET /billing/portal` | Creates a Stripe Customer Portal session and redirects to Stripe. Admin-only. |
 | `POST /stripe/webhook` | Public Stripe webhook endpoint with signature verification. |
+| `POST /workos/webhook` | Public WorkOS webhook endpoint with signature verification for comped-org feature flag changes. |
 
-The webhook handler listens for these event types:
+The Stripe webhook handler listens for these event types:
 
 ```text
 checkout.session.completed
@@ -66,6 +74,9 @@ invoice.payment_failed
 ```
 
 Use snapshot events if Stripe asks you to choose between snapshot and thin events. The handler decodes the object included in the event payload.
+
+The WorkOS webhook handler listens for `flag.rule_updated`, `flag.updated`, and `flag.deleted`
+events for the `hetchy-billing-comped` flag.
 
 ## Products And Prices
 

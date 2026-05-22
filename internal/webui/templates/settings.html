@@ -995,9 +995,6 @@
         <span>{{if $b.PendingPlanAt}}Takes effect on {{$b.PendingPlanAt}}.{{else}}Takes effect at the start of the next billing cycle.{{end}} Your current {{$b.CurrentPlanLabel}} plan stays active until then.</span>
       </div>
     {{end}}
-    {{if and .IsAdmin $b.BillingExempt}}
-      <p class="billing-comped">Comped billing exemption enabled.</p>
-    {{end}}
     {{if and .IsAdmin $b.StripeConfigured}}
       <div class="billing-plan-grid">
         {{range $b.PlanOptions}}
@@ -1069,6 +1066,12 @@
         {{end}}
       </div>
     </div>
+    {{if $b.BillingExempt}}
+      <div class="billing-comped">
+        <strong>Comped access enabled</strong>
+        <span>This organization has full Hetchy access through WorkOS and runs are not charged against credits.</span>
+      </div>
+    {{end}}
     {{if $b.LastPaymentError}}<div class="error-banner">{{$b.LastPaymentError}}</div>{{end}}
     <div class="billing-topups-panel">
       <div class="billing-topups-head">

@@ -59,9 +59,6 @@ func (s *Service) AdmitRun(ctx context.Context, req AdmissionRequest) (Admission
 	if err != nil {
 		return Admission{}, err
 	}
-	if !FlavorAllowed(flavor.Code, account.MaxFlavor) {
-		return Admission{}, FlavorNotAllowedError{Flavor: flavor.Code, MaxFlavor: account.MaxFlavor}
-	}
 	reserveCredits := max(flavor.Multiplier, 1)
 	if account.BillingExempt {
 		if _, _, err := s.store.AdmitRun(ctx, req.OrgID, req.RunID, 0, flavor, req.StartedAt); err != nil {
@@ -73,6 +70,9 @@ func (s *Service) AdmitRun(ctx context.Context, req AdmissionRequest) (Admission
 			Comped:           true,
 			AvailableCredits: account.Balance(),
 		}, nil
+	}
+	if !FlavorAllowed(flavor.Code, account.MaxFlavor) {
+		return Admission{}, FlavorNotAllowedError{Flavor: flavor.Code, MaxFlavor: account.MaxFlavor}
 	}
 	if account.Balance() < reserveCredits {
 		account, err = s.maybeAutoTopup(ctx, account, reserveCredits)
@@ -170,6 +170,27 @@ func (s *Service) UpsertAccountMirror(ctx context.Context, mirror AccountMirror)
 		return Account{}, nil
 	}
 	return s.store.UpsertAccountMirror(ctx, mirror)
+}
+
+func (s *Service) SetBillingExempt(ctx context.Context, orgID string, exempt bool) (Account, error) {
+	if !s.Enabled() {
+		return Account{}, nil
+	}
+	return s.store.SetBillingExempt(ctx, orgID, exempt)
+}
+
+func (s *Service) ListAccountOrgIDs(ctx context.Context) ([]string, error) {
+	if !s.Enabled() {
+		return nil, nil
+	}
+	return s.store.ListAccountOrgIDs(ctx)
+}
+
+func (s *Service) ListBillingExemptOrgIDs(ctx context.Context) ([]string, error) {
+	if !s.Enabled() {
+		return nil, nil
+	}
+	return s.store.ListBillingExemptOrgIDs(ctx)
 }
 
 func (s *Service) SetPendingPlanChange(ctx context.Context, orgID, planCode string, effectiveAt time.Time) (Account, error) {

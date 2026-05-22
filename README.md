@@ -106,6 +106,7 @@ database, not in Doppler. Doppler only holds the *process-level* config:
 | `WORKOS_CLIENT_ID` | WorkOS client ID (client_test_…) |
 | `WORKOS_COOKIE_PASSWORD` | 32-byte secret for sealing session cookies |
 | `WORKOS_REDIRECT_URI` | OAuth callback URL — must match a Redirect URI in the WorkOS dashboard (use `http://dev.hetchy.ai:8080/callback` for local dev) |
+| `WORKOS_WEBHOOK_SECRET` | WorkOS webhook signing secret for `POST /workos/webhook`; optional in local dev because comped billing sync also refreshes when Billing / Usage loads |
 | `LOGOUT_RETURN_TO` | Legacy public app root fallback; no longer controls post-logout redirect |
 | `HETCHY_PUBLIC_BASE_URL` | Required outside dev. Externally reachable `http(s)://host` app origin used for sandbox callbacks and non-Stripe generated links |
 | `STRIPE_RETURN_TO` | Public app root for Stripe Checkout and Customer Portal return URLs |

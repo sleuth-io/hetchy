@@ -61,7 +61,7 @@ ON CONFLICT (org_id) DO UPDATE SET
     END,
     max_flavor             = EXCLUDED.max_flavor,
     per_run_max_credits    = EXCLUDED.per_run_max_credits,
-    billing_exempt         = EXCLUDED.billing_exempt,
+    billing_exempt         = billing_accounts.billing_exempt OR EXCLUDED.billing_exempt,
     last_payment_error     = EXCLUDED.last_payment_error,
     pending_plan_code      = CASE
         WHEN billing_accounts.pending_plan_code = EXCLUDED.plan_code THEN ''
@@ -77,6 +77,29 @@ RETURNING org_id, stripe_customer_id, stripe_subscription_id, plan_code, status,
           included_credits, included_credits_used, topup_credits,
           max_flavor, per_run_max_credits, billing_exempt, last_payment_error,
           created_at, updated_at, pending_plan_code, pending_plan_effective_at;
+
+-- name: SetBillingExempt :one
+INSERT INTO billing_accounts (org_id, billing_exempt)
+VALUES ($1, $2)
+ON CONFLICT (org_id) DO UPDATE SET
+    billing_exempt = EXCLUDED.billing_exempt,
+    updated_at = NOW()
+RETURNING org_id, stripe_customer_id, stripe_subscription_id, plan_code, status,
+          current_period_start, current_period_end,
+          included_credits, included_credits_used, topup_credits,
+          max_flavor, per_run_max_credits, billing_exempt, last_payment_error,
+          created_at, updated_at, pending_plan_code, pending_plan_effective_at;
+
+-- name: ListBillingAccountOrgIDs :many
+SELECT org_id
+FROM billing_accounts
+ORDER BY org_id;
+
+-- name: ListBillingExemptOrgIDs :many
+SELECT org_id
+FROM billing_accounts
+WHERE billing_exempt
+ORDER BY org_id;
 
 -- name: UpdateBillingStripeCustomer :one
 UPDATE billing_accounts

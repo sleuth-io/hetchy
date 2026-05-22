@@ -174,3 +174,35 @@ func TestSettingsTemplate_RendersPendingBillingPlanChange(t *testing.T) {
 		t.Error("scheduled pending plan should not submit through the switch confirmation")
 	}
 }
+
+func TestSettingsTemplate_RendersCompedBillingBanner(t *testing.T) {
+	b := newBypassBot(t)
+	rec := httptest.NewRecorder()
+	b.renderTemplate(rec, webui.Settings, map[string]any{
+		"OrgID": "org_y", "OrgName": "Acme", "Email": "u@y", "PrincipalUserID": "user_me",
+		"IsAdmin": false, "Tab": "billing", "SavedMessage": "",
+		"Billing": billingOverviewView{
+			CurrentPlanLabel:  "Comped",
+			Status:            "comped",
+			BillingExempt:     true,
+			IncludedCredits:   10,
+			IncludedRemaining: 10,
+			Balance:           10,
+			SandboxOptions:    "All sizes",
+			TopupUnitCredits:  billing.TopupUnitCredits,
+		},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`Comped access enabled`,
+		`full Hetchy access through WorkOS`,
+		`runs are not charged against credits`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("comped billing tab missing %q", want)
+		}
+	}
+}

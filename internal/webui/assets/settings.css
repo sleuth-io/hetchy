@@ -322,8 +322,11 @@
   .billing-money-input input { padding-left: 1.55rem; font-family: inherit; }
   .check-row { display: flex; gap: .45rem; align-items: center; margin-top: 0; }
   .check-row input { width: auto; }
-  .billing-comped { color: #7a4d00; background: #fff1cc; border: 1px solid #f3d98a;
-                    border-radius: .4rem; padding: .5rem .65rem; font-size: .82rem; }
+  .billing-comped { display: grid; gap: .2rem; margin-top: .75rem; color: #7a4d00;
+                    background: #fff1cc; border: 1px solid #f3d98a;
+                    border-radius: .4rem; padding: .65rem .75rem; font-size: .82rem; }
+  .billing-comped strong { color: #5b3900; }
+  .billing-comped span { color: #7a4d00; }
   .billing-history { border-top: 1px solid #f0f0f0; margin-top: 1rem;
                      padding-top: 1rem; }
   .billing-history-head { margin-bottom: .4rem; }
@@ -661,6 +664,8 @@
   html.is-dark .billing-settings-actions { border-top-color: #2e2e33; }
   html.is-dark .billing-money-input span { color: #8a8a90; }
   html.is-dark .billing-comped { background: #3a2e0c; border-color: #5a4a2a; color: #f0b674; }
+  html.is-dark .billing-comped strong,
+  html.is-dark .billing-comped span { color: #f0b674; }
   html.is-dark .billing-history { border-top-color: #2e2e33; }
 
   html.is-dark .tag-validated { background: #1a3a26; color: #6cd084; }

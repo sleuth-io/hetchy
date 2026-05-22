@@ -90,10 +90,18 @@ func (b *Bot) loadBillingOverview(ctx context.Context, orgID string) (billingOve
 	settings := overview.TopupSettings
 	plan := billingPlanForTopup(acct.PlanCode)
 	pendingPlanCode, pendingPlanLabel, pendingPlanAt, hasPendingPlan := billingPendingPlanChange(acct)
+	currentPlanLabel := billingPlanLabel(acct.PlanCode)
+	status := acct.Status
+	sandboxOptions := sandboxOptionsLabel(acct.MaxFlavor)
+	if acct.BillingExempt {
+		currentPlanLabel = "Comped"
+		status = "comped"
+		sandboxOptions = sandboxOptionsLabel(billing.FlavorEnterprise)
+	}
 	out := billingOverviewView{
 		PlanCode:          acct.PlanCode,
-		CurrentPlanLabel:  billingPlanLabel(acct.PlanCode),
-		Status:            acct.Status,
+		CurrentPlanLabel:  currentPlanLabel,
+		Status:            status,
 		PeriodStart:       formatBillingTime(acct.CurrentPeriodStart),
 		PeriodEnd:         formatBillingTime(acct.CurrentPeriodEnd),
 		PendingPlanCode:   pendingPlanCode,
@@ -106,7 +114,7 @@ func (b *Bot) loadBillingOverview(ctx context.Context, orgID string) (billingOve
 		TopupCredits:      acct.TopupCredits,
 		Balance:           acct.Balance(),
 		MaxFlavor:         acct.MaxFlavor,
-		SandboxOptions:    sandboxOptionsLabel(acct.MaxFlavor),
+		SandboxOptions:    sandboxOptions,
 		PerRunMaxCredits:  acct.PerRunMaxCredits,
 		BillingExempt:     acct.BillingExempt,
 		LastPaymentError:  acct.LastPaymentError,
@@ -253,6 +261,9 @@ func (b *Bot) repoBillingViewData(ctx context.Context, orgID string) (map[string
 	}
 	if overview, err := b.billing.Overview(ctx, orgID); err == nil {
 		allowed = overview.AllowedFlavors
+		if overview.Account.BillingExempt {
+			allowed = billing.AllowedFlavors(billing.FlavorEnterprise)
+		}
 	}
 	if rows, err := b.billing.ListRepoSettings(ctx, orgID); err == nil {
 		settings = rows

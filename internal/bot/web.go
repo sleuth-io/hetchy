@@ -23,6 +23,7 @@ func (b *Bot) runWeb(ctx context.Context) error {
 	mux.HandleFunc("/signup", b.auth.SignupHandler)
 	mux.HandleFunc("/callback", b.auth.CallbackHandler)
 	mux.HandleFunc("/logout", b.auth.LogoutHandler)
+	mux.HandleFunc("/workos/webhook", b.workOSWebhookHandler)
 	mux.HandleFunc("/stripe/webhook", b.stripeWebhookHandler)
 
 	// Slack HTTP transport — public endpoints that Slack POSTs to. No

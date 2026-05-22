@@ -90,6 +90,42 @@ func (s *Store) UpsertAccountMirror(ctx context.Context, mirror AccountMirror) (
 	return accountFromRow(row), nil
 }
 
+func (s *Store) SetBillingExempt(ctx context.Context, orgID string, exempt bool) (Account, error) {
+	if !s.Enabled() {
+		return Account{}, pgx.ErrNoRows
+	}
+	row, err := s.db.Queries.SetBillingExempt(ctx, sqlc.SetBillingExemptParams{
+		OrgID:         orgID,
+		BillingExempt: exempt,
+	})
+	if err != nil {
+		return Account{}, fmt.Errorf("set billing exemption: %w", err)
+	}
+	return accountFromRow(row), nil
+}
+
+func (s *Store) ListAccountOrgIDs(ctx context.Context) ([]string, error) {
+	if !s.Enabled() {
+		return nil, pgx.ErrNoRows
+	}
+	rows, err := s.db.Queries.ListBillingAccountOrgIDs(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list billing account org ids: %w", err)
+	}
+	return rows, nil
+}
+
+func (s *Store) ListBillingExemptOrgIDs(ctx context.Context) ([]string, error) {
+	if !s.Enabled() {
+		return nil, pgx.ErrNoRows
+	}
+	rows, err := s.db.Queries.ListBillingExemptOrgIDs(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list billing exempt org ids: %w", err)
+	}
+	return rows, nil
+}
+
 func (s *Store) SetStripeCustomer(ctx context.Context, orgID, customerID string) (Account, error) {
 	if !s.Enabled() {
 		return Account{}, pgx.ErrNoRows
@@ -343,7 +379,7 @@ func (s *Store) SetRepoFlavor(ctx context.Context, orgID, owner, repo, flavorCod
 	if err != nil {
 		return RepoSetting{}, err
 	}
-	if !FlavorAllowed(flavor.Code, acct.MaxFlavor) {
+	if !acct.BillingExempt && !FlavorAllowed(flavor.Code, acct.MaxFlavor) {
 		return RepoSetting{}, FlavorNotAllowedError{Flavor: flavor.Code, MaxFlavor: acct.MaxFlavor}
 	}
 	if flavor.Code == FlavorStandard {

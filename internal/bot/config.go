@@ -60,6 +60,7 @@ type Config struct {
 	WorkOSClientID        string
 	WorkOSCookiePassword  string
 	WorkOSRedirectURI     string
+	WorkOSWebhookSecret   string
 	LogoutReturnTo        string
 	PublicBaseURLOverride string
 	// CookieSecure is the Secure flag on the session cookie. Defaults to
@@ -250,6 +251,7 @@ func LoadConfig() (Config, error) {
 		WorkOSClientID:              strings.TrimSpace(os.Getenv("WORKOS_CLIENT_ID")),
 		WorkOSCookiePassword:        strings.TrimSpace(os.Getenv("WORKOS_COOKIE_PASSWORD")),
 		WorkOSRedirectURI:           strings.TrimSpace(os.Getenv("WORKOS_REDIRECT_URI")),
+		WorkOSWebhookSecret:         strings.TrimSpace(os.Getenv("WORKOS_WEBHOOK_SECRET")),
 		LogoutReturnTo:              logout,
 		PublicBaseURLOverride:       publicBaseURLOverride,
 		CookieSecure:                cookieSecure,

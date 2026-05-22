@@ -541,6 +541,59 @@ func (q *Queries) InsertBillingStripeEvent(ctx context.Context, arg InsertBillin
 	return inserted, err
 }
 
+const listBillingAccountOrgIDs = `-- name: ListBillingAccountOrgIDs :many
+SELECT org_id
+FROM billing_accounts
+ORDER BY org_id
+`
+
+func (q *Queries) ListBillingAccountOrgIDs(ctx context.Context) ([]string, error) {
+	rows, err := q.db.Query(ctx, listBillingAccountOrgIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var org_id string
+		if err := rows.Scan(&org_id); err != nil {
+			return nil, err
+		}
+		items = append(items, org_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listBillingExemptOrgIDs = `-- name: ListBillingExemptOrgIDs :many
+SELECT org_id
+FROM billing_accounts
+WHERE billing_exempt
+ORDER BY org_id
+`
+
+func (q *Queries) ListBillingExemptOrgIDs(ctx context.Context) ([]string, error) {
+	rows, err := q.db.Query(ctx, listBillingExemptOrgIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var org_id string
+		if err := rows.Scan(&org_id); err != nil {
+			return nil, err
+		}
+		items = append(items, org_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listBillingRunMetersByOrg = `-- name: ListBillingRunMetersByOrg :many
 SELECT run_id, org_id, flavor, multiplier, sandbox_vcpu, sandbox_memory_gib,
        sandbox_disk_gib, started_at, ended_at, billable_minutes,
@@ -722,6 +775,50 @@ func (q *Queries) ResetBillingTopupMonthlyUsage(ctx context.Context, arg ResetBi
 		&i.UpdatedAt,
 		&i.MonthlyMaxCents,
 		&i.MonthlySpendCentsUsed,
+	)
+	return i, err
+}
+
+const setBillingExempt = `-- name: SetBillingExempt :one
+INSERT INTO billing_accounts (org_id, billing_exempt)
+VALUES ($1, $2)
+ON CONFLICT (org_id) DO UPDATE SET
+    billing_exempt = EXCLUDED.billing_exempt,
+    updated_at = NOW()
+RETURNING org_id, stripe_customer_id, stripe_subscription_id, plan_code, status,
+          current_period_start, current_period_end,
+          included_credits, included_credits_used, topup_credits,
+          max_flavor, per_run_max_credits, billing_exempt, last_payment_error,
+          created_at, updated_at, pending_plan_code, pending_plan_effective_at
+`
+
+type SetBillingExemptParams struct {
+	OrgID         string `json:"org_id"`
+	BillingExempt bool   `json:"billing_exempt"`
+}
+
+func (q *Queries) SetBillingExempt(ctx context.Context, arg SetBillingExemptParams) (BillingAccount, error) {
+	row := q.db.QueryRow(ctx, setBillingExempt, arg.OrgID, arg.BillingExempt)
+	var i BillingAccount
+	err := row.Scan(
+		&i.OrgID,
+		&i.StripeCustomerID,
+		&i.StripeSubscriptionID,
+		&i.PlanCode,
+		&i.Status,
+		&i.CurrentPeriodStart,
+		&i.CurrentPeriodEnd,
+		&i.IncludedCredits,
+		&i.IncludedCreditsUsed,
+		&i.TopupCredits,
+		&i.MaxFlavor,
+		&i.PerRunMaxCredits,
+		&i.BillingExempt,
+		&i.LastPaymentError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.PendingPlanCode,
+		&i.PendingPlanEffectiveAt,
 	)
 	return i, err
 }
@@ -1036,7 +1133,7 @@ ON CONFLICT (org_id) DO UPDATE SET
     END,
     max_flavor             = EXCLUDED.max_flavor,
     per_run_max_credits    = EXCLUDED.per_run_max_credits,
-    billing_exempt         = EXCLUDED.billing_exempt,
+    billing_exempt         = billing_accounts.billing_exempt OR EXCLUDED.billing_exempt,
     last_payment_error     = EXCLUDED.last_payment_error,
     pending_plan_code      = CASE
         WHEN billing_accounts.pending_plan_code = EXCLUDED.plan_code THEN ''
