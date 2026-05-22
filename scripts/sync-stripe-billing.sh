@@ -192,11 +192,24 @@ log() {
 }
 
 stripe_op() {
+  local output status
   if [[ "${#STRIPE_MODE_ARGS[@]}" -gt 0 ]]; then
-    stripe --color off --log-level error "$@" "${STRIPE_MODE_ARGS[@]}" --confirm
+    output="$(stripe --color off --log-level error "$@" "${STRIPE_MODE_ARGS[@]}" --confirm)"
+    status=$?
   else
-    stripe --color off --log-level error "$@" --confirm
+    output="$(stripe --color off --log-level error "$@" --confirm)"
+    status=$?
   fi
+  if [[ "$status" -ne 0 ]]; then
+    printf '%s\n' "$output" >&2
+    return "$status"
+  fi
+  if jq -e 'type == "object" and has("error")' >/dev/null 2>&1 <<<"$output"; then
+    jq -r '.error.message // "Stripe API error"' <<<"$output" >&2
+    jq -r '.error.request_log_url // empty' <<<"$output" >&2
+    return 1
+  fi
+  printf '%s\n' "$output"
 }
 
 display_name() {
@@ -262,7 +275,7 @@ ensure_product() {
 
   local query product_json product_id
   query="$(product_query "$kind" "$plan_code")"
-  product_json="$(stripe_op products search --limit 1 --query "$query")"
+  product_json="$(stripe_op products search --limit 1 --query "$query")" || return
   product_id="$(jq -r '.data[0].id // empty' <<<"$product_json")"
 
   if [[ -n "$product_id" ]]; then
@@ -272,7 +285,7 @@ ensure_product() {
       --name "$name" \
       --description "$description" \
       --unit-label "$unit_label" \
-      "${metadata[@]}" >/dev/null
+      "${metadata[@]}" >/dev/null || return
     printf '%s\n' "$product_id"
     return 0
   fi
@@ -285,8 +298,13 @@ ensure_product() {
     --type service \
     --unit-label "$unit_label" \
     --idempotency "hetchy-${NAMESPACE}-product-${kind}-${plan_code:-all}" \
-    "${metadata[@]}")"
-  jq -r '.id' <<<"$product_json"
+    "${metadata[@]}")" || return
+  product_id="$(jq -r '.id // empty' <<<"$product_json")"
+  if [[ -z "$product_id" ]]; then
+    echo "sync-stripe-billing: Stripe product response is missing id" >&2
+    return 1
+  fi
+  printf '%s\n' "$product_id"
 }
 
 price_metadata_args() {
@@ -344,7 +362,7 @@ ensure_price() {
   done < <(price_metadata_args "$kind" "$plan_code" "$label" "$included_credits" "$max_flavor" "$per_run_max" "$topup_cents")
 
   local price_json existing_id match_state
-  price_json="$(stripe_op prices list --lookup-keys "$key" --limit 1)"
+  price_json="$(stripe_op prices list --lookup-keys "$key" --limit 1)" || return
   existing_id="$(jq -r '.data[0].id // empty' <<<"$price_json")"
   match_state="$(jq -r \
     --argjson amount "$amount_cents" \
@@ -371,7 +389,7 @@ ensure_price() {
     stripe_op prices update "$existing_id" \
       --active=true \
       --nickname "$nickname" \
-      "${metadata[@]}" >/dev/null
+      "${metadata[@]}" >/dev/null || return
     printf '%s\n' "$existing_id"
     return 0
   fi
@@ -397,12 +415,16 @@ ensure_price() {
   local created_json created_id
   created_json="$(stripe_op "${create_args[@]}" \
     --idempotency "hetchy-${NAMESPACE}-price-${kind}-${plan_code}-${amount_cents}-${product_id}" \
-    "${metadata[@]}")"
-  created_id="$(jq -r '.id' <<<"$created_json")"
+    "${metadata[@]}")" || return
+  created_id="$(jq -r '.id // empty' <<<"$created_json")"
+  if [[ -z "$created_id" ]]; then
+    echo "sync-stripe-billing: Stripe price response is missing id" >&2
+    return 1
+  fi
 
   if [[ -n "$existing_id" ]]; then
     log "Deactivating replaced price $existing_id"
-    stripe_op prices update "$existing_id" --active=false >/dev/null
+    stripe_op prices update "$existing_id" --active=false >/dev/null || return
   fi
 
   printf '%s\n' "$created_id"
@@ -415,7 +437,7 @@ ensure_webhook() {
 
   local endpoints endpoint_id description
   description="Hetchy ${ENV_NAME} billing webhook"
-  endpoints="$(stripe_op webhook_endpoints list --limit 100)"
+  endpoints="$(stripe_op webhook_endpoints list --limit 100)" || return
   endpoint_id="$(jq -r --arg url "$WEBHOOK_URL" '.data[] | select(.url == $url) | .id' <<<"$endpoints" | head -n 1)"
 
   local event_args=()
@@ -431,7 +453,7 @@ ensure_webhook() {
       --description "$description" \
       --disabled=false \
       -d "metadata[app]=hetchy" \
-      "${event_args[@]}" >/dev/null
+      "${event_args[@]}" >/dev/null || return
     WEBHOOK_ENDPOINT_ID="$endpoint_id"
     WEBHOOK_SECRET=""
     return 0
@@ -443,8 +465,12 @@ ensure_webhook() {
     --url "$WEBHOOK_URL" \
     --description "$description" \
     -d "metadata[app]=hetchy" \
-    "${event_args[@]}")"
-  WEBHOOK_ENDPOINT_ID="$(jq -r '.id' <<<"$created")"
+    "${event_args[@]}")" || return
+  WEBHOOK_ENDPOINT_ID="$(jq -r '.id // empty' <<<"$created")"
+  if [[ -z "$WEBHOOK_ENDPOINT_ID" ]]; then
+    echo "sync-stripe-billing: Stripe webhook endpoint response is missing id" >&2
+    return 1
+  fi
   WEBHOOK_SECRET="$(jq -r '.secret // empty' <<<"$created")"
 }
 
@@ -459,7 +485,7 @@ ensure_portal() {
 
   local configs config_id name
   name="Hetchy Billing Portal"
-  configs="$(stripe_op billing_portal configurations list --is-default=true --limit 1)"
+  configs="$(stripe_op billing_portal configurations list --is-default=true --limit 1)" || return
   config_id="$(jq -r '.data[0].id // empty' <<<"$configs")"
 
   local portal_args=(
@@ -481,15 +507,19 @@ ensure_portal() {
     log "Updating default Customer Portal config $config_id"
     stripe_op billing_portal configurations update "$config_id" \
       --active=true \
-      "${portal_args[@]}" >/dev/null
+      "${portal_args[@]}" >/dev/null || return
     PORTAL_CONFIGURATION_ID="$config_id"
     return 0
   fi
 
   local created
   log "Creating Customer Portal config"
-  created="$(stripe_op billing_portal configurations create "${portal_args[@]}")"
-  PORTAL_CONFIGURATION_ID="$(jq -r '.id' <<<"$created")"
+  created="$(stripe_op billing_portal configurations create "${portal_args[@]}")" || return
+  PORTAL_CONFIGURATION_ID="$(jq -r '.id // empty' <<<"$created")"
+  if [[ -z "$PORTAL_CONFIGURATION_ID" ]]; then
+    echo "sync-stripe-billing: Stripe portal configuration response is missing id" >&2
+    return 1
+  fi
 }
 
 mode_label="test"
@@ -526,7 +556,7 @@ topup_price_ids=""
 
 topup_product_name="$(display_name "Hetchy Usage Credits - 100 credits")"
 topup_product_desc="100 Hetchy usage credits. The app grants quantity * 100 credits after checkout.session.completed."
-topup_product_id="$(ensure_product "topup" "" "$topup_product_name" "$topup_product_desc" "100 credits" "" "" "" "")"
+topup_product_id="$(ensure_product "topup" "" "$topup_product_name" "$topup_product_desc" "100 credits" "" "" "" "")" || exit 1
 
 for plan in "${PLANS[@]}"; do
   IFS='|' read -r code label monthly_cents included_credits max_flavor per_run_max topup_cents <<<"$plan"
@@ -542,7 +572,7 @@ for plan in "${PLANS[@]}"; do
     "$included_credits" \
     "$max_flavor" \
     "$per_run_max" \
-    "")"
+    "")" || exit 1
 
   subscription_price_id="$(ensure_price \
     "subscription" \
@@ -554,7 +584,7 @@ for plan in "${PLANS[@]}"; do
     "$included_credits" \
     "$max_flavor" \
     "$per_run_max" \
-    "$topup_cents")"
+    "$topup_cents")" || exit 1
   topup_price_id="$(ensure_price \
     "topup" \
     "$code" \
@@ -565,7 +595,7 @@ for plan in "${PLANS[@]}"; do
     "$included_credits" \
     "$max_flavor" \
     "$per_run_max" \
-    "$topup_cents")"
+    "$topup_cents")" || exit 1
 
   subscription_price_ids="${subscription_price_ids}${subscription_price_ids:+,}${code}=${subscription_price_id}"
   topup_price_ids="${topup_price_ids}${topup_price_ids:+,}${code}=${topup_price_id}"
@@ -574,8 +604,8 @@ done
 WEBHOOK_ENDPOINT_ID=""
 WEBHOOK_SECRET=""
 PORTAL_CONFIGURATION_ID=""
-ensure_webhook
-ensure_portal
+ensure_webhook || exit 1
+ensure_portal || exit 1
 
 cat <<EOF
 
