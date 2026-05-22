@@ -205,7 +205,7 @@ func TestStripeUpgradeSubscriptionParamsInvoicesImmediately(t *testing.T) {
 func TestStripeDowngradeScheduleCreateParamsOnlySetsSubscription(t *testing.T) {
 	growth, _ := billing.PaidPlanByCode(billing.PlanGrowth)
 	team, _ := billing.PaidPlanByCode(billing.PlanTeam)
-	params := stripeDowngradeScheduleCreateParams("sub_1", growth, "price_growth", team, "price_team", 1, 2)
+	params := stripeDowngradeScheduleCreateParams("sub_1", "org_1", growth, "price_growth", team, "price_team", 1, 2)
 
 	if params.FromSubscription == nil || *params.FromSubscription != "sub_1" {
 		t.Fatalf("FromSubscription = %v, want sub_1", params.FromSubscription)
@@ -213,8 +213,14 @@ func TestStripeDowngradeScheduleCreateParamsOnlySetsSubscription(t *testing.T) {
 	if key := *params.IdempotencyKey; !strings.Contains(key, "price_growth") || !strings.Contains(key, "price_team") {
 		t.Fatalf("idempotency key = %q, want current and target prices", key)
 	}
-	if params.Metadata != nil {
-		t.Fatalf("Metadata = %v, want nil because Stripe rejects metadata with from_subscription", params.Metadata)
+	if got := params.Metadata[stripeMetadataAppKey]; got != stripeMetadataAppHetchy {
+		t.Fatalf("metadata app = %q, want %q", got, stripeMetadataAppHetchy)
+	}
+	if got := params.Metadata["org_id"]; got != "org_1" {
+		t.Fatalf("metadata org_id = %q, want org_1", got)
+	}
+	if got := params.Metadata["pending_plan_code"]; got != billing.PlanTeam {
+		t.Fatalf("metadata pending_plan_code = %q, want team", got)
 	}
 	if params.Phases != nil {
 		t.Fatalf("Phases = %v, want nil with from_subscription create", params.Phases)

@@ -80,7 +80,7 @@ func (b *Bot) switchStripeSubscriptionPlan(ctx context.Context, orgID string, ac
 		return stripePlanSwitchNoop, err
 	}
 	if scheduleID == "" {
-		schedule, err := client.V1SubscriptionSchedules.Create(ctx, stripeDowngradeScheduleCreateParams(sub.ID, currentPlan, currentPriceID, targetPlan, targetPriceID, periodStart, periodEnd))
+		schedule, err := client.V1SubscriptionSchedules.Create(ctx, stripeDowngradeScheduleCreateParams(sub.ID, orgID, currentPlan, currentPriceID, targetPlan, targetPriceID, periodStart, periodEnd))
 		if err != nil {
 			return stripePlanSwitchNoop, fmt.Errorf("create subscription schedule: %w", err)
 		}
@@ -214,12 +214,17 @@ func stripeSubscriptionPeriod(acct billing.Account, sub *stripe.Subscription, pr
 	return unixTime(start), unixTime(end)
 }
 
-func stripeDowngradeScheduleCreateParams(subscriptionID string, currentPlan billing.PaidPlan, currentPriceID string, targetPlan billing.PaidPlan, targetPriceID string, periodStart, periodEnd int64) *stripe.SubscriptionScheduleCreateParams {
+func stripeDowngradeScheduleCreateParams(subscriptionID, orgID string, currentPlan billing.PaidPlan, currentPriceID string, targetPlan billing.PaidPlan, targetPriceID string, periodStart, periodEnd int64) *stripe.SubscriptionScheduleCreateParams {
 	return &stripe.SubscriptionScheduleCreateParams{
 		Params: stripe.Params{
 			IdempotencyKey: stripe.String("hetchy-plan-schedule-" + subscriptionID + "-" + currentPlan.Code + "-" + currentPriceID + "-" + targetPlan.Code + "-" + targetPriceID + "-" + strconv.FormatInt(periodStart, 10) + "-" + strconv.FormatInt(periodEnd, 10)),
 		},
 		FromSubscription: stripe.String(subscriptionID),
+		Metadata: hetchyStripeMetadata(map[string]string{
+			"kind":              stripeCheckoutKindSubscription,
+			"org_id":            orgID,
+			"pending_plan_code": targetPlan.Code,
+		}),
 	}
 }
 
