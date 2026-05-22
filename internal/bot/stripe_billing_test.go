@@ -92,6 +92,17 @@ func TestTopupCreditsFromCheckoutMetadata(t *testing.T) {
 	}
 }
 
+func TestHetchyStripeMetadataAddsAppMarker(t *testing.T) {
+	got := hetchyStripeMetadata(map[string]string{"org_id": "org_1"})
+
+	if got[stripeMetadataAppKey] != stripeMetadataAppHetchy {
+		t.Fatalf("app metadata = %q, want %q", got[stripeMetadataAppKey], stripeMetadataAppHetchy)
+	}
+	if got["org_id"] != "org_1" {
+		t.Fatalf("org_id metadata = %q, want org_1", got["org_id"])
+	}
+}
+
 func TestPaidAccountMirrorUsesLocalPlanLimits(t *testing.T) {
 	mirror := paidAccountMirror("org_1", "cus_1", "sub_1", "active", time.Time{}, time.Time{}, map[string]string{
 		"plan_code":           billing.PlanTeam,
@@ -185,6 +196,9 @@ func TestStripeUpgradeSubscriptionParamsInvoicesImmediately(t *testing.T) {
 	}
 	if got := params.Metadata["plan_code"]; got != billing.PlanGrowth {
 		t.Fatalf("metadata plan_code = %q, want growth", got)
+	}
+	if got := params.Metadata[stripeMetadataAppKey]; got != stripeMetadataAppHetchy {
+		t.Fatalf("metadata app = %q, want %q", got, stripeMetadataAppHetchy)
 	}
 }
 
@@ -283,6 +297,15 @@ func TestStripeDowngradeScheduleParamsAppliesNextCycle(t *testing.T) {
 	}
 	if got := params.Phases[1].Metadata["plan_code"]; got != billing.PlanTeam {
 		t.Fatalf("next phase metadata plan_code = %q, want team", got)
+	}
+	if got := params.Metadata[stripeMetadataAppKey]; got != stripeMetadataAppHetchy {
+		t.Fatalf("schedule metadata app = %q, want %q", got, stripeMetadataAppHetchy)
+	}
+	if got := params.Phases[0].Metadata[stripeMetadataAppKey]; got != stripeMetadataAppHetchy {
+		t.Fatalf("current phase metadata app = %q, want %q", got, stripeMetadataAppHetchy)
+	}
+	if got := params.Phases[1].Metadata[stripeMetadataAppKey]; got != stripeMetadataAppHetchy {
+		t.Fatalf("next phase metadata app = %q, want %q", got, stripeMetadataAppHetchy)
 	}
 	if key := *params.IdempotencyKey; !strings.Contains(key, "sub_sched_1") || !strings.Contains(key, "price_growth") || !strings.Contains(key, "price_team") {
 		t.Fatalf("idempotency key = %q, want schedule ID plus current and target prices", key)

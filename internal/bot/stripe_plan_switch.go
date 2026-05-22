@@ -232,11 +232,11 @@ func stripeDowngradeScheduleParams(scheduleID, orgID string, acct billing.Accoun
 		},
 		EndBehavior:       stripe.String(string(stripe.SubscriptionScheduleEndBehaviorRelease)),
 		ProrationBehavior: stripe.String("none"),
-		Metadata: map[string]string{
+		Metadata: hetchyStripeMetadata(map[string]string{
 			"kind":              stripeCheckoutKindSubscription,
 			"org_id":            orgID,
 			"pending_plan_code": targetPlan.Code,
-		},
+		}),
 		Phases: []*stripe.SubscriptionScheduleUpdatePhaseParams{
 			{
 				StartDate:         stripe.Int64(periodStart),

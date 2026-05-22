@@ -232,6 +232,7 @@ ensure_product() {
   local topup_cents="${9:-}"
 
   local metadata=(
+    -d "metadata[app]=hetchy"
     -d "metadata[hetchy_managed]=true"
     -d "metadata[hetchy_env]=$ENV_NAME"
     -d "metadata[hetchy_kind]=$kind"
@@ -294,6 +295,7 @@ price_metadata_args() {
   local topup_cents="$7"
 
   printf '%s\n' \
+    "-d" "metadata[app]=hetchy" \
     "-d" "metadata[hetchy_managed]=true" \
     "-d" "metadata[hetchy_env]=$ENV_NAME" \
     "-d" "metadata[hetchy_kind]=$kind" \
@@ -424,6 +426,7 @@ ensure_webhook() {
       --url "$WEBHOOK_URL" \
       --description "$description" \
       --disabled false \
+      -d "metadata[app]=hetchy" \
       "${event_args[@]}" >/dev/null
     WEBHOOK_ENDPOINT_ID="$endpoint_id"
     WEBHOOK_SECRET=""
@@ -435,6 +438,7 @@ ensure_webhook() {
   created="$(stripe_op webhook_endpoints create \
     --url "$WEBHOOK_URL" \
     --description "$description" \
+    -d "metadata[app]=hetchy" \
     "${event_args[@]}")"
   WEBHOOK_ENDPOINT_ID="$(jq -r '.id' <<<"$created")"
   WEBHOOK_SECRET="$(jq -r '.secret // empty' <<<"$created")"
@@ -466,6 +470,7 @@ ensure_portal() {
     --features.subscription-update.enabled false
     --features.customer-update.enabled false
     --login-page.enabled false
+    -d "metadata[app]=hetchy"
   )
 
   if [[ -n "$config_id" ]]; then

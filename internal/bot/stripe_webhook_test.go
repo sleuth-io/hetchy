@@ -274,6 +274,18 @@ func TestStartStripeSubscriptionCheckout(t *testing.T) {
 			http.Error(w, "unexpected Stripe request "+r.Method+" "+r.URL.Path, http.StatusInternalServerError)
 			return
 		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "parse form: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if got := r.Form.Get("metadata[app]"); got != "hetchy" {
+			http.Error(w, "metadata app = "+got, http.StatusBadRequest)
+			return
+		}
+		if got := r.Form.Get("subscription_data[metadata][app]"); got != "hetchy" {
+			http.Error(w, "subscription metadata app = "+got, http.StatusBadRequest)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"id":"cs_1","object":"checkout.session","url":"https://stripe.example/checkout"}`)
 	})
@@ -319,6 +331,18 @@ func TestEnsureStripeCustomerCreatesCustomer(t *testing.T) {
 	restore := useStripeTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/customers" {
 			http.Error(w, "unexpected Stripe request "+r.Method+" "+r.URL.Path, http.StatusInternalServerError)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "parse form: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if got := r.Form.Get("metadata[app]"); got != "hetchy" {
+			http.Error(w, "metadata app = "+got, http.StatusBadRequest)
+			return
+		}
+		if got := r.Form.Get("metadata[org_id]"); got != "org_1" {
+			http.Error(w, "metadata org_id = "+got, http.StatusBadRequest)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")

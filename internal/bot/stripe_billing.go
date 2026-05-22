@@ -19,7 +19,18 @@ import (
 const (
 	stripeCheckoutKindSubscription = "subscription"
 	stripeCheckoutKindTopup        = "topup"
+	stripeMetadataAppKey           = "app"
+	stripeMetadataAppHetchy        = "hetchy"
 )
+
+func hetchyStripeMetadata(values map[string]string) map[string]string {
+	metadata := map[string]string{}
+	for key, value := range values {
+		metadata[key] = value
+	}
+	metadata[stripeMetadataAppKey] = stripeMetadataAppHetchy
+	return metadata
+}
 
 func newStripeAutoTopupper(cfg Config) billing.AutoTopupper {
 	if strings.TrimSpace(cfg.StripeSecretKey) == "" ||
@@ -229,18 +240,18 @@ func (b *Bot) billingTopupHandler(w http.ResponseWriter, r *http.Request) {
 		CancelURL:         stripe.String(b.settingsURL("billing", "")),
 		PaymentIntentData: &stripe.CheckoutSessionCreatePaymentIntentDataParams{
 			SetupFutureUsage: stripe.String("off_session"),
-			Metadata: map[string]string{
+			Metadata: hetchyStripeMetadata(map[string]string{
 				"kind":    stripeCheckoutKindTopup,
 				"org_id":  p.OrgID,
 				"credits": strconv.Itoa(credits),
-			},
+			}),
 		},
-		Metadata: map[string]string{
+		Metadata: hetchyStripeMetadata(map[string]string{
 			"kind":     stripeCheckoutKindTopup,
 			"org_id":   p.OrgID,
 			"quantity": strconv.Itoa(quantity),
 			"credits":  strconv.Itoa(credits),
-		},
+		}),
 	}
 	sess, err := b.stripeClient().V1CheckoutSessions.Create(r.Context(), params)
 	if err != nil {
@@ -320,9 +331,9 @@ func (b *Bot) ensureStripeCustomer(ctx context.Context, orgID, email string) (bi
 	cust, err := b.stripeClient().V1Customers.Create(ctx, &stripe.CustomerCreateParams{
 		Email:       stripe.String(email),
 		Description: stripe.String("Hetchy organization " + orgID),
-		Metadata: map[string]string{
+		Metadata: hetchyStripeMetadata(map[string]string{
 			"org_id": orgID,
-		},
+		}),
 	})
 	if err != nil {
 		return billing.Account{}, err
@@ -356,14 +367,14 @@ func paidAccountMirror(orgID, customerID, subscriptionID, status string, periodS
 }
 
 func paidSubscriptionMetadata(orgID string, plan billing.PaidPlan) map[string]string {
-	return map[string]string{
+	return hetchyStripeMetadata(map[string]string{
 		"kind":                stripeCheckoutKindSubscription,
 		"org_id":              orgID,
 		"plan_code":           plan.Code,
 		"included_credits":    strconv.Itoa(plan.IncludedCredits),
 		"max_flavor":          plan.MaxFlavor,
 		"per_run_max_credits": strconv.Itoa(plan.PerRunMaxCredits),
-	}
+	})
 }
 
 func metadataString(metadata map[string]string, key, def string) string {
@@ -460,11 +471,11 @@ func (s stripeAutoTopupper) PurchaseTopupUnit(ctx context.Context, account billi
 		CollectionMethod:            stripe.String(string(stripe.InvoiceCollectionMethodChargeAutomatically)),
 		PendingInvoiceItemsBehavior: stripe.String("exclude"),
 		AutoAdvance:                 stripe.Bool(false),
-		Metadata: map[string]string{
+		Metadata: hetchyStripeMetadata(map[string]string{
 			"kind":    stripeCheckoutKindTopup,
 			"org_id":  account.OrgID,
 			"credits": strconv.Itoa(billing.TopupUnitCredits),
-		},
+		}),
 	})
 	if err != nil {
 		return "", err
@@ -479,11 +490,11 @@ func (s stripeAutoTopupper) PurchaseTopupUnit(ctx context.Context, account billi
 			Price: stripe.String(priceID),
 		},
 		Quantity: stripe.Int64(1),
-		Metadata: map[string]string{
+		Metadata: hetchyStripeMetadata(map[string]string{
 			"kind":    stripeCheckoutKindTopup,
 			"org_id":  account.OrgID,
 			"credits": strconv.Itoa(billing.TopupUnitCredits),
-		},
+		}),
 	}); err != nil {
 		return "", err
 	}

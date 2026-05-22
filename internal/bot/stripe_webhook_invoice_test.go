@@ -16,8 +16,24 @@ func TestStripeAutoTopupperPurchaseTopupUnit(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/invoices":
+			if err := r.ParseForm(); err != nil {
+				http.Error(w, "parse form: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			if got := r.Form.Get("metadata[app]"); got != "hetchy" {
+				http.Error(w, "invoice metadata app = "+got, http.StatusBadRequest)
+				return
+			}
 			fmt.Fprint(w, `{"id":"in_1","object":"invoice","status":"draft"}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/invoiceitems":
+			if err := r.ParseForm(); err != nil {
+				http.Error(w, "parse form: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			if got := r.Form.Get("metadata[app]"); got != "hetchy" {
+				http.Error(w, "invoice item metadata app = "+got, http.StatusBadRequest)
+				return
+			}
 			fmt.Fprint(w, `{"id":"ii_1","object":"invoiceitem"}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/invoices/in_1/finalize":
 			fmt.Fprint(w, `{"id":"in_1","object":"invoice","status":"open"}`)
