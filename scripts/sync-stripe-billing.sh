@@ -192,7 +192,11 @@ log() {
 }
 
 stripe_op() {
-  stripe --color off --log-level error "$@" "${STRIPE_MODE_ARGS[@]}" --confirm
+  if [[ "${#STRIPE_MODE_ARGS[@]}" -gt 0 ]]; then
+    stripe --color off --log-level error "$@" "${STRIPE_MODE_ARGS[@]}" --confirm
+  else
+    stripe --color off --log-level error "$@" --confirm
+  fi
 }
 
 display_name() {
@@ -264,7 +268,7 @@ ensure_product() {
   if [[ -n "$product_id" ]]; then
     log "Updating product $product_id: $name"
     stripe_op products update "$product_id" \
-      --active true \
+      --active=true \
       --name "$name" \
       --description "$description" \
       --unit-label "$unit_label" \
@@ -275,7 +279,7 @@ ensure_product() {
 
   log "Creating product: $name"
   product_json="$(stripe_op products create \
-    --active true \
+    --active=true \
     --name "$name" \
     --description "$description" \
     --type service \
@@ -365,7 +369,7 @@ ensure_price() {
   if [[ "$match_state" == "match" ]]; then
     log "Updating price metadata $existing_id: $nickname"
     stripe_op prices update "$existing_id" \
-      --active true \
+      --active=true \
       --nickname "$nickname" \
       "${metadata[@]}" >/dev/null
     printf '%s\n' "$existing_id"
@@ -385,7 +389,7 @@ ensure_price() {
   fi
   if [[ -n "$existing_id" ]]; then
     log "Replacing immutable price $existing_id: $nickname"
-    create_args+=(--transfer-lookup-key true)
+    create_args+=(--transfer-lookup-key=true)
   else
     log "Creating price: $nickname"
   fi
@@ -398,7 +402,7 @@ ensure_price() {
 
   if [[ -n "$existing_id" ]]; then
     log "Deactivating replaced price $existing_id"
-    stripe_op prices update "$existing_id" --active false >/dev/null
+    stripe_op prices update "$existing_id" --active=false >/dev/null
   fi
 
   printf '%s\n' "$created_id"
@@ -425,7 +429,7 @@ ensure_webhook() {
     stripe_op webhook_endpoints update "$endpoint_id" \
       --url "$WEBHOOK_URL" \
       --description "$description" \
-      --disabled false \
+      --disabled=false \
       -d "metadata[app]=hetchy" \
       "${event_args[@]}" >/dev/null
     WEBHOOK_ENDPOINT_ID="$endpoint_id"
@@ -455,28 +459,28 @@ ensure_portal() {
 
   local configs config_id name
   name="Hetchy Billing Portal"
-  configs="$(stripe_op billing_portal configurations list --is-default true --limit 1)"
+  configs="$(stripe_op billing_portal configurations list --is-default=true --limit 1)"
   config_id="$(jq -r '.data[0].id // empty' <<<"$configs")"
 
   local portal_args=(
     --name "$name"
     --default-return-url "$RETURN_TO"
-    --features.payment-method-update.enabled true
-    --features.invoice-history.enabled true
-    --features.subscription-cancel.enabled true
+    --features.payment-method-update.enabled=true
+    --features.invoice-history.enabled=true
+    --features.subscription-cancel.enabled=true
     --features.subscription-cancel.mode at_period_end
     --features.subscription-cancel.proration-behavior none
-    --features.subscription-cancel.cancellation-reason.enabled false
-    --features.subscription-update.enabled false
-    --features.customer-update.enabled false
-    --login-page.enabled false
+    --features.subscription-cancel.cancellation-reason.enabled=false
+    --features.subscription-update.enabled=false
+    --features.customer-update.enabled=false
+    --login-page.enabled=false
     -d "metadata[app]=hetchy"
   )
 
   if [[ -n "$config_id" ]]; then
     log "Updating default Customer Portal config $config_id"
     stripe_op billing_portal configurations update "$config_id" \
-      --active true \
+      --active=true \
       "${portal_args[@]}" >/dev/null
     PORTAL_CONFIGURATION_ID="$config_id"
     return 0
