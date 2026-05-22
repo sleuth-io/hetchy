@@ -349,7 +349,7 @@ func paidAccountMirror(orgID, customerID, subscriptionID, status string, periodS
 		Status:               status,
 		CurrentPeriodStart:   periodStart,
 		CurrentPeriodEnd:     periodEnd,
-		IncludedCredits:      metadataInt(metadata, "included_credits", plan.IncludedCredits),
+		IncludedCredits:      plan.IncludedCredits,
 		MaxFlavor:            plan.MaxFlavor,
 		PerRunMaxCredits:     plan.PerRunMaxCredits,
 	}

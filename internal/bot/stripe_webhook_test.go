@@ -196,8 +196,8 @@ func TestStripeCheckoutTopupCreditsUsesMetadataWithoutLookup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stripeCheckoutTopupCredits returned error: %v", err)
 	}
-	if got != 40 {
-		t.Fatalf("stripeCheckoutTopupCredits = %d, want 40", got)
+	if got != 400 {
+		t.Fatalf("stripeCheckoutTopupCredits = %d, want 400", got)
 	}
 }
 
@@ -217,8 +217,8 @@ func TestStripeCheckoutTopupCreditsFetchesLineItems(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stripeCheckoutTopupCredits returned error: %v", err)
 	}
-	if got != 20 {
-		t.Fatalf("stripeCheckoutTopupCredits = %d, want 20", got)
+	if got != 200 {
+		t.Fatalf("stripeCheckoutTopupCredits = %d, want 200", got)
 	}
 }
 

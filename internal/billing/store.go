@@ -473,11 +473,15 @@ func runMeterFromRow(row sqlc.BillingRunMeter) RunMeter {
 }
 
 func repoSettingFromRow(row sqlc.RepoBillingSetting) RepoSetting {
+	flavor := row.Flavor
+	if parsed, err := ParseFlavor(flavor); err == nil {
+		flavor = parsed.Code
+	}
 	return RepoSetting{
 		OrgID:       row.OrgID,
 		GitHubOwner: row.GithubOwner,
 		GitHubRepo:  row.GithubRepo,
-		Flavor:      row.Flavor,
+		Flavor:      flavor,
 		CreatedAt:   pgTime(row.CreatedAt),
 		UpdatedAt:   pgTime(row.UpdatedAt),
 	}

@@ -126,24 +126,18 @@ func (s *Store) FinalizeRun(ctx context.Context, runID, terminalState string, en
 		if terminalState == "" {
 			terminalState = "unknown"
 		}
-		if _, err := q.FinalizeBillingRunMeter(ctx, sqlc.FinalizeBillingRunMeterParams{
-			RunID:           runID,
-			EndedAt:         timestamptz(endedAt),
-			BillableMinutes: int32(minutes),
-			CapturedCredits: int32(credits),
-			TerminalState:   terminalState,
-		}); err != nil {
-			return err
-		}
 		resRow, err := q.GetBillingCreditReservationForUpdate(ctx, runID)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
-				return nil
+				return finalizeRunMeter(ctx, q, runID, endedAt, minutes, credits, terminalState)
 			}
 			return err
 		}
 		res := reservationFromRow(resRow)
 		if res.Status == ReservationComped {
+			if err := finalizeRunMeter(ctx, q, runID, endedAt, minutes, 0, terminalState); err != nil {
+				return err
+			}
 			_, err := q.UpdateBillingCreditReservationCaptured(ctx, sqlc.UpdateBillingCreditReservationCapturedParams{
 				RunID:           runID,
 				CapturedCredits: 0,
@@ -153,12 +147,18 @@ func (s *Store) FinalizeRun(ctx context.Context, runID, terminalState string, en
 			return err
 		}
 		if res.Status != ReservationReserved {
-			return nil
+			return finalizeRunMeter(ctx, q, runID, endedAt, minutes, credits, terminalState)
 		}
-		releasedIncluded, releasedTopup, extraCredits := captureDeltas(res, credits)
 		if _, err := q.LockBillingAccountForUpdate(ctx, res.OrgID); err != nil {
 			return err
 		}
+		if res.ReservedCredits > 0 {
+			credits = min(credits, res.ReservedCredits)
+		}
+		if err := finalizeRunMeter(ctx, q, runID, endedAt, minutes, credits, terminalState); err != nil {
+			return err
+		}
+		releasedIncluded, releasedTopup, extraCredits := captureDeltas(res, credits)
 		includedDelta := -releasedIncluded + extraCredits
 		topupDelta := releasedTopup
 		if _, err := q.UpdateBillingCapturedBalances(ctx, sqlc.UpdateBillingCapturedBalancesParams{
@@ -181,6 +181,17 @@ func (s *Store) FinalizeRun(ctx context.Context, runID, terminalState string, en
 		})
 		return err
 	})
+}
+
+func finalizeRunMeter(ctx context.Context, q *sqlc.Queries, runID string, endedAt time.Time, minutes, credits int, terminalState string) error {
+	_, err := q.FinalizeBillingRunMeter(ctx, sqlc.FinalizeBillingRunMeterParams{
+		RunID:           runID,
+		EndedAt:         timestamptz(endedAt),
+		BillableMinutes: int32(minutes),
+		CapturedCredits: int32(credits),
+		TerminalState:   terminalState,
+	})
+	return err
 }
 
 func captureDeltas(res Reservation, captured int) (releasedIncluded, releasedTopup, extra int) {

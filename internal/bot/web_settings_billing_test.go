@@ -76,8 +76,8 @@ func TestBillingSettingsFormattingHelpers(t *testing.T) {
 	if got := billingPlanActionLabel(false, false, true); got != "Switch" {
 		t.Fatalf("billingPlanActionLabel subscription = %q, want Switch", got)
 	}
-	if got := sandboxOptionsLabel(billing.FlavorMax); got != "All sizes" {
-		t.Fatalf("sandboxOptionsLabel = %q, want All sizes", got)
+	if got := sandboxOptionsLabel(billing.FlavorPlus); got != "Standard and Plus" {
+		t.Fatalf("sandboxOptionsLabel = %q, want Standard and Plus", got)
 	}
 	if got := billingPlanLabel(""); got != "Free" {
 		t.Fatalf("billingPlanLabel empty = %q, want Free", got)
@@ -124,49 +124,49 @@ func TestBillingSettingsFormattingHelpers(t *testing.T) {
 }
 
 func TestBillingTopupSettingsFromSpend(t *testing.T) {
-	account := billing.Account{PlanCode: billing.PlanGrowth, PerRunMaxCredits: 6}
+	account := billing.Account{PlanCode: billing.PlanGrowth, PerRunMaxCredits: 24}
 	got := billingTopupSettingsFromSpend(account, true, 2000)
 
 	if !got.AutoTopupEnabled {
 		t.Fatal("AutoTopupEnabled = false, want true")
 	}
-	if got.TriggerThreshold != 6 {
-		t.Fatalf("TriggerThreshold = %d, want 6", got.TriggerThreshold)
+	if got.TriggerThreshold != 24 {
+		t.Fatalf("TriggerThreshold = %d, want 24", got.TriggerThreshold)
 	}
-	if got.TargetBalance != 16 {
-		t.Fatalf("TargetBalance = %d, want 16", got.TargetBalance)
+	if got.TargetBalance != 124 {
+		t.Fatalf("TargetBalance = %d, want 124", got.TargetBalance)
 	}
-	// Growth top-ups are $6.50, so a $20 spend cap permits 3 whole units.
-	if got.MonthlyMaxUnits != 3 {
-		t.Fatalf("MonthlyMaxUnits = %d, want 3", got.MonthlyMaxUnits)
+	// Growth top-ups are $20, so a $20 spend cap permits 1 whole unit.
+	if got.MonthlyMaxUnits != 1 {
+		t.Fatalf("MonthlyMaxUnits = %d, want 1", got.MonthlyMaxUnits)
 	}
 	if got.MonthlyMaxCents != 2000 {
 		t.Fatalf("MonthlyMaxCents = %d, want 2000", got.MonthlyMaxCents)
 	}
 
 	got = billingTopupSettingsFromSpend(
-		billing.Account{PlanCode: billing.PlanStarter, PerRunMaxCredits: 1},
+		billing.Account{PlanCode: billing.PlanStarter, PerRunMaxCredits: 4},
 		true,
 		2000,
 	)
-	if got.MonthlyMaxUnits != 1 {
-		t.Fatalf("starter MonthlyMaxUnits = %d, want 1", got.MonthlyMaxUnits)
+	if got.MonthlyMaxUnits != 0 {
+		t.Fatalf("starter MonthlyMaxUnits = %d, want 0", got.MonthlyMaxUnits)
 	}
 }
 
 func TestBillingTopupSettingsFromSpendAdditionalCases(t *testing.T) {
 	settings := billingTopupSettingsFromSpend(billing.Account{
 		PlanCode:         billing.PlanTeam,
-		PerRunMaxCredits: 6,
+		PerRunMaxCredits: 12,
 	}, true, 1800)
 	if !settings.AutoTopupEnabled {
 		t.Fatal("AutoTopupEnabled = false, want true")
 	}
-	if settings.TriggerThreshold != 6 || settings.TargetBalance != 16 {
-		t.Fatalf("threshold/target = %d/%d, want 6/16", settings.TriggerThreshold, settings.TargetBalance)
+	if settings.TriggerThreshold != 12 || settings.TargetBalance != 112 {
+		t.Fatalf("threshold/target = %d/%d, want 12/112", settings.TriggerThreshold, settings.TargetBalance)
 	}
-	if settings.MonthlyMaxUnits != 2 || settings.MonthlyMaxCents != 1800 {
-		t.Fatalf("monthly cap = %d/%d, want 2/1800", settings.MonthlyMaxUnits, settings.MonthlyMaxCents)
+	if settings.MonthlyMaxUnits != 0 || settings.MonthlyMaxCents != 1800 {
+		t.Fatalf("monthly cap = %d/%d, want 0/1800", settings.MonthlyMaxUnits, settings.MonthlyMaxCents)
 	}
 
 	settings = billingTopupSettingsFromSpend(billing.Account{PlanCode: "unknown"}, false, -10)
@@ -188,8 +188,8 @@ func TestBillingPlanSwitchConfirmation(t *testing.T) {
 	}
 
 	title, msg = billingPlanSwitchConfirmation(growth, true, team, false, true, "Jun 18, 2026")
-	if title != "Switch to Team?" {
-		t.Fatalf("downgrade title = %q, want Switch to Team?", title)
+	if title != "Switch to Studio?" {
+		t.Fatalf("downgrade title = %q, want Switch to Studio?", title)
 	}
 	if !strings.Contains(msg, "Jun 18, 2026") || !strings.Contains(msg, "no immediate charge") {
 		t.Fatalf("downgrade message = %q, want next-cycle no-charge copy", msg)
@@ -208,8 +208,8 @@ func TestBillingPendingPlanChange(t *testing.T) {
 		PendingPlanCode:        billing.PlanTeam,
 		PendingPlanEffectiveAt: effective,
 	})
-	if !ok || code != billing.PlanTeam || label != "Team" || when != "Jun 18, 2026" {
-		t.Fatalf("pending plan = (%q, %q, %q, %v), want Team on Jun 18, 2026", code, label, when, ok)
+	if !ok || code != billing.PlanTeam || label != "Studio" || when != "Jun 18, 2026" {
+		t.Fatalf("pending plan = (%q, %q, %q, %v), want Studio on Jun 18, 2026", code, label, when, ok)
 	}
 
 	code, label, when, ok = billingPendingPlanChange(billing.Account{

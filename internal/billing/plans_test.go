@@ -2,20 +2,22 @@ package billing
 
 import "testing"
 
-func TestPaidPlansSandboxOptions(t *testing.T) {
-	team, ok := PaidPlanByCode(PlanTeam)
+func TestPaidPlansMatchGenerousPricing(t *testing.T) {
+	builder, ok := PaidPlanByCode(PlanBuilder)
 	if !ok {
-		t.Fatal("team plan not found")
+		t.Fatal("builder plan not found")
 	}
-	if team.MaxFlavor != FlavorMax {
-		t.Fatalf("team MaxFlavor = %q, want %q", team.MaxFlavor, FlavorMax)
+	if builder.Label != "Builder" || builder.MonthlyUSDCents != 1900 || builder.TopupUnitUSDCents != 2500 ||
+		builder.IncludedCredits != 100 || builder.MaxFlavor != FlavorStandard || builder.PerRunMaxCredits != 4 {
+		t.Fatalf("builder plan = %+v", builder)
 	}
 
-	starter, ok := PaidPlanByCode(PlanStarter)
+	studio, ok := PaidPlanByCode(PlanStudio)
 	if !ok {
-		t.Fatal("starter plan not found")
+		t.Fatal("studio plan not found")
 	}
-	if starter.MaxFlavor != FlavorStandard {
-		t.Fatalf("starter MaxFlavor = %q, want %q", starter.MaxFlavor, FlavorStandard)
+	if studio.Label != "Studio" || studio.MonthlyUSDCents != 7900 || studio.TopupUnitUSDCents != 2200 ||
+		studio.IncludedCredits != 500 || studio.MaxFlavor != FlavorPlus || studio.PerRunMaxCredits != 12 {
+		t.Fatalf("studio plan = %+v", studio)
 	}
 }

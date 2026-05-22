@@ -18,7 +18,7 @@ func TestBillableCredits(t *testing.T) {
 		{name: "one second standard", d: time.Second, multiplier: 1, minutes: 1, credits: 1},
 		{name: "fifteen minutes standard", d: 15 * time.Minute, multiplier: 1, minutes: 15, credits: 1},
 		{name: "fifteen plus one second standard", d: 15*time.Minute + time.Second, multiplier: 1, minutes: 16, credits: 2},
-		{name: "pro multiplier", d: 16 * time.Minute, multiplier: 3, minutes: 16, credits: 6},
+		{name: "plus multiplier", d: 16 * time.Minute, multiplier: 2, minutes: 16, credits: 4},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -34,14 +34,14 @@ func TestFlavorCaps(t *testing.T) {
 	if !FlavorAllowed(FlavorStandard, FlavorStandard) {
 		t.Fatal("standard should be allowed by standard cap")
 	}
-	if FlavorAllowed(FlavorPro, FlavorStandard) {
-		t.Fatal("pro should not be allowed by standard cap")
+	if FlavorAllowed(FlavorPlus, FlavorStandard) {
+		t.Fatal("plus should not be allowed by standard cap")
 	}
-	if !FlavorAllowed(FlavorMax, FlavorEnterprise) {
-		t.Fatal("max should be allowed by enterprise cap")
+	if got := MustFlavor(FlavorMax); got.Code != FlavorPlus {
+		t.Fatalf("legacy max normalized to %q, want plus", got.Code)
 	}
-	allowed := AllowedFlavors(FlavorPro)
-	if len(allowed) != 2 || allowed[0].Code != FlavorStandard || allowed[1].Code != FlavorPro {
-		t.Fatalf("AllowedFlavors(pro) = %#v", allowed)
+	allowed := AllowedFlavors(FlavorPlus)
+	if len(allowed) != 2 || allowed[0].Code != FlavorStandard || allowed[1].Code != FlavorPlus {
+		t.Fatalf("AllowedFlavors(plus) = %#v", allowed)
 	}
 }

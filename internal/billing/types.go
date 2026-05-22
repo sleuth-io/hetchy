@@ -6,7 +6,9 @@ const (
 	PlanFree       = "free"
 	PlanTrial      = "trial"
 	PlanStarter    = "starter"
+	PlanBuilder    = PlanStarter
 	PlanTeam       = "team"
+	PlanStudio     = PlanTeam
 	PlanGrowth     = "growth"
 	PlanBusiness   = "business"
 	PlanStandard   = "standard"
@@ -22,7 +24,7 @@ const (
 	ReservationComped   = "comped"
 )
 
-const TopupUnitCredits = 10
+const TopupUnitCredits = 100
 
 type Account struct {
 	OrgID                  string

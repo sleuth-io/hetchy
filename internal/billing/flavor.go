@@ -8,7 +8,11 @@ import (
 )
 
 const (
-	FlavorStandard   = "standard"
+	FlavorStandard = "standard"
+	FlavorPlus     = "plus"
+	// FlavorPro, FlavorMax, and FlavorEnterprise are legacy/deferred codes.
+	// They normalize to Plus until Daytona account limits support larger
+	// launch flavors.
 	FlavorPro        = "pro"
 	FlavorMax        = "max"
 	FlavorEnterprise = "enterprise"
@@ -26,27 +30,24 @@ type Flavor struct {
 	Multiplier int
 }
 
-var flavors = map[string]Flavor{
-	FlavorStandard: {
+var (
+	standardFlavor = Flavor{
 		Code: FlavorStandard, Label: "Standard", Rank: 1,
-		VCPU: 2, MemoryGiB: 3, DiskGiB: 4, Multiplier: 1,
-	},
-	FlavorPro: {
-		Code: FlavorPro, Label: "Pro", Rank: 2,
-		VCPU: 4, MemoryGiB: 8, DiskGiB: 10, Multiplier: 3,
-	},
-	FlavorMax: {
-		Code: FlavorMax, Label: "Max", Rank: 3,
-		VCPU: 8, MemoryGiB: 16, DiskGiB: 25, Multiplier: 6,
-	},
-	// Enterprise resource tuples are ultimately account-specific. Until
-	// a custom tuple is present, using Max's concrete tuple keeps admission
-	// and metering deterministic while preserving the higher plan cap.
-	FlavorEnterprise: {
-		Code: FlavorEnterprise, Label: "Enterprise", Rank: 4,
-		VCPU: 8, MemoryGiB: 16, DiskGiB: 25, Multiplier: 6,
-	},
-}
+		VCPU: 2, MemoryGiB: 6, DiskGiB: 10, Multiplier: 1,
+	}
+	plusFlavor = Flavor{
+		Code: FlavorPlus, Label: "Plus", Rank: 2,
+		VCPU: 4, MemoryGiB: 8, DiskGiB: 10, Multiplier: 2,
+	}
+	flavors = map[string]Flavor{
+		FlavorStandard:   standardFlavor,
+		FlavorPlus:       plusFlavor,
+		FlavorPro:        plusFlavor,
+		FlavorMax:        plusFlavor,
+		FlavorEnterprise: plusFlavor,
+	}
+	launchFlavorOrder = []Flavor{standardFlavor, plusFlavor}
+)
 
 func ParseFlavor(code string) (Flavor, error) {
 	code = strings.ToLower(strings.TrimSpace(code))
@@ -70,9 +71,8 @@ func MustFlavor(code string) Flavor {
 
 func AllowedFlavors(maxCode string) []Flavor {
 	maxFlavor := MustFlavor(maxCode)
-	out := make([]Flavor, 0, len(flavors))
-	for _, code := range []string{FlavorStandard, FlavorPro, FlavorMax, FlavorEnterprise} {
-		f := flavors[code]
+	out := make([]Flavor, 0, len(launchFlavorOrder))
+	for _, f := range launchFlavorOrder {
 		if f.Rank <= maxFlavor.Rank {
 			out = append(out, f)
 		}

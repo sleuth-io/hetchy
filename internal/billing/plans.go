@@ -12,20 +12,20 @@ type PaidPlan struct {
 
 var paidPlans = []PaidPlan{
 	{
-		Code: PlanStarter, Label: "Starter", MonthlyUSDCents: 4900, TopupUnitUSDCents: 1250,
-		IncludedCredits: 50, MaxFlavor: FlavorStandard, PerRunMaxCredits: 1,
+		Code: PlanBuilder, Label: "Builder", MonthlyUSDCents: 1900, TopupUnitUSDCents: 2500,
+		IncludedCredits: 100, MaxFlavor: FlavorStandard, PerRunMaxCredits: 4,
 	},
 	{
-		Code: PlanTeam, Label: "Team", MonthlyUSDCents: 19900, TopupUnitUSDCents: 900,
-		IncludedCredits: 300, MaxFlavor: FlavorMax, PerRunMaxCredits: 6,
+		Code: PlanStudio, Label: "Studio", MonthlyUSDCents: 7900, TopupUnitUSDCents: 2200,
+		IncludedCredits: 500, MaxFlavor: FlavorPlus, PerRunMaxCredits: 12,
 	},
 	{
-		Code: PlanGrowth, Label: "Growth", MonthlyUSDCents: 49900, TopupUnitUSDCents: 650,
-		IncludedCredits: 1000, MaxFlavor: FlavorMax, PerRunMaxCredits: 6,
+		Code: PlanGrowth, Label: "Growth", MonthlyUSDCents: 19900, TopupUnitUSDCents: 2000,
+		IncludedCredits: 1400, MaxFlavor: FlavorPlus, PerRunMaxCredits: 24,
 	},
 	{
-		Code: PlanBusiness, Label: "Business", MonthlyUSDCents: 149900, TopupUnitUSDCents: 450,
-		IncludedCredits: 4000, MaxFlavor: FlavorMax, PerRunMaxCredits: 6,
+		Code: PlanBusiness, Label: "Business", MonthlyUSDCents: 49900, TopupUnitUSDCents: 1600,
+		IncludedCredits: 3600, MaxFlavor: FlavorPlus, PerRunMaxCredits: 48,
 	},
 }
 

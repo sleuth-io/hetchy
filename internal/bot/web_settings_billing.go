@@ -212,7 +212,7 @@ func sandboxOptionsLabel(maxFlavor string) string {
 	if maxFlavor == billing.FlavorStandard {
 		return "Standard only"
 	}
-	return "All sizes"
+	return "Standard and Plus"
 }
 
 func billingPlanForTopup(planCode string) billing.PaidPlan {

@@ -82,11 +82,11 @@ func TestFinishBillingRunDisabled(t *testing.T) {
 }
 
 func TestAddBillingFlavorLabels(t *testing.T) {
-	addBillingFlavorLabels(nil, billing.MustFlavor(billing.FlavorMax))
+	addBillingFlavorLabels(nil, billing.MustFlavor(billing.FlavorPlus))
 	labels := map[string]string{}
-	addBillingFlavorLabels(labels, billing.MustFlavor(billing.FlavorMax))
-	if labels["hetchy_billing_flavor"] != billing.FlavorMax {
-		t.Fatalf("flavor label = %q, want max", labels["hetchy_billing_flavor"])
+	addBillingFlavorLabels(labels, billing.MustFlavor(billing.FlavorPlus))
+	if labels["hetchy_billing_flavor"] != billing.FlavorPlus {
+		t.Fatalf("flavor label = %q, want plus", labels["hetchy_billing_flavor"])
 	}
 	if labels["hetchy_billing_multiplier"] == "" {
 		t.Fatal("missing multiplier label")
@@ -94,7 +94,7 @@ func TestAddBillingFlavorLabels(t *testing.T) {
 }
 
 func TestResizeSandboxForBillingFlavor(t *testing.T) {
-	if err := (&Bot{}).resizeSandboxForBillingFlavor(t.Context(), nil, billing.MustFlavor(billing.FlavorMax)); err != nil {
+	if err := (&Bot{}).resizeSandboxForBillingFlavor(t.Context(), nil, billing.MustFlavor(billing.FlavorPlus)); err != nil {
 		t.Fatalf("nil sandbox resize returned error: %v", err)
 	}
 	if err := (&Bot{}).resizeSandboxForBillingFlavor(t.Context(), &daytona.Sandbox{}, billing.MustFlavor(billing.FlavorStandard)); err != nil {
@@ -105,12 +105,12 @@ func TestResizeSandboxForBillingFlavor(t *testing.T) {
 	called := false
 	b := &Bot{resizeSandboxFn: func(_ context.Context, _ *daytona.Sandbox, flavor billing.Flavor) error {
 		called = true
-		if flavor.Code != billing.FlavorMax {
-			t.Fatalf("resize flavor = %q, want max", flavor.Code)
+		if flavor.Code != billing.FlavorPlus {
+			t.Fatalf("resize flavor = %q, want plus", flavor.Code)
 		}
 		return wantErr
 	}}
-	if err := b.resizeSandboxForBillingFlavor(t.Context(), &daytona.Sandbox{}, billing.MustFlavor(billing.FlavorMax)); !errors.Is(err, wantErr) {
+	if err := b.resizeSandboxForBillingFlavor(t.Context(), &daytona.Sandbox{}, billing.MustFlavor(billing.FlavorPlus)); !errors.Is(err, wantErr) {
 		t.Fatalf("resize error = %v, want %v", err, wantErr)
 	}
 	if !called {

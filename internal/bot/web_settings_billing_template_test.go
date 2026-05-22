@@ -18,40 +18,40 @@ func TestSettingsTemplate_RendersBillingTabLayout(t *testing.T) {
 		"IsAdmin": true, "Tab": "billing", "SavedMessage": "",
 		"Billing": billingOverviewView{
 			PlanCode:          billing.PlanTeam,
-			CurrentPlanLabel:  "Team",
+			CurrentPlanLabel:  "Studio",
 			Status:            "active",
-			IncludedCredits:   300,
+			IncludedCredits:   500,
 			IncludedUsed:      60,
-			IncludedRemaining: 240,
-			TopupCredits:      20,
-			Balance:           260,
-			MaxFlavor:         billing.FlavorMax,
-			SandboxOptions:    "All sizes",
-			PerRunMaxCredits:  6,
+			IncludedRemaining: 440,
+			TopupCredits:      100,
+			Balance:           540,
+			MaxFlavor:         billing.FlavorPlus,
+			SandboxOptions:    "Standard and Plus",
+			PerRunMaxCredits:  12,
 			AutoTopupEnabled:  true,
 			MonthlyMaxSpend:   "27",
-			MonthlySpendUsed:  "$9",
-			TopupUnitPrice:    "$9",
+			MonthlySpendUsed:  "$22",
+			TopupUnitPrice:    "$22",
 			TopupUnitCredits:  billing.TopupUnitCredits,
 			StripeConfigured:  true,
 			HasStripeCustomer: true,
 			PlanOptions: []billingPlanOptionView{
 				{
-					Code: billing.PlanTeam, Label: "Team", Monthly: "$199", TopupUnitPrice: "$9",
-					IncludedCredits: 300, MaxFlavor: billing.FlavorMax, SandboxOptions: "All sizes", PerRunMaxCredits: 6,
+					Code: billing.PlanTeam, Label: "Studio", Monthly: "$79", TopupUnitPrice: "$22",
+					IncludedCredits: 500, MaxFlavor: billing.FlavorPlus, SandboxOptions: "Standard and Plus", PerRunMaxCredits: 12,
 					Configured: true, Current: true, ActionLabel: "Current",
 				},
 				{
-					Code: billing.PlanGrowth, Label: "Growth", Monthly: "$499", TopupUnitPrice: "$6.50",
-					IncludedCredits: 1000, MaxFlavor: billing.FlavorMax, SandboxOptions: "All sizes", PerRunMaxCredits: 6,
+					Code: billing.PlanGrowth, Label: "Growth", Monthly: "$199", TopupUnitPrice: "$20",
+					IncludedCredits: 1400, MaxFlavor: billing.FlavorPlus, SandboxOptions: "Standard and Plus", PerRunMaxCredits: 24,
 					Configured: true, ActionLabel: "Switch", ConfirmTitle: "Switch to Growth?",
 					ConfirmMessage: "This upgrade takes effect immediately. Stripe will invoice the prorated difference now.",
 				},
 			},
 			RecentMeters: []billingMeterView{
 				{
-					RunID: "run_123", Flavor: billing.FlavorMax, BillableMinutes: 15,
-					CapturedCredits: 4, TerminalState: "succeeded", StartedAt: "May 18, 2026",
+					RunID: "run_123", Flavor: billing.FlavorPlus, BillableMinutes: 15,
+					CapturedCredits: 2, TerminalState: "succeeded", StartedAt: "May 18, 2026",
 				},
 			},
 		},
@@ -66,11 +66,11 @@ func TestSettingsTemplate_RendersBillingTabLayout(t *testing.T) {
 		`<h3>Usage</h3>`,
 		`class="billing-usage-meter"`,
 		`Credit balance`,
-		`260 credits available`,
+		`540 credits available`,
 		`Included credits used`,
-		`60 / 300`,
-		`240 included credits remaining this period`,
-		`20 top-up credits available after included credits`,
+		`60 / 500`,
+		`440 included credits remaining this period`,
+		`100 top-up credits available after included credits`,
 		`class="billing-topups-panel"`,
 		`Buy credits now`,
 		`class="secondary" type="submit"`,
@@ -85,8 +85,8 @@ func TestSettingsTemplate_RendersBillingTabLayout(t *testing.T) {
 		`One credit covers a 15-minute run on a standard sandbox.`,
 		`Included credits`,
 		`Top-up price`,
-		`per 10-credit top-up`,
-		`Sandbox size options: All sizes`,
+		`per 100-credit top-up`,
+		`Sandbox size options: Standard and Plus`,
 		`Switch`,
 		`id="billing-plan-switch-dialog"`,
 		`data-billing-plan-confirm="1"`,
@@ -132,24 +132,24 @@ func TestSettingsTemplate_RendersPendingBillingPlanChange(t *testing.T) {
 			Status:            "active",
 			PeriodEnd:         "Jun 18, 2026",
 			PendingPlanCode:   billing.PlanTeam,
-			PendingPlanLabel:  "Team",
+			PendingPlanLabel:  "Studio",
 			PendingPlanAt:     "Jun 18, 2026",
 			HasPendingPlan:    true,
-			IncludedCredits:   4000,
-			Balance:           4000,
-			SandboxOptions:    "All sizes",
+			IncludedCredits:   3600,
+			Balance:           3600,
+			SandboxOptions:    "Standard and Plus",
 			TopupUnitCredits:  billing.TopupUnitCredits,
 			StripeConfigured:  true,
 			HasStripeCustomer: true,
 			PlanOptions: []billingPlanOptionView{
 				{
-					Code: billing.PlanTeam, Label: "Team", Monthly: "$199", TopupUnitPrice: "$9",
-					IncludedCredits: 300, SandboxOptions: "All sizes", Configured: true,
+					Code: billing.PlanTeam, Label: "Studio", Monthly: "$79", TopupUnitPrice: "$22",
+					IncludedCredits: 500, SandboxOptions: "Standard and Plus", Configured: true,
 					Scheduled: true, ActionLabel: "Scheduled",
 				},
 				{
-					Code: billing.PlanBusiness, Label: "Business", Monthly: "$1499", TopupUnitPrice: "$4.50",
-					IncludedCredits: 4000, SandboxOptions: "All sizes", Configured: true,
+					Code: billing.PlanBusiness, Label: "Business", Monthly: "$499", TopupUnitPrice: "$16",
+					IncludedCredits: 3600, SandboxOptions: "Standard and Plus", Configured: true,
 					Current: true, ActionLabel: "Current",
 				},
 			},
@@ -160,7 +160,7 @@ func TestSettingsTemplate_RendersPendingBillingPlanChange(t *testing.T) {
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
-		`Team scheduled`,
+		`Studio scheduled`,
 		`Takes effect on Jun 18, 2026.`,
 		`Your current Business plan stays active until then.`,
 		`class="billing-plan-option scheduled"`,
@@ -170,7 +170,7 @@ func TestSettingsTemplate_RendersPendingBillingPlanChange(t *testing.T) {
 			t.Errorf("pending billing tab missing %q", want)
 		}
 	}
-	if strings.Contains(body, `data-confirm-title="Switch to Team?"`) {
+	if strings.Contains(body, `data-confirm-title="Switch to Studio?"`) {
 		t.Error("scheduled pending plan should not submit through the switch confirmation")
 	}
 }
@@ -188,7 +188,7 @@ func TestSettingsTemplate_RendersCompedBillingBanner(t *testing.T) {
 			IncludedCredits:   10,
 			IncludedRemaining: 10,
 			Balance:           10,
-			SandboxOptions:    "All sizes",
+			SandboxOptions:    "Standard and Plus",
 			TopupUnitCredits:  billing.TopupUnitCredits,
 		},
 	})

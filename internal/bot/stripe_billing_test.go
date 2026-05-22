@@ -81,8 +81,8 @@ func TestTopupCreditsFromCheckoutMetadata(t *testing.T) {
 		want     int
 	}{
 		{name: "explicit credits", metadata: map[string]string{"credits": "50", "quantity": "2"}, want: 50},
-		{name: "quantity fallback", metadata: map[string]string{"quantity": "4"}, want: 40},
-		{name: "default quantity", metadata: nil, want: 10},
+		{name: "quantity fallback", metadata: map[string]string{"quantity": "4"}, want: 400},
+		{name: "default quantity", metadata: nil, want: 100},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := topupCreditsFromCheckoutMetadata(tc.metadata); got != tc.want {
@@ -100,11 +100,14 @@ func TestPaidAccountMirrorUsesLocalPlanLimits(t *testing.T) {
 		"per_run_max_credits": "3",
 	})
 
-	if mirror.MaxFlavor != billing.FlavorMax {
-		t.Fatalf("MaxFlavor = %q, want %q", mirror.MaxFlavor, billing.FlavorMax)
+	if mirror.IncludedCredits != 500 {
+		t.Fatalf("IncludedCredits = %d, want 500", mirror.IncludedCredits)
 	}
-	if mirror.PerRunMaxCredits != 6 {
-		t.Fatalf("PerRunMaxCredits = %d, want 6", mirror.PerRunMaxCredits)
+	if mirror.MaxFlavor != billing.FlavorPlus {
+		t.Fatalf("MaxFlavor = %q, want %q", mirror.MaxFlavor, billing.FlavorPlus)
+	}
+	if mirror.PerRunMaxCredits != 12 {
+		t.Fatalf("PerRunMaxCredits = %d, want 12", mirror.PerRunMaxCredits)
 	}
 }
 

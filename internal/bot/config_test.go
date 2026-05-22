@@ -248,7 +248,7 @@ func TestLoadConfig_StripeSubscriptionPriceIDs(t *testing.T) {
 	}
 }
 
-func TestLoadConfig_StripeSubscriptionPriceIDLegacyDefaultsToTeam(t *testing.T) {
+func TestLoadConfig_StripeSubscriptionPriceIDLegacyDefaultsToStudio(t *testing.T) {
 	clearEnv(t, "AUTH_BYPASS", "STRIPE_SUBSCRIPTION_PRICE_ID", "STRIPE_SUBSCRIPTION_PRICE_IDS")
 	setEnv(t, requiredEnv())
 	t.Setenv("STRIPE_SUBSCRIPTION_PRICE_ID", "price_team")

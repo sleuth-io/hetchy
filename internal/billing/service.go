@@ -59,7 +59,6 @@ func (s *Service) AdmitRun(ctx context.Context, req AdmissionRequest) (Admission
 	if err != nil {
 		return Admission{}, err
 	}
-	reserveCredits := max(flavor.Multiplier, 1)
 	if account.BillingExempt {
 		if _, _, err := s.store.AdmitRun(ctx, req.OrgID, req.RunID, 0, flavor, req.StartedAt); err != nil {
 			return Admission{}, err
@@ -74,6 +73,7 @@ func (s *Service) AdmitRun(ctx context.Context, req AdmissionRequest) (Admission
 	if !FlavorAllowed(flavor.Code, account.MaxFlavor) {
 		return Admission{}, FlavorNotAllowedError{Flavor: flavor.Code, MaxFlavor: account.MaxFlavor}
 	}
+	reserveCredits := max(account.PerRunMaxCredits, flavor.Multiplier, 1)
 	if account.Balance() < reserveCredits {
 		account, err = s.maybeAutoTopup(ctx, account, reserveCredits)
 		if err != nil {

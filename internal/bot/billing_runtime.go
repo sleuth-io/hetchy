@@ -85,7 +85,7 @@ func addBillingFlavorLabels(labels map[string]string, flavor billing.Flavor) {
 }
 
 func (b *Bot) resizeSandboxForBillingFlavor(ctx context.Context, sb *daytona.Sandbox, flavor billing.Flavor) error {
-	if sb == nil || flavor.Code == billing.FlavorStandard {
+	if sb == nil {
 		return nil
 	}
 	if b.resizeSandboxFn != nil {
