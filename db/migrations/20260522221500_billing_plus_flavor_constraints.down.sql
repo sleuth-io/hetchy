@@ -1,0 +1,2 @@
+-- Intentionally left in place when rolling back one step. The pricing
+-- migration down path restores the pre-plus constraints after rewriting rows.

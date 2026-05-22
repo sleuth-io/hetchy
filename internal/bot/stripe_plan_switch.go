@@ -32,14 +32,18 @@ func (b *Bot) switchStripeSubscriptionPlan(ctx context.Context, orgID string, ac
 	if currentPlan.Code == targetPlan.Code {
 		return stripePlanSwitchNoop, nil
 	}
-	if acct.PendingPlanCode == targetPlan.Code && acct.PendingPlanEffectiveAt.After(time.Now()) {
-		return stripePlanSwitchScheduled, nil
-	}
 
 	client := b.stripeClient()
 	sub, err := client.V1Subscriptions.Retrieve(ctx, acct.StripeSubscriptionID, nil)
 	if err != nil {
 		return stripePlanSwitchNoop, fmt.Errorf("retrieve subscription: %w", err)
+	}
+	if stripeSubscriptionHasPendingCancellation(sub) {
+		updated, err := client.V1Subscriptions.Update(ctx, sub.ID, stripeResumeSubscriptionParams(sub))
+		if err != nil {
+			return stripePlanSwitchNoop, fmt.Errorf("resume subscription before plan switch: %w", err)
+		}
+		sub = updated
 	}
 	item, currentPriceID, err := stripeSubscriptionPlanItem(sub, b.stripeSubscriptionPriceIDsByPlan())
 	if err != nil {
@@ -56,7 +60,7 @@ func (b *Bot) switchStripeSubscriptionPlan(ctx context.Context, orgID string, ac
 		}
 		if scheduleID != "" {
 			if _, err := client.V1SubscriptionSchedules.Release(ctx, scheduleID, &stripe.SubscriptionScheduleReleaseParams{
-				PreserveCancelDate: stripe.Bool(true),
+				PreserveCancelDate: stripe.Bool(false),
 			}); err != nil {
 				return stripePlanSwitchNoop, fmt.Errorf("release pending subscription schedule: %w", err)
 			}
@@ -80,7 +84,7 @@ func (b *Bot) switchStripeSubscriptionPlan(ctx context.Context, orgID string, ac
 		return stripePlanSwitchNoop, err
 	}
 	if scheduleID == "" {
-		schedule, err := client.V1SubscriptionSchedules.Create(ctx, stripeDowngradeScheduleCreateParams(sub.ID, orgID, currentPlan, currentPriceID, targetPlan, targetPriceID, periodStart, periodEnd))
+		schedule, err := client.V1SubscriptionSchedules.Create(ctx, stripeDowngradeScheduleCreateParams(sub.ID, currentPlan, currentPriceID, targetPlan, targetPriceID, periodStart, periodEnd))
 		if err != nil {
 			return stripePlanSwitchNoop, fmt.Errorf("create subscription schedule: %w", err)
 		}
@@ -94,6 +98,28 @@ func (b *Bot) switchStripeSubscriptionPlan(ctx context.Context, orgID string, ac
 		return stripePlanSwitchNoop, fmt.Errorf("record pending plan change: %w", err)
 	}
 	return stripePlanSwitchScheduled, nil
+}
+
+func stripeSubscriptionHasPendingCancellation(sub *stripe.Subscription) bool {
+	return sub != nil && (sub.CancelAt > 0 || sub.CancelAtPeriodEnd)
+}
+
+func stripeResumeSubscriptionParams(sub *stripe.Subscription) *stripe.SubscriptionUpdateParams {
+	subscriptionID := ""
+	if sub != nil {
+		subscriptionID = sub.ID
+	}
+	params := &stripe.SubscriptionUpdateParams{
+		Params: stripe.Params{
+			IdempotencyKey: stripe.String("hetchy-plan-resume-" + subscriptionID),
+		},
+	}
+	if sub != nil && sub.CancelAt > 0 {
+		params.AddUnsetField(stripe.SubscriptionUpdateParamsUnsetFieldCancelAt)
+		return params
+	}
+	params.CancelAtPeriodEnd = stripe.Bool(false)
+	return params
 }
 
 func mutableStripeSubscriptionScheduleID(ctx context.Context, client *stripe.Client, sub *stripe.Subscription) (string, error) {
@@ -214,17 +240,14 @@ func stripeSubscriptionPeriod(acct billing.Account, sub *stripe.Subscription, pr
 	return unixTime(start), unixTime(end)
 }
 
-func stripeDowngradeScheduleCreateParams(subscriptionID, orgID string, currentPlan billing.PaidPlan, currentPriceID string, targetPlan billing.PaidPlan, targetPriceID string, periodStart, periodEnd int64) *stripe.SubscriptionScheduleCreateParams {
+func stripeDowngradeScheduleCreateParams(subscriptionID string, currentPlan billing.PaidPlan, currentPriceID string, targetPlan billing.PaidPlan, targetPriceID string, periodStart, periodEnd int64) *stripe.SubscriptionScheduleCreateParams {
 	return &stripe.SubscriptionScheduleCreateParams{
 		Params: stripe.Params{
 			IdempotencyKey: stripe.String("hetchy-plan-schedule-" + subscriptionID + "-" + currentPlan.Code + "-" + currentPriceID + "-" + targetPlan.Code + "-" + targetPriceID + "-" + strconv.FormatInt(periodStart, 10) + "-" + strconv.FormatInt(periodEnd, 10)),
 		},
+		// Stripe rejects metadata when creating a schedule from a subscription.
+		// The immediate update call applies Hetchy's schedule metadata instead.
 		FromSubscription: stripe.String(subscriptionID),
-		Metadata: hetchyStripeMetadata(map[string]string{
-			"kind":              stripeCheckoutKindSubscription,
-			"org_id":            orgID,
-			"pending_plan_code": targetPlan.Code,
-		}),
 	}
 }
 

@@ -34,3 +34,22 @@ UPDATE repo_billing_settings
 SET flavor = 'pro',
     updated_at = NOW()
 WHERE flavor = 'plus';
+
+UPDATE billing_accounts
+SET max_flavor = 'max',
+    updated_at = NOW()
+WHERE max_flavor = 'plus';
+
+ALTER TABLE billing_accounts
+    DROP CONSTRAINT IF EXISTS billing_accounts_max_flavor_check;
+
+ALTER TABLE billing_accounts
+    ADD CONSTRAINT billing_accounts_max_flavor_check
+    CHECK (max_flavor IN ('standard', 'pro', 'max', 'enterprise'));
+
+ALTER TABLE repo_billing_settings
+    DROP CONSTRAINT IF EXISTS repo_billing_settings_flavor_check;
+
+ALTER TABLE repo_billing_settings
+    ADD CONSTRAINT repo_billing_settings_flavor_check
+    CHECK (flavor IN ('standard', 'pro', 'max', 'enterprise'));

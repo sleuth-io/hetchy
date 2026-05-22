@@ -73,6 +73,7 @@ func TestSettingsTemplate_RendersBillingTabLayout(t *testing.T) {
 		`100 top-up credits available after included credits`,
 		`class="billing-topups-panel"`,
 		`Buy credits now`,
+		`action="/billing/topup" class="billing-topup-form" target="_blank" rel="noopener"`,
 		`class="secondary" type="submit"`,
 		`Save top-up settings`,
 		`name="quantity" value="1"`,
@@ -117,6 +118,33 @@ func TestSettingsTemplate_RendersBillingTabLayout(t *testing.T) {
 		if strings.Contains(body, notWant) {
 			t.Errorf("billing tab unexpectedly contained %q", notWant)
 		}
+	}
+}
+
+func TestSettingsTemplate_DisablesBillingPortalWithoutStripeCustomer(t *testing.T) {
+	b := newBypassBot(t)
+	rec := httptest.NewRecorder()
+	b.renderTemplate(rec, webui.Settings, map[string]any{
+		"OrgID": "org_y", "OrgName": "Acme", "Email": "u@y", "PrincipalUserID": "user_me",
+		"IsAdmin": true, "Tab": "billing", "SavedMessage": "",
+		"Billing": billingOverviewView{
+			CurrentPlanLabel: "Free",
+			Status:           "free",
+			IncludedCredits:  10,
+			Balance:          10,
+			SandboxOptions:   "Standard",
+			StripeConfigured: true,
+		},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `<span class="billing-portal-link disabled">Stripe portal</span>`) {
+		t.Error("billing tab should render a disabled Stripe portal label without a Stripe customer")
+	}
+	if strings.Contains(body, `href="/billing/portal"`) {
+		t.Error("billing tab should not link to the Stripe portal without a Stripe customer")
 	}
 }
 

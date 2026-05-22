@@ -205,7 +205,7 @@ func TestStripeUpgradeSubscriptionParamsInvoicesImmediately(t *testing.T) {
 func TestStripeDowngradeScheduleCreateParamsOnlySetsSubscription(t *testing.T) {
 	growth, _ := billing.PaidPlanByCode(billing.PlanGrowth)
 	team, _ := billing.PaidPlanByCode(billing.PlanTeam)
-	params := stripeDowngradeScheduleCreateParams("sub_1", "org_1", growth, "price_growth", team, "price_team", 1, 2)
+	params := stripeDowngradeScheduleCreateParams("sub_1", growth, "price_growth", team, "price_team", 1, 2)
 
 	if params.FromSubscription == nil || *params.FromSubscription != "sub_1" {
 		t.Fatalf("FromSubscription = %v, want sub_1", params.FromSubscription)
@@ -213,14 +213,8 @@ func TestStripeDowngradeScheduleCreateParamsOnlySetsSubscription(t *testing.T) {
 	if key := *params.IdempotencyKey; !strings.Contains(key, "price_growth") || !strings.Contains(key, "price_team") {
 		t.Fatalf("idempotency key = %q, want current and target prices", key)
 	}
-	if got := params.Metadata[stripeMetadataAppKey]; got != stripeMetadataAppHetchy {
-		t.Fatalf("metadata app = %q, want %q", got, stripeMetadataAppHetchy)
-	}
-	if got := params.Metadata["org_id"]; got != "org_1" {
-		t.Fatalf("metadata org_id = %q, want org_1", got)
-	}
-	if got := params.Metadata["pending_plan_code"]; got != billing.PlanTeam {
-		t.Fatalf("metadata pending_plan_code = %q, want team", got)
+	if params.Metadata != nil {
+		t.Fatalf("Metadata = %v, want nil with from_subscription create", params.Metadata)
 	}
 	if params.Phases != nil {
 		t.Fatalf("Phases = %v, want nil with from_subscription create", params.Phases)
@@ -244,29 +238,6 @@ func TestStripeSubscriptionScheduleCanUpdate(t *testing.T) {
 		if stripeSubscriptionScheduleCanUpdate(status) {
 			t.Fatalf("status %q should not be mutable", status)
 		}
-	}
-}
-
-func TestStripePlanSwitchAlreadyPendingSkipsStripe(t *testing.T) {
-	team, _ := billing.PaidPlanByCode(billing.PlanTeam)
-	result, err := (&Bot{}).switchStripeSubscriptionPlan(
-		t.Context(),
-		"org_1",
-		billing.Account{
-			OrgID:                  "org_1",
-			StripeSubscriptionID:   "sub_1",
-			PlanCode:               billing.PlanBusiness,
-			PendingPlanCode:        billing.PlanTeam,
-			PendingPlanEffectiveAt: time.Now().Add(time.Hour),
-		},
-		team,
-		"price_team",
-	)
-	if err != nil {
-		t.Fatalf("switchStripeSubscriptionPlan returned error: %v", err)
-	}
-	if result != stripePlanSwitchScheduled {
-		t.Fatalf("result = %q, want %q", result, stripePlanSwitchScheduled)
 	}
 }
 
@@ -315,5 +286,36 @@ func TestStripeDowngradeScheduleParamsAppliesNextCycle(t *testing.T) {
 	}
 	if key := *params.IdempotencyKey; !strings.Contains(key, "sub_sched_1") || !strings.Contains(key, "price_growth") || !strings.Contains(key, "price_team") {
 		t.Fatalf("idempotency key = %q, want schedule ID plus current and target prices", key)
+	}
+}
+
+func TestStripeResumeSubscriptionParamsClearsCancellation(t *testing.T) {
+	if stripeSubscriptionHasPendingCancellation(nil) {
+		t.Fatal("nil subscription should not have pending cancellation")
+	}
+	if !stripeSubscriptionHasPendingCancellation(&stripe.Subscription{CancelAt: 1782165951}) {
+		t.Fatal("CancelAt should count as pending cancellation")
+	}
+	if !stripeSubscriptionHasPendingCancellation(&stripe.Subscription{CancelAtPeriodEnd: true}) {
+		t.Fatal("CancelAtPeriodEnd should count as pending cancellation")
+	}
+
+	params := stripeResumeSubscriptionParams(&stripe.Subscription{ID: "sub_1", CancelAt: 1782165951})
+	if len(params.UnsetFields) != 1 || params.UnsetFields[0] != stripe.SubscriptionUpdateParamsUnsetFieldCancelAt {
+		t.Fatalf("UnsetFields = %v, want cancel_at", params.UnsetFields)
+	}
+	if params.CancelAtPeriodEnd != nil {
+		t.Fatalf("CancelAtPeriodEnd = %v, want nil when clearing cancel_at", params.CancelAtPeriodEnd)
+	}
+	if params.IdempotencyKey == nil || !strings.Contains(*params.IdempotencyKey, "sub_1") {
+		t.Fatalf("IdempotencyKey = %v, want subscription-specific key", params.IdempotencyKey)
+	}
+
+	params = stripeResumeSubscriptionParams(&stripe.Subscription{ID: "sub_2", CancelAtPeriodEnd: true})
+	if len(params.UnsetFields) != 0 {
+		t.Fatalf("UnsetFields = %v, want none when clearing cancel_at_period_end", params.UnsetFields)
+	}
+	if params.CancelAtPeriodEnd == nil || *params.CancelAtPeriodEnd {
+		t.Fatalf("CancelAtPeriodEnd = %v, want false", params.CancelAtPeriodEnd)
 	}
 }

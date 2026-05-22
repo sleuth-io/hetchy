@@ -25,10 +25,11 @@ set -euo pipefail
 
 base="origin/main"
 threshold=""
+explicit_threshold=0
 
 for arg in "$@"; do
     case "$arg" in
-        --threshold=*) threshold="${arg#--threshold=}" ;;
+        --threshold=*) threshold="${arg#--threshold=}"; explicit_threshold=1 ;;
         --base=*)      base="${arg#--base=}" ;;
         -h|--help)
             sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'
@@ -54,17 +55,19 @@ if ! git rev-parse --verify "$base" >/dev/null 2>&1; then
     exit 0
 fi
 
+base_threshold=$(git ls-tree -r --name-only "$base" -- db/migrations/ 2>/dev/null \
+    | grep -E "$migration_re" \
+    | sed -E 's|db/migrations/([0-9]+)_.*|\1|' \
+    | sort -n | tail -1 || true)
+if [ -z "$base_threshold" ]; then
+    # No migrations on the base ref — likely a misconfigured --base.
+    # Don't pretend the check ran cleanly.
+    echo "check-migrations-order: warning: $base has no migrations; check is inconclusive" >&2
+    base_threshold=0
+fi
+
 if [ -z "$threshold" ]; then
-    threshold=$(git ls-tree -r --name-only "$base" -- db/migrations/ 2>/dev/null \
-        | grep -E "$migration_re" \
-        | sed -E 's|db/migrations/([0-9]+)_.*|\1|' \
-        | sort -n | tail -1 || true)
-    if [ -z "$threshold" ]; then
-        # No migrations on the base ref — likely a misconfigured --base.
-        # Don't pretend the check ran cleanly.
-        echo "check-migrations-order: warning: $base has no migrations; check is inconclusive" >&2
-        threshold=0
-    fi
+    threshold="$base_threshold"
     threshold_label="$base max"
 else
     threshold_label="DB version"
@@ -72,12 +75,36 @@ fi
 
 # Diff against the working tree (not just HEAD) so that an in-progress
 # rename is taken into account during local `make db-up`. In CI the
-# working tree equals HEAD, so the behaviour is the same there.
-added=$(git diff --diff-filter=A --name-only "$base" -- db/migrations/ 2>/dev/null \
-    | grep -E "$migration_re" || true)
+# working tree equals HEAD, so the behaviour is the same there. Include
+# untracked files as branch-added too because go:embed and golang-migrate
+# can see them even though `git diff` cannot.
+added=$((
+    git diff --diff-filter=A --name-only "$base" -- db/migrations/ 2>/dev/null
+    git ls-files --others --exclude-standard -- db/migrations/ 2>/dev/null
+) \
+        | grep -E "$migration_re" \
+        | sort -u || true)
 
 if [ -z "$added" ]; then
     exit 0
+fi
+
+# If the current DB version is itself a migration added on this branch,
+# the local database has already advanced through this branch's migration
+# chain. In that state, comparing every branch-added migration against the
+# current DB version incorrectly flags the already-applied earlier files.
+# Fall back to the base-ref threshold; that still catches the real leapfrog
+# case where main has moved past a migration added on this branch.
+if [ "$explicit_threshold" -eq 1 ]; then
+    while IFS= read -r f; do
+        [ -z "$f" ] && continue
+        ts=$(echo "$f" | sed -E 's|db/migrations/([0-9]+)_.*|\1|')
+        if [ "$ts" -eq "$threshold" ]; then
+            threshold="$base_threshold"
+            threshold_label="$base max"
+            break
+        fi
+    done <<< "$added"
 fi
 
 bad=()

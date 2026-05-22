@@ -186,6 +186,21 @@ func TestStripeOrgIDAndSubscriptionPeriod(t *testing.T) {
 	if start.Unix() != 1780272000 || end.Unix() != 1782864000 {
 		t.Fatalf("Period = %v-%v, want item period", start, end)
 	}
+
+	cancelAt := stripeSubscriptionObject{CancelAt: 1782165951}.CancellationEffectiveAt()
+	if cancelAt.Unix() != 1782165951 {
+		t.Fatalf("CancellationEffectiveAt cancel_at = %v, want unix 1782165951", cancelAt)
+	}
+	cancelAt = stripeSubscriptionObject{
+		CancelAtPeriodEnd: true,
+		CurrentPeriodEnd:  1782864000,
+	}.CancellationEffectiveAt()
+	if cancelAt.Unix() != 1782864000 {
+		t.Fatalf("CancellationEffectiveAt period end = %v, want unix 1782864000", cancelAt)
+	}
+	if got := (stripeSubscriptionObject{}).CancellationEffectiveAt(); !got.IsZero() {
+		t.Fatalf("CancellationEffectiveAt without cancellation = %v, want zero", got)
+	}
 }
 
 func TestStripeCheckoutTopupCreditsUsesMetadataWithoutLookup(t *testing.T) {

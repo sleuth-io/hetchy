@@ -213,6 +213,15 @@ func TestBillingPendingPlanChange(t *testing.T) {
 	}
 
 	code, label, when, ok = billingPendingPlanChange(billing.Account{
+		PlanCode:               billing.PlanGrowth,
+		PendingPlanCode:        billing.PlanFree,
+		PendingPlanEffectiveAt: effective,
+	})
+	if !ok || code != billing.PlanFree || label != "Free" || when != "Jun 18, 2026" {
+		t.Fatalf("pending cancellation = (%q, %q, %q, %v), want Free on Jun 18, 2026", code, label, when, ok)
+	}
+
+	code, label, when, ok = billingPendingPlanChange(billing.Account{
 		PlanCode:        billing.PlanTeam,
 		PendingPlanCode: billing.PlanTeam,
 	})

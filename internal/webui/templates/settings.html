@@ -1080,7 +1080,7 @@
           <p class="hint">Buy credits manually, or let Hetchy add them automatically before the balance runs low.</p>
         </div>
         {{if and .IsAdmin $b.StripeConfigured}}
-          <form method="POST" action="/billing/topup" class="billing-topup-form">
+          <form method="POST" action="/billing/topup" class="billing-topup-form" target="_blank" rel="noopener">
             <input type="hidden" name="quantity" value="1">
             <button class="secondary" type="submit">Buy credits now</button>
           </form>

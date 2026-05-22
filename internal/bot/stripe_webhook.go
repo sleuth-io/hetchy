@@ -131,8 +131,24 @@ func (b *Bot) handleStripeSubscription(ctx context.Context, event stripe.Event) 
 		mirror.MaxFlavor = billing.FlavorStandard
 		mirror.PerRunMaxCredits = 4
 	}
-	_, err := b.billing.UpsertAccountMirror(ctx, mirror)
-	return err
+	acct, err := b.billing.UpsertAccountMirror(ctx, mirror)
+	if err != nil {
+		return err
+	}
+	return b.syncStripeSubscriptionCancellation(ctx, orgID, acct, sub)
+}
+
+func (b *Bot) syncStripeSubscriptionCancellation(ctx context.Context, orgID string, acct billing.Account, sub stripeSubscriptionObject) error {
+	cancelAt := sub.CancellationEffectiveAt()
+	if !cancelAt.IsZero() {
+		_, err := b.billing.SetPendingPlanChange(ctx, orgID, billing.PlanFree, cancelAt)
+		return err
+	}
+	if acct.PendingPlanCode == billing.PlanFree {
+		_, err := b.billing.ClearPendingPlanChange(ctx, orgID)
+		return err
+	}
+	return nil
 }
 
 func (b *Bot) handleStripeInvoicePaid(ctx context.Context, event stripe.Event) error {
@@ -210,6 +226,8 @@ type stripeSubscriptionObject struct {
 	ID                 string            `json:"id"`
 	Customer           stripeID          `json:"customer"`
 	Status             string            `json:"status"`
+	CancelAt           int64             `json:"cancel_at"`
+	CancelAtPeriodEnd  bool              `json:"cancel_at_period_end"`
 	CurrentPeriodStart int64             `json:"current_period_start"`
 	CurrentPeriodEnd   int64             `json:"current_period_end"`
 	Metadata           map[string]string `json:"metadata"`
@@ -229,6 +247,17 @@ func (s stripeSubscriptionObject) Period() (time.Time, time.Time) {
 		endUnix = s.Items.Data[0].CurrentPeriodEnd
 	}
 	return unixTime(startUnix), unixTime(endUnix)
+}
+
+func (s stripeSubscriptionObject) CancellationEffectiveAt() time.Time {
+	if s.CancelAt > 0 {
+		return unixTime(s.CancelAt)
+	}
+	if s.CancelAtPeriodEnd {
+		_, end := s.Period()
+		return end
+	}
+	return time.Time{}
 }
 
 type stripeInvoiceObject struct {
