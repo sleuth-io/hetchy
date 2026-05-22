@@ -2,6 +2,7 @@ package bot
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -10,10 +11,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/stripe/stripe-go/v85"
 	"github.com/stripe/stripe-go/v85/webhook"
 
 	"github.com/hetchyhq/hetchy/internal/billing"
+	"github.com/hetchyhq/hetchy/internal/db"
+	"github.com/hetchyhq/hetchy/internal/db/sqlc"
 )
 
 func TestStripeWebhookHandlerValidation(t *testing.T) {
@@ -200,6 +206,67 @@ func TestStripeOrgIDAndSubscriptionPeriod(t *testing.T) {
 	}
 	if got := (stripeSubscriptionObject{}).CancellationEffectiveAt(); !got.IsZero() {
 		t.Fatalf("CancellationEffectiveAt without cancellation = %v, want zero", got)
+	}
+}
+
+func TestSyncStripeSubscriptionCancellation(t *testing.T) {
+	cancelAt := time.Date(2026, 6, 22, 12, 0, 0, 0, time.UTC)
+
+	for _, tc := range []struct {
+		name     string
+		account  billing.Account
+		sub      stripeSubscriptionObject
+		wantCall stripePendingPlanCall
+	}{
+		{
+			name:    "sets pending free for active cancellation",
+			account: billing.Account{PendingPlanCode: ""},
+			sub:     stripeSubscriptionObject{CancelAt: cancelAt.Unix()},
+			wantCall: stripePendingPlanCall{
+				kind:        "set",
+				orgID:       "org_1",
+				planCode:    billing.PlanFree,
+				effectiveAt: cancelAt,
+			},
+		},
+		{
+			name:     "clears pending free without active cancellation",
+			account:  billing.Account{PendingPlanCode: billing.PlanFree},
+			sub:      stripeSubscriptionObject{},
+			wantCall: stripePendingPlanCall{kind: "clear", orgID: "org_1"},
+		},
+		{
+			name:     "noops without cancellation or pending free",
+			account:  billing.Account{PendingPlanCode: billing.PlanGrowth},
+			sub:      stripeSubscriptionObject{},
+			wantCall: stripePendingPlanCall{},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			billingDB := &stripeCancellationBillingDB{}
+			b := newStripeCancellationBillingTestBot(billingDB)
+
+			if err := b.syncStripeSubscriptionCancellation(t.Context(), "org_1", tc.account, tc.sub); err != nil {
+				t.Fatalf("syncStripeSubscriptionCancellation returned error: %v", err)
+			}
+
+			if tc.wantCall.kind == "" {
+				if len(billingDB.pendingPlanCalls) != 0 {
+					t.Fatalf("pending plan calls = %#v, want none", billingDB.pendingPlanCalls)
+				}
+				return
+			}
+			if len(billingDB.pendingPlanCalls) != 1 {
+				t.Fatalf("pending plan call count = %d, want 1 (%#v)", len(billingDB.pendingPlanCalls), billingDB.pendingPlanCalls)
+			}
+			got := billingDB.pendingPlanCalls[0]
+			if got.kind != tc.wantCall.kind || got.orgID != tc.wantCall.orgID || got.planCode != tc.wantCall.planCode {
+				t.Fatalf("pending plan call = %#v, want %#v", got, tc.wantCall)
+			}
+			if got.effectiveAt.Unix() != tc.wantCall.effectiveAt.Unix() {
+				t.Fatalf("pending plan effective at = %v, want %v", got.effectiveAt, tc.wantCall.effectiveAt)
+			}
+		})
 	}
 }
 
@@ -578,4 +645,136 @@ func useStripeTestServer(t *testing.T, h http.HandlerFunc) func() {
 		stripe.SetBackend(stripe.APIBackend, original)
 		server.Close()
 	}
+}
+
+type stripePendingPlanCall struct {
+	kind        string
+	orgID       string
+	planCode    string
+	effectiveAt time.Time
+}
+
+type stripeCancellationBillingDB struct {
+	pendingPlanCalls []stripePendingPlanCall
+}
+
+func newStripeCancellationBillingTestBot(billingDB *stripeCancellationBillingDB) *Bot {
+	return &Bot{
+		log: discardLogger(),
+		billing: billing.NewService(
+			billing.NewStore(&db.Store{Queries: sqlc.New(billingDB)}),
+			nil,
+		),
+	}
+}
+
+func (f *stripeCancellationBillingDB) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
+	return pgconn.CommandTag{}, nil
+}
+
+func (f *stripeCancellationBillingDB) Query(_ context.Context, query string, _ ...any) (pgx.Rows, error) {
+	return nil, fmt.Errorf("unexpected query: %s", query)
+}
+
+func (f *stripeCancellationBillingDB) QueryRow(_ context.Context, query string, args ...any) pgx.Row {
+	switch {
+	case strings.Contains(query, "SetBillingPendingPlanChange"):
+		if len(args) != 3 {
+			return stripeErrRow{err: fmt.Errorf("set pending plan args = %d, want 3", len(args))}
+		}
+		orgID, _ := args[0].(string)
+		planCode, _ := args[1].(string)
+		effectiveAt, ok := args[2].(pgtype.Timestamptz)
+		if !ok {
+			return stripeErrRow{err: fmt.Errorf("set pending effective at arg = %T, want pgtype.Timestamptz", args[2])}
+		}
+		f.pendingPlanCalls = append(f.pendingPlanCalls, stripePendingPlanCall{
+			kind:        "set",
+			orgID:       orgID,
+			planCode:    planCode,
+			effectiveAt: effectiveAt.Time,
+		})
+		return stripeBillingAccountRow{
+			orgID:                  orgID,
+			pendingPlanCode:        planCode,
+			pendingPlanEffectiveAt: effectiveAt,
+		}
+	case strings.Contains(query, "ClearBillingPendingPlanChange"):
+		if len(args) != 1 {
+			return stripeErrRow{err: fmt.Errorf("clear pending plan args = %d, want 1", len(args))}
+		}
+		orgID, _ := args[0].(string)
+		f.pendingPlanCalls = append(f.pendingPlanCalls, stripePendingPlanCall{
+			kind:  "clear",
+			orgID: orgID,
+		})
+		return stripeBillingAccountRow{orgID: orgID}
+	default:
+		return stripeErrRow{err: fmt.Errorf("unexpected query row: %s", query)}
+	}
+}
+
+type stripeBillingAccountRow struct {
+	orgID                  string
+	pendingPlanCode        string
+	pendingPlanEffectiveAt pgtype.Timestamptz
+}
+
+func (r stripeBillingAccountRow) Scan(dest ...any) error {
+	values := []any{
+		r.orgID, "", "sub_1", billing.PlanGrowth, "active",
+		pgtype.Timestamptz{}, pgtype.Timestamptz{},
+		int32(0), int32(0), int32(0),
+		billing.FlavorStandard, int32(4), false, "",
+		pgtype.Timestamptz{}, pgtype.Timestamptz{}, r.pendingPlanCode, r.pendingPlanEffectiveAt,
+	}
+	if len(dest) != len(values) {
+		return fmt.Errorf("scan destination count = %d, want %d", len(dest), len(values))
+	}
+	for i := range dest {
+		if err := assignStripeScanValue(dest[i], values[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type stripeErrRow struct {
+	err error
+}
+
+func (r stripeErrRow) Scan(...any) error {
+	return r.err
+}
+
+func assignStripeScanValue(dest, value any) error {
+	switch d := dest.(type) {
+	case *string:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("cannot scan %T into *string", value)
+		}
+		*d = v
+	case *int32:
+		v, ok := value.(int32)
+		if !ok {
+			return fmt.Errorf("cannot scan %T into *int32", value)
+		}
+		*d = v
+	case *bool:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("cannot scan %T into *bool", value)
+		}
+		*d = v
+	case *pgtype.Timestamptz:
+		v, ok := value.(pgtype.Timestamptz)
+		if !ok {
+			return fmt.Errorf("cannot scan %T into *pgtype.Timestamptz", value)
+		}
+		*d = v
+	default:
+		return fmt.Errorf("unsupported scan destination %T", dest)
+	}
+	return nil
 }

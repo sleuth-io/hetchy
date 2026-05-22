@@ -1,3 +1,4 @@
+-- Production patch for DBs that applied 20260522090000 before these constraints allowed plus flavors.
 ALTER TABLE billing_accounts
     DROP CONSTRAINT IF EXISTS billing_accounts_max_flavor_check;
 
