@@ -82,6 +82,18 @@ events for the `hetchy-billing-comped` flag.
 
 Create the products and prices separately for each Stripe mode or Stripe account you use. Test/sandbox Price IDs cannot be used with live keys, and live Price IDs cannot be used with test keys.
 
+The preferred provisioning path is the Stripe CLI sync script:
+
+```bash
+scripts/sync-stripe-billing.sh \
+  --env prod \
+  --live \
+  --return-to https://app.hetchy.ai/ \
+  --webhook-url https://app.hetchy.ai/stripe/webhook
+```
+
+Run it once per app environment against the intended Stripe account or mode. The script creates or updates the Hetchy products, creates replacement Prices when immutable Price fields change, configures the default Customer Portal when `--return-to` is provided, optionally creates or updates the Dashboard webhook endpoint, and prints the `STRIPE_SUBSCRIPTION_PRICE_IDS` and `STRIPE_TOPUP_PRICE_IDS` values to store in Doppler.
+
 ### Subscription Products
 
 Create one monthly recurring price for each paid public plan:
