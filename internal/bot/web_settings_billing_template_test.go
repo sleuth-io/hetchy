@@ -215,7 +215,7 @@ func TestSettingsTemplate_RendersCompedBillingBanner(t *testing.T) {
 	rec := httptest.NewRecorder()
 	b.renderTemplate(rec, webui.Settings, map[string]any{
 		"OrgID": "org_y", "OrgName": "Acme", "Email": "u@y", "PrincipalUserID": "user_me",
-		"IsAdmin": false, "Tab": "billing", "SavedMessage": "",
+		"IsAdmin": true, "Tab": "billing", "SavedMessage": "",
 		"Billing": billingOverviewView{
 			CurrentPlanLabel:  "Comped",
 			Status:            "comped",
@@ -225,6 +225,7 @@ func TestSettingsTemplate_RendersCompedBillingBanner(t *testing.T) {
 			Balance:           3600,
 			SandboxOptions:    "Standard and Plus",
 			TopupUnitCredits:  billing.TopupUnitCredits,
+			StripeConfigured:  true,
 		},
 	})
 	if rec.Code != http.StatusOK {
@@ -235,9 +236,20 @@ func TestSettingsTemplate_RendersCompedBillingBanner(t *testing.T) {
 		`Comped access enabled`,
 		`full Hetchy access through WorkOS`,
 		`runs are not charged against credits`,
+		`Plan changes are managed through WorkOS while comped access is enabled.`,
+		`Top-ups are disabled while comped access is enabled.`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("comped billing tab missing %q", want)
+		}
+	}
+	for _, notWant := range []string{
+		`action="/billing/checkout"`,
+		`action="/billing/topup"`,
+		`href="/billing/portal"`,
+	} {
+		if strings.Contains(body, notWant) {
+			t.Errorf("comped billing tab unexpectedly contained %q", notWant)
 		}
 	}
 }

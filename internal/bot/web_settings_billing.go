@@ -96,6 +96,7 @@ func (b *Bot) loadBillingOverview(ctx context.Context, orgID string) (billingOve
 	status := displayAcct.Status
 	sandboxOptions := sandboxOptionsLabel(displayAcct.MaxFlavor)
 	if acct.BillingExempt {
+		// Guard the fallback path where the virtual Business display plan is unavailable.
 		currentPlanLabel = "Comped"
 		status = "comped"
 	}

@@ -526,6 +526,46 @@ func TestBillingTopupHandlerRejectsFreePlanBeforeStripeCustomer(t *testing.T) {
 	}
 }
 
+func TestBillingCheckoutHandlerRejectsCompedOrgBeforeStripeCustomer(t *testing.T) {
+	billingDB := &billingTopupEligibilityDB{account: billing.Account{
+		OrgID:            "org_1",
+		PlanCode:         billing.PlanBusiness,
+		Status:           "comped",
+		IncludedCredits:  3600,
+		MaxFlavor:        billing.FlavorPlus,
+		PerRunMaxCredits: 48,
+		BillingExempt:    true,
+	}}
+	b := &Bot{
+		log: discardLogger(),
+		cfg: Config{
+			StripeSecretKey:           "sk_test",
+			StripeSubscriptionPriceID: "price_team",
+			StripeTopupPriceID:        "price_topup",
+		},
+		billing: billing.NewService(
+			billing.NewStore(&db.Store{Queries: sqlc.New(billingDB)}),
+			nil,
+		),
+	}
+	req := httptest.NewRequest(http.MethodPost, "/billing/checkout", strings.NewReader("plan=team"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", "http://example.com")
+	rr := httptest.NewRecorder()
+
+	serveWithBypassAuth(t, "admin", rr, req, b.billingCheckoutHandler)
+
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("status = %d body=%q, want %d", rr.Code, rr.Body.String(), http.StatusForbidden)
+	}
+	if !strings.Contains(rr.Body.String(), "subscriptions are managed externally") {
+		t.Fatalf("body = %q, want comped subscription error", rr.Body.String())
+	}
+	if billingDB.setStripeCustomerCalls != 0 {
+		t.Fatalf("set stripe customer calls = %d, want 0", billingDB.setStripeCustomerCalls)
+	}
+}
+
 func serveWithBypassAuth(t *testing.T, role string, rr *httptest.ResponseRecorder, req *http.Request, h http.HandlerFunc) {
 	t.Helper()
 	a, err := auth.New(auth.Config{

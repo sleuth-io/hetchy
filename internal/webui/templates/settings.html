@@ -961,7 +961,7 @@
         <h3>Plan</h3>
         <p class="hint">Choose the monthly plan that controls included credits, sandbox size options, and top-up price. One credit covers a 15-minute run on a standard sandbox.</p>
       </div>
-      {{if and .IsAdmin $b.StripeConfigured}}
+      {{if and .IsAdmin $b.StripeConfigured (not $b.BillingExempt)}}
         {{if $b.HasStripeCustomer}}
           <a class="billing-portal-link" href="/billing/portal" target="_blank" rel="noopener">Stripe portal</a>
         {{else}}
@@ -995,7 +995,9 @@
         <span>{{if $b.PendingPlanAt}}Takes effect on {{$b.PendingPlanAt}}.{{else}}Takes effect at the start of the next billing cycle.{{end}} Your current {{$b.CurrentPlanLabel}} plan stays active until then.</span>
       </div>
     {{end}}
-    {{if and .IsAdmin $b.StripeConfigured}}
+    {{if and .IsAdmin $b.BillingExempt}}
+      <p class="hint">Plan changes are managed through WorkOS while comped access is enabled.</p>
+    {{else if and .IsAdmin $b.StripeConfigured}}
       <div class="billing-plan-grid">
         {{range $b.PlanOptions}}
           {{if .Configured}}
