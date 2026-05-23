@@ -133,6 +133,7 @@ func (b *Bot) billingCheckoutHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	// Load overview only to gate comped accounts before touching Stripe.
 	overview, err := b.billing.Overview(r.Context(), p.OrgID)
 	if err != nil {
 		b.log.Error("load billing account for checkout", "error", err, "org", p.OrgID)

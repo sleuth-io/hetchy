@@ -149,6 +149,8 @@ func billingDisplayAccount(acct billing.Account) (billing.Account, billing.PaidP
 	if !acct.BillingExempt {
 		return acct, plan
 	}
+	// Comped orgs display as Business, the highest self-serve tier,
+	// while run admission treats them as unrestricted.
 	business, ok := billing.PaidPlanByCode(billing.PlanBusiness)
 	if !ok {
 		return acct, plan
