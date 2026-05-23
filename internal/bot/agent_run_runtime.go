@@ -185,6 +185,7 @@ func (b *Bot) markRunState(ctx context.Context, state string, err error) {
 			lastErr = err.Error()
 		}
 		b.runs.UpdateState(context.Background(), run.ID, state, lastErr, b.workerID)
+		b.finishBillingRun(context.Background(), run.ID, state)
 	}
 }
 

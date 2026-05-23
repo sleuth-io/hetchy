@@ -506,6 +506,28 @@ func (s *Service) UpdateOrganizationName(ctx context.Context, orgID, name string
 	return err
 }
 
+// OrganizationHasFeatureFlag reports whether WorkOS currently enables slug
+// for orgID. It is used for coarse org entitlements that are managed from the
+// WorkOS dashboard but enforced by local application state.
+func (s *Service) OrganizationHasFeatureFlag(ctx context.Context, orgID, slug string) (bool, error) {
+	orgID = strings.TrimSpace(orgID)
+	slug = strings.TrimSpace(slug)
+	if s.cfg.Bypass || s.client == nil || orgID == "" || slug == "" {
+		return false, nil
+	}
+	limit := 100
+	it := s.client.FeatureFlags().ListOrganizationFeatureFlags(ctx, orgID, &workos.FeatureFlagsListOrganizationFeatureFlagsParams{
+		PaginationParams: workos.PaginationParams{Limit: &limit},
+	})
+	for it.Next() {
+		flag := it.Current()
+		if flag != nil && flag.Slug == slug && flag.Enabled {
+			return true, nil
+		}
+	}
+	return false, it.Err()
+}
+
 // DeleteOrganization deletes the WorkOS organization shell. The onboarding
 // handler uses it as a best-effort rollback when org creation succeeded but a
 // follow-up step failed; the settings delete flow uses it as the primary

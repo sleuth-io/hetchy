@@ -134,6 +134,12 @@ var templateFuncs = template.FuncMap{
 		return m, nil
 	},
 	"minus": func(a, b int) int { return a - b },
+	"orString": func(s, def string) string {
+		if strings.TrimSpace(s) == "" {
+			return def
+		}
+		return s
+	},
 	"faviconHref": func() template.URL {
 		return template.URL(hetchyFaviconHref)
 	},

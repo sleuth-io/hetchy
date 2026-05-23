@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/hetchyhq/hetchy/internal/billing"
 	"github.com/hetchyhq/hetchy/internal/buildinfo"
 )
 
@@ -59,6 +60,7 @@ type Config struct {
 	WorkOSClientID        string
 	WorkOSCookiePassword  string
 	WorkOSRedirectURI     string
+	WorkOSWebhookSecret   string
 	LogoutReturnTo        string
 	PublicBaseURLOverride string
 	// CookieSecure is the Secure flag on the session cookie. Defaults to
@@ -95,6 +97,17 @@ type Config struct {
 	GitHubAppClientID      string
 	GitHubAppPrivateKey    string
 	GitHubAppWebhookSecret string
+
+	// Stripe is the source of truth for paid subscriptions, payment
+	// methods, invoices, hosted checkout, and customer portal sessions.
+	// Free/trial and comped org enforcement is handled locally.
+	StripeSecretKey            string
+	StripeWebhookSecret        string
+	StripeSubscriptionPriceID  string
+	StripeSubscriptionPriceIDs map[string]string
+	StripeTopupPriceID         string
+	StripeTopupPriceIDs        map[string]string
+	StripeReturnTo             string
 
 	AuthBypass      bool
 	AuthBypassUser  string
@@ -167,6 +180,7 @@ func LoadConfig() (Config, error) {
 
 	port := getenvDefault("WEB_PORT", "8080")
 	logout := getenvDefault("LOGOUT_RETURN_TO", "http://localhost:"+port+"/")
+	stripeReturnTo := getenvDefault("STRIPE_RETURN_TO", logout)
 	// CookieSecure defaults to true (required for production HTTPS). It is
 	// forced to false when COOKIE_INSECURE=1 is set OR when WORKOS_REDIRECT_URI
 	// starts with http:// — that scheme indicates the server is running over
@@ -237,6 +251,7 @@ func LoadConfig() (Config, error) {
 		WorkOSClientID:              strings.TrimSpace(os.Getenv("WORKOS_CLIENT_ID")),
 		WorkOSCookiePassword:        strings.TrimSpace(os.Getenv("WORKOS_COOKIE_PASSWORD")),
 		WorkOSRedirectURI:           strings.TrimSpace(os.Getenv("WORKOS_REDIRECT_URI")),
+		WorkOSWebhookSecret:         strings.TrimSpace(os.Getenv("WORKOS_WEBHOOK_SECRET")),
 		LogoutReturnTo:              logout,
 		PublicBaseURLOverride:       publicBaseURLOverride,
 		CookieSecure:                cookieSecure,
@@ -250,17 +265,56 @@ func LoadConfig() (Config, error) {
 		GitHubAppClientID:           strings.TrimSpace(os.Getenv("GITHUB_APP_CLIENT_ID")),
 		// Not trimmed: PEM contents are multi-line and the parser relies on
 		// embedded newlines; trimming risks corrupting the key.
-		GitHubAppPrivateKey:    os.Getenv("GITHUB_APP_PRIVATE_KEY"),
-		GitHubAppWebhookSecret: strings.TrimSpace(os.Getenv("GITHUB_APP_WEBHOOK_SECRET")),
-		AuthBypass:             bypass,
-		AuthBypassUser:         getenvDefault("AUTH_BYPASS_USER", "user_bypass"),
-		AuthBypassOrg:          os.Getenv("AUTH_BYPASS_ORG"),
-		AuthBypassRole:         getenvDefault("AUTH_BYPASS_ROLE", "admin"),
-		AuthBypassEmail:        getenvDefault("AUTH_BYPASS_EMAIL", "bypass@hetchy.local"),
-		S3Bucket:               strings.TrimSpace(os.Getenv("HETCHY_S3_BUCKET")),
-		S3Region:               strings.TrimSpace(os.Getenv("HETCHY_S3_REGION")),
-		SXPublicVaultURL:       getenvDefaultTrimAllowDisabled("HETCHY_SX_PUBLIC_VAULT_URL", DefaultSXPublicVaultURL),
+		GitHubAppPrivateKey:       os.Getenv("GITHUB_APP_PRIVATE_KEY"),
+		GitHubAppWebhookSecret:    strings.TrimSpace(os.Getenv("GITHUB_APP_WEBHOOK_SECRET")),
+		StripeSecretKey:           strings.TrimSpace(os.Getenv("STRIPE_SECRET_KEY")),
+		StripeWebhookSecret:       strings.TrimSpace(os.Getenv("STRIPE_WEBHOOK_SECRET")),
+		StripeSubscriptionPriceID: strings.TrimSpace(os.Getenv("STRIPE_SUBSCRIPTION_PRICE_ID")),
+		StripeSubscriptionPriceIDs: stripeSubscriptionPriceIDs(
+			os.Getenv("STRIPE_SUBSCRIPTION_PRICE_IDS"),
+			os.Getenv("STRIPE_SUBSCRIPTION_PRICE_ID"),
+		),
+		StripeTopupPriceID:  strings.TrimSpace(os.Getenv("STRIPE_TOPUP_PRICE_ID")),
+		StripeTopupPriceIDs: stripePriceIDMap(os.Getenv("STRIPE_TOPUP_PRICE_IDS")),
+		StripeReturnTo:      stripeReturnTo,
+		AuthBypass:          bypass,
+		AuthBypassUser:      getenvDefault("AUTH_BYPASS_USER", "user_bypass"),
+		AuthBypassOrg:       os.Getenv("AUTH_BYPASS_ORG"),
+		AuthBypassRole:      getenvDefault("AUTH_BYPASS_ROLE", "admin"),
+		AuthBypassEmail:     getenvDefault("AUTH_BYPASS_EMAIL", "bypass@hetchy.local"),
+		S3Bucket:            strings.TrimSpace(os.Getenv("HETCHY_S3_BUCKET")),
+		S3Region:            strings.TrimSpace(os.Getenv("HETCHY_S3_REGION")),
+		SXPublicVaultURL:    getenvDefaultTrimAllowDisabled("HETCHY_SX_PUBLIC_VAULT_URL", DefaultSXPublicVaultURL),
 	}, nil
+}
+
+func stripeSubscriptionPriceIDs(raw, legacy string) map[string]string {
+	out := stripePriceIDMap(raw)
+	if legacy = strings.TrimSpace(legacy); legacy != "" {
+		defaultPlan := billing.DefaultPaidPlan()
+		if out[defaultPlan.Code] == "" {
+			out[defaultPlan.Code] = legacy
+		}
+	}
+	return out
+}
+
+func stripePriceIDMap(raw string) map[string]string {
+	out := map[string]string{}
+	for _, entry := range strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == ';' || r == '\n'
+	}) {
+		parts := strings.SplitN(entry, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		plan := strings.ToLower(strings.TrimSpace(parts[0]))
+		priceID := strings.TrimSpace(parts[1])
+		if plan != "" && priceID != "" {
+			out[plan] = priceID
+		}
+	}
+	return out
 }
 
 func resolveDaytonaSnapshot(env, base, version string) (string, error) {
@@ -305,14 +359,13 @@ func getenvDefaultTrimAllowDisabled(key, def string) string {
 	}
 }
 
-// PublicBaseURL returns the externally-reachable base URL for the web
-// app (no trailing slash). HETCHY_PUBLIC_BASE_URL is required outside dev and
-// is the only safe source for deployed callback URLs. LOGOUT_RETURN_TO is kept
-// as a legacy public-root source when set to an external URL. In dev only, if
-// it is unset and therefore defaulted to localhost, derive the public origin
-// from OAuth callback URLs before falling back to the local bind URL. This
-// matters for sandbox callbacks such as artifact-slot minting: a Daytona
-// sandbox cannot call the Hetchy process via localhost.
+// PublicBaseURL returns the externally-reachable base URL for non-Stripe
+// app links and sandbox callbacks (no trailing slash). HETCHY_PUBLIC_BASE_URL
+// is required outside dev and is the only safe source for deployed callback
+// URLs. LOGOUT_RETURN_TO is kept as a legacy public-root fallback when set to
+// an external URL; it no longer controls the post-logout redirect. In dev only,
+// if it is unset and therefore defaulted to localhost, derive the public origin
+// from OAuth callback URLs before falling back to the local bind URL.
 func (c Config) PublicBaseURL() string {
 	if base := publicOrigin(c.PublicBaseURLOverride); base != "" {
 		return base
@@ -351,4 +404,15 @@ func publicOrigin(raw string) string {
 		return ""
 	}
 	return u.Scheme + "://" + u.Host
+}
+
+// StripeReturnBaseURL returns the base URL used for Stripe Checkout and
+// Customer Portal return links. STRIPE_RETURN_TO is preferred; existing
+// LOGOUT_RETURN_TO/PublicBaseURL config remains a fallback for deployments
+// that have not renamed the variable yet.
+func (c Config) StripeReturnBaseURL() string {
+	if base := strings.TrimSuffix(c.StripeReturnTo, "/"); base != "" {
+		return base
+	}
+	return c.PublicBaseURL()
 }

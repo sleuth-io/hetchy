@@ -71,6 +71,78 @@ type AgentRunEvent struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
+type BillingAccount struct {
+	OrgID                  string             `json:"org_id"`
+	StripeCustomerID       string             `json:"stripe_customer_id"`
+	StripeSubscriptionID   string             `json:"stripe_subscription_id"`
+	PlanCode               string             `json:"plan_code"`
+	Status                 string             `json:"status"`
+	CurrentPeriodStart     pgtype.Timestamptz `json:"current_period_start"`
+	CurrentPeriodEnd       pgtype.Timestamptz `json:"current_period_end"`
+	IncludedCredits        int32              `json:"included_credits"`
+	IncludedCreditsUsed    int32              `json:"included_credits_used"`
+	TopupCredits           int32              `json:"topup_credits"`
+	MaxFlavor              string             `json:"max_flavor"`
+	PerRunMaxCredits       int32              `json:"per_run_max_credits"`
+	BillingExempt          bool               `json:"billing_exempt"`
+	LastPaymentError       string             `json:"last_payment_error"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+	PendingPlanCode        string             `json:"pending_plan_code"`
+	PendingPlanEffectiveAt pgtype.Timestamptz `json:"pending_plan_effective_at"`
+}
+
+type BillingCreditReservation struct {
+	RunID               string             `json:"run_id"`
+	OrgID               string             `json:"org_id"`
+	ReservedCredits     int32              `json:"reserved_credits"`
+	FromIncludedCredits int32              `json:"from_included_credits"`
+	FromTopupCredits    int32              `json:"from_topup_credits"`
+	CapturedCredits     int32              `json:"captured_credits"`
+	ReleasedCredits     int32              `json:"released_credits"`
+	Status              string             `json:"status"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+}
+
+type BillingRunMeter struct {
+	RunID            string             `json:"run_id"`
+	OrgID            string             `json:"org_id"`
+	Flavor           string             `json:"flavor"`
+	Multiplier       int32              `json:"multiplier"`
+	SandboxVcpu      int32              `json:"sandbox_vcpu"`
+	SandboxMemoryGib int32              `json:"sandbox_memory_gib"`
+	SandboxDiskGib   int32              `json:"sandbox_disk_gib"`
+	StartedAt        pgtype.Timestamptz `json:"started_at"`
+	EndedAt          pgtype.Timestamptz `json:"ended_at"`
+	BillableMinutes  int32              `json:"billable_minutes"`
+	CapturedCredits  int32              `json:"captured_credits"`
+	TerminalState    string             `json:"terminal_state"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
+type BillingStripeEvent struct {
+	EventID   string             `json:"event_id"`
+	EventType string             `json:"event_type"`
+	OrgID     string             `json:"org_id"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type BillingTopupSetting struct {
+	OrgID                 string             `json:"org_id"`
+	AutoTopupEnabled      bool               `json:"auto_topup_enabled"`
+	TriggerThreshold      int32              `json:"trigger_threshold"`
+	TargetBalance         int32              `json:"target_balance"`
+	MonthlyMaxUnits       int32              `json:"monthly_max_units"`
+	MonthlyUnitsUsed      int32              `json:"monthly_units_used"`
+	MonthlyAnchorMonth    string             `json:"monthly_anchor_month"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+	MonthlyMaxCents       int32              `json:"monthly_max_cents"`
+	MonthlySpendCentsUsed int32              `json:"monthly_spend_cents_used"`
+}
+
 type Conversation struct {
 	OrgID          string             `json:"org_id"`
 	ThreadID       string             `json:"thread_id"`
@@ -167,6 +239,15 @@ type OrgConfig struct {
 	ClaudeCodeOauthTokenEncrypted  []byte             `json:"claude_code_oauth_token_encrypted"`
 	OpenaiApiKeyEncrypted          []byte             `json:"openai_api_key_encrypted"`
 	OpenaiCodexOauthTokenEncrypted []byte             `json:"openai_codex_oauth_token_encrypted"`
+}
+
+type RepoBillingSetting struct {
+	OrgID       string             `json:"org_id"`
+	GithubOwner string             `json:"github_owner"`
+	GithubRepo  string             `json:"github_repo"`
+	Flavor      string             `json:"flavor"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
 type RepoSecretValue struct {

@@ -57,6 +57,14 @@
         </svg>
         Repositories
       </a>
+      <a href="/settings/org?tab=billing"{{if eq .Tab "billing"}} class="active"{{end}}>
+        <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="2.5" y="4" width="11" height="8" rx="1.5"/>
+          <path d="M2.5 6.5h11"/>
+          <path d="M5 10h2"/>
+        </svg>
+        Billing
+      </a>
       {{if .IsAdmin}}
       <a href="/settings/org?tab=members"{{if eq .Tab "members"}} class="active"{{end}}>
         <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -84,6 +92,8 @@
       {{template "api_keys" .}}
     {{else if eq .Tab "repositories"}}
       {{template "repositories" .}}
+    {{else if eq .Tab "billing"}}
+      {{template "billing" .}}
     {{else}}
       {{template "general" .}}
     {{end}}
@@ -866,6 +876,27 @@
             <p class="repo-card-empty">The first task you start against this repo will trigger an automatic bootstrap. Expect a few extra minutes on that first run; subsequent tasks reuse the cached spec.</p>
           {{end}}
 
+          {{if $.IsAdmin}}
+            {{$setting := index $.RepoBillingSettings $slug}}
+            {{$currentFlavor := orString $setting.Flavor "standard"}}
+            <section class="repo-billing-control">
+              <div>
+                <h4 class="repo-card-col-title">Sandbox flavor</h4>
+                <p class="hint">Default for fresh runs and follow-ups on this repo.</p>
+              </div>
+              <form method="POST" action="/settings/org/repositories/flavor" class="repo-flavor-form">
+                <input type="hidden" name="owner" value="{{.Owner}}">
+                <input type="hidden" name="name" value="{{.Name}}">
+                <select name="flavor" aria-label="Sandbox flavor for {{$slug}}">
+                  {{range $.RepoBillingAllowedFlavors}}
+                    <option value="{{.Code}}"{{if eq .Code $currentFlavor}} selected{{end}}>{{.Label}}</option>
+                  {{end}}
+                </select>
+                <button class="primary" type="submit">Save</button>
+              </form>
+            </section>
+          {{end}}
+
           <footer class="repo-card-foot">
             {{if $bs.Slug}}
               <button type="button" class="danger-btn delete-bootstrap-btn"
@@ -914,6 +945,199 @@
     </dialog>
     <script src="{{assetPath "settings_repositories.js"}}"></script>
   {{end}}
+{{end}}
+
+{{define "billing"}}
+  <h1>Billing / Usage</h1>
+  <p/>
+  <p class="desc">Usage is admitted from Hetchy's local credit balance before any Daytona sandbox work starts.</p>
+
+  {{if .SavedMessage}}<div class="saved-banner">{{.SavedMessage}}</div>{{end}}
+  {{$b := .Billing}}
+
+  <section class="billing-panel billing-section">
+    <div class="billing-section-head">
+      <div>
+        <h3>Plan</h3>
+        <p class="hint">Choose the monthly plan that controls included credits, sandbox size options, and top-up price. One credit covers a 15-minute run on a standard sandbox.</p>
+      </div>
+      {{if and .IsAdmin $b.StripeConfigured}}
+        {{if $b.HasStripeCustomer}}
+          <a class="billing-portal-link" href="/billing/portal" target="_blank" rel="noopener">Stripe portal</a>
+        {{else}}
+          <span class="billing-portal-link disabled">Stripe portal</span>
+        {{end}}
+      {{end}}
+    </div>
+    <div class="billing-current-grid">
+      <div class="billing-stat">
+        <span>Current plan</span>
+        <strong>{{$b.CurrentPlanLabel}}</strong>
+      </div>
+      <div class="billing-stat">
+        <span>Status</span>
+        <strong>{{$b.Status}}</strong>
+      </div>
+      {{if $b.PeriodEnd}}
+      <div class="billing-stat">
+        <span>Period</span>
+        <strong>{{if $b.PeriodStart}}{{$b.PeriodStart}} - {{end}}{{$b.PeriodEnd}}</strong>
+      </div>
+      {{end}}
+      <div class="billing-stat">
+        <span>Sandbox options</span>
+        <strong>{{$b.SandboxOptions}}</strong>
+      </div>
+    </div>
+    {{if $b.HasPendingPlan}}
+      <div class="billing-pending-plan">
+        <strong>{{$b.PendingPlanLabel}} scheduled</strong>
+        <span>{{if $b.PendingPlanAt}}Takes effect on {{$b.PendingPlanAt}}.{{else}}Takes effect at the start of the next billing cycle.{{end}} Your current {{$b.CurrentPlanLabel}} plan stays active until then.</span>
+      </div>
+    {{end}}
+    {{if and .IsAdmin $b.StripeConfigured}}
+      <div class="billing-plan-grid">
+        {{range $b.PlanOptions}}
+          {{if .Configured}}
+            <form method="POST" action="/billing/checkout" class="billing-plan-option{{if .Current}} current{{end}}{{if .Scheduled}} scheduled{{end}}"{{if .ConfirmMessage}} data-billing-plan-confirm="1" data-confirm-title="{{.ConfirmTitle}}" data-confirm-message="{{.ConfirmMessage}}" data-confirm-action="{{.ActionLabel}}"{{end}}>
+              <input type="hidden" name="plan" value="{{.Code}}">
+              <div class="billing-plan-head">
+                <strong>{{.Label}}</strong>
+                <span>{{.Monthly}}/mo</span>
+              </div>
+              <div class="billing-plan-features">
+                <div>
+                  <span>Included credits</span>
+                  <strong>{{.IncludedCredits}}</strong>
+                  <small>per month</small>
+                </div>
+                <div>
+                  <span>Top-up price</span>
+                  <strong>{{.TopupUnitPrice}}</strong>
+                  <small>per {{$b.TopupUnitCredits}}-credit top-up</small>
+                </div>
+              </div>
+              <p class="billing-plan-detail">Sandbox size options: {{.SandboxOptions}}</p>
+              <button type="submit"{{if or .Current .Scheduled}} disabled{{end}}>{{.ActionLabel}}</button>
+            </form>
+          {{end}}
+        {{end}}
+      </div>
+      <dialog class="app-dialog" id="billing-plan-switch-dialog" aria-labelledby="billing-plan-switch-title">
+        <div class="dlg-body">
+          <h3 id="billing-plan-switch-title">Switch plan?</h3>
+          <p id="billing-plan-switch-message">This will update your Stripe subscription.</p>
+        </div>
+        <div class="dlg-actions">
+          <button type="button" class="dlg-cancel" id="billing-plan-switch-cancel">Cancel</button>
+          <button type="button" class="dlg-primary" id="billing-plan-switch-confirm">Switch</button>
+        </div>
+      </dialog>
+    {{else if .IsAdmin}}
+      <p class="hint">Stripe is not configured for this environment.</p>
+    {{end}}
+  </section>
+
+  <section class="billing-panel billing-section">
+    <div class="billing-section-head">
+      <div>
+        <h3>Usage</h3>
+        <p class="hint">One credit covers a 15-minute run on a standard sandbox. Larger sandbox sizes use more credits per 15-minute block.</p>
+      </div>
+    </div>
+    <div class="billing-usage-meter">
+      <div class="billing-meter-head">
+        <div>
+          <span>Credit balance</span>
+          <strong>{{$b.Balance}} credit{{if ne $b.Balance 1}}s{{end}} available</strong>
+        </div>
+        <div class="billing-meter-used">
+          <span>Included credits used</span>
+          <strong>{{$b.IncludedUsed}} / {{$b.IncludedCredits}}</strong>
+        </div>
+      </div>
+      <progress class="billing-meter-bar" value="{{$b.IncludedUsed}}" max="{{$b.IncludedCredits}}" aria-label="Included credits used">{{$b.IncludedUsed}} / {{$b.IncludedCredits}}</progress>
+      <div class="billing-meter-foot">
+        <span>{{$b.IncludedRemaining}} included credit{{if ne $b.IncludedRemaining 1}}s{{end}} remaining this period</span>
+        {{if gt $b.TopupCredits 0}}
+          <span>{{$b.TopupCredits}} top-up credit{{if ne $b.TopupCredits 1}}s{{end}} available after included credits</span>
+        {{else}}
+          <span>No top-up credits available</span>
+        {{end}}
+      </div>
+    </div>
+    {{if $b.BillingExempt}}
+      <div class="billing-comped">
+        <strong>Comped access enabled</strong>
+        <span>This organization has full Hetchy access through WorkOS and runs are not charged against credits.</span>
+      </div>
+    {{end}}
+    {{if $b.LastPaymentError}}<div class="error-banner">{{$b.LastPaymentError}}</div>{{end}}
+    <div class="billing-topups-panel">
+      <div class="billing-topups-head">
+        <div class="billing-topups-copy">
+          <h4>Top-ups</h4>
+          <p class="hint">Buy credits manually, or let Hetchy add them automatically before the balance runs low.</p>
+        </div>
+        {{if and .IsAdmin $b.StripeConfigured}}
+          <form method="POST" action="/billing/topup" class="billing-topup-form" target="_blank" rel="noopener">
+            <input type="hidden" name="quantity" value="1">
+            <button class="secondary" type="submit">Buy credits now</button>
+          </form>
+        {{end}}
+      </div>
+      {{if and .IsAdmin $b.StripeConfigured}}
+        <form method="POST" action="/settings/org/billing/topup-settings" class="billing-settings-form">
+          <div class="billing-topup-settings">
+            <label class="check-row">
+              <input type="checkbox" name="auto_topup_enabled" value="1"{{if $b.AutoTopupEnabled}} checked{{end}}>
+              Enable automatic top-up
+            </label>
+            <div class="billing-settings-grid">
+              <label for="monthly_max_spend">Monthly max spend</label>
+              <div class="billing-money-input">
+                <span>$</span>
+                <input id="monthly_max_spend" type="number" name="monthly_max_spend" min="0" step="0.01" value="{{$b.MonthlyMaxSpend}}">
+              </div>
+            </div>
+          </div>
+          <div class="billing-settings-actions">
+            <p class="hint">{{$b.MonthlySpendUsed}} used this month. Top-ups are {{$b.TopupUnitPrice}} per {{$b.TopupUnitCredits}} credits on this plan.</p>
+            <button class="primary" type="submit">Save top-up settings</button>
+          </div>
+        </form>
+      {{else if .IsAdmin}}
+        <p class="hint">Stripe is not configured for top-up purchases or automatic top-up in this environment.</p>
+      {{else}}
+        <p class="hint">Auto top-up is {{if $b.AutoTopupEnabled}}enabled{{else}}disabled{{end}}. Only administrators can buy credits or change billing settings.</p>
+      {{end}}
+    </div>
+
+    <div class="billing-history">
+      <div class="billing-history-head">
+        <h4>Recent runs</h4>
+      </div>
+      {{if $b.RecentMeters}}
+        <table class="members billing-usage-table">
+          <thead><tr><th>Run</th><th>Flavor</th><th>Minutes</th><th>Credits</th><th>Status</th><th>Started</th></tr></thead>
+          <tbody>
+            {{range $b.RecentMeters}}
+            <tr>
+              <td><code>{{.RunID}}</code></td>
+              <td>{{.Flavor}}</td>
+              <td>{{.BillableMinutes}}</td>
+              <td>{{.CapturedCredits}}</td>
+              <td><span class="pill">{{.TerminalState}}</span></td>
+              <td class="email">{{.StartedAt}}</td>
+            </tr>
+            {{end}}
+          </tbody>
+        </table>
+      {{else}}
+        <p class="empty">No metered runs yet.</p>
+      {{end}}
+    </div>
+  </section>
 {{end}}
 
 {{define "secret"}}
