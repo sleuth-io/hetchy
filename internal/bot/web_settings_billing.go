@@ -156,6 +156,7 @@ func billingDisplayAccount(acct billing.Account) (billing.Account, billing.PaidP
 	acct.Status = "comped"
 	acct.IncludedCredits = business.IncludedCredits
 	acct.IncludedCreditsUsed = 0
+	acct.TopupCredits = 0
 	acct.MaxFlavor = business.MaxFlavor
 	acct.PerRunMaxCredits = business.PerRunMaxCredits
 	return acct, business

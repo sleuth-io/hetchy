@@ -99,8 +99,8 @@ func TestBillingDisplayAccountUsesBusinessLimitsForCompedOrgs(t *testing.T) {
 		t.Fatalf("display credits = included %d used %d remaining %d, want 3600/0/3600",
 			acct.IncludedCredits, acct.IncludedCreditsUsed, acct.IncludedRemaining())
 	}
-	if acct.Balance() != 3603 {
-		t.Fatalf("display balance = %d, want business credits plus top-ups", acct.Balance())
+	if acct.TopupCredits != 0 || acct.Balance() != 3600 {
+		t.Fatalf("display topups/balance = %d/%d, want 0/3600", acct.TopupCredits, acct.Balance())
 	}
 	if acct.MaxFlavor != billing.FlavorPlus || acct.PerRunMaxCredits != 48 {
 		t.Fatalf("display limits = %s/%d, want plus/48", acct.MaxFlavor, acct.PerRunMaxCredits)
