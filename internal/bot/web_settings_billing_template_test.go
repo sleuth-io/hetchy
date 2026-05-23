@@ -35,6 +35,7 @@ func TestSettingsTemplate_RendersBillingTabLayout(t *testing.T) {
 			TopupUnitCredits:  billing.TopupUnitCredits,
 			StripeConfigured:  true,
 			HasStripeCustomer: true,
+			CanTopup:          true,
 			PlanOptions: []billingPlanOptionView{
 				{
 					Code: billing.PlanTeam, Label: "Studio", Monthly: "$79", TopupUnitPrice: "$22",
@@ -130,8 +131,8 @@ func TestSettingsTemplate_DisablesBillingPortalWithoutStripeCustomer(t *testing.
 		"Billing": billingOverviewView{
 			CurrentPlanLabel: "Free",
 			Status:           "free",
-			IncludedCredits:  10,
-			Balance:          10,
+			IncludedCredits:  billing.FreeIncludedCredits,
+			Balance:          billing.FreeIncludedCredits,
 			SandboxOptions:   "Standard",
 			StripeConfigured: true,
 		},
@@ -145,6 +146,12 @@ func TestSettingsTemplate_DisablesBillingPortalWithoutStripeCustomer(t *testing.
 	}
 	if strings.Contains(body, `href="/billing/portal"`) {
 		t.Error("billing tab should not link to the Stripe portal without a Stripe customer")
+	}
+	if strings.Contains(body, `Buy credits now`) || strings.Contains(body, `action="/billing/topup"`) {
+		t.Error("free billing tab should not render manual top-up controls")
+	}
+	if !strings.Contains(body, `Top-ups are available only on paid plans.`) {
+		t.Error("free billing tab should explain that top-ups require a paid plan")
 	}
 }
 
@@ -208,16 +215,17 @@ func TestSettingsTemplate_RendersCompedBillingBanner(t *testing.T) {
 	rec := httptest.NewRecorder()
 	b.renderTemplate(rec, webui.Settings, map[string]any{
 		"OrgID": "org_y", "OrgName": "Acme", "Email": "u@y", "PrincipalUserID": "user_me",
-		"IsAdmin": false, "Tab": "billing", "SavedMessage": "",
+		"IsAdmin": true, "Tab": "billing", "SavedMessage": "",
 		"Billing": billingOverviewView{
 			CurrentPlanLabel:  "Comped",
 			Status:            "comped",
 			BillingExempt:     true,
-			IncludedCredits:   10,
-			IncludedRemaining: 10,
-			Balance:           10,
+			IncludedCredits:   3600,
+			IncludedRemaining: 3600,
+			Balance:           3600,
 			SandboxOptions:    "Standard and Plus",
 			TopupUnitCredits:  billing.TopupUnitCredits,
+			StripeConfigured:  true,
 		},
 	})
 	if rec.Code != http.StatusOK {
@@ -228,9 +236,20 @@ func TestSettingsTemplate_RendersCompedBillingBanner(t *testing.T) {
 		`Comped access enabled`,
 		`full Hetchy access through WorkOS`,
 		`runs are not charged against credits`,
+		`Plan changes are managed through WorkOS while comped access is enabled.`,
+		`Top-ups are disabled while comped access is enabled.`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("comped billing tab missing %q", want)
+		}
+	}
+	for _, notWant := range []string{
+		`action="/billing/checkout"`,
+		`action="/billing/topup"`,
+		`href="/billing/portal"`,
+	} {
+		if strings.Contains(body, notWant) {
+			t.Errorf("comped billing tab unexpectedly contained %q", notWant)
 		}
 	}
 }

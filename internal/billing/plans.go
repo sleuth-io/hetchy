@@ -10,6 +10,11 @@ type PaidPlan struct {
 	PerRunMaxCredits  int
 }
 
+const (
+	FreeIncludedCredits  = 25
+	FreePerRunMaxCredits = 4
+)
+
 var paidPlans = []PaidPlan{
 	{
 		Code: PlanBuilder, Label: "Builder", MonthlyUSDCents: 1900, TopupUnitUSDCents: 2500,
