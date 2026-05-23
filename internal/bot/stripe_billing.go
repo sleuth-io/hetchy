@@ -76,7 +76,7 @@ func (b *Bot) stripeTopupPriceID(planCode string) string {
 func stripeTopupPlanPriceID(priceIDs map[string]string, legacy, planCode string) string {
 	planCode = strings.ToLower(strings.TrimSpace(planCode))
 	if _, ok := billing.PaidPlanByCode(planCode); !ok {
-		planCode = billing.DefaultPaidPlan().Code
+		return ""
 	}
 	if priceIDs != nil {
 		if priceID := strings.TrimSpace(priceIDs[planCode]); priceID != "" {
@@ -215,6 +215,17 @@ func (b *Bot) billingTopupHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	credits := quantity * billing.TopupUnitCredits
+
+	overview, err := b.billing.Overview(r.Context(), p.OrgID)
+	if err != nil {
+		b.log.Error("load billing account for top-up", "error", err, "org", p.OrgID)
+		http.Error(w, "load billing account: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !billingAccountAllowsTopups(overview.Account) {
+		http.Error(w, "top-ups require a paid plan", http.StatusBadRequest)
+		return
+	}
 
 	acct, err := b.ensureStripeCustomer(r.Context(), p.OrgID, p.Email)
 	if err != nil {

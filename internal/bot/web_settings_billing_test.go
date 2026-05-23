@@ -1,15 +1,22 @@
 package bot
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
+
 	"github.com/hetchyhq/hetchy/internal/auth"
 	"github.com/hetchyhq/hetchy/internal/billing"
 	"github.com/hetchyhq/hetchy/internal/db"
+	"github.com/hetchyhq/hetchy/internal/db/sqlc"
 )
 
 func TestLoadBillingOverviewDisabledDefaults(t *testing.T) {
@@ -21,8 +28,9 @@ func TestLoadBillingOverviewDisabledDefaults(t *testing.T) {
 	if overview.PlanCode != billing.PlanFree {
 		t.Fatalf("PlanCode = %q, want free", overview.PlanCode)
 	}
-	if overview.Balance != 10 || overview.IncludedRemaining != 10 {
-		t.Fatalf("default credits = balance %d remaining %d, want 10/10", overview.Balance, overview.IncludedRemaining)
+	if overview.Balance != billing.FreeIncludedCredits || overview.IncludedRemaining != billing.FreeIncludedCredits {
+		t.Fatalf("default credits = balance %d remaining %d, want %d/%d",
+			overview.Balance, overview.IncludedRemaining, billing.FreeIncludedCredits, billing.FreeIncludedCredits)
 	}
 	if overview.SandboxOptions != "Standard only" {
 		t.Fatalf("SandboxOptions = %q, want Standard only", overview.SandboxOptions)
@@ -66,6 +74,48 @@ func TestBillingPlanOptionsAndConfirmationCopy(t *testing.T) {
 	}
 	if !strings.Contains(growth.ConfirmMessage, "takes effect immediately") {
 		t.Fatalf("growth confirm message = %q, want immediate upgrade copy", growth.ConfirmMessage)
+	}
+}
+
+func TestBillingDisplayAccountUsesBusinessLimitsForCompedOrgs(t *testing.T) {
+	acct, plan := billingDisplayAccount(billing.Account{
+		PlanCode:            billing.PlanFree,
+		Status:              billing.PlanFree,
+		IncludedCredits:     billing.FreeIncludedCredits,
+		IncludedCreditsUsed: 7,
+		TopupCredits:        3,
+		MaxFlavor:           billing.FlavorStandard,
+		PerRunMaxCredits:    billing.FreePerRunMaxCredits,
+		BillingExempt:       true,
+	})
+
+	if plan.Code != billing.PlanBusiness {
+		t.Fatalf("display plan = %q, want business", plan.Code)
+	}
+	if acct.PlanCode != billing.PlanBusiness || acct.Status != "comped" {
+		t.Fatalf("display account plan/status = %q/%q, want business/comped", acct.PlanCode, acct.Status)
+	}
+	if acct.IncludedCredits != 3600 || acct.IncludedCreditsUsed != 0 || acct.IncludedRemaining() != 3600 {
+		t.Fatalf("display credits = included %d used %d remaining %d, want 3600/0/3600",
+			acct.IncludedCredits, acct.IncludedCreditsUsed, acct.IncludedRemaining())
+	}
+	if acct.Balance() != 3603 {
+		t.Fatalf("display balance = %d, want business credits plus top-ups", acct.Balance())
+	}
+	if acct.MaxFlavor != billing.FlavorPlus || acct.PerRunMaxCredits != 48 {
+		t.Fatalf("display limits = %s/%d, want plus/48", acct.MaxFlavor, acct.PerRunMaxCredits)
+	}
+}
+
+func TestBillingAccountAllowsTopupsOnlyForPaidNonCompedPlans(t *testing.T) {
+	if billingAccountAllowsTopups(billing.Account{PlanCode: billing.PlanFree}) {
+		t.Fatal("free account unexpectedly allows top-ups")
+	}
+	if billingAccountAllowsTopups(billing.Account{PlanCode: billing.PlanBusiness, BillingExempt: true}) {
+		t.Fatal("comped account unexpectedly allows top-ups")
+	}
+	if !billingAccountAllowsTopups(billing.Account{PlanCode: " TEAM "}) {
+		t.Fatal("paid plan should allow top-ups")
 	}
 }
 
@@ -436,6 +486,46 @@ func TestBillingHandlersValidateConfigBeforeDatabaseUse(t *testing.T) {
 	})
 }
 
+func TestBillingTopupHandlerRejectsFreePlanBeforeStripeCustomer(t *testing.T) {
+	billingDB := &billingTopupEligibilityDB{account: billing.Account{
+		OrgID:               "org_1",
+		PlanCode:            billing.PlanFree,
+		Status:              billing.PlanFree,
+		IncludedCredits:     billing.FreeIncludedCredits,
+		IncludedCreditsUsed: 0,
+		MaxFlavor:           billing.FlavorStandard,
+		PerRunMaxCredits:    billing.FreePerRunMaxCredits,
+	}}
+	b := &Bot{
+		log: discardLogger(),
+		cfg: Config{
+			StripeSecretKey:           "sk_test",
+			StripeSubscriptionPriceID: "price_team",
+			StripeTopupPriceID:        "price_topup",
+		},
+		billing: billing.NewService(
+			billing.NewStore(&db.Store{Queries: sqlc.New(billingDB)}),
+			nil,
+		),
+	}
+	req := httptest.NewRequest(http.MethodPost, "/billing/topup", strings.NewReader("quantity=1"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", "http://example.com")
+	rr := httptest.NewRecorder()
+
+	serveWithBypassAuth(t, "admin", rr, req, b.billingTopupHandler)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%q, want %d", rr.Code, rr.Body.String(), http.StatusBadRequest)
+	}
+	if !strings.Contains(rr.Body.String(), "top-ups require a paid plan") {
+		t.Fatalf("body = %q, want paid plan error", rr.Body.String())
+	}
+	if billingDB.setStripeCustomerCalls != 0 {
+		t.Fatalf("set stripe customer calls = %d, want 0", billingDB.setStripeCustomerCalls)
+	}
+}
+
 func serveWithBypassAuth(t *testing.T, role string, rr *httptest.ResponseRecorder, req *http.Request, h http.HandlerFunc) {
 	t.Helper()
 	a, err := auth.New(auth.Config{
@@ -449,4 +539,110 @@ func serveWithBypassAuth(t *testing.T, role string, rr *httptest.ResponseRecorde
 		t.Fatalf("auth.New: %v", err)
 	}
 	a.Middleware(http.HandlerFunc(h)).ServeHTTP(rr, req)
+}
+
+type billingTopupEligibilityDB struct {
+	account                billing.Account
+	setStripeCustomerCalls int
+}
+
+func (f *billingTopupEligibilityDB) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
+	return pgconn.CommandTag{}, nil
+}
+
+func (f *billingTopupEligibilityDB) Query(_ context.Context, query string, _ ...any) (pgx.Rows, error) {
+	if strings.Contains(query, "ListBillingRunMetersByOrg") {
+		return &workOSStringRows{}, nil
+	}
+	return nil, fmt.Errorf("unexpected query: %s", query)
+}
+
+func (f *billingTopupEligibilityDB) QueryRow(_ context.Context, query string, args ...any) pgx.Row {
+	switch {
+	case strings.Contains(query, "EnsureBillingAccount"):
+		return billingTopupAccountRow{account: f.account}
+	case strings.Contains(query, "EnsureBillingTopupSettings"):
+		return billingTopupSettingsRow{orgID: f.account.OrgID}
+	case strings.Contains(query, "UpdateBillingStripeCustomer"):
+		f.setStripeCustomerCalls++
+		return billingTopupAccountRow{account: f.account}
+	default:
+		return billingTopupErrRow{err: fmt.Errorf("unexpected query row: %s", query)}
+	}
+}
+
+type billingTopupAccountRow struct {
+	account billing.Account
+}
+
+func (r billingTopupAccountRow) Scan(dest ...any) error {
+	values := []any{
+		r.account.OrgID,
+		r.account.StripeCustomerID,
+		r.account.StripeSubscriptionID,
+		r.account.PlanCode,
+		r.account.Status,
+		timestamptzValue(r.account.CurrentPeriodStart),
+		timestamptzValue(r.account.CurrentPeriodEnd),
+		int32(r.account.IncludedCredits),
+		int32(r.account.IncludedCreditsUsed),
+		int32(r.account.TopupCredits),
+		r.account.MaxFlavor,
+		int32(r.account.PerRunMaxCredits),
+		r.account.BillingExempt,
+		r.account.LastPaymentError,
+		timestamptzValue(r.account.CreatedAt),
+		timestamptzValue(r.account.UpdatedAt),
+		r.account.PendingPlanCode,
+		timestamptzValue(r.account.PendingPlanEffectiveAt),
+	}
+	return scanBillingTopupValues(dest, values)
+}
+
+type billingTopupSettingsRow struct {
+	orgID string
+}
+
+func (r billingTopupSettingsRow) Scan(dest ...any) error {
+	values := []any{
+		r.orgID,
+		false,
+		int32(2),
+		int32(10),
+		int32(0),
+		int32(0),
+		"2026-05",
+		pgtype.Timestamptz{},
+		pgtype.Timestamptz{},
+		int32(0),
+		int32(0),
+	}
+	return scanBillingTopupValues(dest, values)
+}
+
+type billingTopupErrRow struct {
+	err error
+}
+
+func (r billingTopupErrRow) Scan(...any) error {
+	return r.err
+}
+
+func scanBillingTopupValues(dest []any, values []any) error {
+	if len(dest) != len(values) {
+		return fmt.Errorf("scan destination count = %d, want %d", len(dest), len(values))
+	}
+	for i := range dest {
+		if err := assignWorkOSScanValue(dest[i], values[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func timestamptzValue(t time.Time) pgtype.Timestamptz {
+	if t.IsZero() {
+		return pgtype.Timestamptz{}
+	}
+	return pgtype.Timestamptz{Time: t, Valid: true}
 }

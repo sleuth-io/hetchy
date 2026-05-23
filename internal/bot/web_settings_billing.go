@@ -41,6 +41,7 @@ type billingOverviewView struct {
 	StripeConfigured  bool
 	HasStripeCustomer bool
 	HasSubscription   bool
+	CanTopup          bool
 	PlanOptions       []billingPlanOptionView
 	RecentMeters      []billingMeterView
 }
@@ -77,7 +78,8 @@ func (b *Bot) loadBillingOverview(ctx context.Context, orgID string) (billingOve
 		return billingOverviewView{
 			PlanCode: "free", CurrentPlanLabel: "Free", Status: "free", MaxFlavor: billing.FlavorStandard,
 			SandboxOptions:  sandboxOptionsLabel(billing.FlavorStandard),
-			IncludedCredits: 10, IncludedRemaining: 10, Balance: 10, PerRunMaxCredits: 4,
+			IncludedCredits: billing.FreeIncludedCredits, IncludedRemaining: billing.FreeIncludedCredits,
+			Balance: billing.FreeIncludedCredits, PerRunMaxCredits: billing.FreePerRunMaxCredits,
 			TopupUnitPrice: formatUSDCents(plan.TopupUnitUSDCents), TopupUnitCredits: billing.TopupUnitCredits,
 			MonthlyMaxSpend: "0", MonthlySpendUsed: "$0",
 		}, nil
@@ -88,18 +90,17 @@ func (b *Bot) loadBillingOverview(ctx context.Context, orgID string) (billingOve
 	}
 	acct := overview.Account
 	settings := overview.TopupSettings
-	plan := billingPlanForTopup(acct.PlanCode)
+	displayAcct, plan := billingDisplayAccount(acct)
 	pendingPlanCode, pendingPlanLabel, pendingPlanAt, hasPendingPlan := billingPendingPlanChange(acct)
-	currentPlanLabel := billingPlanLabel(acct.PlanCode)
-	status := acct.Status
-	sandboxOptions := sandboxOptionsLabel(acct.MaxFlavor)
+	currentPlanLabel := billingPlanLabel(displayAcct.PlanCode)
+	status := displayAcct.Status
+	sandboxOptions := sandboxOptionsLabel(displayAcct.MaxFlavor)
 	if acct.BillingExempt {
 		currentPlanLabel = "Comped"
 		status = "comped"
-		sandboxOptions = sandboxOptionsLabel(billing.FlavorEnterprise)
 	}
 	out := billingOverviewView{
-		PlanCode:          acct.PlanCode,
+		PlanCode:          displayAcct.PlanCode,
 		CurrentPlanLabel:  currentPlanLabel,
 		Status:            status,
 		PeriodStart:       formatBillingTime(acct.CurrentPeriodStart),
@@ -108,14 +109,14 @@ func (b *Bot) loadBillingOverview(ctx context.Context, orgID string) (billingOve
 		PendingPlanLabel:  pendingPlanLabel,
 		PendingPlanAt:     pendingPlanAt,
 		HasPendingPlan:    hasPendingPlan,
-		IncludedCredits:   acct.IncludedCredits,
-		IncludedUsed:      acct.IncludedCreditsUsed,
-		IncludedRemaining: acct.IncludedRemaining(),
-		TopupCredits:      acct.TopupCredits,
-		Balance:           acct.Balance(),
-		MaxFlavor:         acct.MaxFlavor,
+		IncludedCredits:   displayAcct.IncludedCredits,
+		IncludedUsed:      displayAcct.IncludedCreditsUsed,
+		IncludedRemaining: displayAcct.IncludedRemaining(),
+		TopupCredits:      displayAcct.TopupCredits,
+		Balance:           displayAcct.Balance(),
+		MaxFlavor:         displayAcct.MaxFlavor,
 		SandboxOptions:    sandboxOptions,
-		PerRunMaxCredits:  acct.PerRunMaxCredits,
+		PerRunMaxCredits:  displayAcct.PerRunMaxCredits,
 		BillingExempt:     acct.BillingExempt,
 		LastPaymentError:  acct.LastPaymentError,
 		AutoTopupEnabled:  settings.AutoTopupEnabled,
@@ -126,7 +127,8 @@ func (b *Bot) loadBillingOverview(ctx context.Context, orgID string) (billingOve
 		StripeConfigured:  b.stripeConfigured(),
 		HasStripeCustomer: acct.StripeCustomerID != "",
 		HasSubscription:   acct.StripeSubscriptionID != "",
-		PlanOptions:       b.billingPlanOptions(acct.PlanCode, pendingPlanCode, acct.StripeSubscriptionID != "", formatBillingTime(acct.CurrentPeriodEnd)),
+		CanTopup:          billingAccountAllowsTopups(acct),
+		PlanOptions:       b.billingPlanOptions(displayAcct.PlanCode, pendingPlanCode, acct.StripeSubscriptionID != "", formatBillingTime(acct.CurrentPeriodEnd)),
 	}
 	for _, meter := range overview.RecentMeters {
 		out.RecentMeters = append(out.RecentMeters, billingMeterView{
@@ -139,6 +141,32 @@ func (b *Bot) loadBillingOverview(ctx context.Context, orgID string) (billingOve
 		})
 	}
 	return out, nil
+}
+
+func billingDisplayAccount(acct billing.Account) (billing.Account, billing.PaidPlan) {
+	plan := billingPlanForTopup(acct.PlanCode)
+	if !acct.BillingExempt {
+		return acct, plan
+	}
+	business, ok := billing.PaidPlanByCode(billing.PlanBusiness)
+	if !ok {
+		return acct, plan
+	}
+	acct.PlanCode = business.Code
+	acct.Status = "comped"
+	acct.IncludedCredits = business.IncludedCredits
+	acct.IncludedCreditsUsed = 0
+	acct.MaxFlavor = business.MaxFlavor
+	acct.PerRunMaxCredits = business.PerRunMaxCredits
+	return acct, business
+}
+
+func billingAccountAllowsTopups(acct billing.Account) bool {
+	if acct.BillingExempt {
+		return false
+	}
+	_, ok := billing.PaidPlanByCode(strings.ToLower(strings.TrimSpace(acct.PlanCode)))
+	return ok
 }
 
 func (b *Bot) billingPlanOptions(currentPlan, pendingPlan string, hasSubscription bool, periodEnd string) []billingPlanOptionView {
@@ -351,6 +379,10 @@ func (b *Bot) billingTopupSettingsHandler(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		b.log.Error("load billing account for top-up settings", "error", err, "org", p.OrgID)
 		http.Error(w, "load billing settings: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !billingAccountAllowsTopups(overview.Account) {
+		http.Error(w, "top-ups require a paid plan", http.StatusBadRequest)
 		return
 	}
 	settings := billingTopupSettingsFromSpend(

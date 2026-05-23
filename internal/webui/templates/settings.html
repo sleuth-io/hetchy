@@ -1079,14 +1079,14 @@
           <h4>Top-ups</h4>
           <p class="hint">Buy credits manually, or let Hetchy add them automatically before the balance runs low.</p>
         </div>
-        {{if and .IsAdmin $b.StripeConfigured}}
+        {{if and .IsAdmin $b.StripeConfigured $b.CanTopup}}
           <form method="POST" action="/billing/topup" class="billing-topup-form" target="_blank" rel="noopener">
             <input type="hidden" name="quantity" value="1">
             <button class="secondary" type="submit">Buy credits now</button>
           </form>
         {{end}}
       </div>
-      {{if and .IsAdmin $b.StripeConfigured}}
+      {{if and .IsAdmin $b.StripeConfigured $b.CanTopup}}
         <form method="POST" action="/settings/org/billing/topup-settings" class="billing-settings-form">
           <div class="billing-topup-settings">
             <label class="check-row">
@@ -1106,6 +1106,10 @@
             <button class="primary" type="submit">Save top-up settings</button>
           </div>
         </form>
+      {{else if and .IsAdmin $b.BillingExempt}}
+        <p class="hint">Top-ups are disabled while comped access is enabled.</p>
+      {{else if and .IsAdmin (not $b.CanTopup)}}
+        <p class="hint">Top-ups are available only on paid plans.</p>
       {{else if .IsAdmin}}
         <p class="hint">Stripe is not configured for top-up purchases or automatic top-up in this environment.</p>
       {{else}}

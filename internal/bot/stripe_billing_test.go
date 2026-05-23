@@ -38,7 +38,8 @@ func TestStripeTopupPlanPriceID(t *testing.T) {
 	}{
 		{name: "plan specific", planCode: "growth", want: "price_growth_topup"},
 		{name: "case insensitive", planCode: " STARTER ", want: "price_starter_topup"},
-		{name: "free falls back to default plan", planCode: "free", want: "price_team_topup"},
+		{name: "free has no top-up price", planCode: "free", want: ""},
+		{name: "empty has no top-up price", planCode: "", want: ""},
 		{name: "missing paid plan uses legacy", planCode: "business", legacy: "price_legacy_topup", want: "price_legacy_topup"},
 		{name: "missing paid plan without legacy", planCode: "business", want: ""},
 	} {
