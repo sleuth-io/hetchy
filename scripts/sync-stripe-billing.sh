@@ -496,7 +496,6 @@ ensure_portal() {
     --features.subscription-cancel.enabled=true
     --features.subscription-cancel.mode at_period_end
     --features.subscription-cancel.proration-behavior none
-    --features.subscription-cancel.cancellation-reason.enabled=false
     --features.subscription-update.enabled=false
     --features.customer-update.enabled=false
     --login-page.enabled=false
