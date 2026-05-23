@@ -227,6 +227,7 @@ func (b *Bot) billingTopupHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	credits := quantity * billing.TopupUnitCredits
 
+	// Load overview only to check eligibility before touching Stripe.
 	overview, err := b.billing.Overview(r.Context(), p.OrgID)
 	if err != nil {
 		b.log.Error("load billing account for top-up", "error", err, "org", p.OrgID)
