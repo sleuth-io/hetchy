@@ -231,17 +231,37 @@ func TestSettingsTemplate_RendersAgentsTab(t *testing.T) {
 	rec := httptest.NewRecorder()
 	b.renderTemplate(rec, webui.Settings, map[string]any{
 		"OrgID": "org_y", "OrgName": "Acme", "Email": "u@y", "PrincipalUserID": "user_me",
-		"IsAdmin": true, "Tab": "agents", "SavedMessage": "",
-		"Agents": []agentSummary{
+		"IsAdmin": true, "Tab": "agents", "SavedMessage": "", "SXEnabled": true,
+		"AgentTemplates": []agentTemplateView{
 			{
-				Slug:         "backend",
-				DisplayName:  "Backend",
-				Description:  "Handles server-side work.",
+				Slug:          "backend",
+				DisplayName:   "Backend",
+				Skills:        []string{"golang-pro", "database-migrations"},
+				PersonaPrompt: "Use backend rules.",
+			},
+		},
+		"AgentSkillOptions": []agentSkillOptionView{
+			{Name: "code-review", Source: "Skills.new", Description: "Review code changes"},
+			{Name: "database-migrations", Source: "Skills.new"},
+			{Name: "golang-pro", Source: "Skills.new"},
+		},
+		"Agents": []agentSettingsView{
+			{
+				Slug:         "alice",
+				DisplayName:  "Alice",
+				Description:  "Handles frontend work.",
 				SXBot:        "bob",
 				PersonaAsset: "bob",
 				SlackAliases: []string{"backend", "api"},
 				Skills:       []string{"golang-pro", "database-migrations"},
 				BuiltIn:      true,
+			},
+			{
+				Slug:          "reviewer",
+				DisplayName:   "Reviewer",
+				Description:   "Reviews pull requests.",
+				PersonaPrompt: "Review code carefully.",
+				Skills:        []string{"code-review"},
 			},
 		},
 	})
@@ -251,9 +271,20 @@ func TestSettingsTemplate_RendersAgentsTab(t *testing.T) {
 	body := rec.Body.String()
 	for _, w := range []string{
 		`href="/settings/org?tab=agents" class="active"`,
-		`action="/settings/org/agents/backend"`,
-		`action="/settings/org/agents/backend/delete"`,
-		`name="display_name" value="Backend"`,
+		`data-open-modal="modal-agent-create"`,
+		`id="modal-agent-create"`,
+		`data-skills="golang-pro,database-migrations"`,
+		`data-prompt="Use backend rules."`,
+		`data-agent-skill-picker`,
+		`data-skill-name="golang-pro"`,
+		`data-skill-source="Skills.new"`,
+		`data-agent-skill-hidden`,
+		`Skills.new`,
+		`Built-in`,
+		`action="/settings/org/agents/reviewer"`,
+		`action="/settings/org/agents/reviewer/delete"`,
+		`name="display_name" value="Reviewer"`,
+		`Review code carefully.`,
 		`golang-pro`,
 		`database-migrations`,
 		`sx bot: <code>bob</code>`,
@@ -262,6 +293,33 @@ func TestSettingsTemplate_RendersAgentsTab(t *testing.T) {
 		if !strings.Contains(body, w) {
 			t.Errorf("agents tab missing %q", w)
 		}
+	}
+	for _, n := range []string{
+		`name="slug"`,
+		`comma-separated skill names`,
+		`action="/settings/org/agents/alice"`,
+		`action="/settings/org/agents/alice/delete"`,
+	} {
+		if strings.Contains(body, n) {
+			t.Errorf("agents tab should not render %q", n)
+		}
+	}
+}
+
+func TestSettingsTemplate_DisablesAgentCreateWithoutSX(t *testing.T) {
+	b := newBypassBot(t)
+	rec := httptest.NewRecorder()
+	b.renderTemplate(rec, webui.Settings, map[string]any{
+		"OrgID": "org_y", "OrgName": "Acme", "Email": "u@y", "PrincipalUserID": "user_me",
+		"IsAdmin": true, "Tab": "agents", "SavedMessage": "",
+		"Agents": []agentSettingsView{},
+	})
+	body := rec.Body.String()
+	if !strings.Contains(body, `data-open-modal="modal-agent-create" disabled`) {
+		t.Fatalf("agents tab should disable create without SX, body=%q", body)
+	}
+	if !strings.Contains(body, "Enable SX in Integrations before creating agents.") {
+		t.Fatalf("agents tab missing SX enable hint")
 	}
 }
 

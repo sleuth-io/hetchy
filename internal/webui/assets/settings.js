@@ -25,7 +25,7 @@
       const dlg = document.getElementById(btn.dataset.openModal);
       if (dlg && typeof dlg.showModal === 'function') {
         dlg.showModal();
-        const input = dlg.querySelector('input[type="password"]');
+        const input = dlg.querySelector('[autofocus], input[type="password"], input:not([type="hidden"]), select, textarea');
         if (input) setTimeout(() => input.focus(), 0);
       }
     });
@@ -33,6 +33,162 @@
   document.querySelectorAll('[data-close-modal]').forEach(btn => {
     btn.addEventListener('click', () => btn.closest('dialog').close());
   });
+
+  // Agent templates carry default prompts and skill names; mirror those
+  // defaults into the create modal when a template is selected.
+  (function () {
+    const form = document.getElementById('agent-create-form');
+    const template = document.getElementById('agent-template');
+    const prompt = document.getElementById('agent-create-prompt');
+    const picker = form ? form.querySelector('[data-agent-skill-picker]') : null;
+    if (!form || !template || !picker) return;
+
+    const search = picker.querySelector('[data-agent-skill-search]');
+    const toggle = picker.querySelector('[data-agent-skill-toggle]');
+    const menu = picker.querySelector('[data-agent-skill-menu]');
+    const selectedEl = picker.querySelector('[data-agent-skill-selected]');
+    const hiddenEl = picker.querySelector('[data-agent-skill-hidden]');
+    const optionEls = Array.from(picker.querySelectorAll('[data-agent-skill-option]'));
+    const skills = optionEls.map(el => ({
+      name: el.dataset.skillName || '',
+      normalizedName: normalizeSkillName(el.dataset.skillName || ''),
+      description: el.dataset.skillDescription || '',
+      source: el.dataset.skillSource || '',
+      el
+    })).filter(skill => skill.name);
+    const byName = new Map(skills.map(skill => [skill.name, skill]));
+    const byNormalizedName = new Map(skills.map(skill => [skill.normalizedName, skill]));
+    const selectedSkills = new Set();
+
+    function normalizeSkillName(value) {
+      return (value || '').trim().toLowerCase();
+    }
+
+    function splitSkills(value) {
+      return (value || '').split(',').map(s => s.trim()).filter(Boolean);
+    }
+
+    function resolveSkillName(name) {
+      const trimmed = (name || '').trim();
+      if (byName.has(trimmed)) return trimmed;
+
+      const normalized = normalizeSkillName(trimmed);
+      if (!normalized) return '';
+      const exactNormalized = byNormalizedName.get(normalized);
+      if (exactNormalized) return exactNormalized.name;
+
+      // Skills imported from the public Git Vault can be prefixed by the
+      // vault slug in Skills.new, while the agent templates keep the original
+      // skill names. Match that stable suffix so templates still hydrate.
+      const suffix = '-' + normalized;
+      const matches = skills.filter(skill => skill.normalizedName.endsWith(suffix));
+      if (matches.length === 0) return '';
+      matches.sort((a, b) => a.name.length - b.name.length || a.name.localeCompare(b.name));
+      return matches[0].name;
+    }
+
+    function setOpen(open) {
+      if (!menu || !search || skills.length === 0) return;
+      menu.hidden = !open;
+      search.setAttribute('aria-expanded', open ? 'true' : 'false');
+      if (open) {
+        renderOptions();
+        picker.scrollIntoView({ block: 'nearest' });
+      }
+    }
+
+    function renderOptions() {
+      const query = (search ? search.value : '').trim().toLowerCase();
+      for (const skill of skills) {
+        const haystack = (skill.name + ' ' + skill.source + ' ' + skill.description).toLowerCase();
+        const hidden = selectedSkills.has(skill.name) || !!(query && !haystack.includes(query));
+        skill.el.hidden = hidden;
+        skill.el.style.display = hidden ? 'none' : '';
+      }
+    }
+
+    function renderSelected() {
+      if (!selectedEl || !hiddenEl) return;
+      selectedEl.innerHTML = '';
+      hiddenEl.innerHTML = '';
+      for (const name of selectedSkills) {
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = 'skills';
+        input.value = name;
+        hiddenEl.appendChild(input);
+
+        const chip = document.createElement('span');
+        chip.className = 'agent-skill-chip';
+        chip.textContent = name;
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.setAttribute('aria-label', 'Remove ' + name);
+        remove.textContent = 'x';
+        remove.addEventListener('click', () => {
+          selectedSkills.delete(name);
+          renderSelected();
+          renderOptions();
+          if (search) search.focus();
+        });
+        chip.appendChild(remove);
+        selectedEl.appendChild(chip);
+      }
+    }
+
+    function selectSkill(name) {
+      if (!byName.has(name)) return;
+      selectedSkills.add(name);
+      if (search) search.value = '';
+      renderSelected();
+      renderOptions();
+      setOpen(false);
+      if (search) search.focus();
+    }
+
+    function applyTemplate() {
+      const selected = template.selectedOptions && template.selectedOptions[0];
+      if (prompt) prompt.value = selected ? selected.dataset.prompt || '' : '';
+
+      selectedSkills.clear();
+      splitSkills(selected ? selected.dataset.skills : '').forEach(name => {
+        const resolved = resolveSkillName(name);
+        if (resolved) selectedSkills.add(resolved);
+      });
+      renderSelected();
+      renderOptions();
+    }
+
+    optionEls.forEach(el => {
+      el.addEventListener('click', () => selectSkill(el.dataset.skillName || ''));
+    });
+    if (search) {
+      search.addEventListener('focus', () => setOpen(true));
+      search.addEventListener('input', () => setOpen(true));
+      search.addEventListener('keydown', e => {
+        if (e.key === 'Escape') {
+          setOpen(false);
+          return;
+        }
+        if (e.key !== 'Enter') return;
+        const first = optionEls.find(el => !el.hidden);
+        if (!first) return;
+        e.preventDefault();
+        selectSkill(first.dataset.skillName || '');
+      });
+    }
+    if (toggle) {
+      toggle.addEventListener('click', () => {
+        setOpen(menu ? menu.hidden : true);
+        if (search) search.focus();
+      });
+    }
+    document.addEventListener('click', e => {
+      if (!picker.contains(e.target)) setOpen(false);
+    });
+    template.addEventListener('change', applyTemplate);
+    renderSelected();
+  })();
 
   // Integration disconnect confirms use the shared app-dialog styling
   // instead of native browser confirm() prompts.

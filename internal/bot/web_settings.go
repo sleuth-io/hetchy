@@ -277,18 +277,19 @@ func (b *Bot) loadBootstrapStatus(ctx context.Context, repos []integrationRepo) 
 }
 
 type agentSettingsView struct {
-	Slug         string
-	DisplayName  string
-	Description  string
-	SXBot        string
-	PersonaAsset string
-	SlackAliases []string
-	Skills       []string
-	VaultBackend string
-	SyncStatus   string
-	SyncError    string
-	BuiltIn      bool
-	Default      bool
+	Slug          string
+	DisplayName   string
+	Description   string
+	PersonaPrompt string
+	SXBot         string
+	PersonaAsset  string
+	SlackAliases  []string
+	Skills        []string
+	VaultBackend  string
+	SyncStatus    string
+	SyncError     string
+	BuiltIn       bool
+	Default       bool
 }
 
 type agentTemplateView struct {
@@ -297,6 +298,100 @@ type agentTemplateView struct {
 	Description   string
 	Skills        []string
 	PersonaPrompt string
+}
+
+type agentSkillOptionView struct {
+	Name          string
+	Source        string
+	Description   string
+	LatestVersion string
+}
+
+func (b *Bot) populateAgentSettingsTabData(ctx context.Context, orgID string, data map[string]any) error {
+	store := b.agents
+	if store == nil {
+		store = agents.NewStore(nil)
+	}
+	sxEnabled, err := b.sxIntegrationEnabled(ctx, orgID)
+	if err != nil {
+		return fmt.Errorf("load sx integration: %w", err)
+	}
+	data["SXEnabled"] = sxEnabled
+	data["AgentSkillOptions"] = []agentSkillOptionView{}
+	skillSource := b.sxSkillSourceLabel(ctx, orgID)
+	if sxEnabled && b.sx != nil {
+		assets, err := b.sx.ListSkills(ctx, orgID, sxsync.Actor{Name: "Hetchy"})
+		if err != nil {
+			if b.log != nil {
+				b.log.Warn("load sx skills failed", "org", orgID, "error", err)
+			}
+			data["AgentSkillsLoadError"] = "Unable to load available skills."
+		} else {
+			skills := make([]agentSkillOptionView, 0, len(assets))
+			for _, asset := range assets {
+				skills = append(skills, agentSkillOptionView{
+					Name:          asset.Name,
+					Source:        skillSource,
+					Description:   asset.Description,
+					LatestVersion: asset.LatestVersion,
+				})
+			}
+			data["AgentSkillOptions"] = skills
+		}
+	}
+	profiles, err := store.List(ctx, orgID)
+	if err != nil {
+		return fmt.Errorf("load agents: %w", err)
+	}
+	out := make([]agentSettingsView, 0, len(profiles))
+	for _, a := range profiles {
+		if !a.Enabled {
+			continue
+		}
+		out = append(out, agentSettingsView{
+			Slug:          a.Slug,
+			DisplayName:   a.DisplayName,
+			Description:   a.Description,
+			PersonaPrompt: a.PersonaPrompt,
+			SXBot:         a.SXBot,
+			PersonaAsset:  a.PersonaAsset,
+			SlackAliases:  a.SlackAliases,
+			Skills:        a.Skills,
+			VaultBackend:  a.VaultBackend,
+			SyncStatus:    a.SyncStatus,
+			SyncError:     a.SyncError,
+			BuiltIn:       a.BuiltIn,
+			Default:       a.Slug == agents.DefaultSlug,
+		})
+	}
+	data["Agents"] = out
+	templates, err := store.ListTemplates(ctx)
+	if err != nil {
+		return fmt.Errorf("load agent templates: %w", err)
+	}
+	templateViews := make([]agentTemplateView, 0, len(templates))
+	for _, t := range templates {
+		templateViews = append(templateViews, agentTemplateView{
+			Slug:          t.Slug,
+			DisplayName:   t.DisplayName,
+			Description:   t.Description,
+			Skills:        t.Skills,
+			PersonaPrompt: t.PersonaPrompt,
+		})
+	}
+	data["AgentTemplates"] = templateViews
+	return nil
+}
+
+func (b *Bot) sxSkillSourceLabel(ctx context.Context, orgID string) string {
+	if b == nil || b.sx == nil {
+		return "SX"
+	}
+	gv, err := b.sx.GitVault(ctx, orgID)
+	if err == nil && gv.Configured && strings.TrimSpace(gv.RepositorySlug) != "" {
+		return gv.RepositorySlug
+	}
+	return "Skills.new"
 }
 
 // populateSettingsTabData fetches the per-tab data the template needs
@@ -345,50 +440,9 @@ func (b *Bot) populateSettingsTabData(ctx context.Context, orgID, tab string, da
 		data["RepoBillingAllowedFlavors"] = allowedFlavors
 
 	case "agents":
-		store := b.agents
-		if store == nil {
-			store = agents.NewStore(nil)
+		if err := b.populateAgentSettingsTabData(ctx, orgID, data); err != nil {
+			return err
 		}
-		profiles, err := store.List(ctx, orgID)
-		if err != nil {
-			return fmt.Errorf("load agents: %w", err)
-		}
-		out := make([]agentSettingsView, 0, len(profiles))
-		for _, a := range profiles {
-			if !a.Enabled {
-				continue
-			}
-			out = append(out, agentSettingsView{
-				Slug:         a.Slug,
-				DisplayName:  a.DisplayName,
-				Description:  a.Description,
-				SXBot:        a.SXBot,
-				PersonaAsset: a.PersonaAsset,
-				SlackAliases: a.SlackAliases,
-				Skills:       a.Skills,
-				VaultBackend: a.VaultBackend,
-				SyncStatus:   a.SyncStatus,
-				SyncError:    a.SyncError,
-				BuiltIn:      a.BuiltIn,
-				Default:      a.Slug == agents.DefaultSlug,
-			})
-		}
-		data["Agents"] = out
-		templates, err := store.ListTemplates(ctx)
-		if err != nil {
-			return fmt.Errorf("load agent templates: %w", err)
-		}
-		templateViews := make([]agentTemplateView, 0, len(templates))
-		for _, t := range templates {
-			templateViews = append(templateViews, agentTemplateView{
-				Slug:          t.Slug,
-				DisplayName:   t.DisplayName,
-				Description:   t.Description,
-				Skills:        t.Skills,
-				PersonaPrompt: t.PersonaPrompt,
-			})
-		}
-		data["AgentTemplates"] = templateViews
 
 	case "api-keys":
 		var keys []apikeys.Key

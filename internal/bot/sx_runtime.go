@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"maps"
 
 	"github.com/hetchyhq/hetchy/internal/agents"
 	"github.com/hetchyhq/hetchy/internal/sxsync"
@@ -21,7 +22,5 @@ func (b *Bot) addOrgSXVaultEnv(ctx context.Context, orgID string, agent agents.P
 		}
 		return
 	}
-	for k, v := range values {
-		env[k] = v
-	}
+	maps.Copy(env, values)
 }

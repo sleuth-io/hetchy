@@ -260,6 +260,24 @@ func (m *Manager) RuntimeGitVaultEnv(ctx context.Context, orgID string) (map[str
 	}, nil
 }
 
+func (m *Manager) ListSkills(ctx context.Context, orgID string, actor Actor) ([]sxlib.AssetSummary, error) {
+	handle, err := m.OpenOrgVault(ctx, orgID, actor)
+	if err != nil {
+		return nil, err
+	}
+	assets, err := handle.Client.ListAssetsWithOptions(ctx, sxlib.ListOptions{
+		Type:  "skill",
+		Limit: 500,
+	})
+	if err != nil {
+		return nil, err
+	}
+	slices.SortFunc(assets, func(a, b sxlib.AssetSummary) int {
+		return strings.Compare(a.Name, b.Name)
+	})
+	return assets, nil
+}
+
 func (m *Manager) SaveAgent(ctx context.Context, orgID string, actor Actor, p agents.Profile, templateSlug string) (agents.Profile, error) {
 	p = normalizeProfile(p)
 	if p.Slug == "" {

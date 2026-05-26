@@ -359,6 +359,30 @@ func TestSplitAgentAction(t *testing.T) {
 	}
 }
 
+func TestAgentSettingsActionHandlerBuiltInsReadOnly(t *testing.T) {
+	b := newBypassOrgBot(t, "admin")
+	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.agentSettingsActionHandler)))
+
+	for _, tc := range []struct {
+		name string
+		path string
+		body string
+	}{
+		{name: "save", path: "/settings/org/agents/alice", body: "display_name=Alicia"},
+		{name: "install skill", path: "/settings/org/agents/alice/skills", body: "skill=golang-pro"},
+		{name: "delete", path: "/settings/org/agents/alice/delete", body: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			req := settingsFormRequest(http.MethodPost, tc.path, tc.body)
+			handler.ServeHTTP(rec, req)
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("status = %d want %d body=%q", rec.Code, http.StatusForbidden, rec.Body.String())
+			}
+		})
+	}
+}
+
 func TestSlackInstallHandler_NonAdminReturns403(t *testing.T) {
 	a, err := auth.New(auth.Config{
 		Bypass: true, BypassUser: "user_member", BypassEmail: "m@hetchy.local",
