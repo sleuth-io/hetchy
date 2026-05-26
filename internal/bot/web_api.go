@@ -20,6 +20,7 @@ import (
 	"github.com/hetchyhq/hetchy/internal/blocks"
 	"github.com/hetchyhq/hetchy/internal/convstore"
 	"github.com/hetchyhq/hetchy/internal/db/sqlc"
+	"github.com/hetchyhq/hetchy/internal/sxsync"
 )
 
 const conversationProjectionRunEventLimit int32 = 5000
@@ -98,6 +99,9 @@ type agentSummary struct {
 	PersonaAsset string   `json:"persona_asset,omitempty"`
 	SlackAliases []string `json:"slack_aliases,omitempty"`
 	Skills       []string `json:"skills,omitempty"`
+	VaultBackend string   `json:"vault_backend,omitempty"`
+	SyncStatus   string   `json:"sync_status,omitempty"`
+	SyncError    string   `json:"sync_error,omitempty"`
 	BuiltIn      bool     `json:"built_in"`
 	Default      bool     `json:"default"`
 }
@@ -140,7 +144,7 @@ func (b *Bot) agentsHandler(w http.ResponseWriter, r *http.Request) {
 		if body.Enabled != nil {
 			enabled = *body.Enabled
 		}
-		profile, err := store.Upsert(r.Context(), p.OrgID, agents.Profile{
+		input := agents.Profile{
 			Slug:          body.Slug,
 			DisplayName:   body.DisplayName,
 			Description:   body.Description,
@@ -150,7 +154,17 @@ func (b *Bot) agentsHandler(w http.ResponseWriter, r *http.Request) {
 			SlackAliases:  body.SlackAliases,
 			Skills:        body.Skills,
 			Enabled:       enabled,
-		})
+		}
+		var profile agents.Profile
+		var err error
+		if b.sx != nil {
+			profile, err = b.sx.SaveAgent(r.Context(), p.OrgID, sxsync.Actor{Name: p.Email, Email: p.Email}, input, "")
+			if errors.Is(err, sxsync.ErrNotConfigured) {
+				profile, err = store.Upsert(r.Context(), p.OrgID, input)
+			}
+		} else {
+			profile, err = store.Upsert(r.Context(), p.OrgID, input)
+		}
 		if err != nil {
 			b.log.Warn("upsert agent", "error", err, "org", p.OrgID)
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -164,6 +178,9 @@ func (b *Bot) agentsHandler(w http.ResponseWriter, r *http.Request) {
 			PersonaAsset: profile.PersonaAsset,
 			SlackAliases: profile.SlackAliases,
 			Skills:       profile.Skills,
+			VaultBackend: profile.VaultBackend,
+			SyncStatus:   profile.SyncStatus,
+			SyncError:    profile.SyncError,
 			BuiltIn:      profile.BuiltIn,
 			Default:      profile.Slug == agents.DefaultSlug,
 		})
@@ -188,6 +205,9 @@ func (b *Bot) agentsHandler(w http.ResponseWriter, r *http.Request) {
 			PersonaAsset: a.PersonaAsset,
 			SlackAliases: a.SlackAliases,
 			Skills:       a.Skills,
+			VaultBackend: a.VaultBackend,
+			SyncStatus:   a.SyncStatus,
+			SyncError:    a.SyncError,
 			BuiltIn:      a.BuiltIn,
 			Default:      a.Slug == agents.DefaultSlug,
 		})

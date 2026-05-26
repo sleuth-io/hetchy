@@ -16,9 +16,12 @@
 #
 # Optional env:
 #   HETCHY_AGENT_SX_BOT          sx bot identity for the selected Hetchy agent
+#   HETCHY_AGENT_SX_BOT_KEY      optional bot-scoped Skills.new key
 #   HETCHY_AGENT_PERSONA_ASSET   Claude Code agent asset name to prepend, when installed
 #   HETCHY_AGENT_PROMPT_B64      fallback persona prompt when the sx asset is unavailable
 #   HETCHY_SX_PUBLIC_VAULT_URL   git sx vault for Hetchy-managed agent assets
+#   HETCHY_SX_GIT_VAULT_URL      org Git Vault containing custom agents/skills
+#   HETCHY_SX_GIT_VAULT_TOKEN    short-lived GitHub App token for the org Git Vault
 #   SX_KEY                       optional org skills.new bot key
 #   SF_SPEC_SETUP_B64 or SF_SPEC_SETUP_B64_FILE      base64-encoded setup.sh from the saved bootstrap spec
 #   SF_SPEC_START_B64 or SF_SPEC_START_B64_FILE      base64-encoded start.sh from the saved bootstrap spec
@@ -272,7 +275,7 @@ emit_installed_skills() {
 if [[ "${HETCHY_SKIP_SX_INSTALL:-}" == "1" ]]; then
   echo "[hetchy] skipping sx install for ${HETCHY_FOLLOWUP_MODE:-non-change} follow-up"
 else
-  if [[ -n "${HETCHY_SX_PUBLIC_VAULT_URL:-}" || -n "${SX_KEY:-}" ]]; then
+  if [[ -n "${HETCHY_SX_PUBLIC_VAULT_URL:-}" || -n "${HETCHY_SX_GIT_VAULT_URL:-}" || -n "${SX_KEY:-}" ]]; then
     ensure_sx
   fi
 
@@ -285,13 +288,22 @@ else
     run_sx_install "hetchy-public" "$public_config" "$public_cache" "$public_profile" "${HETCHY_AGENT_SX_BOT:-}" ""
   fi
 
+  if [[ -n "${HETCHY_SX_GIT_VAULT_URL:-}" ]]; then
+    git_vault_profile="org-git-vault"
+    git_vault_config="/tmp/hetchy-sx/git-${HETCHY_AGENT_SLUG:-default}/config"
+    git_vault_cache="/tmp/hetchy-sx/git-${HETCHY_AGENT_SLUG:-default}/cache"
+    echo "[hetchy] writing org SX Git Vault config"
+    write_sx_config "$git_vault_config" "$git_vault_profile" "git" "$HETCHY_SX_GIT_VAULT_URL" "${HETCHY_SX_GIT_VAULT_TOKEN:-}"
+    run_sx_install "org-git-vault" "$git_vault_config" "$git_vault_cache" "$git_vault_profile" "${HETCHY_AGENT_SX_BOT:-}" ""
+  fi
+
   if [[ -n "${SX_KEY:-}" ]]; then
     org_profile="org-skills"
     org_config="/tmp/hetchy-sx/org-${HETCHY_AGENT_SLUG:-default}/config"
     org_cache="/tmp/hetchy-sx/org-${HETCHY_AGENT_SLUG:-default}/cache"
     echo "[hetchy] writing org sx config"
     write_sx_config "$org_config" "$org_profile" "sleuth" "https://app.skills.new" "$SX_KEY"
-    run_sx_install "org-skills" "$org_config" "$org_cache" "$org_profile" "${HETCHY_AGENT_SX_BOT:-}" "$SX_KEY"
+    run_sx_install "org-skills" "$org_config" "$org_cache" "$org_profile" "${HETCHY_AGENT_SX_BOT:-}" "${HETCHY_AGENT_SX_BOT_KEY:-$SX_KEY}"
   fi
 fi
 

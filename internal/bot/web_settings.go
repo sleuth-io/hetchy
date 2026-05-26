@@ -12,6 +12,7 @@ import (
 	"github.com/hetchyhq/hetchy/internal/apikeys"
 	"github.com/hetchyhq/hetchy/internal/auth"
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
+	"github.com/hetchyhq/hetchy/internal/sxsync"
 	"github.com/hetchyhq/hetchy/internal/webui"
 )
 
@@ -65,6 +66,7 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 			"SlackOAuthEnabled":            b.slackOAuthConfigured(),
 			"IsDev":                        b.cfg.Env == "dev",
 			"SXKeyPreview":                 previewSecret(current.SXKey),
+			"SXGitVault":                   sxsync.GitVaultView{},
 			"GitHubAppEnabled":             b.app != nil,
 			"DefaultRepoSlug":              defaultRepoSlug,
 		}
@@ -282,8 +284,19 @@ type agentSettingsView struct {
 	PersonaAsset string
 	SlackAliases []string
 	Skills       []string
+	VaultBackend string
+	SyncStatus   string
+	SyncError    string
 	BuiltIn      bool
 	Default      bool
+}
+
+type agentTemplateView struct {
+	Slug          string
+	DisplayName   string
+	Description   string
+	Skills        []string
+	PersonaPrompt string
 }
 
 // populateSettingsTabData fetches the per-tab data the template needs
@@ -300,6 +313,13 @@ func (b *Bot) populateSettingsTabData(ctx context.Context, orgID, tab string, da
 		}
 		data["GitHubInstallations"] = installs
 		data["GitHubRepos"] = repos
+		if b.sx != nil {
+			gv, err := b.sx.GitVault(ctx, orgID)
+			if err != nil {
+				return fmt.Errorf("load sx git vault: %w", err)
+			}
+			data["SXGitVault"] = gv
+		}
 
 	case "repositories":
 		// Repositories tab is the home for per-repo bootstrap state +
@@ -346,11 +366,29 @@ func (b *Bot) populateSettingsTabData(ctx context.Context, orgID, tab string, da
 				PersonaAsset: a.PersonaAsset,
 				SlackAliases: a.SlackAliases,
 				Skills:       a.Skills,
+				VaultBackend: a.VaultBackend,
+				SyncStatus:   a.SyncStatus,
+				SyncError:    a.SyncError,
 				BuiltIn:      a.BuiltIn,
 				Default:      a.Slug == agents.DefaultSlug,
 			})
 		}
 		data["Agents"] = out
+		templates, err := store.ListTemplates(ctx)
+		if err != nil {
+			return fmt.Errorf("load agent templates: %w", err)
+		}
+		templateViews := make([]agentTemplateView, 0, len(templates))
+		for _, t := range templates {
+			templateViews = append(templateViews, agentTemplateView{
+				Slug:          t.Slug,
+				DisplayName:   t.DisplayName,
+				Description:   t.Description,
+				Skills:        t.Skills,
+				PersonaPrompt: t.PersonaPrompt,
+			})
+		}
+		data["AgentTemplates"] = templateViews
 
 	case "api-keys":
 		var keys []apikeys.Key
@@ -510,8 +548,18 @@ func savedMessage(s string) string {
 		return "Slack was already disconnected."
 	case "agent_saved":
 		return "Agent saved."
+	case "agent_created":
+		return "Agent created."
+	case "agent_skill_saved":
+		return "Skill installed."
+	case "agent_skill_uploaded":
+		return "Skill uploaded and installed."
 	case "agent_deleted":
 		return "Agent deleted."
+	case "sx_git_vault_saved":
+		return "SX Git Vault saved."
+	case "sx_git_vault_deleted":
+		return "SX Git Vault disconnected."
 	case "repo_flavor_saved":
 		return "Repo flavor saved."
 	case "billing_saved":

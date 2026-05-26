@@ -501,7 +501,8 @@
 {{end}}
 
 {{define "integration_sx"}}
-  {{$enabled := ne .SXKeyPreview ""}}
+  {{$gitVault := .SXGitVault}}
+  {{$enabled := or (ne .SXKeyPreview "") $gitVault.Configured}}
   <article class="integration{{if $enabled}} enabled{{end}}" data-integration="sx">
     <div class="integration-head">
       <div class="integration-icon">
@@ -528,7 +529,7 @@
         </button>
       </div>
     </div>
-    {{if $enabled}}
+    {{if or $enabled .IsAdmin}}
     <div class="integration-body">
       <div class="body-section">
         <legend>SX bot key</legend>
@@ -539,6 +540,53 @@
         </form>
         {{else}}
           <p class="hint">Bot key configured.</p>
+        {{end}}
+      </div>
+      <div class="body-section">
+        <legend>Git Vault</legend>
+        {{if $gitVault.Configured}}
+          <p class="hint">Active vault: <code>{{$gitVault.RepositorySlug}}</code></p>
+          {{if .IsAdmin}}
+          <div class="integration-actions">
+            <form method="POST" action="/settings/org/sx-vault/delete"
+                  data-confirm-title="Disconnect SX Git Vault?"
+                  data-confirm-message="Hetchy will stop writing custom agents and uploaded skills to {{$gitVault.RepositorySlug}}. The repository itself will not be deleted.">
+              <button type="submit" class="danger-btn">Disconnect Git Vault</button>
+            </form>
+          </div>
+          {{end}}
+        {{else if .IsAdmin}}
+          {{if .GitHubRepos}}
+          <form method="POST" action="/settings/org/sx-vault">
+            <input type="hidden" name="mode" value="existing">
+            <label for="sx-git-vault-repo">Use existing repository</label>
+            <select id="sx-git-vault-repo" name="git_vault_repo" required>
+              {{range .GitHubRepos}}
+                {{$slug := printf "%s/%s" .Owner .Name}}
+                <option value="{{$slug}}">{{$slug}}</option>
+              {{end}}
+            </select>
+            <p class="hint">All custom agents and uploaded skills for this organization will share this one vault.</p>
+            <button class="primary" type="submit">Save Git Vault</button>
+          </form>
+          {{end}}
+          {{if .GitHubInstallations}}
+          <form method="POST" action="/settings/org/sx-vault">
+            <input type="hidden" name="mode" value="create">
+            <label for="sx-git-vault-installation">Create new private repository</label>
+            <select id="sx-git-vault-installation" name="installation_id" required>
+              {{range .GitHubInstallations}}
+                <option value="{{.InstallationID}}">{{.AccountLogin}}</option>
+              {{end}}
+            </select>
+            <input type="text" name="new_repo_name" value="sx-vault" maxlength="100" required>
+            <button class="primary" type="submit">Create Git Vault</button>
+          </form>
+          {{else}}
+            <p class="hint">Connect GitHub first to create or select a Git Vault repository.</p>
+          {{end}}
+        {{else}}
+          <p class="hint">No Git Vault configured.</p>
         {{end}}
       </div>
     </div>
@@ -573,6 +621,32 @@
 
   {{if .SavedMessage}}<div class="saved-banner">{{.SavedMessage}}</div>{{end}}
   {{if not .IsAdmin}}<p class="hint">Only administrators can change agents.</p>{{end}}
+
+  {{if .IsAdmin}}
+  <form method="POST" action="/settings/org/agents" class="agent-edit-form">
+    <fieldset>
+      <legend>Create agent</legend>
+      <label for="agent-template">Template</label>
+      <select id="agent-template" name="template_slug">
+        <option value="">Blank agent</option>
+        {{range .AgentTemplates}}
+          <option value="{{.Slug}}">{{.DisplayName}}</option>
+        {{end}}
+      </select>
+      <label for="agent-create-name">Name</label>
+      <input id="agent-create-name" type="text" name="display_name" placeholder="Reviewer" required maxlength="80">
+      <label for="agent-create-slug">Slug</label>
+      <input id="agent-create-slug" type="text" name="slug" placeholder="reviewer" required maxlength="80">
+      <label for="agent-create-description">Description</label>
+      <input id="agent-create-description" type="text" name="description" placeholder="Reviews pull requests and test coverage" maxlength="240">
+      <label for="agent-create-prompt">Prompt</label>
+      <textarea id="agent-create-prompt" name="persona_prompt" rows="6" placeholder="You are Reviewer, a custom Hetchy agent."></textarea>
+      <label for="agent-create-skills">Skills</label>
+      <input id="agent-create-skills" type="text" name="skills" placeholder="comma-separated skill names">
+    </fieldset>
+    <button class="primary" type="submit">Create agent</button>
+  </form>
+  {{end}}
 
   {{if .Agents}}
     <div class="agent-list">
@@ -614,9 +688,30 @@
           {{end}}
         </div>
 
+        {{if $.IsAdmin}}
+        <form method="POST" action="/settings/org/agents/{{.Slug}}/skills" class="agent-edit-form">
+          <div>
+            <label for="agent-skill-{{.Slug}}">Install existing skill</label>
+            <input id="agent-skill-{{.Slug}}" type="text" name="skill" placeholder="skill-name" required>
+          </div>
+          <button class="primary" type="submit">Install</button>
+        </form>
+        <form method="POST" action="/settings/org/agents/{{.Slug}}/skills/upload" class="agent-edit-form" enctype="multipart/form-data">
+          <div>
+            <label for="agent-skill-name-{{.Slug}}">Upload skill ZIP</label>
+            <input id="agent-skill-name-{{.Slug}}" type="text" name="skill_name" placeholder="skill-name" required>
+            <input type="text" name="skill_version" value="1.0.0" required>
+            <input type="file" name="skill_zip" accept=".zip,application/zip" required>
+          </div>
+          <button class="primary" type="submit">Upload</button>
+        </form>
+        {{end}}
+
         <div class="agent-meta">
           {{if .SXBot}}<span>sx bot: <code>{{.SXBot}}</code></span>{{end}}
           {{if .PersonaAsset}}<span>persona: <code>{{.PersonaAsset}}</code></span>{{end}}
+          {{if .VaultBackend}}<span>vault: <code>{{.VaultBackend}}</code></span>{{end}}
+          {{if .SyncError}}<span>sync error: <code>{{.SyncError}}</code></span>{{end}}
           {{if .SlackAliases}}<span>aliases: {{range $i, $a := .SlackAliases}}{{if gt $i 0}}, {{end}}@{{$a}}{{end}}</span>{{end}}
         </div>
       </article>

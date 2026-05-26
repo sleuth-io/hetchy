@@ -9,20 +9,25 @@ import (
 )
 
 type AgentProfile struct {
-	ID            pgtype.UUID        `json:"id"`
-	OrgID         string             `json:"org_id"`
-	Slug          string             `json:"slug"`
-	DisplayName   string             `json:"display_name"`
-	Description   string             `json:"description"`
-	SxBot         string             `json:"sx_bot"`
-	PersonaAsset  string             `json:"persona_asset"`
-	PersonaPrompt string             `json:"persona_prompt"`
-	SlackAliases  []string           `json:"slack_aliases"`
-	Enabled       bool               `json:"enabled"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
-	Skills        []string           `json:"skills"`
-	BuiltIn       bool               `json:"built_in"`
+	ID                pgtype.UUID        `json:"id"`
+	OrgID             string             `json:"org_id"`
+	Slug              string             `json:"slug"`
+	DisplayName       string             `json:"display_name"`
+	Description       string             `json:"description"`
+	SxBot             string             `json:"sx_bot"`
+	PersonaAsset      string             `json:"persona_asset"`
+	PersonaPrompt     string             `json:"persona_prompt"`
+	SlackAliases      []string           `json:"slack_aliases"`
+	Enabled           bool               `json:"enabled"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+	Skills            []string           `json:"skills"`
+	BuiltIn           bool               `json:"built_in"`
+	VaultBackend      string             `json:"vault_backend"`
+	SxBotKeyEncrypted []byte             `json:"sx_bot_key_encrypted"`
+	TemplateSlug      string             `json:"template_slug"`
+	SyncStatus        string             `json:"sync_status"`
+	SyncError         string             `json:"sync_error"`
 }
 
 type AgentProfileTemplate struct {
@@ -239,6 +244,18 @@ type OrgConfig struct {
 	ClaudeCodeOauthTokenEncrypted  []byte             `json:"claude_code_oauth_token_encrypted"`
 	OpenaiApiKeyEncrypted          []byte             `json:"openai_api_key_encrypted"`
 	OpenaiCodexOauthTokenEncrypted []byte             `json:"openai_codex_oauth_token_encrypted"`
+}
+
+type OrgSxVault struct {
+	OrgID                string             `json:"org_id"`
+	Backend              string             `json:"backend"`
+	GithubInstallationID *int64             `json:"github_installation_id"`
+	GithubRepoID         int64              `json:"github_repo_id"`
+	GithubOwner          string             `json:"github_owner"`
+	GithubRepo           string             `json:"github_repo"`
+	RepositoryUrl        string             `json:"repository_url"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
 }
 
 type RepoBillingSetting struct {

@@ -38,6 +38,7 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, o
 		"GITHUB_TOKEN":   repo.GitHubToken,
 	}
 	addAgentEnv(env, b.cfg, agent)
+	b.addOrgSXVaultEnv(ctx, oc.OrgID, agent, env)
 	addDaytonaCacheEnv(env, b.cfg, oc, repo, repo.CacheMounted)
 
 	// Mint the default proof-artifact batch before constructing the
@@ -452,6 +453,7 @@ func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx
 		"GITHUB_TOKEN": repo.GitHubToken,
 	}
 	addAgentEnv(env, b.cfg, agent)
+	b.addOrgSXVaultEnv(ctx, oc.OrgID, agent, env)
 
 	artifactSlotCount := 0
 	if changeMode && opts.ValidateChanges && repo.RepoID != 0 {

@@ -10,6 +10,11 @@ SELECT
     persona_prompt,
     slack_aliases,
     skills,
+    vault_backend,
+    sx_bot_key_encrypted,
+    template_slug,
+    sync_status,
+    sync_error,
     enabled,
     built_in,
     created_at,
@@ -30,6 +35,11 @@ SELECT
     persona_prompt,
     slack_aliases,
     skills,
+    vault_backend,
+    sx_bot_key_encrypted,
+    template_slug,
+    sync_status,
+    sync_error,
     enabled,
     built_in,
     created_at,
@@ -111,6 +121,11 @@ RETURNING
     persona_prompt,
     slack_aliases,
     skills,
+    vault_backend,
+    sx_bot_key_encrypted,
+    template_slug,
+    sync_status,
+    sync_error,
     enabled,
     built_in,
     created_at,
@@ -135,6 +150,11 @@ RETURNING
     persona_prompt,
     slack_aliases,
     skills,
+    vault_backend,
+    sx_bot_key_encrypted,
+    template_slug,
+    sync_status,
+    sync_error,
     enabled,
     built_in,
     created_at,
@@ -146,3 +166,68 @@ SET enabled = FALSE,
     updated_at = NOW()
 WHERE org_id = $1
   AND slug = $2;
+
+-- name: ListAgentProfileTemplates :many
+SELECT
+    slug,
+    display_name,
+    description,
+    sx_bot,
+    persona_asset,
+    persona_prompt,
+    slack_aliases,
+    skills,
+    enabled,
+    created_at,
+    updated_at
+FROM agent_profile_templates
+WHERE enabled
+ORDER BY slug;
+
+-- name: GetAgentProfileTemplate :one
+SELECT
+    slug,
+    display_name,
+    description,
+    sx_bot,
+    persona_asset,
+    persona_prompt,
+    slack_aliases,
+    skills,
+    enabled,
+    created_at,
+    updated_at
+FROM agent_profile_templates
+WHERE slug = $1 AND enabled;
+
+-- name: UpdateAgentProfileVaultSync :one
+UPDATE agent_profiles
+SET
+    vault_backend = $3,
+    sx_bot_key_encrypted = $4,
+    template_slug = $5,
+    sync_status = $6,
+    sync_error = $7,
+    updated_at = NOW()
+WHERE org_id = $1
+  AND slug = $2
+RETURNING
+    id,
+    org_id,
+    slug,
+    display_name,
+    description,
+    sx_bot,
+    persona_asset,
+    persona_prompt,
+    slack_aliases,
+    skills,
+    vault_backend,
+    sx_bot_key_encrypted,
+    template_slug,
+    sync_status,
+    sync_error,
+    enabled,
+    built_in,
+    created_at,
+    updated_at;

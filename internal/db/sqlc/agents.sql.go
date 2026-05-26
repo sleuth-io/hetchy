@@ -56,6 +56,11 @@ SELECT
     persona_prompt,
     slack_aliases,
     skills,
+    vault_backend,
+    sx_bot_key_encrypted,
+    template_slug,
+    sync_status,
+    sync_error,
     enabled,
     built_in,
     created_at,
@@ -70,20 +75,25 @@ type GetAgentProfileBySlugParams struct {
 }
 
 type GetAgentProfileBySlugRow struct {
-	ID            pgtype.UUID        `json:"id"`
-	OrgID         string             `json:"org_id"`
-	Slug          string             `json:"slug"`
-	DisplayName   string             `json:"display_name"`
-	Description   string             `json:"description"`
-	SxBot         string             `json:"sx_bot"`
-	PersonaAsset  string             `json:"persona_asset"`
-	PersonaPrompt string             `json:"persona_prompt"`
-	SlackAliases  []string           `json:"slack_aliases"`
-	Skills        []string           `json:"skills"`
-	Enabled       bool               `json:"enabled"`
-	BuiltIn       bool               `json:"built_in"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+	ID                pgtype.UUID        `json:"id"`
+	OrgID             string             `json:"org_id"`
+	Slug              string             `json:"slug"`
+	DisplayName       string             `json:"display_name"`
+	Description       string             `json:"description"`
+	SxBot             string             `json:"sx_bot"`
+	PersonaAsset      string             `json:"persona_asset"`
+	PersonaPrompt     string             `json:"persona_prompt"`
+	SlackAliases      []string           `json:"slack_aliases"`
+	Skills            []string           `json:"skills"`
+	VaultBackend      string             `json:"vault_backend"`
+	SxBotKeyEncrypted []byte             `json:"sx_bot_key_encrypted"`
+	TemplateSlug      string             `json:"template_slug"`
+	SyncStatus        string             `json:"sync_status"`
+	SyncError         string             `json:"sync_error"`
+	Enabled           bool               `json:"enabled"`
+	BuiltIn           bool               `json:"built_in"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) GetAgentProfileBySlug(ctx context.Context, arg GetAgentProfileBySlugParams) (GetAgentProfileBySlugRow, error) {
@@ -100,12 +110,103 @@ func (q *Queries) GetAgentProfileBySlug(ctx context.Context, arg GetAgentProfile
 		&i.PersonaPrompt,
 		&i.SlackAliases,
 		&i.Skills,
+		&i.VaultBackend,
+		&i.SxBotKeyEncrypted,
+		&i.TemplateSlug,
+		&i.SyncStatus,
+		&i.SyncError,
 		&i.Enabled,
 		&i.BuiltIn,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const getAgentProfileTemplate = `-- name: GetAgentProfileTemplate :one
+SELECT
+    slug,
+    display_name,
+    description,
+    sx_bot,
+    persona_asset,
+    persona_prompt,
+    slack_aliases,
+    skills,
+    enabled,
+    created_at,
+    updated_at
+FROM agent_profile_templates
+WHERE slug = $1 AND enabled
+`
+
+func (q *Queries) GetAgentProfileTemplate(ctx context.Context, slug string) (AgentProfileTemplate, error) {
+	row := q.db.QueryRow(ctx, getAgentProfileTemplate, slug)
+	var i AgentProfileTemplate
+	err := row.Scan(
+		&i.Slug,
+		&i.DisplayName,
+		&i.Description,
+		&i.SxBot,
+		&i.PersonaAsset,
+		&i.PersonaPrompt,
+		&i.SlackAliases,
+		&i.Skills,
+		&i.Enabled,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const listAgentProfileTemplates = `-- name: ListAgentProfileTemplates :many
+SELECT
+    slug,
+    display_name,
+    description,
+    sx_bot,
+    persona_asset,
+    persona_prompt,
+    slack_aliases,
+    skills,
+    enabled,
+    created_at,
+    updated_at
+FROM agent_profile_templates
+WHERE enabled
+ORDER BY slug
+`
+
+func (q *Queries) ListAgentProfileTemplates(ctx context.Context) ([]AgentProfileTemplate, error) {
+	rows, err := q.db.Query(ctx, listAgentProfileTemplates)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AgentProfileTemplate
+	for rows.Next() {
+		var i AgentProfileTemplate
+		if err := rows.Scan(
+			&i.Slug,
+			&i.DisplayName,
+			&i.Description,
+			&i.SxBot,
+			&i.PersonaAsset,
+			&i.PersonaPrompt,
+			&i.SlackAliases,
+			&i.Skills,
+			&i.Enabled,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listAgentProfilesByOrg = `-- name: ListAgentProfilesByOrg :many
@@ -120,6 +221,11 @@ SELECT
     persona_prompt,
     slack_aliases,
     skills,
+    vault_backend,
+    sx_bot_key_encrypted,
+    template_slug,
+    sync_status,
+    sync_error,
     enabled,
     built_in,
     created_at,
@@ -130,20 +236,25 @@ ORDER BY slug
 `
 
 type ListAgentProfilesByOrgRow struct {
-	ID            pgtype.UUID        `json:"id"`
-	OrgID         string             `json:"org_id"`
-	Slug          string             `json:"slug"`
-	DisplayName   string             `json:"display_name"`
-	Description   string             `json:"description"`
-	SxBot         string             `json:"sx_bot"`
-	PersonaAsset  string             `json:"persona_asset"`
-	PersonaPrompt string             `json:"persona_prompt"`
-	SlackAliases  []string           `json:"slack_aliases"`
-	Skills        []string           `json:"skills"`
-	Enabled       bool               `json:"enabled"`
-	BuiltIn       bool               `json:"built_in"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+	ID                pgtype.UUID        `json:"id"`
+	OrgID             string             `json:"org_id"`
+	Slug              string             `json:"slug"`
+	DisplayName       string             `json:"display_name"`
+	Description       string             `json:"description"`
+	SxBot             string             `json:"sx_bot"`
+	PersonaAsset      string             `json:"persona_asset"`
+	PersonaPrompt     string             `json:"persona_prompt"`
+	SlackAliases      []string           `json:"slack_aliases"`
+	Skills            []string           `json:"skills"`
+	VaultBackend      string             `json:"vault_backend"`
+	SxBotKeyEncrypted []byte             `json:"sx_bot_key_encrypted"`
+	TemplateSlug      string             `json:"template_slug"`
+	SyncStatus        string             `json:"sync_status"`
+	SyncError         string             `json:"sync_error"`
+	Enabled           bool               `json:"enabled"`
+	BuiltIn           bool               `json:"built_in"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) ListAgentProfilesByOrg(ctx context.Context, orgID string) ([]ListAgentProfilesByOrgRow, error) {
@@ -166,6 +277,11 @@ func (q *Queries) ListAgentProfilesByOrg(ctx context.Context, orgID string) ([]L
 			&i.PersonaPrompt,
 			&i.SlackAliases,
 			&i.Skills,
+			&i.VaultBackend,
+			&i.SxBotKeyEncrypted,
+			&i.TemplateSlug,
+			&i.SyncStatus,
+			&i.SyncError,
 			&i.Enabled,
 			&i.BuiltIn,
 			&i.CreatedAt,
@@ -236,6 +352,11 @@ RETURNING
     persona_prompt,
     slack_aliases,
     skills,
+    vault_backend,
+    sx_bot_key_encrypted,
+    template_slug,
+    sync_status,
+    sync_error,
     enabled,
     built_in,
     created_at,
@@ -249,20 +370,25 @@ type UpdateAgentProfileNameParams struct {
 }
 
 type UpdateAgentProfileNameRow struct {
-	ID            pgtype.UUID        `json:"id"`
-	OrgID         string             `json:"org_id"`
-	Slug          string             `json:"slug"`
-	DisplayName   string             `json:"display_name"`
-	Description   string             `json:"description"`
-	SxBot         string             `json:"sx_bot"`
-	PersonaAsset  string             `json:"persona_asset"`
-	PersonaPrompt string             `json:"persona_prompt"`
-	SlackAliases  []string           `json:"slack_aliases"`
-	Skills        []string           `json:"skills"`
-	Enabled       bool               `json:"enabled"`
-	BuiltIn       bool               `json:"built_in"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+	ID                pgtype.UUID        `json:"id"`
+	OrgID             string             `json:"org_id"`
+	Slug              string             `json:"slug"`
+	DisplayName       string             `json:"display_name"`
+	Description       string             `json:"description"`
+	SxBot             string             `json:"sx_bot"`
+	PersonaAsset      string             `json:"persona_asset"`
+	PersonaPrompt     string             `json:"persona_prompt"`
+	SlackAliases      []string           `json:"slack_aliases"`
+	Skills            []string           `json:"skills"`
+	VaultBackend      string             `json:"vault_backend"`
+	SxBotKeyEncrypted []byte             `json:"sx_bot_key_encrypted"`
+	TemplateSlug      string             `json:"template_slug"`
+	SyncStatus        string             `json:"sync_status"`
+	SyncError         string             `json:"sync_error"`
+	Enabled           bool               `json:"enabled"`
+	BuiltIn           bool               `json:"built_in"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) UpdateAgentProfileName(ctx context.Context, arg UpdateAgentProfileNameParams) (UpdateAgentProfileNameRow, error) {
@@ -279,6 +405,111 @@ func (q *Queries) UpdateAgentProfileName(ctx context.Context, arg UpdateAgentPro
 		&i.PersonaPrompt,
 		&i.SlackAliases,
 		&i.Skills,
+		&i.VaultBackend,
+		&i.SxBotKeyEncrypted,
+		&i.TemplateSlug,
+		&i.SyncStatus,
+		&i.SyncError,
+		&i.Enabled,
+		&i.BuiltIn,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const updateAgentProfileVaultSync = `-- name: UpdateAgentProfileVaultSync :one
+UPDATE agent_profiles
+SET
+    vault_backend = $3,
+    sx_bot_key_encrypted = $4,
+    template_slug = $5,
+    sync_status = $6,
+    sync_error = $7,
+    updated_at = NOW()
+WHERE org_id = $1
+  AND slug = $2
+RETURNING
+    id,
+    org_id,
+    slug,
+    display_name,
+    description,
+    sx_bot,
+    persona_asset,
+    persona_prompt,
+    slack_aliases,
+    skills,
+    vault_backend,
+    sx_bot_key_encrypted,
+    template_slug,
+    sync_status,
+    sync_error,
+    enabled,
+    built_in,
+    created_at,
+    updated_at
+`
+
+type UpdateAgentProfileVaultSyncParams struct {
+	OrgID             string `json:"org_id"`
+	Slug              string `json:"slug"`
+	VaultBackend      string `json:"vault_backend"`
+	SxBotKeyEncrypted []byte `json:"sx_bot_key_encrypted"`
+	TemplateSlug      string `json:"template_slug"`
+	SyncStatus        string `json:"sync_status"`
+	SyncError         string `json:"sync_error"`
+}
+
+type UpdateAgentProfileVaultSyncRow struct {
+	ID                pgtype.UUID        `json:"id"`
+	OrgID             string             `json:"org_id"`
+	Slug              string             `json:"slug"`
+	DisplayName       string             `json:"display_name"`
+	Description       string             `json:"description"`
+	SxBot             string             `json:"sx_bot"`
+	PersonaAsset      string             `json:"persona_asset"`
+	PersonaPrompt     string             `json:"persona_prompt"`
+	SlackAliases      []string           `json:"slack_aliases"`
+	Skills            []string           `json:"skills"`
+	VaultBackend      string             `json:"vault_backend"`
+	SxBotKeyEncrypted []byte             `json:"sx_bot_key_encrypted"`
+	TemplateSlug      string             `json:"template_slug"`
+	SyncStatus        string             `json:"sync_status"`
+	SyncError         string             `json:"sync_error"`
+	Enabled           bool               `json:"enabled"`
+	BuiltIn           bool               `json:"built_in"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) UpdateAgentProfileVaultSync(ctx context.Context, arg UpdateAgentProfileVaultSyncParams) (UpdateAgentProfileVaultSyncRow, error) {
+	row := q.db.QueryRow(ctx, updateAgentProfileVaultSync,
+		arg.OrgID,
+		arg.Slug,
+		arg.VaultBackend,
+		arg.SxBotKeyEncrypted,
+		arg.TemplateSlug,
+		arg.SyncStatus,
+		arg.SyncError,
+	)
+	var i UpdateAgentProfileVaultSyncRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Slug,
+		&i.DisplayName,
+		&i.Description,
+		&i.SxBot,
+		&i.PersonaAsset,
+		&i.PersonaPrompt,
+		&i.SlackAliases,
+		&i.Skills,
+		&i.VaultBackend,
+		&i.SxBotKeyEncrypted,
+		&i.TemplateSlug,
+		&i.SyncStatus,
+		&i.SyncError,
 		&i.Enabled,
 		&i.BuiltIn,
 		&i.CreatedAt,
@@ -327,6 +558,11 @@ RETURNING
     persona_prompt,
     slack_aliases,
     skills,
+    vault_backend,
+    sx_bot_key_encrypted,
+    template_slug,
+    sync_status,
+    sync_error,
     enabled,
     built_in,
     created_at,
@@ -348,20 +584,25 @@ type UpsertAgentProfileParams struct {
 }
 
 type UpsertAgentProfileRow struct {
-	ID            pgtype.UUID        `json:"id"`
-	OrgID         string             `json:"org_id"`
-	Slug          string             `json:"slug"`
-	DisplayName   string             `json:"display_name"`
-	Description   string             `json:"description"`
-	SxBot         string             `json:"sx_bot"`
-	PersonaAsset  string             `json:"persona_asset"`
-	PersonaPrompt string             `json:"persona_prompt"`
-	SlackAliases  []string           `json:"slack_aliases"`
-	Skills        []string           `json:"skills"`
-	Enabled       bool               `json:"enabled"`
-	BuiltIn       bool               `json:"built_in"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+	ID                pgtype.UUID        `json:"id"`
+	OrgID             string             `json:"org_id"`
+	Slug              string             `json:"slug"`
+	DisplayName       string             `json:"display_name"`
+	Description       string             `json:"description"`
+	SxBot             string             `json:"sx_bot"`
+	PersonaAsset      string             `json:"persona_asset"`
+	PersonaPrompt     string             `json:"persona_prompt"`
+	SlackAliases      []string           `json:"slack_aliases"`
+	Skills            []string           `json:"skills"`
+	VaultBackend      string             `json:"vault_backend"`
+	SxBotKeyEncrypted []byte             `json:"sx_bot_key_encrypted"`
+	TemplateSlug      string             `json:"template_slug"`
+	SyncStatus        string             `json:"sync_status"`
+	SyncError         string             `json:"sync_error"`
+	Enabled           bool               `json:"enabled"`
+	BuiltIn           bool               `json:"built_in"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) UpsertAgentProfile(ctx context.Context, arg UpsertAgentProfileParams) (UpsertAgentProfileRow, error) {
@@ -390,6 +631,11 @@ func (q *Queries) UpsertAgentProfile(ctx context.Context, arg UpsertAgentProfile
 		&i.PersonaPrompt,
 		&i.SlackAliases,
 		&i.Skills,
+		&i.VaultBackend,
+		&i.SxBotKeyEncrypted,
+		&i.TemplateSlug,
+		&i.SyncStatus,
+		&i.SyncError,
 		&i.Enabled,
 		&i.BuiltIn,
 		&i.CreatedAt,

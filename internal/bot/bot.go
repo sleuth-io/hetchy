@@ -31,6 +31,7 @@ import (
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
 	"github.com/hetchyhq/hetchy/internal/runstore"
 	"github.com/hetchyhq/hetchy/internal/secrets"
+	"github.com/hetchyhq/hetchy/internal/sxsync"
 )
 
 // maxBlocksPerTurn caps the legacy response_blocks projection when a
@@ -94,6 +95,7 @@ type Bot struct {
 	billing   *billing.Service
 	agents    *agents.Store
 	apiKeys   *apikeys.Store
+	sx        *sxsync.Manager
 	auth      *auth.Service
 	slack     *slackManager
 	bootstrap bootstrapStore
@@ -246,17 +248,19 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 		log.Info("artifact upload configured", "bucket", cfg.S3Bucket, "region", cfg.S3Region)
 	}
 
+	orgStore := orgcfg.New(store, cipher)
+	agentStore := agents.NewStoreWithCipher(store, cipher)
 	b := &Bot{
 		cfg:              cfg,
 		log:              log,
 		daytona:          dc,
 		cacheVols:        dc.Volume,
 		store:            store,
-		orgs:             orgcfg.New(store, cipher),
+		orgs:             orgStore,
 		convs:            convstore.New(store),
 		runs:             runstore.New(store),
 		billing:          billing.NewService(billing.NewStore(store), newStripeAutoTopupper(cfg)),
-		agents:           agents.NewStore(store),
+		agents:           agentStore,
 		apiKeys:          apikeys.New(store),
 		bootstrap:        bootstrap.New(store, cipher),
 		artifacts:        artifactSigner,
@@ -315,6 +319,7 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 			"env", cfg.Env,
 		)
 	}
+	b.sx = sxsync.NewManager(store, orgStore, agentStore, b.app)
 	return b, nil
 }
 
