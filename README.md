@@ -120,6 +120,10 @@ database, not in Doppler. Doppler only holds the *process-level* config:
 | `DAYTONA_CACHE_PRUNE_DAYS` | Best-effort local dependency cache pruning age before archiving in days (default: `30`) |
 | `DAYTONA_AUTO_ARCHIVE_MINUTES` | Minutes a successful stopped sandbox remains unarchived before Daytona auto-archives it (default: `60`) |
 | `HETCHY_SX_PUBLIC_VAULT_URL` | Public git sx vault containing Hetchy's seeded agent personas and scoped role skills; defaults to `https://github.com/hetchyhq/hetchy-sx-vault.git`; set to `disabled`, `off`, `none`, or `-` to skip the public vault install |
+| `HETCHY_SX_CACHE_DIR` | Server-side SX cache root for Git Vault clones; leave unset in dev to use SX's normal user cache dir. In non-dev, Hetchy auto-uses `/data/hetchy/sx-cache` when Railway's `/data` volume exists; set explicitly to override |
+| `HETCHY_SX_CACHE_MIN_FREE_MB` | Minimum free space required in `HETCHY_SX_CACHE_DIR` before SX Git Vault work runs (default: `512`; set `0` to disable) |
+| `HETCHY_SX_GIT_OPERATION_TIMEOUT_SECONDS` | Timeout for server-side SX Git Vault clone/pull/push operations triggered by custom-agent writes (default: `180`) |
+| `HETCHY_SX_GIT_MAX_CONCURRENT_OPS` | Global cap for concurrent server-side SX Git Vault operations; per-org operations are also serialized (default: `4`) |
 | `WEB_PORT` | Web UI port (default: 8080) |
 | `GITHUB_APP_ID` | Numeric ID of this env's GitHub App |
 | `GITHUB_APP_SLUG` | App slug — used to build the install URL `github.com/apps/<slug>/installations/new` |

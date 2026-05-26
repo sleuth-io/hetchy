@@ -293,6 +293,9 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 		"daytona_snapshot", cfg.Snapshot,
 		"sandbox_snapshot_version", cfg.SandboxSnapshotVersion,
 		"daytona_auto_archive_minutes", cfg.DaytonaAutoArchiveMinutes,
+		"sx_cache_dir", cfg.SXCacheDir,
+		"sx_git_operation_timeout_seconds", cfg.SXGitOperationTimeoutSeconds,
+		"sx_git_max_concurrent_ops", cfg.SXGitMaxConcurrentOps,
 	)
 
 	// GitHub App is optional in dev — without env vars the integrations
@@ -319,7 +322,27 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 			"env", cfg.Env,
 		)
 	}
-	b.sx = sxsync.NewManager(store, orgStore, agentStore, b.app)
+	b.sx = sxsync.NewManagerWithOptions(store, orgStore, agentStore, b.app, sxsync.Options{
+		CacheDir:            cfg.SXCacheDir,
+		CacheMinFreeBytes:   cfg.SXCacheMinFreeBytes,
+		GitOperationTimeout: time.Duration(cfg.SXGitOperationTimeoutSeconds) * time.Second,
+		MaxConcurrentGitOps: cfg.SXGitMaxConcurrentOps,
+	})
+	if status, err := b.sx.CheckCache(); err != nil {
+		if cfg.SXCacheDir != "" {
+			store.Close()
+			return nil, fmt.Errorf("sx cache: %w", err)
+		}
+		log.Warn("sx cache check failed; using sx default cache location", "error", err)
+	} else if status.Configured {
+		log.Info("sx cache configured",
+			"path", status.Path,
+			"available_bytes", status.AvailableBytes,
+			"min_free_bytes", status.MinFreeBytes,
+		)
+	} else if cfg.Env != "dev" {
+		log.Warn("sx cache dir is not configured; Git vault clones will use the process default cache location")
+	}
 	return b, nil
 }
 

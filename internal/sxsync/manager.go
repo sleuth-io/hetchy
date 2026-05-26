@@ -7,10 +7,12 @@ import (
 	"io"
 	"mime/multipart"
 	"net/url"
+	"os"
 	"path"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/go-github/v66/github"
@@ -41,10 +43,43 @@ type Manager struct {
 	orgs   *orgcfg.Store
 	agents *agents.Store
 	app    *githubapp.App
+
+	cacheDir            string
+	cacheMinFreeBytes   uint64
+	gitOperationTimeout time.Duration
+	gitOps              chan struct{}
+	orgLocksMu          sync.Mutex
+	orgLocks            map[string]chan struct{}
 }
 
 func NewManager(d *db.Store, orgs *orgcfg.Store, agents *agents.Store, app *githubapp.App) *Manager {
-	return &Manager{db: d, orgs: orgs, agents: agents, app: app}
+	return NewManagerWithOptions(d, orgs, agents, app, Options{})
+}
+
+type Options struct {
+	CacheDir            string
+	CacheMinFreeBytes   uint64
+	GitOperationTimeout time.Duration
+	MaxConcurrentGitOps int
+}
+
+func NewManagerWithOptions(d *db.Store, orgs *orgcfg.Store, agents *agents.Store, app *githubapp.App, opts Options) *Manager {
+	cacheDir := strings.TrimSpace(opts.CacheDir)
+	if cacheDir != "" {
+		_ = os.Setenv("SX_CACHE_DIR", cacheDir)
+	}
+	maxConcurrent := max(opts.MaxConcurrentGitOps, 1)
+	return &Manager{
+		db:                  d,
+		orgs:                orgs,
+		agents:              agents,
+		app:                 app,
+		cacheDir:            cacheDir,
+		cacheMinFreeBytes:   opts.CacheMinFreeBytes,
+		gitOperationTimeout: opts.GitOperationTimeout,
+		gitOps:              make(chan struct{}, maxConcurrent),
+		orgLocks:            map[string]chan struct{}{},
+	}
 }
 
 type GitVaultView struct {
@@ -261,105 +296,124 @@ func (m *Manager) RuntimeGitVaultEnv(ctx context.Context, orgID string) (map[str
 }
 
 func (m *Manager) ListSkills(ctx context.Context, orgID string, actor Actor) ([]sxlib.AssetSummary, error) {
-	handle, err := m.OpenOrgVault(ctx, orgID, actor)
-	if err != nil {
-		return nil, err
-	}
-	assets, err := handle.Client.ListAssetsWithOptions(ctx, sxlib.ListOptions{
-		Type:  "skill",
-		Limit: 500,
+	var assets []sxlib.AssetSummary
+	err := m.withGitVaultGuardIfConfigured(ctx, orgID, func(ctx context.Context) error {
+		handle, err := m.OpenOrgVault(ctx, orgID, actor)
+		if err != nil {
+			return err
+		}
+		assets, err = handle.Client.ListAssetsWithOptions(ctx, sxlib.ListOptions{
+			Type:  "skill",
+			Limit: 500,
+		})
+		if err != nil {
+			return err
+		}
+		slices.SortFunc(assets, func(a, b sxlib.AssetSummary) int {
+			return strings.Compare(a.Name, b.Name)
+		})
+		return nil
 	})
-	if err != nil {
-		return nil, err
-	}
-	slices.SortFunc(assets, func(a, b sxlib.AssetSummary) int {
-		return strings.Compare(a.Name, b.Name)
-	})
-	return assets, nil
+	return assets, err
 }
 
 func (m *Manager) SaveAgent(ctx context.Context, orgID string, actor Actor, p agents.Profile, templateSlug string) (agents.Profile, error) {
-	p = normalizeProfile(p)
-	if p.Slug == "" {
-		return agents.Profile{}, errors.New("agent slug is required")
-	}
-	existing, _ := m.agents.GetBySlug(ctx, orgID, p.Slug)
-	handle, err := m.OpenOrgVault(ctx, orgID, actor)
-	if err != nil {
-		return agents.Profile{}, err
-	}
-	result, err := handle.Client.PutAgent(ctx, sxlib.AgentSpec{
-		BotName:     p.SXBot,
-		AssetName:   p.PersonaAsset,
-		Version:     nextAgentVersion(),
-		DisplayName: p.DisplayName,
-		Description: p.Description,
-		Prompt:      p.PersonaPrompt,
-		Skills:      p.Skills,
+	var out agents.Profile
+	err := m.withGitVaultGuardIfConfigured(ctx, orgID, func(ctx context.Context) error {
+		p = normalizeProfile(p)
+		if p.Slug == "" {
+			return errors.New("agent slug is required")
+		}
+		existing, _ := m.agents.GetBySlug(ctx, orgID, p.Slug)
+		handle, err := m.OpenOrgVault(ctx, orgID, actor)
+		if err != nil {
+			return err
+		}
+		result, err := handle.Client.PutAgent(ctx, sxlib.AgentSpec{
+			BotName:     p.SXBot,
+			AssetName:   p.PersonaAsset,
+			Version:     nextAgentVersion(),
+			DisplayName: p.DisplayName,
+			Description: p.Description,
+			Prompt:      p.PersonaPrompt,
+			Skills:      p.Skills,
+		})
+		if err != nil {
+			return err
+		}
+		saved, err := m.agents.Upsert(ctx, orgID, p)
+		if err != nil {
+			return err
+		}
+		botKey := result.BotKey
+		if botKey == "" {
+			botKey = existing.SXBotKey
+		}
+		out, err = m.agents.UpdateVaultSync(ctx, orgID, saved.Slug, handle.Backend, botKey, templateSlug, "synced", "")
+		return err
 	})
-	if err != nil {
-		return agents.Profile{}, err
-	}
-	saved, err := m.agents.Upsert(ctx, orgID, p)
-	if err != nil {
-		return agents.Profile{}, err
-	}
-	botKey := result.BotKey
-	if botKey == "" {
-		botKey = existing.SXBotKey
-	}
-	return m.agents.UpdateVaultSync(ctx, orgID, saved.Slug, handle.Backend, botKey, templateSlug, "synced", "")
+	return out, err
 }
 
 func (m *Manager) AttachSkill(ctx context.Context, orgID string, actor Actor, slug, skill string) (agents.Profile, error) {
-	skill = strings.TrimSpace(skill)
-	if skill == "" {
-		return agents.Profile{}, errors.New("skill name is required")
-	}
-	p, err := m.agents.GetBySlug(ctx, orgID, slug)
-	if err != nil {
-		return agents.Profile{}, err
-	}
-	handle, err := m.OpenOrgVault(ctx, orgID, actor)
-	if err != nil {
-		return agents.Profile{}, err
-	}
-	if _, err := handle.Client.EnsureBot(ctx, sxlib.Bot{Name: p.SXBot, Description: p.Description}); err != nil {
-		return agents.Profile{}, err
-	}
-	if err := handle.Client.InstallAssetToBot(ctx, skill, p.SXBot); err != nil {
-		return agents.Profile{}, err
-	}
-	if !slices.Contains(p.Skills, skill) {
-		p.Skills = append(p.Skills, skill)
-	}
-	saved, err := m.agents.Upsert(ctx, orgID, p)
-	if err != nil {
-		return agents.Profile{}, err
-	}
-	return m.agents.UpdateVaultSync(ctx, orgID, saved.Slug, handle.Backend, p.SXBotKey, p.TemplateSlug, "synced", "")
+	var out agents.Profile
+	err := m.withGitVaultGuardIfConfigured(ctx, orgID, func(ctx context.Context) error {
+		skill = strings.TrimSpace(skill)
+		if skill == "" {
+			return errors.New("skill name is required")
+		}
+		p, err := m.agents.GetBySlug(ctx, orgID, slug)
+		if err != nil {
+			return err
+		}
+		handle, err := m.OpenOrgVault(ctx, orgID, actor)
+		if err != nil {
+			return err
+		}
+		if _, err := handle.Client.EnsureBot(ctx, sxlib.Bot{Name: p.SXBot, Description: p.Description}); err != nil {
+			return err
+		}
+		if err := handle.Client.InstallAssetToBot(ctx, skill, p.SXBot); err != nil {
+			return err
+		}
+		if !slices.Contains(p.Skills, skill) {
+			p.Skills = append(p.Skills, skill)
+		}
+		saved, err := m.agents.Upsert(ctx, orgID, p)
+		if err != nil {
+			return err
+		}
+		out, err = m.agents.UpdateVaultSync(ctx, orgID, saved.Slug, handle.Backend, p.SXBotKey, p.TemplateSlug, "synced", "")
+		return err
+	})
+	return out, err
 }
 
 func (m *Manager) UploadSkillZip(ctx context.Context, orgID string, actor Actor, slug string, spec sxlib.SkillZipSpec) (agents.Profile, error) {
-	p, err := m.agents.GetBySlug(ctx, orgID, slug)
-	if err != nil {
-		return agents.Profile{}, err
-	}
-	handle, err := m.OpenOrgVault(ctx, orgID, actor)
-	if err != nil {
-		return agents.Profile{}, err
-	}
-	if err := handle.Client.PutSkillZip(ctx, spec, p.SXBot); err != nil {
-		return agents.Profile{}, err
-	}
-	if !slices.Contains(p.Skills, spec.Name) {
-		p.Skills = append(p.Skills, spec.Name)
-	}
-	saved, err := m.agents.Upsert(ctx, orgID, p)
-	if err != nil {
-		return agents.Profile{}, err
-	}
-	return m.agents.UpdateVaultSync(ctx, orgID, saved.Slug, handle.Backend, p.SXBotKey, p.TemplateSlug, "synced", "")
+	var out agents.Profile
+	err := m.withGitVaultGuardIfConfigured(ctx, orgID, func(ctx context.Context) error {
+		p, err := m.agents.GetBySlug(ctx, orgID, slug)
+		if err != nil {
+			return err
+		}
+		handle, err := m.OpenOrgVault(ctx, orgID, actor)
+		if err != nil {
+			return err
+		}
+		if err := handle.Client.PutSkillZip(ctx, spec, p.SXBot); err != nil {
+			return err
+		}
+		if !slices.Contains(p.Skills, spec.Name) {
+			p.Skills = append(p.Skills, spec.Name)
+		}
+		saved, err := m.agents.Upsert(ctx, orgID, p)
+		if err != nil {
+			return err
+		}
+		out, err = m.agents.UpdateVaultSync(ctx, orgID, saved.Slug, handle.Backend, p.SXBotKey, p.TemplateSlug, "synced", "")
+		return err
+	})
+	return out, err
 }
 
 func ReadUploadedSkillZip(file multipart.File, maxBytes int64) ([]byte, error) {
