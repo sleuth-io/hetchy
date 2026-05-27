@@ -14,13 +14,12 @@ require (
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/joho/godotenv v1.5.1
 	github.com/slack-go/slack v0.23.0
-	github.com/sleuth-io/sx v0.0.0
+	github.com/sleuth-io/sx v1.3.0
 	github.com/stripe/stripe-go/v85 v85.1.0
 	github.com/workos/workos-go/v7 v7.1.1
 	golang.org/x/sync v0.20.0
+	golang.org/x/sys v0.43.0
 )
-
-replace github.com/sleuth-io/sx => ../sx
 
 require (
 	4d63.com/gocheckcompilerdirectives v1.3.0 // indirect
@@ -268,7 +267,6 @@ require (
 	golang.org/x/mod v0.34.0 // indirect
 	golang.org/x/net v0.53.0 // indirect
 	golang.org/x/oauth2 v0.35.0 // indirect
-	golang.org/x/sys v0.43.0 // indirect
 	golang.org/x/text v0.36.0 // indirect
 	golang.org/x/tools v0.43.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260401024825-9d38bb4040a9 // indirect
