@@ -337,7 +337,7 @@ func (m *Manager) SaveAgent(ctx context.Context, orgID string, actor Actor, p ag
 			AssetName:      p.PersonaAsset,
 			Version:        nextAgentVersion(),
 			Description:    p.Description,
-			BotDescription: p.Description,
+			BotDescription: botDescription(p),
 			Prompt:         p.PersonaPrompt,
 			Skills:         p.Skills,
 		})
@@ -373,7 +373,7 @@ func (m *Manager) AttachSkill(ctx context.Context, orgID string, actor Actor, sl
 		if err != nil {
 			return err
 		}
-		if _, err := handle.Client.EnsureBot(ctx, sxlib.Bot{Name: p.SXBot, Description: p.Description}); err != nil {
+		if _, err := handle.Client.EnsureBot(ctx, sxlib.Bot{Name: p.SXBot, Description: botDescription(p)}); err != nil {
 			return err
 		}
 		if err := handle.Client.InstallAssetToBot(ctx, skill, p.SXBot); err != nil {
@@ -403,7 +403,7 @@ func (m *Manager) UploadSkillZip(ctx context.Context, orgID string, actor Actor,
 		if err != nil {
 			return err
 		}
-		if _, err := handle.Client.EnsureBot(ctx, sxlib.Bot{Name: p.SXBot, Description: p.Description}); err != nil {
+		if _, err := handle.Client.EnsureBot(ctx, sxlib.Bot{Name: p.SXBot, Description: botDescription(p)}); err != nil {
 			return err
 		}
 		spec.BotName = p.SXBot
@@ -476,6 +476,24 @@ func normalizeProfile(p agents.Profile) agents.Profile {
 	}
 	p.Enabled = true
 	return p
+}
+
+func botDescription(p agents.Profile) string {
+	desc := strings.TrimSpace(p.Description)
+	if desc != "" {
+		return desc
+	}
+	name := strings.TrimSpace(p.DisplayName)
+	if name == "" {
+		name = strings.TrimSpace(p.Slug)
+	}
+	if name == "" {
+		name = strings.TrimSpace(p.SXBot)
+	}
+	if name == "" {
+		return "Custom Hetchy agent"
+	}
+	return "Custom Hetchy agent: " + name
 }
 
 func splitRepoSlug(slug string) (owner, name string, ok bool) {
