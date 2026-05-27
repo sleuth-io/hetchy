@@ -525,7 +525,7 @@
   .integration-actions .primary { margin-top: 0; }
   .integration-disconnect-form { margin: 0; }
 
-  /* Credential tabs (Anthropic integration: API key vs subscription token).
+  /* Credential tabs (Anthropic/OpenAI/SX integration panels).
      Two mutually exclusive panels share one form so a single Save covers
      either. The non-active panel is display:none so its hidden inputs
      still post (and applyTokenChange treats blank as "keep existing"). */
@@ -545,6 +545,17 @@
   .cred-help code { background: #f3f3f5; padding: .05rem .3rem;
                     border-radius: .25rem; font-size: .85em;
                     font-family: ui-monospace, monospace; }
+
+  .sx-tabs { padding-top: .85rem; }
+  .sx-vault-options { display: grid; gap: 1rem; }
+  .sx-vault-form { margin: 0; }
+  .sx-vault-form-actions { display: flex; align-items: center; gap: .5rem;
+                           margin-top: .85rem; flex-wrap: wrap; }
+  .sx-vault-form-actions .secondary,
+  .sx-vault-form-actions .primary { margin: 0; white-space: nowrap; }
+  .sx-vault-create-note { color: #888; font-size: .75rem; margin-top: -.4rem; }
+  .sx-vault-create-dialog select,
+  .sx-vault-create-dialog input { font-family: inherit; }
 
   /* Modal dialogs (used by API-key integrations) */
   dialog.api-modal { border: none; border-radius: .5rem; padding: 0;
@@ -636,6 +647,7 @@
   html.is-dark .cred-tab.active { color: #4da6ff; border-bottom-color: #4da6ff; }
   html.is-dark .cred-help { color: #9a9aa0; }
   html.is-dark .cred-help code { background: #2a2a2e; }
+  html.is-dark .sx-vault-create-note { color: #6e6e72; }
   html.is-dark .sep { color: #3a3a40; }
   html.is-dark .link-btn { color: #9a9aa0; }
   html.is-dark .link-btn:hover { color: #e7e7e9; }
@@ -848,6 +860,9 @@
     .billing-topup-form,
     .billing-topup-form .secondary,
     .billing-settings-actions .primary { width: 100%; }
+    .sx-vault-form-actions { flex-direction: column; align-items: stretch; }
+    .sx-vault-form-actions .secondary,
+    .sx-vault-form-actions .primary { width: 100%; }
     .billing-settings-actions .hint { min-width: 0; }
     .billing-settings-grid { grid-template-columns: 1fr; }
     table.members { display: block; }

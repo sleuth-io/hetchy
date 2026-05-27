@@ -185,7 +185,6 @@
     </div>
   </dialog>
 
-  {{template "modal_sx" .}}
 {{end}}
 
 {{define "integration_github"}}
@@ -503,6 +502,10 @@
 {{define "integration_sx"}}
   {{$gitVault := .SXGitVault}}
   {{$enabled := or (ne .SXKeyPreview "") $gitVault.Configured}}
+  {{$selectedGitVaultRepo := ""}}
+  {{with .SXGitVaultSelectedRepo}}{{$selectedGitVaultRepo = .}}{{end}}
+  {{$activeTab := "skills-new"}}
+  {{if or (ne $selectedGitVaultRepo "") (and (eq .SXKeyPreview "") $gitVault.Configured)}}{{$activeTab = "git-vault"}}{{end}}
   <article class="integration{{if $enabled}} enabled{{end}}" data-integration="sx">
     <div class="integration-head">
       <div class="integration-icon">
@@ -522,7 +525,7 @@
         {{if $enabled}}
           <span class="btn-enabled">✓ Enabled</span>
         {{else if .IsAdmin}}
-          <button class="btn-enable" type="button" data-open-modal="modal-sx">Enable</button>
+          <button class="btn-enable" type="button" data-toggle-card data-focus-field="sx_key">Enable</button>
         {{end}}
         <button class="caret" type="button" aria-label="Toggle details">
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><polyline points="4,6 8,10 12,6"/></svg>
@@ -531,87 +534,99 @@
     </div>
     {{if or $enabled .IsAdmin}}
     <div class="integration-body">
-      <div class="body-section">
-        <legend>SX bot key</legend>
-        {{if .IsAdmin}}
-        <form method="POST" action="/settings/org?tab=integrations">
-          {{template "secret" dict "Field" "sx_key" "Label" "Bot key" "Preview" .SXKeyPreview "Placeholder" "sx-…" "Required" false}}
-          <button class="primary" type="submit">Save</button>
-        </form>
-        {{else}}
-          <p class="hint">Bot key configured.</p>
-        {{end}}
-      </div>
-      <div class="body-section">
-        <legend>Git Vault</legend>
-        {{if $gitVault.Configured}}
-          <p class="hint">Active vault: <code>{{$gitVault.RepositorySlug}}</code></p>
+      <div class="sx-tabs" data-settings-tabs>
+        <div class="cred-tabs" role="tablist">
+          <button type="button" class="cred-tab{{if eq $activeTab "skills-new"}} active{{end}}" data-settings-tab="skills-new" role="tab" aria-selected="{{if eq $activeTab "skills-new"}}true{{else}}false{{end}}">Skills.new</button>
+          <button type="button" class="cred-tab{{if eq $activeTab "git-vault"}} active{{end}}" data-settings-tab="git-vault" role="tab" aria-selected="{{if eq $activeTab "git-vault"}}true{{else}}false{{end}}">Git Vault</button>
+        </div>
+
+        <div class="cred-panel{{if eq $activeTab "skills-new"}} active{{end}}" data-settings-panel="skills-new">
           {{if .IsAdmin}}
-          <div class="integration-actions">
-            <form method="POST" action="/settings/org/sx-vault/delete"
-                  data-confirm-title="Disconnect SX Git Vault?"
-                  data-confirm-message="Hetchy will stop writing custom agents and uploaded skills to {{$gitVault.RepositorySlug}}. The repository itself will not be deleted.">
-              <button type="submit" class="danger-btn">Disconnect Git Vault</button>
-            </form>
-          </div>
-          {{end}}
-        {{else if .IsAdmin}}
-          {{if .GitHubRepos}}
-          <form method="POST" action="/settings/org/sx-vault">
-            <input type="hidden" name="mode" value="existing">
-            <label for="sx-git-vault-repo">Use existing repository</label>
-            <select id="sx-git-vault-repo" name="git_vault_repo" required>
-              {{range .GitHubRepos}}
-                {{$slug := printf "%s/%s" .Owner .Name}}
-                <option value="{{$slug}}">{{$slug}}</option>
-              {{end}}
-            </select>
-            <p class="hint">All custom agents and uploaded skills for this organization will share this one vault.</p>
-            <button class="primary" type="submit">Save Git Vault</button>
+          <form method="POST" action="/settings/org?tab=integrations">
+            <p class="cred-help">Use a Skills.new bot key when Hetchy should write custom agents and skills back to Skills.new.</p>
+            {{template "secret" dict "Field" "sx_key" "Label" "Bot key" "Preview" .SXKeyPreview "Placeholder" "sx-…" "Required" false}}
+            <button class="primary" type="submit">Save</button>
           </form>
-          {{end}}
-          {{if .GitHubInstallations}}
-          <form method="POST" action="/settings/org/sx-vault">
-            <input type="hidden" name="mode" value="create">
-            <label for="sx-git-vault-installation">Create new private repository</label>
-            <select id="sx-git-vault-installation" name="installation_id" required>
-              {{range .GitHubInstallations}}
-                <option value="{{.InstallationID}}">{{.AccountLogin}}</option>
-              {{end}}
-            </select>
-            <input type="text" name="new_repo_name" value="sx-vault" maxlength="100" required>
-            <button class="primary" type="submit">Create Git Vault</button>
-          </form>
+          {{else if ne .SXKeyPreview ""}}
+            <p class="hint">Bot key configured.</p>
           {{else}}
-            <p class="hint">Connect GitHub first to create or select a Git Vault repository.</p>
+            <p class="hint">No Skills.new bot key configured.</p>
           {{end}}
-        {{else}}
-          <p class="hint">No Git Vault configured.</p>
-        {{end}}
+        </div>
+
+        <div class="cred-panel{{if eq $activeTab "git-vault"}} active{{end}}" data-settings-panel="git-vault">
+          {{if $gitVault.Configured}}
+            <p class="hint">Active vault: <code>{{$gitVault.RepositorySlug}}</code></p>
+            {{if .IsAdmin}}
+            <div class="integration-actions">
+              <form method="POST" action="/settings/org/sx-vault/delete"
+                    data-confirm-title="Disconnect SX Git Vault?"
+                    data-confirm-message="Hetchy will stop writing custom agents and uploaded skills to {{$gitVault.RepositorySlug}}. The repository itself will not be deleted.">
+                <button type="submit" class="danger-btn">Disconnect Git Vault</button>
+              </form>
+            </div>
+            {{end}}
+          {{else if .IsAdmin}}
+            <div class="sx-vault-options">
+              {{if .GitHubRepos}}
+              <form class="sx-vault-form" method="POST" action="/settings/org/sx-vault">
+                <input type="hidden" name="mode" value="existing">
+                <label for="sx-git-vault-repo">Repository</label>
+	                <div class="sx-vault-repo-row">
+	                  <select id="sx-git-vault-repo" name="git_vault_repo" required>
+	                    {{range .GitHubRepos}}
+	                      {{$slug := printf "%s/%s" .Owner .Name}}
+	                      <option value="{{$slug}}"{{if eq $selectedGitVaultRepo $slug}} selected{{end}}>{{$slug}}</option>
+	                    {{end}}
+	                  </select>
+	                </div>
+	                <p class="hint">All custom agents and uploaded skills for this organization will share this one vault.</p>
+	                <div class="sx-vault-form-actions">
+	                  {{if .GitHubInstallations}}<button class="secondary" type="button" data-open-modal="modal-sx-git-vault-create">Create new Git Vault</button>{{end}}
+	                  <button class="primary" type="submit">Save Git Vault</button>
+	                </div>
+	              </form>
+              {{else if .GitHubInstallations}}
+                <p class="hint">No repositories are cached yet.</p>
+                <button class="secondary" type="button" data-open-modal="modal-sx-git-vault-create">Create new Git Vault</button>
+              {{end}}
+              {{if .GitHubInstallations}}
+              <dialog class="app-dialog sx-vault-create-dialog" id="modal-sx-git-vault-create" aria-labelledby="sx-git-vault-create-title">
+                <form method="POST" action="/settings/org/sx-vault">
+                  <input type="hidden" name="mode" value="create">
+                  <div class="dlg-body">
+                    <h3 id="sx-git-vault-create-title">Create Git Vault repository</h3>
+                    <p>Create a private GitHub repository, then select it here so you can save it as this organization's SX Git Vault.</p>
+                    <label for="sx-git-vault-installation">GitHub account</label>
+                    <select id="sx-git-vault-installation" name="installation_id" required>
+                      {{range .GitHubInstallations}}
+                        <option value="{{.InstallationID}}">{{.AccountLogin}}</option>
+                      {{end}}
+                    </select>
+                    <label for="sx-git-vault-new-repo-name">Repository name</label>
+                    <input id="sx-git-vault-new-repo-name" type="text" name="new_repo_name" value="sx-vault" maxlength="100" required>
+                  </div>
+                  <div class="dlg-actions">
+                    <button type="button" class="dlg-cancel" data-close-modal>Cancel</button>
+                    <button type="submit" class="dlg-primary">Create</button>
+                  </div>
+                </form>
+              </dialog>
+              {{else if not .GitHubRepos}}
+                <p class="hint">Connect GitHub first to create or select a Git Vault repository.</p>
+              {{end}}
+              {{if and .GitHubInstallations .GitHubRepos}}
+                <div class="sx-vault-create-note">Create a repository if the vault you want is not in the list.</div>
+              {{end}}
+            </div>
+          {{else}}
+            <p class="hint">No Git Vault configured.</p>
+          {{end}}
+        </div>
       </div>
     </div>
     {{end}}
   </article>
-{{end}}
-
-
-{{define "modal_sx"}}
-{{if .IsAdmin}}
-<dialog class="api-modal" id="modal-sx">
-  <form method="POST" action="/settings/org?tab=integrations">
-    <div class="body">
-      <h2>SX bot key</h2>
-      <label for="modal-sx-input">Bot key</label>
-      <input id="modal-sx-input" type="password" name="sx_key" placeholder="sx-…" autocomplete="off" required>
-      <p>Issued by your SX admin. Optional — leave SX disabled if you're not using skills.</p>
-    </div>
-    <div class="actions">
-      <button type="button" class="cancel" data-close-modal>Cancel</button>
-      <button type="submit" class="save">Save</button>
-    </div>
-  </form>
-</dialog>
-{{end}}
 {{end}}
 
 {{define "agents"}}

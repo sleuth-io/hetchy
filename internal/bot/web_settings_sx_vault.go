@@ -2,6 +2,7 @@ package bot
 
 import (
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -62,11 +63,14 @@ func (b *Bot) sxVaultSettingsHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "repository name is required", http.StatusBadRequest)
 			return
 		}
-		if _, err := b.sx.CreateGitVaultRepo(r.Context(), p.OrgID, installationID, repoName); err != nil {
+		gv, err := b.sx.CreateGitVaultRepo(r.Context(), p.OrgID, installationID, repoName)
+		if err != nil {
 			b.log.Error("create sx git vault repo", "org", p.OrgID, "installation_id", installationID, "repo", repoName, "error", err)
 			http.Error(w, "create sx git vault: "+err.Error(), http.StatusBadRequest)
 			return
 		}
+		http.Redirect(w, r, "/settings/org?tab=integrations&saved=sx_git_vault_created&sx_git_vault_repo="+url.QueryEscape(gv.RepositorySlug), http.StatusFound)
+		return
 	default:
 		http.Error(w, "unknown sx vault mode", http.StatusBadRequest)
 		return

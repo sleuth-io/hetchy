@@ -382,7 +382,7 @@
     });
   });
 
-  // Credential tabs (Anthropic integration).
+  // Credential tabs (Anthropic/OpenAI integrations).
   // Mutually exclusive tabs: only the active panel's inputs are
   // submittable. Hidden panels get `disabled` set on every input and
   // hidden field — without this, both panels' values post on every
@@ -418,6 +418,32 @@
         const active = p.dataset.credPanel === tab;
         p.classList.toggle('active', active);
         setCredPanelDisabled(p, !active);
+      });
+    });
+  });
+
+  function setSettingsPanelDisabled(panel, disabled) {
+    panel.querySelectorAll('input, select, textarea, button:not([data-settings-tab])').forEach(el => {
+      el.disabled = disabled;
+    });
+  }
+  document.querySelectorAll('[data-settings-tabs]').forEach(scope => {
+    scope.querySelectorAll('[data-settings-panel]').forEach(panel => {
+      setSettingsPanelDisabled(panel, !panel.classList.contains('active'));
+    });
+    scope.querySelectorAll('[data-settings-tab]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const tab = btn.dataset.settingsTab;
+        scope.querySelectorAll('[data-settings-tab]').forEach(t => {
+          const active = t.dataset.settingsTab === tab;
+          t.classList.toggle('active', active);
+          t.setAttribute('aria-selected', active ? 'true' : 'false');
+        });
+        scope.querySelectorAll('[data-settings-panel]').forEach(panel => {
+          const active = panel.dataset.settingsPanel === tab;
+          panel.classList.toggle('active', active);
+          setSettingsPanelDisabled(panel, !active);
+        });
       });
     });
   });

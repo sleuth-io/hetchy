@@ -200,18 +200,18 @@ func (m *Manager) CreateGitVaultRepo(ctx context.Context, orgID string, installa
 	}); err != nil {
 		return GitVaultView{}, fmt.Errorf("cache github repository: %w", err)
 	}
-	v, err := m.db.Queries.UpsertOrgSXGitVault(ctx, sqlc.UpsertOrgSXGitVaultParams{
-		OrgID:                orgID,
-		GithubInstallationID: &installationID,
-		GithubRepoID:         created.GetID(),
-		GithubOwner:          owner,
-		GithubRepo:           created.GetName(),
-		RepositoryUrl:        githubRepoURL(owner, created.GetName()),
-	})
-	if err != nil {
-		return GitVaultView{}, fmt.Errorf("save sx git vault: %w", err)
+	name := created.GetName()
+	if name == "" {
+		name = repoName
 	}
-	return gitVaultView(v), nil
+	return GitVaultView{
+		Owner:          owner,
+		Name:           name,
+		RepositorySlug: strings.Trim(owner+"/"+name, "/"),
+		RepositoryURL:  githubRepoURL(owner, name),
+		InstallationID: installationID,
+		RepoID:         created.GetID(),
+	}, nil
 }
 
 func (m *Manager) DeleteGitVault(ctx context.Context, orgID string) error {

@@ -67,6 +67,7 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 			"IsDev":                        b.cfg.Env == "dev",
 			"SXKeyPreview":                 previewSecret(current.SXKey),
 			"SXGitVault":                   sxsync.GitVaultView{},
+			"SXGitVaultSelectedRepo":       strings.TrimSpace(r.URL.Query().Get("sx_git_vault_repo")),
 			"GitHubAppEnabled":             b.app != nil,
 			"DefaultRepoSlug":              defaultRepoSlug,
 		}
@@ -612,6 +613,8 @@ func savedMessage(s string) string {
 		return "Agent deleted."
 	case "sx_git_vault_saved":
 		return "SX Git Vault saved."
+	case "sx_git_vault_created":
+		return "Git Vault repository created. Save it to use it for SX."
 	case "sx_git_vault_deleted":
 		return "SX Git Vault disconnected."
 	case "repo_flavor_saved":

@@ -46,7 +46,7 @@ func TestSettingsTemplate_GeneralTab(t *testing.T) {
 
 // TestSettingsTemplate_IntegrationsTab covers the card-based
 // integrations layout. Each integration is its own card; OAuth cards
-// link to install URLs, API-key cards open a <dialog> modal.
+// link to install URLs, credential integrations expand inline.
 func TestSettingsTemplate_IntegrationsTab(t *testing.T) {
 	b := newBypassBot(t)
 	cases := []struct {
@@ -56,7 +56,7 @@ func TestSettingsTemplate_IntegrationsTab(t *testing.T) {
 		notWant []string
 	}{
 		{
-			name: "all disabled — every Enable button + every modal pre-rendered",
+			name: "all disabled — Enable buttons and inline credential panels render",
 			data: map[string]any{
 				"OrgID": "org_x", "OrgName": "Acme", "Email": "u@x", "Tab": "integrations",
 				"IsAdmin":                     true,
@@ -80,9 +80,11 @@ func TestSettingsTemplate_IntegrationsTab(t *testing.T) {
 				`href="/integrations/github/install"`,
 				// Slack Enable is a real link too
 				`href="/slack/install"`,
-				// SX Enable button opens its modal
-				`data-open-modal="modal-sx"`,
-				`id="modal-sx"`,
+				// SX now expands into tabbed inline setup.
+				`data-integration="sx"`,
+				`data-settings-tab="skills-new"`,
+				`data-settings-tab="git-vault"`,
+				`name="sx_key"`,
 				// Anthropic Enable now toggles the card open (tabbed UI
 				// inside the card replaces the old single-input modal).
 				`data-toggle-card`,
@@ -97,6 +99,8 @@ func TestSettingsTemplate_IntegrationsTab(t *testing.T) {
 				// The old modal-based onboarding for Anthropic is gone.
 				`data-open-modal="modal-anthropic"`,
 				`id="modal-anthropic"`,
+				`data-open-modal="modal-sx"`,
+				`id="modal-sx"`,
 			},
 		},
 		{
@@ -119,9 +123,10 @@ func TestSettingsTemplate_IntegrationsTab(t *testing.T) {
 					{Owner: "acme", Name: "web", DefaultBranch: "main"},
 					{Owner: "acme", Name: "api", DefaultBranch: "main"},
 				},
-				"DefaultRepoSlug":      "acme/web",
-				"SlackOAuthEnabled":    false,
-				"SlackBotTokenPreview": "", "SlackSocketTokenPreview": "",
+				"DefaultRepoSlug":        "acme/web",
+				"SXGitVaultSelectedRepo": "acme/api",
+				"SlackOAuthEnabled":      false,
+				"SlackBotTokenPreview":   "", "SlackSocketTokenPreview": "",
 				"SXKeyPreview": "", "AnthropicAPIKeyPreview": "",
 				"ClaudeCodeOAuthTokenPreview": "",
 			},
@@ -131,6 +136,10 @@ func TestSettingsTemplate_IntegrationsTab(t *testing.T) {
 				`installations/999`,
 				`name="installation_id" value="999"`,
 				`<option value="acme/web" selected>acme/web</option>`,
+				`<option value="acme/api" selected>acme/api</option>`,
+				`id="sx-git-vault-repo"`,
+				`data-open-modal="modal-sx-git-vault-create"`,
+				`<button class="primary" type="submit">Save Git Vault</button>`,
 				`✓ Enabled`,
 			},
 		},
@@ -389,7 +398,6 @@ func TestSettingsTemplate_NonAdminReadOnly(t *testing.T) {
 		for _, btn := range []string{
 			`href="/integrations/github/install"`,
 			`href="/slack/install"`,
-			`data-open-modal="modal-sx"`,
 			// Use a specific attribute sequence to avoid matching the JS selector
 			// string querySelectorAll('[data-toggle-card]') which is always present.
 			`class="btn-enable" type="button" data-toggle-card`,
