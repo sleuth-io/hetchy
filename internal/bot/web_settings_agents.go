@@ -16,7 +16,10 @@ import (
 	"github.com/hetchyhq/hetchy/internal/sxsync"
 )
 
-var errBuiltInAgentLocked = errors.New("built-in agents cannot be edited")
+var (
+	errBuiltInAgentLocked  = errors.New("built-in agents cannot be edited")
+	errImportedAgentLocked = errors.New("imported agents cannot be edited from Hetchy yet")
+)
 
 func (b *Bot) agentSettingsActionHandler(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.FromContext(r.Context())
@@ -59,7 +62,7 @@ func (b *Bot) agentSettingsActionHandler(w http.ResponseWriter, r *http.Request)
 		b.updateAgentFromSettings(w, r, p.OrgID, sxActor(p), slug, store)
 	case "skills":
 		skill := strings.TrimSpace(r.FormValue("skill"))
-		if _, err := editableAgentProfile(r.Context(), store, p.OrgID, slug); err != nil {
+		if _, err := editableAgentSkillsProfile(r.Context(), store, p.OrgID, slug); err != nil {
 			handleAgentEditError(w, r, err)
 			return
 		}
@@ -74,7 +77,7 @@ func (b *Bot) agentSettingsActionHandler(w http.ResponseWriter, r *http.Request)
 		}
 		http.Redirect(w, r, "/settings/org?tab=agents&saved=agent_skill_saved", http.StatusFound)
 	case "skills/upload":
-		if _, err := editableAgentProfile(r.Context(), store, p.OrgID, slug); err != nil {
+		if _, err := editableAgentSkillsProfile(r.Context(), store, p.OrgID, slug); err != nil {
 			handleAgentEditError(w, r, err)
 			return
 		}
@@ -109,11 +112,20 @@ func (b *Bot) agentSettingsActionHandler(w http.ResponseWriter, r *http.Request)
 		}
 		http.Redirect(w, r, "/settings/org?tab=agents&saved=agent_skill_uploaded", http.StatusFound)
 	case "delete":
-		if _, err := editableAgentProfile(r.Context(), store, p.OrgID, slug); err != nil {
+		if _, err := editableAgentDeleteProfile(r.Context(), store, p.OrgID, slug); err != nil {
 			handleAgentEditError(w, r, err)
 			return
 		}
-		if err := store.Delete(r.Context(), p.OrgID, slug); err != nil {
+		var err error
+		if b.sx != nil {
+			err = b.sx.DeleteAgent(r.Context(), p.OrgID, sxActor(p), slug)
+			if errors.Is(err, sxsync.ErrNotConfigured) {
+				err = store.Delete(r.Context(), p.OrgID, slug)
+			}
+		} else {
+			err = store.Delete(r.Context(), p.OrgID, slug)
+		}
+		if err != nil {
 			if errors.Is(err, agents.ErrNotFound) {
 				http.NotFound(w, r)
 				return
@@ -246,6 +258,31 @@ func editableAgentProfile(ctx context.Context, store *agents.Store, orgID, slug 
 	if p.BuiltIn {
 		return agents.Profile{}, errBuiltInAgentLocked
 	}
+	if p.SyncStatus == "imported" {
+		return agents.Profile{}, errImportedAgentLocked
+	}
+	return p, nil
+}
+
+func editableAgentSkillsProfile(ctx context.Context, store *agents.Store, orgID, slug string) (agents.Profile, error) {
+	p, err := store.GetBySlug(ctx, orgID, slug)
+	if err != nil {
+		return agents.Profile{}, err
+	}
+	if p.BuiltIn {
+		return agents.Profile{}, errBuiltInAgentLocked
+	}
+	return p, nil
+}
+
+func editableAgentDeleteProfile(ctx context.Context, store *agents.Store, orgID, slug string) (agents.Profile, error) {
+	p, err := store.GetBySlug(ctx, orgID, slug)
+	if err != nil {
+		return agents.Profile{}, err
+	}
+	if p.BuiltIn {
+		return agents.Profile{}, errBuiltInAgentLocked
+	}
 	return p, nil
 }
 
@@ -255,6 +292,8 @@ func handleAgentEditError(w http.ResponseWriter, r *http.Request, err error) {
 		http.NotFound(w, r)
 	case errors.Is(err, errBuiltInAgentLocked):
 		http.Error(w, errBuiltInAgentLocked.Error(), http.StatusForbidden)
+	case errors.Is(err, errImportedAgentLocked):
+		http.Error(w, errImportedAgentLocked.Error(), http.StatusForbidden)
 	default:
 		http.Error(w, "load agent: "+err.Error(), http.StatusInternalServerError)
 	}

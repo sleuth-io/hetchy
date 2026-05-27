@@ -286,11 +286,13 @@ type agentSettingsView struct {
 	PersonaAsset  string
 	SlackAliases  []string
 	Skills        []string
+	SXTeams       []string
 	VaultBackend  string
 	SyncStatus    string
 	SyncError     string
 	BuiltIn       bool
 	Default       bool
+	Imported      bool
 }
 
 type agentTemplateView struct {
@@ -320,7 +322,17 @@ func (b *Bot) populateAgentSettingsTabData(ctx context.Context, orgID string, da
 	data["SXEnabled"] = sxEnabled
 	data["AgentSkillOptions"] = []agentSkillOptionView{}
 	skillSource := b.sxSkillSourceLabel(ctx, orgID)
+	remoteProfiles := []agents.Profile{}
 	if sxEnabled && b.sx != nil {
+		remote, err := b.sx.SyncAgents(ctx, orgID, sxsync.Actor{Name: "Hetchy"})
+		if err != nil {
+			if b.log != nil {
+				b.log.Warn("sync sx agents failed", "org", orgID, "error", err)
+			}
+			data["AgentRemoteLoadError"] = "Unable to load agents from SX."
+		} else {
+			remoteProfiles = remote
+		}
 		assets, err := b.sx.ListSkills(ctx, orgID, sxsync.Actor{Name: "Hetchy"})
 		if err != nil {
 			if b.log != nil {
@@ -344,12 +356,30 @@ func (b *Bot) populateAgentSettingsTabData(ctx context.Context, orgID string, da
 	if err != nil {
 		return fmt.Errorf("load agents: %w", err)
 	}
+	remoteBySlug := make(map[string]agents.Profile, len(remoteProfiles))
+	for _, remote := range remoteProfiles {
+		slug := agents.NormalizeSlug(remote.Slug)
+		if slug != "" {
+			remoteBySlug[slug] = remote
+		}
+	}
 	out := make([]agentSettingsView, 0, len(profiles))
+	custom := make([]agentSettingsView, 0, len(profiles))
+	builtIns := make([]agentSettingsView, 0, len(profiles))
 	for _, a := range profiles {
 		if !a.Enabled {
 			continue
 		}
-		out = append(out, agentSettingsView{
+		remote := remoteBySlug[a.Slug]
+		sxTeams := a.SXTeams
+		if len(remote.SXTeams) > 0 {
+			sxTeams = remote.SXTeams
+		}
+		imported := a.SyncStatus == "imported"
+		if !imported && remote.Slug != "" && a.VaultBackend != "" && strings.TrimSpace(a.PersonaPrompt) == strings.TrimSpace(remote.PersonaPrompt) {
+			imported = true
+		}
+		view := agentSettingsView{
 			Slug:          a.Slug,
 			DisplayName:   a.DisplayName,
 			Description:   a.Description,
@@ -358,14 +388,24 @@ func (b *Bot) populateAgentSettingsTabData(ctx context.Context, orgID string, da
 			PersonaAsset:  a.PersonaAsset,
 			SlackAliases:  a.SlackAliases,
 			Skills:        a.Skills,
+			SXTeams:       sxTeams,
 			VaultBackend:  a.VaultBackend,
 			SyncStatus:    a.SyncStatus,
 			SyncError:     a.SyncError,
 			BuiltIn:       a.BuiltIn,
 			Default:       a.Slug == agents.DefaultSlug,
-		})
+			Imported:      imported,
+		}
+		out = append(out, view)
+		if view.BuiltIn {
+			builtIns = append(builtIns, view)
+		} else {
+			custom = append(custom, view)
+		}
 	}
 	data["Agents"] = out
+	data["CustomAgents"] = custom
+	data["BuiltInAgents"] = builtIns
 	templates, err := store.ListTemplates(ctx)
 	if err != nil {
 		return fmt.Errorf("load agent templates: %w", err)
@@ -387,6 +427,12 @@ func (b *Bot) populateAgentSettingsTabData(ctx context.Context, orgID string, da
 func (b *Bot) sxSkillSourceLabel(ctx context.Context, orgID string) string {
 	if b == nil || b.sx == nil {
 		return "SX"
+	}
+	if b.orgs != nil {
+		current, err := b.orgs.Get(ctx, orgID)
+		if err == nil && strings.TrimSpace(current.SXKey) != "" {
+			return "Skills.new"
+		}
 	}
 	gv, err := b.sx.GitVault(ctx, orgID)
 	if err == nil && gv.Configured && strings.TrimSpace(gv.RepositorySlug) != "" {

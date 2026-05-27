@@ -182,4 +182,10 @@ func TestHandleAgentEditError(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("locked status = %d", rec.Code)
 	}
+
+	rec = httptest.NewRecorder()
+	handleAgentEditError(rec, req, errImportedAgentLocked)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("imported locked status = %d", rec.Code)
+	}
 }

@@ -190,11 +190,17 @@
   /* Agents tab */
   .agent-toolbar { display: flex; justify-content: flex-end; margin: 0 0 1rem; }
   .agent-toolbar .primary { margin: 0; }
+  .agent-sections { display: grid; gap: 1.4rem; }
+  .agent-section { min-width: 0; }
+  .agent-section-title { margin: 0 0 .65rem; color: #888; font-size: .72rem;
+                         text-transform: uppercase; letter-spacing: .03em; font-weight: 700; }
   .agent-list { display: flex; flex-direction: column; gap: .85rem; }
   .agent-card { background: #fff; border: 1px solid #e6e6e6;
-                border-radius: .5rem; padding: 1rem 1.25rem; }
+                border-radius: .5rem; padding: 1rem 1.25rem; overflow: hidden; }
   .agent-card-head { display: flex; justify-content: space-between;
                      gap: 1rem; align-items: flex-start; margin-bottom: .75rem; }
+  .agent-card-actions { display: flex; align-items: flex-start; gap: .5rem;
+                        flex-wrap: wrap; justify-content: flex-end; }
   .agent-title { min-width: 0; }
   .agent-title h3 { margin: 0 .35rem .2rem 0; font-size: 1rem; color: #222;
                     display: inline-block; }
@@ -213,6 +219,9 @@
   .agent-form-actions { display: flex; justify-content: flex-end; margin-top: .75rem; }
   .agent-command-form { display: grid; grid-template-columns: minmax(0, 1fr) auto;
                         gap: .55rem; align-items: end; }
+  .agent-command-form > div { min-width: 0; }
+  .agent-command-form select,
+  .agent-command-form input { width: 100%; max-width: 100%; box-sizing: border-box; }
   .agent-delete-form { margin: 0; }
   .agent-skills { margin-top: .75rem; }
   .agent-skills-label { color: #888; font-size: .72rem; text-transform: uppercase;
@@ -689,6 +698,7 @@
   html.is-dark .danger-zone .danger-zone-text h4 { color: #f5f5f7; }
   html.is-dark .danger-zone .hint { color: #c0a0a0; }
   html.is-dark .agent-card { background: #232327; border-color: #2e2e33; }
+  html.is-dark .agent-section-title { color: #8a8a90; }
   html.is-dark .agent-title h3 { color: #f5f5f7; }
   html.is-dark .agent-title code,
   html.is-dark .skill-chip { background: #2e2e33; color: #d4d4d8; }

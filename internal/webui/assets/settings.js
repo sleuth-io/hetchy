@@ -190,7 +190,7 @@
     renderSelected();
   })();
 
-  // Integration disconnect confirms use the shared app-dialog styling
+  // Destructive settings actions use the shared app-dialog styling
   // instead of native browser confirm() prompts.
   (function () {
     const dlg = document.getElementById('integration-disconnect-dialog');
@@ -205,7 +205,7 @@
       pendingForm = null;
       if (confirm) {
         confirm.disabled = false;
-        confirm.textContent = 'Disconnect';
+        confirm.textContent = 'Confirm';
       }
     }
 
@@ -216,7 +216,7 @@
       form.dataset.confirmed = '1';
       if (confirm) {
         confirm.disabled = true;
-        confirm.textContent = 'Disconnecting…';
+        confirm.textContent = form.dataset.confirmProgress || 'Working...';
       }
       if (typeof form.requestSubmit === 'function') {
         form.requestSubmit();
@@ -225,7 +225,7 @@
       }
     }
 
-    document.querySelectorAll('form[data-confirm-title][data-confirm-message]').forEach(form => {
+    document.querySelectorAll('form[data-confirm-title][data-confirm-message]:not([data-billing-plan-confirm])').forEach(form => {
       form.addEventListener('submit', e => {
         if (form.dataset.confirmed === '1') return;
         e.preventDefault();
@@ -234,7 +234,7 @@
         if (message) message.textContent = form.dataset.confirmMessage || 'This integration will be disconnected.';
         if (confirm) {
           confirm.disabled = false;
-          confirm.textContent = 'Disconnect';
+          confirm.textContent = form.dataset.confirmAction || 'Disconnect';
         }
         if (typeof dlg.showModal === 'function') {
           dlg.showModal();

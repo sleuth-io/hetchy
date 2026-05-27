@@ -100,6 +100,20 @@ func TestPopulateSettingsTabDataAgentsUsesFallbackProfiles(t *testing.T) {
 	if len(agents) < 3 {
 		t.Fatalf("agents count = %d, want fallback profiles: %#v", len(agents), agents)
 	}
+	builtIns, ok := data["BuiltInAgents"].([]agentSettingsView)
+	if !ok {
+		t.Fatalf("BuiltInAgents type = %T, want []agentSettingsView", data["BuiltInAgents"])
+	}
+	if len(builtIns) < 3 {
+		t.Fatalf("built-in agents count = %d, want fallback profiles: %#v", len(builtIns), builtIns)
+	}
+	custom, ok := data["CustomAgents"].([]agentSettingsView)
+	if !ok {
+		t.Fatalf("CustomAgents type = %T, want []agentSettingsView", data["CustomAgents"])
+	}
+	if len(custom) != 0 {
+		t.Fatalf("custom agents = %#v, want none for fallback built-ins", custom)
+	}
 	for _, want := range []string{"bob", "alice", "archy"} {
 		found := false
 		for _, got := range agents {

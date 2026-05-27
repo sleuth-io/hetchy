@@ -11,6 +11,7 @@ import (
 	"github.com/hetchyhq/hetchy/internal/convstore"
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
 	"github.com/hetchyhq/hetchy/internal/runstore"
+	"github.com/hetchyhq/hetchy/internal/sxsync"
 )
 
 // HandleRequest is the shared core. It expects an already-resolved org
@@ -363,6 +364,13 @@ func (b *Bot) selectAgentForConversation(ctx context.Context, orgID, slug string
 	}
 	agent, err := store.Resolve(ctx, orgID, slug)
 	if err != nil {
+		if syncErr := b.syncSXAgents(ctx, orgID, sxsync.Actor{Name: "Hetchy"}); syncErr != nil {
+			if b.log != nil {
+				b.log.Warn("sync sx agents before resolve", "error", syncErr, "org", orgID, "slug", slug)
+			}
+		} else if agent, err = store.Resolve(ctx, orgID, slug); err == nil {
+			return agent, true
+		}
 		emit.Error("Unknown agent", fmt.Sprintf("I couldn't find an enabled Hetchy agent matching `%s`.", strings.TrimSpace(slug)))
 		return agents.Profile{}, false
 	}

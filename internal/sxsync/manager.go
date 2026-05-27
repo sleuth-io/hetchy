@@ -241,6 +241,20 @@ func (m *Manager) OpenOrgVault(ctx context.Context, orgID string, actor Actor) (
 	if m == nil {
 		return VaultHandle{}, ErrNotConfigured
 	}
+	sxKey, err := m.skillsNewKey(ctx, orgID)
+	if err != nil {
+		return VaultHandle{}, err
+	}
+	if sxKey != "" {
+		client, err := sxlib.OpenSkillsNewWithOptions(sxlib.DefaultSkillsNewURL, sxlib.SkillsNewOptions{
+			AuthToken: sxKey,
+			Actor:     sxlib.Actor{Name: actor.Name, Email: actor.Email},
+		})
+		if err != nil {
+			return VaultHandle{}, err
+		}
+		return VaultHandle{Backend: BackendSkillsNew, Client: client}, nil
+	}
 	if gv, err := m.GitVault(ctx, orgID); err != nil {
 		return VaultHandle{}, err
 	} else if gv.Configured {
@@ -260,24 +274,21 @@ func (m *Manager) OpenOrgVault(ctx context.Context, orgID string, actor Actor) (
 		}
 		return VaultHandle{Backend: BackendGitHubGit, Git: gv, Client: client}, nil
 	}
+	return VaultHandle{}, ErrNotConfigured
+}
+
+func (m *Manager) skillsNewKey(ctx context.Context, orgID string) (string, error) {
+	if m == nil || m.orgs == nil {
+		return "", nil
+	}
 	oc, err := m.orgs.Get(ctx, orgID)
 	if err != nil {
 		if errors.Is(err, orgcfg.ErrNotFound) {
-			return VaultHandle{}, ErrNotConfigured
+			return "", nil
 		}
-		return VaultHandle{}, err
+		return "", err
 	}
-	if oc.SXKey == "" {
-		return VaultHandle{}, ErrNotConfigured
-	}
-	client, err := sxlib.OpenSkillsNewWithOptions(sxlib.DefaultSkillsNewURL, sxlib.SkillsNewOptions{
-		AuthToken: oc.SXKey,
-		Actor:     sxlib.Actor{Name: actor.Name, Email: actor.Email},
-	})
-	if err != nil {
-		return VaultHandle{}, err
-	}
-	return VaultHandle{Backend: BackendSkillsNew, Client: client}, nil
+	return strings.TrimSpace(oc.SXKey), nil
 }
 
 func (m *Manager) RuntimeGitVaultEnv(ctx context.Context, orgID string) (map[string]string, error) {
@@ -320,6 +331,77 @@ func (m *Manager) ListSkills(ctx context.Context, orgID string, actor Actor) ([]
 	return assets, err
 }
 
+func (m *Manager) SyncAgents(ctx context.Context, orgID string, actor Actor) ([]agents.Profile, error) {
+	if m == nil || m.agents == nil {
+		return nil, ErrNotConfigured
+	}
+	var remoteProfiles []agents.Profile
+	err := m.withGitVaultGuardIfConfigured(ctx, orgID, func(ctx context.Context) error {
+		if err := m.agents.EnsureSeeded(ctx, orgID); err != nil {
+			return err
+		}
+		handle, err := m.OpenOrgVault(ctx, orgID, actor)
+		if err != nil {
+			return err
+		}
+		bots, err := handle.Client.ListBots(ctx)
+		if err != nil {
+			return err
+		}
+		agentAssets, err := handle.Client.ListAssetsWithOptions(ctx, sxlib.ListOptions{
+			Type:  "agent",
+			Limit: 500,
+		})
+		if err != nil {
+			return err
+		}
+		remoteProfiles = profilesFromRemoteAgents(handle.Backend, bots, agentAssets)
+		for _, profile := range remoteProfiles {
+			importProfile, err := m.shouldImportRemoteAgent(ctx, orgID, profile)
+			if err != nil {
+				return err
+			}
+			if !importProfile {
+				continue
+			}
+			saved, err := m.agents.Upsert(ctx, orgID, profile)
+			if err != nil {
+				return err
+			}
+			_, err = m.agents.UpdateVaultSync(ctx, orgID, saved.Slug, handle.Backend, "", "", "imported", "")
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	return remoteProfiles, err
+}
+
+func (m *Manager) shouldImportRemoteAgent(ctx context.Context, orgID string, profile agents.Profile) (bool, error) {
+	if m == nil || m.db == nil || m.db.Queries == nil {
+		return true, nil
+	}
+	row, err := m.db.Queries.GetAgentProfileBySlug(ctx, sqlc.GetAgentProfileBySlugParams{
+		OrgID: orgID,
+		Slug:  agents.NormalizeSlug(profile.Slug),
+	})
+	if err == nil {
+		return shouldImportRemoteAgentRow(row.Enabled, profile), nil
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return true, nil
+	}
+	return false, fmt.Errorf("check agent profile: %w", err)
+}
+
+func shouldImportRemoteAgentRow(existingEnabled bool, profile agents.Profile) bool {
+	if existingEnabled {
+		return false
+	}
+	return profile.VaultBackend == BackendSkillsNew
+}
+
 func (m *Manager) SaveAgent(ctx context.Context, orgID string, actor Actor, p agents.Profile, templateSlug string) (agents.Profile, error) {
 	var out agents.Profile
 	err := m.withGitVaultGuardIfConfigured(ctx, orgID, func(ctx context.Context) error {
@@ -331,17 +413,23 @@ func (m *Manager) SaveAgent(ctx context.Context, orgID string, actor Actor, p ag
 		if err != nil {
 			return err
 		}
+		skills := cleanAgentSkills(p.Skills)
 		if _, err := handle.Client.PutAgent(ctx, sxlib.AgentSpec{
 			BotName:        p.SXBot,
 			AssetName:      p.PersonaAsset,
 			Version:        nextAgentVersion(),
 			Description:    p.Description,
 			BotDescription: botDescription(p),
-			Prompt:         p.PersonaPrompt,
-			Skills:         p.Skills,
+			Prompt:         agentPromptMarkdown(p),
 		}); err != nil {
 			return err
 		}
+		for _, skill := range skills {
+			if err := handle.Client.InstallAssetToBot(ctx, skill, p.SXBot); err != nil {
+				return fmt.Errorf("install skill %q on bot %q: %w", skill, p.SXBot, err)
+			}
+		}
+		p.Skills = skills
 		saved, err := m.agents.Upsert(ctx, orgID, p)
 		if err != nil {
 			return err
@@ -350,6 +438,38 @@ func (m *Manager) SaveAgent(ctx context.Context, orgID string, actor Actor, p ag
 		return err
 	})
 	return out, err
+}
+
+func (m *Manager) DeleteAgent(ctx context.Context, orgID string, actor Actor, slug string) error {
+	return m.withGitVaultGuardIfConfigured(ctx, orgID, func(ctx context.Context) error {
+		if m == nil || m.agents == nil {
+			return ErrNotConfigured
+		}
+		p, err := m.agents.GetBySlug(ctx, orgID, slug)
+		if err != nil {
+			return err
+		}
+		if p.BuiltIn {
+			return errors.New("built-in agents cannot be deleted")
+		}
+		handle, err := m.OpenOrgVault(ctx, orgID, actor)
+		if err != nil && !errors.Is(err, ErrNotConfigured) {
+			return err
+		}
+		if err == nil && handle.Backend == BackendSkillsNew {
+			token, err := m.skillsNewKey(ctx, orgID)
+			if err != nil {
+				return err
+			}
+			if token == "" {
+				return ErrNotConfigured
+			}
+			if err := deleteSkillsNewBot(ctx, sxlib.DefaultSkillsNewURL, token, botSlugCandidates(p)); err != nil {
+				return err
+			}
+		}
+		return m.agents.Delete(ctx, orgID, slug)
+	})
 }
 
 func (m *Manager) AttachSkill(ctx context.Context, orgID string, actor Actor, slug, skill string) (agents.Profile, error) {
@@ -373,6 +493,7 @@ func (m *Manager) AttachSkill(ctx context.Context, orgID string, actor Actor, sl
 		if err := handle.Client.InstallAssetToBot(ctx, skill, p.SXBot); err != nil {
 			return err
 		}
+		p.Skills = cleanAgentSkills(p.Skills)
 		if !slices.Contains(p.Skills, skill) {
 			p.Skills = append(p.Skills, skill)
 		}
@@ -468,8 +589,149 @@ func normalizeProfile(p agents.Profile) agents.Profile {
 	if p.PersonaPrompt == "" {
 		p.PersonaPrompt = "You are " + p.DisplayName + ", a custom Hetchy agent."
 	}
+	p.Skills = cleanAgentSkills(p.Skills)
 	p.Enabled = true
 	return p
+}
+
+func cleanAgentSkills(skills []string) []string {
+	out := []string{}
+	for _, raw := range skills {
+		skill := strings.TrimSpace(raw)
+		if skill == "" || slices.Contains(out, skill) {
+			continue
+		}
+		out = append(out, skill)
+	}
+	return out
+}
+
+func botSlugCandidates(p agents.Profile) []string {
+	out := []string{}
+	for _, raw := range []string{p.SXBot, p.Slug, p.DisplayName} {
+		slug := agents.NormalizeSlug(raw)
+		if slug == "" || slices.Contains(out, slug) {
+			continue
+		}
+		out = append(out, slug)
+	}
+	return out
+}
+
+func agentPromptMarkdown(p agents.Profile) string {
+	prompt := strings.TrimSpace(p.PersonaPrompt)
+	if strings.HasPrefix(prompt, "---") {
+		return prompt
+	}
+	name := agentFrontmatterName(firstNonEmpty(p.PersonaAsset, p.Slug, p.SXBot, p.DisplayName))
+	description := agentFrontmatterDescription(p.Description, botDescription(p))
+	return "---\nname: " + name + "\ndescription: " + description + "\n---\n\n" + prompt
+}
+
+func agentFrontmatterName(name string) string {
+	name = agents.NormalizeSlug(name)
+	if len(name) > 64 {
+		name = strings.Trim(name[:64], "-")
+	}
+	if name == "" {
+		return "agent"
+	}
+	return name
+}
+
+func agentFrontmatterDescription(values ...string) string {
+	for _, value := range values {
+		value = strings.Join(strings.Fields(value), " ")
+		if value == "" {
+			continue
+		}
+		if len(value) > 1024 {
+			value = value[:1024]
+		}
+		return value
+	}
+	return "Custom Hetchy agent"
+}
+
+func profilesFromRemoteAgents(backend string, bots []sxlib.BotSummary, agentAssets []sxlib.AssetSummary) []agents.Profile {
+	assetsBySlug := make(map[string]sxlib.AssetSummary, len(agentAssets))
+	for _, asset := range agentAssets {
+		slug := agents.NormalizeSlug(asset.Name)
+		if slug == "" {
+			continue
+		}
+		assetsBySlug[slug] = asset
+	}
+	out := make([]agents.Profile, 0, len(bots))
+	seen := map[string]bool{}
+	for _, bot := range bots {
+		slug := agents.NormalizeSlug(firstNonEmpty(bot.Slug, bot.Name))
+		if slug == "" || seen[slug] {
+			continue
+		}
+		seen[slug] = true
+		asset, hasAsset := assetsBySlug[slug]
+		displayName := strings.TrimSpace(bot.Name)
+		if displayName == "" {
+			displayName = titleFromSlug(slug)
+		}
+		description := firstNonEmpty(bot.Description, asset.Description)
+		personaAsset := ""
+		if hasAsset {
+			personaAsset = strings.TrimSpace(asset.Name)
+		}
+		sxBot := firstNonEmpty(bot.Name, bot.Slug, slug)
+		out = append(out, agents.Profile{
+			Slug:          slug,
+			DisplayName:   displayName,
+			Description:   description,
+			SXBot:         sxBot,
+			PersonaAsset:  personaAsset,
+			PersonaPrompt: remoteAgentPrompt(displayName, description),
+			SXTeams:       append([]string(nil), bot.Teams...),
+			VaultBackend:  backend,
+			SyncStatus:    "imported",
+			Enabled:       true,
+		})
+	}
+	slices.SortFunc(out, func(a, b agents.Profile) int {
+		return strings.Compare(a.Slug, b.Slug)
+	})
+	return out
+}
+
+func remoteAgentPrompt(displayName, description string) string {
+	displayName = strings.TrimSpace(displayName)
+	if displayName == "" {
+		displayName = "Hetchy"
+	}
+	prompt := "You are " + displayName + ", a custom Hetchy agent backed by SX."
+	if description = strings.TrimSpace(description); description != "" {
+		prompt += "\n\n" + description
+	}
+	return prompt
+}
+
+func titleFromSlug(slug string) string {
+	parts := strings.FieldsFunc(strings.TrimSpace(slug), func(r rune) bool {
+		return r == '-' || r == '_' || r == ' '
+	})
+	for i, part := range parts {
+		if part == "" {
+			continue
+		}
+		parts[i] = strings.ToUpper(part[:1]) + part[1:]
+	}
+	return strings.Join(parts, " ")
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func botDescription(p agents.Profile) string {
@@ -519,5 +781,5 @@ func githubRepoURL(owner, name string) string {
 }
 
 func nextAgentVersion() string {
-	return "1.0." + strconv.FormatInt(time.Now().UTC().Unix(), 10)
+	return strconv.FormatInt(time.Now().UTC().Unix(), 10)
 }

@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hetchyhq/hetchy/internal/orgcfg"
 	"github.com/hetchyhq/hetchy/internal/sxsync"
 )
 
@@ -89,7 +90,13 @@ func TestSXSkillSourceLabel(t *testing.T) {
 		t.Fatalf("git vault source = %q", got)
 	}
 
+	b.orgs = &fakeOrgStore{getConfig: orgcfg.Config{SXKey: "sx_prod"}}
+	if got := b.sxSkillSourceLabel(context.Background(), "org_test"); got != "Skills.new" {
+		t.Fatalf("skills.new source with token = %q", got)
+	}
+
 	b.sx = &fakeSXManager{gitVaultErr: context.Canceled}
+	b.orgs = nil
 	if got := b.sxSkillSourceLabel(context.Background(), "org_test"); got != "Skills.new" {
 		t.Fatalf("skills.new fallback source = %q", got)
 	}

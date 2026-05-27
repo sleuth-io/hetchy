@@ -68,7 +68,9 @@ type sxManager interface {
 	RuntimeSkillsNewEnv(context.Context, string, agents.Profile) (map[string]string, error)
 	GitVault(context.Context, string) (sxsync.GitVaultView, error)
 	ListSkills(context.Context, string, sxsync.Actor) ([]sxlib.AssetSummary, error)
+	SyncAgents(context.Context, string, sxsync.Actor) ([]agents.Profile, error)
 	SaveAgent(context.Context, string, sxsync.Actor, agents.Profile, string) (agents.Profile, error)
+	DeleteAgent(context.Context, string, sxsync.Actor, string) error
 	AttachSkill(context.Context, string, sxsync.Actor, string, string) (agents.Profile, error)
 	UploadSkillZip(context.Context, string, sxsync.Actor, string, sxlib.SkillZipSpec) (agents.Profile, error)
 	DeleteGitVault(context.Context, string) error

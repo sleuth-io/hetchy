@@ -20,13 +20,18 @@ type fakeSXManager struct {
 	skills    []sxlib.AssetSummary
 	skillsErr error
 
+	remoteAgents  []agents.Profile
+	syncAgentsErr error
+
 	gitEnv       map[string]string
 	gitEnvErr    error
 	skillsNewEnv map[string]string
 	skillsNewErr error
 
-	savedAgents []agents.Profile
-	saveErr     error
+	savedAgents    []agents.Profile
+	saveErr        error
+	deletedAgent   string
+	deleteAgentErr error
 
 	attachedSkill string
 	attachedSlug  string
@@ -68,12 +73,21 @@ func (f *fakeSXManager) ListSkills(context.Context, string, sxsync.Actor) ([]sxl
 	return append([]sxlib.AssetSummary(nil), f.skills...), f.skillsErr
 }
 
+func (f *fakeSXManager) SyncAgents(context.Context, string, sxsync.Actor) ([]agents.Profile, error) {
+	return append([]agents.Profile(nil), f.remoteAgents...), f.syncAgentsErr
+}
+
 func (f *fakeSXManager) SaveAgent(_ context.Context, _ string, _ sxsync.Actor, p agents.Profile, _ string) (agents.Profile, error) {
 	if f.saveErr != nil {
 		return agents.Profile{}, f.saveErr
 	}
 	f.savedAgents = append(f.savedAgents, p)
 	return p, nil
+}
+
+func (f *fakeSXManager) DeleteAgent(_ context.Context, _ string, _ sxsync.Actor, slug string) error {
+	f.deletedAgent = slug
+	return f.deleteAgentErr
 }
 
 func (f *fakeSXManager) AttachSkill(_ context.Context, _ string, _ sxsync.Actor, slug, skill string) (agents.Profile, error) {

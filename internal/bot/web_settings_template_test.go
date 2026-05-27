@@ -254,7 +254,27 @@ func TestSettingsTemplate_RendersAgentsTab(t *testing.T) {
 			{Name: "database-migrations", Source: "Skills.new"},
 			{Name: "golang-pro", Source: "Skills.new"},
 		},
-		"Agents": []agentSettingsView{
+		"Agents": []agentSettingsView{},
+		"CustomAgents": []agentSettingsView{
+			{
+				Slug:          "reviewer",
+				DisplayName:   "Reviewer",
+				Description:   "Reviews pull requests.",
+				PersonaPrompt: "Review code carefully.",
+				Skills:        []string{"code-review"},
+			},
+			{
+				Slug:         "hetchy-bot",
+				DisplayName:  "Hetchy Bot",
+				Description:  "Builds stuff for Hetchy.",
+				SXBot:        "hetchy-bot",
+				PersonaAsset: "hetchy-bot",
+				SXTeams:      []string{"Frontend"},
+				VaultBackend: "skills_new",
+				Imported:     true,
+			},
+		},
+		"BuiltInAgents": []agentSettingsView{
 			{
 				Slug:         "alice",
 				DisplayName:  "Alice",
@@ -264,13 +284,6 @@ func TestSettingsTemplate_RendersAgentsTab(t *testing.T) {
 				SlackAliases: []string{"backend", "api"},
 				Skills:       []string{"golang-pro", "database-migrations"},
 				BuiltIn:      true,
-			},
-			{
-				Slug:          "reviewer",
-				DisplayName:   "Reviewer",
-				Description:   "Reviews pull requests.",
-				PersonaPrompt: "Review code carefully.",
-				Skills:        []string{"code-review"},
 			},
 		},
 	})
@@ -289,13 +302,24 @@ func TestSettingsTemplate_RendersAgentsTab(t *testing.T) {
 		`data-skill-source="Skills.new"`,
 		`data-agent-skill-hidden`,
 		`Skills.new`,
+		`Custom agents`,
+		`Built-in agents`,
 		`Built-in`,
+		`Imported`,
 		`action="/settings/org/agents/reviewer"`,
 		`action="/settings/org/agents/reviewer/delete"`,
+		`data-confirm-title="Delete Reviewer?"`,
+		`data-confirm-action="Delete"`,
 		`name="display_name" value="Reviewer"`,
 		`Review code carefully.`,
+		`team: Frontend`,
+		`action="/settings/org/agents/hetchy-bot/delete"`,
+		`data-confirm-title="Delete Hetchy Bot?"`,
+		`action="/settings/org/agents/hetchy-bot/skills"`,
+		`action="/settings/org/agents/hetchy-bot/skills/upload"`,
 		`golang-pro`,
 		`database-migrations`,
+		`<option value="code-review" title="Review code changes">code-review</option>`,
 		`sx bot: <code>bob</code>`,
 		`aliases: @backend, @api`,
 	} {
@@ -308,6 +332,11 @@ func TestSettingsTemplate_RendersAgentsTab(t *testing.T) {
 		`comma-separated skill names`,
 		`action="/settings/org/agents/alice"`,
 		`action="/settings/org/agents/alice/delete"`,
+		`action="/settings/org/agents/hetchy-bot"`,
+		`agent-name-hetchy-bot`,
+		`agent-prompt-hetchy-bot`,
+		`code-review - Review code changes`,
+		`onsubmit="return confirm(`,
 	} {
 		if strings.Contains(body, n) {
 			t.Errorf("agents tab should not render %q", n)
@@ -321,7 +350,7 @@ func TestSettingsTemplate_DisablesAgentCreateWithoutSX(t *testing.T) {
 	b.renderTemplate(rec, webui.Settings, map[string]any{
 		"OrgID": "org_y", "OrgName": "Acme", "Email": "u@y", "PrincipalUserID": "user_me",
 		"IsAdmin": true, "Tab": "agents", "SavedMessage": "",
-		"Agents": []agentSettingsView{},
+		"Agents": []agentSettingsView{}, "CustomAgents": []agentSettingsView{}, "BuiltInAgents": []agentSettingsView{},
 	})
 	body := rec.Body.String()
 	if !strings.Contains(body, `data-open-modal="modal-agent-create" disabled`) {
@@ -422,12 +451,15 @@ func TestSettingsTemplate_NonAdminReadOnly(t *testing.T) {
 	t.Run("agents tab is read-only", func(t *testing.T) {
 		data := maps.Clone(nonAdminBase)
 		data["Tab"] = "agents"
-		data["Agents"] = []agentSummary{{
+		profile := agentSettingsView{
 			Slug:        "backend",
 			DisplayName: "Backend",
 			Description: "Handles server-side work.",
 			Skills:      []string{"golang-pro"},
-		}}
+		}
+		data["Agents"] = []agentSettingsView{profile}
+		data["CustomAgents"] = []agentSettingsView{profile}
+		data["BuiltInAgents"] = []agentSettingsView{}
 		rec := httptest.NewRecorder()
 		b.renderTemplate(rec, webui.Settings, data)
 		body := rec.Body.String()

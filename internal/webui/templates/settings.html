@@ -174,17 +174,21 @@
     {{template "integration_sx" .}}
   </div>
 
+  {{template "settings_confirm_dialog" .}}
+
+{{end}}
+
+{{define "settings_confirm_dialog"}}
   <dialog class="app-dialog" id="integration-disconnect-dialog" aria-labelledby="integration-disconnect-title">
     <div class="dlg-body">
-      <h3 id="integration-disconnect-title">Disconnect integration?</h3>
-      <p id="integration-disconnect-message">This integration will be disconnected.</p>
+      <h3 id="integration-disconnect-title">Confirm action?</h3>
+      <p id="integration-disconnect-message">This action will be applied.</p>
     </div>
     <div class="dlg-actions">
       <button type="button" class="dlg-cancel" id="integration-disconnect-cancel">Cancel</button>
-      <button type="button" class="dlg-delete" id="integration-disconnect-confirm">Disconnect</button>
+      <button type="button" class="dlg-delete" id="integration-disconnect-confirm">Confirm</button>
     </div>
   </dialog>
-
 {{end}}
 
 {{define "integration_github"}}
@@ -629,6 +633,107 @@
   </article>
 {{end}}
 
+{{define "agent_card"}}
+{{$root := .Root}}
+{{$a := .Agent}}
+<article class="agent-card">
+  <div class="agent-card-head">
+    <div class="agent-title">
+      <h3>{{$a.DisplayName}}</h3>
+      <code>{{$a.Slug}}</code>
+    </div>
+    {{if $a.BuiltIn}}
+      <span class="agent-badge">Built-in</span>
+    {{else}}
+      <div class="agent-card-actions">
+        {{if $a.Imported}}<span class="agent-badge">Imported</span>{{end}}
+        {{if $root.IsAdmin}}
+        <form method="POST" action="/settings/org/agents/{{$a.Slug}}/delete" class="agent-delete-form"
+              data-confirm-title="Delete {{$a.DisplayName}}?"
+              data-confirm-message="This removes the Hetchy agent and deletes the SX bot for Skills.new-backed agents. Existing conversations that used this agent will keep their history, but new turns cannot select it."
+              data-confirm-action="Delete"
+              data-confirm-progress="Deleting...">
+          <button type="submit" class="danger-btn">Delete</button>
+        </form>
+        {{end}}
+      </div>
+    {{end}}
+  </div>
+
+  <p>{{$a.Description}}</p>
+
+  {{if and $root.IsAdmin (not $a.BuiltIn) (not $a.Imported)}}
+  <form method="POST" action="/settings/org/agents/{{$a.Slug}}" class="agent-edit-form agent-profile-form">
+    <div class="agent-form-grid">
+      <label for="agent-name-{{$a.Slug}}">Name</label>
+      <input id="agent-name-{{$a.Slug}}" type="text" name="display_name" value="{{$a.DisplayName}}" required maxlength="80">
+      <label for="agent-description-{{$a.Slug}}">Description</label>
+      <input id="agent-description-{{$a.Slug}}" type="text" name="description" value="{{$a.Description}}" maxlength="240">
+      <label for="agent-prompt-{{$a.Slug}}">Prompt</label>
+      <textarea id="agent-prompt-{{$a.Slug}}" name="persona_prompt" rows="10">{{$a.PersonaPrompt}}</textarea>
+    </div>
+    <div class="agent-form-actions">
+      <button class="primary" type="submit">Save changes</button>
+    </div>
+  </form>
+  {{end}}
+
+  <div class="agent-skills">
+    <div class="agent-skills-label">{{if $a.Skills}}Installed skills{{else if $a.SXTeams}}SX team access{{else if $a.Imported}}SX runtime skills{{else}}Installed skills{{end}}</div>
+    {{if $a.Skills}}
+      <div class="skill-chip-list">
+        {{range $a.Skills}}<span class="skill-chip">{{.}}</span>{{end}}
+      </div>
+    {{else if $a.SXTeams}}
+      <div class="skill-chip-list">
+        {{range $a.SXTeams}}<span class="skill-chip">team: {{.}}</span>{{end}}
+      </div>
+    {{else if $a.Imported}}
+      <p class="hint">Resolved by SX at runtime.</p>
+    {{else}}
+      <p class="hint">No skills listed.</p>
+    {{end}}
+  </div>
+
+  {{if and $root.IsAdmin (not $a.BuiltIn)}}
+  <form method="POST" action="/settings/org/agents/{{$a.Slug}}/skills" class="agent-edit-form agent-command-form">
+    <div>
+      <label for="agent-skill-{{$a.Slug}}">Install existing skill</label>
+      {{if $root.AgentSkillOptions}}
+      <select id="agent-skill-{{$a.Slug}}" name="skill" required>
+        <option value="">Choose skill</option>
+        {{range $root.AgentSkillOptions}}
+          <option value="{{.Name}}"{{if .Description}} title="{{.Description}}"{{end}}>{{.Name}}</option>
+        {{end}}
+      </select>
+      {{else}}
+      <input id="agent-skill-{{$a.Slug}}" type="text" name="skill" placeholder="skill-name" required>
+      {{end}}
+    </div>
+    <button class="primary" type="submit">Install</button>
+  </form>
+  <form method="POST" action="/settings/org/agents/{{$a.Slug}}/skills/upload" class="agent-edit-form agent-command-form" enctype="multipart/form-data">
+    <div>
+      <label for="agent-skill-name-{{$a.Slug}}">Upload skill ZIP</label>
+      <input id="agent-skill-name-{{$a.Slug}}" type="text" name="skill_name" placeholder="skill-name" required>
+      <input type="text" name="skill_version" value="1.0.0" required>
+      <input type="file" name="skill_zip" accept=".zip,application/zip" required>
+    </div>
+    <button class="primary" type="submit">Upload</button>
+  </form>
+  {{end}}
+
+  <div class="agent-meta">
+    {{if $a.SXBot}}<span>sx bot: <code>{{$a.SXBot}}</code></span>{{end}}
+    {{if $a.PersonaAsset}}<span>persona: <code>{{$a.PersonaAsset}}</code></span>{{end}}
+    {{if $a.VaultBackend}}<span>vault: <code>{{$a.VaultBackend}}</code></span>{{end}}
+    {{if $a.SyncError}}<span>sync error: <code>{{$a.SyncError}}</code></span>{{end}}
+    {{if $a.SXTeams}}<span>teams: {{range $i, $t := $a.SXTeams}}{{if gt $i 0}}, {{end}}{{$t}}{{end}}</span>{{end}}
+    {{if $a.SlackAliases}}<span>aliases: {{range $i, $alias := $a.SlackAliases}}{{if gt $i 0}}, {{end}}@{{$alias}}{{end}}</span>{{end}}
+  </div>
+</article>
+{{end}}
+
 {{define "agents"}}
   <h1>Agents</h1>
   <p/>
@@ -642,97 +747,36 @@
     <button class="primary" type="button" data-open-modal="modal-agent-create"{{if not .SXEnabled}} disabled{{end}}>Create agent</button>
   </div>
   {{if not .SXEnabled}}<p class="hint">Enable SX in Integrations before creating agents.</p>{{end}}
+  {{if .AgentRemoteLoadError}}<p class="hint">{{.AgentRemoteLoadError}}</p>{{end}}
   {{end}}
 
-  {{if .Agents}}
-    <div class="agent-list">
-      {{range .Agents}}
-      <article class="agent-card">
-        <div class="agent-card-head">
-          <div class="agent-title">
-            <h3>{{.DisplayName}}</h3>
-            <code>{{.Slug}}</code>
-          </div>
-          {{if .BuiltIn}}
-            <span class="agent-badge">Built-in</span>
-          {{else if $.IsAdmin}}
-          <form method="POST" action="/settings/org/agents/{{.Slug}}/delete" class="agent-delete-form"
-                onsubmit="return confirm('Delete agent {{.DisplayName}}? Existing conversations that used this agent will keep their history, but new turns cannot select it.');">
-            <button type="submit" class="danger-btn">Delete</button>
-          </form>
+  {{if or .CustomAgents .BuiltInAgents}}
+    <div class="agent-sections">
+      {{if .CustomAgents}}
+      <section class="agent-section">
+        <h2 class="agent-section-title">Custom agents</h2>
+        <div class="agent-list">
+          {{range .CustomAgents}}
+            {{template "agent_card" dict "Root" $ "Agent" .}}
           {{end}}
         </div>
-
-        <p>{{.Description}}</p>
-
-        {{if and $.IsAdmin (not .BuiltIn)}}
-        <form method="POST" action="/settings/org/agents/{{.Slug}}" class="agent-edit-form agent-profile-form">
-          <div class="agent-form-grid">
-            <label for="agent-name-{{.Slug}}">Name</label>
-            <input id="agent-name-{{.Slug}}" type="text" name="display_name" value="{{.DisplayName}}" required maxlength="80">
-            <label for="agent-description-{{.Slug}}">Description</label>
-            <input id="agent-description-{{.Slug}}" type="text" name="description" value="{{.Description}}" maxlength="240">
-            <label for="agent-prompt-{{.Slug}}">Prompt</label>
-            <textarea id="agent-prompt-{{.Slug}}" name="persona_prompt" rows="10">{{.PersonaPrompt}}</textarea>
-          </div>
-          <div class="agent-form-actions">
-            <button class="primary" type="submit">Save changes</button>
-          </div>
-        </form>
-        {{end}}
-
-        <div class="agent-skills">
-          <div class="agent-skills-label">Installed skills</div>
-          {{if .Skills}}
-            <div class="skill-chip-list">
-              {{range .Skills}}<span class="skill-chip">{{.}}</span>{{end}}
-            </div>
-          {{else}}
-            <p class="hint">No skills listed.</p>
+      </section>
+      {{end}}
+      {{if .BuiltInAgents}}
+      <section class="agent-section">
+        <h2 class="agent-section-title">Built-in agents</h2>
+        <div class="agent-list">
+          {{range .BuiltInAgents}}
+            {{template "agent_card" dict "Root" $ "Agent" .}}
           {{end}}
         </div>
-
-        {{if and $.IsAdmin (not .BuiltIn)}}
-        <form method="POST" action="/settings/org/agents/{{.Slug}}/skills" class="agent-edit-form agent-command-form">
-          <div>
-            <label for="agent-skill-{{.Slug}}">Install existing skill</label>
-            {{if $.AgentSkillOptions}}
-            <select id="agent-skill-{{.Slug}}" name="skill" required>
-              <option value="">Choose skill</option>
-              {{range $.AgentSkillOptions}}
-                <option value="{{.Name}}">{{.Name}}{{if .Description}} - {{.Description}}{{end}}</option>
-              {{end}}
-            </select>
-            {{else}}
-            <input id="agent-skill-{{.Slug}}" type="text" name="skill" placeholder="skill-name" required>
-            {{end}}
-          </div>
-          <button class="primary" type="submit">Install</button>
-        </form>
-        <form method="POST" action="/settings/org/agents/{{.Slug}}/skills/upload" class="agent-edit-form agent-command-form" enctype="multipart/form-data">
-          <div>
-            <label for="agent-skill-name-{{.Slug}}">Upload skill ZIP</label>
-            <input id="agent-skill-name-{{.Slug}}" type="text" name="skill_name" placeholder="skill-name" required>
-            <input type="text" name="skill_version" value="1.0.0" required>
-            <input type="file" name="skill_zip" accept=".zip,application/zip" required>
-          </div>
-          <button class="primary" type="submit">Upload</button>
-        </form>
-        {{end}}
-
-        <div class="agent-meta">
-          {{if .SXBot}}<span>sx bot: <code>{{.SXBot}}</code></span>{{end}}
-          {{if .PersonaAsset}}<span>persona: <code>{{.PersonaAsset}}</code></span>{{end}}
-          {{if .VaultBackend}}<span>vault: <code>{{.VaultBackend}}</code></span>{{end}}
-          {{if .SyncError}}<span>sync error: <code>{{.SyncError}}</code></span>{{end}}
-          {{if .SlackAliases}}<span>aliases: {{range $i, $a := .SlackAliases}}{{if gt $i 0}}, {{end}}@{{$a}}{{end}}</span>{{end}}
-        </div>
-      </article>
+      </section>
       {{end}}
     </div>
   {{else}}
     <p class="empty">No enabled agents.</p>
   {{end}}
+  {{template "settings_confirm_dialog" .}}
   {{template "modal_agent_create" .}}
 {{end}}
 

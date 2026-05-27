@@ -54,6 +54,11 @@ func (m *Manager) withGitVaultGuardIfConfigured(ctx context.Context, orgID strin
 	if m == nil {
 		return ErrNotConfigured
 	}
+	if sxKey, err := m.skillsNewKey(ctx, orgID); err != nil {
+		return err
+	} else if sxKey != "" {
+		return fn(ctx)
+	}
 	gv, err := m.GitVault(ctx, orgID)
 	if err != nil {
 		return err

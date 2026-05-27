@@ -99,6 +99,7 @@ type agentSummary struct {
 	PersonaAsset string   `json:"persona_asset,omitempty"`
 	SlackAliases []string `json:"slack_aliases,omitempty"`
 	Skills       []string `json:"skills,omitempty"`
+	SXTeams      []string `json:"sx_teams,omitempty"`
 	VaultBackend string   `json:"vault_backend,omitempty"`
 	SyncStatus   string   `json:"sync_status,omitempty"`
 	SyncError    string   `json:"sync_error,omitempty"`
@@ -178,6 +179,7 @@ func (b *Bot) agentsHandler(w http.ResponseWriter, r *http.Request) {
 			PersonaAsset: profile.PersonaAsset,
 			SlackAliases: profile.SlackAliases,
 			Skills:       profile.Skills,
+			SXTeams:      profile.SXTeams,
 			VaultBackend: profile.VaultBackend,
 			SyncStatus:   profile.SyncStatus,
 			SyncError:    profile.SyncError,
@@ -185,6 +187,11 @@ func (b *Bot) agentsHandler(w http.ResponseWriter, r *http.Request) {
 			Default:      profile.Slug == agents.DefaultSlug,
 		})
 		return
+	}
+	if err := b.syncSXAgents(r.Context(), p.OrgID, sxActor(p)); err != nil {
+		if b.log != nil {
+			b.log.Warn("sync sx agents", "error", err, "org", p.OrgID)
+		}
 	}
 	profiles, err := store.List(r.Context(), p.OrgID)
 	if err != nil {
@@ -205,6 +212,7 @@ func (b *Bot) agentsHandler(w http.ResponseWriter, r *http.Request) {
 			PersonaAsset: a.PersonaAsset,
 			SlackAliases: a.SlackAliases,
 			Skills:       a.Skills,
+			SXTeams:      a.SXTeams,
 			VaultBackend: a.VaultBackend,
 			SyncStatus:   a.SyncStatus,
 			SyncError:    a.SyncError,

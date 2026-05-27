@@ -35,6 +35,7 @@ type Profile struct {
 	PersonaPrompt string   `json:"-"`
 	SlackAliases  []string `json:"slack_aliases,omitempty"`
 	Skills        []string `json:"skills,omitempty"`
+	SXTeams       []string `json:"sx_teams,omitempty"`
 	VaultBackend  string   `json:"vault_backend,omitempty"`
 	SXBotKey      string   `json:"-"`
 	TemplateSlug  string   `json:"template_slug,omitempty"`
