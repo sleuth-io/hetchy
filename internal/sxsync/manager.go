@@ -270,7 +270,10 @@ func (m *Manager) OpenOrgVault(ctx context.Context, orgID string, actor Actor) (
 	if oc.SXKey == "" {
 		return VaultHandle{}, ErrNotConfigured
 	}
-	client, err := sxlib.OpenSkillsNew(sxlib.DefaultSkillsNewURL, oc.SXKey)
+	client, err := sxlib.OpenSkillsNewWithOptions(sxlib.DefaultSkillsNewURL, sxlib.SkillsNewOptions{
+		AuthToken: oc.SXKey,
+		Actor:     sxlib.Actor{Name: actor.Name, Email: actor.Email},
+	})
 	if err != nil {
 		return VaultHandle{}, err
 	}
@@ -330,13 +333,13 @@ func (m *Manager) SaveAgent(ctx context.Context, orgID string, actor Actor, p ag
 			return err
 		}
 		result, err := handle.Client.PutAgent(ctx, sxlib.AgentSpec{
-			BotName:     p.SXBot,
-			AssetName:   p.PersonaAsset,
-			Version:     nextAgentVersion(),
-			DisplayName: p.DisplayName,
-			Description: p.Description,
-			Prompt:      p.PersonaPrompt,
-			Skills:      p.Skills,
+			BotName:        p.SXBot,
+			AssetName:      p.PersonaAsset,
+			Version:        nextAgentVersion(),
+			Description:    p.Description,
+			BotDescription: p.Description,
+			Prompt:         p.PersonaPrompt,
+			Skills:         p.Skills,
 		})
 		if err != nil {
 			return err
@@ -400,11 +403,16 @@ func (m *Manager) UploadSkillZip(ctx context.Context, orgID string, actor Actor,
 		if err != nil {
 			return err
 		}
-		if err := handle.Client.PutSkillZip(ctx, spec, p.SXBot); err != nil {
+		if _, err := handle.Client.EnsureBot(ctx, sxlib.Bot{Name: p.SXBot, Description: p.Description}); err != nil {
 			return err
 		}
-		if !slices.Contains(p.Skills, spec.Name) {
-			p.Skills = append(p.Skills, spec.Name)
+		spec.BotName = p.SXBot
+		if err := handle.Client.PutSkillZip(ctx, spec); err != nil {
+			return err
+		}
+		skillName := strings.TrimSpace(spec.Name)
+		if !slices.Contains(p.Skills, skillName) {
+			p.Skills = append(p.Skills, skillName)
 		}
 		saved, err := m.agents.Upsert(ctx, orgID, p)
 		if err != nil {
