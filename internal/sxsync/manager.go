@@ -327,12 +327,11 @@ func (m *Manager) SaveAgent(ctx context.Context, orgID string, actor Actor, p ag
 		if p.Slug == "" {
 			return errors.New("agent slug is required")
 		}
-		existing, _ := m.agents.GetBySlug(ctx, orgID, p.Slug)
 		handle, err := m.OpenOrgVault(ctx, orgID, actor)
 		if err != nil {
 			return err
 		}
-		result, err := handle.Client.PutAgent(ctx, sxlib.AgentSpec{
+		if _, err := handle.Client.PutAgent(ctx, sxlib.AgentSpec{
 			BotName:        p.SXBot,
 			AssetName:      p.PersonaAsset,
 			Version:        nextAgentVersion(),
@@ -340,19 +339,14 @@ func (m *Manager) SaveAgent(ctx context.Context, orgID string, actor Actor, p ag
 			BotDescription: botDescription(p),
 			Prompt:         p.PersonaPrompt,
 			Skills:         p.Skills,
-		})
-		if err != nil {
+		}); err != nil {
 			return err
 		}
 		saved, err := m.agents.Upsert(ctx, orgID, p)
 		if err != nil {
 			return err
 		}
-		botKey := result.BotKey
-		if botKey == "" {
-			botKey = existing.SXBotKey
-		}
-		out, err = m.agents.UpdateVaultSync(ctx, orgID, saved.Slug, handle.Backend, botKey, templateSlug, "synced", "")
+		out, err = m.agents.UpdateVaultSync(ctx, orgID, saved.Slug, handle.Backend, "", templateSlug, "synced", "")
 		return err
 	})
 	return out, err
@@ -386,7 +380,7 @@ func (m *Manager) AttachSkill(ctx context.Context, orgID string, actor Actor, sl
 		if err != nil {
 			return err
 		}
-		out, err = m.agents.UpdateVaultSync(ctx, orgID, saved.Slug, handle.Backend, p.SXBotKey, p.TemplateSlug, "synced", "")
+		out, err = m.agents.UpdateVaultSync(ctx, orgID, saved.Slug, handle.Backend, "", p.TemplateSlug, "synced", "")
 		return err
 	})
 	return out, err
@@ -418,7 +412,7 @@ func (m *Manager) UploadSkillZip(ctx context.Context, orgID string, actor Actor,
 		if err != nil {
 			return err
 		}
-		out, err = m.agents.UpdateVaultSync(ctx, orgID, saved.Slug, handle.Backend, p.SXBotKey, p.TemplateSlug, "synced", "")
+		out, err = m.agents.UpdateVaultSync(ctx, orgID, saved.Slug, handle.Backend, "", p.TemplateSlug, "synced", "")
 		return err
 	})
 	return out, err

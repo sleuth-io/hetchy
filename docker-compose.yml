@@ -123,9 +123,6 @@ services:
       STRIPE_TOPUP_PRICE_IDS: ${STRIPE_TOPUP_PRICE_IDS:-}
       STRIPE_RETURN_TO: ${STRIPE_RETURN_TO:-}
 
-      # sx (optional)
-      SX_KEY: ${SX_KEY:-}
-
       # Proof artifact upload. Validation runs use these settings
       # to mint pre-signed S3 slots so screenshots and recordings can be
       # linked in PR bodies.

@@ -91,9 +91,6 @@ func addAgentEnv(env map[string]string, cfg Config, agent agents.Profile) {
 	env["HETCHY_AGENT_SLUG"] = agent.Slug
 	env["HETCHY_AGENT_NAME"] = agent.DisplayName
 	env["HETCHY_AGENT_SX_BOT"] = agent.SXBot
-	if agent.SXBotKey != "" {
-		env["HETCHY_AGENT_SX_BOT_KEY"] = agent.SXBotKey
-	}
 	env["HETCHY_AGENT_PERSONA_ASSET"] = agent.PersonaAsset
 	env["HETCHY_AGENT_PROMPT_B64"] = base64.StdEncoding.EncodeToString([]byte(agent.PersonaPrompt))
 	if cfg.SXPublicVaultURL != "" {

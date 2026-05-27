@@ -19,13 +19,12 @@
 #
 # Optional env:
 #   HETCHY_AGENT_SX_BOT          sx bot identity for the selected Hetchy agent
-#   HETCHY_AGENT_SX_BOT_KEY      optional bot-scoped Skills.new key
+#   HETCHY_AGENT_SX_BOT_KEY      short-lived bot runtime token for Skills.new
 #   HETCHY_AGENT_PERSONA_ASSET   Claude Code agent asset name to prepend, when installed
 #   HETCHY_AGENT_PROMPT_B64      fallback persona prompt when the sx asset is unavailable
 #   HETCHY_SX_PUBLIC_VAULT_URL   git sx vault for Hetchy-managed agent assets
 #   HETCHY_SX_GIT_VAULT_URL      org Git Vault containing custom agents/skills
 #   HETCHY_SX_GIT_VAULT_TOKEN    short-lived GitHub App token for the org Git Vault
-#   SX_KEY  if set, install org skills.new assets after clone, before claude
 #   SF_SPEC_SETUP_B64 or SF_SPEC_SETUP_B64_FILE    base64-encoded setup.sh from the saved bootstrap spec
 #   SF_SPEC_START_B64 or SF_SPEC_START_B64_FILE    base64-encoded start.sh from the saved bootstrap spec
 #   SF_SPEC_STOP_B64 or SF_SPEC_STOP_B64_FILE      base64-encoded stop.sh from the saved bootstrap spec
@@ -309,7 +308,7 @@ emit_installed_skills() {
   echo "[hetchy:sx-skills] ${joined}"
 }
 
-if [[ -n "${HETCHY_SX_PUBLIC_VAULT_URL:-}" || -n "${HETCHY_SX_GIT_VAULT_URL:-}" || -n "${SX_KEY:-}" ]]; then
+if [[ -n "${HETCHY_SX_PUBLIC_VAULT_URL:-}" || -n "${HETCHY_SX_GIT_VAULT_URL:-}" || -n "${HETCHY_AGENT_SX_BOT_KEY:-}" ]]; then
   ensure_sx
 fi
 
@@ -331,13 +330,13 @@ if [[ -n "${HETCHY_SX_GIT_VAULT_URL:-}" ]]; then
   run_sx_install "org-git-vault" "$git_vault_config" "$git_vault_cache" "$git_vault_profile" "${HETCHY_AGENT_SX_BOT:-}" ""
 fi
 
-if [[ -n "${SX_KEY:-}" ]]; then
+if [[ -n "${HETCHY_AGENT_SX_BOT_KEY:-}" ]]; then
   org_profile="org-skills"
   org_config="/tmp/hetchy-sx/org-${HETCHY_AGENT_SLUG:-default}/config"
   org_cache="/tmp/hetchy-sx/org-${HETCHY_AGENT_SLUG:-default}/cache"
   echo "[hetchy] writing org sx config"
-  write_sx_config "$org_config" "$org_profile" "sleuth" "https://app.skills.new" "$SX_KEY"
-  run_sx_install "org-skills" "$org_config" "$org_cache" "$org_profile" "${HETCHY_AGENT_SX_BOT:-}" "${HETCHY_AGENT_SX_BOT_KEY:-$SX_KEY}"
+  write_sx_config "$org_config" "$org_profile" "sleuth" "https://app.skills.new" "$HETCHY_AGENT_SX_BOT_KEY"
+  run_sx_install "org-skills" "$org_config" "$org_cache" "$org_profile" "${HETCHY_AGENT_SX_BOT:-}" "$HETCHY_AGENT_SX_BOT_KEY"
 fi
 
 # Emit the marker unconditionally — even when neither sx vault was

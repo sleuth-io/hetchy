@@ -14,7 +14,7 @@ require (
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/joho/godotenv v1.5.1
 	github.com/slack-go/slack v0.23.0
-	github.com/sleuth-io/sx v1.3.0
+	github.com/sleuth-io/sx v1.3.1
 	github.com/stripe/stripe-go/v85 v85.1.0
 	github.com/workos/workos-go/v7 v7.1.1
 	golang.org/x/sync v0.20.0

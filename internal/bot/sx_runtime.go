@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"errors"
 	"maps"
 
 	"github.com/hetchyhq/hetchy/internal/agents"
@@ -13,6 +14,14 @@ func (b *Bot) addOrgSXVaultEnv(ctx context.Context, orgID string, agent agents.P
 		return
 	}
 	if agent.VaultBackend != sxsync.BackendGitHubGit {
+		values, err := b.sx.RuntimeSkillsNewEnv(ctx, orgID, agent)
+		if err != nil {
+			if !errors.Is(err, sxsync.ErrNotConfigured) && b.log != nil {
+				b.log.Warn("sx skills.new runtime env unavailable", "org", orgID, "agent", agent.Slug, "error", err)
+			}
+			return
+		}
+		maps.Copy(env, values)
 		return
 	}
 	values, err := b.sx.RuntimeGitVaultEnv(ctx, orgID)

@@ -543,14 +543,14 @@
         <div class="cred-panel{{if eq $activeTab "skills-new"}} active{{end}}" data-settings-panel="skills-new">
           {{if .IsAdmin}}
           <form method="POST" action="/settings/org?tab=integrations">
-            <p class="cred-help">Use a Skills.new bot key when Hetchy should write custom agents and skills back to Skills.new.</p>
-            {{template "secret" dict "Field" "sx_key" "Label" "Bot key" "Preview" .SXKeyPreview "Placeholder" "sx-…" "Required" false}}
+            <p class="cred-help">Use a Skills.new management token so Hetchy can publish agents and mint short-lived bot runtime tokens.</p>
+            {{template "secret" dict "Field" "sx_key" "Label" "Management token" "Preview" .SXKeyPreview "Placeholder" "sx-…" "Required" false}}
             <button class="primary" type="submit">Save</button>
           </form>
           {{else if ne .SXKeyPreview ""}}
-            <p class="hint">Bot key configured.</p>
+            <p class="hint">Management token configured.</p>
           {{else}}
-            <p class="hint">No Skills.new bot key configured.</p>
+            <p class="hint">No Skills.new management token configured.</p>
           {{end}}
         </div>
 

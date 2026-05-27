@@ -100,9 +100,6 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, o
 		}
 	}
 	b.addRuntimeEnv(env, oc, model, requestID)
-	if oc.SXKey != "" {
-		env["SX_KEY"] = oc.SXKey
-	}
 	sessionID := "agent-" + requestID
 	prURL, err := b.runScriptForRequest(ctx, sb, sessionID, "agent", agentScript, env, emit)
 	b.writeBackOpenAICodexAuthJSON(ctx, sb, oc, requestID)
@@ -453,7 +450,6 @@ func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx
 		"GITHUB_TOKEN": repo.GitHubToken,
 	}
 	addAgentEnv(env, b.cfg, agent)
-	b.addOrgSXVaultEnv(ctx, oc.OrgID, agent, env)
 
 	artifactSlotCount := 0
 	if changeMode && opts.ValidateChanges && repo.RepoID != 0 {
@@ -479,11 +475,10 @@ func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx
 	if !changeMode {
 		env["HETCHY_SKIP_CACHE_SAVE"] = "1"
 		env["HETCHY_SKIP_SX_INSTALL"] = "1"
+	} else {
+		b.addOrgSXVaultEnv(ctx, oc.OrgID, agent, env)
 	}
 	b.addRuntimeEnv(env, oc, model, requestID)
-	if oc.SXKey != "" {
-		env["SX_KEY"] = oc.SXKey
-	}
 	// A follow-up lands in a stopped or archived sandbox where any
 	// background processes from the original run are gone — including the
 	// `start.sh &` invocation that brought the app up. Without this

@@ -95,7 +95,7 @@ type Bot struct {
 	billing   *billing.Service
 	agents    *agents.Store
 	apiKeys   *apikeys.Store
-	sx        *sxsync.Manager
+	sx        sxManager
 	auth      *auth.Service
 	slack     *slackManager
 	bootstrap bootstrapStore
