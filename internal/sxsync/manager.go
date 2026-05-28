@@ -471,7 +471,7 @@ func (m *Manager) installSkillForAgent(ctx context.Context, target *sxlib.Client
 	} else if !looksLikeMissingSXAsset(err) {
 		return "", err
 	}
-	copiedSkill, err := m.copySkillFromPublicVault(ctx, target, actor, skill)
+	copiedSkill, err := m.copySkillFromPublicVault(ctx, target, actor, skill, botName)
 	if err != nil {
 		return "", err
 	}
@@ -486,7 +486,7 @@ type copiedPublicSkill struct {
 	InstallName string
 }
 
-func (m *Manager) copySkillFromPublicVault(ctx context.Context, target *sxlib.Client, actor Actor, skill string) (copiedPublicSkill, error) {
+func (m *Manager) copySkillFromPublicVault(ctx context.Context, target *sxlib.Client, actor Actor, skill, botName string) (copiedPublicSkill, error) {
 	source, ok, err := m.openPublicVault(ctx, actor)
 	if err != nil {
 		return copiedPublicSkill{}, err
@@ -512,6 +512,7 @@ func (m *Manager) copySkillFromPublicVault(ctx context.Context, target *sxlib.Cl
 			Name:        targetName,
 			Version:     "1",
 			Description: zip.Description,
+			BotName:     botName,
 			ZipData:     zip.Data,
 		})
 		if err != nil {
