@@ -2,9 +2,11 @@ package bot
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/hetchyhq/hetchy/internal/agents"
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
 	"github.com/hetchyhq/hetchy/internal/sxsync"
 )
@@ -103,6 +105,134 @@ func TestInheritedSkillNamesExcludesDirectInstalls(t *testing.T) {
 	if len(got) != 1 || got[0] != "golang-patterns" {
 		t.Fatalf("inherited skills = %+v, want [golang-patterns]", got)
 	}
+}
+
+func TestAgentSkillChipsDedupesByStoredName(t *testing.T) {
+	got := agentSkillChips([]string{" fix-pr_skill ", "fix-pr_skill", "fix-pr", "", "webapp-testing_skill"})
+	want := []agentSkillChipView{
+		{Name: "fix-pr_skill", DisplayName: "fix-pr"},
+		{Name: "fix-pr", DisplayName: "fix-pr"},
+		{Name: "webapp-testing_skill", DisplayName: "webapp-testing"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("agentSkillChips length = %d, want %d: %+v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("agentSkillChips[%d] = %+v, want %+v; got %+v", i, got[i], want[i], got)
+		}
+	}
+}
+
+func TestPopulateAgentSettingsTabDataMarksInstalledSkillAndTeamOptions(t *testing.T) {
+	b := newBypassOrgBot(t, "admin")
+	b.orgs = &fakeOrgStore{getConfig: orgcfg.Config{OrgID: "org_test", SXKey: "management-token"}}
+	b.sx = &fakeSXManager{
+		skills: []sxsync.SkillSummary{
+			{Name: "fix-pr_skill", Source: "Skills.new", Description: "Fix PRs"},
+			{Name: "golang-patterns", Source: "Skills.new"},
+			{Name: "webapp-testing_skill", Source: "Skills.new"},
+			{Name: "  "},
+		},
+		teams: []sxsync.TeamSummary{
+			{Name: "Dev", Description: "Developers"},
+			{Name: "Design", Description: "Designers"},
+			{Name: "  "},
+		},
+		remoteAgents: []agents.Profile{
+			{
+				Slug:     "alice",
+				Skills:   []string{"fix-pr_skill"},
+				SXSkills: []string{"fix-pr_skill", "webapp-testing_skill"},
+				SXTeams:  []string{"Dev"},
+			},
+		},
+	}
+
+	data := map[string]any{}
+	if err := b.populateAgentSettingsTabData(context.Background(), "org_test", data); err != nil {
+		t.Fatalf("populateAgentSettingsTabData: %v", err)
+	}
+	agentsView, ok := data["Agents"].([]agentSettingsView)
+	if !ok {
+		t.Fatalf("Agents type = %T", data["Agents"])
+	}
+	var alice agentSettingsView
+	for _, view := range agentsView {
+		if view.Slug == "alice" {
+			alice = view
+			break
+		}
+	}
+	if alice.Slug == "" {
+		t.Fatalf("alice view not found in %+v", agentsView)
+	}
+	if len(alice.SkillChips) != 1 || alice.SkillChips[0].Name != "fix-pr_skill" || alice.SkillChips[0].DisplayName != "fix-pr" {
+		t.Fatalf("alice direct skill chips = %+v", alice.SkillChips)
+	}
+	if len(alice.SXSkills) != 1 || alice.SXSkills[0] != "webapp-testing" {
+		t.Fatalf("alice inherited skills = %+v, want webapp-testing only", alice.SXSkills)
+	}
+	assertSkillOptionInstalled(t, alice.SkillOptions, "fix-pr_skill", true)
+	assertSkillOptionInstalled(t, alice.SkillOptions, "webapp-testing_skill", true)
+	assertSkillOptionInstalled(t, alice.SkillOptions, "golang-patterns", false)
+	if !alice.CanAddSkill {
+		t.Fatal("alice CanAddSkill = false, want true because golang-patterns is available")
+	}
+	assertTeamOptionInstalled(t, alice.TeamOptions, "Dev", true)
+	assertTeamOptionInstalled(t, alice.TeamOptions, "Design", false)
+	if !alice.CanAddTeam {
+		t.Fatal("alice CanAddTeam = false, want true because Design is available")
+	}
+}
+
+func TestPopulateSXAgentRemoteDataRecordsLoadErrors(t *testing.T) {
+	b := newBypassOrgBot(t, "admin")
+	b.sx = &fakeSXManager{
+		syncAgentsErr: errors.New("sync failed"),
+		skillsErr:     errors.New("skills failed"),
+		teamsErr:      errors.New("teams failed"),
+	}
+
+	data := map[string]any{}
+	if got := b.populateSXAgentRemoteData(context.Background(), "org_test", data); len(got) != 0 {
+		t.Fatalf("remote profiles = %+v, want none on sync error", got)
+	}
+	if data["AgentRemoteLoadError"] != "Unable to load agents from SX." {
+		t.Fatalf("AgentRemoteLoadError = %#v", data["AgentRemoteLoadError"])
+	}
+	if data["AgentSkillsLoadError"] != "Unable to load available skills." {
+		t.Fatalf("AgentSkillsLoadError = %#v", data["AgentSkillsLoadError"])
+	}
+	if data["AgentTeamsLoadError"] != "Unable to load available teams." {
+		t.Fatalf("AgentTeamsLoadError = %#v", data["AgentTeamsLoadError"])
+	}
+}
+
+func assertSkillOptionInstalled(t *testing.T, options []agentSkillOptionView, name string, installed bool) {
+	t.Helper()
+	for _, option := range options {
+		if option.Name == name {
+			if option.Installed != installed {
+				t.Fatalf("skill option %q installed = %v, want %v in %+v", name, option.Installed, installed, options)
+			}
+			return
+		}
+	}
+	t.Fatalf("skill option %q not found in %+v", name, options)
+}
+
+func assertTeamOptionInstalled(t *testing.T, options []agentTeamOptionView, name string, installed bool) {
+	t.Helper()
+	for _, option := range options {
+		if option.Name == name {
+			if option.Installed != installed {
+				t.Fatalf("team option %q installed = %v, want %v in %+v", name, option.Installed, installed, options)
+			}
+			return
+		}
+	}
+	t.Fatalf("team option %q not found in %+v", name, options)
 }
 
 func TestSXSkillSourceLabel(t *testing.T) {

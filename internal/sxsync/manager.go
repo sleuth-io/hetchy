@@ -507,8 +507,13 @@ func looksLikeMissingSXAsset(err error) bool {
 	if err == nil {
 		return false
 	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "not found") && (strings.Contains(msg, "asset") || strings.Contains(msg, "skill"))
+	msg := strings.ToLower(strings.TrimSpace(err.Error()))
+	if strings.Contains(msg, "not found") && (strings.Contains(msg, "asset") || strings.Contains(msg, "skill")) {
+		return true
+	}
+	// Skills.new currently returns an opaque HTTP 500 when installing an asset
+	// on a bot before that asset exists in the active vault.
+	return msg == "http 500" || strings.Contains(msg, "returned error 500")
 }
 
 func (m *Manager) SyncAgents(ctx context.Context, orgID string, actor Actor) ([]agents.Profile, error) {
@@ -803,6 +808,17 @@ func (m *Manager) RemoveAgentTeam(ctx context.Context, orgID string, actor Actor
 		if err := handle.Client.RemoveBotTeam(ctx, p.SXBot, team); err != nil {
 			return err
 		}
+		bots, err := handle.Client.ListBots(ctx)
+		if err != nil {
+			return fmt.Errorf("verify bot team removal: %w", err)
+		}
+		found, hasTeam := botTeamState(bots, p.SXBot, team)
+		if !found {
+			return fmt.Errorf("verify bot team removal: bot %q not found", p.SXBot)
+		}
+		if hasTeam {
+			return fmt.Errorf("team %q is still attached to bot %q after removal", team, p.SXBot)
+		}
 		p.SXTeams = removeString(p.SXTeams, team)
 		saved, err := m.agents.Upsert(ctx, orgID, p)
 		if err != nil {
@@ -812,4 +828,14 @@ func (m *Manager) RemoveAgentTeam(ctx context.Context, orgID string, actor Actor
 		return err
 	})
 	return out, err
+}
+
+func botTeamState(bots []sxlib.BotSummary, botName, team string) (bool, bool) {
+	for _, bot := range bots {
+		if bot.Name != botName {
+			continue
+		}
+		return true, slices.Contains(bot.Teams, team)
+	}
+	return false, false
 }

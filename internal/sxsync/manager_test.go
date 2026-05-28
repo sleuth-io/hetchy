@@ -1,6 +1,7 @@
 package sxsync
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -85,6 +86,62 @@ func TestPublicSkillCandidatesRecognizesRepositoryPrefixedNames(t *testing.T) {
 	want := []string{"sx-hetchyhq-hetchy-sx-vault-fix-pr_skill", "sx-hetchyhq-hetchy-sx-vault-fix-pr", "fix-pr_skill", "fix-pr"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("publicSkillCandidates = %+v, want %+v", got, want)
+	}
+}
+
+func TestLooksLikeMissingSXAssetRecognizesOpaqueInstallErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{name: "asset not found", err: errors.New(`asset "fix-pr" not found`)},
+		{name: "skill not found", err: errors.New(`skill "fix-pr" not found`)},
+		{name: "bare skills new 500", err: errors.New("HTTP 500")},
+		{name: "returned 500", err: errors.New(`returned error 500: {"errors":[{"message":"internal"}]}`)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if !looksLikeMissingSXAsset(tc.err) {
+				t.Fatalf("looksLikeMissingSXAsset(%v) = false, want true", tc.err)
+			}
+		})
+	}
+}
+
+func TestLooksLikeMissingSXAssetIgnoresUnrelatedErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{name: "nil"},
+		{name: "permission", err: errors.New("permission denied")},
+		{name: "forbidden", err: errors.New("HTTP 403")},
+		{name: "object missing without asset context", err: errors.New("object not found")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if looksLikeMissingSXAsset(tc.err) {
+				t.Fatalf("looksLikeMissingSXAsset(%v) = true, want false", tc.err)
+			}
+		})
+	}
+}
+
+func TestBotTeamStateMatchesBotNameOnly(t *testing.T) {
+	bots := []sxlib.BotSummary{
+		{Name: "Hetchy Bot", Slug: "hetchy-bot", Teams: []string{"Dev"}},
+		{Name: "Other Bot", Slug: "other-bot", Teams: []string{"Dev"}},
+	}
+
+	found, hasTeam := botTeamState(bots, "Hetchy Bot", "Dev")
+	if !found || !hasTeam {
+		t.Fatalf("botTeamState = (%v, %v), want (true, true)", found, hasTeam)
+	}
+	found, hasTeam = botTeamState(bots, "hetchy-bot", "Dev")
+	if found || hasTeam {
+		t.Fatalf("botTeamState matched slug = (%v, %v), want (false, false)", found, hasTeam)
+	}
+	found, hasTeam = botTeamState(bots, "Hetchy Bot", "Design")
+	if !found || hasTeam {
+		t.Fatalf("botTeamState missing team = (%v, %v), want (true, false)", found, hasTeam)
 	}
 }
 
