@@ -10,15 +10,15 @@ import (
 	"time"
 )
 
-func TestManagerCheckCacheConfiguresSXCacheDir(t *testing.T) {
-	t.Setenv("SX_CACHE_DIR", "")
+func TestManagerCheckCacheUsesConfiguredDir(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "sx-cache")
+	t.Setenv("SX_CACHE_DIR", dir)
 	m := NewManagerWithOptions(nil, nil, nil, nil, Options{
 		CacheDir:          dir,
 		CacheMinFreeBytes: 1,
 	})
 	if got := os.Getenv("SX_CACHE_DIR"); got != dir {
-		t.Fatalf("SX_CACHE_DIR = %q, want %q", got, dir)
+		t.Fatalf("test SX_CACHE_DIR = %q, want %q", got, dir)
 	}
 	status, err := m.CheckCache()
 	if err != nil {

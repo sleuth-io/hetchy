@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 	"unicode"
@@ -558,6 +559,7 @@ func (s *Store) decryptBotKey(ciphertext []byte) string {
 	}
 	raw, err := s.cipher.Decrypt(ciphertext)
 	if err != nil {
+		slog.Warn("decrypt sx bot key", "error", err)
 		return ""
 	}
 	return raw

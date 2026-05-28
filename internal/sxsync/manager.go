@@ -7,7 +7,6 @@ import (
 	"io"
 	"mime/multipart"
 	"net/url"
-	"os"
 	"path"
 	"slices"
 	"strconv"
@@ -65,9 +64,6 @@ type Options struct {
 
 func NewManagerWithOptions(d *db.Store, orgs *orgcfg.Store, agents *agents.Store, app *githubapp.App, opts Options) *Manager {
 	cacheDir := strings.TrimSpace(opts.CacheDir)
-	if cacheDir != "" {
-		_ = os.Setenv("SX_CACHE_DIR", cacheDir)
-	}
 	maxConcurrent := max(opts.MaxConcurrentGitOps, 1)
 	return &Manager{
 		db:                  d,
@@ -805,5 +801,5 @@ func githubRepoURL(owner, name string) string {
 }
 
 func nextAgentVersion() string {
-	return strconv.FormatInt(time.Now().UTC().Unix(), 10)
+	return strconv.FormatInt(time.Now().UnixNano(), 10)
 }

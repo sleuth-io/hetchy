@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"os"
 	"path"
 	"strings"
 	"time"
@@ -321,6 +322,9 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 		log.Warn("github app: GITHUB_APP_ID is not set — integration install button + webhooks disabled",
 			"env", cfg.Env,
 		)
+	}
+	if cfg.SXCacheDir != "" {
+		_ = os.Setenv("SX_CACHE_DIR", cfg.SXCacheDir)
 	}
 	b.sx = sxsync.NewManagerWithOptions(store, orgStore, agentStore, b.app, sxsync.Options{
 		CacheDir:            cfg.SXCacheDir,

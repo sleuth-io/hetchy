@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -103,6 +104,50 @@ func TestAgentSettingsActionHandlerMethodAuthAndCreate(t *testing.T) {
 	}
 	if len(sx.savedAgents) != 1 || sx.savedAgents[0].Slug != "reviewer" {
 		t.Fatalf("saved agents = %+v", sx.savedAgents)
+	}
+}
+
+func TestAgentSettingsActionHandlerLocksBuiltInsForMutations(t *testing.T) {
+	b := newBypassOrgBot(t, "admin")
+	b.sx = &fakeSXManager{}
+	b.orgs = &fakeOrgStore{getConfig: orgcfg.Config{OrgID: "org_test", SXKey: "management-token"}}
+	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.agentSettingsActionHandler)))
+
+	for _, tc := range []struct {
+		name string
+		path string
+		body string
+	}{
+		{name: "attach skill", path: "/settings/org/agents/alice/skills", body: "skill=fix-pr"},
+		{name: "upload skill", path: "/settings/org/agents/alice/skills/upload", body: ""},
+		{name: "delete", path: "/settings/org/agents/alice/delete", body: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			req := settingsFormRequest(http.MethodPost, tc.path, tc.body)
+			handler.ServeHTTP(rec, req)
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("status = %d body=%q, want forbidden", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestRequireActiveAgentBackend(t *testing.T) {
+	b := newBypassOrgBot(t, "admin")
+	b.sx = &fakeSXManager{gitVault: sxsync.GitVaultView{Configured: true}}
+
+	if err := b.requireActiveAgentBackend(context.Background(), "org_test", agents.Profile{
+		Slug:         "reviewer",
+		VaultBackend: sxsync.BackendGitHubGit,
+	}); err != nil {
+		t.Fatalf("matching backend: %v", err)
+	}
+	if err := b.requireActiveAgentBackend(context.Background(), "org_test", agents.Profile{
+		Slug:         "reviewer",
+		VaultBackend: sxsync.BackendSkillsNew,
+	}); !errors.Is(err, agents.ErrNotFound) {
+		t.Fatalf("inactive backend err = %v, want ErrNotFound", err)
 	}
 }
 

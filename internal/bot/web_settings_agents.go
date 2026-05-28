@@ -65,97 +65,110 @@ func (b *Bot) agentSettingsActionHandler(w http.ResponseWriter, r *http.Request)
 	case "":
 		b.updateAgentFromSettings(w, r, p.OrgID, sxActor(p), slug, store)
 	case "skills":
-		skill := strings.TrimSpace(r.FormValue("skill"))
-		profile, err := editableAgentSkillsProfile(r.Context(), store, p.OrgID, slug)
-		if err != nil {
-			handleAgentEditError(w, r, err)
-			return
-		}
-		if err := b.requireActiveAgentBackend(r.Context(), p.OrgID, profile); err != nil {
-			handleAgentEditError(w, r, err)
-			return
-		}
-		if b.sx == nil {
-			http.Error(w, "sx vault is not configured", http.StatusBadRequest)
-			return
-		}
-		if _, err := b.sx.AttachSkill(r.Context(), p.OrgID, sxActor(p), slug, skill); err != nil {
-			b.log.Error("attach agent skill", "error", err, "org", p.OrgID, "slug", slug, "skill", skill)
-			http.Error(w, "attach skill: "+err.Error(), http.StatusBadRequest)
-			return
-		}
-		http.Redirect(w, r, "/settings/org?tab=agents&saved=agent_skill_saved", http.StatusFound)
+		b.attachAgentSkillFromSettings(w, r, p.OrgID, sxActor(p), slug, store)
 	case "skills/upload":
-		profile, err := editableAgentSkillsProfile(r.Context(), store, p.OrgID, slug)
-		if err != nil {
-			handleAgentEditError(w, r, err)
-			return
-		}
-		if err := b.requireActiveAgentBackend(r.Context(), p.OrgID, profile); err != nil {
-			handleAgentEditError(w, r, err)
-			return
-		}
-		if b.sx == nil {
-			http.Error(w, "sx vault is not configured", http.StatusBadRequest)
-			return
-		}
-		file, header, err := r.FormFile("skill_zip")
-		if err != nil {
-			http.Error(w, "skill zip is required", http.StatusBadRequest)
-			return
-		}
-		name := skillNameFromUploadFilename(header.Filename)
-		if name == "" {
-			http.Error(w, "skill zip filename must include a skill name", http.StatusBadRequest)
-			return
-		}
-		data, err := sxsync.ReadUploadedSkillZip(file, 8<<20)
-		if err != nil {
-			http.Error(w, "read skill zip: "+err.Error(), http.StatusBadRequest)
-			return
-		}
-		if _, err := b.sx.UploadSkillZip(r.Context(), p.OrgID, sxActor(p), slug, sxlib.SkillZipSpec{
-			Name:    name,
-			Version: uploadedSkillInitialVersion,
-			ZipData: data,
-		}); err != nil {
-			b.log.Error("upload agent skill", "error", err, "org", p.OrgID, "slug", slug, "skill", name)
-			http.Error(w, "upload skill: "+err.Error(), http.StatusBadRequest)
-			return
-		}
-		http.Redirect(w, r, "/settings/org?tab=agents&saved=agent_skill_uploaded", http.StatusFound)
+		b.uploadAgentSkillFromSettings(w, r, p.OrgID, sxActor(p), slug, store)
 	case "delete":
-		profile, err := editableAgentDeleteProfile(r.Context(), store, p.OrgID, slug)
-		if err != nil {
-			handleAgentEditError(w, r, err)
-			return
-		}
-		if err := b.requireActiveAgentBackend(r.Context(), p.OrgID, profile); err != nil {
-			handleAgentEditError(w, r, err)
-			return
-		}
-		var deleteErr error
-		if b.sx != nil {
-			deleteErr = b.sx.DeleteAgent(r.Context(), p.OrgID, sxActor(p), slug)
-			if errors.Is(deleteErr, sxsync.ErrNotConfigured) {
-				deleteErr = store.Delete(r.Context(), p.OrgID, slug)
-			}
-		} else {
-			deleteErr = store.Delete(r.Context(), p.OrgID, slug)
-		}
-		if deleteErr != nil {
-			if errors.Is(deleteErr, agents.ErrNotFound) {
-				http.NotFound(w, r)
-				return
-			}
-			b.log.Error("delete agent", "error", deleteErr, "org", p.OrgID, "slug", slug)
-			http.Error(w, "delete agent: "+deleteErr.Error(), http.StatusInternalServerError)
-			return
-		}
-		http.Redirect(w, r, "/settings/org?tab=agents&saved=agent_deleted", http.StatusFound)
+		b.deleteAgentFromSettings(w, r, p.OrgID, sxActor(p), slug, store)
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+func (b *Bot) attachAgentSkillFromSettings(w http.ResponseWriter, r *http.Request, orgID string, actor sxsync.Actor, slug string, store *agents.Store) {
+	skill := strings.TrimSpace(r.FormValue("skill"))
+	profile, err := editableAgentSkillsProfile(r.Context(), store, orgID, slug)
+	if err != nil {
+		handleAgentEditError(w, r, err)
+		return
+	}
+	if err := b.requireActiveAgentBackend(r.Context(), orgID, profile); err != nil {
+		handleAgentEditError(w, r, err)
+		return
+	}
+	if b.sx == nil {
+		http.Error(w, "sx vault is not configured", http.StatusBadRequest)
+		return
+	}
+	if _, err := b.sx.AttachSkill(r.Context(), orgID, actor, slug, skill); err != nil {
+		b.log.Error("attach agent skill", "error", err, "org", orgID, "slug", slug, "skill", skill)
+		http.Error(w, "attach skill: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	http.Redirect(w, r, "/settings/org?tab=agents&saved=agent_skill_saved", http.StatusFound)
+}
+
+func (b *Bot) uploadAgentSkillFromSettings(w http.ResponseWriter, r *http.Request, orgID string, actor sxsync.Actor, slug string, store *agents.Store) {
+	profile, err := editableAgentSkillsProfile(r.Context(), store, orgID, slug)
+	if err != nil {
+		handleAgentEditError(w, r, err)
+		return
+	}
+	if err := b.requireActiveAgentBackend(r.Context(), orgID, profile); err != nil {
+		handleAgentEditError(w, r, err)
+		return
+	}
+	if b.sx == nil {
+		http.Error(w, "sx vault is not configured", http.StatusBadRequest)
+		return
+	}
+	file, header, err := r.FormFile("skill_zip")
+	if err != nil {
+		http.Error(w, "skill zip is required", http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+	name := skillNameFromUploadFilename(header.Filename)
+	if name == "" {
+		http.Error(w, "skill zip filename must include a skill name", http.StatusBadRequest)
+		return
+	}
+	data, err := sxsync.ReadUploadedSkillZip(file, 8<<20)
+	if err != nil {
+		http.Error(w, "read skill zip: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if _, err := b.sx.UploadSkillZip(r.Context(), orgID, actor, slug, sxlib.SkillZipSpec{
+		Name:    name,
+		Version: uploadedSkillInitialVersion,
+		ZipData: data,
+	}); err != nil {
+		b.log.Error("upload agent skill", "error", err, "org", orgID, "slug", slug, "skill", name)
+		http.Error(w, "upload skill: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	http.Redirect(w, r, "/settings/org?tab=agents&saved=agent_skill_uploaded", http.StatusFound)
+}
+
+func (b *Bot) deleteAgentFromSettings(w http.ResponseWriter, r *http.Request, orgID string, actor sxsync.Actor, slug string, store *agents.Store) {
+	profile, err := editableAgentDeleteProfile(r.Context(), store, orgID, slug)
+	if err != nil {
+		handleAgentEditError(w, r, err)
+		return
+	}
+	if err := b.requireActiveAgentBackend(r.Context(), orgID, profile); err != nil {
+		handleAgentEditError(w, r, err)
+		return
+	}
+	var deleteErr error
+	if b.sx != nil {
+		deleteErr = b.sx.DeleteAgent(r.Context(), orgID, actor, slug)
+		if errors.Is(deleteErr, sxsync.ErrNotConfigured) {
+			deleteErr = store.Delete(r.Context(), orgID, slug)
+		}
+	} else {
+		deleteErr = store.Delete(r.Context(), orgID, slug)
+	}
+	if deleteErr != nil {
+		if errors.Is(deleteErr, agents.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		b.log.Error("delete agent", "error", deleteErr, "org", orgID, "slug", slug)
+		http.Error(w, "delete agent: "+deleteErr.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/settings/org?tab=agents&saved=agent_deleted", http.StatusFound)
 }
 
 func skillNameFromUploadFilename(filename string) string {
