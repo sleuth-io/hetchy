@@ -474,10 +474,22 @@ func (m *Manager) installSkillForAgent(ctx context.Context, target *sxlib.Client
 	if err != nil {
 		return "", err
 	}
-	if err := target.InstallAssetToBot(ctx, copiedSkill, botName); err != nil {
+	if err := installCopiedSkillForAgent(ctx, target, copiedSkill, botName); err != nil {
 		return "", err
 	}
 	return copiedSkill, nil
+}
+
+func installCopiedSkillForAgent(ctx context.Context, target *sxlib.Client, skill, botName string) error {
+	if err := target.InstallAssetToBot(ctx, skill, botName); err != nil {
+		if generatedSlug, ok := generatedSkillsNewSkillSlugForAmbiguousSkill(skill, err); ok {
+			if retryErr := target.InstallAssetToBot(ctx, generatedSlug, botName); retryErr == nil {
+				return nil
+			}
+		}
+		return err
+	}
+	return nil
 }
 
 func (m *Manager) copySkillFromPublicVault(ctx context.Context, target *sxlib.Client, actor Actor, skill string) (string, error) {
@@ -529,6 +541,21 @@ func looksLikeMissingSXAsset(err error) bool {
 	// Skills.new currently returns an opaque HTTP 500 when installing an asset
 	// on a bot before that asset exists in the active vault.
 	return msg == "http 500" || strings.Contains(msg, "returned error 500")
+}
+
+func generatedSkillsNewSkillSlugForAmbiguousSkill(skill string, err error) (string, bool) {
+	if err == nil {
+		return "", false
+	}
+	skill = strings.TrimSpace(skill)
+	if skill == "" || strings.HasSuffix(skill, "_skill") {
+		return "", false
+	}
+	msg := strings.ToLower(err.Error())
+	if !strings.Contains(msg, "ambiguous") || !strings.Contains(msg, "matches both a slug and a different display name") {
+		return "", false
+	}
+	return skill + "_skill", true
 }
 
 func (m *Manager) SyncAgents(ctx context.Context, orgID string, actor Actor) ([]agents.Profile, error) {

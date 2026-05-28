@@ -130,6 +130,23 @@ func TestLooksLikeMissingSXAssetIgnoresUnrelatedErrors(t *testing.T) {
 	}
 }
 
+func TestGeneratedSkillsNewSkillSlugForAmbiguousSkill(t *testing.T) {
+	got, ok := generatedSkillsNewSkillSlugForAmbiguousSkill(
+		"architecture-blueprint-generator",
+		errors.New(`asset "architecture-blueprint-generator" is ambiguous: matches both a slug and a different display name`),
+	)
+	if !ok || got != "architecture-blueprint-generator_skill" {
+		t.Fatalf("generated skill slug = %q, %v; want architecture-blueprint-generator_skill, true", got, ok)
+	}
+
+	if got, ok := generatedSkillsNewSkillSlugForAmbiguousSkill("already_skill", errors.New("ambiguous: matches both a slug and a different display name")); ok || got != "" {
+		t.Fatalf("already suffixed generated slug = %q, %v; want empty, false", got, ok)
+	}
+	if got, ok := generatedSkillsNewSkillSlugForAmbiguousSkill("fix-pr", errors.New("asset not found")); ok || got != "" {
+		t.Fatalf("non-ambiguity generated slug = %q, %v; want empty, false", got, ok)
+	}
+}
+
 func TestInstallSkillForAgentCopiesPrefixedPublicSkillUnderCanonicalName(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
