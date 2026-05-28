@@ -456,6 +456,11 @@ func (m *Manager) DeleteAgent(ctx context.Context, orgID string, actor Actor, sl
 		if err != nil && !errors.Is(err, ErrNotConfigured) {
 			return err
 		}
+		if err == nil && handle.Backend == BackendGitHubGit {
+			if err := handle.Client.DeleteBot(ctx, p.SXBot); err != nil {
+				return fmt.Errorf("delete sx git vault bot %q: %w", p.SXBot, err)
+			}
+		}
 		if err == nil && handle.Backend == BackendSkillsNew {
 			token, err := m.skillsNewKey(ctx, orgID)
 			if err != nil {
