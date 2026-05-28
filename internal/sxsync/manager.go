@@ -464,7 +464,7 @@ func sourceLabelForBackend(backend string) string {
 	}
 }
 
-func (m *Manager) installSkillForAgent(ctx context.Context, target *sxlib.Client, actor Actor, skill, botName string) (string, error) {
+func (m *Manager) installSkillForAgent(ctx context.Context, target *sxlib.Client, actor Actor, backend, skill, botName string) (string, error) {
 	if err := target.InstallAssetToBot(ctx, skill, botName); err == nil {
 		return skill, nil
 	} else if !looksLikeMissingSXAsset(err) {
@@ -474,17 +474,27 @@ func (m *Manager) installSkillForAgent(ctx context.Context, target *sxlib.Client
 	if err != nil {
 		return "", err
 	}
-	if err := installCopiedSkillForAgent(ctx, target, copiedSkill, botName); err != nil {
+	if err := installCopiedSkillForAgent(ctx, target, copiedSkill, botName, backend == BackendSkillsNew); err != nil {
 		return "", err
 	}
 	return copiedSkill, nil
 }
 
-func installCopiedSkillForAgent(ctx context.Context, target *sxlib.Client, skill, botName string) error {
+func installCopiedSkillForAgent(ctx context.Context, target *sxlib.Client, skill, botName string, preferGeneratedSlug bool) error {
+	if preferGeneratedSlug {
+		generatedSlug := generatedSkillsNewSkillSlug(skill)
+		if generatedSlug != "" {
+			if err := target.InstallAssetToBot(ctx, generatedSlug, botName); err == nil {
+				return nil
+			}
+		}
+	}
 	if err := target.InstallAssetToBot(ctx, skill, botName); err != nil {
 		if generatedSlug, ok := generatedSkillsNewSkillSlugForAmbiguousSkill(skill, err); ok {
 			if retryErr := target.InstallAssetToBot(ctx, generatedSlug, botName); retryErr == nil {
 				return nil
+			} else {
+				return fmt.Errorf("install copied skill %q or generated Skills.new slug %q: %w", skill, generatedSlug, retryErr)
 			}
 		}
 		return err
@@ -543,19 +553,27 @@ func looksLikeMissingSXAsset(err error) bool {
 	return msg == "http 500" || strings.Contains(msg, "returned error 500")
 }
 
+func generatedSkillsNewSkillSlug(skill string) string {
+	skill = strings.TrimSpace(skill)
+	if skill == "" || strings.HasSuffix(skill, "_skill") {
+		return ""
+	}
+	return skill + "_skill"
+}
+
 func generatedSkillsNewSkillSlugForAmbiguousSkill(skill string, err error) (string, bool) {
 	if err == nil {
 		return "", false
 	}
-	skill = strings.TrimSpace(skill)
-	if skill == "" || strings.HasSuffix(skill, "_skill") {
+	generatedSlug := generatedSkillsNewSkillSlug(skill)
+	if generatedSlug == "" {
 		return "", false
 	}
 	msg := strings.ToLower(err.Error())
 	if !strings.Contains(msg, "ambiguous") || !strings.Contains(msg, "matches both a slug and a different display name") {
 		return "", false
 	}
-	return skill + "_skill", true
+	return generatedSlug, true
 }
 
 func (m *Manager) SyncAgents(ctx context.Context, orgID string, actor Actor) ([]agents.Profile, error) {
@@ -653,7 +671,7 @@ func (m *Manager) SaveAgent(ctx context.Context, orgID string, actor Actor, p ag
 		}
 		installedSkills := make([]string, 0, len(skills))
 		for _, skill := range skills {
-			installedSkill, err := m.installSkillForAgent(ctx, handle.Client, actor, skill, p.SXBot)
+			installedSkill, err := m.installSkillForAgent(ctx, handle.Client, actor, handle.Backend, skill, p.SXBot)
 			if err != nil {
 				return fmt.Errorf("install skill %q on bot %q: %w", skill, p.SXBot, err)
 			}
@@ -725,7 +743,7 @@ func (m *Manager) AttachSkill(ctx context.Context, orgID string, actor Actor, sl
 		if _, err := handle.Client.EnsureBot(ctx, sxlib.Bot{Name: p.SXBot, Description: botDescription(p)}); err != nil {
 			return err
 		}
-		installedSkill, err := m.installSkillForAgent(ctx, handle.Client, actor, skill, p.SXBot)
+		installedSkill, err := m.installSkillForAgent(ctx, handle.Client, actor, handle.Backend, skill, p.SXBot)
 		if err != nil {
 			return err
 		}

@@ -184,6 +184,7 @@ func TestInstallSkillForAgentCopiesPrefixedPublicSkillUnderCanonicalName(t *test
 		ctx,
 		targetClient,
 		Actor{Name: "Admin", Email: "admin@example.com"},
+		BackendGitHubGit,
 		"sx-hetchyhq-hetchy-sx-vault-architecture-blueprint-generator",
 		"test-agent",
 	)
@@ -202,6 +203,42 @@ func TestInstallSkillForAgentCopiesPrefixedPublicSkillUnderCanonicalName(t *test
 	}
 	if botHasDirectSkill(bots, "test-agent", "sx-hetchyhq-hetchy-sx-vault-architecture-blueprint-generator") {
 		t.Fatalf("target bot skills = %+v, should not install prefixed public skill name", bots)
+	}
+}
+
+func TestInstallCopiedSkillForAgentPrefersGeneratedSkillsNewSlug(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	client, err := sxlib.OpenPath(dir, sxlib.PathOptions{Actor: sxlib.Actor{Email: "admin@example.com"}})
+	if err != nil {
+		t.Fatalf("OpenPath: %v", err)
+	}
+	if _, err := client.EnsureBot(ctx, sxlib.Bot{Name: "test-agent", Description: "Test agent"}); err != nil {
+		t.Fatalf("EnsureBot: %v", err)
+	}
+	for _, name := range []string{"architecture-blueprint-generator", "architecture-blueprint-generator_skill"} {
+		if err := client.PutSkillZip(ctx, sxlib.SkillZipSpec{
+			Name:        name,
+			Version:     "1",
+			Description: "Creates architecture blueprints.",
+			ZipData:     testSkillZip(t, name),
+		}); err != nil {
+			t.Fatalf("PutSkillZip %q: %v", name, err)
+		}
+	}
+
+	if err := installCopiedSkillForAgent(ctx, client, "architecture-blueprint-generator", "test-agent", true); err != nil {
+		t.Fatalf("installCopiedSkillForAgent: %v", err)
+	}
+	bots, err := client.ListBots(ctx)
+	if err != nil {
+		t.Fatalf("ListBots: %v", err)
+	}
+	if !botHasDirectSkill(bots, "test-agent", "architecture-blueprint-generator_skill") {
+		t.Fatalf("target bot skills = %+v, want generated slug skill installed", bots)
+	}
+	if botHasDirectSkill(bots, "test-agent", "architecture-blueprint-generator") {
+		t.Fatalf("target bot skills = %+v, should not install canonical name when generated slug is preferred", bots)
 	}
 }
 
