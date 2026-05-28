@@ -38,7 +38,7 @@ func TestBotDescriptionFallsBackToStableIdentifier(t *testing.T) {
 
 func TestProfilesFromRemoteAgentsUsesBotsAndMatchingAgentAssets(t *testing.T) {
 	got := profilesFromRemoteAgents(BackendSkillsNew, []sxlib.BotSummary{
-		{Name: "Frontend", Slug: "front", Description: "Frontend specialist", Teams: []string{"Web"}},
+		{Name: "Frontend", Slug: "front", Description: "Frontend specialist", Teams: []string{"Web"}, InstalledSkills: []string{" webapp-testing ", "fix-pr", "fix-pr", ""}},
 		{Name: "Reviewer", Slug: "reviewer"},
 		{Name: "Frontend", Slug: "front", Description: "duplicate"},
 	}, []sxlib.AssetSummary{
@@ -57,6 +57,9 @@ func TestProfilesFromRemoteAgentsUsesBotsAndMatchingAgentAssets(t *testing.T) {
 	}
 	if len(got[0].SXTeams) != 1 || got[0].SXTeams[0] != "Web" {
 		t.Fatalf("front teams = %+v", got[0].SXTeams)
+	}
+	if strings.Join(got[0].SXSkills, ",") != "fix-pr,webapp-testing" {
+		t.Fatalf("front sx skills = %+v", got[0].SXSkills)
 	}
 	if got[1].Slug != "reviewer" || got[1].PersonaAsset != "" {
 		t.Fatalf("reviewer profile = %+v", got[1])

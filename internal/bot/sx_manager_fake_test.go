@@ -46,11 +46,6 @@ type fakeSXManager struct {
 
 	configuredRepo string
 	configureErr   error
-
-	createdInstallationID int64
-	createdRepoName       string
-	createView            sxsync.GitVaultView
-	createErr             error
 }
 
 func (f *fakeSXManager) CheckCache() (sxsync.CacheStatus, error) {
@@ -110,13 +105,4 @@ func (f *fakeSXManager) DeleteGitVault(context.Context, string) error {
 func (f *fakeSXManager) ConfigureExistingGitVault(_ context.Context, _ string, repo string) (sxsync.GitVaultView, error) {
 	f.configuredRepo = repo
 	return sxsync.GitVaultView{Configured: true, RepositorySlug: repo}, f.configureErr
-}
-
-func (f *fakeSXManager) CreateGitVaultRepo(_ context.Context, _ string, installationID int64, repoName string) (sxsync.GitVaultView, error) {
-	f.createdInstallationID = installationID
-	f.createdRepoName = repoName
-	if f.createView.RepositorySlug == "" {
-		f.createView = sxsync.GitVaultView{Configured: true, RepositorySlug: "acme/" + repoName}
-	}
-	return f.createView, f.createErr
 }

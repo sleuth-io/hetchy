@@ -3,8 +3,10 @@ package bot
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -20,6 +22,8 @@ var (
 	errBuiltInAgentLocked  = errors.New("built-in agents cannot be edited")
 	errImportedAgentLocked = errors.New("imported agents cannot be edited from Hetchy yet")
 )
+
+const uploadedSkillInitialVersion = "1"
 
 func (b *Bot) agentSettingsActionHandler(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.FromContext(r.Context())
@@ -62,7 +66,12 @@ func (b *Bot) agentSettingsActionHandler(w http.ResponseWriter, r *http.Request)
 		b.updateAgentFromSettings(w, r, p.OrgID, sxActor(p), slug, store)
 	case "skills":
 		skill := strings.TrimSpace(r.FormValue("skill"))
-		if _, err := editableAgentSkillsProfile(r.Context(), store, p.OrgID, slug); err != nil {
+		profile, err := editableAgentSkillsProfile(r.Context(), store, p.OrgID, slug)
+		if err != nil {
+			handleAgentEditError(w, r, err)
+			return
+		}
+		if err := b.requireActiveAgentBackend(r.Context(), p.OrgID, profile); err != nil {
 			handleAgentEditError(w, r, err)
 			return
 		}
@@ -77,7 +86,12 @@ func (b *Bot) agentSettingsActionHandler(w http.ResponseWriter, r *http.Request)
 		}
 		http.Redirect(w, r, "/settings/org?tab=agents&saved=agent_skill_saved", http.StatusFound)
 	case "skills/upload":
-		if _, err := editableAgentSkillsProfile(r.Context(), store, p.OrgID, slug); err != nil {
+		profile, err := editableAgentSkillsProfile(r.Context(), store, p.OrgID, slug)
+		if err != nil {
+			handleAgentEditError(w, r, err)
+			return
+		}
+		if err := b.requireActiveAgentBackend(r.Context(), p.OrgID, profile); err != nil {
 			handleAgentEditError(w, r, err)
 			return
 		}
@@ -85,9 +99,14 @@ func (b *Bot) agentSettingsActionHandler(w http.ResponseWriter, r *http.Request)
 			http.Error(w, "sx vault is not configured", http.StatusBadRequest)
 			return
 		}
-		file, _, err := r.FormFile("skill_zip")
+		file, header, err := r.FormFile("skill_zip")
 		if err != nil {
 			http.Error(w, "skill zip is required", http.StatusBadRequest)
+			return
+		}
+		name := skillNameFromUploadFilename(header.Filename)
+		if name == "" {
+			http.Error(w, "skill zip filename must include a skill name", http.StatusBadRequest)
 			return
 		}
 		data, err := sxsync.ReadUploadedSkillZip(file, 8<<20)
@@ -95,16 +114,10 @@ func (b *Bot) agentSettingsActionHandler(w http.ResponseWriter, r *http.Request)
 			http.Error(w, "read skill zip: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-		name := strings.TrimSpace(r.FormValue("skill_name"))
-		version := strings.TrimSpace(r.FormValue("skill_version"))
-		if version == "" {
-			version = "1.0.0"
-		}
 		if _, err := b.sx.UploadSkillZip(r.Context(), p.OrgID, sxActor(p), slug, sxlib.SkillZipSpec{
-			Name:        name,
-			Version:     version,
-			Description: strings.TrimSpace(r.FormValue("skill_description")),
-			ZipData:     data,
+			Name:    name,
+			Version: uploadedSkillInitialVersion,
+			ZipData: data,
 		}); err != nil {
 			b.log.Error("upload agent skill", "error", err, "org", p.OrgID, "slug", slug, "skill", name)
 			http.Error(w, "upload skill: "+err.Error(), http.StatusBadRequest)
@@ -112,26 +125,31 @@ func (b *Bot) agentSettingsActionHandler(w http.ResponseWriter, r *http.Request)
 		}
 		http.Redirect(w, r, "/settings/org?tab=agents&saved=agent_skill_uploaded", http.StatusFound)
 	case "delete":
-		if _, err := editableAgentDeleteProfile(r.Context(), store, p.OrgID, slug); err != nil {
+		profile, err := editableAgentDeleteProfile(r.Context(), store, p.OrgID, slug)
+		if err != nil {
 			handleAgentEditError(w, r, err)
 			return
 		}
-		var err error
+		if err := b.requireActiveAgentBackend(r.Context(), p.OrgID, profile); err != nil {
+			handleAgentEditError(w, r, err)
+			return
+		}
+		var deleteErr error
 		if b.sx != nil {
-			err = b.sx.DeleteAgent(r.Context(), p.OrgID, sxActor(p), slug)
-			if errors.Is(err, sxsync.ErrNotConfigured) {
-				err = store.Delete(r.Context(), p.OrgID, slug)
+			deleteErr = b.sx.DeleteAgent(r.Context(), p.OrgID, sxActor(p), slug)
+			if errors.Is(deleteErr, sxsync.ErrNotConfigured) {
+				deleteErr = store.Delete(r.Context(), p.OrgID, slug)
 			}
 		} else {
-			err = store.Delete(r.Context(), p.OrgID, slug)
+			deleteErr = store.Delete(r.Context(), p.OrgID, slug)
 		}
-		if err != nil {
-			if errors.Is(err, agents.ErrNotFound) {
+		if deleteErr != nil {
+			if errors.Is(deleteErr, agents.ErrNotFound) {
 				http.NotFound(w, r)
 				return
 			}
-			b.log.Error("delete agent", "error", err, "org", p.OrgID, "slug", slug)
-			http.Error(w, "delete agent: "+err.Error(), http.StatusInternalServerError)
+			b.log.Error("delete agent", "error", deleteErr, "org", p.OrgID, "slug", slug)
+			http.Error(w, "delete agent: "+deleteErr.Error(), http.StatusInternalServerError)
 			return
 		}
 		http.Redirect(w, r, "/settings/org?tab=agents&saved=agent_deleted", http.StatusFound)
@@ -140,9 +158,25 @@ func (b *Bot) agentSettingsActionHandler(w http.ResponseWriter, r *http.Request)
 	}
 }
 
+func skillNameFromUploadFilename(filename string) string {
+	filename = strings.TrimSpace(filename)
+	if filename == "" {
+		return ""
+	}
+	base := filepath.Base(strings.ReplaceAll(filename, "\\", "/"))
+	if ext := filepath.Ext(base); strings.EqualFold(ext, ".zip") {
+		base = strings.TrimSuffix(base, ext)
+	}
+	return agents.NormalizeSlug(base)
+}
+
 func (b *Bot) updateAgentFromSettings(w http.ResponseWriter, r *http.Request, orgID string, actor sxsync.Actor, slug string, store *agents.Store) {
 	current, err := editableAgentProfile(r.Context(), store, orgID, slug)
 	if err != nil {
+		handleAgentEditError(w, r, err)
+		return
+	}
+	if err := b.requireActiveAgentBackend(r.Context(), orgID, current); err != nil {
 		handleAgentEditError(w, r, err)
 		return
 	}
@@ -229,25 +263,54 @@ func (b *Bot) createAgentFromSettings(w http.ResponseWriter, r *http.Request, or
 }
 
 func (b *Bot) sxIntegrationEnabled(ctx context.Context, orgID string) (bool, error) {
+	backend, err := b.activeSXBackend(ctx, orgID)
+	return backend != "", err
+}
+
+func (b *Bot) activeSXBackend(ctx context.Context, orgID string) (string, error) {
 	if b == nil || b.sx == nil {
-		return false, nil
+		return "", nil
 	}
-	if gv, err := b.sx.GitVault(ctx, orgID); err != nil {
-		return false, err
-	} else if gv.Configured {
-		return true, nil
-	}
-	if b.orgs == nil {
-		return false, nil
-	}
-	current, err := b.orgs.Get(ctx, orgID)
-	if err != nil {
-		if errors.Is(err, orgcfg.ErrNotFound) {
-			return false, nil
+	if b.orgs != nil {
+		current, err := b.orgs.Get(ctx, orgID)
+		if err != nil {
+			if !errors.Is(err, orgcfg.ErrNotFound) {
+				return "", err
+			}
+		} else if strings.TrimSpace(current.SXKey) != "" {
+			return sxsync.BackendSkillsNew, nil
 		}
-		return false, err
 	}
-	return strings.TrimSpace(current.SXKey) != "", nil
+	gv, err := b.sx.GitVault(ctx, orgID)
+	if err != nil {
+		return "", err
+	}
+	if gv.Configured {
+		return sxsync.BackendGitHubGit, nil
+	}
+	return "", nil
+}
+
+func agentAvailableForActiveSXBackend(p agents.Profile, activeBackend string) bool {
+	if p.BuiltIn {
+		return true
+	}
+	backend := strings.TrimSpace(p.VaultBackend)
+	if backend == "" {
+		return true
+	}
+	return activeBackend != "" && backend == activeBackend
+}
+
+func (b *Bot) requireActiveAgentBackend(ctx context.Context, orgID string, p agents.Profile) error {
+	activeBackend, err := b.activeSXBackend(ctx, orgID)
+	if err != nil {
+		return err
+	}
+	if agentAvailableForActiveSXBackend(p, activeBackend) {
+		return nil
+	}
+	return fmt.Errorf("%w: inactive sx backend", agents.ErrNotFound)
 }
 
 func editableAgentProfile(ctx context.Context, store *agents.Store, orgID, slug string) (agents.Profile, error) {

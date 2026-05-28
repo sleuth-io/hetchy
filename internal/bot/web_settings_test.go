@@ -15,6 +15,7 @@ import (
 	"github.com/hetchyhq/hetchy/internal/bootstrap"
 	"github.com/hetchyhq/hetchy/internal/db/sqlc"
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
+	"github.com/hetchyhq/hetchy/internal/sxsync"
 )
 
 func TestGithubInstallationManageURL(t *testing.T) {
@@ -196,6 +197,32 @@ func TestSettingsHandlerGetAndPostWithFakes(t *testing.T) {
 	}
 	if saved.DefaultGitHubOwner != "" || saved.DefaultGitHubRepo != "" {
 		t.Fatalf("default repo should be cleared, got %s/%s", saved.DefaultGitHubOwner, saved.DefaultGitHubRepo)
+	}
+}
+
+func TestSettingsHandlerSkillsNewSaveDisconnectsGitVault(t *testing.T) {
+	store := &fakeOrgStore{getConfig: orgcfg.Config{OrgID: "org_test"}}
+	sx := &fakeSXManager{gitVault: sxsync.GitVaultView{Configured: true, RepositorySlug: "acme/vault"}}
+	b := newBypassOrgBot(t, "admin")
+	b.orgs = store
+	b.sx = sx
+	b.slack = newSlackManager(discardLogger(), store, nil)
+	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.settingsHandler)))
+
+	rec := httptest.NewRecorder()
+	req := settingsFormRequest(http.MethodPost, "/settings/org?tab=integrations", "sx_key=sx-new")
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	if !sx.deletedGitVault {
+		t.Fatal("saving a Skills.new token should disconnect the Git Vault")
+	}
+	if len(store.upserts) != 1 {
+		t.Fatalf("org upserts = %d, want 1", len(store.upserts))
+	}
+	if store.upserts[0].SXKey != "sx-new" {
+		t.Fatalf("saved SXKey = %q, want sx-new", store.upserts[0].SXKey)
 	}
 }
 

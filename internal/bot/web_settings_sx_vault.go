@@ -1,12 +1,13 @@
 package bot
 
 import (
+	"context"
+	"errors"
 	"net/http"
-	"net/url"
-	"strconv"
 	"strings"
 
 	"github.com/hetchyhq/hetchy/internal/auth"
+	"github.com/hetchyhq/hetchy/internal/orgcfg"
 )
 
 func (b *Bot) sxVaultSettingsHandler(w http.ResponseWriter, r *http.Request) {
@@ -52,28 +53,40 @@ func (b *Bot) sxVaultSettingsHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "configure sx git vault: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-	case "create":
-		installationID, err := strconv.ParseInt(strings.TrimSpace(r.FormValue("installation_id")), 10, 64)
-		if err != nil || installationID == 0 {
-			http.Error(w, "github installation is required", http.StatusBadRequest)
+		if err := b.clearSkillsNewSXKey(r.Context(), p.OrgID); err != nil {
+			b.log.Error("clear skills.new token after sx git vault configure", "org", p.OrgID, "error", err)
+			http.Error(w, "clear skills.new token: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		repoName := strings.TrimSpace(r.FormValue("new_repo_name"))
-		if repoName == "" {
-			http.Error(w, "repository name is required", http.StatusBadRequest)
-			return
-		}
-		gv, err := b.sx.CreateGitVaultRepo(r.Context(), p.OrgID, installationID, repoName)
-		if err != nil {
-			b.log.Error("create sx git vault repo", "org", p.OrgID, "installation_id", installationID, "repo", repoName, "error", err)
-			http.Error(w, "create sx git vault: "+err.Error(), http.StatusBadRequest)
-			return
-		}
-		http.Redirect(w, r, "/settings/org?tab=integrations&saved=sx_git_vault_created&sx_git_vault_repo="+url.QueryEscape(gv.RepositorySlug), http.StatusFound)
-		return
 	default:
 		http.Error(w, "unknown sx vault mode", http.StatusBadRequest)
 		return
 	}
 	http.Redirect(w, r, "/settings/org?tab=integrations&saved=sx_git_vault_saved", http.StatusFound)
+}
+
+func (b *Bot) clearSkillsNewSXKey(ctx context.Context, orgID string) error {
+	if b == nil || b.orgs == nil {
+		return nil
+	}
+	current, err := b.orgs.Get(ctx, orgID)
+	if err != nil {
+		if errors.Is(err, orgcfg.ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+	if strings.TrimSpace(current.SXKey) == "" {
+		return nil
+	}
+	current.SXKey = ""
+	_, err = b.orgs.Upsert(ctx, current)
+	return err
+}
+
+func (b *Bot) disconnectGitVaultForSkillsNewSave(ctx context.Context, orgID string, submitted bool, sxKey string) error {
+	if !submitted || strings.TrimSpace(sxKey) == "" || b == nil || b.sx == nil {
+		return nil
+	}
+	return b.sx.DeleteGitVault(ctx, orgID)
 }

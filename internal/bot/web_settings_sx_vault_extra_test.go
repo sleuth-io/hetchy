@@ -3,11 +3,12 @@ package bot
 import (
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
+
+	"github.com/hetchyhq/hetchy/internal/orgcfg"
 )
 
-func TestSXVaultSettingsHandlerExistingCreateAndDelete(t *testing.T) {
+func TestSXVaultSettingsHandlerExistingAndDelete(t *testing.T) {
 	sx := &fakeSXManager{}
 	b := newBypassOrgBot(t, "admin")
 	b.sx = sx
@@ -27,19 +28,6 @@ func TestSXVaultSettingsHandlerExistingCreateAndDelete(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	req = settingsFormRequest(http.MethodPost, "/settings/org/sx-vault", "mode=create&installation_id=42&new_repo_name=team-vault")
-	handler.ServeHTTP(rec, req)
-	if rec.Code != http.StatusFound {
-		t.Fatalf("create status = %d body=%q", rec.Code, rec.Body.String())
-	}
-	if sx.createdInstallationID != 42 || sx.createdRepoName != "team-vault" {
-		t.Fatalf("created installation/repo = %d/%q", sx.createdInstallationID, sx.createdRepoName)
-	}
-	if got := rec.Header().Get("Location"); !strings.Contains(got, "saved=sx_git_vault_created") || !strings.Contains(got, "sx_git_vault_repo=acme%2Fteam-vault") {
-		t.Fatalf("create redirect = %q", got)
-	}
-
-	rec = httptest.NewRecorder()
 	req = settingsFormRequest(http.MethodPost, "/settings/org/sx-vault/delete", "")
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusFound {
@@ -47,6 +35,31 @@ func TestSXVaultSettingsHandlerExistingCreateAndDelete(t *testing.T) {
 	}
 	if !sx.deletedGitVault {
 		t.Fatal("DeleteGitVault was not called")
+	}
+}
+
+func TestSXVaultSettingsHandlerClearsSkillsNewToken(t *testing.T) {
+	sx := &fakeSXManager{}
+	orgs := &fakeOrgStore{getConfig: orgcfg.Config{OrgID: "org_test", SXKey: "sx-old"}}
+	b := newBypassOrgBot(t, "admin")
+	b.sx = sx
+	b.orgs = orgs
+	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.sxVaultSettingsHandler)))
+
+	rec := httptest.NewRecorder()
+	req := settingsFormRequest(http.MethodPost, "/settings/org/sx-vault", "mode=existing&git_vault_repo=acme/vault")
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	if sx.configuredRepo != "acme/vault" {
+		t.Fatalf("configured repo = %q", sx.configuredRepo)
+	}
+	if len(orgs.upserts) != 1 {
+		t.Fatalf("org upserts = %d, want 1", len(orgs.upserts))
+	}
+	if orgs.upserts[0].SXKey != "" {
+		t.Fatalf("SXKey after git vault save = %q, want cleared", orgs.upserts[0].SXKey)
 	}
 }
 
@@ -61,8 +74,7 @@ func TestSXVaultSettingsHandlerValidation(t *testing.T) {
 		want int
 	}{
 		{name: "missing existing repo", form: "mode=existing", want: http.StatusBadRequest},
-		{name: "missing installation", form: "mode=create&new_repo_name=team-vault", want: http.StatusBadRequest},
-		{name: "missing repo name", form: "mode=create&installation_id=42", want: http.StatusBadRequest},
+		{name: "create mode disabled", form: "mode=create&installation_id=42&new_repo_name=team-vault", want: http.StatusBadRequest},
 		{name: "unknown mode", form: "mode=bogus", want: http.StatusBadRequest},
 	}
 	for _, tc := range cases {

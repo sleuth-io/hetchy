@@ -374,6 +374,18 @@ func (b *Bot) selectAgentForConversation(ctx context.Context, orgID, slug string
 		emit.Error("Unknown agent", fmt.Sprintf("I couldn't find an enabled Hetchy agent matching `%s`.", strings.TrimSpace(slug)))
 		return agents.Profile{}, false
 	}
+	activeBackend, backendErr := b.activeSXBackend(ctx, orgID)
+	if backendErr != nil {
+		if b.log != nil {
+			b.log.Warn("load sx integration while selecting agent", "error", backendErr, "org", orgID, "slug", slug)
+		}
+		emit.Error("Unknown agent", fmt.Sprintf("I couldn't find an enabled Hetchy agent matching `%s`.", strings.TrimSpace(slug)))
+		return agents.Profile{}, false
+	}
+	if !agentAvailableForActiveSXBackend(agent, activeBackend) {
+		emit.Error("Unknown agent", fmt.Sprintf("I couldn't find an enabled Hetchy agent matching `%s`.", strings.TrimSpace(slug)))
+		return agents.Profile{}, false
+	}
 	return agent, true
 }
 

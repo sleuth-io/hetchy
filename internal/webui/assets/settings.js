@@ -51,6 +51,7 @@
     const optionEls = Array.from(picker.querySelectorAll('[data-agent-skill-option]'));
     const skills = optionEls.map(el => ({
       name: el.dataset.skillName || '',
+      displayName: el.dataset.skillDisplayName || el.dataset.skillName || '',
       normalizedName: normalizeSkillName(el.dataset.skillName || ''),
       description: el.dataset.skillDescription || '',
       source: el.dataset.skillSource || '',
@@ -59,6 +60,7 @@
     const byName = new Map(skills.map(skill => [skill.name, skill]));
     const byNormalizedName = new Map(skills.map(skill => [skill.normalizedName, skill]));
     const selectedSkills = new Set();
+    let suppressSearchFocusOpen = false;
 
     function normalizeSkillName(value) {
       return (value || '').trim().toLowerCase();
@@ -91,16 +93,26 @@
       if (!menu || !search || skills.length === 0) return;
       menu.hidden = !open;
       search.setAttribute('aria-expanded', open ? 'true' : 'false');
+      if (toggle) toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
       if (open) {
         renderOptions();
         picker.scrollIntoView({ block: 'nearest' });
       }
     }
 
+    function focusSearchWithoutOpening() {
+      if (!search) return;
+      suppressSearchFocusOpen = true;
+      search.focus();
+      window.setTimeout(() => {
+        suppressSearchFocusOpen = false;
+      }, 0);
+    }
+
     function renderOptions() {
       const query = (search ? search.value : '').trim().toLowerCase();
       for (const skill of skills) {
-        const haystack = (skill.name + ' ' + skill.source + ' ' + skill.description).toLowerCase();
+        const haystack = (skill.name + ' ' + skill.displayName + ' ' + skill.source + ' ' + skill.description).toLowerCase();
         const hidden = selectedSkills.has(skill.name) || !!(query && !haystack.includes(query));
         skill.el.hidden = hidden;
         skill.el.style.display = hidden ? 'none' : '';
@@ -118,18 +130,20 @@
         input.value = name;
         hiddenEl.appendChild(input);
 
+        const skill = byName.get(name);
+        const label = skill ? skill.displayName : name;
         const chip = document.createElement('span');
         chip.className = 'agent-skill-chip';
-        chip.textContent = name;
+        chip.textContent = label;
         const remove = document.createElement('button');
         remove.type = 'button';
-        remove.setAttribute('aria-label', 'Remove ' + name);
+        remove.setAttribute('aria-label', 'Remove ' + label);
         remove.textContent = 'x';
         remove.addEventListener('click', () => {
           selectedSkills.delete(name);
           renderSelected();
           renderOptions();
-          if (search) search.focus();
+          focusSearchWithoutOpening();
         });
         chip.appendChild(remove);
         selectedEl.appendChild(chip);
@@ -143,7 +157,7 @@
       renderSelected();
       renderOptions();
       setOpen(false);
-      if (search) search.focus();
+      focusSearchWithoutOpening();
     }
 
     function applyTemplate() {
@@ -163,7 +177,13 @@
       el.addEventListener('click', () => selectSkill(el.dataset.skillName || ''));
     });
     if (search) {
-      search.addEventListener('focus', () => setOpen(true));
+      search.addEventListener('focus', () => {
+        if (suppressSearchFocusOpen) {
+          suppressSearchFocusOpen = false;
+          return;
+        }
+        setOpen(true);
+      });
       search.addEventListener('input', () => setOpen(true));
       search.addEventListener('keydown', e => {
         if (e.key === 'Escape') {
@@ -179,8 +199,9 @@
     }
     if (toggle) {
       toggle.addEventListener('click', () => {
-        setOpen(menu ? menu.hidden : true);
-        if (search) search.focus();
+        const opening = menu ? menu.hidden : true;
+        setOpen(opening);
+        if (opening && search) search.focus();
       });
     }
     document.addEventListener('click', e => {
@@ -445,6 +466,42 @@
           setSettingsPanelDisabled(panel, !active);
         });
       });
+    });
+  });
+
+  document.querySelectorAll('[data-skill-upload-drop]').forEach(zone => {
+    const input = zone.querySelector('[data-skill-upload-input]');
+    const nameEl = zone.querySelector('[data-skill-upload-name]');
+    if (!input) return;
+
+    function setFileName() {
+      const file = input.files && input.files[0];
+      if (nameEl) nameEl.textContent = file ? file.name : '';
+    }
+
+    input.addEventListener('change', setFileName);
+    ['dragenter', 'dragover'].forEach(type => {
+      zone.addEventListener(type, e => {
+        e.preventDefault();
+        if (!input.disabled) zone.classList.add('is-dragging');
+      });
+    });
+    ['dragleave', 'dragend'].forEach(type => {
+      zone.addEventListener(type, e => {
+        e.preventDefault();
+        zone.classList.remove('is-dragging');
+      });
+    });
+    zone.addEventListener('drop', e => {
+      e.preventDefault();
+      zone.classList.remove('is-dragging');
+      if (input.disabled || !e.dataTransfer || !e.dataTransfer.files.length) return;
+      try {
+        input.files = e.dataTransfer.files;
+      } catch (_) {
+        return;
+      }
+      input.dispatchEvent(new Event('change', { bubbles: true }));
     });
   });
 

@@ -689,6 +689,7 @@ func profilesFromRemoteAgents(backend string, bots []sxlib.BotSummary, agentAsse
 			PersonaAsset:  personaAsset,
 			PersonaPrompt: remoteAgentPrompt(displayName, description),
 			SXTeams:       append([]string(nil), bot.Teams...),
+			SXSkills:      cleanSXSkillNames(bot.InstalledSkills),
 			VaultBackend:  backend,
 			SyncStatus:    "imported",
 			Enabled:       true,
@@ -697,6 +698,24 @@ func profilesFromRemoteAgents(backend string, bots []sxlib.BotSummary, agentAsse
 	slices.SortFunc(out, func(a, b agents.Profile) int {
 		return strings.Compare(a.Slug, b.Slug)
 	})
+	return out
+}
+
+func cleanSXSkillNames(in []string) []string {
+	seen := make(map[string]struct{}, len(in))
+	out := make([]string, 0, len(in))
+	for _, skill := range in {
+		name := strings.TrimSpace(skill)
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		out = append(out, name)
+	}
+	slices.Sort(out)
 	return out
 }
 

@@ -506,10 +506,10 @@
 {{define "integration_sx"}}
   {{$gitVault := .SXGitVault}}
   {{$enabled := or (ne .SXKeyPreview "") $gitVault.Configured}}
-  {{$selectedGitVaultRepo := ""}}
-  {{with .SXGitVaultSelectedRepo}}{{$selectedGitVaultRepo = .}}{{end}}
-  {{$activeTab := "skills-new"}}
-  {{if or (ne $selectedGitVaultRepo "") (and (eq .SXKeyPreview "") $gitVault.Configured)}}{{$activeTab = "git-vault"}}{{end}}
+	  {{$selectedGitVaultRepo := ""}}
+	  {{with .SXGitVaultSelectedRepo}}{{$selectedGitVaultRepo = .}}{{end}}
+	  {{$activeTab := "skills-new"}}
+	  {{if or .SXGitVaultActive (ne $selectedGitVaultRepo "") (and (eq .SXKeyPreview "") $gitVault.Configured)}}{{$activeTab = "git-vault"}}{{end}}
   <article class="integration{{if $enabled}} enabled{{end}}" data-integration="sx">
     <div class="integration-head">
       <div class="integration-icon">
@@ -570,12 +570,12 @@
               </form>
             </div>
             {{end}}
-          {{else if .IsAdmin}}
-            <div class="sx-vault-options">
-              {{if .GitHubRepos}}
-              <form class="sx-vault-form" method="POST" action="/settings/org/sx-vault">
-                <input type="hidden" name="mode" value="existing">
-                <label for="sx-git-vault-repo">Repository</label>
+	          {{else if .IsAdmin}}
+	            <div class="sx-vault-options">
+	              {{if .GitHubRepos}}
+	              <form class="sx-vault-form" method="POST" action="/settings/org/sx-vault">
+	                <input type="hidden" name="mode" value="existing">
+	                <label for="sx-git-vault-repo">Repository</label>
 	                <div class="sx-vault-repo-row">
 	                  <select id="sx-git-vault-repo" name="git_vault_repo" required>
 	                    {{range .GitHubRepos}}
@@ -590,35 +590,39 @@
 	                  <button class="primary" type="submit">Save Git Vault</button>
 	                </div>
 	              </form>
-              {{else if .GitHubInstallations}}
-                <p class="hint">No repositories are cached yet.</p>
-                <button class="secondary" type="button" data-open-modal="modal-sx-git-vault-create">Create new Git Vault</button>
-              {{end}}
-              {{if .GitHubInstallations}}
-              <dialog class="app-dialog sx-vault-create-dialog" id="modal-sx-git-vault-create" aria-labelledby="sx-git-vault-create-title">
-                <form method="POST" action="/settings/org/sx-vault">
-                  <input type="hidden" name="mode" value="create">
-                  <div class="dlg-body">
-                    <h3 id="sx-git-vault-create-title">Create Git Vault repository</h3>
-                    <p>Create a private GitHub repository, then select it here so you can save it as this organization's SX Git Vault.</p>
-                    <label for="sx-git-vault-installation">GitHub account</label>
-                    <select id="sx-git-vault-installation" name="installation_id" required>
-                      {{range .GitHubInstallations}}
-                        <option value="{{.InstallationID}}">{{.AccountLogin}}</option>
-                      {{end}}
-                    </select>
-                    <label for="sx-git-vault-new-repo-name">Repository name</label>
-                    <input id="sx-git-vault-new-repo-name" type="text" name="new_repo_name" value="sx-vault" maxlength="100" required>
-                  </div>
-                  <div class="dlg-actions">
-                    <button type="button" class="dlg-cancel" data-close-modal>Cancel</button>
-                    <button type="submit" class="dlg-primary">Create</button>
-                  </div>
-                </form>
-              </dialog>
-              {{else if not .GitHubRepos}}
-                <p class="hint">Connect GitHub first to create or select a Git Vault repository.</p>
-              {{end}}
+	              {{else if .GitHubInstallations}}
+	                <p class="hint">No repositories are cached yet.</p>
+	                <button class="secondary" type="button" data-open-modal="modal-sx-git-vault-create">Create new Git Vault</button>
+	              {{end}}
+	              {{if .GitHubInstallations}}
+	              <dialog class="app-dialog sx-vault-create-dialog" id="modal-sx-git-vault-create" aria-labelledby="sx-git-vault-create-title">
+	                <div class="dlg-body">
+	                  <h3 id="sx-git-vault-create-title">Create Git Vault repository</h3>
+	                  <p>Create an empty private repository in GitHub, make sure the Hetchy GitHub App has access to it, then refresh repositories here.</p>
+	                  <ol class="sx-vault-instructions">
+	                    <li>Create a new empty private repository on GitHub, for example <code>sx-vault</code>.</li>
+	                    <li>Do not initialize it with a README, license, or <code>.gitignore</code>.</li>
+	                    <li>If the repository is not already available to Hetchy, update the Hetchy GitHub App installation to include it.</li>
+	                    <li>Refresh repositories, then select the new repository from the Git Vault list and save.</li>
+	                  </ol>
+	                  <div class="sx-vault-refresh-list">
+	                    {{range .GitHubInstallations}}
+	                    <form method="POST" action="/integrations/github/sync" class="sx-vault-refresh-row">
+	                      <input type="hidden" name="installation_id" value="{{.InstallationID}}">
+	                      <input type="hidden" name="return_to" value="sx_git_vault">
+	                      <span>{{.AccountLogin}}</span>
+	                      <button type="submit" class="secondary">Refresh repositories</button>
+	                    </form>
+	                    {{end}}
+	                  </div>
+	                </div>
+	                <div class="dlg-actions">
+	                  <button type="button" class="dlg-cancel" data-close-modal>Close</button>
+	                </div>
+	              </dialog>
+	              {{else if not .GitHubRepos}}
+	                <p class="hint">Connect GitHub first to create or select a Git Vault repository.</p>
+	              {{end}}
               {{if and .GitHubInstallations .GitHubRepos}}
                 <div class="sx-vault-create-note">Create a repository if the vault you want is not in the list.</div>
               {{end}}
@@ -644,19 +648,8 @@
     </div>
     {{if $a.BuiltIn}}
       <span class="agent-badge">Built-in</span>
-    {{else}}
-      <div class="agent-card-actions">
-        {{if $a.Imported}}<span class="agent-badge">Imported</span>{{end}}
-        {{if $root.IsAdmin}}
-        <form method="POST" action="/settings/org/agents/{{$a.Slug}}/delete" class="agent-delete-form"
-              data-confirm-title="Delete {{$a.DisplayName}}?"
-              data-confirm-message="This removes the Hetchy agent and deletes the SX bot for Skills.new-backed agents. Existing conversations that used this agent will keep their history, but new turns cannot select it."
-              data-confirm-action="Delete"
-              data-confirm-progress="Deleting...">
-          <button type="submit" class="danger-btn">Delete</button>
-        </form>
-        {{end}}
-      </div>
+    {{else if $a.Imported}}
+      <span class="agent-badge">Imported</span>
     {{end}}
   </div>
 
@@ -679,48 +672,73 @@
   {{end}}
 
   <div class="agent-skills">
-    <div class="agent-skills-label">{{if $a.Skills}}Installed skills{{else if $a.SXTeams}}SX team access{{else if $a.Imported}}SX runtime skills{{else}}Installed skills{{end}}</div>
+    <div class="agent-skills-label">Installed skills</div>
     {{if $a.Skills}}
       <div class="skill-chip-list">
         {{range $a.Skills}}<span class="skill-chip">{{.}}</span>{{end}}
       </div>
-    {{else if $a.SXTeams}}
+    {{else}}
+      <p class="hint">No directly installed skills.</p>
+    {{end}}
+    {{if $a.SXSkills}}
+      <div class="agent-skills-label agent-skills-label-secondary">Inherited skills from orgs and teams</div>
       <div class="skill-chip-list">
-        {{range $a.SXTeams}}<span class="skill-chip">team: {{.}}</span>{{end}}
+        {{range $a.SXSkills}}<span class="skill-chip">{{.}}</span>{{end}}
       </div>
     {{else if $a.Imported}}
       <p class="hint">Resolved by SX at runtime.</p>
-    {{else}}
-      <p class="hint">No skills listed.</p>
     {{end}}
   </div>
 
   {{if and $root.IsAdmin (not $a.BuiltIn)}}
-  <form method="POST" action="/settings/org/agents/{{$a.Slug}}/skills" class="agent-edit-form agent-command-form">
-    <div>
-      <label for="agent-skill-{{$a.Slug}}">Install existing skill</label>
-      {{if $root.AgentSkillOptions}}
-      <select id="agent-skill-{{$a.Slug}}" name="skill" required>
-        <option value="">Choose skill</option>
-        {{range $root.AgentSkillOptions}}
-          <option value="{{.Name}}"{{if .Description}} title="{{.Description}}"{{end}}>{{.Name}}</option>
-        {{end}}
-      </select>
-      {{else}}
-      <input id="agent-skill-{{$a.Slug}}" type="text" name="skill" placeholder="skill-name" required>
-      {{end}}
+  <div class="agent-skill-tabs" data-settings-tabs>
+    <div class="agent-skill-section-title">Add skill</div>
+    <div class="cred-tabs agent-skill-tablist" role="tablist">
+      <button type="button" class="cred-tab active" data-settings-tab="existing-{{$a.Slug}}" role="tab" aria-selected="true">Existing skill</button>
+      <button type="button" class="cred-tab" data-settings-tab="upload-{{$a.Slug}}" role="tab" aria-selected="false">Upload</button>
     </div>
-    <button class="primary" type="submit">Install</button>
-  </form>
-  <form method="POST" action="/settings/org/agents/{{$a.Slug}}/skills/upload" class="agent-edit-form agent-command-form" enctype="multipart/form-data">
-    <div>
-      <label for="agent-skill-name-{{$a.Slug}}">Upload skill ZIP</label>
-      <input id="agent-skill-name-{{$a.Slug}}" type="text" name="skill_name" placeholder="skill-name" required>
-      <input type="text" name="skill_version" value="1.0.0" required>
-      <input type="file" name="skill_zip" accept=".zip,application/zip" required>
+
+    <div class="cred-panel active" data-settings-panel="existing-{{$a.Slug}}">
+      <form method="POST" action="/settings/org/agents/{{$a.Slug}}/skills" class="agent-edit-form agent-command-form">
+        <div>
+          <label for="agent-skill-{{$a.Slug}}">Install existing skill</label>
+          {{if $root.AgentSkillOptions}}
+          <select id="agent-skill-{{$a.Slug}}" name="skill" required>
+            <option value="">Choose skill</option>
+            {{range $root.AgentSkillOptions}}
+              <option value="{{.Name}}"{{if .Description}} title="{{.Description}}"{{end}}>{{if .DisplayName}}{{.DisplayName}}{{else}}{{.Name}}{{end}}</option>
+            {{end}}
+          </select>
+          {{else}}
+          <input id="agent-skill-{{$a.Slug}}" type="text" name="skill" placeholder="skill-name" required>
+          {{end}}
+        </div>
+        <div class="agent-form-actions">
+          <button class="secondary" type="submit">Install</button>
+        </div>
+      </form>
     </div>
-    <button class="primary" type="submit">Upload</button>
-  </form>
+
+    <div class="cred-panel" data-settings-panel="upload-{{$a.Slug}}">
+      <form method="POST" action="/settings/org/agents/{{$a.Slug}}/skills/upload" class="agent-edit-form agent-upload-form" enctype="multipart/form-data">
+        <label for="agent-skill-zip-{{$a.Slug}}">Upload skill ZIP</label>
+        <label class="agent-upload-dropzone" for="agent-skill-zip-{{$a.Slug}}" data-skill-upload-drop>
+          <input id="agent-skill-zip-{{$a.Slug}}" class="agent-upload-input" type="file" name="skill_zip" accept=".zip,application/zip" required data-skill-upload-input>
+          <svg class="agent-upload-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M17.5 18.5H8a5 5 0 1 1 1.1-9.88A6.5 6.5 0 0 1 21 12.5a3 3 0 0 1-3.5 6Z"/>
+            <path d="M12 15V8.5"/>
+            <path d="m9.5 11 2.5-2.5 2.5 2.5"/>
+          </svg>
+          <strong>Drop a .zip file here or click to browse</strong>
+          <span>The zip should contain skill files (SKILL.md, etc.)</span>
+          <em data-skill-upload-name></em>
+        </label>
+        <div class="agent-form-actions">
+          <button class="secondary" type="submit">Upload</button>
+        </div>
+      </form>
+    </div>
+  </div>
   {{end}}
 
   <div class="agent-meta">
@@ -730,6 +748,15 @@
     {{if $a.SyncError}}<span>sync error: <code>{{$a.SyncError}}</code></span>{{end}}
     {{if $a.SXTeams}}<span>teams: {{range $i, $t := $a.SXTeams}}{{if gt $i 0}}, {{end}}{{$t}}{{end}}</span>{{end}}
     {{if $a.SlackAliases}}<span>aliases: {{range $i, $alias := $a.SlackAliases}}{{if gt $i 0}}, {{end}}@{{$alias}}{{end}}</span>{{end}}
+    {{if and $root.IsAdmin (not $a.BuiltIn)}}
+    <form method="POST" action="/settings/org/agents/{{$a.Slug}}/delete" class="agent-delete-form agent-meta-delete"
+          data-confirm-title="Delete {{$a.DisplayName}}?"
+          data-confirm-message="This removes the Hetchy agent and deletes the SX bot for Skills.new-backed agents. Existing conversations that used this agent will keep their history, but new turns cannot select it."
+          data-confirm-action="Delete"
+          data-confirm-progress="Deleting...">
+      <button type="submit" class="link-btn danger-link agent-delete-link">Delete</button>
+    </form>
+    {{end}}
   </div>
 </article>
 {{end}}
@@ -809,8 +836,8 @@
         {{if .AgentSkillOptions}}
           <div class="agent-skill-menu" data-agent-skill-menu role="listbox" hidden>
             {{range .AgentSkillOptions}}
-            <button type="button" class="agent-skill-menu-option" data-agent-skill-option data-skill-name="{{.Name}}" data-skill-description="{{.Description}}" data-skill-source="{{.Source}}" role="option">
-              <strong>{{.Name}}</strong>
+            <button type="button" class="agent-skill-menu-option" data-agent-skill-option data-skill-name="{{.Name}}" data-skill-display-name="{{if .DisplayName}}{{.DisplayName}}{{else}}{{.Name}}{{end}}" data-skill-description="{{.Description}}" data-skill-source="{{.Source}}" role="option">
+              <strong>{{if .DisplayName}}{{.DisplayName}}{{else}}{{.Name}}{{end}}</strong>
               {{if .Source}}<small>{{.Source}}</small>{{else if .LatestVersion}}<small>{{.LatestVersion}}</small>{{end}}
             </button>
             {{end}}

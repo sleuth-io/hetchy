@@ -75,7 +75,6 @@ type sxManager interface {
 	UploadSkillZip(context.Context, string, sxsync.Actor, string, sxlib.SkillZipSpec) (agents.Profile, error)
 	DeleteGitVault(context.Context, string) error
 	ConfigureExistingGitVault(context.Context, string, string) (sxsync.GitVaultView, error)
-	CreateGitVaultRepo(context.Context, string, int64, string) (sxsync.GitVaultView, error)
 }
 
 type orgStore interface {

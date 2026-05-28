@@ -240,3 +240,14 @@ func applyTokenChange(r *http.Request, field, existing string) string {
 	}
 	return val
 }
+
+func tokenFieldSubmitted(r *http.Request, field string) bool {
+	if r == nil {
+		return false
+	}
+	if _, ok := r.PostForm[field]; ok {
+		return true
+	}
+	_, ok := r.PostForm[field+"_action"]
+	return ok
+}

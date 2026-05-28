@@ -100,6 +100,7 @@ type agentSummary struct {
 	SlackAliases []string `json:"slack_aliases,omitempty"`
 	Skills       []string `json:"skills,omitempty"`
 	SXTeams      []string `json:"sx_teams,omitempty"`
+	SXSkills     []string `json:"sx_skills,omitempty"`
 	VaultBackend string   `json:"vault_backend,omitempty"`
 	SyncStatus   string   `json:"sync_status,omitempty"`
 	SyncError    string   `json:"sync_error,omitempty"`
@@ -180,6 +181,7 @@ func (b *Bot) agentsHandler(w http.ResponseWriter, r *http.Request) {
 			SlackAliases: profile.SlackAliases,
 			Skills:       profile.Skills,
 			SXTeams:      profile.SXTeams,
+			SXSkills:     profile.SXSkills,
 			VaultBackend: profile.VaultBackend,
 			SyncStatus:   profile.SyncStatus,
 			SyncError:    profile.SyncError,
@@ -193,6 +195,12 @@ func (b *Bot) agentsHandler(w http.ResponseWriter, r *http.Request) {
 			b.log.Warn("sync sx agents", "error", err, "org", p.OrgID)
 		}
 	}
+	activeBackend, err := b.activeSXBackend(r.Context(), p.OrgID)
+	if err != nil {
+		b.log.Error("load sx integration", "error", err, "org", p.OrgID)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
 	profiles, err := store.List(r.Context(), p.OrgID)
 	if err != nil {
 		b.log.Error("list agents", "error", err, "org", p.OrgID)
@@ -204,6 +212,9 @@ func (b *Bot) agentsHandler(w http.ResponseWriter, r *http.Request) {
 		if !a.Enabled {
 			continue
 		}
+		if !agentAvailableForActiveSXBackend(a, activeBackend) {
+			continue
+		}
 		out = append(out, agentSummary{
 			Slug:         a.Slug,
 			DisplayName:  a.DisplayName,
@@ -213,6 +224,7 @@ func (b *Bot) agentsHandler(w http.ResponseWriter, r *http.Request) {
 			SlackAliases: a.SlackAliases,
 			Skills:       a.Skills,
 			SXTeams:      a.SXTeams,
+			SXSkills:     a.SXSkills,
 			VaultBackend: a.VaultBackend,
 			SyncStatus:   a.SyncStatus,
 			SyncError:    a.SyncError,
@@ -538,6 +550,16 @@ func (b *Bot) resolveAgent(ctx context.Context, orgID, slug string) (resolvedSlu
 	resolvedSlug = slug
 	if slug != "" {
 		if agent, err := store.GetBySlug(ctx, orgID, slug); err == nil {
+			activeBackend, backendErr := b.activeSXBackend(ctx, orgID)
+			if backendErr != nil {
+				if b.log != nil {
+					b.log.Warn("load sx integration while resolving agent", "error", backendErr, "org", orgID, "slug", slug)
+				}
+				return
+			}
+			if !agentAvailableForActiveSXBackend(agent, activeBackend) {
+				return
+			}
 			resolvedSlug = agent.Slug
 			name = agent.DisplayName
 		}

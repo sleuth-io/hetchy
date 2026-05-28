@@ -117,6 +117,22 @@ func TestAgentSettingsHelpers(t *testing.T) {
 		t.Fatalf("mergeCSV = %+v", got)
 	}
 
+	nameTests := []struct {
+		filename string
+		want     string
+	}{
+		{filename: "fix-pr.zip", want: "fix-pr"},
+		{filename: "My Skill.zip", want: "my-skill"},
+		{filename: `C:\Users\me\Review Bot.ZIP`, want: "review-bot"},
+		{filename: "../Odd_Name.zip", want: "odd-name"},
+		{filename: "", want: ""},
+	}
+	for _, tc := range nameTests {
+		if got := skillNameFromUploadFilename(tc.filename); got != tc.want {
+			t.Fatalf("skillNameFromUploadFilename(%q) = %q, want %q", tc.filename, got, tc.want)
+		}
+	}
+
 	tests := []struct {
 		path       string
 		wantSlug   string
@@ -162,10 +178,38 @@ func TestSXIntegrationEnabled(t *testing.T) {
 	if ok, err := b.sxIntegrationEnabled(context.Background(), "org_1"); !ok || err != nil {
 		t.Fatalf("skills.new enabled=%v err=%v", ok, err)
 	}
+	if got, err := b.activeSXBackend(context.Background(), "org_1"); got != sxsync.BackendSkillsNew || err != nil {
+		t.Fatalf("active skills.new backend=%q err=%v", got, err)
+	}
 
+	b.sx = &fakeSXManager{gitVault: sxsync.GitVaultView{Configured: true}}
+	b.orgs = &fakeOrgStore{getConfig: orgcfg.Config{OrgID: "org_1", SXKey: "management-token"}}
+	if got, err := b.activeSXBackend(context.Background(), "org_1"); got != sxsync.BackendSkillsNew || err != nil {
+		t.Fatalf("active backend with both configured=%q err=%v", got, err)
+	}
+
+	b.sx = &fakeSXManager{}
 	b.orgs = &fakeOrgStore{getErr: orgcfg.ErrNotFound}
 	if ok, err := b.sxIntegrationEnabled(context.Background(), "org_1"); ok || err != nil {
 		t.Fatalf("missing org enabled=%v err=%v", ok, err)
+	}
+}
+
+func TestAgentAvailableForActiveSXBackend(t *testing.T) {
+	if !agentAvailableForActiveSXBackend(agents.Profile{BuiltIn: true, VaultBackend: sxsync.BackendSkillsNew}, "") {
+		t.Fatal("built-in agents should be available without an active SX backend")
+	}
+	if !agentAvailableForActiveSXBackend(agents.Profile{Slug: "local"}, "") {
+		t.Fatal("local agents without a vault backend should remain available")
+	}
+	if !agentAvailableForActiveSXBackend(agents.Profile{Slug: "git", VaultBackend: sxsync.BackendGitHubGit}, sxsync.BackendGitHubGit) {
+		t.Fatal("matching SX backend should be available")
+	}
+	if agentAvailableForActiveSXBackend(agents.Profile{Slug: "skills", VaultBackend: sxsync.BackendSkillsNew}, sxsync.BackendGitHubGit) {
+		t.Fatal("inactive SX backend should not be available")
+	}
+	if agentAvailableForActiveSXBackend(agents.Profile{Slug: "skills", VaultBackend: sxsync.BackendSkillsNew}, "") {
+		t.Fatal("SX-backed agent should not be available when SX is disabled")
 	}
 }
 

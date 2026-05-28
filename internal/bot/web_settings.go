@@ -67,6 +67,7 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 			"IsDev":                        b.cfg.Env == "dev",
 			"SXKeyPreview":                 previewSecret(current.SXKey),
 			"SXGitVault":                   sxsync.GitVaultView{},
+			"SXGitVaultActive":             strings.TrimSpace(r.URL.Query().Get("sx_git_vault")) == "1",
 			"SXGitVaultSelectedRepo":       strings.TrimSpace(r.URL.Query().Get("sx_git_vault_repo")),
 			"GitHubAppEnabled":             b.app != nil,
 			"DefaultRepoSlug":              defaultRepoSlug,
@@ -103,18 +104,7 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 	// integrations save below would null out default_repo and the API-key
 	// previews, so handle the rename inline and bounce.
 	if tab == "general" {
-		name := strings.TrimSpace(r.FormValue("org_name"))
-		if name == "" {
-			http.Error(w, "organization name is required", http.StatusBadRequest)
-			return
-		}
-		if err := b.auth.UpdateOrganizationName(r.Context(), p.OrgID, name); err != nil {
-			b.log.Error("update org name failed", "error", err, "org", p.OrgID)
-			http.Error(w, "rename: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		b.log.Info("org renamed", "org", p.OrgID, "actor", p.UserID)
-		http.Redirect(w, r, "/settings/org?tab=general&saved=1", http.StatusFound)
+		b.updateOrganizationNameFromSettings(w, r, p)
 		return
 	}
 
@@ -133,7 +123,12 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 	current.SlackSocketToken = applyTokenChange(r, "slack_socket_token", current.SlackSocketToken)
 	// SlackTeamID is set by the OAuth callback, not the form — only the
 	// HTTP transport needs it, and OAuth is its source of truth.
+	sxKeySubmitted := tokenFieldSubmitted(r, "sx_key")
 	current.SXKey = applyTokenChange(r, "sx_key", current.SXKey)
+	if err := b.disconnectGitVaultForSkillsNewSave(r.Context(), p.OrgID, sxKeySubmitted, current.SXKey); err != nil {
+		http.Error(w, "disconnect sx git vault: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 	newCredKind, newCredValue := applyAnthropicCredsChange(r, &current)
 	// Anthropic is required at chat-launch time (HandleRequest enforces
 	// it), but no longer required at settings-save time: each
@@ -176,6 +171,21 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 	// Slack creds may have changed; rebuild that org's connection.
 	b.slack.RestartOrg(r.Context(), p.OrgID)
 	http.Redirect(w, r, "/settings/org?tab="+tab+"&saved=1", http.StatusFound)
+}
+
+func (b *Bot) updateOrganizationNameFromSettings(w http.ResponseWriter, r *http.Request, p auth.Principal) {
+	name := strings.TrimSpace(r.FormValue("org_name"))
+	if name == "" {
+		http.Error(w, "organization name is required", http.StatusBadRequest)
+		return
+	}
+	if err := b.auth.UpdateOrganizationName(r.Context(), p.OrgID, name); err != nil {
+		b.log.Error("update org name failed", "error", err, "org", p.OrgID)
+		http.Error(w, "rename: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	b.log.Info("org renamed", "org", p.OrgID, "actor", p.UserID)
+	http.Redirect(w, r, "/settings/org?tab=general&saved=1", http.StatusFound)
 }
 
 // integrationInstallation is the per-installation row passed to the
@@ -287,6 +297,7 @@ type agentSettingsView struct {
 	SlackAliases  []string
 	Skills        []string
 	SXTeams       []string
+	SXSkills      []string
 	VaultBackend  string
 	SyncStatus    string
 	SyncError     string
@@ -305,6 +316,7 @@ type agentTemplateView struct {
 
 type agentSkillOptionView struct {
 	Name          string
+	DisplayName   string
 	Source        string
 	Description   string
 	LatestVersion string
@@ -315,10 +327,11 @@ func (b *Bot) populateAgentSettingsTabData(ctx context.Context, orgID string, da
 	if store == nil {
 		store = agents.NewStore(nil)
 	}
-	sxEnabled, err := b.sxIntegrationEnabled(ctx, orgID)
+	activeBackend, err := b.activeSXBackend(ctx, orgID)
 	if err != nil {
 		return fmt.Errorf("load sx integration: %w", err)
 	}
+	sxEnabled := activeBackend != ""
 	data["SXEnabled"] = sxEnabled
 	data["AgentSkillOptions"] = []agentSkillOptionView{}
 	skillSource := b.sxSkillSourceLabel(ctx, orgID)
@@ -342,8 +355,13 @@ func (b *Bot) populateAgentSettingsTabData(ctx context.Context, orgID string, da
 		} else {
 			skills := make([]agentSkillOptionView, 0, len(assets))
 			for _, asset := range assets {
+				name := strings.TrimSpace(asset.Name)
+				if name == "" {
+					continue
+				}
 				skills = append(skills, agentSkillOptionView{
-					Name:          asset.Name,
+					Name:          name,
+					DisplayName:   displaySkillName(name),
 					Source:        skillSource,
 					Description:   asset.Description,
 					LatestVersion: asset.LatestVersion,
@@ -370,11 +388,19 @@ func (b *Bot) populateAgentSettingsTabData(ctx context.Context, orgID string, da
 		if !a.Enabled {
 			continue
 		}
+		if !agentAvailableForActiveSXBackend(a, activeBackend) {
+			continue
+		}
 		remote := remoteBySlug[a.Slug]
 		sxTeams := a.SXTeams
 		if len(remote.SXTeams) > 0 {
 			sxTeams = remote.SXTeams
 		}
+		sxSkills := a.SXSkills
+		if len(remote.SXSkills) > 0 {
+			sxSkills = remote.SXSkills
+		}
+		directSkills := displaySkillNames(a.Skills)
 		imported := a.SyncStatus == "imported"
 		if !imported && remote.Slug != "" && a.VaultBackend != "" && strings.TrimSpace(a.PersonaPrompt) == strings.TrimSpace(remote.PersonaPrompt) {
 			imported = true
@@ -387,8 +413,9 @@ func (b *Bot) populateAgentSettingsTabData(ctx context.Context, orgID string, da
 			SXBot:         a.SXBot,
 			PersonaAsset:  a.PersonaAsset,
 			SlackAliases:  a.SlackAliases,
-			Skills:        a.Skills,
+			Skills:        directSkills,
 			SXTeams:       sxTeams,
+			SXSkills:      displaySkillNames(inheritedSkillNames(sxSkills, a.Skills)),
 			VaultBackend:  a.VaultBackend,
 			SyncStatus:    a.SyncStatus,
 			SyncError:     a.SyncError,
@@ -422,6 +449,52 @@ func (b *Bot) populateAgentSettingsTabData(ctx context.Context, orgID string, da
 	}
 	data["AgentTemplates"] = templateViews
 	return nil
+}
+
+func displaySkillNames(names []string) []string {
+	out := make([]string, 0, len(names))
+	seen := map[string]struct{}{}
+	for _, raw := range names {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		if _, ok := seen[raw]; ok {
+			continue
+		}
+		seen[raw] = struct{}{}
+		out = append(out, displaySkillName(raw))
+	}
+	return out
+}
+
+func inheritedSkillNames(names, direct []string) []string {
+	directSet := make(map[string]struct{}, len(direct))
+	for _, raw := range direct {
+		if key := skillDisplayKey(raw); key != "" {
+			directSet[key] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(names))
+	for _, raw := range names {
+		if _, ok := directSet[skillDisplayKey(raw)]; ok {
+			continue
+		}
+		out = append(out, raw)
+	}
+	return out
+}
+
+func skillDisplayKey(name string) string {
+	return strings.ToLower(displaySkillName(name))
+}
+
+func displaySkillName(name string) string {
+	name = strings.TrimSpace(name)
+	if trimmed := strings.TrimSuffix(name, "_skill"); trimmed != name && trimmed != "" {
+		return trimmed
+	}
+	return name
 }
 
 func (b *Bot) sxSkillSourceLabel(ctx context.Context, orgID string) string {
@@ -659,8 +732,6 @@ func savedMessage(s string) string {
 		return "Agent deleted."
 	case "sx_git_vault_saved":
 		return "SX Git Vault saved."
-	case "sx_git_vault_created":
-		return "Git Vault repository created. Save it to use it for SX."
 	case "sx_git_vault_deleted":
 		return "SX Git Vault disconnected."
 	case "repo_flavor_saved":
