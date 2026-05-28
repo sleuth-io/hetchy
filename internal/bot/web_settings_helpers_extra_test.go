@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	sxlib "github.com/sleuth-io/sx/pkg/sxvault"
+
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
 	"github.com/hetchyhq/hetchy/internal/sxsync"
 )
@@ -121,5 +123,34 @@ func TestSXSkillSourceLabel(t *testing.T) {
 	b.orgs = nil
 	if got := b.sxSkillSourceLabel(context.Background(), "org_test"); got != "Skills.new" {
 		t.Fatalf("skills.new fallback source = %q", got)
+	}
+}
+
+func TestPopulateAgentSettingsTabDataLoadsSXSkillOptions(t *testing.T) {
+	b := newBypassOrgBot(t, "admin")
+	b.sx = &fakeSXManager{
+		gitVault: sxsync.GitVaultView{Configured: true, RepositorySlug: "hetchy/sx-vault-test"},
+		skills: []sxlib.AssetSummary{
+			{Name: "fix-pr_skill", Description: "Fix PRs", LatestVersion: "7"},
+			{Name: "  "},
+		},
+	}
+
+	data := map[string]any{}
+	if err := b.populateAgentSettingsTabData(context.Background(), "org_test", data); err != nil {
+		t.Fatalf("populateAgentSettingsTabData: %v", err)
+	}
+	if enabled, ok := data["SXEnabled"].(bool); !ok || !enabled {
+		t.Fatalf("SXEnabled = %#v, want true", data["SXEnabled"])
+	}
+	options, ok := data["AgentSkillOptions"].([]agentSkillOptionView)
+	if !ok {
+		t.Fatalf("AgentSkillOptions type = %T", data["AgentSkillOptions"])
+	}
+	if len(options) != 1 {
+		t.Fatalf("AgentSkillOptions = %+v, want one non-empty skill", options)
+	}
+	if options[0].Name != "fix-pr_skill" || options[0].DisplayName != "fix-pr" || options[0].Source != "hetchy/sx-vault-test" || options[0].LatestVersion != "7" {
+		t.Fatalf("skill option = %+v", options[0])
 	}
 }

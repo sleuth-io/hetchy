@@ -50,23 +50,25 @@ func (m *Manager) withGitVaultGuard(ctx context.Context, orgID string, fn func(c
 	return fn(ctx)
 }
 
-func (m *Manager) withGitVaultGuardIfConfigured(ctx context.Context, orgID string, fn func(context.Context) error) error {
+func (m *Manager) withGitVaultGuardIfConfigured(ctx context.Context, orgID string, fn func(context.Context, *GitVaultView) error) error {
 	if m == nil {
 		return ErrNotConfigured
 	}
 	if sxKey, err := m.skillsNewKey(ctx, orgID); err != nil {
 		return err
 	} else if sxKey != "" {
-		return fn(ctx)
+		return fn(ctx, nil)
 	}
 	gv, err := m.GitVault(ctx, orgID)
 	if err != nil {
 		return err
 	}
 	if !gv.Configured {
-		return fn(ctx)
+		return fn(ctx, nil)
 	}
-	return m.withGitVaultGuard(ctx, orgID, fn)
+	return m.withGitVaultGuard(ctx, orgID, func(ctx context.Context) error {
+		return fn(ctx, &gv)
+	})
 }
 
 func (m *Manager) acquireGlobalGitSlot(ctx context.Context) error {
