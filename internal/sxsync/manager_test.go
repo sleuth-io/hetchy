@@ -1,7 +1,12 @@
 package sxsync
 
 import (
+	"archive/zip"
+	"bytes"
+	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -125,6 +130,64 @@ func TestLooksLikeMissingSXAssetIgnoresUnrelatedErrors(t *testing.T) {
 	}
 }
 
+func TestInstallSkillForAgentCopiesPrefixedPublicSkillUnderCanonicalName(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	publicDir := filepath.Join(root, "hetchyhq", "hetchy-sx-vault")
+	if err := os.MkdirAll(publicDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	publicClient, err := sxlib.OpenPath(publicDir, sxlib.PathOptions{Actor: sxlib.Actor{Email: "admin@example.com"}})
+	if err != nil {
+		t.Fatalf("OpenPath public: %v", err)
+	}
+	if err := publicClient.PutSkillZip(ctx, sxlib.SkillZipSpec{
+		Name:        "architecture-blueprint-generator",
+		Version:     "1",
+		Description: "Creates architecture blueprints.",
+		ZipData:     testSkillZip(t, "architecture-blueprint-generator"),
+	}); err != nil {
+		t.Fatalf("seed public skill: %v", err)
+	}
+
+	targetDir := filepath.Join(root, "target")
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	targetClient, err := sxlib.OpenPath(targetDir, sxlib.PathOptions{Actor: sxlib.Actor{Email: "admin@example.com"}})
+	if err != nil {
+		t.Fatalf("OpenPath target: %v", err)
+	}
+	if _, err := targetClient.EnsureBot(ctx, sxlib.Bot{Name: "test-agent", Description: "Test agent"}); err != nil {
+		t.Fatalf("EnsureBot: %v", err)
+	}
+
+	m := &Manager{publicVaultURL: "file://" + publicDir}
+	installed, err := m.installSkillForAgent(
+		ctx,
+		targetClient,
+		Actor{Name: "Admin", Email: "admin@example.com"},
+		"sx-hetchyhq-hetchy-sx-vault-architecture-blueprint-generator",
+		"test-agent",
+	)
+	if err != nil {
+		t.Fatalf("installSkillForAgent: %v", err)
+	}
+	if installed != "architecture-blueprint-generator" {
+		t.Fatalf("installed skill = %q, want canonical public skill name", installed)
+	}
+	bots, err := targetClient.ListBots(ctx)
+	if err != nil {
+		t.Fatalf("ListBots: %v", err)
+	}
+	if !botHasDirectSkill(bots, "test-agent", "architecture-blueprint-generator") {
+		t.Fatalf("target bot skills = %+v, want canonical skill installed", bots)
+	}
+	if botHasDirectSkill(bots, "test-agent", "sx-hetchyhq-hetchy-sx-vault-architecture-blueprint-generator") {
+		t.Fatalf("target bot skills = %+v, should not install prefixed public skill name", bots)
+	}
+}
+
 func TestBotTeamStateMatchesBotNameOnly(t *testing.T) {
 	bots := []sxlib.BotSummary{
 		{Name: "Hetchy Bot", Slug: "hetchy-bot", Teams: []string{"Dev"}},
@@ -143,6 +206,38 @@ func TestBotTeamStateMatchesBotNameOnly(t *testing.T) {
 	if !found || hasTeam {
 		t.Fatalf("botTeamState missing team = (%v, %v), want (true, false)", found, hasTeam)
 	}
+}
+
+func testSkillZip(t *testing.T, name string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	w, err := zw.Create("SKILL.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = w.Write([]byte("---\nname: " + name + "\ndescription: Test skill.\n---\n\nUse this skill."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func botHasDirectSkill(bots []sxlib.BotSummary, botName, skillName string) bool {
+	for _, bot := range bots {
+		if bot.Name != botName {
+			continue
+		}
+		for _, skill := range bot.InstalledSkills {
+			if skill.Name == skillName && skill.IsDirectInstall {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func TestShouldImportRemoteAgentRowRevivesDisabledSkillsNewAgents(t *testing.T) {

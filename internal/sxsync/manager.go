@@ -397,9 +397,16 @@ func (m *Manager) openPublicVault(ctx context.Context, actor Actor) (*sxlib.Clie
 	if publicURL == "" {
 		return nil, false, nil
 	}
-	client, err := sxlib.OpenGit(publicURL, sxlib.GitOptions{
-		Actor: sxlib.Actor{Name: firstNonEmpty(actor.Name, "Hetchy"), Email: actor.Email},
-	})
+	sxActor := sxlib.Actor{Name: firstNonEmpty(actor.Name, "Hetchy"), Email: actor.Email}
+	var (
+		client *sxlib.Client
+		err    error
+	)
+	if strings.HasPrefix(publicURL, "file://") {
+		client, err = sxlib.OpenPath(publicURL, sxlib.PathOptions{Actor: sxActor})
+	} else {
+		client, err = sxlib.OpenGit(publicURL, sxlib.GitOptions{Actor: sxActor})
+	}
 	if err != nil {
 		return nil, false, fmt.Errorf("open public sx vault: %w", err)
 	}
@@ -457,25 +464,29 @@ func sourceLabelForBackend(backend string) string {
 	}
 }
 
-func (m *Manager) installSkillForAgent(ctx context.Context, target *sxlib.Client, actor Actor, skill, botName string) error {
+func (m *Manager) installSkillForAgent(ctx context.Context, target *sxlib.Client, actor Actor, skill, botName string) (string, error) {
 	if err := target.InstallAssetToBot(ctx, skill, botName); err == nil {
-		return nil
+		return skill, nil
 	} else if !looksLikeMissingSXAsset(err) {
-		return err
+		return "", err
 	}
-	if err := m.copySkillFromPublicVault(ctx, target, actor, skill); err != nil {
-		return err
+	copiedSkill, err := m.copySkillFromPublicVault(ctx, target, actor, skill)
+	if err != nil {
+		return "", err
 	}
-	return target.InstallAssetToBot(ctx, skill, botName)
+	if err := target.InstallAssetToBot(ctx, copiedSkill, botName); err != nil {
+		return "", err
+	}
+	return copiedSkill, nil
 }
 
-func (m *Manager) copySkillFromPublicVault(ctx context.Context, target *sxlib.Client, actor Actor, skill string) error {
+func (m *Manager) copySkillFromPublicVault(ctx context.Context, target *sxlib.Client, actor Actor, skill string) (string, error) {
 	source, ok, err := m.openPublicVault(ctx, actor)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if !ok {
-		return fmt.Errorf("skill %q was not found in the active SX vault and the public SX vault is disabled", skill)
+		return "", fmt.Errorf("skill %q was not found in the active SX vault and the public SX vault is disabled", skill)
 	}
 	var lastErr error
 	for _, candidate := range publicSkillCandidates(m.publicVaultURL, skill) {
@@ -485,22 +496,26 @@ func (m *Manager) copySkillFromPublicVault(ctx context.Context, target *sxlib.Cl
 			continue
 		}
 		if zip.Type != "skill" {
-			return fmt.Errorf("public asset %q is type %q, not skill", candidate, zip.Type)
+			return "", fmt.Errorf("public asset %q is type %q, not skill", candidate, zip.Type)
+		}
+		targetName := strings.TrimSpace(zip.Name)
+		if targetName == "" {
+			targetName = strings.TrimSpace(candidate)
 		}
 		if err := target.PutSkillZip(ctx, sxlib.SkillZipSpec{
-			Name:        skill,
+			Name:        targetName,
 			Version:     "1",
 			Description: zip.Description,
 			ZipData:     zip.Data,
 		}); err != nil {
-			return fmt.Errorf("copy public skill %q into active SX vault: %w", candidate, err)
+			return "", fmt.Errorf("copy public skill %q into active SX vault: %w", candidate, err)
 		}
-		return nil
+		return targetName, nil
 	}
 	if lastErr != nil {
-		return fmt.Errorf("skill %q was not found in the active SX vault or public SX vault: %w", skill, lastErr)
+		return "", fmt.Errorf("skill %q was not found in the active SX vault or public SX vault: %w", skill, lastErr)
 	}
-	return fmt.Errorf("skill %q was not found in the active SX vault or public SX vault", skill)
+	return "", fmt.Errorf("skill %q was not found in the active SX vault or public SX vault", skill)
 }
 
 func looksLikeMissingSXAsset(err error) bool {
@@ -609,12 +624,15 @@ func (m *Manager) SaveAgent(ctx context.Context, orgID string, actor Actor, p ag
 		}); err != nil {
 			return err
 		}
+		installedSkills := make([]string, 0, len(skills))
 		for _, skill := range skills {
-			if err := m.installSkillForAgent(ctx, handle.Client, actor, skill, p.SXBot); err != nil {
+			installedSkill, err := m.installSkillForAgent(ctx, handle.Client, actor, skill, p.SXBot)
+			if err != nil {
 				return fmt.Errorf("install skill %q on bot %q: %w", skill, p.SXBot, err)
 			}
+			installedSkills = append(installedSkills, installedSkill)
 		}
-		p.Skills = skills
+		p.Skills = cleanAgentSkills(installedSkills)
 		saved, err := m.agents.Upsert(ctx, orgID, p)
 		if err != nil {
 			return err
@@ -680,12 +698,13 @@ func (m *Manager) AttachSkill(ctx context.Context, orgID string, actor Actor, sl
 		if _, err := handle.Client.EnsureBot(ctx, sxlib.Bot{Name: p.SXBot, Description: botDescription(p)}); err != nil {
 			return err
 		}
-		if err := m.installSkillForAgent(ctx, handle.Client, actor, skill, p.SXBot); err != nil {
+		installedSkill, err := m.installSkillForAgent(ctx, handle.Client, actor, skill, p.SXBot)
+		if err != nil {
 			return err
 		}
 		p.Skills = cleanAgentSkills(p.Skills)
-		if !slices.Contains(p.Skills, skill) {
-			p.Skills = append(p.Skills, skill)
+		if !slices.Contains(p.Skills, installedSkill) {
+			p.Skills = append(p.Skills, installedSkill)
 		}
 		saved, err := m.agents.Upsert(ctx, orgID, p)
 		if err != nil {

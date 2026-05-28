@@ -299,6 +299,9 @@ func publicVaultSkillPrefix(publicVaultURL string) string {
 	if err == nil && u.Host != "" {
 		return publicVaultSkillPrefixFromPath(u.Path)
 	}
+	if err == nil && u.Scheme == "file" {
+		return publicVaultSkillPrefixFromPath(u.Path)
+	}
 	if strings.HasPrefix(publicVaultURL, "git@") && strings.Contains(publicVaultURL, ":") {
 		parts := strings.SplitN(publicVaultURL, ":", 2)
 		return publicVaultSkillPrefixFromPath(parts[1])
