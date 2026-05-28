@@ -186,6 +186,46 @@ func TestPopulateAgentSettingsTabDataMarksInstalledSkillAndTeamOptions(t *testin
 	}
 }
 
+func TestPopulateAgentSettingsTabDataTrustsEmptyRemoteSkillList(t *testing.T) {
+	b := newBypassOrgBot(t, "admin")
+	b.orgs = &fakeOrgStore{getConfig: orgcfg.Config{OrgID: "org_test", SXKey: "management-token"}}
+	b.sx = &fakeSXManager{
+		skills: []sxsync.SkillSummary{
+			{Name: "golang-patterns", Source: "Skills.new"},
+		},
+		remoteAgents: []agents.Profile{
+			{
+				Slug:     "bob",
+				Skills:   []string{},
+				SXSkills: []string{},
+				SXTeams:  []string{},
+			},
+		},
+	}
+
+	data := map[string]any{}
+	if err := b.populateAgentSettingsTabData(context.Background(), "org_test", data); err != nil {
+		t.Fatalf("populateAgentSettingsTabData: %v", err)
+	}
+	agentsView, ok := data["Agents"].([]agentSettingsView)
+	if !ok {
+		t.Fatalf("Agents type = %T", data["Agents"])
+	}
+	var bob agentSettingsView
+	for _, view := range agentsView {
+		if view.Slug == "bob" {
+			bob = view
+			break
+		}
+	}
+	if bob.Slug == "" {
+		t.Fatalf("bob view not found in %+v", agentsView)
+	}
+	if len(bob.SkillChips) != 0 || len(bob.Skills) != 0 || len(bob.SXSkills) != 0 {
+		t.Fatalf("bob skills = chips:%+v direct:%+v inherited:%+v, want all empty", bob.SkillChips, bob.Skills, bob.SXSkills)
+	}
+}
+
 func TestPopulateSXAgentRemoteDataRecordsLoadErrors(t *testing.T) {
 	b := newBypassOrgBot(t, "admin")
 	b.sx = &fakeSXManager{

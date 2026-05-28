@@ -676,6 +676,9 @@ func (m *Manager) SyncAgents(ctx context.Context, orgID string, actor Actor) ([]
 				return err
 			}
 			if !importProfile {
+				if err := m.refreshExistingRemoteAgent(ctx, orgID, profile); err != nil {
+					return err
+				}
 				continue
 			}
 			saved, err := m.agents.Upsert(ctx, orgID, profile)
@@ -690,6 +693,36 @@ func (m *Manager) SyncAgents(ctx context.Context, orgID string, actor Actor) ([]
 		return nil
 	})
 	return remoteProfiles, err
+}
+
+func (m *Manager) refreshExistingRemoteAgent(ctx context.Context, orgID string, remote agents.Profile) error {
+	if m == nil || m.agents == nil {
+		return nil
+	}
+	existing, err := m.agents.GetBySlug(ctx, orgID, remote.Slug)
+	if err != nil {
+		if errors.Is(err, agents.ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+	refreshed := mergeRemoteAgentState(existing, remote)
+	_, err = m.agents.Upsert(ctx, orgID, refreshed)
+	return err
+}
+
+func mergeRemoteAgentState(existing, remote agents.Profile) agents.Profile {
+	existing.Skills = cleanAgentSkills(remote.Skills)
+	if strings.TrimSpace(remote.SXBot) != "" {
+		existing.SXBot = strings.TrimSpace(remote.SXBot)
+	}
+	if strings.TrimSpace(remote.PersonaAsset) != "" {
+		existing.PersonaAsset = strings.TrimSpace(remote.PersonaAsset)
+	}
+	if strings.TrimSpace(remote.VaultBackend) != "" {
+		existing.VaultBackend = strings.TrimSpace(remote.VaultBackend)
+	}
+	return existing
 }
 
 func (m *Manager) shouldImportRemoteAgent(ctx context.Context, orgID string, profile agents.Profile) (bool, error) {

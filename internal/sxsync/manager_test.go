@@ -277,6 +277,38 @@ func TestShouldImportRemoteAgentRowRevivesDisabledSkillsNewAgents(t *testing.T) 
 	}
 }
 
+func TestMergeRemoteAgentStateClearsDeletedRemoteSkills(t *testing.T) {
+	got := mergeRemoteAgentState(
+		agents.Profile{
+			Slug:         "reviewer",
+			DisplayName:  "Reviewer",
+			Description:  "Local description",
+			SXBot:        "Reviewer",
+			PersonaAsset: "reviewer",
+			Skills:       []string{"deleted-skill"},
+			BuiltIn:      true,
+			Enabled:      true,
+		},
+		agents.Profile{
+			Slug:          "reviewer",
+			SXBot:         "Reviewer",
+			PersonaAsset:  "reviewer",
+			Skills:        []string{},
+			VaultBackend:  BackendSkillsNew,
+			PersonaPrompt: "Remote prompt should not replace local prompt",
+		},
+	)
+	if len(got.Skills) != 0 {
+		t.Fatalf("skills = %+v, want remote empty list", got.Skills)
+	}
+	if got.DisplayName != "Reviewer" || got.Description != "Local description" || !got.BuiltIn || !got.Enabled {
+		t.Fatalf("local fields were not preserved: %+v", got)
+	}
+	if got.VaultBackend != BackendSkillsNew {
+		t.Fatalf("vault backend = %q, want %q", got.VaultBackend, BackendSkillsNew)
+	}
+}
+
 func TestAgentPromptMarkdownAddsAgentFrontmatter(t *testing.T) {
 	got := agentPromptMarkdown(agents.Profile{
 		Slug:          "reviewer",

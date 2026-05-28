@@ -101,17 +101,17 @@ func (b *Bot) populateAgentSettingsTabData(ctx context.Context, orgID string, da
 		if !agentAvailableForActiveSXBackend(a, activeBackend) {
 			continue
 		}
-		remote := remoteBySlug[a.Slug]
+		remote, hasRemote := remoteBySlug[a.Slug]
 		sxTeams := a.SXTeams
-		if len(remote.SXTeams) > 0 {
+		if hasRemote {
 			sxTeams = remote.SXTeams
 		}
 		directSkillNames := a.Skills
-		if len(remote.Skills) > 0 {
+		if hasRemote {
 			directSkillNames = remote.Skills
 		}
 		sxSkills := a.SXSkills
-		if len(remote.SXSkills) > 0 {
+		if hasRemote {
 			sxSkills = remote.SXSkills
 		}
 		directSkills := displaySkillNames(directSkillNames)
