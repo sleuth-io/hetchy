@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -464,7 +465,7 @@ func sourceLabelForBackend(backend string) string {
 	}
 }
 
-func (m *Manager) installSkillForAgent(ctx context.Context, target *sxlib.Client, actor Actor, backend, skill, botName string) (string, error) {
+func (m *Manager) installSkillForAgent(ctx context.Context, target *sxlib.Client, actor Actor, skill, botName string) (string, error) {
 	if err := target.InstallAssetToBot(ctx, skill, botName); err == nil {
 		return skill, nil
 	} else if !looksLikeMissingSXAsset(err) {
@@ -474,41 +475,24 @@ func (m *Manager) installSkillForAgent(ctx context.Context, target *sxlib.Client
 	if err != nil {
 		return "", err
 	}
-	if err := installCopiedSkillForAgent(ctx, target, copiedSkill, botName, backend == BackendSkillsNew); err != nil {
+	if err := target.InstallAssetToBot(ctx, copiedSkill.InstallName, botName); err != nil {
 		return "", err
 	}
-	return copiedSkill, nil
+	return copiedSkill.ProfileName, nil
 }
 
-func installCopiedSkillForAgent(ctx context.Context, target *sxlib.Client, skill, botName string, preferGeneratedSlug bool) error {
-	if preferGeneratedSlug {
-		generatedSlug := generatedSkillsNewSkillSlug(skill)
-		if generatedSlug != "" {
-			if err := target.InstallAssetToBot(ctx, generatedSlug, botName); err == nil {
-				return nil
-			}
-		}
-	}
-	if err := target.InstallAssetToBot(ctx, skill, botName); err != nil {
-		if generatedSlug, ok := generatedSkillsNewSkillSlugForAmbiguousSkill(skill, err); ok {
-			if retryErr := target.InstallAssetToBot(ctx, generatedSlug, botName); retryErr == nil {
-				return nil
-			} else {
-				return fmt.Errorf("install copied skill %q or generated Skills.new slug %q: %w", skill, generatedSlug, retryErr)
-			}
-		}
-		return err
-	}
-	return nil
+type copiedPublicSkill struct {
+	ProfileName string
+	InstallName string
 }
 
-func (m *Manager) copySkillFromPublicVault(ctx context.Context, target *sxlib.Client, actor Actor, skill string) (string, error) {
+func (m *Manager) copySkillFromPublicVault(ctx context.Context, target *sxlib.Client, actor Actor, skill string) (copiedPublicSkill, error) {
 	source, ok, err := m.openPublicVault(ctx, actor)
 	if err != nil {
-		return "", err
+		return copiedPublicSkill{}, err
 	}
 	if !ok {
-		return "", fmt.Errorf("skill %q was not found in the active SX vault and the public SX vault is disabled", skill)
+		return copiedPublicSkill{}, fmt.Errorf("skill %q was not found in the active SX vault and the public SX vault is disabled", skill)
 	}
 	var lastErr error
 	for _, candidate := range publicSkillCandidates(m.publicVaultURL, skill) {
@@ -518,26 +502,38 @@ func (m *Manager) copySkillFromPublicVault(ctx context.Context, target *sxlib.Cl
 			continue
 		}
 		if zip.Type != "skill" {
-			return "", fmt.Errorf("public asset %q is type %q, not skill", candidate, zip.Type)
+			return copiedPublicSkill{}, fmt.Errorf("public asset %q is type %q, not skill", candidate, zip.Type)
 		}
 		targetName := strings.TrimSpace(zip.Name)
 		if targetName == "" {
 			targetName = strings.TrimSpace(candidate)
 		}
-		if err := target.PutSkillZip(ctx, sxlib.SkillZipSpec{
+		uploadName, err := putSkillZipWithReturnedName(ctx, target, sxlib.SkillZipSpec{
 			Name:        targetName,
 			Version:     "1",
 			Description: zip.Description,
 			ZipData:     zip.Data,
-		}); err != nil {
-			return "", fmt.Errorf("copy public skill %q into active SX vault: %w", candidate, err)
+		})
+		if err != nil {
+			return copiedPublicSkill{}, fmt.Errorf("copy public skill %q into active SX vault: %w", candidate, err)
 		}
-		return targetName, nil
+		installName := strings.TrimSpace(uploadName)
+		if installName == "" || installName == targetName {
+			resolvedName, err := resolveCopiedSkillInstallName(ctx, target, targetName, zip.Description)
+			if err != nil {
+				return copiedPublicSkill{}, fmt.Errorf("resolve copied public skill %q in active SX vault: %w", targetName, err)
+			}
+			installName = resolvedName
+		}
+		if installName == "" {
+			installName = targetName
+		}
+		return copiedPublicSkill{ProfileName: targetName, InstallName: installName}, nil
 	}
 	if lastErr != nil {
-		return "", fmt.Errorf("skill %q was not found in the active SX vault or public SX vault: %w", skill, lastErr)
+		return copiedPublicSkill{}, fmt.Errorf("skill %q was not found in the active SX vault or public SX vault: %w", skill, lastErr)
 	}
-	return "", fmt.Errorf("skill %q was not found in the active SX vault or public SX vault", skill)
+	return copiedPublicSkill{}, fmt.Errorf("skill %q was not found in the active SX vault or public SX vault", skill)
 }
 
 func looksLikeMissingSXAsset(err error) bool {
@@ -553,27 +549,99 @@ func looksLikeMissingSXAsset(err error) bool {
 	return msg == "http 500" || strings.Contains(msg, "returned error 500")
 }
 
-func generatedSkillsNewSkillSlug(skill string) string {
-	skill = strings.TrimSpace(skill)
-	if skill == "" || strings.HasSuffix(skill, "_skill") {
-		return ""
+func putSkillZipWithReturnedName(ctx context.Context, target *sxlib.Client, spec sxlib.SkillZipSpec) (string, error) {
+	// SX >= 1.3.5 exposes the persisted upload name. Keep this reflective so
+	// the Hetchy branch still builds until that release is pinned.
+	method := reflect.ValueOf(target).MethodByName("PutSkillZipWithResult")
+	if !method.IsValid() {
+		if err := target.PutSkillZip(ctx, spec); err != nil {
+			return "", err
+		}
+		return "", nil
 	}
-	return skill + "_skill"
+	values := method.Call([]reflect.Value{reflect.ValueOf(ctx), reflect.ValueOf(spec)})
+	if len(values) != 2 {
+		return "", fmt.Errorf("unexpected PutSkillZipWithResult return count %d", len(values))
+	}
+	if !values[1].IsNil() {
+		err, ok := values[1].Interface().(error)
+		if !ok {
+			return "", fmt.Errorf("unexpected PutSkillZipWithResult error type %T", values[1].Interface())
+		}
+		return "", err
+	}
+	return skillZipResultName(values[0]), nil
 }
 
-func generatedSkillsNewSkillSlugForAmbiguousSkill(skill string, err error) (string, bool) {
-	if err == nil {
-		return "", false
+func skillZipResultName(result reflect.Value) string {
+	if result.Kind() == reflect.Pointer {
+		if result.IsNil() {
+			return ""
+		}
+		result = result.Elem()
 	}
-	generatedSlug := generatedSkillsNewSkillSlug(skill)
-	if generatedSlug == "" {
-		return "", false
+	if result.Kind() != reflect.Struct {
+		return ""
 	}
-	msg := strings.ToLower(err.Error())
-	if !strings.Contains(msg, "ambiguous") || !strings.Contains(msg, "matches both a slug and a different display name") {
-		return "", false
+	for _, fieldName := range []string{"Name", "InstallName"} {
+		field := result.FieldByName(fieldName)
+		if field.IsValid() && field.Kind() == reflect.String {
+			if value := strings.TrimSpace(field.String()); value != "" {
+				return value
+			}
+		}
 	}
-	return generatedSlug, true
+	return ""
+}
+
+func resolveCopiedSkillInstallName(ctx context.Context, target *sxlib.Client, targetName, description string) (string, error) {
+	assets, err := target.ListAssetsWithOptions(ctx, sxlib.ListOptions{Type: "skill", Search: targetName, Limit: 50})
+	if err != nil {
+		return "", err
+	}
+	return copiedSkillInstallNameFromAssets(targetName, description, assets), nil
+}
+
+func copiedSkillInstallNameFromAssets(targetName, description string, assets []sxlib.AssetSummary) string {
+	targetName = strings.TrimSpace(targetName)
+	description = normalizeSkillDescription(description)
+	var firstName string
+	var exactName string
+	var descriptionMatch string
+	for _, asset := range assets {
+		name := strings.TrimSpace(asset.Name)
+		if name == "" {
+			continue
+		}
+		if firstName == "" {
+			firstName = name
+		}
+		if name == targetName && exactName == "" {
+			exactName = name
+		}
+		if description != "" && normalizeSkillDescription(asset.Description) == description {
+			if name != targetName {
+				return name
+			}
+			if descriptionMatch == "" {
+				descriptionMatch = name
+			}
+		}
+	}
+	if descriptionMatch != "" {
+		return descriptionMatch
+	}
+	if exactName != "" {
+		return exactName
+	}
+	if firstName != "" {
+		return firstName
+	}
+	return targetName
+}
+
+func normalizeSkillDescription(description string) string {
+	return strings.Join(strings.Fields(description), " ")
 }
 
 func (m *Manager) SyncAgents(ctx context.Context, orgID string, actor Actor) ([]agents.Profile, error) {
@@ -671,7 +739,7 @@ func (m *Manager) SaveAgent(ctx context.Context, orgID string, actor Actor, p ag
 		}
 		installedSkills := make([]string, 0, len(skills))
 		for _, skill := range skills {
-			installedSkill, err := m.installSkillForAgent(ctx, handle.Client, actor, handle.Backend, skill, p.SXBot)
+			installedSkill, err := m.installSkillForAgent(ctx, handle.Client, actor, skill, p.SXBot)
 			if err != nil {
 				return fmt.Errorf("install skill %q on bot %q: %w", skill, p.SXBot, err)
 			}
@@ -743,7 +811,7 @@ func (m *Manager) AttachSkill(ctx context.Context, orgID string, actor Actor, sl
 		if _, err := handle.Client.EnsureBot(ctx, sxlib.Bot{Name: p.SXBot, Description: botDescription(p)}); err != nil {
 			return err
 		}
-		installedSkill, err := m.installSkillForAgent(ctx, handle.Client, actor, handle.Backend, skill, p.SXBot)
+		installedSkill, err := m.installSkillForAgent(ctx, handle.Client, actor, skill, p.SXBot)
 		if err != nil {
 			return err
 		}

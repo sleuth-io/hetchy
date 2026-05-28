@@ -130,23 +130,6 @@ func TestLooksLikeMissingSXAssetIgnoresUnrelatedErrors(t *testing.T) {
 	}
 }
 
-func TestGeneratedSkillsNewSkillSlugForAmbiguousSkill(t *testing.T) {
-	got, ok := generatedSkillsNewSkillSlugForAmbiguousSkill(
-		"architecture-blueprint-generator",
-		errors.New(`asset "architecture-blueprint-generator" is ambiguous: matches both a slug and a different display name`),
-	)
-	if !ok || got != "architecture-blueprint-generator_skill" {
-		t.Fatalf("generated skill slug = %q, %v; want architecture-blueprint-generator_skill, true", got, ok)
-	}
-
-	if got, ok := generatedSkillsNewSkillSlugForAmbiguousSkill("already_skill", errors.New("ambiguous: matches both a slug and a different display name")); ok || got != "" {
-		t.Fatalf("already suffixed generated slug = %q, %v; want empty, false", got, ok)
-	}
-	if got, ok := generatedSkillsNewSkillSlugForAmbiguousSkill("fix-pr", errors.New("asset not found")); ok || got != "" {
-		t.Fatalf("non-ambiguity generated slug = %q, %v; want empty, false", got, ok)
-	}
-}
-
 func TestInstallSkillForAgentCopiesPrefixedPublicSkillUnderCanonicalName(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
@@ -184,7 +167,6 @@ func TestInstallSkillForAgentCopiesPrefixedPublicSkillUnderCanonicalName(t *test
 		ctx,
 		targetClient,
 		Actor{Name: "Admin", Email: "admin@example.com"},
-		BackendGitHubGit,
 		"sx-hetchyhq-hetchy-sx-vault-architecture-blueprint-generator",
 		"test-agent",
 	)
@@ -206,39 +188,28 @@ func TestInstallSkillForAgentCopiesPrefixedPublicSkillUnderCanonicalName(t *test
 	}
 }
 
-func TestInstallCopiedSkillForAgentPrefersGeneratedSkillsNewSlug(t *testing.T) {
-	ctx := context.Background()
-	dir := t.TempDir()
-	client, err := sxlib.OpenPath(dir, sxlib.PathOptions{Actor: sxlib.Actor{Email: "admin@example.com"}})
-	if err != nil {
-		t.Fatalf("OpenPath: %v", err)
+func TestCopiedSkillInstallNameFromAssetsPrefersReturnedDescriptionMatch(t *testing.T) {
+	got := copiedSkillInstallNameFromAssets(
+		"architecture-blueprint-generator",
+		"Creates architecture blueprints.",
+		[]sxlib.AssetSummary{
+			{Name: "architecture-blueprint-generator", Description: "Different asset."},
+			{Name: "server-returned-skill-slug", Description: "Creates architecture blueprints."},
+		},
+	)
+	if got != "server-returned-skill-slug" {
+		t.Fatalf("install name = %q, want server-returned-skill-slug", got)
 	}
-	if _, err := client.EnsureBot(ctx, sxlib.Bot{Name: "test-agent", Description: "Test agent"}); err != nil {
-		t.Fatalf("EnsureBot: %v", err)
-	}
-	for _, name := range []string{"architecture-blueprint-generator", "architecture-blueprint-generator_skill"} {
-		if err := client.PutSkillZip(ctx, sxlib.SkillZipSpec{
-			Name:        name,
-			Version:     "1",
-			Description: "Creates architecture blueprints.",
-			ZipData:     testSkillZip(t, name),
-		}); err != nil {
-			t.Fatalf("PutSkillZip %q: %v", name, err)
-		}
-	}
+}
 
-	if err := installCopiedSkillForAgent(ctx, client, "architecture-blueprint-generator", "test-agent", true); err != nil {
-		t.Fatalf("installCopiedSkillForAgent: %v", err)
-	}
-	bots, err := client.ListBots(ctx)
-	if err != nil {
-		t.Fatalf("ListBots: %v", err)
-	}
-	if !botHasDirectSkill(bots, "test-agent", "architecture-blueprint-generator_skill") {
-		t.Fatalf("target bot skills = %+v, want generated slug skill installed", bots)
-	}
-	if botHasDirectSkill(bots, "test-agent", "architecture-blueprint-generator") {
-		t.Fatalf("target bot skills = %+v, should not install canonical name when generated slug is preferred", bots)
+func TestCopiedSkillInstallNameFromAssetsFallsBackToCanonicalName(t *testing.T) {
+	got := copiedSkillInstallNameFromAssets(
+		"architecture-blueprint-generator",
+		"Creates architecture blueprints.",
+		[]sxlib.AssetSummary{{Name: "architecture-blueprint-generator", Description: "Creates architecture blueprints."}},
+	)
+	if got != "architecture-blueprint-generator" {
+		t.Fatalf("install name = %q, want architecture-blueprint-generator", got)
 	}
 }
 
