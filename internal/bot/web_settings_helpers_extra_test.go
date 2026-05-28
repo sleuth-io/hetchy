@@ -5,8 +5,6 @@ import (
 	"testing"
 	"time"
 
-	sxlib "github.com/sleuth-io/sx/pkg/sxvault"
-
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
 	"github.com/hetchyhq/hetchy/internal/sxsync"
 )
@@ -30,7 +28,10 @@ func TestSettingsMessageHelpersCoverSentinels(t *testing.T) {
 		"agent_saved",
 		"agent_created",
 		"agent_skill_saved",
+		"agent_skill_removed",
 		"agent_skill_uploaded",
+		"agent_team_added",
+		"agent_team_removed",
 		"agent_deleted",
 		"sx_git_vault_saved",
 		"sx_git_vault_deleted",
@@ -130,8 +131,8 @@ func TestPopulateAgentSettingsTabDataLoadsSXSkillOptions(t *testing.T) {
 	b := newBypassOrgBot(t, "admin")
 	b.sx = &fakeSXManager{
 		gitVault: sxsync.GitVaultView{Configured: true, RepositorySlug: "hetchy/sx-vault-test"},
-		skills: []sxlib.AssetSummary{
-			{Name: "fix-pr_skill", Description: "Fix PRs", LatestVersion: "7"},
+		skills: []sxsync.SkillSummary{
+			{Name: "fix-pr_skill", Description: "Fix PRs", LatestVersion: "7", Source: "Git vault"},
 			{Name: "  "},
 		},
 	}
@@ -150,7 +151,7 @@ func TestPopulateAgentSettingsTabDataLoadsSXSkillOptions(t *testing.T) {
 	if len(options) != 1 {
 		t.Fatalf("AgentSkillOptions = %+v, want one non-empty skill", options)
 	}
-	if options[0].Name != "fix-pr_skill" || options[0].DisplayName != "fix-pr" || options[0].Source != "hetchy/sx-vault-test" || options[0].LatestVersion != "7" {
+	if options[0].Name != "fix-pr_skill" || options[0].DisplayName != "fix-pr" || options[0].Source != "Git vault" || options[0].LatestVersion != "7" {
 		t.Fatalf("skill option = %+v", options[0])
 	}
 }

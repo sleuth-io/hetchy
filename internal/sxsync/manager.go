@@ -38,6 +38,7 @@ type Manager struct {
 	agents *agents.Store
 	app    *githubapp.App
 
+	publicVaultURL      string
 	cacheDir            string
 	cacheMinFreeBytes   uint64
 	gitOperationTimeout time.Duration
@@ -51,6 +52,7 @@ func NewManager(d *db.Store, orgs *orgcfg.Store, agents *agents.Store, app *gith
 }
 
 type Options struct {
+	PublicVaultURL      string
 	CacheDir            string
 	CacheMinFreeBytes   uint64
 	GitOperationTimeout time.Duration
@@ -65,6 +67,7 @@ func NewManagerWithOptions(d *db.Store, orgs *orgcfg.Store, agents *agents.Store
 		orgs:                orgs,
 		agents:              agents,
 		app:                 app,
+		publicVaultURL:      strings.TrimSpace(opts.PublicVaultURL),
 		cacheDir:            cacheDir,
 		cacheMinFreeBytes:   opts.CacheMinFreeBytes,
 		gitOperationTimeout: opts.GitOperationTimeout,
@@ -87,6 +90,20 @@ type VaultHandle struct {
 	Backend string
 	Git     GitVaultView
 	Client  *sxlib.Client
+}
+
+type SkillSummary struct {
+	Name          string
+	Description   string
+	LatestVersion string
+	Source        string
+}
+
+type TeamSummary struct {
+	Name         string
+	Description  string
+	MemberCount  int
+	Repositories []string
 }
 
 func (m *Manager) GitVault(ctx context.Context, orgID string) (GitVaultView, error) {
@@ -311,26 +328,187 @@ func (m *Manager) RuntimeGitVaultEnv(ctx context.Context, orgID string) (map[str
 	}, nil
 }
 
-func (m *Manager) ListSkills(ctx context.Context, orgID string, actor Actor) ([]sxlib.AssetSummary, error) {
-	var assets []sxlib.AssetSummary
+func (m *Manager) ListSkills(ctx context.Context, orgID string, actor Actor) ([]SkillSummary, error) {
+	var skills []SkillSummary
 	err := m.withGitVaultGuardIfConfigured(ctx, orgID, func(ctx context.Context, gv *GitVaultView) error {
 		handle, err := m.openOrgVault(ctx, orgID, actor, gv)
 		if err != nil {
 			return err
 		}
-		assets, err = handle.Client.ListAssetsWithOptions(ctx, sxlib.ListOptions{
+		activeAssets, err := handle.Client.ListAssetsWithOptions(ctx, sxlib.ListOptions{
 			Type:  "skill",
 			Limit: 500,
 		})
 		if err != nil {
 			return err
 		}
-		slices.SortFunc(assets, func(a, b sxlib.AssetSummary) int {
+		skills = append(skills, skillSummariesFromAssets(activeAssets, sourceLabelForBackend(handle.Backend))...)
+		publicAssets, err := m.publicVaultSkills(ctx, actor)
+		if err != nil {
+			return err
+		}
+		skills = mergeSkillSummaries(skills, skillSummariesFromAssets(publicAssets, "Hetchy defaults"))
+		return nil
+	})
+	return skills, err
+}
+
+func (m *Manager) ListTeams(ctx context.Context, orgID string, actor Actor) ([]TeamSummary, error) {
+	var teams []TeamSummary
+	err := m.withGitVaultGuardIfConfigured(ctx, orgID, func(ctx context.Context, gv *GitVaultView) error {
+		handle, err := m.openOrgVault(ctx, orgID, actor, gv)
+		if err != nil {
+			return err
+		}
+		remoteTeams, err := handle.Client.ListTeams(ctx)
+		if err != nil {
+			return err
+		}
+		teams = make([]TeamSummary, 0, len(remoteTeams))
+		for _, t := range remoteTeams {
+			teams = append(teams, TeamSummary{
+				Name:         t.Name,
+				Description:  t.Description,
+				MemberCount:  t.MemberCount,
+				Repositories: append([]string(nil), t.Repositories...),
+			})
+		}
+		slices.SortFunc(teams, func(a, b TeamSummary) int {
 			return strings.Compare(a.Name, b.Name)
 		})
 		return nil
 	})
-	return assets, err
+	return teams, err
+}
+
+func (m *Manager) publicVaultSkills(ctx context.Context, actor Actor) ([]sxlib.AssetSummary, error) {
+	client, ok, err := m.openPublicVault(ctx, actor)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return []sxlib.AssetSummary{}, nil
+	}
+	return client.ListAssetsWithOptions(ctx, sxlib.ListOptions{Type: "skill", Limit: 500})
+}
+
+func (m *Manager) openPublicVault(ctx context.Context, actor Actor) (*sxlib.Client, bool, error) {
+	publicURL := strings.TrimSpace(m.publicVaultURL)
+	if publicURL == "" {
+		return nil, false, nil
+	}
+	client, err := sxlib.OpenGit(publicURL, sxlib.GitOptions{
+		Actor: sxlib.Actor{Name: firstNonEmpty(actor.Name, "Hetchy"), Email: actor.Email},
+	})
+	if err != nil {
+		return nil, false, fmt.Errorf("open public sx vault: %w", err)
+	}
+	return client, true, nil
+}
+
+func skillSummariesFromAssets(assets []sxlib.AssetSummary, source string) []SkillSummary {
+	out := make([]SkillSummary, 0, len(assets))
+	for _, a := range assets {
+		name := strings.TrimSpace(a.Name)
+		if name == "" {
+			continue
+		}
+		out = append(out, SkillSummary{
+			Name:          name,
+			Description:   a.Description,
+			LatestVersion: a.LatestVersion,
+			Source:        source,
+		})
+	}
+	slices.SortFunc(out, func(a, b SkillSummary) int {
+		return strings.Compare(a.Name, b.Name)
+	})
+	return out
+}
+
+func mergeSkillSummaries(base, extra []SkillSummary) []SkillSummary {
+	seen := make(map[string]struct{}, len(base)+len(extra))
+	out := make([]SkillSummary, 0, len(base)+len(extra))
+	for _, skill := range append(base, extra...) {
+		key := strings.ToLower(strings.TrimSpace(skill.Name))
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, skill)
+	}
+	slices.SortFunc(out, func(a, b SkillSummary) int {
+		return strings.Compare(a.Name, b.Name)
+	})
+	return out
+}
+
+func sourceLabelForBackend(backend string) string {
+	switch backend {
+	case BackendSkillsNew:
+		return "Skills.new"
+	case BackendGitHubGit:
+		return "Git vault"
+	default:
+		return "SX"
+	}
+}
+
+func (m *Manager) installSkillForAgent(ctx context.Context, target *sxlib.Client, actor Actor, skill, botName string) error {
+	if err := target.InstallAssetToBot(ctx, skill, botName); err == nil {
+		return nil
+	} else if !looksLikeMissingSXAsset(err) {
+		return err
+	}
+	if err := m.copySkillFromPublicVault(ctx, target, actor, skill); err != nil {
+		return err
+	}
+	return target.InstallAssetToBot(ctx, skill, botName)
+}
+
+func (m *Manager) copySkillFromPublicVault(ctx context.Context, target *sxlib.Client, actor Actor, skill string) error {
+	source, ok, err := m.openPublicVault(ctx, actor)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("skill %q was not found in the active SX vault and the public SX vault is disabled", skill)
+	}
+	var lastErr error
+	for _, candidate := range publicSkillCandidates(m.publicVaultURL, skill) {
+		zip, err := source.GetAssetZip(ctx, candidate, "")
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if zip.Type != "skill" {
+			return fmt.Errorf("public asset %q is type %q, not skill", candidate, zip.Type)
+		}
+		if err := target.PutSkillZip(ctx, sxlib.SkillZipSpec{
+			Name:        skill,
+			Version:     "1",
+			Description: zip.Description,
+			ZipData:     zip.Data,
+		}); err != nil {
+			return fmt.Errorf("copy public skill %q into active SX vault: %w", candidate, err)
+		}
+		return nil
+	}
+	if lastErr != nil {
+		return fmt.Errorf("skill %q was not found in the active SX vault or public SX vault: %w", skill, lastErr)
+	}
+	return fmt.Errorf("skill %q was not found in the active SX vault or public SX vault", skill)
+}
+
+func looksLikeMissingSXAsset(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "not found") && (strings.Contains(msg, "asset") || strings.Contains(msg, "skill"))
 }
 
 func (m *Manager) SyncAgents(ctx context.Context, orgID string, actor Actor) ([]agents.Profile, error) {
@@ -427,7 +605,7 @@ func (m *Manager) SaveAgent(ctx context.Context, orgID string, actor Actor, p ag
 			return err
 		}
 		for _, skill := range skills {
-			if err := handle.Client.InstallAssetToBot(ctx, skill, p.SXBot); err != nil {
+			if err := m.installSkillForAgent(ctx, handle.Client, actor, skill, p.SXBot); err != nil {
 				return fmt.Errorf("install skill %q on bot %q: %w", skill, p.SXBot, err)
 			}
 		}
@@ -497,13 +675,42 @@ func (m *Manager) AttachSkill(ctx context.Context, orgID string, actor Actor, sl
 		if _, err := handle.Client.EnsureBot(ctx, sxlib.Bot{Name: p.SXBot, Description: botDescription(p)}); err != nil {
 			return err
 		}
-		if err := handle.Client.InstallAssetToBot(ctx, skill, p.SXBot); err != nil {
+		if err := m.installSkillForAgent(ctx, handle.Client, actor, skill, p.SXBot); err != nil {
 			return err
 		}
 		p.Skills = cleanAgentSkills(p.Skills)
 		if !slices.Contains(p.Skills, skill) {
 			p.Skills = append(p.Skills, skill)
 		}
+		saved, err := m.agents.Upsert(ctx, orgID, p)
+		if err != nil {
+			return err
+		}
+		out, err = m.agents.UpdateVaultSync(ctx, orgID, saved.Slug, handle.Backend, "", p.TemplateSlug, "synced", "")
+		return err
+	})
+	return out, err
+}
+
+func (m *Manager) DetachSkill(ctx context.Context, orgID string, actor Actor, slug, skill string) (agents.Profile, error) {
+	var out agents.Profile
+	err := m.withGitVaultGuardIfConfigured(ctx, orgID, func(ctx context.Context, gv *GitVaultView) error {
+		skill = strings.TrimSpace(skill)
+		if skill == "" {
+			return errors.New("skill name is required")
+		}
+		p, err := m.agents.GetBySlug(ctx, orgID, slug)
+		if err != nil {
+			return err
+		}
+		handle, err := m.openOrgVault(ctx, orgID, actor, gv)
+		if err != nil {
+			return err
+		}
+		if err := handle.Client.UninstallAssetFromBot(ctx, skill, p.SXBot); err != nil {
+			return err
+		}
+		p.Skills = removeString(cleanAgentSkills(p.Skills), skill)
 		saved, err := m.agents.Upsert(ctx, orgID, p)
 		if err != nil {
 			return err
@@ -536,6 +743,67 @@ func (m *Manager) UploadSkillZip(ctx context.Context, orgID string, actor Actor,
 		if !slices.Contains(p.Skills, skillName) {
 			p.Skills = append(p.Skills, skillName)
 		}
+		saved, err := m.agents.Upsert(ctx, orgID, p)
+		if err != nil {
+			return err
+		}
+		out, err = m.agents.UpdateVaultSync(ctx, orgID, saved.Slug, handle.Backend, "", p.TemplateSlug, "synced", "")
+		return err
+	})
+	return out, err
+}
+
+func (m *Manager) AddAgentTeam(ctx context.Context, orgID string, actor Actor, slug, team string) (agents.Profile, error) {
+	var out agents.Profile
+	err := m.withGitVaultGuardIfConfigured(ctx, orgID, func(ctx context.Context, gv *GitVaultView) error {
+		team = strings.TrimSpace(team)
+		if team == "" {
+			return errors.New("team name is required")
+		}
+		p, err := m.agents.GetBySlug(ctx, orgID, slug)
+		if err != nil {
+			return err
+		}
+		handle, err := m.openOrgVault(ctx, orgID, actor, gv)
+		if err != nil {
+			return err
+		}
+		if err := handle.Client.AddBotTeam(ctx, p.SXBot, team); err != nil {
+			return err
+		}
+		if !slices.Contains(p.SXTeams, team) {
+			p.SXTeams = append(p.SXTeams, team)
+			slices.Sort(p.SXTeams)
+		}
+		saved, err := m.agents.Upsert(ctx, orgID, p)
+		if err != nil {
+			return err
+		}
+		out, err = m.agents.UpdateVaultSync(ctx, orgID, saved.Slug, handle.Backend, "", p.TemplateSlug, "synced", "")
+		return err
+	})
+	return out, err
+}
+
+func (m *Manager) RemoveAgentTeam(ctx context.Context, orgID string, actor Actor, slug, team string) (agents.Profile, error) {
+	var out agents.Profile
+	err := m.withGitVaultGuardIfConfigured(ctx, orgID, func(ctx context.Context, gv *GitVaultView) error {
+		team = strings.TrimSpace(team)
+		if team == "" {
+			return errors.New("team name is required")
+		}
+		p, err := m.agents.GetBySlug(ctx, orgID, slug)
+		if err != nil {
+			return err
+		}
+		handle, err := m.openOrgVault(ctx, orgID, actor, gv)
+		if err != nil {
+			return err
+		}
+		if err := handle.Client.RemoveBotTeam(ctx, p.SXBot, team); err != nil {
+			return err
+		}
+		p.SXTeams = removeString(p.SXTeams, team)
 		saved, err := m.agents.Upsert(ctx, orgID, p)
 		if err != nil {
 			return err

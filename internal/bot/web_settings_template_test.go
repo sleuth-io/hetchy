@@ -246,6 +246,20 @@ func TestSettingsTemplate_RendersMembersTab(t *testing.T) {
 func TestSettingsTemplate_RendersAgentsTab(t *testing.T) {
 	b := newBypassBot(t)
 	rec := httptest.NewRecorder()
+	skillOptions := []agentSkillOptionView{
+		{Name: "code-review", Source: "Skills.new", Description: "Review code changes"},
+		{Name: "database-migrations", Source: "Skills.new"},
+		{Name: "fix-pr_skill", DisplayName: "fix-pr", Source: "Skills.new", Description: "Fix PRs"},
+		{Name: "golang-pro", Source: "Skills.new"},
+	}
+	teamOptions := []agentTeamOptionView{
+		{Name: "Frontend", Description: "Frontend team"},
+		{Name: "Backend", Description: "Backend team"},
+	}
+	reviewerSkillOptions, reviewerCanAddSkill := agentSkillOptionsForAgent(skillOptions, []string{"code-review"}, nil)
+	reviewerTeamOptions, reviewerCanAddTeam := agentTeamOptionsForAgent(teamOptions, nil)
+	hetchySkillOptions, hetchyCanAddSkill := agentSkillOptionsForAgent(skillOptions, nil, []string{"fix-pr", "webapp-testing"})
+	hetchyTeamOptions, hetchyCanAddTeam := agentTeamOptionsForAgent(teamOptions, []string{"Frontend"})
 	b.renderTemplate(rec, webui.Settings, map[string]any{
 		"OrgID": "org_y", "OrgName": "Acme", "Email": "u@y", "PrincipalUserID": "user_me",
 		"IsAdmin": true, "Tab": "agents", "SavedMessage": "", "SXEnabled": true,
@@ -257,13 +271,9 @@ func TestSettingsTemplate_RendersAgentsTab(t *testing.T) {
 				PersonaPrompt: "Use backend rules.",
 			},
 		},
-		"AgentSkillOptions": []agentSkillOptionView{
-			{Name: "code-review", Source: "Skills.new", Description: "Review code changes"},
-			{Name: "database-migrations", Source: "Skills.new"},
-			{Name: "fix-pr_skill", DisplayName: "fix-pr", Source: "Skills.new", Description: "Fix PRs"},
-			{Name: "golang-pro", Source: "Skills.new"},
-		},
-		"Agents": []agentSettingsView{},
+		"AgentSkillOptions": skillOptions,
+		"AgentTeamOptions":  teamOptions,
+		"Agents":            []agentSettingsView{},
 		"CustomAgents": []agentSettingsView{
 			{
 				Slug:          "reviewer",
@@ -271,6 +281,11 @@ func TestSettingsTemplate_RendersAgentsTab(t *testing.T) {
 				Description:   "Reviews pull requests.",
 				PersonaPrompt: "Review code carefully.",
 				Skills:        []string{"code-review"},
+				SkillChips:    []agentSkillChipView{{Name: "code-review", DisplayName: "code-review"}},
+				SkillOptions:  reviewerSkillOptions,
+				CanAddSkill:   reviewerCanAddSkill,
+				TeamOptions:   reviewerTeamOptions,
+				CanAddTeam:    reviewerCanAddTeam,
 			},
 			{
 				Slug:         "hetchy-bot",
@@ -282,6 +297,10 @@ func TestSettingsTemplate_RendersAgentsTab(t *testing.T) {
 				SXSkills:     []string{"fix-pr", "webapp-testing"},
 				VaultBackend: "skills_new",
 				Imported:     true,
+				SkillOptions: hetchySkillOptions,
+				CanAddSkill:  hetchyCanAddSkill,
+				TeamOptions:  hetchyTeamOptions,
+				CanAddTeam:   hetchyCanAddTeam,
 			},
 		},
 		"BuiltInAgents": []agentSettingsView{
@@ -293,7 +312,11 @@ func TestSettingsTemplate_RendersAgentsTab(t *testing.T) {
 				PersonaAsset: "bob",
 				SlackAliases: []string{"backend", "api"},
 				Skills:       []string{"golang-pro", "database-migrations"},
-				BuiltIn:      true,
+				SkillChips: []agentSkillChipView{
+					{Name: "golang-pro", DisplayName: "golang-pro"},
+					{Name: "database-migrations", DisplayName: "database-migrations"},
+				},
+				BuiltIn: true,
 			},
 		},
 	})
@@ -315,7 +338,7 @@ func TestSettingsTemplate_RendersAgentsTab(t *testing.T) {
 		`Custom agents`,
 		`Built-in agents`,
 		`Built-in`,
-		`Imported`,
+		`<span class="agent-badge">skills_new</span>`,
 		`action="/settings/org/agents/reviewer"`,
 		`action="/settings/org/agents/reviewer/delete"`,
 		`data-confirm-title="Delete Reviewer?"`,
@@ -325,13 +348,15 @@ func TestSettingsTemplate_RendersAgentsTab(t *testing.T) {
 		`Inherited skills from orgs and teams`,
 		`fix-pr`,
 		`webapp-testing`,
-		`teams: Frontend`,
 		`Add skill`,
-		`class="secondary" type="submit">Install</button>`,
-		`class="secondary" type="submit">Upload</button>`,
+		`data-open-modal="modal-agent-skill-hetchy-bot"`,
+		`id="modal-agent-skill-hetchy-bot"`,
+		`class="save" type="submit">Install</button>`,
+		`class="save" type="submit">Upload</button>`,
+		`data-open-modal="modal-agent-team-hetchy-bot"`,
+		`id="modal-agent-team-hetchy-bot"`,
 		`action="/settings/org/agents/hetchy-bot/delete"`,
-		`agent-meta-delete`,
-		`class="link-btn danger-link agent-delete-link">Delete</button>`,
+		`class="danger-btn agent-delete-link">Delete</button>`,
 		`data-confirm-title="Delete Hetchy Bot?"`,
 		`action="/settings/org/agents/hetchy-bot/skills"`,
 		`action="/settings/org/agents/hetchy-bot/skills/upload"`,
@@ -345,10 +370,13 @@ func TestSettingsTemplate_RendersAgentsTab(t *testing.T) {
 		`The zip should contain skill files (SKILL.md, etc.)`,
 		`golang-pro`,
 		`database-migrations`,
-		`<option value="code-review" title="Review code changes">code-review</option>`,
-		`<option value="fix-pr_skill" title="Fix PRs">fix-pr</option>`,
+		`<option value="code-review" title="Review code changes">code-review - Skills.new</option>`,
+		`<option value="fix-pr_skill" disabled title="Already installed on this Agent">fix-pr - Skills.new</option>`,
+		`action="/settings/org/agents/hetchy-bot/teams"`,
+		`action="/settings/org/agents/hetchy-bot/teams/remove"`,
+		`<option value="Frontend" disabled title="Already installed on this Agent">Frontend</option>`,
+		`<option value="Backend" title="Backend team">Backend</option>`,
 		`data-skill-name="fix-pr_skill" data-skill-display-name="fix-pr"`,
-		`sx bot: <code>bob</code>`,
 		`aliases: @backend, @api`,
 	} {
 		if !strings.Contains(body, w) {
@@ -368,6 +396,12 @@ func TestSettingsTemplate_RendersAgentsTab(t *testing.T) {
 		`name="skill_name"`,
 		`name="skill_version"`,
 		`onsubmit="return confirm(`,
+		`Imported`,
+		`sx bot:`,
+		`vault:`,
+		`teams: Frontend`,
+		`agent-meta-delete`,
+		`link-btn danger-link agent-delete-link`,
 	} {
 		if strings.Contains(body, n) {
 			t.Errorf("agents tab should not render %q", n)
@@ -487,6 +521,7 @@ func TestSettingsTemplate_NonAdminReadOnly(t *testing.T) {
 			DisplayName: "Backend",
 			Description: "Handles server-side work.",
 			Skills:      []string{"golang-pro"},
+			SkillChips:  []agentSkillChipView{{Name: "golang-pro", DisplayName: "golang-pro"}},
 		}
 		data["Agents"] = []agentSettingsView{profile}
 		data["CustomAgents"] = []agentSettingsView{profile}

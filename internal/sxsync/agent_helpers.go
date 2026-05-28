@@ -166,8 +166,9 @@ func profilesFromRemoteAgents(backend string, bots []sxlib.BotSummary, agentAsse
 			SXBot:         sxBot,
 			PersonaAsset:  personaAsset,
 			PersonaPrompt: remoteAgentPrompt(displayName, description),
+			Skills:        cleanSXSkillNames(directBotSkillNames(bot.InstalledSkills)),
 			SXTeams:       append([]string(nil), bot.Teams...),
-			SXSkills:      cleanSXSkillNames(bot.InstalledSkills),
+			SXSkills:      cleanSXSkillNames(botSkillNames(bot.InstalledSkills)),
 			VaultBackend:  backend,
 			SyncStatus:    "imported",
 			Enabled:       true,
@@ -176,6 +177,24 @@ func profilesFromRemoteAgents(backend string, bots []sxlib.BotSummary, agentAsse
 	slices.SortFunc(out, func(a, b agents.Profile) int {
 		return strings.Compare(a.Slug, b.Slug)
 	})
+	return out
+}
+
+func botSkillNames(skills []sxlib.BotSkillSummary) []string {
+	out := make([]string, 0, len(skills))
+	for _, skill := range skills {
+		out = append(out, skill.Name)
+	}
+	return out
+}
+
+func directBotSkillNames(skills []sxlib.BotSkillSummary) []string {
+	out := make([]string, 0, len(skills))
+	for _, skill := range skills {
+		if skill.IsDirectInstall {
+			out = append(out, skill.Name)
+		}
+	}
 	return out
 }
 
@@ -229,6 +248,76 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func removeString(values []string, needle string) []string {
+	needle = strings.TrimSpace(needle)
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if strings.TrimSpace(value) == needle {
+			continue
+		}
+		out = append(out, value)
+	}
+	return out
+}
+
+func publicSkillCandidates(publicVaultURL, name string) []string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
+	candidates := []string{name}
+	if trimmed := strings.TrimSuffix(name, "_skill"); trimmed != name && trimmed != "" {
+		candidates = append(candidates, trimmed)
+	}
+	if prefix := publicVaultSkillPrefix(publicVaultURL); prefix != "" && strings.HasPrefix(name, prefix) {
+		if trimmed := strings.TrimPrefix(name, prefix); trimmed != "" {
+			candidates = append(candidates, trimmed)
+			if noSuffix := strings.TrimSuffix(trimmed, "_skill"); noSuffix != trimmed && noSuffix != "" {
+				candidates = append(candidates, noSuffix)
+			}
+		}
+	}
+	out := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" || slices.Contains(out, candidate) {
+			continue
+		}
+		out = append(out, candidate)
+	}
+	return out
+}
+
+func publicVaultSkillPrefix(publicVaultURL string) string {
+	publicVaultURL = strings.TrimSpace(publicVaultURL)
+	if publicVaultURL == "" {
+		return ""
+	}
+	u, err := url.Parse(publicVaultURL)
+	if err == nil && u.Host != "" {
+		return publicVaultSkillPrefixFromPath(u.Path)
+	}
+	if strings.HasPrefix(publicVaultURL, "git@") && strings.Contains(publicVaultURL, ":") {
+		parts := strings.SplitN(publicVaultURL, ":", 2)
+		return publicVaultSkillPrefixFromPath(parts[1])
+	}
+	return ""
+}
+
+func publicVaultSkillPrefixFromPath(rawPath string) string {
+	rawPath = strings.TrimSuffix(strings.Trim(rawPath, "/"), ".git")
+	parts := strings.Split(rawPath, "/")
+	if len(parts) < 2 {
+		return ""
+	}
+	owner := agents.NormalizeSlug(parts[len(parts)-2])
+	repo := agents.NormalizeSlug(parts[len(parts)-1])
+	if owner == "" || repo == "" {
+		return ""
+	}
+	return "sx-" + owner + "-" + repo + "-"
 }
 
 func botDescription(p agents.Profile) string {

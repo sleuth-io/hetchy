@@ -224,7 +224,6 @@
   .agent-command-form input { width: 100%; max-width: 100%; box-sizing: border-box; }
   .agent-command-form select { font-family: inherit; font-size: .85rem; }
   .agent-delete-form { margin: 0; }
-  .agent-meta-delete { margin-left: auto; display: flex; align-items: center; }
   .agent-delete-link { font-size: .82rem; }
   .agent-skills { margin-top: .75rem; }
   .agent-skills-label { color: #888; font-size: .72rem; text-transform: uppercase;
@@ -234,6 +233,23 @@
   .skill-chip { background: #f0f2f5; color: #444; border-radius: 1rem;
                 padding: .22rem .55rem; font-size: .76rem;
                 font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .skill-chip-form { border: 0; margin: 0; display: inline-flex; align-items: center;
+                     gap: .25rem; }
+  .skill-chip-remove { border: 0; background: transparent; color: inherit; opacity: .55;
+                       cursor: pointer; font: inherit; line-height: 1; padding: 0 .05rem; }
+  .skill-chip-remove:hover { opacity: 1; }
+  .agent-team-editor { margin-top: 1rem; padding-top: .85rem; border-top: 1px solid #f0f0f0; }
+  .agent-team-editor .agent-command-form { margin-top: .65rem; }
+  .agent-card-footer { display: flex; align-items: flex-end; justify-content: space-between;
+                       gap: .75rem; margin-top: .9rem; }
+  .agent-footer-actions { margin-left: auto; display: flex; align-items: center;
+                          justify-content: flex-end; gap: .5rem; flex-wrap: wrap; }
+  .agent-footer-actions .secondary,
+  .agent-footer-actions .danger-btn { display: inline-flex; align-items: center;
+                                      justify-content: center; min-height: 2.2rem;
+                                      box-sizing: border-box; margin: 0; padding: .55rem 1rem;
+                                      border-radius: .4rem; font-size: .9rem;
+                                      line-height: 1.2; white-space: nowrap; }
   .agent-skill-picker { display: grid; gap: .55rem; }
   .agent-skill-combo { display: grid; grid-template-columns: minmax(0, 1fr) 2.5rem; }
   .agent-skill-combo input { border-radius: .4rem 0 0 .4rem; }
@@ -293,7 +309,7 @@
                               color: #0b74c8; font-style: normal; font-size: .8rem;
                               overflow-wrap: anywhere; }
   .agent-upload-dropzone em:empty { display: none; }
-  .agent-meta { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: .75rem; }
+  .agent-meta { display: flex; flex-wrap: wrap; gap: .35rem; margin: 0; }
   .agent-meta span { color: #777; background: #fafafa; border: 1px solid #eee;
                      border-radius: .35rem; padding: .2rem .45rem; font-size: .75rem; }
   dialog.agent-modal { max-width: 32rem; max-height: calc(100dvh - 2rem); overflow: hidden; }
@@ -301,6 +317,20 @@
   dialog.agent-modal .body { display: grid; gap: .55rem; overflow: auto; padding-bottom: .85rem; }
   dialog.agent-modal label { margin: 0; }
   dialog.agent-modal textarea { min-height: 8.5rem; max-height: 28dvh; font-family: inherit; }
+  dialog.agent-modal .agent-action-modal-body { gap: .95rem; padding-bottom: 1.25rem; }
+  dialog.agent-modal .agent-action-modal-body h2 { margin: 0 0 .35rem; }
+  dialog.agent-modal .agent-action-modal-body .cred-tabs { margin: -.1rem 0 .1rem; }
+  dialog.agent-modal .agent-action-modal-body .cred-panel,
+  dialog.agent-modal .agent-action-modal-body .agent-edit-form { margin: 0; }
+  dialog.agent-modal .agent-action-modal-body .cred-panel,
+  dialog.agent-modal .agent-action-modal-body .agent-edit-form { width: 100%; }
+  dialog.agent-modal .agent-action-modal-body .agent-command-form { gap: .75rem; }
+  dialog.agent-modal .agent-action-modal-body .agent-command-form > div:not(.actions) {
+    display: grid; gap: .35rem;
+  }
+  dialog.agent-modal .agent-action-modal-body .actions { display: flex; justify-content: flex-end;
+                                                         width: 100%; box-sizing: border-box;
+                                                         padding: .35rem 0 0; }
 
   /* Billing tab */
   .billing-panel { border: 1px solid #e6e6e6; border-radius: .5rem;
@@ -622,6 +652,7 @@
                             font-family: inherit; }
   dialog.api-modal .save { background: #0b93f6; color: #fff; border: 0; }
   dialog.api-modal .save:hover { background: #0a83d8; }
+  dialog.api-modal .save:disabled { opacity: .55; cursor: default; }
   dialog.api-modal .cancel { background: #fff; color: #555;
                              border: 1px solid #ddd; }
   dialog.api-modal .cancel:hover { background: #fafafa; }
@@ -747,6 +778,7 @@
   html.is-dark .agent-badge { background: #2e2e33; border-color: #3a3a3f; color: #b8b8bc; }
   html.is-dark .agent-card p { color: #9a9aa0; }
   html.is-dark .agent-profile-form { border-top-color: #2e2e33; }
+  html.is-dark .agent-team-editor { border-top-color: #2e2e33; }
   html.is-dark .agent-skill-tabs { border-top-color: #2e2e33; }
   html.is-dark .agent-skill-section-title { color: #8a8a90; }
   html.is-dark .agent-skills-label { color: #8a8a90; }

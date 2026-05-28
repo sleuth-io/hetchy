@@ -652,6 +652,9 @@ func TestSavedMessage(t *testing.T) {
 		"slack_disconnected":         "Slack disconnected. The Hetchy app has been removed from that workspace.",
 		"slack_already_disconnected": "Slack was already disconnected.",
 		"agent_saved":                "Agent saved.",
+		"agent_skill_removed":        "Skill removed.",
+		"agent_team_added":           "Team added.",
+		"agent_team_removed":         "Team removed.",
 		"agent_deleted":              "Agent deleted.",
 	}
 	for in, want := range cases {

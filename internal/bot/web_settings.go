@@ -462,65 +462,40 @@ func errorMessage(s string) string {
 
 // savedMessage maps the ?saved= sentinel to the green banner text shown
 // at the top of a tab after a successful POST. Empty string → no banner.
+var savedMessages = map[string]string{
+	"1":                          "Settings saved.",
+	"invited":                    "Invitation sent.",
+	"revoked":                    "Invitation revoked.",
+	"removed":                    "Member removed.",
+	"role":                       "Role updated.",
+	"slack_installed":            "Slack installed.",
+	"slack_install_cancelled":    "Slack install cancelled.",
+	"slack_install_conflict":     "That Slack workspace is already connected to another Hetchy organization. Have the existing org uninstall first.",
+	"github_installed":           "GitHub App installed. Repos and teams have been synced.",
+	"github_synced":              "Sync complete.",
+	"github_install_conflict":    "That GitHub installation is already connected to another Hetchy organization. Have the existing org uninstall first (or pick a different account).",
+	"github_disconnected":        "GitHub installation removed. The Hetchy GitHub App has been uninstalled from that account.",
+	"slack_disconnected":         "Slack disconnected. The Hetchy app has been removed from that workspace.",
+	"slack_already_disconnected": "Slack was already disconnected.",
+	"agent_saved":                "Agent saved.",
+	"agent_created":              "Agent created.",
+	"agent_skill_saved":          "Skill installed.",
+	"agent_skill_removed":        "Skill removed.",
+	"agent_skill_uploaded":       "Skill uploaded and installed.",
+	"agent_team_added":           "Team added.",
+	"agent_team_removed":         "Team removed.",
+	"agent_deleted":              "Agent deleted.",
+	"sx_git_vault_saved":         "SX Git Vault saved.",
+	"sx_git_vault_deleted":       "SX Git Vault disconnected.",
+	"repo_flavor_saved":          "Repo flavor saved.",
+	"billing_saved":              "Billing settings saved.",
+	"topup_started":              "Stripe Checkout opened for top-up.",
+	"plan_switched":              "Plan switched.",
+	"plan_scheduled":             "Plan downgrade scheduled for the next billing cycle.",
+	"portal_return":              "Returned from Stripe billing portal.",
+	"api_key_revoked":            "API key revoked.",
+}
+
 func savedMessage(s string) string {
-	switch s {
-	case "1":
-		return "Settings saved."
-	case "invited":
-		return "Invitation sent."
-	case "revoked":
-		return "Invitation revoked."
-	case "removed":
-		return "Member removed."
-	case "role":
-		return "Role updated."
-	case "slack_installed":
-		return "Slack installed."
-	case "slack_install_cancelled":
-		return "Slack install cancelled."
-	case "slack_install_conflict":
-		return "That Slack workspace is already connected to another Hetchy organization. Have the existing org uninstall first."
-	case "github_installed":
-		return "GitHub App installed. Repos and teams have been synced."
-	case "github_synced":
-		return "Sync complete."
-	case "github_install_conflict":
-		return "That GitHub installation is already connected to another Hetchy organization. Have the existing org uninstall first (or pick a different account)."
-	case "github_disconnected":
-		return "GitHub installation removed. The Hetchy GitHub App has been uninstalled from that account."
-	case "slack_disconnected":
-		return "Slack disconnected. The Hetchy app has been removed from that workspace."
-	case "slack_already_disconnected":
-		return "Slack was already disconnected."
-	case "agent_saved":
-		return "Agent saved."
-	case "agent_created":
-		return "Agent created."
-	case "agent_skill_saved":
-		return "Skill installed."
-	case "agent_skill_uploaded":
-		return "Skill uploaded and installed."
-	case "agent_deleted":
-		return "Agent deleted."
-	case "sx_git_vault_saved":
-		return "SX Git Vault saved."
-	case "sx_git_vault_deleted":
-		return "SX Git Vault disconnected."
-	case "repo_flavor_saved":
-		return "Repo flavor saved."
-	case "billing_saved":
-		return "Billing settings saved."
-	case "topup_started":
-		return "Stripe Checkout opened for top-up."
-	case "plan_switched":
-		return "Plan switched."
-	case "plan_scheduled":
-		return "Plan downgrade scheduled for the next billing cycle."
-	case "portal_return":
-		return "Returned from Stripe billing portal."
-	case "api_key_revoked":
-		return "API key revoked."
-	default:
-		return ""
-	}
+	return savedMessages[s]
 }

@@ -18,7 +18,12 @@ type agentSettingsView struct {
 	PersonaAsset  string
 	SlackAliases  []string
 	Skills        []string
+	SkillChips    []agentSkillChipView
+	SkillOptions  []agentSkillOptionView
+	CanAddSkill   bool
 	SXTeams       []string
+	TeamOptions   []agentTeamOptionView
+	CanAddTeam    bool
 	SXSkills      []string
 	VaultBackend  string
 	SyncStatus    string
@@ -42,6 +47,18 @@ type agentSkillOptionView struct {
 	Source        string
 	Description   string
 	LatestVersion string
+	Installed     bool
+}
+
+type agentSkillChipView struct {
+	Name        string
+	DisplayName string
+}
+
+type agentTeamOptionView struct {
+	Name        string
+	Description string
+	Installed   bool
 }
 
 func (b *Bot) populateAgentSettingsTabData(ctx context.Context, orgID string, data map[string]any) error {
@@ -56,46 +73,17 @@ func (b *Bot) populateAgentSettingsTabData(ctx context.Context, orgID string, da
 	sxEnabled := activeBackend != ""
 	data["SXEnabled"] = sxEnabled
 	data["AgentSkillOptions"] = []agentSkillOptionView{}
-	skillSource := b.sxSkillSourceLabel(ctx, orgID)
+	data["AgentTeamOptions"] = []agentTeamOptionView{}
 	remoteProfiles := []agents.Profile{}
 	if sxEnabled && b.sx != nil {
-		remote, err := b.sx.SyncAgents(ctx, orgID, sxsync.Actor{Name: "Hetchy"})
-		if err != nil {
-			if b.log != nil {
-				b.log.Warn("sync sx agents failed", "org", orgID, "error", err)
-			}
-			data["AgentRemoteLoadError"] = "Unable to load agents from SX."
-		} else {
-			remoteProfiles = remote
-		}
-		assets, err := b.sx.ListSkills(ctx, orgID, sxsync.Actor{Name: "Hetchy"})
-		if err != nil {
-			if b.log != nil {
-				b.log.Warn("load sx skills failed", "org", orgID, "error", err)
-			}
-			data["AgentSkillsLoadError"] = "Unable to load available skills."
-		} else {
-			skills := make([]agentSkillOptionView, 0, len(assets))
-			for _, asset := range assets {
-				name := strings.TrimSpace(asset.Name)
-				if name == "" {
-					continue
-				}
-				skills = append(skills, agentSkillOptionView{
-					Name:          name,
-					DisplayName:   displaySkillName(name),
-					Source:        skillSource,
-					Description:   asset.Description,
-					LatestVersion: asset.LatestVersion,
-				})
-			}
-			data["AgentSkillOptions"] = skills
-		}
+		remoteProfiles = b.populateSXAgentRemoteData(ctx, orgID, data)
 	}
 	profiles, err := store.List(ctx, orgID)
 	if err != nil {
 		return fmt.Errorf("load agents: %w", err)
 	}
+	skillOptions, _ := data["AgentSkillOptions"].([]agentSkillOptionView)
+	teamOptions, _ := data["AgentTeamOptions"].([]agentTeamOptionView)
 	remoteBySlug := make(map[string]agents.Profile, len(remoteProfiles))
 	for _, remote := range remoteProfiles {
 		slug := agents.NormalizeSlug(remote.Slug)
@@ -118,11 +106,17 @@ func (b *Bot) populateAgentSettingsTabData(ctx context.Context, orgID string, da
 		if len(remote.SXTeams) > 0 {
 			sxTeams = remote.SXTeams
 		}
+		directSkillNames := a.Skills
+		if len(remote.Skills) > 0 {
+			directSkillNames = remote.Skills
+		}
 		sxSkills := a.SXSkills
 		if len(remote.SXSkills) > 0 {
 			sxSkills = remote.SXSkills
 		}
-		directSkills := displaySkillNames(a.Skills)
+		directSkills := displaySkillNames(directSkillNames)
+		agentSkillOptions, canAddSkill := agentSkillOptionsForAgent(skillOptions, directSkillNames, sxSkills)
+		agentTeamOptions, canAddTeam := agentTeamOptionsForAgent(teamOptions, sxTeams)
 		imported := a.SyncStatus == "imported"
 		if !imported && remote.Slug != "" && a.VaultBackend != "" && strings.TrimSpace(a.PersonaPrompt) == strings.TrimSpace(remote.PersonaPrompt) {
 			imported = true
@@ -136,8 +130,13 @@ func (b *Bot) populateAgentSettingsTabData(ctx context.Context, orgID string, da
 			PersonaAsset:  a.PersonaAsset,
 			SlackAliases:  a.SlackAliases,
 			Skills:        directSkills,
+			SkillChips:    agentSkillChips(directSkillNames),
+			SkillOptions:  agentSkillOptions,
+			CanAddSkill:   canAddSkill,
 			SXTeams:       sxTeams,
-			SXSkills:      displaySkillNames(inheritedSkillNames(sxSkills, a.Skills)),
+			TeamOptions:   agentTeamOptions,
+			CanAddTeam:    canAddTeam,
+			SXSkills:      displaySkillNames(inheritedSkillNames(sxSkills, directSkillNames)),
 			VaultBackend:  a.VaultBackend,
 			SyncStatus:    a.SyncStatus,
 			SyncError:     a.SyncError,
@@ -173,6 +172,72 @@ func (b *Bot) populateAgentSettingsTabData(ctx context.Context, orgID string, da
 	return nil
 }
 
+func (b *Bot) populateSXAgentRemoteData(ctx context.Context, orgID string, data map[string]any) []agents.Profile {
+	actor := sxsync.Actor{Name: "Hetchy"}
+	remoteProfiles := []agents.Profile{}
+	remote, err := b.sx.SyncAgents(ctx, orgID, actor)
+	if err != nil {
+		b.warnAgentSettingsLoad("sync sx agents failed", orgID, err)
+		data["AgentRemoteLoadError"] = "Unable to load agents from SX."
+	} else {
+		remoteProfiles = remote
+	}
+	b.populateSXAgentSkillOptions(ctx, orgID, actor, data)
+	b.populateSXAgentTeamOptions(ctx, orgID, actor, data)
+	return remoteProfiles
+}
+
+func (b *Bot) populateSXAgentSkillOptions(ctx context.Context, orgID string, actor sxsync.Actor, data map[string]any) {
+	assets, err := b.sx.ListSkills(ctx, orgID, actor)
+	if err != nil {
+		b.warnAgentSettingsLoad("load sx skills failed", orgID, err)
+		data["AgentSkillsLoadError"] = "Unable to load available skills."
+		return
+	}
+	skills := make([]agentSkillOptionView, 0, len(assets))
+	for _, asset := range assets {
+		name := strings.TrimSpace(asset.Name)
+		if name == "" {
+			continue
+		}
+		skills = append(skills, agentSkillOptionView{
+			Name:          name,
+			DisplayName:   displaySkillName(name),
+			Source:        asset.Source,
+			Description:   asset.Description,
+			LatestVersion: asset.LatestVersion,
+		})
+	}
+	data["AgentSkillOptions"] = skills
+}
+
+func (b *Bot) populateSXAgentTeamOptions(ctx context.Context, orgID string, actor sxsync.Actor, data map[string]any) {
+	teams, err := b.sx.ListTeams(ctx, orgID, actor)
+	if err != nil {
+		b.warnAgentSettingsLoad("load sx teams failed", orgID, err)
+		data["AgentTeamsLoadError"] = "Unable to load available teams."
+		return
+	}
+	teamViews := make([]agentTeamOptionView, 0, len(teams))
+	for _, team := range teams {
+		name := strings.TrimSpace(team.Name)
+		if name == "" {
+			continue
+		}
+		teamViews = append(teamViews, agentTeamOptionView{
+			Name:        name,
+			Description: team.Description,
+		})
+	}
+	data["AgentTeamOptions"] = teamViews
+}
+
+func (b *Bot) warnAgentSettingsLoad(message, orgID string, err error) {
+	if b.log != nil {
+		b.log.Warn(message, "org", orgID, "error", err)
+	}
+}
+
 func displaySkillNames(names []string) []string {
 	out := make([]string, 0, len(names))
 	seen := map[string]struct{}{}
@@ -188,6 +253,86 @@ func displaySkillNames(names []string) []string {
 		out = append(out, displaySkillName(raw))
 	}
 	return out
+}
+
+func agentSkillChips(names []string) []agentSkillChipView {
+	out := make([]agentSkillChipView, 0, len(names))
+	seen := map[string]struct{}{}
+	for _, raw := range names {
+		name := strings.TrimSpace(raw)
+		if name == "" {
+			continue
+		}
+		key := strings.ToLower(name)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, agentSkillChipView{Name: name, DisplayName: displaySkillName(name)})
+	}
+	return out
+}
+
+func agentSkillOptionsForAgent(options []agentSkillOptionView, direct, inherited []string) ([]agentSkillOptionView, bool) {
+	installed := make(map[string]struct{}, len(direct)+len(inherited))
+	for _, name := range direct {
+		if key := skillDisplayKey(name); key != "" {
+			installed[key] = struct{}{}
+		}
+	}
+	for _, name := range inherited {
+		if key := skillDisplayKey(name); key != "" {
+			installed[key] = struct{}{}
+		}
+	}
+
+	out := make([]agentSkillOptionView, 0, len(options))
+	canAdd := false
+	for _, option := range options {
+		next := option
+		if _, ok := installed[skillOptionDisplayKey(option)]; ok {
+			next.Installed = true
+		} else {
+			next.Installed = false
+			canAdd = true
+		}
+		out = append(out, next)
+	}
+	return out, canAdd
+}
+
+func skillOptionDisplayKey(option agentSkillOptionView) string {
+	if key := strings.ToLower(strings.TrimSpace(option.DisplayName)); key != "" {
+		return key
+	}
+	return skillDisplayKey(option.Name)
+}
+
+func agentTeamOptionsForAgent(options []agentTeamOptionView, installedTeams []string) ([]agentTeamOptionView, bool) {
+	installed := make(map[string]struct{}, len(installedTeams))
+	for _, team := range installedTeams {
+		if key := teamOptionKey(team); key != "" {
+			installed[key] = struct{}{}
+		}
+	}
+
+	out := make([]agentTeamOptionView, 0, len(options))
+	canAdd := false
+	for _, option := range options {
+		next := option
+		if _, ok := installed[teamOptionKey(option.Name)]; ok {
+			next.Installed = true
+		} else {
+			next.Installed = false
+			canAdd = true
+		}
+		out = append(out, next)
+	}
+	return out, canAdd
+}
+
+func teamOptionKey(name string) string {
+	return strings.ToLower(strings.TrimSpace(name))
 }
 
 func inheritedSkillNames(names, direct []string) []string {

@@ -66,8 +66,14 @@ func (b *Bot) agentSettingsActionHandler(w http.ResponseWriter, r *http.Request)
 		b.updateAgentFromSettings(w, r, p.OrgID, sxActor(p), slug, store)
 	case "skills":
 		b.attachAgentSkillFromSettings(w, r, p.OrgID, sxActor(p), slug, store)
+	case "skills/delete":
+		b.detachAgentSkillFromSettings(w, r, p.OrgID, sxActor(p), slug, store)
 	case "skills/upload":
 		b.uploadAgentSkillFromSettings(w, r, p.OrgID, sxActor(p), slug, store)
+	case "teams":
+		b.addAgentTeamFromSettings(w, r, p.OrgID, sxActor(p), slug, store)
+	case "teams/remove":
+		b.removeAgentTeamFromSettings(w, r, p.OrgID, sxActor(p), slug, store)
 	case "delete":
 		b.deleteAgentFromSettings(w, r, p.OrgID, sxActor(p), slug, store)
 	default:
@@ -96,6 +102,29 @@ func (b *Bot) attachAgentSkillFromSettings(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	http.Redirect(w, r, "/settings/org?tab=agents&saved=agent_skill_saved", http.StatusFound)
+}
+
+func (b *Bot) detachAgentSkillFromSettings(w http.ResponseWriter, r *http.Request, orgID string, actor sxsync.Actor, slug string, store *agents.Store) {
+	skill := strings.TrimSpace(r.FormValue("skill"))
+	profile, err := editableAgentSkillsProfile(r.Context(), store, orgID, slug)
+	if err != nil {
+		handleAgentEditError(w, r, err)
+		return
+	}
+	if err := b.requireActiveAgentBackend(r.Context(), orgID, profile); err != nil {
+		handleAgentEditError(w, r, err)
+		return
+	}
+	if b.sx == nil {
+		http.Error(w, "sx vault is not configured", http.StatusBadRequest)
+		return
+	}
+	if _, err := b.sx.DetachSkill(r.Context(), orgID, actor, slug, skill); err != nil {
+		b.log.Error("detach agent skill", "error", err, "org", orgID, "slug", slug, "skill", skill)
+		http.Error(w, "detach skill: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	http.Redirect(w, r, "/settings/org?tab=agents&saved=agent_skill_removed", http.StatusFound)
 }
 
 func (b *Bot) uploadAgentSkillFromSettings(w http.ResponseWriter, r *http.Request, orgID string, actor sxsync.Actor, slug string, store *agents.Store) {
@@ -138,6 +167,52 @@ func (b *Bot) uploadAgentSkillFromSettings(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	http.Redirect(w, r, "/settings/org?tab=agents&saved=agent_skill_uploaded", http.StatusFound)
+}
+
+func (b *Bot) addAgentTeamFromSettings(w http.ResponseWriter, r *http.Request, orgID string, actor sxsync.Actor, slug string, store *agents.Store) {
+	team := strings.TrimSpace(r.FormValue("team"))
+	profile, err := editableAgentSkillsProfile(r.Context(), store, orgID, slug)
+	if err != nil {
+		handleAgentEditError(w, r, err)
+		return
+	}
+	if err := b.requireActiveAgentBackend(r.Context(), orgID, profile); err != nil {
+		handleAgentEditError(w, r, err)
+		return
+	}
+	if b.sx == nil {
+		http.Error(w, "sx vault is not configured", http.StatusBadRequest)
+		return
+	}
+	if _, err := b.sx.AddAgentTeam(r.Context(), orgID, actor, slug, team); err != nil {
+		b.log.Error("add agent team", "error", err, "org", orgID, "slug", slug, "team", team)
+		http.Error(w, "add team: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	http.Redirect(w, r, "/settings/org?tab=agents&saved=agent_team_added", http.StatusFound)
+}
+
+func (b *Bot) removeAgentTeamFromSettings(w http.ResponseWriter, r *http.Request, orgID string, actor sxsync.Actor, slug string, store *agents.Store) {
+	team := strings.TrimSpace(r.FormValue("team"))
+	profile, err := editableAgentSkillsProfile(r.Context(), store, orgID, slug)
+	if err != nil {
+		handleAgentEditError(w, r, err)
+		return
+	}
+	if err := b.requireActiveAgentBackend(r.Context(), orgID, profile); err != nil {
+		handleAgentEditError(w, r, err)
+		return
+	}
+	if b.sx == nil {
+		http.Error(w, "sx vault is not configured", http.StatusBadRequest)
+		return
+	}
+	if _, err := b.sx.RemoveAgentTeam(r.Context(), orgID, actor, slug, team); err != nil {
+		b.log.Error("remove agent team", "error", err, "org", orgID, "slug", slug, "team", team)
+		http.Error(w, "remove team: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	http.Redirect(w, r, "/settings/org?tab=agents&saved=agent_team_removed", http.StatusFound)
 }
 
 func (b *Bot) deleteAgentFromSettings(w http.ResponseWriter, r *http.Request, orgID string, actor sxsync.Actor, slug string, store *agents.Store) {
@@ -399,10 +474,16 @@ func splitAgentAction(path string) (slug, action string, ok bool) {
 			return "", "", false
 		}
 	} else if len(parts) == 3 {
-		if parts[1] != "skills" || parts[2] != "upload" {
+		switch {
+		case parts[1] == "skills" && parts[2] == "upload":
+			action = "skills/upload"
+		case parts[1] == "skills" && parts[2] == "delete":
+			action = "skills/delete"
+		case parts[1] == "teams" && parts[2] == "remove":
+			action = "teams/remove"
+		default:
 			return "", "", false
 		}
-		action = "skills/upload"
 	}
 	return slug, action, true
 }

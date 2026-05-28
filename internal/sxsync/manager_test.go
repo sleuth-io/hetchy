@@ -38,7 +38,18 @@ func TestBotDescriptionFallsBackToStableIdentifier(t *testing.T) {
 
 func TestProfilesFromRemoteAgentsUsesBotsAndMatchingAgentAssets(t *testing.T) {
 	got := profilesFromRemoteAgents(BackendSkillsNew, []sxlib.BotSummary{
-		{Name: "Frontend", Slug: "front", Description: "Frontend specialist", Teams: []string{"Web"}, InstalledSkills: []string{" webapp-testing ", "fix-pr", "fix-pr", ""}},
+		{
+			Name:        "Frontend",
+			Slug:        "front",
+			Description: "Frontend specialist",
+			Teams:       []string{"Web"},
+			InstalledSkills: []sxlib.BotSkillSummary{
+				{Name: " webapp-testing ", IsDirectInstall: false},
+				{Name: "fix-pr", IsDirectInstall: true},
+				{Name: "fix-pr", IsDirectInstall: true},
+				{Name: "", IsDirectInstall: true},
+			},
+		},
 		{Name: "Reviewer", Slug: "reviewer"},
 		{Name: "Frontend", Slug: "front", Description: "duplicate"},
 	}, []sxlib.AssetSummary{
@@ -61,8 +72,19 @@ func TestProfilesFromRemoteAgentsUsesBotsAndMatchingAgentAssets(t *testing.T) {
 	if strings.Join(got[0].SXSkills, ",") != "fix-pr,webapp-testing" {
 		t.Fatalf("front sx skills = %+v", got[0].SXSkills)
 	}
+	if strings.Join(got[0].Skills, ",") != "fix-pr" {
+		t.Fatalf("front direct skills = %+v", got[0].Skills)
+	}
 	if got[1].Slug != "reviewer" || got[1].PersonaAsset != "" {
 		t.Fatalf("reviewer profile = %+v", got[1])
+	}
+}
+
+func TestPublicSkillCandidatesRecognizesRepositoryPrefixedNames(t *testing.T) {
+	got := publicSkillCandidates("https://github.com/hetchyhq/hetchy-sx-vault.git", "sx-hetchyhq-hetchy-sx-vault-fix-pr_skill")
+	want := []string{"sx-hetchyhq-hetchy-sx-vault-fix-pr_skill", "sx-hetchyhq-hetchy-sx-vault-fix-pr", "fix-pr_skill", "fix-pr"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("publicSkillCandidates = %+v, want %+v", got, want)
 	}
 }
 

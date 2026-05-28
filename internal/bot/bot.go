@@ -327,6 +327,7 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 		_ = os.Setenv("SX_CACHE_DIR", cfg.SXCacheDir)
 	}
 	b.sx = sxsync.NewManagerWithOptions(store, orgStore, agentStore, b.app, sxsync.Options{
+		PublicVaultURL:      cfg.SXPublicVaultURL,
 		CacheDir:            cfg.SXCacheDir,
 		CacheMinFreeBytes:   cfg.SXCacheMinFreeBytes,
 		GitOperationTimeout: time.Duration(cfg.SXGitOperationTimeoutSeconds) * time.Second,
