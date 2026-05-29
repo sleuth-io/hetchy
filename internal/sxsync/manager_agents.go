@@ -115,7 +115,12 @@ func shouldImportRemoteAgentRow(existingEnabled bool, profile agents.Profile) bo
 	if existingEnabled {
 		return false
 	}
-	return profile.VaultBackend == BackendSkillsNew
+	switch strings.TrimSpace(profile.VaultBackend) {
+	case BackendSkillsNew, BackendGitHubGit:
+		return true
+	default:
+		return false
+	}
 }
 
 func (m *Manager) SaveAgent(ctx context.Context, orgID string, actor Actor, p agents.Profile, templateSlug string) (agents.Profile, error) {
@@ -130,15 +135,19 @@ func (m *Manager) SaveAgent(ctx context.Context, orgID string, actor Actor, p ag
 			return err
 		}
 		skills := cleanAgentSkills(p.Skills)
-		if _, err := handle.Client.PutAgent(ctx, sxlib.AgentSpec{
+		agentResult, err := handle.Client.PutAgent(ctx, sxlib.AgentSpec{
 			BotName:        p.SXBot,
 			AssetName:      p.PersonaAsset,
 			Version:        nextAgentVersion(),
 			Description:    p.Description,
 			BotDescription: botDescription(p),
 			Prompt:         agentPromptMarkdown(p),
-		}); err != nil {
+		})
+		if err != nil {
 			return err
+		}
+		if strings.TrimSpace(agentResult.AgentName) != "" {
+			p.PersonaAsset = strings.TrimSpace(agentResult.AgentName)
 		}
 		installedSkills := make([]string, 0, len(skills))
 		for _, skill := range skills {
@@ -149,6 +158,7 @@ func (m *Manager) SaveAgent(ctx context.Context, orgID string, actor Actor, p ag
 			installedSkills = append(installedSkills, installedSkill)
 		}
 		p.Skills = cleanAgentSkills(installedSkills)
+		p.PersonaPrompt = ""
 		saved, err := m.agents.Upsert(ctx, orgID, p)
 		if err != nil {
 			return err
@@ -175,25 +185,54 @@ func (m *Manager) DeleteAgent(ctx context.Context, orgID string, actor Actor, sl
 		if err != nil && !errors.Is(err, ErrNotConfigured) {
 			return err
 		}
-		if err == nil && handle.Backend == BackendGitHubGit {
-			if err := handle.Client.DeleteBot(ctx, p.SXBot); err != nil {
-				return fmt.Errorf("delete sx git vault bot %q: %w", p.SXBot, err)
-			}
-		}
-		if err == nil && handle.Backend == BackendSkillsNew {
-			token, err := m.skillsNewKey(ctx, orgID)
-			if err != nil {
-				return err
-			}
-			if token == "" {
-				return ErrNotConfigured
-			}
-			if err := deleteSkillsNewBot(ctx, sxlib.DefaultSkillsNewURL, token, botSlugCandidates(p)); err != nil {
+		if err == nil && (handle.Backend == BackendGitHubGit || handle.Backend == BackendSkillsNew) {
+			if err := deleteAgentFromVault(ctx, handle.Client, p); err != nil {
 				return err
 			}
 		}
 		return m.agents.Delete(ctx, orgID, slug)
 	})
+}
+
+func deleteAgentFromVault(ctx context.Context, client *sxlib.Client, p agents.Profile) error {
+	if client == nil {
+		return ErrNotConfigured
+	}
+	assetName, err := agentAssetNameForDelete(ctx, client, p)
+	if err != nil {
+		return err
+	}
+	if assetName != "" {
+		if err := client.DeleteAsset(ctx, assetName); err != nil && !looksLikeMissingSXAsset(err) {
+			return fmt.Errorf("delete sx agent asset %q: %w", assetName, err)
+		}
+	}
+	botName := firstNonEmpty(p.SXBot, p.Slug)
+	if botName != "" {
+		if err := client.DeleteBot(ctx, botName); err != nil {
+			return fmt.Errorf("delete sx bot %q: %w", botName, err)
+		}
+	}
+	return nil
+}
+
+func agentAssetNameForDelete(ctx context.Context, client *sxlib.Client, p agents.Profile) (string, error) {
+	if assetName := strings.TrimSpace(p.PersonaAsset); assetName != "" {
+		return assetName, nil
+	}
+	slug := agents.NormalizeSlug(p.Slug)
+	if slug == "" {
+		return "", nil
+	}
+	assets, err := client.ListAssetsWithOptions(ctx, sxlib.ListOptions{Type: "agent", Limit: 500})
+	if err != nil {
+		return "", fmt.Errorf("list sx agent assets: %w", err)
+	}
+	asset, ok := agentAssetForBotSlug(slug, assets)
+	if !ok {
+		return "", nil
+	}
+	return strings.TrimSpace(asset.Name), nil
 }
 
 func (m *Manager) AttachSkill(ctx context.Context, orgID string, actor Actor, slug, skill string) (agents.Profile, error) {
@@ -211,7 +250,7 @@ func (m *Manager) AttachSkill(ctx context.Context, orgID string, actor Actor, sl
 		if err != nil {
 			return err
 		}
-		if _, err := handle.Client.EnsureBot(ctx, sxlib.Bot{Name: p.SXBot, Description: botDescription(p)}); err != nil {
+		if _, err := handle.Client.EnsureBot(ctx, sxlib.Bot{Name: p.SXBot}); err != nil {
 			return err
 		}
 		installedSkill, err := m.installSkillForAgent(ctx, handle.Client, actor, skill, p.SXBot)
@@ -272,7 +311,7 @@ func (m *Manager) UploadSkillZip(ctx context.Context, orgID string, actor Actor,
 		if err != nil {
 			return err
 		}
-		if _, err := handle.Client.EnsureBot(ctx, sxlib.Bot{Name: p.SXBot, Description: botDescription(p)}); err != nil {
+		if _, err := handle.Client.EnsureBot(ctx, sxlib.Bot{Name: p.SXBot}); err != nil {
 			return err
 		}
 		spec.BotName = p.SXBot

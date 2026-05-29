@@ -31,6 +31,7 @@ type agentSettingsView struct {
 	BuiltIn       bool
 	Default       bool
 	Imported      bool
+	RemoteBacked  bool
 }
 
 type agentTemplateView struct {
@@ -102,6 +103,26 @@ func (b *Bot) populateAgentSettingsTabData(ctx context.Context, orgID string, da
 			continue
 		}
 		remote, hasRemote := remoteBySlug[a.Slug]
+		displayName := a.DisplayName
+		description := a.Description
+		sxBot := a.SXBot
+		personaAsset := a.PersonaAsset
+		vaultBackend := a.VaultBackend
+		if hasRemote && !a.BuiltIn {
+			if strings.TrimSpace(remote.DisplayName) != "" {
+				displayName = remote.DisplayName
+			}
+			description = remote.Description
+			if strings.TrimSpace(remote.SXBot) != "" {
+				sxBot = remote.SXBot
+			}
+			if strings.TrimSpace(remote.PersonaAsset) != "" {
+				personaAsset = remote.PersonaAsset
+			}
+			if strings.TrimSpace(remote.VaultBackend) != "" {
+				vaultBackend = remote.VaultBackend
+			}
+		}
 		sxTeams := a.SXTeams
 		if hasRemote {
 			sxTeams = remote.SXTeams
@@ -117,17 +138,18 @@ func (b *Bot) populateAgentSettingsTabData(ctx context.Context, orgID string, da
 		directSkills := displaySkillNames(directSkillNames)
 		agentSkillOptions, canAddSkill := agentSkillOptionsForAgent(skillOptions, directSkillNames, sxSkills)
 		agentTeamOptions, canAddTeam := agentTeamOptionsForAgent(teamOptions, sxTeams)
+		remoteBacked := strings.TrimSpace(vaultBackend) != "" || hasRemote
 		imported := a.SyncStatus == "imported"
-		if !imported && remote.Slug != "" && a.VaultBackend != "" && strings.TrimSpace(a.PersonaPrompt) == strings.TrimSpace(remote.PersonaPrompt) {
+		if !imported && remote.Slug != "" && remoteBacked && strings.TrimSpace(a.PersonaPrompt) == strings.TrimSpace(remote.PersonaPrompt) {
 			imported = true
 		}
 		view := agentSettingsView{
 			Slug:          a.Slug,
-			DisplayName:   a.DisplayName,
-			Description:   a.Description,
+			DisplayName:   displayName,
+			Description:   description,
 			PersonaPrompt: a.PersonaPrompt,
-			SXBot:         a.SXBot,
-			PersonaAsset:  a.PersonaAsset,
+			SXBot:         sxBot,
+			PersonaAsset:  personaAsset,
 			SlackAliases:  a.SlackAliases,
 			Skills:        directSkills,
 			SkillChips:    agentSkillChips(directSkillNames),
@@ -137,12 +159,13 @@ func (b *Bot) populateAgentSettingsTabData(ctx context.Context, orgID string, da
 			TeamOptions:   agentTeamOptions,
 			CanAddTeam:    canAddTeam,
 			SXSkills:      displaySkillNames(inheritedSkillNames(sxSkills, directSkillNames)),
-			VaultBackend:  a.VaultBackend,
+			VaultBackend:  vaultBackend,
 			SyncStatus:    a.SyncStatus,
 			SyncError:     a.SyncError,
 			BuiltIn:       a.BuiltIn,
 			Default:       a.Slug == agents.DefaultSlug,
 			Imported:      imported,
+			RemoteBacked:  remoteBacked,
 		}
 		out = append(out, view)
 		if view.BuiltIn {

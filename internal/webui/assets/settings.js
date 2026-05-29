@@ -209,11 +209,47 @@
     });
     template.addEventListener('change', applyTemplate);
     renderSelected();
-  })();
+	  })();
 
-  // Destructive settings actions use the shared app-dialog styling
-  // instead of native browser confirm() prompts.
-  (function () {
+	  // SX-backed agent actions can take several seconds. Keep the posted
+	  // controls enabled, but lock the buttons and replace the submit label
+	  // with a spinner so the modal shows progress before navigation.
+	  (function () {
+	    const forms = [
+	      '#agent-create-form',
+	      '.agent-command-form',
+	      '.agent-upload-form',
+	      'dialog[id^="modal-agent-team-"] form'
+	    ].join(', ');
+
+	    function setSubmitting(form, submitter) {
+	      if (form.dataset.submitting === '1') return;
+	      form.dataset.submitting = '1';
+	      form.setAttribute('aria-busy', 'true');
+
+	      const button = submitter && submitter.matches('button[type="submit"], button:not([type])')
+	        ? submitter
+	        : form.querySelector('button[type="submit"], button:not([type])');
+	      form.querySelectorAll('button').forEach(btn => {
+	        btn.disabled = true;
+	      });
+	      if (!button) return;
+	      button.dataset.originalLabel = button.textContent;
+	      button.classList.add('is-submitting');
+	      button.setAttribute('aria-label', button.dataset.submittingLabel || 'Working');
+	      button.innerHTML = '<span class="button-spinner" aria-hidden="true"></span>';
+	    }
+
+	    document.querySelectorAll(forms).forEach(form => {
+	      form.addEventListener('submit', e => {
+	        setSubmitting(form, e.submitter);
+	      });
+	    });
+	  })();
+
+	  // Destructive settings actions use the shared app-dialog styling
+	  // instead of native browser confirm() prompts.
+	  (function () {
     const dlg = document.getElementById('integration-disconnect-dialog');
     if (!dlg) return;
     const title = document.getElementById('integration-disconnect-title');

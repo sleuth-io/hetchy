@@ -657,7 +657,7 @@
 
   <p>{{$a.Description}}</p>
 
-  {{if and $root.IsAdmin (not $a.BuiltIn) (not $a.Imported)}}
+  {{if and $root.IsAdmin (not $a.BuiltIn) (not $a.RemoteBacked) (not $a.Imported) (not $a.VaultBackend)}}
   <form method="POST" action="/settings/org/agents/{{$a.Slug}}" class="agent-edit-form agent-profile-form">
     <div class="agent-form-grid">
       <label for="agent-name-{{$a.Slug}}">Name</label>
@@ -732,7 +732,6 @@
 
   <div class="agent-card-footer">
     <div class="agent-meta">
-    {{if $a.PersonaAsset}}<span>persona: <code>{{$a.PersonaAsset}}</code></span>{{end}}
     {{if $a.SyncError}}<span>sync error: <code>{{$a.SyncError}}</code></span>{{end}}
     {{if $a.SlackAliases}}<span>aliases: {{range $i, $alias := $a.SlackAliases}}{{if gt $i 0}}, {{end}}@{{$alias}}{{end}}</span>{{end}}
     </div>

@@ -84,18 +84,6 @@ func cleanAgentSkills(skills []string) []string {
 	return out
 }
 
-func botSlugCandidates(p agents.Profile) []string {
-	out := []string{}
-	for _, raw := range []string{p.SXBot, p.Slug, p.DisplayName} {
-		slug := agents.NormalizeSlug(raw)
-		if slug == "" || slices.Contains(out, slug) {
-			continue
-		}
-		out = append(out, slug)
-	}
-	return out
-}
-
 func agentPromptMarkdown(p agents.Profile) string {
 	prompt := strings.TrimSpace(p.PersonaPrompt)
 	if strings.HasPrefix(prompt, "---") {
@@ -132,14 +120,6 @@ func agentFrontmatterDescription(values ...string) string {
 }
 
 func profilesFromRemoteAgents(backend string, bots []sxlib.BotSummary, agentAssets []sxlib.AssetSummary) []agents.Profile {
-	assetsBySlug := make(map[string]sxlib.AssetSummary, len(agentAssets))
-	for _, asset := range agentAssets {
-		slug := agents.NormalizeSlug(asset.Name)
-		if slug == "" {
-			continue
-		}
-		assetsBySlug[slug] = asset
-	}
 	out := make([]agents.Profile, 0, len(bots))
 	seen := map[string]bool{}
 	for _, bot := range bots {
@@ -148,7 +128,7 @@ func profilesFromRemoteAgents(backend string, bots []sxlib.BotSummary, agentAsse
 			continue
 		}
 		seen[slug] = true
-		asset, hasAsset := assetsBySlug[slug]
+		asset, hasAsset := agentAssetForBotSlug(slug, agentAssets)
 		displayName := strings.TrimSpace(bot.Name)
 		if displayName == "" {
 			displayName = titleFromSlug(slug)
@@ -160,24 +140,45 @@ func profilesFromRemoteAgents(backend string, bots []sxlib.BotSummary, agentAsse
 		}
 		sxBot := firstNonEmpty(bot.Name, bot.Slug, slug)
 		out = append(out, agents.Profile{
-			Slug:          slug,
-			DisplayName:   displayName,
-			Description:   description,
-			SXBot:         sxBot,
-			PersonaAsset:  personaAsset,
-			PersonaPrompt: remoteAgentPrompt(displayName, description),
-			Skills:        cleanSXSkillNames(directBotSkillNames(bot.InstalledSkills)),
-			SXTeams:       append([]string(nil), bot.Teams...),
-			SXSkills:      cleanSXSkillNames(botSkillNames(bot.InstalledSkills)),
-			VaultBackend:  backend,
-			SyncStatus:    "imported",
-			Enabled:       true,
+			Slug:         slug,
+			DisplayName:  displayName,
+			Description:  description,
+			SXBot:        sxBot,
+			PersonaAsset: personaAsset,
+			Skills:       cleanSXSkillNames(directBotSkillNames(bot.InstalledSkills)),
+			SXTeams:      append([]string(nil), bot.Teams...),
+			SXSkills:     cleanSXSkillNames(botSkillNames(bot.InstalledSkills)),
+			VaultBackend: backend,
+			SyncStatus:   "imported",
+			Enabled:      true,
 		})
 	}
 	slices.SortFunc(out, func(a, b agents.Profile) int {
 		return strings.Compare(a.Slug, b.Slug)
 	})
 	return out
+}
+
+func agentAssetForBotSlug(botSlug string, agentAssets []sxlib.AssetSummary) (sxlib.AssetSummary, bool) {
+	botSlug = agents.NormalizeSlug(botSlug)
+	if botSlug == "" {
+		return sxlib.AssetSummary{}, false
+	}
+	for _, asset := range agentAssets {
+		if agents.NormalizeSlug(asset.Name) == botSlug {
+			return asset, true
+		}
+	}
+	for _, asset := range agentAssets {
+		name := strings.TrimSpace(asset.Name)
+		for _, suffix := range []string{"_agent", "-agent"} {
+			base, ok := strings.CutSuffix(name, suffix)
+			if ok && agents.NormalizeSlug(base) == botSlug {
+				return asset, true
+			}
+		}
+	}
+	return sxlib.AssetSummary{}, false
 }
 
 func botSkillNames(skills []sxlib.BotSkillSummary) []string {
@@ -214,18 +215,6 @@ func cleanSXSkillNames(in []string) []string {
 	}
 	slices.Sort(out)
 	return out
-}
-
-func remoteAgentPrompt(displayName, description string) string {
-	displayName = strings.TrimSpace(displayName)
-	if displayName == "" {
-		displayName = "Hetchy"
-	}
-	prompt := "You are " + displayName + ", a custom Hetchy agent backed by SX."
-	if description = strings.TrimSpace(description); description != "" {
-		prompt += "\n\n" + description
-	}
-	return prompt
 }
 
 func titleFromSlug(slug string) string {

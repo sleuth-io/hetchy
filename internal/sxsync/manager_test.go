@@ -60,6 +60,7 @@ func TestProfilesFromRemoteAgentsUsesBotsAndMatchingAgentAssets(t *testing.T) {
 		{Name: "Frontend", Slug: "front", Description: "duplicate"},
 	}, []sxlib.AssetSummary{
 		{Name: "front", Type: "agent", Description: "Frontend persona"},
+		{Name: "reviewer_agent", Type: "agent", Description: "Reviewer persona"},
 		{Name: "orphan", Type: "agent", Description: "No bot"},
 	})
 
@@ -72,6 +73,9 @@ func TestProfilesFromRemoteAgentsUsesBotsAndMatchingAgentAssets(t *testing.T) {
 	if got[0].Description != "Frontend specialist" || got[0].VaultBackend != BackendSkillsNew || got[0].SyncStatus != "imported" || !got[0].Enabled {
 		t.Fatalf("front sync fields = %+v", got[0])
 	}
+	if got[0].PersonaPrompt != "" {
+		t.Fatalf("front PersonaPrompt = %q, want remote-backed prompt left unstored", got[0].PersonaPrompt)
+	}
 	if len(got[0].SXTeams) != 1 || got[0].SXTeams[0] != "Web" {
 		t.Fatalf("front teams = %+v", got[0].SXTeams)
 	}
@@ -81,7 +85,7 @@ func TestProfilesFromRemoteAgentsUsesBotsAndMatchingAgentAssets(t *testing.T) {
 	if strings.Join(got[0].Skills, ",") != "fix-pr" {
 		t.Fatalf("front direct skills = %+v", got[0].Skills)
 	}
-	if got[1].Slug != "reviewer" || got[1].PersonaAsset != "" {
+	if got[1].Slug != "reviewer" || got[1].PersonaAsset != "reviewer_agent" {
 		t.Fatalf("reviewer profile = %+v", got[1])
 	}
 }
@@ -233,6 +237,89 @@ func TestBotTeamStateMatchesBotNameOnly(t *testing.T) {
 	}
 }
 
+func TestDeleteAgentFromVaultDeletesAssetAndBot(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	client, err := sxlib.OpenPath(root, sxlib.PathOptions{Actor: sxlib.Actor{Email: "admin@example.com"}})
+	if err != nil {
+		t.Fatalf("OpenPath: %v", err)
+	}
+	if _, err := client.PutAgent(ctx, sxlib.AgentSpec{
+		BotName:        "reviewer-bot",
+		AssetName:      "reviewer-agent",
+		Version:        "1",
+		Description:    "Reviews code.",
+		BotDescription: "Reviewer bot.",
+		Prompt:         "You are Reviewer.",
+	}); err != nil {
+		t.Fatalf("PutAgent: %v", err)
+	}
+
+	if err := deleteAgentFromVault(ctx, client, agents.Profile{
+		Slug:         "reviewer",
+		SXBot:        "reviewer-bot",
+		PersonaAsset: "reviewer-agent",
+	}); err != nil {
+		t.Fatalf("deleteAgentFromVault: %v", err)
+	}
+
+	bots, err := client.ListBots(ctx)
+	if err != nil {
+		t.Fatalf("ListBots: %v", err)
+	}
+	if len(bots) != 0 {
+		t.Fatalf("bots after delete = %+v, want none", bots)
+	}
+	assets, err := client.ListAssetsWithOptions(ctx, sxlib.ListOptions{Type: "agent"})
+	if err != nil {
+		t.Fatalf("ListAssetsWithOptions: %v", err)
+	}
+	if len(assets) != 0 {
+		t.Fatalf("agent assets after delete = %+v, want none", assets)
+	}
+	if _, err := os.Stat(filepath.Join(root, "assets", "reviewer-agent")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("deleted asset directory stat error = %v, want not exist", err)
+	}
+}
+
+func TestDeleteAgentFromVaultDoesNotGuessSkillAsset(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	client, err := sxlib.OpenPath(root, sxlib.PathOptions{Actor: sxlib.Actor{Email: "admin@example.com"}})
+	if err != nil {
+		t.Fatalf("OpenPath: %v", err)
+	}
+	if _, err := client.EnsureBot(ctx, sxlib.Bot{Name: "reviewer-bot", Description: "Reviewer bot."}); err != nil {
+		t.Fatalf("EnsureBot: %v", err)
+	}
+	if err := client.PutSkillZip(ctx, sxlib.SkillZipSpec{
+		Name:        "reviewer",
+		Version:     "1",
+		Description: "Reviewer skill.",
+		ZipData:     testSkillZip(t, "reviewer"),
+	}); err != nil {
+		t.Fatalf("PutSkillZip: %v", err)
+	}
+
+	if err := deleteAgentFromVault(ctx, client, agents.Profile{
+		Slug:  "reviewer",
+		SXBot: "reviewer-bot",
+	}); err != nil {
+		t.Fatalf("deleteAgentFromVault: %v", err)
+	}
+
+	skills, err := client.ListAssetsWithOptions(ctx, sxlib.ListOptions{Type: "skill"})
+	if err != nil {
+		t.Fatalf("ListAssetsWithOptions: %v", err)
+	}
+	if len(skills) != 1 || skills[0].Name != "reviewer" {
+		t.Fatalf("skill assets after delete = %+v, want reviewer skill retained", skills)
+	}
+	if _, err := os.Stat(filepath.Join(root, "assets", "reviewer")); err != nil {
+		t.Fatalf("skill asset directory stat error = %v, want retained", err)
+	}
+}
+
 func testSkillZip(t *testing.T, name string) []byte {
 	t.Helper()
 	var buf bytes.Buffer
@@ -265,15 +352,18 @@ func botHasDirectSkill(bots []sxlib.BotSummary, botName, skillName string) bool 
 	return false
 }
 
-func TestShouldImportRemoteAgentRowRevivesDisabledSkillsNewAgents(t *testing.T) {
+func TestShouldImportRemoteAgentRowRevivesDisabledRemoteAgents(t *testing.T) {
 	if shouldImportRemoteAgentRow(true, agents.Profile{VaultBackend: BackendSkillsNew}) {
 		t.Fatal("enabled local row should not be replaced by remote import")
 	}
 	if !shouldImportRemoteAgentRow(false, agents.Profile{VaultBackend: BackendSkillsNew}) {
 		t.Fatal("disabled Skills.new row should be revived by remote import")
 	}
-	if shouldImportRemoteAgentRow(false, agents.Profile{VaultBackend: BackendGitHubGit}) {
-		t.Fatal("disabled Git Vault row should stay deleted until the Git delete path removes the remote asset")
+	if !shouldImportRemoteAgentRow(false, agents.Profile{VaultBackend: BackendGitHubGit}) {
+		t.Fatal("disabled Git Vault row should be revived by remote import")
+	}
+	if shouldImportRemoteAgentRow(false, agents.Profile{VaultBackend: ""}) {
+		t.Fatal("profiles without a remote vault backend should not be imported")
 	}
 }
 
