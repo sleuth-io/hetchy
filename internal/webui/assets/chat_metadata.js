@@ -559,7 +559,7 @@ async function loadHistory(opts) {
         target.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
     } else {
-      log.scrollTop = log.scrollHeight;
+      scrollLogToBottom();
     }
   } catch (e) {
     // Leave the log empty on error; the user can still type a message.

@@ -1,5 +1,39 @@
 const log = document.getElementById('log');
 const inp = document.getElementById('inp');
+
+// Auto-scroll bookkeeping. Streaming bot output used to jam the chat
+// to the bottom on every delta, which yanked the viewport away from
+// users reading earlier messages. We now only force-scroll when the
+// user is already pinned to the bottom; as soon as they scroll up,
+// we leave the viewport alone until they scroll back down. The 50px
+// threshold absorbs sub-line jitter (rounding, sub-pixel layout, a
+// just-collapsed phase) so the pin doesn't drop on its own.
+let stickToBottom = true;
+const SCROLL_BOTTOM_THRESHOLD = 50;
+
+function isLogAtBottom() {
+  return log.scrollHeight - log.scrollTop - log.clientHeight <= SCROLL_BOTTOM_THRESHOLD;
+}
+
+// scrollLogToBottom forces the viewport to the bottom and re-arms the
+// stick-to-bottom flag. Use this for user-initiated actions (sending a
+// message, loading a conversation) where the user expects the latest
+// content to be in view regardless of where they last scrolled to.
+function scrollLogToBottom() {
+  log.scrollTop = log.scrollHeight;
+  stickToBottom = true;
+}
+
+// scrollLogToBottomIfPinned scrolls only when the user is already at
+// (or near) the bottom. Use this for bot-driven updates so streaming
+// output doesn't fight the user who has scrolled up to read history.
+function scrollLogToBottomIfPinned() {
+  if (stickToBottom) log.scrollTop = log.scrollHeight;
+}
+
+log.addEventListener('scroll', () => {
+  stickToBottom = isLogAtBottom();
+}, { passive: true });
 const btn = document.getElementById('btn');
 const toastStack = document.getElementById('toast-stack');
 const toolsBtn = document.getElementById('tools-btn');
@@ -260,6 +294,6 @@ function addUserMsg(text, attachments = []) {
     d.appendChild(list);
   }
   log.appendChild(d);
-  log.scrollTop = log.scrollHeight;
+  scrollLogToBottom();
   return d;
 }

@@ -82,7 +82,7 @@ function startBotTurn() {
   const d = document.createElement('div');
   d.className = 'bot-turn';
   log.appendChild(d);
-  log.scrollTop = log.scrollHeight;
+  scrollLogToBottomIfPinned();
   return d;
 }
 
@@ -248,7 +248,7 @@ function appendPhaseProse(phase, delta) {
   requestAnimationFrame(() => {
     phase.proseRenderQueued = false;
     phase.proseEl.innerHTML = renderMarkdown(phase.proseRaw);
-    log.scrollTop = log.scrollHeight;
+    scrollLogToBottomIfPinned();
   });
 }
 
@@ -314,7 +314,7 @@ function scheduleBlockRender(el) {
     if (el.tagName === 'DETAILS' && !el.open) return;
     const body = el.querySelector('.blk-body');
     body.innerHTML = renderMarkdown(body.dataset.raw || '');
-    log.scrollTop = log.scrollHeight;
+    scrollLogToBottomIfPinned();
   });
 }
 
@@ -384,6 +384,10 @@ function applyHeartbeatToActiveBlock(currentPhase, lastStandaloneEl, payload) {
 
 function showEmptyState() {
   log.innerHTML = '';
+  // Reset the scroll pin so a fresh chat starts in the "follow new
+  // content" state regardless of where the user had scrolled in the
+  // chat we just navigated away from.
+  stickToBottom = true;
   const d = document.createElement('div');
   d.id = 'empty-state';
   const ascii = `<div class="empty-brand"><pre class="empty-ascii">
