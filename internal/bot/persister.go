@@ -138,10 +138,12 @@ func (p *chatPersister) snapshot() convstore.Record {
 		for len(blocksOut) < len(p.history) {
 			blocksOut = append(blocksOut, nil)
 		}
-		if len(blocksOut) == 0 {
+		if len(p.history) == 0 {
 			blocksOut = append(blocksOut, nil)
+			blocksOut[0] = append(blocksOut[0], current...)
+			break
 		}
-		last := len(blocksOut) - 1
+		last := len(p.history) - 1
 		blocksOut[last] = append(blocksOut[last], current...)
 	}
 	return convstore.Record{

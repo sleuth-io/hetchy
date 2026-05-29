@@ -470,8 +470,13 @@ func (b *Bot) handleRetryAfterFailure(ctx context.Context, oc orgcfg.Config, rec
 		rec.SandboxID = ""
 	}
 	attachmentTurn := len(rec.History)
-	userRequest := retryAfterFailureRequest(rec, text)
-	appendBlocksAsNewTurn(&rec, text, nil)
+	retryText := strings.TrimSpace(text)
+	userRequest := retryAfterFailureRequest(rec, retryText)
+	displayText := retryText
+	if displayText == "" {
+		displayText = "Retry the previous request."
+	}
+	appendBlocksAsNewTurn(&rec, displayText, nil)
 	rec.AgentSlug = agent.Slug
 	rec.Model = string(model)
 	b.runFreshAgentWithTranscriptMode(ctx, oc, rec, agent, userRequest, requestID, opts, model, recorder, emit, appendToLastTurn, attachmentTurn)

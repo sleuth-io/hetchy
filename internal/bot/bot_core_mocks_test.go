@@ -894,6 +894,69 @@ func TestHandleRequestRetryAfterFailureRunsWithOriginalRequestContext(t *testing
 	}
 }
 
+func TestRetryAfterFailureRequest(t *testing.T) {
+	cases := []struct {
+		name         string
+		history      []string
+		retryText    string
+		wantExact    string
+		wantContains []string
+	}{
+		{name: "empty history and empty retry", wantExact: ""},
+		{name: "empty history and retry text", retryText: "do the thing", wantExact: "do the thing"},
+		{name: "single prior and empty retry", history: []string{"original task"}, wantExact: "original task"},
+		{
+			name:      "single prior and retry text",
+			history:   []string{"original task"},
+			retryText: "try again",
+			wantContains: []string{
+				"ORIGINAL REQUEST:",
+				"original task",
+				"USER RETRY REQUEST:",
+				"try again",
+			},
+		},
+		{
+			name:      "multiple prior messages and retry text",
+			history:   []string{"original task", "first retry context"},
+			retryText: "second retry",
+			wantContains: []string{
+				"ORIGINAL REQUEST:",
+				"original task",
+				"PRIOR RETRY REQUEST 1:",
+				"first retry context",
+				"USER RETRY REQUEST:",
+				"second retry",
+			},
+		},
+		{
+			name:    "multiple prior messages and empty retry",
+			history: []string{"original task", "first retry context"},
+			wantContains: []string{
+				"ORIGINAL REQUEST:",
+				"original task",
+				"PRIOR RETRY REQUEST 1:",
+				"first retry context",
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := retryAfterFailureRequest(convstore.Record{History: tc.history}, tc.retryText)
+			if tc.wantExact != "" || len(tc.wantContains) == 0 {
+				if got != tc.wantExact {
+					t.Fatalf("retryAfterFailureRequest() = %q, want %q", got, tc.wantExact)
+				}
+			}
+			for _, want := range tc.wantContains {
+				if !strings.Contains(got, want) {
+					t.Fatalf("retryAfterFailureRequest() = %q, missing %q", got, want)
+				}
+			}
+		})
+	}
+}
+
 // TestParseRequestedRepo covers the boundary cases the chat HTTP body
 // can produce — a nil pointer (older client), an empty string (cleared
 // picker), and assorted whitespace / URL / .git shapes pulled through
