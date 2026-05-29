@@ -165,6 +165,7 @@ HETCHY_CREDENTIAL_HELPER
     cat > "$HOME/.local/bin/gh" <<HETCHY_GH_WRAPPER
 #!/bin/bash
 set -euo pipefail
+export PATH="$HOME/.local/bin:\$PATH"
 token="\$(hetchy-github-token 2>/dev/null || true)"
 if [[ -n "\$token" ]]; then
   export GITHUB_TOKEN="\$token"
