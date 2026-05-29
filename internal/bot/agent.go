@@ -48,22 +48,8 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, o
 	// proof even when bootstrap generation or persistence failed. The
 	// run-scoped token lets the sandbox request more slots up to
 	// artifacts.MaxSlots.
-	artifactSlotCount := 0
-	if opts.ValidateChanges && repo.RepoID != 0 {
-		prefix := fmt.Sprintf("%s/%d/%s", oc.OrgID, repo.RepoID, requestID)
-		s, err := b.addArtifactRunEnv(ctx, prefix, env)
-		switch {
-		case err == nil:
-			artifactSlotCount = len(s)
-		case errors.Is(err, errArtifactSlotsDisabled):
-			// No S3 upload path configured; BuildValidationPrompt will
-			// tell the agent to mark artifact proof incomplete rather
-			// than write broken local-file links.
-		default:
-			b.log.Warn("artifact slot minting failed",
-				"request_id", requestID, "error", err)
-		}
-	}
+	artifactPrefix := fmt.Sprintf("%s/%d/%s", oc.OrgID, repo.RepoID, requestID)
+	artifactSlotCount := b.addSandboxGitHubAuthEnv(ctx, artifactPrefix, env, repo, requestID, "initial", opts.ValidateChanges)
 	proofInstructions := proofInstructionsForSpec(opts, spec, artifactSlotCount)
 
 	originalPrompt := fmt.Sprintf(agentPromptTemplate,
@@ -451,24 +437,11 @@ func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx
 	}
 	addAgentEnv(env, b.cfg, agent)
 
-	artifactSlotCount := 0
-	if changeMode && opts.ValidateChanges && repo.RepoID != 0 {
-		// Follow-ups can still need fresh proof links. Issue a new
-		// run-scoped batch under a follow-up prefix so keys don't
-		// collide with the initial request.
-		prefix := fmt.Sprintf("%s/%d/%s/followup-%s", oc.OrgID, repo.RepoID, rec.ThreadID, requestID)
-		s, err := b.addArtifactRunEnv(ctx, prefix, env)
-		switch {
-		case err == nil:
-			artifactSlotCount = len(s)
-		case errors.Is(err, errArtifactSlotsDisabled):
-			// No S3 upload path configured; validation prompt will
-			// require an explicit incomplete-artifact note.
-		default:
-			b.log.Warn("artifact slot minting failed (followup)",
-				"request_id", requestID, "error", err)
-		}
-	}
+	artifactPrefix := fmt.Sprintf("%s/%d/%s/followup-%s", oc.OrgID, repo.RepoID, rec.ThreadID, requestID)
+	// Follow-ups can still need fresh proof links. Issue a new
+	// run-scoped batch under a follow-up prefix so keys don't collide
+	// with the initial request.
+	artifactSlotCount := b.addSandboxGitHubAuthEnv(ctx, artifactPrefix, env, repo, requestID, "followup", changeMode && opts.ValidateChanges)
 	prompt := buildFollowUpPrompt(repo.Slug, rec, userRequest, spec, artifactSlotCount, opts, mode)
 	env["SF_PROMPT_B64"] = base64.StdEncoding.EncodeToString([]byte(prompt))
 	env["HETCHY_FOLLOWUP_MODE"] = string(mode)

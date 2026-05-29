@@ -279,7 +279,7 @@ func TestHandleRequestFreshRunSuccessUsesMocks(t *testing.T) {
 	}
 }
 
-func TestHandleRequestFreshRunAnswerOnlyNoPR(t *testing.T) {
+func TestHandleRequestFreshRunNoPRKeepsBranchForRetry(t *testing.T) {
 	convs := &fakeConversationStore{getErr: convstore.ErrNotFound}
 	b := testCoreBot(convs)
 	b.resolveRepoFn = func(context.Context, string, string, string) (repoCtx, error) {
@@ -320,8 +320,65 @@ func TestHandleRequestFreshRunAnswerOnlyNoPR(t *testing.T) {
 		t.Fatalf("archived sandbox = %q, want sandbox-1", archivedSandbox)
 	}
 	rec := convs.lastUpsert(t)
-	if rec.PRURL != "" || rec.SandboxID != "" || rec.Branch != "" {
-		t.Fatalf("answer-only run should not persist PR/sandbox state: %+v", rec)
+	if rec.PRURL != "" || rec.SandboxID != "sandbox-1" || rec.Branch != "feature/sf-req-1" {
+		t.Fatalf("no-PR run should keep sandbox branch for retry: %+v", rec)
+	}
+}
+
+func TestHandleRequestNoPRRetryUsesExistingSandboxAndOriginalHistory(t *testing.T) {
+	convs := &fakeConversationStore{
+		rec: convstore.Record{
+			OrgID:       "org_test",
+			ThreadID:    "thread-1",
+			SandboxID:   "sandbox-1",
+			Branch:      "feature/sf-req-1",
+			GitHubOwner: "hetchyhq",
+			GitHubRepo:  "hetchy",
+			History:     []string{"original implementation request"},
+		},
+	}
+	b := testCoreBot(convs)
+	b.resolveRepoFn = func(context.Context, string, string, string) (repoCtx, error) {
+		return repoCtx{Slug: "hetchyhq/hetchy", GitHubToken: "token"}, nil
+	}
+	b.getSandboxFn = func(_ context.Context, sandboxID string) (*daytona.Sandbox, error) {
+		if sandboxID != "sandbox-1" {
+			t.Fatalf("sandbox = %q, want sandbox-1", sandboxID)
+		}
+		return &daytona.Sandbox{ID: sandboxID}, nil
+	}
+	b.resumeSandboxFn = func(context.Context, *daytona.Sandbox, blocks.Emitter) error { return nil }
+	b.deleteSandboxSessionFn = func(*daytona.Sandbox, string) {}
+	b.stopAndArchiveFn = func(context.Context, *daytona.Sandbox) {}
+	var gotRec convstore.Record
+	var gotText string
+	b.runFollowUpFn = func(_ context.Context, _ *daytona.Sandbox, _ repoCtx, _ orgcfg.Config, rec convstore.Record, _ agents.Profile, text, _ string, _ chatTaskOptions, _ ClaudeModel, mode followUpMode, _ blocks.Emitter) (string, error) {
+		gotRec = rec
+		gotText = text
+		if mode != followUpModeChange {
+			t.Fatalf("mode = %s, want change", mode)
+		}
+		return "https://github.com/hetchyhq/hetchy/pull/9", nil
+	}
+	emit := newCaptureEmitter()
+
+	b.HandleRequest(context.Background(),
+		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant"},
+		"Try to create the pull request again", "req-2", "thread-1", "user-1",
+		chatTaskOptionPatch{}, nil, nil, ClaudeModelOpus, emit)
+
+	if gotText != "Try to create the pull request again" {
+		t.Fatalf("follow-up text = %q", gotText)
+	}
+	if len(gotRec.History) != 1 || gotRec.History[0] != "original implementation request" {
+		t.Fatalf("original history was not preserved: %#v", gotRec.History)
+	}
+	rec := convs.lastUpsert(t)
+	if len(rec.History) != 2 || rec.History[0] != "original implementation request" || rec.History[1] != "Try to create the pull request again" {
+		t.Fatalf("persisted history = %#v", rec.History)
+	}
+	if rec.PRURL != "https://github.com/hetchyhq/hetchy/pull/9" {
+		t.Fatalf("PRURL = %q", rec.PRURL)
 	}
 }
 

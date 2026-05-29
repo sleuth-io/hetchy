@@ -53,10 +53,13 @@ func (b *Bot) getSandbox(ctx context.Context, sandboxID string) (*daytona.Sandbo
 	return b.daytona.Get(ctx, sandboxID)
 }
 
+const sandboxGitHubTokenMinTTL = 55 * time.Minute
+
 // resolveRepo joins org → installations → repos to find which
 // installation grants access to (owner, name), then mints a fresh
 // installation token scoped to that single repo. The 1-hour token is
-// cached inside githubapp.App until 5 min before expiry.
+// cached inside githubapp.App, but sandbox-bound calls require enough
+// lifetime for a long agent run plus a later push.
 func (b *Bot) resolveRepo(ctx context.Context, orgID, owner, name string) (repoCtx, error) {
 	if owner == "" || name == "" {
 		return repoCtx{}, fmt.Errorf("repo not selected (owner=%q name=%q)", owner, name)
@@ -72,7 +75,7 @@ func (b *Bot) resolveRepo(ctx context.Context, orgID, owner, name string) (repoC
 	if err != nil {
 		return repoCtx{}, fmt.Errorf("lookup %s/%s for org %s: %w", owner, name, orgID, err)
 	}
-	tok, exp, err := b.app.InstallationToken(ctx, row.InstallationID, []int64{row.RepoID})
+	tok, exp, err := b.app.InstallationTokenMinTTL(ctx, row.InstallationID, []int64{row.RepoID}, sandboxGitHubTokenMinTTL)
 	if err != nil {
 		// IDs not visible in the caller's "resolve repo failed" log.
 		b.log.Warn("github installation token mint failed",

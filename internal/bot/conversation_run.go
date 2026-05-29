@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	sdkerrors "github.com/daytonaio/daytona/libs/sdk-go/pkg/errors"
@@ -157,8 +158,8 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 			b.markRunState(ctx, runstore.StateRecovering, err)
 			return
 		}
-		rec.SandboxID = ""
-		rec.Branch = ""
+		rec.SandboxID = sb.ID
+		rec.Branch = branch
 		rec.PRURL = ""
 		appendBlocksToFirstTurn(&rec, recorder.Snapshot())
 		if err := b.convs.Upsert(ctx, rec); err != nil {
@@ -196,6 +197,9 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 	model = modelForConversation(rec, model)
 	modeDecision := b.decideFollowUpMode(ctx, oc, rec, text)
 	mode := modeDecision.Mode
+	if strings.TrimSpace(rec.PRURL) == "" {
+		mode = followUpModeChange
+	}
 	b.log.Info("follow-up received", "org", oc.OrgID, "sandbox", rec.SandboxID, "branch", rec.Branch, "pr", rec.PRURL, "agent", agent.Slug, "model", model, "mode", mode, "mode_confidence", modeDecision.Confidence, "mode_reason", modeDecision.Reason)
 	b.markRunKind(ctx, "followup")
 	b.markRunBranch(ctx, rec.Branch)
@@ -203,9 +207,9 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 	rec.AgentSlug = agent.Slug
 	rec.Model = string(model)
 	if agent.Slug == "" {
-		emit.Notify("Resuming", fmt.Sprintf("Resuming work on %s…", rec.PRURL))
+		emit.Notify("Resuming", fmt.Sprintf("Resuming work on %s…", followUpTargetLabel(rec)))
 	} else {
-		emit.Notify("Resuming", fmt.Sprintf("Resuming `%s` on %s…", agent.DisplayName, rec.PRURL))
+		emit.Notify("Resuming", fmt.Sprintf("Resuming `%s` on %s…", agent.DisplayName, followUpTargetLabel(rec)))
 	}
 
 	repo, err := b.resolveRepoForRun(ctx, oc.OrgID, rec.GitHubOwner, rec.GitHubRepo)
@@ -327,7 +331,7 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 	// then upsert with the new user turn + this turn's blocks.
 	resultBody := prURL
 	if resultBody == "" {
-		resultBody = noPullRequestResultBody(true)
+		resultBody = noPullRequestResultBody(strings.TrimSpace(rec.PRURL) != "")
 	}
 	emit.Result("Done!", resultBody)
 	if err := agentRunDurabilityErr(ctx); err != nil {
@@ -354,4 +358,14 @@ func noPullRequestResultBody(followup bool) string {
 		return "No new pull request URL was reported; keeping the existing PR."
 	}
 	return "No pull request was created."
+}
+
+func followUpTargetLabel(rec convstore.Record) string {
+	if pr := strings.TrimSpace(rec.PRURL); pr != "" {
+		return pr
+	}
+	if branch := strings.TrimSpace(rec.Branch); branch != "" {
+		return "branch `" + branch + "`"
+	}
+	return "this chat"
 }
