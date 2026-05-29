@@ -728,7 +728,7 @@ func conversationTurns(rec convstore.Record, attachments []attachmentInfo, inclu
 		}
 		displayMessage := conversationTurnMessage(i, message, blocksForTurn)
 		turn := conversationTurn{
-			ID:      conversationTurnID(rec.ThreadID, i, displayMessage),
+			ID:      conversationTurnID(rec.ThreadID, i, message),
 			Index:   i,
 			Message: displayMessage,
 			Blocks:  blocksForTurn,
