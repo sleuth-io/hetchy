@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hetchyhq/hetchy/internal/sxsync"
 	"github.com/hetchyhq/hetchy/internal/webui"
 )
 
@@ -187,7 +188,60 @@ func TestSettingsTemplate_DisablesAgentCreateWithoutSX(t *testing.T) {
 	if !strings.Contains(body, `data-open-modal="modal-agent-create" disabled`) {
 		t.Fatalf("agents tab should disable create without SX, body=%q", body)
 	}
-	if !strings.Contains(body, "Enable SX in Integrations before creating agents.") {
-		t.Fatalf("agents tab missing SX enable hint")
+	for _, want := range []string{
+		`class="sx-enable-callout"`,
+		`href="/settings/org?tab=integrations&amp;expand=sx#integration-sx"`,
+		"Enable SX to create custom agents",
+		"Connect SX in Integrations to start creating agents",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("agents tab missing %q in callout, body=%q", want, body)
+		}
+	}
+}
+
+func TestSettingsTemplate_HidesSXCalloutWhenEnabled(t *testing.T) {
+	b := newBypassBot(t)
+	rec := httptest.NewRecorder()
+	b.renderTemplate(rec, webui.Settings, map[string]any{
+		"OrgID": "org_y", "OrgName": "Acme", "Email": "u@y", "PrincipalUserID": "user_me",
+		"IsAdmin": true, "Tab": "agents", "SavedMessage": "", "SXEnabled": true,
+		"Agents": []agentSettingsView{}, "CustomAgents": []agentSettingsView{}, "BuiltInAgents": []agentSettingsView{},
+	})
+	body := rec.Body.String()
+	if strings.Contains(body, `class="sx-enable-callout"`) {
+		t.Fatalf("agents tab should not render SX callout when SX is enabled, body=%q", body)
+	}
+}
+
+func TestSettingsTemplate_SXCalloutForNonAdmin(t *testing.T) {
+	b := newBypassBot(t)
+	rec := httptest.NewRecorder()
+	b.renderTemplate(rec, webui.Settings, map[string]any{
+		"OrgID": "org_y", "OrgName": "Acme", "Email": "u@y", "PrincipalUserID": "user_me",
+		"IsAdmin": false, "Tab": "agents", "SavedMessage": "",
+		"Agents": []agentSettingsView{}, "CustomAgents": []agentSettingsView{}, "BuiltInAgents": []agentSettingsView{},
+	})
+	body := rec.Body.String()
+	if !strings.Contains(body, `class="sx-enable-callout"`) {
+		t.Fatalf("agents tab should render SX callout for non-admins too, body=%q", body)
+	}
+	if !strings.Contains(body, "Ask an administrator to connect SX") {
+		t.Fatalf("non-admin callout should ask an administrator, body=%q", body)
+	}
+}
+
+func TestSettingsTemplate_SXIntegrationExpandsWhenRequested(t *testing.T) {
+	b := newBypassBot(t)
+	rec := httptest.NewRecorder()
+	b.renderTemplate(rec, webui.Settings, map[string]any{
+		"OrgID": "org_y", "OrgName": "Acme", "Email": "u@y", "PrincipalUserID": "user_me",
+		"IsAdmin": true, "Tab": "integrations", "SavedMessage": "",
+		"GitHubAppEnabled": false, "SXExpand": true,
+		"SXGitVault": sxsync.GitVaultView{},
+	})
+	body := rec.Body.String()
+	if !strings.Contains(body, `data-integration="sx" id="integration-sx" open`) {
+		t.Fatalf("integrations tab should open SX card when SXExpand is set, body=%q", body)
 	}
 }
