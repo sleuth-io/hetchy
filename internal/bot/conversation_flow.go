@@ -479,16 +479,30 @@ func (b *Bot) handleRetryAfterFailure(ctx context.Context, oc orgcfg.Config, rec
 
 func retryAfterFailureRequest(rec convstore.Record, retryText string) string {
 	retryText = strings.TrimSpace(retryText)
-	original := ""
-	if len(rec.History) > 0 {
-		original = strings.TrimSpace(rec.History[0])
+	var prior []string
+	for _, h := range rec.History {
+		if h = strings.TrimSpace(h); h != "" {
+			prior = append(prior, h)
+		}
 	}
 	switch {
-	case original == "":
+	case len(prior) == 0:
 		return retryText
-	case retryText == "" || strings.EqualFold(retryText, original):
-		return original
+	case retryText == "" && len(prior) == 1:
+		return prior[0]
 	default:
-		return fmt.Sprintf("The previous attempt did not produce a pull request. Retry the original task using the preserved context below.\n\nORIGINAL REQUEST:\n%s\n\nUSER RETRY REQUEST:\n%s", original, retryText)
+		var b strings.Builder
+		b.WriteString("The previous attempt did not produce a pull request. Retry the task using the preserved conversation context below.")
+		for i, h := range prior {
+			if i == 0 {
+				fmt.Fprintf(&b, "\n\nORIGINAL REQUEST:\n%s", h)
+				continue
+			}
+			fmt.Fprintf(&b, "\n\nPRIOR RETRY REQUEST %d:\n%s", i, h)
+		}
+		if retryText != "" {
+			fmt.Fprintf(&b, "\n\nUSER RETRY REQUEST:\n%s", retryText)
+		}
+		return b.String()
 	}
 }

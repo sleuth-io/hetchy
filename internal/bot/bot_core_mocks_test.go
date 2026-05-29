@@ -848,9 +848,13 @@ func TestHandleRequestRetryAfterFailureRunsWithOriginalRequestContext(t *testing
 			ThreadID:    "thread-1",
 			GitHubOwner: "hetchyhq",
 			GitHubRepo:  "hetchy",
-			History:     []string{"fix chat autoscroll when user scrolled up"},
+			History: []string{
+				"fix chat autoscroll when user scrolled up",
+				"try again, also preserve manual scroll position during streaming updates",
+			},
 			ResponseBlocks: [][]blocks.Block{
 				{{Kind: blocks.KindError, Title: "Agent failed", Body: "token expired"}},
+				{{Kind: blocks.KindError, Title: "Agent failed", Body: "token still expired"}},
 			},
 		},
 	}
@@ -877,14 +881,15 @@ func TestHandleRequestRetryAfterFailureRunsWithOriginalRequestContext(t *testing
 		chatTaskOptionPatch{}, nil, nil, ClaudeModelOpus, emit)
 
 	if !strings.Contains(capturedRequest, "fix chat autoscroll when user scrolled up") ||
+		!strings.Contains(capturedRequest, "also preserve manual scroll position") ||
 		!strings.Contains(capturedRequest, "try to complete this task again") {
 		t.Fatalf("retry prompt lost context: %q", capturedRequest)
 	}
 	rec := convs.lastUpsert(t)
-	if got := rec.History; len(got) != 2 || got[0] != "fix chat autoscroll when user scrolled up" || got[1] != "try to complete this task again" {
+	if got := rec.History; len(got) != 3 || got[0] != "fix chat autoscroll when user scrolled up" || got[1] != "try again, also preserve manual scroll position during streaming updates" || got[2] != "try to complete this task again" {
 		t.Fatalf("retry should append without clobbering original history: %#v", got)
 	}
-	if len(rec.ResponseBlocks) != 2 || len(rec.ResponseBlocks[0]) == 0 || len(rec.ResponseBlocks[1]) == 0 {
+	if len(rec.ResponseBlocks) != 3 || len(rec.ResponseBlocks[0]) == 0 || len(rec.ResponseBlocks[1]) == 0 || len(rec.ResponseBlocks[2]) == 0 {
 		t.Fatalf("retry should preserve old blocks and write retry blocks: %#v", rec.ResponseBlocks)
 	}
 }

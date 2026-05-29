@@ -197,11 +197,16 @@ func (b *Bot) runFreshAgentWithTranscriptMode(ctx context.Context, oc orgcfg.Con
 }
 
 func appendFreshRunBlocks(rec *convstore.Record, mode appendMode, next []blocks.Block) {
-	if mode == appendToLastTurn {
+	switch mode {
+	case appendToFirstTurn:
+		appendBlocksToFirstTurn(rec, next)
+	case appendToLastTurn:
 		appendBlocksToLastTurn(rec, next)
-		return
+	case appendAsNewTurn:
+		panic("appendFreshRunBlocks: appendAsNewTurn is not valid for fresh runs")
+	default:
+		panic(fmt.Sprintf("appendFreshRunBlocks: unexpected mode %d", mode))
 	}
-	appendBlocksToFirstTurn(rec, next)
 }
 
 func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, text, requestID string, opts chatTaskOptions, model ClaudeModel, recorder *blocks.Recorder, emit blocks.Emitter) {

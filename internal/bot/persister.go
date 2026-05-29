@@ -132,6 +132,9 @@ func (p *chatPersister) snapshot() convstore.Record {
 		for i, t := range p.priorBlocks {
 			blocksOut[i] = append([]blocks.Block(nil), t...)
 		}
+		// handleRetryAfterFailure calls appendBlocksAsNewTurn before
+		// constructing this persister, so priorBlocks and history should
+		// already be aligned. Keep the padding as a defensive guard.
 		for len(blocksOut) < len(p.history) {
 			blocksOut = append(blocksOut, nil)
 		}
