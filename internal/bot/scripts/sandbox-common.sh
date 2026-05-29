@@ -135,7 +135,7 @@ exit 1
 HETCHY_TOKEN_HELPER
   chmod 700 "$HOME/.local/bin/hetchy-github-token"
 
-cat > "$HOME/.local/bin/hetchy-git-credential" <<'HETCHY_CREDENTIAL_HELPER'
+  cat > "$HOME/.local/bin/hetchy-git-credential" <<'HETCHY_CREDENTIAL_HELPER'
 #!/bin/bash
 set -euo pipefail
 export PATH="$HOME/.local/bin:$PATH"
