@@ -195,11 +195,15 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 
 func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, text, requestID string, opts chatTaskOptions, model ClaudeModel, recorder *blocks.Recorder, emit blocks.Emitter) {
 	model = modelForConversation(rec, model)
-	modeDecision := b.decideFollowUpMode(ctx, oc, rec, text)
-	mode := modeDecision.Mode
-	if strings.TrimSpace(rec.PRURL) == "" {
-		mode = followUpModeChange
+	modeDecision := followUpModeDecision{
+		Mode:       followUpModeChange,
+		Confidence: 1,
+		Reason:     "no pull request exists; continuing unpublished branch",
 	}
+	if strings.TrimSpace(rec.PRURL) != "" {
+		modeDecision = b.decideFollowUpMode(ctx, oc, rec, text)
+	}
+	mode := modeDecision.Mode
 	b.log.Info("follow-up received", "org", oc.OrgID, "sandbox", rec.SandboxID, "branch", rec.Branch, "pr", rec.PRURL, "agent", agent.Slug, "model", model, "mode", mode, "mode_confidence", modeDecision.Confidence, "mode_reason", modeDecision.Reason)
 	b.markRunKind(ctx, "followup")
 	b.markRunBranch(ctx, rec.Branch)

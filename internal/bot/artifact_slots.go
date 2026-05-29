@@ -191,10 +191,7 @@ func (br *artifactSlotBroker) GitHubAuth(token string) (int64, int64, error) {
 	if run == nil {
 		return 0, 0, errArtifactTokenInvalid
 	}
-	if br.now().After(run.expires) {
-		delete(br.runs, token)
-		return 0, 0, errArtifactTokenInvalid
-	}
+	// pruneLocked above guarantees run is not expired.
 	if run.githubInstallationID == 0 || run.githubRepoID == 0 {
 		return 0, 0, errors.New("github token unavailable for this run")
 	}

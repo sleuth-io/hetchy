@@ -350,6 +350,10 @@ func TestHandleRequestNoPRRetryUsesExistingSandboxAndOriginalHistory(t *testing.
 	b.resumeSandboxFn = func(context.Context, *daytona.Sandbox, blocks.Emitter) error { return nil }
 	b.deleteSandboxSessionFn = func(*daytona.Sandbox, string) {}
 	b.stopAndArchiveFn = func(context.Context, *daytona.Sandbox) {}
+	b.followUpModeFn = func(context.Context, orgcfg.Config, convstore.Record, string) followUpModeDecision {
+		t.Fatal("follow-up mode classifier should not run before a PR exists")
+		return followUpModeDecision{}
+	}
 	var gotRec convstore.Record
 	var gotText string
 	b.runFollowUpFn = func(_ context.Context, _ *daytona.Sandbox, _ repoCtx, _ orgcfg.Config, rec convstore.Record, _ agents.Profile, text, _ string, _ chatTaskOptions, _ ClaudeModel, mode followUpMode, _ blocks.Emitter) (string, error) {
