@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -137,6 +138,9 @@ func (p *chatPersister) snapshot() convstore.Record {
 		// already be aligned. Keep the padding as a defensive guard.
 		for len(blocksOut) < len(p.history) {
 			blocksOut = append(blocksOut, nil)
+		}
+		if len(blocksOut) > len(p.history) {
+			panic(fmt.Sprintf("chatPersister appendToLastTurn: priorBlocks (%d) longer than history (%d)", len(blocksOut), len(p.history)))
 		}
 		if len(p.history) == 0 {
 			blocksOut = append(blocksOut, nil)
