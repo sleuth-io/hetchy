@@ -68,6 +68,7 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 			"SXGitVault":                   sxsync.GitVaultView{},
 			"SXGitVaultActive":             strings.TrimSpace(r.URL.Query().Get("sx_git_vault")) == "1",
 			"SXGitVaultSelectedRepo":       strings.TrimSpace(r.URL.Query().Get("sx_git_vault_repo")),
+			"SXExpand":                     strings.TrimSpace(r.URL.Query().Get("expand")) == "sx",
 			"GitHubAppEnabled":             b.app != nil,
 			"DefaultRepoSlug":              defaultRepoSlug,
 		}

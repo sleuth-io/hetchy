@@ -510,7 +510,7 @@
 	  {{with .SXGitVaultSelectedRepo}}{{$selectedGitVaultRepo = .}}{{end}}
 	  {{$activeTab := "skills-new"}}
 	  {{if or .SXGitVaultActive (ne $selectedGitVaultRepo "") (and (eq .SXKeyPreview "") $gitVault.Configured)}}{{$activeTab = "git-vault"}}{{end}}
-  <article class="integration{{if $enabled}} enabled{{end}}" data-integration="sx">
+  <article class="integration{{if $enabled}} enabled{{end}}" data-integration="sx" id="integration-sx"{{if .SXExpand}} open{{end}}>
     <div class="integration-head">
       <div class="integration-icon">
         <svg viewBox="0 0 16 16" fill="none" stroke="#5a4ad9" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -840,11 +840,20 @@
   {{if .SavedMessage}}<div class="saved-banner">{{.SavedMessage}}</div>{{end}}
   {{if not .IsAdmin}}<p class="hint">Only administrators can change agents.</p>{{end}}
 
+  {{if not .SXEnabled}}
+  <a class="sx-enable-callout" href="/settings/org?tab=integrations&amp;expand=sx#integration-sx">
+    <div class="sx-enable-callout-body">
+      <strong>Enable SX to create custom agents</strong>
+      <p>Custom agents are powered by the SX integration. {{if .IsAdmin}}Connect SX in Integrations to start creating agents for your organization.{{else}}Ask an administrator to connect SX in Integrations so custom agents can be created.{{end}}</p>
+    </div>
+    <span class="sx-enable-callout-cta">Go to Integrations →</span>
+  </a>
+  {{end}}
+
   {{if .IsAdmin}}
   <div class="agent-toolbar">
     <button class="primary" type="button" data-open-modal="modal-agent-create"{{if not .SXEnabled}} disabled{{end}}>Create agent</button>
   </div>
-  {{if not .SXEnabled}}<p class="hint">Enable SX in Integrations before creating agents.</p>{{end}}
   {{if .AgentRemoteLoadError}}<p class="hint">{{.AgentRemoteLoadError}}</p>{{end}}
   {{if .AgentTeamsLoadError}}<p class="hint">{{.AgentTeamsLoadError}}</p>{{end}}
   {{end}}
