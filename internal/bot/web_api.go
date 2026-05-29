@@ -726,10 +726,11 @@ func conversationTurns(rec convstore.Record, attachments []attachmentInfo, inclu
 		if i < len(rec.ResponseBlocks) {
 			blocksForTurn = rec.ResponseBlocks[i]
 		}
+		displayMessage := conversationTurnMessage(i, message, blocksForTurn)
 		turn := conversationTurn{
-			ID:      conversationTurnID(rec.ThreadID, i, message),
+			ID:      conversationTurnID(rec.ThreadID, i, displayMessage),
 			Index:   i,
-			Message: message,
+			Message: displayMessage,
 			Blocks:  blocksForTurn,
 		}
 		if includeAttachments {
@@ -738,6 +739,13 @@ func conversationTurns(rec convstore.Record, attachments []attachmentInfo, inclu
 		turns = append(turns, turn)
 	}
 	return turns
+}
+
+func conversationTurnMessage(index int, message string, turnBlocks []blocks.Block) string {
+	if index > 0 && strings.TrimSpace(message) == "" && len(turnBlocks) > 0 {
+		return "Retry the previous request."
+	}
+	return message
 }
 
 func conversationTurnID(threadID string, index int, message string) string {

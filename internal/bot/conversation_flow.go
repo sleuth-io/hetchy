@@ -472,6 +472,9 @@ func (b *Bot) handleRetryAfterFailure(ctx context.Context, oc orgcfg.Config, rec
 	attachmentTurn := len(rec.History)
 	retryText := strings.TrimSpace(text)
 	userRequest := retryAfterFailureRequest(rec, retryText)
+	// A no-text retry still needs a history slot so History[i] stays paired
+	// with ResponseBlocks[i]. Keep the stored value empty so future retry
+	// prompts ignore it; conversationTurns supplies the display label.
 	appendBlocksAsNewTurn(&rec, retryText, nil)
 	rec.AgentSlug = agent.Slug
 	rec.Model = string(model)

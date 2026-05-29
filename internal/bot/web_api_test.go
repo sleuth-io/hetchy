@@ -788,6 +788,30 @@ func TestConversationDetailResponseUsesTurnsAndOptionalAttachments(t *testing.T)
 	}
 }
 
+func TestConversationDetailLabelsNoTextRetryTurns(t *testing.T) {
+	b := newBypassOrgBot(t, "member")
+	rec := convstore.Record{
+		OrgID:    "org_test",
+		ThreadID: "thread-1",
+		History:  []string{"first", ""},
+		ResponseBlocks: [][]blocks.Block{
+			{{Kind: blocks.KindNotify, Title: "first turn"}},
+			{{Kind: blocks.KindResult, Title: "retry done"}},
+		},
+	}
+
+	detail := b.conversationDetailResponse(context.Background(), "org_test", rec, conversationIncludeOptions{Turns: true})
+	if len(detail.Turns) != 2 {
+		t.Fatalf("turn count = %d, want 2", len(detail.Turns))
+	}
+	if detail.Turns[1].Message != "Retry the previous request." {
+		t.Fatalf("retry turn message = %q", detail.Turns[1].Message)
+	}
+	if rec.History[1] != "" {
+		t.Fatalf("input record history mutated: %#v", rec.History)
+	}
+}
+
 func TestAttachmentInfosReturnsDownloadMetadata(t *testing.T) {
 	b := newBypassOrgBot(t, "member")
 	createdAt := time.Date(2026, 5, 18, 12, 30, 0, 0, time.UTC)
