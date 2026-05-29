@@ -46,7 +46,7 @@ func TestSettingsTemplate_GeneralTab(t *testing.T) {
 
 // TestSettingsTemplate_IntegrationsTab covers the card-based
 // integrations layout. Each integration is its own card; OAuth cards
-// link to install URLs, API-key cards open a <dialog> modal.
+// link to install URLs, credential integrations expand inline.
 func TestSettingsTemplate_IntegrationsTab(t *testing.T) {
 	b := newBypassBot(t)
 	cases := []struct {
@@ -56,7 +56,7 @@ func TestSettingsTemplate_IntegrationsTab(t *testing.T) {
 		notWant []string
 	}{
 		{
-			name: "all disabled — every Enable button + every modal pre-rendered",
+			name: "all disabled — Enable buttons and inline credential panels render",
 			data: map[string]any{
 				"OrgID": "org_x", "OrgName": "Acme", "Email": "u@x", "Tab": "integrations",
 				"IsAdmin":                     true,
@@ -80,9 +80,11 @@ func TestSettingsTemplate_IntegrationsTab(t *testing.T) {
 				`href="/integrations/github/install"`,
 				// Slack Enable is a real link too
 				`href="/slack/install"`,
-				// SX Enable button opens its modal
-				`data-open-modal="modal-sx"`,
-				`id="modal-sx"`,
+				// SX now expands into tabbed inline setup.
+				`data-integration="sx"`,
+				`data-settings-tab="skills-new"`,
+				`data-settings-tab="git-vault"`,
+				`name="sx_key"`,
 				// Anthropic Enable now toggles the card open (tabbed UI
 				// inside the card replaces the old single-input modal).
 				`data-toggle-card`,
@@ -97,6 +99,8 @@ func TestSettingsTemplate_IntegrationsTab(t *testing.T) {
 				// The old modal-based onboarding for Anthropic is gone.
 				`data-open-modal="modal-anthropic"`,
 				`id="modal-anthropic"`,
+				`data-open-modal="modal-sx"`,
+				`id="modal-sx"`,
 			},
 		},
 		{
@@ -119,9 +123,10 @@ func TestSettingsTemplate_IntegrationsTab(t *testing.T) {
 					{Owner: "acme", Name: "web", DefaultBranch: "main"},
 					{Owner: "acme", Name: "api", DefaultBranch: "main"},
 				},
-				"DefaultRepoSlug":      "acme/web",
-				"SlackOAuthEnabled":    false,
-				"SlackBotTokenPreview": "", "SlackSocketTokenPreview": "",
+				"DefaultRepoSlug":        "acme/web",
+				"SXGitVaultSelectedRepo": "acme/api",
+				"SlackOAuthEnabled":      false,
+				"SlackBotTokenPreview":   "", "SlackSocketTokenPreview": "",
 				"SXKeyPreview": "", "AnthropicAPIKeyPreview": "",
 				"ClaudeCodeOAuthTokenPreview": "",
 			},
@@ -131,7 +136,19 @@ func TestSettingsTemplate_IntegrationsTab(t *testing.T) {
 				`installations/999`,
 				`name="installation_id" value="999"`,
 				`<option value="acme/web" selected>acme/web</option>`,
+				`<option value="acme/api" selected>acme/api</option>`,
+				`id="sx-git-vault-repo"`,
+				`data-open-modal="modal-sx-git-vault-create"`,
+				`Create an empty private repository in GitHub`,
+				`action="/integrations/github/sync"`,
+				`name="return_to" value="sx_git_vault"`,
+				`Refresh repositories`,
+				`<button class="primary" type="submit">Save Git Vault</button>`,
 				`✓ Enabled`,
+			},
+			notWant: []string{
+				`name="new_repo_name"`,
+				`name="mode" value="create"`,
 			},
 		},
 		{
@@ -226,45 +243,6 @@ func TestSettingsTemplate_RendersMembersTab(t *testing.T) {
 	}
 }
 
-func TestSettingsTemplate_RendersAgentsTab(t *testing.T) {
-	b := newBypassBot(t)
-	rec := httptest.NewRecorder()
-	b.renderTemplate(rec, webui.Settings, map[string]any{
-		"OrgID": "org_y", "OrgName": "Acme", "Email": "u@y", "PrincipalUserID": "user_me",
-		"IsAdmin": true, "Tab": "agents", "SavedMessage": "",
-		"Agents": []agentSummary{
-			{
-				Slug:         "backend",
-				DisplayName:  "Backend",
-				Description:  "Handles server-side work.",
-				SXBot:        "bob",
-				PersonaAsset: "bob",
-				SlackAliases: []string{"backend", "api"},
-				Skills:       []string{"golang-pro", "database-migrations"},
-				BuiltIn:      true,
-			},
-		},
-	})
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
-	}
-	body := rec.Body.String()
-	for _, w := range []string{
-		`href="/settings/org?tab=agents" class="active"`,
-		`action="/settings/org/agents/backend"`,
-		`action="/settings/org/agents/backend/delete"`,
-		`name="display_name" value="Backend"`,
-		`golang-pro`,
-		`database-migrations`,
-		`sx bot: <code>bob</code>`,
-		`aliases: @backend, @api`,
-	} {
-		if !strings.Contains(body, w) {
-			t.Errorf("agents tab missing %q", w)
-		}
-	}
-}
-
 func TestSettingsTemplate_HidesMembersTabForNonAdmin(t *testing.T) {
 	b := newBypassBot(t)
 	rec := httptest.NewRecorder()
@@ -331,7 +309,6 @@ func TestSettingsTemplate_NonAdminReadOnly(t *testing.T) {
 		for _, btn := range []string{
 			`href="/integrations/github/install"`,
 			`href="/slack/install"`,
-			`data-open-modal="modal-sx"`,
 			// Use a specific attribute sequence to avoid matching the JS selector
 			// string querySelectorAll('[data-toggle-card]') which is always present.
 			`class="btn-enable" type="button" data-toggle-card`,
@@ -356,12 +333,16 @@ func TestSettingsTemplate_NonAdminReadOnly(t *testing.T) {
 	t.Run("agents tab is read-only", func(t *testing.T) {
 		data := maps.Clone(nonAdminBase)
 		data["Tab"] = "agents"
-		data["Agents"] = []agentSummary{{
+		profile := agentSettingsView{
 			Slug:        "backend",
 			DisplayName: "Backend",
 			Description: "Handles server-side work.",
 			Skills:      []string{"golang-pro"},
-		}}
+			SkillChips:  []agentSkillChipView{{Name: "golang-pro", DisplayName: "golang-pro"}},
+		}
+		data["Agents"] = []agentSettingsView{profile}
+		data["CustomAgents"] = []agentSettingsView{profile}
+		data["BuiltInAgents"] = []agentSettingsView{}
 		rec := httptest.NewRecorder()
 		b.renderTemplate(rec, webui.Settings, data)
 		body := rec.Body.String()

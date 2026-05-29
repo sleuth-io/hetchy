@@ -44,6 +44,10 @@ The compose file reads environment variables from your shell (injected by Dopple
 | `HETCHY_SANDBOX_VERSION` | Optional runtime override for the content-addressed sandbox version; normally stamped into the binary |
 | `SANDBOX_VERSION` | Optional build-time Docker arg override for the content-addressed sandbox version; when unset, the Dockerfile computes it from `sandbox/` |
 | `HETCHY_SX_PUBLIC_VAULT_URL` | Public git sx vault containing seeded agent personas and scoped role skills; defaults to `https://github.com/hetchyhq/hetchy-sx-vault.git`; set to `disabled`, `off`, `none`, or `-` to skip the public vault install |
+| `HETCHY_SX_CACHE_DIR` | Server-side SX cache root for Git Vault clones; leave unset in dev to use SX's normal user cache dir. In non-dev, Hetchy auto-uses `/data/hetchy/sx-cache` when Railway's `/data` volume exists; set explicitly to override |
+| `HETCHY_SX_CACHE_MIN_FREE_MB` | Minimum free space required in `HETCHY_SX_CACHE_DIR` before SX Git Vault work runs (default: `512`; set `0` to disable) |
+| `HETCHY_SX_GIT_OPERATION_TIMEOUT_SECONDS` | Timeout for server-side SX Git Vault clone/pull/push operations triggered by custom-agent writes (default: `180`) |
+| `HETCHY_SX_GIT_MAX_CONCURRENT_OPS` | Global cap for concurrent server-side SX Git Vault operations; per-org operations are also serialized (default: `4`) |
 | `WEB_PORT` | Web UI port (default: 8080) |
 | `DISABLE_SLACK` | Set to 1 to run web UI only |
 | `DATABASE_URL` | PostgreSQL connection string (optional, enables conversation persistence) |

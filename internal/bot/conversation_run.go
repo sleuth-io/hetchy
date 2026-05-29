@@ -73,9 +73,6 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 	b.markRunBranch(ctx, branch)
 
 	envVars := map[string]string{}
-	if oc.SXKey != "" {
-		envVars["SX_KEY"] = oc.SXKey
-	}
 	volumes := []types.VolumeMount(nil)
 	cacheVolumeID := ""
 	if mount, mounted := b.resolveDaytonaCacheMount(ctx, oc, repo); mounted {

@@ -186,7 +186,7 @@ func TestAgentScript_EmbeddedAndWellFormed(t *testing.T) {
 		"codex login --with-access-token",
 		"--output-last-message",
 		`--model "$HETCHY_CODEX_MODEL"`,
-		`if [[ -n "${SX_KEY:-}" ]]; then`,
+		`if [[ -n "${HETCHY_AGENT_SX_BOT_KEY:-}" ]]; then`,
 		"sx install",
 		`(cd "$SF_WORKDIR" && \`,
 		"emit_installed_skills",
@@ -959,7 +959,6 @@ func TestRunAgentBuildsScriptEnvironmentWithFakeRunner(t *testing.T) {
 		"HETCHY_AGENT_SX_BOT":        "review-bot",
 		"HETCHY_AGENT_PERSONA_ASSET": "asset.md",
 		"ANTHROPIC_API_KEY":          "sk-ant",
-		"SX_KEY":                     "sx-key",
 		"HETCHY_SX_PUBLIC_VAULT_URL": "https://vault.example.test",
 	}
 	for key, want := range wantEnv {

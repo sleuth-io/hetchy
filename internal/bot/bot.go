@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"os"
 	"path"
 	"strings"
 	"time"
@@ -31,6 +32,7 @@ import (
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
 	"github.com/hetchyhq/hetchy/internal/runstore"
 	"github.com/hetchyhq/hetchy/internal/secrets"
+	"github.com/hetchyhq/hetchy/internal/sxsync"
 )
 
 // maxBlocksPerTurn caps the legacy response_blocks projection when a
@@ -94,6 +96,7 @@ type Bot struct {
 	billing   *billing.Service
 	agents    *agents.Store
 	apiKeys   *apikeys.Store
+	sx        sxManager
 	auth      *auth.Service
 	slack     *slackManager
 	bootstrap bootstrapStore
@@ -246,17 +249,19 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 		log.Info("artifact upload configured", "bucket", cfg.S3Bucket, "region", cfg.S3Region)
 	}
 
+	orgStore := orgcfg.New(store, cipher)
+	agentStore := agents.NewStoreWithCipher(store, cipher)
 	b := &Bot{
 		cfg:              cfg,
 		log:              log,
 		daytona:          dc,
 		cacheVols:        dc.Volume,
 		store:            store,
-		orgs:             orgcfg.New(store, cipher),
+		orgs:             orgStore,
 		convs:            convstore.New(store),
 		runs:             runstore.New(store),
 		billing:          billing.NewService(billing.NewStore(store), newStripeAutoTopupper(cfg)),
-		agents:           agents.NewStore(store),
+		agents:           agentStore,
 		apiKeys:          apikeys.New(store),
 		bootstrap:        bootstrap.New(store, cipher),
 		artifacts:        artifactSigner,
@@ -289,6 +294,9 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 		"daytona_snapshot", cfg.Snapshot,
 		"sandbox_snapshot_version", cfg.SandboxSnapshotVersion,
 		"daytona_auto_archive_minutes", cfg.DaytonaAutoArchiveMinutes,
+		"sx_cache_dir", cfg.SXCacheDir,
+		"sx_git_operation_timeout_seconds", cfg.SXGitOperationTimeoutSeconds,
+		"sx_git_max_concurrent_ops", cfg.SXGitMaxConcurrentOps,
 	)
 
 	// GitHub App is optional in dev — without env vars the integrations
@@ -314,6 +322,31 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 		log.Warn("github app: GITHUB_APP_ID is not set — integration install button + webhooks disabled",
 			"env", cfg.Env,
 		)
+	}
+	if cfg.SXCacheDir != "" {
+		_ = os.Setenv("SX_CACHE_DIR", cfg.SXCacheDir)
+	}
+	b.sx = sxsync.NewManagerWithOptions(store, orgStore, agentStore, b.app, sxsync.Options{
+		PublicVaultURL:      cfg.SXPublicVaultURL,
+		CacheDir:            cfg.SXCacheDir,
+		CacheMinFreeBytes:   cfg.SXCacheMinFreeBytes,
+		GitOperationTimeout: time.Duration(cfg.SXGitOperationTimeoutSeconds) * time.Second,
+		MaxConcurrentGitOps: cfg.SXGitMaxConcurrentOps,
+	})
+	if status, err := b.sx.CheckCache(); err != nil {
+		if cfg.SXCacheDir != "" {
+			store.Close()
+			return nil, fmt.Errorf("sx cache: %w", err)
+		}
+		log.Warn("sx cache check failed; using sx default cache location", "error", err)
+	} else if status.Configured {
+		log.Info("sx cache configured",
+			"path", status.Path,
+			"available_bytes", status.AvailableBytes,
+			"min_free_bytes", status.MinFreeBytes,
+		)
+	} else if cfg.Env != "dev" {
+		log.Warn("sx cache dir is not configured; Git vault clones will use the process default cache location")
 	}
 	return b, nil
 }

@@ -128,9 +128,27 @@ type Config struct {
 	// SX_BOT=<selected agent> before running Claude. The org's skills.new
 	// vault, when configured, is installed separately.
 	SXPublicVaultURL string
+	// SXCacheDir is passed to the SX library as SX_CACHE_DIR so Git vault
+	// clones and lockfile caches live on a known, volume-backed path. Empty
+	// in dev lets SX use the normal OS user cache dir; non-dev auto-detects
+	// Railway's /data volume when present.
+	SXCacheDir string
+	// SXCacheMinFreeBytes is checked before each Hetchy-side SX Git vault
+	// operation. Zero disables the free-space check.
+	SXCacheMinFreeBytes uint64
+	// SXGitOperationTimeoutSeconds bounds Hetchy-side SX Git vault operations.
+	SXGitOperationTimeoutSeconds int
+	// SXGitMaxConcurrentOps caps concurrent SX Git vault work across orgs.
+	SXGitMaxConcurrentOps int
 }
 
 const DefaultSXPublicVaultURL = "https://github.com/hetchyhq/hetchy-sx-vault.git"
+
+const (
+	defaultSXCacheMinFreeMiB            = 512
+	defaultSXGitOperationTimeoutSeconds = 180
+	defaultSXGitMaxConcurrentOps        = 4
+)
 
 // LoadConfig reads required and optional env vars. Set AUTH_BYPASS=1 to
 // skip the WorkOS round-trip for tests/CI.
@@ -233,6 +251,10 @@ func LoadConfig() (Config, error) {
 		}
 		autoArchiveMinutes = n
 	}
+	sxRuntime, err := loadSXRuntimeConfig(env)
+	if err != nil {
+		return Config{}, err
+	}
 
 	return Config{
 		Env:                         env,
@@ -274,18 +296,85 @@ func LoadConfig() (Config, error) {
 			os.Getenv("STRIPE_SUBSCRIPTION_PRICE_IDS"),
 			os.Getenv("STRIPE_SUBSCRIPTION_PRICE_ID"),
 		),
-		StripeTopupPriceID:  strings.TrimSpace(os.Getenv("STRIPE_TOPUP_PRICE_ID")),
-		StripeTopupPriceIDs: stripePriceIDMap(os.Getenv("STRIPE_TOPUP_PRICE_IDS")),
-		StripeReturnTo:      stripeReturnTo,
-		AuthBypass:          bypass,
-		AuthBypassUser:      getenvDefault("AUTH_BYPASS_USER", "user_bypass"),
-		AuthBypassOrg:       os.Getenv("AUTH_BYPASS_ORG"),
-		AuthBypassRole:      getenvDefault("AUTH_BYPASS_ROLE", "admin"),
-		AuthBypassEmail:     getenvDefault("AUTH_BYPASS_EMAIL", "bypass@hetchy.local"),
-		S3Bucket:            strings.TrimSpace(os.Getenv("HETCHY_S3_BUCKET")),
-		S3Region:            strings.TrimSpace(os.Getenv("HETCHY_S3_REGION")),
-		SXPublicVaultURL:    getenvDefaultTrimAllowDisabled("HETCHY_SX_PUBLIC_VAULT_URL", DefaultSXPublicVaultURL),
+		StripeTopupPriceID:           strings.TrimSpace(os.Getenv("STRIPE_TOPUP_PRICE_ID")),
+		StripeTopupPriceIDs:          stripePriceIDMap(os.Getenv("STRIPE_TOPUP_PRICE_IDS")),
+		StripeReturnTo:               stripeReturnTo,
+		AuthBypass:                   bypass,
+		AuthBypassUser:               getenvDefault("AUTH_BYPASS_USER", "user_bypass"),
+		AuthBypassOrg:                os.Getenv("AUTH_BYPASS_ORG"),
+		AuthBypassRole:               getenvDefault("AUTH_BYPASS_ROLE", "admin"),
+		AuthBypassEmail:              getenvDefault("AUTH_BYPASS_EMAIL", "bypass@hetchy.local"),
+		S3Bucket:                     strings.TrimSpace(os.Getenv("HETCHY_S3_BUCKET")),
+		S3Region:                     strings.TrimSpace(os.Getenv("HETCHY_S3_REGION")),
+		SXPublicVaultURL:             getenvDefaultTrimAllowDisabled("HETCHY_SX_PUBLIC_VAULT_URL", DefaultSXPublicVaultURL),
+		SXCacheDir:                   sxRuntime.cacheDir,
+		SXCacheMinFreeBytes:          sxRuntime.cacheMinFreeBytes,
+		SXGitOperationTimeoutSeconds: sxRuntime.gitOperationTimeoutSeconds,
+		SXGitMaxConcurrentOps:        sxRuntime.gitMaxConcurrentOps,
 	}, nil
+}
+
+type sxRuntimeConfig struct {
+	cacheDir                   string
+	cacheMinFreeBytes          uint64
+	gitOperationTimeoutSeconds int
+	gitMaxConcurrentOps        int
+}
+
+func loadSXRuntimeConfig(env string) (sxRuntimeConfig, error) {
+	cacheDir := sxCacheDirFromEnv(env)
+	cacheMinFreeMiB := 0
+	if cacheDir != "" {
+		cacheMinFreeMiB = defaultSXCacheMinFreeMiB
+	}
+	if v := strings.TrimSpace(os.Getenv("HETCHY_SX_CACHE_MIN_FREE_MB")); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			return sxRuntimeConfig{}, fmt.Errorf("HETCHY_SX_CACHE_MIN_FREE_MB must be a non-negative integer (got %q)", v)
+		}
+		cacheMinFreeMiB = n
+	}
+	timeoutSeconds, err := positiveIntEnv("HETCHY_SX_GIT_OPERATION_TIMEOUT_SECONDS", defaultSXGitOperationTimeoutSeconds)
+	if err != nil {
+		return sxRuntimeConfig{}, err
+	}
+	maxConcurrentOps, err := positiveIntEnv("HETCHY_SX_GIT_MAX_CONCURRENT_OPS", defaultSXGitMaxConcurrentOps)
+	if err != nil {
+		return sxRuntimeConfig{}, err
+	}
+	return sxRuntimeConfig{
+		cacheDir:                   cacheDir,
+		cacheMinFreeBytes:          uint64(cacheMinFreeMiB) << 20,
+		gitOperationTimeoutSeconds: timeoutSeconds,
+		gitMaxConcurrentOps:        maxConcurrentOps,
+	}, nil
+}
+
+func positiveIntEnv(key string, fallback int) (int, error) {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return fallback, nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 {
+		return 0, fmt.Errorf("%s must be a positive integer (got %q)", key, v)
+	}
+	return n, nil
+}
+
+func sxCacheDirFromEnv(env string) string {
+	if dir := strings.TrimSpace(os.Getenv("HETCHY_SX_CACHE_DIR")); dir != "" {
+		return dir
+	}
+	if dir := strings.TrimSpace(os.Getenv("SX_CACHE_DIR")); dir != "" {
+		return dir
+	}
+	if env != "dev" {
+		if st, err := os.Stat("/data"); err == nil && st.IsDir() {
+			return "/data/hetchy/sx-cache"
+		}
+	}
+	return ""
 }
 
 func stripeSubscriptionPriceIDs(raw, legacy string) map[string]string {

@@ -62,7 +62,8 @@ func TestLoadConfig_AllRequiredSet(t *testing.T) {
 func TestLoadConfig_AppliesDefaults(t *testing.T) {
 	clearEnv(t, "AUTH_BYPASS", "WEB_PORT", "DAYTONA_API_URL", "LOGOUT_RETURN_TO", "HETCHY_PUBLIC_BASE_URL", "SLACK_OAUTH_REDIRECT_URI", "HETCHY_SX_PUBLIC_VAULT_URL",
 		"STRIPE_RETURN_TO",
-		"DAYTONA_CACHE_VOLUMES_DISABLED", "DAYTONA_CACHE_VOLUME_PREFIX", "DAYTONA_CACHE_PRUNE_DAYS", "DAYTONA_AUTO_ARCHIVE_MINUTES")
+		"DAYTONA_CACHE_VOLUMES_DISABLED", "DAYTONA_CACHE_VOLUME_PREFIX", "DAYTONA_CACHE_PRUNE_DAYS", "DAYTONA_AUTO_ARCHIVE_MINUTES",
+		"HETCHY_SX_CACHE_DIR", "SX_CACHE_DIR", "HETCHY_SX_CACHE_MIN_FREE_MB", "HETCHY_SX_GIT_OPERATION_TIMEOUT_SECONDS", "HETCHY_SX_GIT_MAX_CONCURRENT_OPS")
 	setEnv(t, requiredEnv())
 	t.Setenv("HETCHY_ENV", "dev")
 	t.Setenv("HETCHY_PUBLIC_BASE_URL", "")
@@ -97,6 +98,18 @@ func TestLoadConfig_AppliesDefaults(t *testing.T) {
 	}
 	if cfg.DaytonaAutoArchiveMinutes != 60 {
 		t.Errorf("DaytonaAutoArchiveMinutes default = %d", cfg.DaytonaAutoArchiveMinutes)
+	}
+	if cfg.SXCacheDir != "" {
+		t.Errorf("SXCacheDir default = %q", cfg.SXCacheDir)
+	}
+	if cfg.SXCacheMinFreeBytes != 0 {
+		t.Errorf("SXCacheMinFreeBytes default = %d", cfg.SXCacheMinFreeBytes)
+	}
+	if cfg.SXGitOperationTimeoutSeconds != defaultSXGitOperationTimeoutSeconds {
+		t.Errorf("SXGitOperationTimeoutSeconds default = %d", cfg.SXGitOperationTimeoutSeconds)
+	}
+	if cfg.SXGitMaxConcurrentOps != defaultSXGitMaxConcurrentOps {
+		t.Errorf("SXGitMaxConcurrentOps default = %d", cfg.SXGitMaxConcurrentOps)
 	}
 }
 
@@ -225,6 +238,51 @@ func TestLoadConfig_DaytonaCacheOverrides(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_SXGitCacheOverrides(t *testing.T) {
+	clearEnv(t, "AUTH_BYPASS", "SX_CACHE_DIR")
+	setEnv(t, requiredEnv())
+	t.Setenv("HETCHY_ENV", "dev")
+	t.Setenv("HETCHY_SX_CACHE_DIR", " /mnt/volume/sx-cache ")
+	t.Setenv("HETCHY_SX_CACHE_MIN_FREE_MB", "128")
+	t.Setenv("HETCHY_SX_GIT_OPERATION_TIMEOUT_SECONDS", "45")
+	t.Setenv("HETCHY_SX_GIT_MAX_CONCURRENT_OPS", "3")
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.SXCacheDir != "/mnt/volume/sx-cache" {
+		t.Fatalf("SXCacheDir = %q", cfg.SXCacheDir)
+	}
+	if cfg.SXCacheMinFreeBytes != 128<<20 {
+		t.Fatalf("SXCacheMinFreeBytes = %d", cfg.SXCacheMinFreeBytes)
+	}
+	if cfg.SXGitOperationTimeoutSeconds != 45 {
+		t.Fatalf("SXGitOperationTimeoutSeconds = %d", cfg.SXGitOperationTimeoutSeconds)
+	}
+	if cfg.SXGitMaxConcurrentOps != 3 {
+		t.Fatalf("SXGitMaxConcurrentOps = %d", cfg.SXGitMaxConcurrentOps)
+	}
+}
+
+func TestLoadConfig_SXCacheDirFallsBackToSXCacheDir(t *testing.T) {
+	clearEnv(t, "AUTH_BYPASS", "HETCHY_SX_CACHE_DIR")
+	setEnv(t, requiredEnv())
+	t.Setenv("HETCHY_ENV", "dev")
+	t.Setenv("SX_CACHE_DIR", "/tmp/sx-cache")
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.SXCacheDir != "/tmp/sx-cache" {
+		t.Fatalf("SXCacheDir = %q", cfg.SXCacheDir)
+	}
+	if cfg.SXCacheMinFreeBytes != defaultSXCacheMinFreeMiB<<20 {
+		t.Fatalf("SXCacheMinFreeBytes = %d", cfg.SXCacheMinFreeBytes)
+	}
+}
+
 func TestLoadConfig_StripeSubscriptionPriceIDs(t *testing.T) {
 	clearEnv(t, "AUTH_BYPASS", "STRIPE_SUBSCRIPTION_PRICE_ID", "STRIPE_SUBSCRIPTION_PRICE_IDS")
 	setEnv(t, requiredEnv())
@@ -326,6 +384,31 @@ func TestLoadConfig_DaytonaAutoArchiveMinutes(t *testing.T) {
 			})
 		}
 	})
+}
+
+func TestLoadConfig_SXGitCacheRejectsInvalid(t *testing.T) {
+	tests := []struct {
+		key   string
+		value string
+	}{
+		{"HETCHY_SX_CACHE_MIN_FREE_MB", "-1"},
+		{"HETCHY_SX_CACHE_MIN_FREE_MB", "abc"},
+		{"HETCHY_SX_GIT_OPERATION_TIMEOUT_SECONDS", "0"},
+		{"HETCHY_SX_GIT_OPERATION_TIMEOUT_SECONDS", "abc"},
+		{"HETCHY_SX_GIT_MAX_CONCURRENT_OPS", "0"},
+		{"HETCHY_SX_GIT_MAX_CONCURRENT_OPS", "abc"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.key+"="+tc.value, func(t *testing.T) {
+			clearEnv(t, "AUTH_BYPASS")
+			setEnv(t, requiredEnv())
+			t.Setenv("HETCHY_ENV", "dev")
+			t.Setenv(tc.key, tc.value)
+			if _, err := LoadConfig(); err == nil {
+				t.Fatalf("expected %s=%q to fail", tc.key, tc.value)
+			}
+		})
+	}
 }
 
 func TestLoadConfig_SXPublicVaultOverride(t *testing.T) {

@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 	"unicode"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/hetchyhq/hetchy/internal/db"
 	"github.com/hetchyhq/hetchy/internal/db/sqlc"
+	"github.com/hetchyhq/hetchy/internal/secrets"
 )
 
 // DefaultSlug is empty because a Hetchy chat does not require a
@@ -34,13 +36,27 @@ type Profile struct {
 	PersonaPrompt string   `json:"-"`
 	SlackAliases  []string `json:"slack_aliases,omitempty"`
 	Skills        []string `json:"skills,omitempty"`
+	SXTeams       []string `json:"sx_teams,omitempty"`
+	SXSkills      []string `json:"sx_skills,omitempty"`
+	VaultBackend  string   `json:"vault_backend,omitempty"`
+	SXBotKey      string   `json:"-"`
+	TemplateSlug  string   `json:"template_slug,omitempty"`
+	SyncStatus    string   `json:"sync_status,omitempty"`
+	SyncError     string   `json:"sync_error,omitempty"`
 	Enabled       bool     `json:"enabled"`
 	BuiltIn       bool     `json:"built_in"`
 }
 
-type Store struct{ db *db.Store }
+type Store struct {
+	db     *db.Store
+	cipher *secrets.Cipher
+}
 
 func NewStore(d *db.Store) *Store { return &Store{db: d} }
+
+func NewStoreWithCipher(d *db.Store, cipher *secrets.Cipher) *Store {
+	return &Store{db: d, cipher: cipher}
+}
 
 // FallbackProfiles mirrors the database seed templates for DB-less unit tests
 // and degraded local wiring. Real org traffic goes through agent_profiles.
@@ -110,7 +126,7 @@ func (s *Store) List(ctx context.Context, orgID string) ([]Profile, error) {
 		if !r.Enabled {
 			continue
 		}
-		out = append(out, profileFromListRow(r))
+		out = append(out, s.profileFromListRow(r))
 	}
 	return out, nil
 }
@@ -182,7 +198,7 @@ func (s *Store) GetBySlug(ctx context.Context, orgID, slug string) (Profile, err
 	if !row.Enabled {
 		return Profile{}, fmt.Errorf("%w: %s", ErrNotFound, slug)
 	}
-	return profileFromGetRow(row), nil
+	return s.profileFromGetRow(row), nil
 }
 
 func (s *Store) Upsert(ctx context.Context, orgID string, p Profile) (Profile, error) {
@@ -242,7 +258,7 @@ func (s *Store) GetCustom(ctx context.Context, orgID, slug string) (Profile, err
 	if !row.Enabled {
 		return Profile{}, ErrNotFound
 	}
-	return profileFromGetRow(row), nil
+	return s.profileFromGetRow(row), nil
 }
 
 func (s *Store) UpdateName(ctx context.Context, orgID, slug, displayName string) (Profile, error) {
@@ -271,6 +287,70 @@ func (s *Store) UpdateName(ctx context.Context, orgID, slug, displayName string)
 		return Profile{}, fmt.Errorf("update agent profile name: %w", err)
 	}
 	return profileFromUpdateNameRow(row), nil
+}
+
+func (s *Store) ListTemplates(ctx context.Context) ([]Profile, error) {
+	if s == nil || s.db == nil {
+		return FallbackProfiles(), nil
+	}
+	rows, err := s.db.Queries.ListAgentProfileTemplates(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list agent templates: %w", err)
+	}
+	out := make([]Profile, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, profileFromTemplateRow(row))
+	}
+	return out, nil
+}
+
+func (s *Store) GetTemplate(ctx context.Context, slug string) (Profile, error) {
+	slug = NormalizeSlug(slug)
+	if slug == "" {
+		return Profile{}, ErrNotFound
+	}
+	if s == nil || s.db == nil {
+		for _, p := range FallbackProfiles() {
+			if p.Slug == slug {
+				return p, nil
+			}
+		}
+		return Profile{}, ErrNotFound
+	}
+	row, err := s.db.Queries.GetAgentProfileTemplate(ctx, slug)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Profile{}, ErrNotFound
+		}
+		return Profile{}, fmt.Errorf("get agent template: %w", err)
+	}
+	return profileFromTemplateRow(row), nil
+}
+
+func (s *Store) UpdateVaultSync(ctx context.Context, orgID, slug, backend, botKey, templateSlug, status, syncErr string) (Profile, error) {
+	if s == nil || s.db == nil {
+		return Profile{}, errors.New("agents: store disabled")
+	}
+	encrypted, err := s.encryptBotKey(botKey)
+	if err != nil {
+		return Profile{}, err
+	}
+	row, err := s.db.Queries.UpdateAgentProfileVaultSync(ctx, sqlc.UpdateAgentProfileVaultSyncParams{
+		OrgID:             orgID,
+		Slug:              NormalizeSlug(slug),
+		VaultBackend:      strings.TrimSpace(backend),
+		SxBotKeyEncrypted: encrypted,
+		TemplateSlug:      NormalizeSlug(templateSlug),
+		SyncStatus:        strings.TrimSpace(status),
+		SyncError:         strings.TrimSpace(syncErr),
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Profile{}, ErrNotFound
+		}
+		return Profile{}, fmt.Errorf("update agent vault sync: %w", err)
+	}
+	return s.profileFromVaultSyncRow(row), nil
 }
 
 func (s *Store) Delete(ctx context.Context, orgID, slug string) error {
@@ -341,8 +421,8 @@ func NormalizeLookup(s string) string {
 	return s
 }
 
-func profileFromListRow(row sqlc.ListAgentProfilesByOrgRow) Profile {
-	return Profile{
+func (s *Store) profileFromListRow(row sqlc.ListAgentProfilesByOrgRow) Profile {
+	p := Profile{
 		Slug:          row.Slug,
 		DisplayName:   row.DisplayName,
 		Description:   row.Description,
@@ -351,9 +431,21 @@ func profileFromListRow(row sqlc.ListAgentProfilesByOrgRow) Profile {
 		PersonaPrompt: row.PersonaPrompt,
 		SlackAliases:  cleanAliases(row.SlackAliases),
 		Skills:        cleanSkills(row.Skills),
+		VaultBackend:  row.VaultBackend,
+		TemplateSlug:  row.TemplateSlug,
+		SyncStatus:    row.SyncStatus,
+		SyncError:     row.SyncError,
 		Enabled:       row.Enabled,
 		BuiltIn:       row.BuiltIn,
 	}
+	p.SXBotKey = s.decryptBotKey(row.SxBotKeyEncrypted)
+	return p
+}
+
+func (s *Store) profileFromGetRow(row sqlc.GetAgentProfileBySlugRow) Profile {
+	p := profileFromGetRow(row)
+	p.SXBotKey = s.decryptBotKey(row.SxBotKeyEncrypted)
+	return p
 }
 
 func profileFromGetRow(row sqlc.GetAgentProfileBySlugRow) Profile {
@@ -366,6 +458,10 @@ func profileFromGetRow(row sqlc.GetAgentProfileBySlugRow) Profile {
 		PersonaPrompt: row.PersonaPrompt,
 		SlackAliases:  cleanAliases(row.SlackAliases),
 		Skills:        cleanSkills(row.Skills),
+		VaultBackend:  row.VaultBackend,
+		TemplateSlug:  row.TemplateSlug,
+		SyncStatus:    row.SyncStatus,
+		SyncError:     row.SyncError,
 		Enabled:       row.Enabled,
 		BuiltIn:       row.BuiltIn,
 	}
@@ -381,6 +477,10 @@ func profileFromUpsertRow(row sqlc.UpsertAgentProfileRow) Profile {
 		PersonaPrompt: row.PersonaPrompt,
 		SlackAliases:  cleanAliases(row.SlackAliases),
 		Skills:        cleanSkills(row.Skills),
+		VaultBackend:  row.VaultBackend,
+		TemplateSlug:  row.TemplateSlug,
+		SyncStatus:    row.SyncStatus,
+		SyncError:     row.SyncError,
 		Enabled:       row.Enabled,
 		BuiltIn:       row.BuiltIn,
 	}
@@ -396,9 +496,73 @@ func profileFromUpdateNameRow(row sqlc.UpdateAgentProfileNameRow) Profile {
 		PersonaPrompt: row.PersonaPrompt,
 		SlackAliases:  cleanAliases(row.SlackAliases),
 		Skills:        cleanSkills(row.Skills),
+		VaultBackend:  row.VaultBackend,
+		TemplateSlug:  row.TemplateSlug,
+		SyncStatus:    row.SyncStatus,
+		SyncError:     row.SyncError,
 		Enabled:       row.Enabled,
 		BuiltIn:       row.BuiltIn,
 	}
+}
+
+func profileFromTemplateRow(row sqlc.AgentProfileTemplate) Profile {
+	return Profile{
+		Slug:          row.Slug,
+		DisplayName:   row.DisplayName,
+		Description:   row.Description,
+		SXBot:         row.SxBot,
+		PersonaAsset:  row.PersonaAsset,
+		PersonaPrompt: row.PersonaPrompt,
+		SlackAliases:  cleanAliases(row.SlackAliases),
+		Skills:        cleanSkills(row.Skills),
+		Enabled:       row.Enabled,
+		BuiltIn:       true,
+		TemplateSlug:  row.Slug,
+	}
+}
+
+func (s *Store) profileFromVaultSyncRow(row sqlc.UpdateAgentProfileVaultSyncRow) Profile {
+	p := Profile{
+		Slug:          row.Slug,
+		DisplayName:   row.DisplayName,
+		Description:   row.Description,
+		SXBot:         row.SxBot,
+		PersonaAsset:  row.PersonaAsset,
+		PersonaPrompt: row.PersonaPrompt,
+		SlackAliases:  cleanAliases(row.SlackAliases),
+		Skills:        cleanSkills(row.Skills),
+		VaultBackend:  row.VaultBackend,
+		TemplateSlug:  row.TemplateSlug,
+		SyncStatus:    row.SyncStatus,
+		SyncError:     row.SyncError,
+		Enabled:       row.Enabled,
+		BuiltIn:       row.BuiltIn,
+	}
+	p.SXBotKey = s.decryptBotKey(row.SxBotKeyEncrypted)
+	return p
+}
+
+func (s *Store) encryptBotKey(raw string) ([]byte, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return []byte{}, nil
+	}
+	if s == nil || s.cipher == nil {
+		return nil, errors.New("agents: cipher required to store sx bot key")
+	}
+	return s.cipher.Encrypt(raw)
+}
+
+func (s *Store) decryptBotKey(ciphertext []byte) string {
+	if s == nil || s.cipher == nil || len(ciphertext) == 0 {
+		return ""
+	}
+	raw, err := s.cipher.Decrypt(ciphertext)
+	if err != nil {
+		slog.Warn("decrypt sx bot key", "error", err)
+		return ""
+	}
+	return raw
 }
 
 func cleanAliases(in []string) []string {

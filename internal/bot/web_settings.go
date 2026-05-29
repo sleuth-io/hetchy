@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hetchyhq/hetchy/internal/agents"
 	"github.com/hetchyhq/hetchy/internal/apikeys"
 	"github.com/hetchyhq/hetchy/internal/auth"
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
+	"github.com/hetchyhq/hetchy/internal/sxsync"
 	"github.com/hetchyhq/hetchy/internal/webui"
 )
 
@@ -65,6 +65,9 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 			"SlackOAuthEnabled":            b.slackOAuthConfigured(),
 			"IsDev":                        b.cfg.Env == "dev",
 			"SXKeyPreview":                 previewSecret(current.SXKey),
+			"SXGitVault":                   sxsync.GitVaultView{},
+			"SXGitVaultActive":             strings.TrimSpace(r.URL.Query().Get("sx_git_vault")) == "1",
+			"SXGitVaultSelectedRepo":       strings.TrimSpace(r.URL.Query().Get("sx_git_vault_repo")),
 			"GitHubAppEnabled":             b.app != nil,
 			"DefaultRepoSlug":              defaultRepoSlug,
 		}
@@ -100,18 +103,7 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 	// integrations save below would null out default_repo and the API-key
 	// previews, so handle the rename inline and bounce.
 	if tab == "general" {
-		name := strings.TrimSpace(r.FormValue("org_name"))
-		if name == "" {
-			http.Error(w, "organization name is required", http.StatusBadRequest)
-			return
-		}
-		if err := b.auth.UpdateOrganizationName(r.Context(), p.OrgID, name); err != nil {
-			b.log.Error("update org name failed", "error", err, "org", p.OrgID)
-			http.Error(w, "rename: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		b.log.Info("org renamed", "org", p.OrgID, "actor", p.UserID)
-		http.Redirect(w, r, "/settings/org?tab=general&saved=1", http.StatusFound)
+		b.updateOrganizationNameFromSettings(w, r, p)
 		return
 	}
 
@@ -130,7 +122,12 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 	current.SlackSocketToken = applyTokenChange(r, "slack_socket_token", current.SlackSocketToken)
 	// SlackTeamID is set by the OAuth callback, not the form — only the
 	// HTTP transport needs it, and OAuth is its source of truth.
+	sxKeySubmitted := tokenFieldSubmitted(r, "sx_key")
 	current.SXKey = applyTokenChange(r, "sx_key", current.SXKey)
+	if err := b.disconnectGitVaultForSkillsNewSave(r.Context(), p.OrgID, sxKeySubmitted, current.SXKey); err != nil {
+		http.Error(w, "disconnect sx git vault: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 	newCredKind, newCredValue := applyAnthropicCredsChange(r, &current)
 	// Anthropic is required at chat-launch time (HandleRequest enforces
 	// it), but no longer required at settings-save time: each
@@ -173,6 +170,21 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 	// Slack creds may have changed; rebuild that org's connection.
 	b.slack.RestartOrg(r.Context(), p.OrgID)
 	http.Redirect(w, r, "/settings/org?tab="+tab+"&saved=1", http.StatusFound)
+}
+
+func (b *Bot) updateOrganizationNameFromSettings(w http.ResponseWriter, r *http.Request, p auth.Principal) {
+	name := strings.TrimSpace(r.FormValue("org_name"))
+	if name == "" {
+		http.Error(w, "organization name is required", http.StatusBadRequest)
+		return
+	}
+	if err := b.auth.UpdateOrganizationName(r.Context(), p.OrgID, name); err != nil {
+		b.log.Error("update org name failed", "error", err, "org", p.OrgID)
+		http.Error(w, "rename: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	b.log.Info("org renamed", "org", p.OrgID, "actor", p.UserID)
+	http.Redirect(w, r, "/settings/org?tab=general&saved=1", http.StatusFound)
 }
 
 // integrationInstallation is the per-installation row passed to the
@@ -274,18 +286,6 @@ func (b *Bot) loadBootstrapStatus(ctx context.Context, repos []integrationRepo) 
 	return out, nil
 }
 
-type agentSettingsView struct {
-	Slug         string
-	DisplayName  string
-	Description  string
-	SXBot        string
-	PersonaAsset string
-	SlackAliases []string
-	Skills       []string
-	BuiltIn      bool
-	Default      bool
-}
-
 // populateSettingsTabData fetches the per-tab data the template needs
 // and writes it into data. Pulled out of settingsHandler so the GET
 // path stays under the gocyclo threshold as more tabs land — each new
@@ -300,6 +300,13 @@ func (b *Bot) populateSettingsTabData(ctx context.Context, orgID, tab string, da
 		}
 		data["GitHubInstallations"] = installs
 		data["GitHubRepos"] = repos
+		if b.sx != nil {
+			gv, err := b.sx.GitVault(ctx, orgID)
+			if err != nil {
+				return fmt.Errorf("load sx git vault: %w", err)
+			}
+			data["SXGitVault"] = gv
+		}
 
 	case "repositories":
 		// Repositories tab is the home for per-repo bootstrap state +
@@ -325,32 +332,9 @@ func (b *Bot) populateSettingsTabData(ctx context.Context, orgID, tab string, da
 		data["RepoBillingAllowedFlavors"] = allowedFlavors
 
 	case "agents":
-		store := b.agents
-		if store == nil {
-			store = agents.NewStore(nil)
+		if err := b.populateAgentSettingsTabData(ctx, orgID, data); err != nil {
+			return err
 		}
-		profiles, err := store.List(ctx, orgID)
-		if err != nil {
-			return fmt.Errorf("load agents: %w", err)
-		}
-		out := make([]agentSettingsView, 0, len(profiles))
-		for _, a := range profiles {
-			if !a.Enabled {
-				continue
-			}
-			out = append(out, agentSettingsView{
-				Slug:         a.Slug,
-				DisplayName:  a.DisplayName,
-				Description:  a.Description,
-				SXBot:        a.SXBot,
-				PersonaAsset: a.PersonaAsset,
-				SlackAliases: a.SlackAliases,
-				Skills:       a.Skills,
-				BuiltIn:      a.BuiltIn,
-				Default:      a.Slug == agents.DefaultSlug,
-			})
-		}
-		data["Agents"] = out
 
 	case "api-keys":
 		var keys []apikeys.Key
@@ -478,55 +462,40 @@ func errorMessage(s string) string {
 
 // savedMessage maps the ?saved= sentinel to the green banner text shown
 // at the top of a tab after a successful POST. Empty string → no banner.
+var savedMessages = map[string]string{
+	"1":                          "Settings saved.",
+	"invited":                    "Invitation sent.",
+	"revoked":                    "Invitation revoked.",
+	"removed":                    "Member removed.",
+	"role":                       "Role updated.",
+	"slack_installed":            "Slack installed.",
+	"slack_install_cancelled":    "Slack install cancelled.",
+	"slack_install_conflict":     "That Slack workspace is already connected to another Hetchy organization. Have the existing org uninstall first.",
+	"github_installed":           "GitHub App installed. Repos and teams have been synced.",
+	"github_synced":              "Sync complete.",
+	"github_install_conflict":    "That GitHub installation is already connected to another Hetchy organization. Have the existing org uninstall first (or pick a different account).",
+	"github_disconnected":        "GitHub installation removed. The Hetchy GitHub App has been uninstalled from that account.",
+	"slack_disconnected":         "Slack disconnected. The Hetchy app has been removed from that workspace.",
+	"slack_already_disconnected": "Slack was already disconnected.",
+	"agent_saved":                "Agent saved.",
+	"agent_created":              "Agent created.",
+	"agent_skill_saved":          "Skill installed.",
+	"agent_skill_removed":        "Skill removed.",
+	"agent_skill_uploaded":       "Skill uploaded and installed.",
+	"agent_team_added":           "Team added.",
+	"agent_team_removed":         "Team removed.",
+	"agent_deleted":              "Agent deleted.",
+	"sx_git_vault_saved":         "SX Git Vault saved.",
+	"sx_git_vault_deleted":       "SX Git Vault disconnected.",
+	"repo_flavor_saved":          "Repo flavor saved.",
+	"billing_saved":              "Billing settings saved.",
+	"topup_started":              "Stripe Checkout opened for top-up.",
+	"plan_switched":              "Plan switched.",
+	"plan_scheduled":             "Plan downgrade scheduled for the next billing cycle.",
+	"portal_return":              "Returned from Stripe billing portal.",
+	"api_key_revoked":            "API key revoked.",
+}
+
 func savedMessage(s string) string {
-	switch s {
-	case "1":
-		return "Settings saved."
-	case "invited":
-		return "Invitation sent."
-	case "revoked":
-		return "Invitation revoked."
-	case "removed":
-		return "Member removed."
-	case "role":
-		return "Role updated."
-	case "slack_installed":
-		return "Slack installed."
-	case "slack_install_cancelled":
-		return "Slack install cancelled."
-	case "slack_install_conflict":
-		return "That Slack workspace is already connected to another Hetchy organization. Have the existing org uninstall first."
-	case "github_installed":
-		return "GitHub App installed. Repos and teams have been synced."
-	case "github_synced":
-		return "Sync complete."
-	case "github_install_conflict":
-		return "That GitHub installation is already connected to another Hetchy organization. Have the existing org uninstall first (or pick a different account)."
-	case "github_disconnected":
-		return "GitHub installation removed. The Hetchy GitHub App has been uninstalled from that account."
-	case "slack_disconnected":
-		return "Slack disconnected. The Hetchy app has been removed from that workspace."
-	case "slack_already_disconnected":
-		return "Slack was already disconnected."
-	case "agent_saved":
-		return "Agent saved."
-	case "agent_deleted":
-		return "Agent deleted."
-	case "repo_flavor_saved":
-		return "Repo flavor saved."
-	case "billing_saved":
-		return "Billing settings saved."
-	case "topup_started":
-		return "Stripe Checkout opened for top-up."
-	case "plan_switched":
-		return "Plan switched."
-	case "plan_scheduled":
-		return "Plan downgrade scheduled for the next billing cycle."
-	case "portal_return":
-		return "Returned from Stripe billing portal."
-	case "api_key_revoked":
-		return "API key revoked."
-	default:
-		return ""
-	}
+	return savedMessages[s]
 }

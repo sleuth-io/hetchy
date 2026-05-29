@@ -15,6 +15,7 @@ import (
 	"github.com/hetchyhq/hetchy/internal/bootstrap"
 	"github.com/hetchyhq/hetchy/internal/db/sqlc"
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
+	"github.com/hetchyhq/hetchy/internal/sxsync"
 )
 
 func TestGithubInstallationManageURL(t *testing.T) {
@@ -100,6 +101,20 @@ func TestPopulateSettingsTabDataAgentsUsesFallbackProfiles(t *testing.T) {
 	if len(agents) < 3 {
 		t.Fatalf("agents count = %d, want fallback profiles: %#v", len(agents), agents)
 	}
+	builtIns, ok := data["BuiltInAgents"].([]agentSettingsView)
+	if !ok {
+		t.Fatalf("BuiltInAgents type = %T, want []agentSettingsView", data["BuiltInAgents"])
+	}
+	if len(builtIns) < 3 {
+		t.Fatalf("built-in agents count = %d, want fallback profiles: %#v", len(builtIns), builtIns)
+	}
+	custom, ok := data["CustomAgents"].([]agentSettingsView)
+	if !ok {
+		t.Fatalf("CustomAgents type = %T, want []agentSettingsView", data["CustomAgents"])
+	}
+	if len(custom) != 0 {
+		t.Fatalf("custom agents = %#v, want none for fallback built-ins", custom)
+	}
 	for _, want := range []string{"bob", "alice", "archy"} {
 		found := false
 		for _, got := range agents {
@@ -182,6 +197,32 @@ func TestSettingsHandlerGetAndPostWithFakes(t *testing.T) {
 	}
 	if saved.DefaultGitHubOwner != "" || saved.DefaultGitHubRepo != "" {
 		t.Fatalf("default repo should be cleared, got %s/%s", saved.DefaultGitHubOwner, saved.DefaultGitHubRepo)
+	}
+}
+
+func TestSettingsHandlerSkillsNewSaveDisconnectsGitVault(t *testing.T) {
+	store := &fakeOrgStore{getConfig: orgcfg.Config{OrgID: "org_test"}}
+	sx := &fakeSXManager{gitVault: sxsync.GitVaultView{Configured: true, RepositorySlug: "acme/vault"}}
+	b := newBypassOrgBot(t, "admin")
+	b.orgs = store
+	b.sx = sx
+	b.slack = newSlackManager(discardLogger(), store, nil)
+	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.settingsHandler)))
+
+	rec := httptest.NewRecorder()
+	req := settingsFormRequest(http.MethodPost, "/settings/org?tab=integrations", "sx_key=sx-new")
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	if !sx.deletedGitVault {
+		t.Fatal("saving a Skills.new token should disconnect the Git Vault")
+	}
+	if len(store.upserts) != 1 {
+		t.Fatalf("org upserts = %d, want 1", len(store.upserts))
+	}
+	if store.upserts[0].SXKey != "sx-new" {
+		t.Fatalf("saved SXKey = %q, want sx-new", store.upserts[0].SXKey)
 	}
 }
 
@@ -356,6 +397,30 @@ func TestSplitAgentAction(t *testing.T) {
 			t.Errorf("splitAgentAction(%q) = (%q, %q, %v), want (%q, %q, %v)",
 				tc.path, gotSlug, gotAction, gotOK, tc.wantSlug, tc.wantAction, tc.wantOK)
 		}
+	}
+}
+
+func TestAgentSettingsActionHandlerBuiltInsReadOnly(t *testing.T) {
+	b := newBypassOrgBot(t, "admin")
+	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.agentSettingsActionHandler)))
+
+	for _, tc := range []struct {
+		name string
+		path string
+		body string
+	}{
+		{name: "save", path: "/settings/org/agents/alice", body: "display_name=Alicia"},
+		{name: "install skill", path: "/settings/org/agents/alice/skills", body: "skill=golang-pro"},
+		{name: "delete", path: "/settings/org/agents/alice/delete", body: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			req := settingsFormRequest(http.MethodPost, tc.path, tc.body)
+			handler.ServeHTTP(rec, req)
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("status = %d want %d body=%q", rec.Code, http.StatusForbidden, rec.Body.String())
+			}
+		})
 	}
 }
 
@@ -566,32 +631,4 @@ func TestOrgDeleteHandlerBypassAuth(t *testing.T) {
 			t.Fatalf("local deletes = %#v, want none", failing.deletes)
 		}
 	})
-}
-
-func TestSavedMessage(t *testing.T) {
-	cases := map[string]string{
-		"":                           "",
-		"unknown":                    "",
-		"1":                          "Settings saved.",
-		"invited":                    "Invitation sent.",
-		"revoked":                    "Invitation revoked.",
-		"removed":                    "Member removed.",
-		"role":                       "Role updated.",
-		"slack_installed":            "Slack installed.",
-		"slack_install_cancelled":    "Slack install cancelled.",
-		"slack_install_conflict":     "That Slack workspace is already connected to another Hetchy organization. Have the existing org uninstall first.",
-		"github_installed":           "GitHub App installed. Repos and teams have been synced.",
-		"github_synced":              "Sync complete.",
-		"github_install_conflict":    "That GitHub installation is already connected to another Hetchy organization. Have the existing org uninstall first (or pick a different account).",
-		"github_disconnected":        "GitHub installation removed. The Hetchy GitHub App has been uninstalled from that account.",
-		"slack_disconnected":         "Slack disconnected. The Hetchy app has been removed from that workspace.",
-		"slack_already_disconnected": "Slack was already disconnected.",
-		"agent_saved":                "Agent saved.",
-		"agent_deleted":              "Agent deleted.",
-	}
-	for in, want := range cases {
-		if got := savedMessage(in); got != want {
-			t.Errorf("savedMessage(%q) = %q, want %q", in, got, want)
-		}
-	}
 }

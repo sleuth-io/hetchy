@@ -31,11 +31,12 @@
   fieldset { border: none; padding: 0; margin: 0 0 1.5rem; }
   legend { font-weight: 600; font-size: .9rem; padding: 0 0 .5rem; }
   label { display: block; font-size: .85rem; color: #555; margin: .5rem 0 .25rem; }
-  input[type="text"], input[type="password"], input[type="email"], input[type="number"], select {
+  input[type="text"], input[type="password"], input[type="email"], input[type="number"], select, textarea {
           width: 100%; padding: .55rem .75rem; border: 1px solid #ccc;
           border-radius: .4rem; font-size: .95rem; box-sizing: border-box;
           font-family: ui-monospace, monospace; background: #fff; }
-  input:focus, select:focus { outline: none; border-color: #0b93f6; }
+  textarea { resize: vertical; min-height: 7rem; line-height: 1.45; }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: #0b93f6; }
   input[readonly] { background: #fafafa; color: #555; cursor: default; }
   input[readonly]:focus { border-color: #ccc; }
   input.removing { background: #fdecec; color: #b03030; text-decoration: line-through; }
@@ -187,33 +188,149 @@
   .danger-zone .danger-zone-row .hint { margin-top: 0; }
 
   /* Agents tab */
+  .agent-toolbar { display: flex; justify-content: flex-end; margin: 0 0 1rem; }
+  .agent-toolbar .primary { margin: 0; }
+  .agent-sections { display: grid; gap: 1.4rem; }
+  .agent-section { min-width: 0; }
+  .agent-section-title { margin: 0 0 .65rem; color: #888; font-size: .72rem;
+                         text-transform: uppercase; letter-spacing: .03em; font-weight: 700; }
   .agent-list { display: flex; flex-direction: column; gap: .85rem; }
   .agent-card { background: #fff; border: 1px solid #e6e6e6;
-                border-radius: .5rem; padding: 1rem 1.25rem; }
+                border-radius: .5rem; padding: 1rem 1.25rem; overflow: hidden; }
   .agent-card-head { display: flex; justify-content: space-between;
                      gap: 1rem; align-items: flex-start; margin-bottom: .75rem; }
+  .agent-card-actions { display: flex; align-items: flex-start; gap: .5rem;
+                        flex-wrap: wrap; justify-content: flex-end; }
   .agent-title { min-width: 0; }
   .agent-title h3 { margin: 0 .35rem .2rem 0; font-size: 1rem; color: #222;
                     display: inline-block; }
   .agent-title code { background: #f0f2f5; color: #555; padding: .12rem .4rem;
                       border-radius: .3rem; font-size: .75rem; }
+  .agent-badge { color: #777; background: #f7f7f7; border: 1px solid #e8e8e8;
+                 border-radius: 1rem; padding: .18rem .5rem; font-size: .72rem;
+                 line-height: 1.2; white-space: nowrap; }
   .agent-card p { margin: 0; color: #666; font-size: .85rem; line-height: 1.45; }
-  .agent-edit-form { display: grid; grid-template-columns: 1fr auto;
-                     gap: .55rem; align-items: end; margin: .75rem 0; }
+  .agent-edit-form { margin: .75rem 0; }
   .agent-edit-form label { margin-top: 0; }
-  .agent-edit-form input { font-family: inherit; }
+  .agent-edit-form input, .agent-edit-form textarea { font-family: inherit; }
   .agent-edit-form .primary { margin: 0; padding: .55rem 1rem; }
+  .agent-profile-form { border-top: 1px solid #f0f0f0; padding-top: .85rem; }
+  .agent-form-grid { display: grid; gap: .55rem; }
+  .agent-form-actions { display: flex; justify-content: flex-end; margin-top: .75rem; }
+  .agent-command-form { display: grid; grid-template-columns: 1fr;
+                        gap: .55rem; align-items: start; }
+  .agent-command-form > div { min-width: 0; }
+  .agent-command-form select,
+  .agent-command-form input { width: 100%; max-width: 100%; box-sizing: border-box; }
+  .agent-command-form select { font-family: inherit; font-size: .85rem; }
   .agent-delete-form { margin: 0; }
+  .agent-delete-link { font-size: .82rem; }
   .agent-skills { margin-top: .75rem; }
   .agent-skills-label { color: #888; font-size: .72rem; text-transform: uppercase;
                         letter-spacing: .03em; font-weight: 600; margin-bottom: .35rem; }
+  .agent-skills-label-secondary { margin-top: .65rem; }
   .skill-chip-list { display: flex; flex-wrap: wrap; gap: .35rem; }
   .skill-chip { background: #f0f2f5; color: #444; border-radius: 1rem;
                 padding: .22rem .55rem; font-size: .76rem;
                 font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-  .agent-meta { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: .75rem; }
+  .skill-chip-form { border: 0; margin: 0; display: inline-flex; align-items: center;
+                     gap: .25rem; }
+  .skill-chip-remove { border: 0; background: transparent; color: inherit; opacity: .55;
+                       cursor: pointer; font: inherit; line-height: 1; padding: 0 .05rem; }
+  .skill-chip-remove:hover { opacity: 1; }
+  .agent-team-editor { margin-top: 1rem; padding-top: .85rem; border-top: 1px solid #f0f0f0; }
+  .agent-team-editor .agent-command-form { margin-top: .65rem; }
+  .agent-card-footer { display: flex; align-items: flex-end; justify-content: space-between;
+                       gap: .75rem; margin-top: .9rem; }
+  .agent-footer-actions { margin-left: auto; display: flex; align-items: center;
+                          justify-content: flex-end; gap: .5rem; flex-wrap: wrap; }
+  .agent-footer-actions .secondary,
+  .agent-footer-actions .danger-btn { display: inline-flex; align-items: center;
+                                      justify-content: center; min-height: 2.2rem;
+                                      box-sizing: border-box; margin: 0; padding: .55rem 1rem;
+                                      border-radius: .4rem; font-size: .9rem;
+                                      line-height: 1.2; white-space: nowrap; }
+  .agent-skill-picker { display: grid; gap: .55rem; }
+  .agent-skill-combo { display: grid; grid-template-columns: minmax(0, 1fr) 2.5rem; }
+  .agent-skill-combo input { border-radius: .4rem 0 0 .4rem; }
+  .agent-skill-toggle { border: 1px solid #ccc; border-left: 0; background: #fff;
+                        border-radius: 0 .4rem .4rem 0; cursor: pointer;
+                        position: relative; }
+  .agent-skill-toggle::before { content: ""; position: absolute; left: 50%; top: 50%;
+                                width: .5rem; height: .5rem; border-right: 1px solid #777;
+                                border-bottom: 1px solid #777; transform: translate(-50%, -65%) rotate(45deg); }
+  .agent-skill-toggle:disabled { cursor: default; opacity: .55; }
+  .agent-skill-menu { max-height: min(8rem, 28dvh); overflow: auto; background: #fff;
+                      border: 1px solid #d8d8d8; border-radius: .4rem;
+                      box-shadow: 0 14px 34px rgba(0,0,0,.18); padding: .25rem; }
+  .agent-skill-menu[hidden] { display: none; }
+  .agent-skill-menu-option[hidden] { display: none; }
+  .agent-skill-menu-option { display: flex; align-items: center; justify-content: space-between;
+                             gap: .75rem; width: 100%; text-align: left;
+                             background: transparent; border: 0; border-radius: .28rem;
+                             padding: .5rem .65rem; cursor: pointer; font-family: inherit; }
+  .agent-skill-menu-option:hover,
+  .agent-skill-menu-option:focus { background: #f0f2f5; outline: none; }
+  .agent-skill-menu-option strong { display: block; color: #333; font-size: .85rem;
+                                    line-height: 1.3; overflow-wrap: anywhere; min-width: 0; }
+  .agent-skill-menu-option small { display: block; color: #777; font-size: .76rem;
+                                   line-height: 1.35; white-space: nowrap; overflow: hidden;
+                                   text-overflow: ellipsis; max-width: 12rem; }
+  .agent-skill-selected { display: flex; flex-wrap: wrap; gap: .4rem; min-height: 0; }
+  .agent-skill-chip { display: inline-flex; align-items: center; gap: .4rem;
+                      max-width: 100%; border: 1px solid #1b78ff; background: #e9f2ff;
+                      color: #124f9f; border-radius: 1rem; padding: .28rem .42rem .28rem .6rem;
+                      font-size: .78rem; line-height: 1.2; overflow-wrap: anywhere; }
+  .agent-skill-chip button { width: 1.15rem; height: 1.15rem; border: 0; border-radius: 50%;
+                             background: transparent; color: #124f9f; cursor: pointer;
+                             font-size: .8rem; line-height: 1; padding: 0; }
+  .agent-skill-chip button:hover { background: rgba(18,79,159,.12); }
+  .agent-skill-tabs { margin-top: 1rem; padding-top: .85rem; border-top: 1px solid #f0f0f0; }
+  .agent-skill-tabs .agent-form-actions { justify-content: flex-start; }
+  .agent-skill-section-title { margin: 0 0 .65rem; color: #888; font-size: .72rem;
+                               text-transform: uppercase; letter-spacing: .03em;
+                               font-weight: 700; }
+  .agent-skill-tablist { margin-bottom: .8rem; }
+  .agent-upload-form { display: grid; gap: .65rem; }
+  .agent-upload-dropzone { position: relative; display: flex; min-height: 9rem;
+                           flex-direction: column; align-items: center; justify-content: center;
+                           gap: .2rem; margin: 0; padding: 1.25rem;
+                           border: 2px dashed #c7c7cc; border-radius: .55rem;
+                           background: #fafafa; color: #444; text-align: center;
+                           cursor: pointer; transition: border-color .15s, background .15s; }
+  .agent-upload-dropzone:hover,
+  .agent-upload-dropzone.is-dragging { border-color: #0b93f6; background: #f2f8ff; }
+  .agent-upload-input { position: absolute; width: 1px; height: 1px; opacity: 0;
+                        pointer-events: none; }
+  .agent-upload-icon { width: 2.6rem; height: 2.6rem; color: #777; margin-bottom: .45rem; }
+  .agent-upload-dropzone strong { font-size: .92rem; line-height: 1.3; color: #333; }
+  .agent-upload-dropzone span { font-size: .82rem; line-height: 1.35; color: #777; }
+  .agent-upload-dropzone em { margin-top: .45rem; max-width: 100%;
+                              color: #0b74c8; font-style: normal; font-size: .8rem;
+                              overflow-wrap: anywhere; }
+  .agent-upload-dropzone em:empty { display: none; }
+  .agent-meta { display: flex; flex-wrap: wrap; gap: .35rem; margin: 0; }
   .agent-meta span { color: #777; background: #fafafa; border: 1px solid #eee;
                      border-radius: .35rem; padding: .2rem .45rem; font-size: .75rem; }
+  dialog.agent-modal { max-width: 32rem; max-height: calc(100dvh - 2rem); overflow: hidden; }
+  dialog.agent-modal form { display: flex; flex-direction: column; max-height: inherit; }
+  dialog.agent-modal .body { display: grid; gap: .55rem; overflow: auto; padding-bottom: .85rem; }
+  dialog.agent-modal label { margin: 0; }
+  dialog.agent-modal textarea { min-height: 8.5rem; max-height: 28dvh; font-family: inherit; }
+  dialog.agent-modal .agent-action-modal-body { gap: .95rem; padding-bottom: 1.25rem; }
+  dialog.agent-modal .agent-action-modal-body h2 { margin: 0 0 .35rem; }
+  dialog.agent-modal .agent-action-modal-body .cred-tabs { margin: -.1rem 0 .1rem; }
+  dialog.agent-modal .agent-action-modal-body .cred-panel,
+  dialog.agent-modal .agent-action-modal-body .agent-edit-form { margin: 0; }
+  dialog.agent-modal .agent-action-modal-body .cred-panel,
+  dialog.agent-modal .agent-action-modal-body .agent-edit-form { width: 100%; }
+  dialog.agent-modal .agent-action-modal-body .agent-command-form { gap: .75rem; }
+  dialog.agent-modal .agent-action-modal-body .agent-command-form > div:not(.actions) {
+    display: grid; gap: .35rem;
+  }
+  dialog.agent-modal .agent-action-modal-body .actions { display: flex; justify-content: flex-end;
+                                                         width: 100%; box-sizing: border-box;
+                                                         padding: .35rem 0 0; }
 
   /* Billing tab */
   .billing-panel { border: 1px solid #e6e6e6; border-radius: .5rem;
@@ -475,7 +592,7 @@
   .integration-actions .primary { margin-top: 0; }
   .integration-disconnect-form { margin: 0; }
 
-  /* Credential tabs (Anthropic integration: API key vs subscription token).
+  /* Credential tabs (Anthropic/OpenAI/SX integration panels).
      Two mutually exclusive panels share one form so a single Save covers
      either. The non-active panel is display:none so its hidden inputs
      still post (and applyTokenChange treats blank as "keep existing"). */
@@ -496,6 +613,27 @@
                     border-radius: .25rem; font-size: .85em;
                     font-family: ui-monospace, monospace; }
 
+  .sx-tabs { padding-top: .85rem; }
+  .sx-vault-options { display: grid; gap: 1rem; }
+  .sx-vault-form { margin: 0; }
+  .sx-vault-form-actions { display: flex; align-items: center; gap: .5rem;
+                           margin-top: .85rem; flex-wrap: wrap; }
+  .sx-vault-form-actions .secondary,
+  .sx-vault-form-actions .primary { margin: 0; white-space: nowrap; }
+  .sx-vault-create-note { color: #888; font-size: .75rem; margin-top: -.4rem; }
+  .sx-vault-create-dialog ol { margin: .75rem 0 0; padding-left: 1.1rem;
+                               color: #666; font-size: .8rem; line-height: 1.45; }
+  .sx-vault-create-dialog li + li { margin-top: .35rem; }
+  .sx-vault-create-dialog code { background: #f3f3f5; padding: .05rem .3rem;
+                                border-radius: .25rem; font-size: .85em;
+                                font-family: ui-monospace, monospace; }
+  .sx-vault-refresh-list { display: grid; gap: .45rem; margin-top: 1rem; }
+  .sx-vault-refresh-row { display: flex; align-items: center; justify-content: space-between;
+                          gap: .75rem; margin: 0; padding: .55rem .65rem;
+                          border: 1px solid #ececef; border-radius: .45rem; }
+  .sx-vault-refresh-row span { color: #333; font-size: .85rem; font-weight: 500; }
+  .sx-vault-refresh-row .secondary { margin: 0; white-space: nowrap; }
+
   /* Modal dialogs (used by API-key integrations) */
   dialog.api-modal { border: none; border-radius: .5rem; padding: 0;
                      box-shadow: 0 24px 64px rgba(0,0,0,.35);
@@ -514,9 +652,24 @@
                             font-family: inherit; }
   dialog.api-modal .save { background: #0b93f6; color: #fff; border: 0; }
   dialog.api-modal .save:hover { background: #0a83d8; }
+  dialog.api-modal .save:disabled { opacity: .55; cursor: default; }
+  dialog.api-modal .save.is-submitting,
+  dialog.api-modal .save.is-submitting:hover { display: inline-flex; align-items: center;
+    justify-content: center; min-width: 4.75rem; background: #0b93f6; opacity: .85; }
+  .button-spinner { display: inline-block; width: 1rem; height: 1rem;
+    border: 2px solid currentColor; border-right-color: transparent;
+    border-radius: 50%; animation: button-spin .8s linear infinite; }
+  @keyframes button-spin { to { transform: rotate(360deg); } }
   dialog.api-modal .cancel { background: #fff; color: #555;
-                             border: 1px solid #ddd; }
+    border: 1px solid #ddd; }
   dialog.api-modal .cancel:hover { background: #fafafa; }
+  dialog.api-modal .agent-skill-toggle { padding: 0; border-radius: 0 .4rem .4rem 0;
+                                         font-size: 0; margin: 0; }
+  dialog.api-modal .agent-skill-menu-option { padding: .55rem .65rem;
+                                              border-radius: .28rem; font-size: .85rem;
+                                              margin: 0; }
+  dialog.api-modal .agent-skill-chip button { padding: 0; border-radius: 50%;
+                                              font-size: .8rem; margin: 0; }
 
   /* Members table */
   table.members { width: 100%; border-collapse: collapse; font-size: .85rem; }
@@ -566,7 +719,8 @@
   html.is-dark input[type="password"],
   html.is-dark input[type="email"],
   html.is-dark input[type="number"],
-  html.is-dark select { background: #232327; color: #e7e7e9; border-color: #2e2e33; }
+  html.is-dark select,
+  html.is-dark textarea { background: #232327; color: #e7e7e9; border-color: #2e2e33; }
   html.is-dark input[readonly] { background: #1a1a1d; color: #9a9aa0; }
   html.is-dark input.removing { background: #3a1818; color: #ff8888; }
   html.is-dark .hint { color: #6e6e72; }
@@ -578,6 +732,11 @@
   html.is-dark .cred-tab.active { color: #4da6ff; border-bottom-color: #4da6ff; }
   html.is-dark .cred-help { color: #9a9aa0; }
   html.is-dark .cred-help code { background: #2a2a2e; }
+  html.is-dark .sx-vault-create-note { color: #6e6e72; }
+  html.is-dark .sx-vault-create-dialog ol { color: #9a9aa0; }
+  html.is-dark .sx-vault-create-dialog code { background: #2a2a2e; }
+  html.is-dark .sx-vault-refresh-row { border-color: #2e2e33; }
+  html.is-dark .sx-vault-refresh-row span { color: #e7e7e9; }
   html.is-dark .sep { color: #3a3a40; }
   html.is-dark .link-btn { color: #9a9aa0; }
   html.is-dark .link-btn:hover { color: #e7e7e9; }
@@ -619,11 +778,36 @@
   html.is-dark .danger-zone .danger-zone-text h4 { color: #f5f5f7; }
   html.is-dark .danger-zone .hint { color: #c0a0a0; }
   html.is-dark .agent-card { background: #232327; border-color: #2e2e33; }
+  html.is-dark .agent-section-title { color: #8a8a90; }
   html.is-dark .agent-title h3 { color: #f5f5f7; }
   html.is-dark .agent-title code,
   html.is-dark .skill-chip { background: #2e2e33; color: #d4d4d8; }
+  html.is-dark .agent-badge { background: #2e2e33; border-color: #3a3a3f; color: #b8b8bc; }
   html.is-dark .agent-card p { color: #9a9aa0; }
+  html.is-dark .agent-profile-form { border-top-color: #2e2e33; }
+  html.is-dark .agent-team-editor { border-top-color: #2e2e33; }
+  html.is-dark .agent-skill-tabs { border-top-color: #2e2e33; }
+  html.is-dark .agent-skill-section-title { color: #8a8a90; }
   html.is-dark .agent-skills-label { color: #8a8a90; }
+  html.is-dark .agent-skill-toggle { background: #232327; border-color: #2e2e33; }
+  html.is-dark .agent-skill-toggle::before { border-color: #b8b8bc; }
+  html.is-dark .agent-skill-menu { background: #232327; border-color: #2e2e33;
+                                   box-shadow: 0 14px 34px rgba(0,0,0,.45); }
+  html.is-dark .agent-skill-menu-option:hover,
+  html.is-dark .agent-skill-menu-option:focus { background: #2e2e33; }
+  html.is-dark .agent-skill-menu-option strong { color: #e7e7e9; }
+  html.is-dark .agent-skill-menu-option small { color: #9a9aa0; }
+  html.is-dark .agent-skill-chip { background: #17345c; color: #9dccff; border-color: #3f8cff; }
+  html.is-dark .agent-skill-chip button { color: #9dccff; }
+  html.is-dark .agent-skill-chip button:hover { background: rgba(157,204,255,.14); }
+  html.is-dark .agent-upload-dropzone { background: #1f1f23; border-color: #4a4a50;
+                                        color: #e7e7e9; }
+  html.is-dark .agent-upload-dropzone:hover,
+  html.is-dark .agent-upload-dropzone.is-dragging { background: #1a2b3d; border-color: #4da6ff; }
+  html.is-dark .agent-upload-icon,
+  html.is-dark .agent-upload-dropzone span { color: #9a9aa0; }
+  html.is-dark .agent-upload-dropzone strong { color: #e7e7e9; }
+  html.is-dark .agent-upload-dropzone em { color: #78bdf2; }
   html.is-dark .agent-meta span { background: #1c1c1f; border-color: #2e2e33; color: #9a9aa0; }
   html.is-dark .billing-panel { background: #232327; border-color: #2e2e33; }
   html.is-dark .billing-panel h3,
@@ -749,7 +933,7 @@
     .content .close { top: .85rem; right: 1rem; }
     .invite-form { grid-template-columns: 1fr; }
     .invite-form button { width: 100%; }
-    .agent-edit-form { grid-template-columns: 1fr; }
+    .agent-command-form { grid-template-columns: 1fr; }
     .agent-edit-form .primary { width: 100%; }
     .connection { grid-template-columns: 1fr; }
     .connection .actions { justify-content: flex-start;
@@ -777,6 +961,9 @@
     .billing-topup-form,
     .billing-topup-form .secondary,
     .billing-settings-actions .primary { width: 100%; }
+    .sx-vault-form-actions { flex-direction: column; align-items: stretch; }
+    .sx-vault-form-actions .secondary,
+    .sx-vault-form-actions .primary { width: 100%; }
     .billing-settings-actions .hint { min-width: 0; }
     .billing-settings-grid { grid-template-columns: 1fr; }
     table.members { display: block; }

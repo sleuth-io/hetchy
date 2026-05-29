@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
+	sxlib "github.com/sleuth-io/sx/pkg/sxvault"
 
 	"github.com/hetchyhq/hetchy/internal/agents"
 	"github.com/hetchyhq/hetchy/internal/blocks"
@@ -12,6 +13,7 @@ import (
 	"github.com/hetchyhq/hetchy/internal/convstore"
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
 	"github.com/hetchyhq/hetchy/internal/runstore"
+	"github.com/hetchyhq/hetchy/internal/sxsync"
 )
 
 type conversationStore interface {
@@ -59,6 +61,25 @@ type sandboxStartCheckFunc func(context.Context, *daytona.Sandbox) error
 type commandLogSnapshotFunc func(context.Context, *daytona.Sandbox, string, string) (string, error)
 
 type sessionCommandStatusFunc func(context.Context, *daytona.Sandbox, string, string) (map[string]any, error)
+
+type sxManager interface {
+	CheckCache() (sxsync.CacheStatus, error)
+	RuntimeGitVaultEnv(context.Context, string) (map[string]string, error)
+	RuntimeSkillsNewEnv(context.Context, string, agents.Profile) (map[string]string, error)
+	GitVault(context.Context, string) (sxsync.GitVaultView, error)
+	ListSkills(context.Context, string, sxsync.Actor) ([]sxsync.SkillSummary, error)
+	ListTeams(context.Context, string, sxsync.Actor) ([]sxsync.TeamSummary, error)
+	SyncAgents(context.Context, string, sxsync.Actor) ([]agents.Profile, error)
+	SaveAgent(context.Context, string, sxsync.Actor, agents.Profile, string) (agents.Profile, error)
+	DeleteAgent(context.Context, string, sxsync.Actor, string) error
+	AttachSkill(context.Context, string, sxsync.Actor, string, string) (agents.Profile, error)
+	DetachSkill(context.Context, string, sxsync.Actor, string, string) (agents.Profile, error)
+	UploadSkillZip(context.Context, string, sxsync.Actor, string, sxlib.SkillZipSpec) (agents.Profile, error)
+	AddAgentTeam(context.Context, string, sxsync.Actor, string, string) (agents.Profile, error)
+	RemoveAgentTeam(context.Context, string, sxsync.Actor, string, string) (agents.Profile, error)
+	DeleteGitVault(context.Context, string) error
+	ConfigureExistingGitVault(context.Context, string, string) (sxsync.GitVaultView, error)
+}
 
 type orgStore interface {
 	Get(context.Context, string) (orgcfg.Config, error)

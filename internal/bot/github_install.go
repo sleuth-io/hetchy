@@ -279,7 +279,11 @@ func (b *Bot) githubSyncHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "sync failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, "/settings/org?tab=integrations&saved=github_synced", http.StatusFound)
+	redirect := "/settings/org?tab=integrations&saved=github_synced"
+	if strings.TrimSpace(r.FormValue("return_to")) == "sx_git_vault" {
+		redirect += "&sx_git_vault=1"
+	}
+	http.Redirect(w, r, redirect, http.StatusFound)
 }
 
 // githubDisconnectHandler removes an installation's binding to this

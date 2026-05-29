@@ -37,6 +37,7 @@ type Querier interface {
 	DeleteGithubTeamsByInstallationExcept(ctx context.Context, arg DeleteGithubTeamsByInstallationExceptParams) error
 	DeleteOrgAPIKeysByOrg(ctx context.Context, orgID string) error
 	DeleteOrgConfig(ctx context.Context, orgID string) error
+	DeleteOrgSXVault(ctx context.Context, orgID string) error
 	DeleteRepoBillingSetting(ctx context.Context, arg DeleteRepoBillingSettingParams) error
 	DeleteRepoSecretValue(ctx context.Context, arg DeleteRepoSecretValueParams) error
 	DeleteRepoSecretValuesByOrg(ctx context.Context, orgID string) error
@@ -51,6 +52,7 @@ type Querier interface {
 	FinalizeBillingRunMeter(ctx context.Context, arg FinalizeBillingRunMeterParams) (BillingRunMeter, error)
 	GetActiveAgentRunForThread(ctx context.Context, arg GetActiveAgentRunForThreadParams) (AgentRun, error)
 	GetAgentProfileBySlug(ctx context.Context, arg GetAgentProfileBySlugParams) (GetAgentProfileBySlugRow, error)
+	GetAgentProfileTemplate(ctx context.Context, slug string) (AgentProfileTemplate, error)
 	GetAgentRun(ctx context.Context, id string) (AgentRun, error)
 	GetAgentRunByRequest(ctx context.Context, arg GetAgentRunByRequestParams) (AgentRun, error)
 	GetBillingAccount(ctx context.Context, orgID string) (BillingAccount, error)
@@ -73,6 +75,7 @@ type Querier interface {
 	GetOrgAPIKeyByHash(ctx context.Context, keyHash []byte) (OrgApiKey, error)
 	GetOrgConfig(ctx context.Context, orgID string) (OrgConfig, error)
 	GetOrgConfigBySlackTeamID(ctx context.Context, slackTeamID *string) (OrgConfig, error)
+	GetOrgSXVault(ctx context.Context, orgID string) (OrgSxVault, error)
 	GetRepoBillingSetting(ctx context.Context, arg GetRepoBillingSettingParams) (RepoBillingSetting, error)
 	GetRepoSecretValue(ctx context.Context, arg GetRepoSecretValueParams) (RepoSecretValue, error)
 	GetRepoSetupSpec(ctx context.Context, arg GetRepoSetupSpecParams) (RepoSetupSpec, error)
@@ -89,6 +92,7 @@ type Querier interface {
 	// NULL when the user filled it in between the two statements.
 	InsertRepoSecretValueIfAbsent(ctx context.Context, arg InsertRepoSecretValueIfAbsentParams) error
 	ListActiveAgentRunsForLeaseOwnerPrefix(ctx context.Context, arg ListActiveAgentRunsForLeaseOwnerPrefixParams) ([]AgentRun, error)
+	ListAgentProfileTemplates(ctx context.Context) ([]AgentProfileTemplate, error)
 	ListAgentProfilesByOrg(ctx context.Context, orgID string) ([]ListAgentProfilesByOrgRow, error)
 	ListAgentRunEventsFromSeq(ctx context.Context, arg ListAgentRunEventsFromSeqParams) ([]AgentRunEvent, error)
 	ListBillingAccountOrgIDs(ctx context.Context) ([]string, error)
@@ -194,6 +198,7 @@ type Querier interface {
 	TouchAgentRunLease(ctx context.Context, arg TouchAgentRunLeaseParams) error
 	TouchOrgAPIKeyLastUsed(ctx context.Context, id string) error
 	UpdateAgentProfileName(ctx context.Context, arg UpdateAgentProfileNameParams) (UpdateAgentProfileNameRow, error)
+	UpdateAgentProfileVaultSync(ctx context.Context, arg UpdateAgentProfileVaultSyncParams) (UpdateAgentProfileVaultSyncRow, error)
 	UpdateAgentRunBranch(ctx context.Context, arg UpdateAgentRunBranchParams) error
 	UpdateAgentRunCommand(ctx context.Context, arg UpdateAgentRunCommandParams) error
 	UpdateAgentRunKind(ctx context.Context, arg UpdateAgentRunKindParams) error
@@ -238,6 +243,7 @@ type Querier interface {
 	UpsertGithubTeam(ctx context.Context, arg UpsertGithubTeamParams) error
 	UpsertGithubTeamMember(ctx context.Context, arg UpsertGithubTeamMemberParams) error
 	UpsertOrgConfig(ctx context.Context, arg UpsertOrgConfigParams) (OrgConfig, error)
+	UpsertOrgSXGitVault(ctx context.Context, arg UpsertOrgSXGitVaultParams) (OrgSxVault, error)
 	UpsertRepoBillingSetting(ctx context.Context, arg UpsertRepoBillingSettingParams) (RepoBillingSetting, error)
 	// Repo-scoped secrets ---------------------------------------------------
 	// Inserts a placeholder row (value_encrypted=NULL) when bootstrap
