@@ -23,6 +23,10 @@ import (
 // repo-reply, and "had repo but no sandbox" paths so they all stamp
 // the row identically.
 func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, userRequest, requestID string, opts chatTaskOptions, model ClaudeModel, recorder *blocks.Recorder, emit blocks.Emitter) {
+	b.runFreshAgentWithTranscriptMode(ctx, oc, rec, agent, userRequest, requestID, opts, model, recorder, emit, appendToFirstTurn, 0)
+}
+
+func (b *Bot) runFreshAgentWithTranscriptMode(ctx context.Context, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, userRequest, requestID string, opts chatTaskOptions, model ClaudeModel, recorder *blocks.Recorder, emit blocks.Emitter, mode appendMode, attachmentTurn int) {
 	model = normalizeClaudeModel(model)
 	rec.Model = string(model)
 	b.markRunKind(ctx, "fresh")
@@ -30,7 +34,7 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 	if err != nil {
 		if liveRunCancelled(ctx) {
 			emit.Result("Stopped", "Stopped before the sandbox was created.")
-			appendBlocksToFirstTurn(&rec, recorder.Snapshot())
+			appendFreshRunBlocks(&rec, mode, recorder.Snapshot())
 			if err := b.convs.Upsert(context.Background(), rec); err != nil {
 				b.log.Error("convstore upsert (cancel before sandbox)", "error", err)
 			}
@@ -43,7 +47,7 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 		// message can pick a different repo without being interpreted
 		// as a follow-up to a half-launched conversation.
 		clearRepoOnFailure(&rec)
-		appendBlocksToFirstTurn(&rec, recorder.Snapshot())
+		appendFreshRunBlocks(&rec, mode, recorder.Snapshot())
 		if err := b.convs.Upsert(ctx, rec); err != nil {
 			b.log.Error("convstore upsert (resolve fail)", "error", err)
 		}
@@ -53,7 +57,7 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 
 	flavor, ok := b.admitBillingForRun(ctx, oc.OrgID, rec.GitHubOwner, rec.GitHubRepo, emit)
 	if !ok {
-		appendBlocksToFirstTurn(&rec, recorder.Snapshot())
+		appendFreshRunBlocks(&rec, mode, recorder.Snapshot())
 		if err := b.convs.Upsert(ctx, rec); err != nil {
 			b.log.Error("convstore upsert (billing admission fail)", "error", err)
 		}
@@ -96,7 +100,7 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 		Snapshot: snapshot,
 	})
 	if err != nil {
-		b.handleFreshSandboxCreateError(ctx, &rec, recorder, requestID, err, emit)
+		b.handleFreshSandboxCreateError(ctx, &rec, recorder, requestID, err, emit, mode)
 		return
 	}
 	// Mark this fresh-run sandbox as owned by the current turn. The
@@ -115,11 +119,11 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 	emit.Append(sandboxReadyID, fmt.Sprintf("`%s` is up — cloning repo and starting %s.", sb.ID, agentRuntimeDisplayName(model)))
 	emit.Done(sandboxReadyID, "")
 
-	agentRequest, err := b.promptWithSandboxAttachments(ctx, sb, rec.OrgID, rec.ThreadID, 0, requestID, userRequest, emit)
+	agentRequest, err := b.promptWithSandboxAttachments(ctx, sb, rec.OrgID, rec.ThreadID, attachmentTurn, requestID, userRequest, emit)
 	if err != nil {
 		b.log.Error("sandbox attachment upload failed", "sandbox", sb.ID, "request_id", requestID, "error", err)
 		emit.Error("Attachment upload failed", fmt.Sprintf("Could not copy the attached files into sandbox `%s`. Try again.", sb.ID))
-		appendBlocksToFirstTurn(&rec, recorder.Snapshot())
+		appendFreshRunBlocks(&rec, mode, recorder.Snapshot())
 		if uerr := b.convs.Upsert(context.Background(), rec); uerr != nil {
 			b.log.Error("convstore upsert (attachment upload fail)", "error", uerr)
 		}
@@ -133,11 +137,10 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 	// writes only history + response_blocks + creator_id via
 	// SaveProgress; the terminal Upsert below remains the
 	// canonical write for sandbox_id / branch / pr_url.
-	// appendToFirstTurn matches appendBlocksToFirstTurn used by
-	// every terminal Upsert in this function — a mismatch would
-	// let a late tick overwrite the terminal save with a different
-	// shape and drop turns from the UI.
-	persister := newChatPersister(b.log, b.convs, recorder, rec, appendToFirstTurn, 2*time.Second)
+	// mode matches the terminal Upsert helper used in this function. A
+	// mismatch would let a late tick overwrite the terminal save with a
+	// different shape and drop turns from the UI.
+	persister := newChatPersister(b.log, b.convs, recorder, rec, mode, 2*time.Second)
 	persisterCtx, cancelPersister := context.WithCancel(ctx)
 	go persister.Run(persisterCtx)
 	defer func() {
@@ -148,7 +151,7 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 	runEmit := newPRURLPersistingEmitter(b.log, b.convs, rec, emit)
 	prURL, runErr := b.runAgentForRequest(ctx, sb, repo, oc, agent, agentRequest, requestID, branch, opts, model, runEmit)
 	if runErr != nil {
-		b.handleFreshAgentRunError(ctx, sb, &rec, recorder, requestID, branch, runErr, runEmit)
+		b.handleFreshAgentRunError(ctx, sb, &rec, recorder, requestID, branch, runErr, runEmit, mode)
 		return
 	}
 
@@ -161,7 +164,7 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 		rec.SandboxID = sb.ID
 		rec.Branch = branch
 		rec.PRURL = ""
-		appendBlocksToFirstTurn(&rec, recorder.Snapshot())
+		appendFreshRunBlocks(&rec, mode, recorder.Snapshot())
 		if err := b.convs.Upsert(ctx, rec); err != nil {
 			b.log.Error("convstore upsert (agent answer-only)", "error", err)
 			b.markRunState(ctx, runstore.StateFailed, err)
@@ -182,7 +185,7 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 	rec.SandboxID = sb.ID
 	rec.Branch = branch
 	rec.PRURL = prURL
-	appendBlocksToFirstTurn(&rec, recorder.Snapshot())
+	appendFreshRunBlocks(&rec, mode, recorder.Snapshot())
 	if err := b.convs.Upsert(ctx, rec); err != nil {
 		b.log.Error("convstore upsert", "error", err)
 		b.markRunState(ctx, runstore.StateFailed, err)
@@ -191,6 +194,14 @@ func (b *Bot) runFreshAgent(ctx context.Context, oc orgcfg.Config, rec convstore
 	b.markRunState(ctx, runstore.StateSucceeded, nil)
 	b.deleteSandboxSession(sb, b.currentAgentRunSessionID(ctx, "agent-"+requestID))
 	b.stopAndArchiveSandbox(ctx, sb)
+}
+
+func appendFreshRunBlocks(rec *convstore.Record, mode appendMode, next []blocks.Block) {
+	if mode == appendToLastTurn {
+		appendBlocksToLastTurn(rec, next)
+		return
+	}
+	appendBlocksToFirstTurn(rec, next)
 }
 
 func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, text, requestID string, opts chatTaskOptions, model ClaudeModel, recorder *blocks.Recorder, emit blocks.Emitter) {

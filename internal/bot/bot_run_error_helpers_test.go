@@ -28,7 +28,7 @@ func TestHandleFreshSandboxCreateErrorPersistsFailure(t *testing.T) {
 	emit := newCaptureEmitter()
 	ctx := contextWithAgentRun(context.Background(), runstore.Run{ID: "run_1"})
 
-	b.handleFreshSandboxCreateError(ctx, &rec, recorder, "req-1", errors.New("daytona down"), emit)
+	b.handleFreshSandboxCreateError(ctx, &rec, recorder, "req-1", errors.New("daytona down"), emit, appendToFirstTurn)
 
 	if !emit.hasCall("error", "Sandbox failed") {
 		t.Fatalf("expected sandbox failure, got calls=%v", emit.Calls)
@@ -69,7 +69,7 @@ func TestHandleFreshSandboxCreateErrorHonorsLiveCancel(t *testing.T) {
 	ctx := contextWithAgentRun(contextWithLiveRun(runCtx, live), runstore.Run{ID: "run_1"})
 	live.Cancel()
 
-	b.handleFreshSandboxCreateError(ctx, &rec, recorder, "req-1", errors.New("context canceled"), emit)
+	b.handleFreshSandboxCreateError(ctx, &rec, recorder, "req-1", errors.New("context canceled"), emit, appendToFirstTurn)
 
 	if !emit.hasCall("result", "Stopped") {
 		t.Fatalf("expected stopped result, got calls=%v", emit.Calls)
@@ -94,7 +94,7 @@ func TestHandleFreshAgentRunErrorProjectsRetryableFailure(t *testing.T) {
 	emit := newCaptureEmitter()
 	ctx := contextWithAgentRun(context.Background(), runstore.Run{ID: "run_1"})
 
-	b.handleFreshAgentRunError(ctx, &daytona.Sandbox{ID: "sandbox-1"}, &rec, recorder, "req-1", "feature/sf-1", errors.New("agent exploded"), emit)
+	b.handleFreshAgentRunError(ctx, &daytona.Sandbox{ID: "sandbox-1"}, &rec, recorder, "req-1", "feature/sf-1", errors.New("agent exploded"), emit, appendToFirstTurn)
 
 	if !emit.hasCall("error", "Agent failed") {
 		t.Fatalf("expected agent failure, got calls=%v", emit.Calls)
@@ -128,7 +128,7 @@ func TestHandleFreshAgentRunErrorKeepsDurabilityRecoverable(t *testing.T) {
 	emit := newCaptureEmitter()
 	ctx := contextWithAgentRun(context.Background(), runstore.Run{ID: "run_1"})
 
-	b.handleFreshAgentRunError(ctx, &daytona.Sandbox{ID: "sandbox-1"}, &rec, blocks.NewRecorder(maxBlocksPerTurn), "req-1", "feature/sf-1", errAgentRunDurability, emit)
+	b.handleFreshAgentRunError(ctx, &daytona.Sandbox{ID: "sandbox-1"}, &rec, blocks.NewRecorder(maxBlocksPerTurn), "req-1", "feature/sf-1", errAgentRunDurability, emit, appendToFirstTurn)
 
 	if len(convs.upserts) != 0 {
 		t.Fatalf("durability failure should not project conversation blocks, got %d upserts", len(convs.upserts))

@@ -14,8 +14,8 @@ import (
 
 // appendMode controls how the persister stitches the live recorder
 // snapshot into rec.ResponseBlocks. The two modes mirror the
-// terminal-Upsert helpers (appendBlocksToFirstTurn / appendBlocksAsNewTurn)
-// in bot.go — the persister and the terminal save MUST agree on
+// terminal-Upsert helpers (appendBlocksToFirstTurn / appendBlocksAsNewTurn /
+// appendBlocksToLastTurn) in bot.go — the persister and the terminal save MUST agree on
 // shape, or a tick that lands after the terminal write would corrupt
 // the row (e.g. produce 2 turns where the UI expects 1, dropping the
 // second turn permanently).
@@ -23,15 +23,18 @@ type appendMode int
 
 const (
 	// appendToFirstTurn merges current blocks into rec.ResponseBlocks[0].
-	// Used by every "first encounter" path: new chat with default repo,
-	// awaiting-repo reply, retry-after-failure. The history slice has
-	// exactly one entry (the user's first message) and one bot turn
-	// holds everything that happened.
+	// Used by "first encounter" paths: new chat with default repo and
+	// awaiting-repo reply. The history slice has exactly one entry (the
+	// user's first message) and one bot turn holds everything that happened.
 	appendToFirstTurn appendMode = iota
 	// appendAsNewTurn appends a fresh turn at the tail. Used by
 	// handleFollowUp where rec.ResponseBlocks already has N completed
 	// turns and the current run is producing turn N+1.
 	appendAsNewTurn
+	// appendToLastTurn merges current blocks into the existing last
+	// history turn. Used by retry-after-failure after the retry message
+	// has already been appended to history.
+	appendToLastTurn
 )
 
 // chatPersister periodically writes the in-flight conversation row to
@@ -76,8 +79,9 @@ type chatPersister struct {
 // starts the goroutine via Run; Stop blocks until the loop exits.
 // mode MUST match the terminal Upsert's append helper:
 // appendBlocksToFirstTurn → appendToFirstTurn, appendBlocksAsNewTurn
-// → appendAsNewTurn. A mismatch causes a late tick to overwrite the
-// terminal save with a different shape, dropping turns from the UI.
+// → appendAsNewTurn, appendBlocksToLastTurn → appendToLastTurn. A mismatch
+// causes a late tick to overwrite the terminal save with a different shape,
+// dropping turns from the UI.
 func newChatPersister(log *slog.Logger, convs conversationStore, recorder *blocks.Recorder, rec convstore.Record, mode appendMode, tick time.Duration) *chatPersister {
 	prior := make([][]blocks.Block, len(rec.ResponseBlocks))
 	for i, t := range rec.ResponseBlocks {
@@ -123,6 +127,19 @@ func (p *chatPersister) snapshot() convstore.Record {
 			}
 			blocksOut[0] = append(blocksOut[0], current...)
 		}
+	case appendToLastTurn:
+		blocksOut = make([][]blocks.Block, len(p.priorBlocks))
+		for i, t := range p.priorBlocks {
+			blocksOut[i] = append([]blocks.Block(nil), t...)
+		}
+		for len(blocksOut) < len(p.history) {
+			blocksOut = append(blocksOut, nil)
+		}
+		if len(blocksOut) == 0 {
+			blocksOut = append(blocksOut, nil)
+		}
+		last := len(blocksOut) - 1
+		blocksOut[last] = append(blocksOut[last], current...)
 	}
 	return convstore.Record{
 		OrgID:          p.orgID,
