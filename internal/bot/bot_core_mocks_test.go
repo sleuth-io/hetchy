@@ -1036,3 +1036,42 @@ func TestChatPersisterSavesProgressWithFakeStore(t *testing.T) {
 		t.Fatalf("progress save blocks = %#v, want one recorded block", got.ResponseBlocks)
 	}
 }
+
+func TestChatPersisterSnapshotAppendToLastTurn(t *testing.T) {
+	priorBlocks := [][]blocks.Block{
+		{{Kind: blocks.KindNotify, Title: "turn 0", Status: blocks.StatusDone}},
+		{{Kind: blocks.KindNotify, Title: "turn 1", Status: blocks.StatusDone}},
+	}
+	recorder := blocks.NewRecorder(maxBlocksPerTurn)
+	id := recorder.Start(blocks.KindNotify, "live", nil)
+	recorder.Done(id, "")
+
+	p := newChatPersister(discardLogger(), &fakeConversationStore{}, recorder, convstore.Record{
+		OrgID:          "org_test",
+		ThreadID:       "thread-1",
+		History:        []string{"first", "retry"},
+		ResponseBlocks: priorBlocks,
+	}, appendToLastTurn, time.Hour)
+
+	got := p.snapshot()
+	if len(got.ResponseBlocks) != len(got.History) {
+		t.Fatalf("response block turns = %d, history = %d", len(got.ResponseBlocks), len(got.History))
+	}
+	if len(got.ResponseBlocks) != 2 {
+		t.Fatalf("response block turns = %d, want 2", len(got.ResponseBlocks))
+	}
+	if len(got.ResponseBlocks[0]) != 1 || got.ResponseBlocks[0][0].Title != "turn 0" {
+		t.Fatalf("turn 0 mutated: %#v", got.ResponseBlocks[0])
+	}
+	if len(got.ResponseBlocks[1]) != 2 {
+		t.Fatalf("last turn blocks = %#v, want prior plus live block", got.ResponseBlocks[1])
+	}
+	if got.ResponseBlocks[1][0].Title != "turn 1" || got.ResponseBlocks[1][1].Title != "live" {
+		t.Fatalf("last turn blocks = %#v, want prior then live", got.ResponseBlocks[1])
+	}
+
+	got.ResponseBlocks[0][0].Title = "mutated"
+	if priorBlocks[0][0].Title != "turn 0" {
+		t.Fatalf("snapshot reused prior block storage: %#v", priorBlocks[0])
+	}
+}

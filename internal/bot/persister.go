@@ -143,9 +143,7 @@ func (p *chatPersister) snapshot() convstore.Record {
 			panic(fmt.Sprintf("chatPersister appendToLastTurn: priorBlocks (%d) longer than history (%d)", len(blocksOut), len(p.history)))
 		}
 		if len(p.history) == 0 {
-			blocksOut = append(blocksOut, nil)
-			blocksOut[0] = append(blocksOut[0], current...)
-			break
+			panic("chatPersister appendToLastTurn: history is empty")
 		}
 		last := len(p.history) - 1
 		blocksOut[last] = append(blocksOut[last], current...)
