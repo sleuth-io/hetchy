@@ -59,3 +59,16 @@ async function init() {
 }
 
 init();
+
+// pageshow fires on every visibility transition, including bfcache
+// restores. When the browser restores a chat page from bfcache (Chrome /
+// Safari do this on back/forward navigation, even from a sidebar link
+// click that came from another tab), the original DOM and JS state come
+// back unchanged — including a stale lastDetail that may have lost the
+// attachments + PR URL because they hadn't been persisted yet on the
+// initial render. event.persisted is true only on a bfcache restore, so
+// we re-fetch the conversation detail and repaint the right-hand sidebar.
+window.addEventListener('pageshow', (event) => {
+  if (!event.persisted) return;
+  refreshMetadata();
+});
