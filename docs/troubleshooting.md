@@ -18,7 +18,7 @@ This guide covers common issues and their solutions.
 
 **Solutions:**
 - Check Claude Code output in bot logs
-- Verify GitHub token has repo scope
+- Confirm the Hetchy GitHub App is installed on the target repo's owner and that the install grants access to that repo — the bot mints per-request installation tokens via the App, not a PAT (see [Per-env GitHub App setup](../README.md#per-env-github-app-setup))
 - Ensure base branch exists in repository
 
 ## Slack Connection Issues
