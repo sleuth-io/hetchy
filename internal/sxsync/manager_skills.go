@@ -3,7 +3,6 @@ package sxsync
 import (
 	"context"
 	"fmt"
-	"reflect"
 	"slices"
 	"strings"
 
@@ -232,48 +231,11 @@ func looksLikeMissingSXAsset(err error) bool {
 }
 
 func putSkillZipWithReturnedName(ctx context.Context, target *sxlib.Client, spec sxlib.SkillZipSpec) (string, error) {
-	// SX >= 1.3.5 exposes the persisted upload name. Keep this reflective so
-	// the Hetchy branch still builds until that release is pinned.
-	method := reflect.ValueOf(target).MethodByName("PutSkillZipWithResult")
-	if !method.IsValid() {
-		if err := target.PutSkillZip(ctx, spec); err != nil {
-			return "", err
-		}
-		return "", nil
-	}
-	values := method.Call([]reflect.Value{reflect.ValueOf(ctx), reflect.ValueOf(spec)})
-	if len(values) != 2 {
-		return "", fmt.Errorf("unexpected PutSkillZipWithResult return count %d", len(values))
-	}
-	if !values[1].IsNil() {
-		err, ok := values[1].Interface().(error)
-		if !ok {
-			return "", fmt.Errorf("unexpected PutSkillZipWithResult error type %T", values[1].Interface())
-		}
+	result, err := target.PutSkillZipWithResult(ctx, spec)
+	if err != nil {
 		return "", err
 	}
-	return skillZipResultName(values[0]), nil
-}
-
-func skillZipResultName(result reflect.Value) string {
-	if result.Kind() == reflect.Pointer {
-		if result.IsNil() {
-			return ""
-		}
-		result = result.Elem()
-	}
-	if result.Kind() != reflect.Struct {
-		return ""
-	}
-	for _, fieldName := range []string{"Name", "InstallName"} {
-		field := result.FieldByName(fieldName)
-		if field.IsValid() && field.Kind() == reflect.String {
-			if value := strings.TrimSpace(field.String()); value != "" {
-				return value
-			}
-		}
-	}
-	return ""
+	return strings.TrimSpace(result.Name), nil
 }
 
 func resolveCopiedSkillInstallName(ctx context.Context, target *sxlib.Client, targetName, description string) (string, error) {
