@@ -138,6 +138,97 @@ func TestHandleFreshAgentRunErrorKeepsDurabilityRecoverable(t *testing.T) {
 	}
 }
 
+// TestHandleFreshAgentRunErrorPreservesPRURLOnCancel makes sure that a
+// user pressing Stop after the agent has already opened a PR doesn't
+// drop the PR URL from the chat. The streaming emitter observes the
+// URL while the agent is still printing tool output; the cancel branch
+// in handleFreshAgentRunError must pull that observed URL into rec
+// before its terminal Upsert, otherwise pr_url gets overwritten with
+// "" and the user sees no PR.
+func TestHandleFreshAgentRunErrorPreservesPRURLOnCancel(t *testing.T) {
+	convs := &fakeConversationStore{}
+	store := &fakeRunStore{enabled: true}
+	b := testCoreBot(convs)
+	b.runs = store
+	b.workerID = "worker-1"
+	b.cleanupSandboxFn = func(context.Context, *daytona.Sandbox, string) {}
+	rec := convstore.Record{
+		OrgID:    "org_test",
+		ThreadID: "thread-1",
+		History:  []string{"ship it"},
+	}
+	recorder := recorderWithNotifyBlock("Running")
+	const wantPR = "https://github.com/hetchyhq/hetchy/pull/777"
+	capture := newCaptureEmitter()
+	emit := newPRURLPersistingEmitter(discardLogger(), convs, rec, capture)
+	id := emit.Start(blocks.KindResult, "Done!", nil)
+	emit.Append(id, "Opened "+wantPR+"\n")
+	if got := emit.Latest(); got != wantPR {
+		t.Fatalf("Latest() before cancel = %q, want %q", got, wantPR)
+	}
+	runCtx, cancel := context.WithCancel(context.Background())
+	live := newLiveRun(runCtx, cancel)
+	ctx := contextWithAgentRun(contextWithLiveRun(runCtx, live), runstore.Run{ID: "run_1"})
+	live.Cancel()
+
+	b.handleFreshAgentRunError(ctx, &daytona.Sandbox{ID: "sandbox-1"}, &rec, recorder, "req-1", "feature/sf-1", errors.New("context canceled"), emit, appendToFirstTurn)
+
+	if !capture.hasCall("result", "Stopped") {
+		t.Fatalf("expected stopped result, got calls=%v", capture.Calls)
+	}
+	got := convs.lastUpsert(t)
+	if got.PRURL != wantPR {
+		t.Fatalf("PRURL after cancel = %q, want %q", got.PRURL, wantPR)
+	}
+	if last := lastRunState(t, store); last.state != runstore.StateCancelled {
+		t.Fatalf("run state = %+v, want cancelled", last)
+	}
+}
+
+// TestHandleFollowUpRunErrorPreservesPRURLOnCancel covers the follow-up
+// variant: the chat already has a PR URL from earlier, the user sends
+// a follow-up that opens a *new* PR mid-turn, then presses Stop. The
+// cancel branch must promote the new URL into rec instead of falling
+// back to whatever the original rec held.
+func TestHandleFollowUpRunErrorPreservesPRURLOnCancel(t *testing.T) {
+	convs := &fakeConversationStore{}
+	store := &fakeRunStore{enabled: true, getRun: runstore.Run{ID: "run_1", SessionID: "session-latest"}}
+	b := testCoreBot(convs)
+	b.runs = store
+	b.workerID = "worker-1"
+	b.deleteSandboxSessionFn = func(*daytona.Sandbox, string) {}
+	rec := convstore.Record{
+		OrgID:    "org_test",
+		ThreadID: "thread-1",
+		History:  []string{"first turn"},
+		Branch:   "feature/sf-1",
+		PRURL:    "https://github.com/hetchyhq/hetchy/pull/1",
+	}
+	recorder := recorderWithNotifyBlock("Continuing")
+	const wantPR = "https://github.com/hetchyhq/hetchy/pull/2"
+	capture := newCaptureEmitter()
+	emit := newPRURLPersistingEmitter(discardLogger(), convs, rec, capture)
+	id := emit.Start(blocks.KindResult, "Done!", nil)
+	emit.Append(id, wantPR+"\n")
+	runCtx, cancel := context.WithCancel(context.Background())
+	live := newLiveRun(runCtx, cancel)
+	ctx := contextWithAgentRun(contextWithLiveRun(runCtx, live), runstore.Run{ID: "run_1"})
+	live.Cancel()
+
+	b.handleFollowUpRunError(ctx, &daytona.Sandbox{ID: "sandbox-1"}, &rec, "follow up", recorder, "req-2", errors.New("context canceled"), emit)
+
+	if !capture.hasCall("result", "Stopped") {
+		t.Fatalf("expected stopped result, got calls=%v", capture.Calls)
+	}
+	got := convs.lastUpsert(t)
+	if got.PRURL != wantPR {
+		t.Fatalf("PRURL after cancel = %q, want %q", got.PRURL, wantPR)
+	}
+	if last := lastRunState(t, store); last.state != runstore.StateCancelled {
+		t.Fatalf("run state = %+v, want cancelled", last)
+	}
+}
+
 func TestHandleFollowUpRunErrorProjectsPRVerificationFailure(t *testing.T) {
 	convs := &fakeConversationStore{}
 	store := &fakeRunStore{enabled: true, getRun: runstore.Run{ID: "run_1", SessionID: "session-latest"}}

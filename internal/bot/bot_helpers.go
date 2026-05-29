@@ -246,6 +246,13 @@ func (b *Bot) handleFreshAgentRunError(ctx context.Context, sb *daytona.Sandbox,
 		b.log.Info("agent run stopped", "sandbox", sb.ID, "request_id", requestID, "error", runErr)
 		b.cleanupSandboxWithTimeout(sb, "cancelled fresh run")
 		emit.Result("Stopped", fmt.Sprintf("Stopped the run and archived sandbox `%s`.", sb.ID))
+		// If the agent opened a PR before the user pressed Stop the
+		// streaming emitter has already observed the URL — pull it in
+		// so the terminal Upsert below doesn't clobber pr_url back to
+		// empty.
+		if pr := latestPRURLFromEmitter(emit); pr != "" {
+			rec.PRURL = pr
+		}
 		appendFreshRunBlocks(rec, mode, recorder.Snapshot())
 		if err := b.convs.Upsert(context.Background(), *rec); err != nil {
 			b.log.Error("convstore upsert (agent stopped)", "error", err)
@@ -285,6 +292,13 @@ func (b *Bot) handleFollowUpRunError(ctx context.Context, sb *daytona.Sandbox, r
 	if liveRunCancelled(ctx) {
 		b.log.Info("follow-up stopped", "sandbox", sb.ID, "request_id", requestID, "error", err)
 		emit.Result("Stopped", fmt.Sprintf("Stopped this turn. Sandbox `%s` is still available; send another message to continue.", sb.ID))
+		// A follow-up that opens a new PR mid-turn must not lose that
+		// URL just because the user stopped before the result block
+		// flushed. The streaming emitter captures it as soon as gh pr
+		// create finishes; pull from it before Upserting.
+		if pr := latestPRURLFromEmitter(emit); pr != "" {
+			rec.PRURL = pr
+		}
 		appendBlocksAsNewTurn(rec, text, recorder.Snapshot())
 		if uerr := b.convs.Upsert(context.Background(), *rec); uerr != nil {
 			b.log.Error("convstore upsert (follow-up stopped)", "error", uerr)
