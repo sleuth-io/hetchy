@@ -687,6 +687,44 @@ func TestMembersHandlerBypassMemberList(t *testing.T) {
 	}
 }
 
+// Browsers happily reuse a cached JSON response when a back/forward
+// navigation lands on the same URL. Without no-store, returning to a
+// chat after visiting another one re-renders the right-hand details
+// sidebar from a stale snapshot that's missing attachments and pr_url
+// because the cached response predates the run's terminal save. Pin
+// the directive so the regression can't sneak back in by someone
+// "tidying up" writeJSON to omit Cache-Control on default endpoints.
+func TestServeConversationDetailIsNotCached(t *testing.T) {
+	b := newBypassOrgBot(t, "member")
+	b.convs = &fakeConversationStore{rec: convstore.Record{
+		OrgID:       "org_test",
+		ThreadID:    "thread-1",
+		History:     []string{"look at these"},
+		PRURL:       "https://github.com/acme/demo/pull/42",
+		GitHubOwner: "acme",
+		GitHubRepo:  "demo",
+		Branch:      "feature/sf-test",
+		CreatedAt:   time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC),
+		UpdatedAt:   time.Date(2026, 5, 18, 12, 1, 0, 0, time.UTC),
+	}}
+	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b.conversationResourceHandler(context.Background(), w, r)
+	})))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/conversations/thread-1?include=turns,attachments", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-store, max-age=0" {
+		t.Fatalf("Cache-Control = %q, want no-store, max-age=0", got)
+	}
+	if got := rec.Header().Get("Content-Type"); !strings.HasPrefix(got, "application/json") {
+		t.Fatalf("Content-Type = %q, want application/json", got)
+	}
+}
+
 func TestConversationResourceHandlerRejectsUnsafeAndMissingRecords(t *testing.T) {
 	b := newBypassOrgBot(t, "member")
 	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
