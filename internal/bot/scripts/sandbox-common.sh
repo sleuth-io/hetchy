@@ -113,7 +113,7 @@ hetchy_configure_git_auth() {
 set -euo pipefail
 
 if [[ -n "${HETCHY_ARTIFACT_SLOT_URL:-}" && -n "${HETCHY_ARTIFACT_SLOT_TOKEN:-}" ]]; then
-  body="$(curl -fsS -X POST \
+  body="$(curl -fs -X POST \
     -H "Authorization: Bearer ${HETCHY_ARTIFACT_SLOT_TOKEN}" \
     -H "Content-Type: application/json" \
     --data '{"kind":"github_token"}' \
