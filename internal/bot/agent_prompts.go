@@ -49,6 +49,24 @@ When you are done implementing the change:
   6. If the latest request only repairs validation/proof/PR metadata and no repository files changed, do not create an empty commit; update the PR body as needed and continue to the final PR URL.
   7. The very last line of your output MUST be just the PR URL — no other text on that line.`
 
+const agentFollowUpUnpublishedBranchPromptTemplate = `You are continuing work in %s on branch %s.
+No pull request has been created for this branch yet.
+
+Conversation so far:
+%s
+
+USER REQUEST:
+%s%s
+
+%s
+
+When you are done:
+  1. Run ` + "`make format`" + ` to format the code.
+  2. Stage and commit any new changes with a clear message. If the requested work is already committed locally, do not create an empty commit.
+  3. Push the branch to origin.
+  4. Open a pull request against the repository's base branch with ` + "`gh pr create`" + `, giving it a clear title and a markdown body describing what changed and why. Write each paragraph or bullet of the PR body as one long line — do NOT insert hard line breaks; let GitHub reflow the text for the reader's viewport.
+  5. The very last line of your output MUST be just the PR URL — no other text on that line.`
+
 const agentFollowUpInspectPromptTemplate = `You are continuing context in %s on branch %s.
 The existing pull request is at %s.
 
@@ -107,11 +125,13 @@ func buildFollowUpPrompt(ownerRepo string, rec convstore.Record, userRequest str
 		)
 	case followUpModeChange:
 	}
-	prompt := fmt.Sprintf(agentFollowUpPromptTemplate,
-		repoWorkdir(ownerRepo), rec.Branch, rec.PRURL,
-		history, userRequest, conditionalTasksPrompt(opts),
-		proofInstructionsForSpec(opts, spec, artifactSlotCount),
-	)
+	template := agentFollowUpPromptTemplate
+	args := []any{repoWorkdir(ownerRepo), rec.Branch, rec.PRURL, history, userRequest, conditionalTasksPrompt(opts), proofInstructionsForSpec(opts, spec, artifactSlotCount)}
+	if strings.TrimSpace(rec.PRURL) == "" {
+		template = agentFollowUpUnpublishedBranchPromptTemplate
+		args = []any{repoWorkdir(ownerRepo), rec.Branch, history, userRequest, conditionalTasksPrompt(opts), proofInstructionsForSpec(opts, spec, artifactSlotCount)}
+	}
+	prompt := fmt.Sprintf(template, args...)
 	if spec == nil {
 		return prompt
 	}

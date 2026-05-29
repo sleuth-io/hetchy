@@ -130,8 +130,10 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		return
 	}
 	switch {
-	case err == nil && rec.SandboxID != "" && rec.PRURL != "":
-		// Live conversation — agent succeeded at least once, PR exists.
+	case err == nil && rec.SandboxID != "" && rec.Branch != "":
+		// Live conversation — either a PR exists, or the first run made
+		// local branch progress but failed to publish a PR. In both cases
+		// keep the original conversation context and resume the same branch.
 		agent, ok := b.selectAgentForConversation(ctx, oc.OrgID, rec.AgentSlug, emit)
 		if !ok {
 			b.markRunState(ctx, runstore.StateFailed, errors.New("unknown agent"))

@@ -105,6 +105,77 @@ hetchy_unset_stale_github_token_rewrites() {
 hetchy_configure_git_auth() {
   : "${GITHUB_TOKEN:?GITHUB_TOKEN required}"
 
+  mkdir -p "$HOME/.local/bin"
+  export PATH="$HOME/.local/bin:$PATH"
+
+  cat > "$HOME/.local/bin/hetchy-github-token" <<'HETCHY_TOKEN_HELPER'
+#!/bin/bash
+set -euo pipefail
+
+if [[ -n "${HETCHY_ARTIFACT_SLOT_URL:-}" && -n "${HETCHY_ARTIFACT_SLOT_TOKEN:-}" ]]; then
+  body="$(curl -fs -X POST \
+    -H "Authorization: Bearer ${HETCHY_ARTIFACT_SLOT_TOKEN}" \
+    -H "Content-Type: application/json" \
+    --data '{"kind":"github_token"}' \
+    "${HETCHY_ARTIFACT_SLOT_URL}" 2>/dev/null || true)"
+  token="$(printf '%s' "$body" | sed -n 's/.*"token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+  if [[ -n "$token" ]]; then
+    printf '%s\n' "$token"
+    exit 0
+  fi
+  echo "[hetchy] token refresh parse failed; falling back to GITHUB_TOKEN" >&2
+fi
+
+if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+  printf '%s\n' "$GITHUB_TOKEN"
+  exit 0
+fi
+
+exit 1
+HETCHY_TOKEN_HELPER
+  chmod 700 "$HOME/.local/bin/hetchy-github-token"
+
+  cat > "$HOME/.local/bin/hetchy-git-credential" <<'HETCHY_CREDENTIAL_HELPER'
+#!/bin/bash
+set -euo pipefail
+export PATH="$HOME/.local/bin:$PATH"
+
+op="${1:-}"
+host=""
+while IFS= read -r line; do
+  [[ -n "$line" ]] || break
+  case "$line" in
+    host=*) host="${line#host=}" ;;
+  esac
+done
+
+if [[ "$op" == "get" && "$host" == "github.com" ]]; then
+  token="$(hetchy-github-token 2>/dev/null || true)"
+  if [[ -n "$token" ]]; then
+    printf 'username=x-access-token\n'
+    printf 'password=%s\n' "$token"
+  fi
+fi
+HETCHY_CREDENTIAL_HELPER
+  chmod 700 "$HOME/.local/bin/hetchy-git-credential"
+
+  local real_gh=""
+  real_gh="$(type -ap gh 2>/dev/null | grep -vx "$HOME/.local/bin/gh" | head -1 || true)"
+  if [[ -n "$real_gh" ]]; then
+    cat > "$HOME/.local/bin/gh" <<HETCHY_GH_WRAPPER
+#!/bin/bash
+set -euo pipefail
+export PATH="$HOME/.local/bin:\$PATH"
+token="\$(hetchy-github-token 2>/dev/null || true)"
+if [[ -n "\$token" ]]; then
+  export GITHUB_TOKEN="\$token"
+  export GH_TOKEN="\$token"
+fi
+exec "$real_gh" "\$@"
+HETCHY_GH_WRAPPER
+    chmod 700 "$HOME/.local/bin/gh"
+  fi
+
   hetchy_unset_stale_github_token_rewrites ""
   if [[ -n "${SF_WORKDIR:-}" && -d "${SF_WORKDIR}/.git" ]]; then
     hetchy_unset_stale_github_token_rewrites "$SF_WORKDIR"
@@ -113,7 +184,8 @@ hetchy_configure_git_auth() {
     fi
   fi
 
-  git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+  git config --global --unset-all credential.https://github.com.helper >/dev/null 2>&1 || true
+  git config --global credential.https://github.com.helper "$HOME/.local/bin/hetchy-git-credential"
 }
 
 save_hetchy_cache_archive() {

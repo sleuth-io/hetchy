@@ -129,8 +129,12 @@ echo "[hetchy] checking out branch"
 cd "${SF_WORKDIR}"
 git fetch --prune origin
 git checkout "${SF_BRANCH}"
-echo "[hetchy] syncing ${SF_BRANCH} with origin/${SF_BRANCH}"
-git pull --rebase --autostash origin "${SF_BRANCH}"
+if git rev-parse --verify "refs/remotes/origin/${SF_BRANCH}" >/dev/null 2>&1; then
+  echo "[hetchy] syncing ${SF_BRANCH} with origin/${SF_BRANCH}"
+  git pull --rebase --autostash origin "${SF_BRANCH}"
+else
+  echo "[hetchy] remote branch ${SF_BRANCH} does not exist yet; continuing with local branch"
+fi
 
 # Same pre-create as agent.sh — the Playwright MCP server requires
 # this directory to exist before the first screenshot, and follow-ups

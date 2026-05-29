@@ -51,7 +51,22 @@ func newTokenCache() *tokenCache {
 // Cached tokens are reused until they're within the safety window of
 // expiry and were minted with the same scope set.
 func (a *App) InstallationToken(ctx context.Context, installationID int64, repoIDs []int64) (string, time.Time, error) {
-	if tok, exp, ok := a.cachedToken(installationID, repoIDs); ok {
+	return a.installationToken(ctx, installationID, repoIDs, installationTokenSafetyWindow)
+}
+
+// InstallationTokenMinTTL returns an installation token with at least minTTL
+// remaining. It is intended for credentials handed to long-running sandboxes,
+// where the normal server-side 5 minute safety window can still leave too
+// little lifetime for a later git push.
+func (a *App) InstallationTokenMinTTL(ctx context.Context, installationID int64, repoIDs []int64, minTTL time.Duration) (string, time.Time, error) {
+	if minTTL < installationTokenSafetyWindow {
+		minTTL = installationTokenSafetyWindow
+	}
+	return a.installationToken(ctx, installationID, repoIDs, minTTL)
+}
+
+func (a *App) installationToken(ctx context.Context, installationID int64, repoIDs []int64, minTTL time.Duration) (string, time.Time, error) {
+	if tok, exp, ok := a.cachedToken(installationID, repoIDs, minTTL); ok {
 		return tok, exp, nil
 	}
 
@@ -59,11 +74,13 @@ func (a *App) InstallationToken(ctx context.Context, installationID int64, repoI
 	// the same installation only spends one GitHub API call. The key
 	// includes the scope set so a sandbox token (single repo) and a
 	// sync token (full access) for the same install don't share a flight.
-	key := mintKey(installationID, repoIDs)
+	// Include minTTL so a sandbox caller (long TTL) and sync caller
+	// (short TTL) do not share a singleflight for the same scope.
+	key := mintKey(installationID, repoIDs) + ":ttl=" + minTTL.String()
 	v, err, _ := a.tokens.flight.Do(key, func() (any, error) {
 		// Re-check the cache: the inflight goroutine may have just
 		// populated it for the same key while we were waiting on Do.
-		if tok, exp, ok := a.cachedToken(installationID, repoIDs); ok {
+		if tok, exp, ok := a.cachedToken(installationID, repoIDs, minTTL); ok {
 			return mintResult{token: tok, expiresAt: exp}, nil
 		}
 		jwtTok, err := a.appJWT()
@@ -107,17 +124,17 @@ type mintResult struct {
 	expiresAt time.Time
 }
 
-// cachedToken returns the cached token for installationID if one exists
-// that's still inside the safety window and was minted with a matching
-// scope set. The bool reports whether the returned token is usable.
-func (a *App) cachedToken(installationID int64, repoIDs []int64) (string, time.Time, bool) {
+// cachedToken returns the cached token for installationID if one exists with
+// enough lifetime remaining and was minted with a matching scope set. The bool
+// reports whether the returned token is usable.
+func (a *App) cachedToken(installationID int64, repoIDs []int64, minTTL time.Duration) (string, time.Time, bool) {
 	a.tokens.mu.Lock()
 	defer a.tokens.mu.Unlock()
 	e, ok := a.tokens.entries[installationID]
 	if !ok {
 		return "", time.Time{}, false
 	}
-	if time.Until(e.expiresAt) <= installationTokenSafetyWindow {
+	if time.Until(e.expiresAt) <= minTTL {
 		return "", time.Time{}, false
 	}
 	if !sameInts(e.repoIDs, repoIDs) {

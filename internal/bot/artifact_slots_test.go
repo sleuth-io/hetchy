@@ -53,7 +53,7 @@ func TestArtifactSlotBrokerRejectsAndPrunesExpiredToken(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	br.now = func() time.Time { return now }
 
-	_, token, err := br.Start(context.Background(), "org_abc/42/req_1", defaultArtifactSlotRequests)
+	_, token, err := br.Start(context.Background(), "org_abc/42/req_1", defaultArtifactSlotRequests, artifactSlotRunOptions{})
 	if err != nil {
 		t.Fatalf("start run: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestArtifactSlotBrokerRejectsAndPrunesExpiredToken(t *testing.T) {
 		t.Fatalf("runs before expiry = %d, want 1", got)
 	}
 
-	now = now.Add(artifacts.PutExpiry + time.Second)
+	now = now.Add(artifactRunTokenExpiry + time.Second)
 	_, err = br.Mint(context.Background(), token, artifacts.MintRequest{
 		Kind:        artifacts.KindScreenshot,
 		ContentType: artifacts.ContentTypePNG,
@@ -78,6 +78,47 @@ func TestArtifactSlotBrokerRejectsAndPrunesExpiredToken(t *testing.T) {
 	}
 }
 
+func TestAddGitHubTokenRefreshEnvWithoutArtifactSigner(t *testing.T) {
+	b := &Bot{
+		log:           discardLogger(),
+		cfg:           Config{LogoutReturnTo: "https://app.example.test/"},
+		artifactSlots: newArtifactSlotBroker(nil),
+		githubTokenMinTTLFn: func(context.Context, int64, []int64, time.Duration) (string, time.Time, error) {
+			return "ghs_fresh", time.Now().Add(time.Hour), nil
+		},
+	}
+
+	env := map[string]string{}
+	if err := b.addGitHubTokenRefreshEnv(context.Background(), "org_abc/42/req_1", env, repoCtx{InstallID: 11, RepoID: 22}); err != nil {
+		t.Fatalf("add refresh env: %v", err)
+	}
+	if got, want := env[artifacts.EnvSlotURL], "https://app.example.test"+artifactSlotPath; got != want {
+		t.Fatalf("%s = %q, want %q", artifacts.EnvSlotURL, got, want)
+	}
+	if env[artifacts.EnvSlotToken] == "" {
+		t.Fatalf("missing %s", artifacts.EnvSlotToken)
+	}
+	if _, ok := env[artifacts.EnvSlots]; ok {
+		t.Fatalf("%s should not be set for token-only refresh env", artifacts.EnvSlots)
+	}
+
+	installationID, repoID, err := b.artifactSlots.GitHubAuth(env[artifacts.EnvSlotToken])
+	if err != nil {
+		t.Fatalf("GitHubAuth: %v", err)
+	}
+	if installationID != 11 || repoID != 22 {
+		t.Fatalf("GitHubAuth = %d/%d, want 11/22", installationID, repoID)
+	}
+	_, err = b.artifactSlots.Mint(context.Background(), env[artifacts.EnvSlotToken], artifacts.MintRequest{
+		Kind:        artifacts.KindScreenshot,
+		ContentType: artifacts.ContentTypePNG,
+		Count:       1,
+	})
+	if !errors.Is(err, errArtifactSlotsDisabled) {
+		t.Fatalf("Mint without signer error = %v, want %v", err, errArtifactSlotsDisabled)
+	}
+}
+
 func TestAddArtifactRunEnvInitialAndFollowup(t *testing.T) {
 	fake := &fakeArtifactMinter{}
 	b := &Bot{
@@ -87,12 +128,12 @@ func TestAddArtifactRunEnvInitialAndFollowup(t *testing.T) {
 	}
 
 	initialEnv := map[string]string{}
-	initialSlots, err := b.addArtifactRunEnv(context.Background(), "org_abc/42/req_1", initialEnv)
+	initialSlots, err := b.addArtifactRunEnv(context.Background(), "org_abc/42/req_1", initialEnv, repoCtx{})
 	if err != nil {
 		t.Fatalf("initial add env: %v", err)
 	}
 	followupEnv := map[string]string{}
-	followupSlots, err := b.addArtifactRunEnv(context.Background(), "org_abc/42/thread_1/followup-req_2", followupEnv)
+	followupSlots, err := b.addArtifactRunEnv(context.Background(), "org_abc/42/thread_1/followup-req_2", followupEnv, repoCtx{})
 	if err != nil {
 		t.Fatalf("followup add env: %v", err)
 	}
@@ -150,7 +191,7 @@ func TestAddArtifactRunEnvUsesExternalCallbackOrigin(t *testing.T) {
 	}
 
 	env := map[string]string{}
-	if _, err := b.addArtifactRunEnv(context.Background(), "org_abc/42/req_1", env); err != nil {
+	if _, err := b.addArtifactRunEnv(context.Background(), "org_abc/42/req_1", env, repoCtx{}); err != nil {
 		t.Fatalf("add env: %v", err)
 	}
 	if got, want := env[artifacts.EnvSlotURL], "https://app.hetchy.ai"+artifactSlotPath; got != want {
@@ -167,7 +208,7 @@ func TestArtifactSlotsHandlerMintsMoreSlots(t *testing.T) {
 		artifactSlots: newArtifactSlotBroker(fake),
 	}
 	env := map[string]string{}
-	if _, err := b.addArtifactRunEnv(context.Background(), "org_abc/42/req_1", env); err != nil {
+	if _, err := b.addArtifactRunEnv(context.Background(), "org_abc/42/req_1", env, repoCtx{}); err != nil {
 		t.Fatalf("add env: %v", err)
 	}
 
@@ -199,6 +240,116 @@ func TestArtifactSlotsHandlerMintsMoreSlots(t *testing.T) {
 	}
 }
 
+func TestArtifactSlotsHandlerMintsGitHubToken(t *testing.T) {
+	fake := &fakeArtifactMinter{}
+	expiresAt := time.Unix(1_800_000_000, 0).UTC()
+	b := &Bot{
+		log:           discardLogger(),
+		app:           freshGithubAppForTest(t, "wh-secret"),
+		artifactSlots: newArtifactSlotBroker(fake),
+		githubTokenMinTTLFn: func(_ context.Context, installationID int64, repoIDs []int64, minTTL time.Duration) (string, time.Time, error) {
+			if installationID != 11 {
+				t.Fatalf("installationID = %d, want 11", installationID)
+			}
+			if len(repoIDs) != 1 || repoIDs[0] != 22 {
+				t.Fatalf("repoIDs = %#v, want [22]", repoIDs)
+			}
+			if minTTL != sandboxGitHubTokenMinTTL {
+				t.Fatalf("minTTL = %s, want %s", minTTL, sandboxGitHubTokenMinTTL)
+			}
+			return "ghs_fresh", expiresAt, nil
+		},
+	}
+	env := map[string]string{}
+	if err := b.addGitHubTokenRefreshEnv(context.Background(), "org_abc/42/req_1", env, repoCtx{InstallID: 11, RepoID: 22}); err != nil {
+		t.Fatalf("add refresh env: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, artifactSlotPath, strings.NewReader(`{"kind":"github_token"}`))
+	req.Header.Set("Authorization", "Bearer "+env[artifacts.EnvSlotToken])
+	rec := httptest.NewRecorder()
+	b.artifactSlotsHandler(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%q", rec.Code, rec.Body.String())
+	}
+	var body githubTokenResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Token != "ghs_fresh" || body.ExpiresAt != expiresAt.Format(time.RFC3339) {
+		t.Fatalf("response = %+v", body)
+	}
+}
+
+func TestArtifactSlotsHandlerGitHubTokenErrors(t *testing.T) {
+	fake := &fakeArtifactMinter{}
+	b := &Bot{
+		log:           discardLogger(),
+		app:           freshGithubAppForTest(t, "wh-secret"),
+		artifactSlots: newArtifactSlotBroker(fake),
+		githubTokenMinTTLFn: func(context.Context, int64, []int64, time.Duration) (string, time.Time, error) {
+			return "ghs_fresh", time.Now().Add(time.Hour), nil
+		},
+	}
+	env := map[string]string{}
+	if err := b.addGitHubTokenRefreshEnv(context.Background(), "org_abc/42/req_1", env, repoCtx{InstallID: 11, RepoID: 22}); err != nil {
+		t.Fatalf("add refresh env: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, artifactSlotPath, strings.NewReader(`{"kind":"github_token"}`))
+	req.Header.Set("Authorization", "Bearer wrong")
+	rec := httptest.NewRecorder()
+	b.artifactSlotsHandler(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("bad token status = %d, want 401; body=%q", rec.Code, rec.Body.String())
+	}
+
+	_, tokenWithoutGitHub, err := b.artifactSlots.Start(context.Background(), "org_abc/42/req_2", nil, artifactSlotRunOptions{})
+	if err != nil {
+		t.Fatalf("start token-only run: %v", err)
+	}
+	req = httptest.NewRequest(http.MethodPost, artifactSlotPath, strings.NewReader(`{"kind":"github_token"}`))
+	req.Header.Set("Authorization", "Bearer "+tokenWithoutGitHub)
+	rec = httptest.NewRecorder()
+	b.artifactSlotsHandler(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("missing github auth status = %d, want 500; body=%q", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "for this run") {
+		t.Fatalf("response leaked internal lookup error: %q", rec.Body.String())
+	}
+
+	b.app = nil
+	b.githubTokenMinTTLFn = nil
+	req = httptest.NewRequest(http.MethodPost, artifactSlotPath, strings.NewReader(`{"kind":"github_token"}`))
+	req.Header.Set("Authorization", "Bearer "+env[artifacts.EnvSlotToken])
+	rec = httptest.NewRecorder()
+	b.artifactSlotsHandler(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("missing app status = %d, want 503; body=%q", rec.Code, rec.Body.String())
+	}
+}
+
+func TestArtifactSlotBrokerStoresGitHubAuthForRun(t *testing.T) {
+	fake := &fakeArtifactMinter{}
+	b := &Bot{
+		log:           discardLogger(),
+		artifacts:     fake,
+		artifactSlots: newArtifactSlotBroker(fake),
+	}
+	env := map[string]string{}
+	if _, err := b.addArtifactRunEnv(context.Background(), "org_abc/42/req_1", env, repoCtx{InstallID: 11, RepoID: 22}); err != nil {
+		t.Fatalf("add env: %v", err)
+	}
+	installationID, repoID, err := b.artifactSlots.GitHubAuth(env[artifacts.EnvSlotToken])
+	if err != nil {
+		t.Fatalf("GitHubAuth: %v", err)
+	}
+	if installationID != 11 || repoID != 22 {
+		t.Fatalf("GitHubAuth = %d/%d, want 11/22", installationID, repoID)
+	}
+}
+
 func TestArtifactSlotsHandlerRejectsBadTokenAndLimit(t *testing.T) {
 	fake := &fakeArtifactMinter{}
 	b := &Bot{
@@ -207,7 +358,7 @@ func TestArtifactSlotsHandlerRejectsBadTokenAndLimit(t *testing.T) {
 		artifactSlots: newArtifactSlotBroker(fake),
 	}
 	env := map[string]string{}
-	if _, err := b.addArtifactRunEnv(context.Background(), "org_abc/42/req_1", env); err != nil {
+	if _, err := b.addArtifactRunEnv(context.Background(), "org_abc/42/req_1", env, repoCtx{}); err != nil {
 		t.Fatalf("add env: %v", err)
 	}
 

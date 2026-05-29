@@ -594,12 +594,30 @@ func TestSandboxCommon_ConfiguresGitAuthWithoutStaleRepoToken(t *testing.T) {
 	globalConfig := exec.Command("git", "config", "--global", "--get-regexp", `^url\..*\.insteadOf$`)
 	globalConfig.Env = env()
 	globalOut, err := globalConfig.CombinedOutput()
-	if err != nil {
-		t.Fatalf("global token rewrite missing: %v\n%s", err, globalOut)
+	if err == nil {
+		t.Fatalf("global token rewrite was not removed:\n%s", globalOut)
 	}
-	global := string(globalOut)
-	if !strings.Contains(global, "fresh-token") || strings.Contains(global, "older-token") {
-		t.Fatalf("global token rewrite = %q, want only fresh token", global)
+
+	helperConfig := exec.Command("git", "config", "--global", "--get", "credential.https://github.com.helper")
+	helperConfig.Env = env()
+	helperOut, err := helperConfig.CombinedOutput()
+	if err != nil {
+		t.Fatalf("credential helper missing: %v\n%s", err, helperOut)
+	}
+	helper := strings.TrimSpace(string(helperOut))
+	if !strings.HasSuffix(helper, "hetchy-git-credential") {
+		t.Fatalf("credential helper = %q, want hetchy-git-credential", helper)
+	}
+	helperCmd := exec.Command(helper, "get")
+	helperCmd.Env = append(env(), "GITHUB_TOKEN=fresh-token")
+	helperCmd.Stdin = strings.NewReader("protocol=https\nhost=github.com\n\n")
+	credOut, err := helperCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("credential helper get: %v\n%s", err, credOut)
+	}
+	creds := string(credOut)
+	if !strings.Contains(creds, "username=x-access-token") || !strings.Contains(creds, "password=fresh-token") {
+		t.Fatalf("credential helper output = %q", creds)
 	}
 }
 
@@ -917,8 +935,10 @@ func TestRunAgentBuildsScriptEnvironmentWithFakeRunner(t *testing.T) {
 
 	var captured capturedScriptRun
 	b := &Bot{
-		log: discardLogger(),
-		cfg: Config{SXPublicVaultURL: "https://vault.example.test"},
+		log:           discardLogger(),
+		cfg:           Config{LogoutReturnTo: "https://app.example.test/", SXPublicVaultURL: "https://vault.example.test"},
+		app:           freshGithubAppForTest(t, "wh-secret"),
+		artifactSlots: newArtifactSlotBroker(nil),
 		runScriptFn: func(_ context.Context, sb *daytona.Sandbox, sessionID, label, scriptBody string, env map[string]string, _ blocks.Emitter) (string, error) {
 			captured = captureScriptRun(sb, sessionID, label, scriptBody, env)
 			return "https://github.com/acme/repo/pull/7", nil
@@ -931,7 +951,7 @@ func TestRunAgentBuildsScriptEnvironmentWithFakeRunner(t *testing.T) {
 		PersonaAsset:  "asset.md",
 		PersonaPrompt: "Review carefully.",
 	}
-	repo := repoCtx{Slug: "acme/repo", BaseBranch: "main", GitHubToken: "ghs_token"}
+	repo := repoCtx{Slug: "acme/repo", BaseBranch: "main", GitHubToken: "ghs_token", InstallID: 11, RepoID: 22}
 	oc := orgcfg.Config{OrgID: "org_1", AnthropicAPIKey: "sk-ant", SXKey: "sx-key"}
 
 	prURL, err := b.runAgent(context.Background(), &daytona.Sandbox{ID: "sandbox-1"}, repo, oc, agent, "ship feature", "req-1", "feature/sf-req-1", chatTaskOptions{
@@ -968,6 +988,18 @@ func TestRunAgentBuildsScriptEnvironmentWithFakeRunner(t *testing.T) {
 	}
 	if _, ok := captured.env["SF_SPEC_SETUP_B64"]; ok {
 		t.Fatal("spec env should not be set when validation is disabled")
+	}
+	if got, want := captured.env[artifacts.EnvSlotURL], "https://app.example.test"+artifactSlotPath; got != want {
+		t.Fatalf("%s = %q, want %q", artifacts.EnvSlotURL, got, want)
+	}
+	if captured.env[artifacts.EnvSlotToken] == "" {
+		t.Fatalf("missing %s", artifacts.EnvSlotToken)
+	}
+	if _, ok := captured.env[artifacts.EnvSlots]; ok {
+		t.Fatalf("%s should not be set when validation is disabled", artifacts.EnvSlots)
+	}
+	if installationID, repoID, err := b.artifactSlots.GitHubAuth(captured.env[artifacts.EnvSlotToken]); err != nil || installationID != 11 || repoID != 22 {
+		t.Fatalf("GitHubAuth = %d/%d, %v; want 11/22 nil", installationID, repoID, err)
 	}
 	prompt := mustDecodeBase64Env(t, captured.env, "SF_PROMPT_B64")
 	for _, want := range []string{"ship feature", "feature/sf-req-1", "Review code before push"} {

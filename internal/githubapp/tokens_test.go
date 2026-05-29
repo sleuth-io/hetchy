@@ -1,6 +1,9 @@
 package githubapp
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestSameInts(t *testing.T) {
 	cases := []struct {
@@ -51,5 +54,21 @@ func TestSameInts_DoesNotMutateInputs(t *testing.T) {
 			t.Errorf("sameInts mutated input b: got %v, want %v", b, origB)
 			break
 		}
+	}
+}
+
+func TestCachedTokenRequiresRequestedMinTTL(t *testing.T) {
+	app := &App{tokens: newTokenCache()}
+	app.tokens.entries[42] = &tokenEntry{
+		token:     "ghs_cached",
+		expiresAt: time.Now().Add(10 * time.Minute),
+		repoIDs:   []int64{100},
+	}
+
+	if tok, _, ok := app.cachedToken(42, []int64{100}, installationTokenSafetyWindow); !ok || tok != "ghs_cached" {
+		t.Fatalf("default safety window should accept cached token, got tok=%q ok=%v", tok, ok)
+	}
+	if tok, _, ok := app.cachedToken(42, []int64{100}, 55*time.Minute); ok || tok != "" {
+		t.Fatalf("long sandbox min TTL should reject cached token, got tok=%q ok=%v", tok, ok)
 	}
 }
