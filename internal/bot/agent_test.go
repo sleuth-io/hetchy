@@ -609,7 +609,7 @@ func TestSandboxCommon_ConfiguresGitAuthWithoutStaleRepoToken(t *testing.T) {
 		t.Fatalf("credential helper = %q, want hetchy-git-credential", helper)
 	}
 	helperCmd := exec.Command(helper, "get")
-	helperCmd.Env = append(env(), "PATH="+filepath.Join(home, ".local", "bin")+":"+os.Getenv("PATH"), "GITHUB_TOKEN=fresh-token")
+	helperCmd.Env = append(env(), "GITHUB_TOKEN=fresh-token")
 	helperCmd.Stdin = strings.NewReader("protocol=https\nhost=github.com\n\n")
 	credOut, err := helperCmd.CombinedOutput()
 	if err != nil {

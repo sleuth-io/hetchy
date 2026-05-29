@@ -84,7 +84,7 @@ func (b *Bot) startArtifactRun(ctx context.Context, prefix string, repo repoCtx)
 }
 
 func (b *Bot) addGitHubTokenRefreshEnv(ctx context.Context, prefix string, env map[string]string, repo repoCtx) error {
-	if b == nil || b.artifactSlots == nil || b.app == nil || repo.InstallID == 0 || repo.RepoID == 0 {
+	if b == nil || b.artifactSlots == nil || (b.app == nil && b.githubTokenMinTTLFn == nil) || repo.InstallID == 0 || repo.RepoID == 0 {
 		return errArtifactSlotsDisabled
 	}
 	_, token, err := b.artifactSlots.Start(ctx, prefix, nil, artifactSlotRunOptions{

@@ -82,8 +82,10 @@ func TestAddGitHubTokenRefreshEnvWithoutArtifactSigner(t *testing.T) {
 	b := &Bot{
 		log:           discardLogger(),
 		cfg:           Config{LogoutReturnTo: "https://app.example.test/"},
-		app:           freshGithubAppForTest(t, "wh-secret"),
 		artifactSlots: newArtifactSlotBroker(nil),
+		githubTokenMinTTLFn: func(context.Context, int64, []int64, time.Duration) (string, time.Time, error) {
+			return "ghs_fresh", time.Now().Add(time.Hour), nil
+		},
 	}
 
 	env := map[string]string{}
