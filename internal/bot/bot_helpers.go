@@ -192,6 +192,9 @@ func appendBlocksToLastTurn(rec *convstore.Record, next []blocks.Block) {
 	for len(rec.ResponseBlocks) < len(rec.History) {
 		rec.ResponseBlocks = append(rec.ResponseBlocks, nil)
 	}
+	if len(rec.ResponseBlocks) > len(rec.History) {
+		panic(fmt.Sprintf("appendBlocksToLastTurn: ResponseBlocks (%d) longer than History (%d)", len(rec.ResponseBlocks), len(rec.History)))
+	}
 	last := len(rec.History) - 1
 	rec.ResponseBlocks[last] = append(rec.ResponseBlocks[last], next...)
 }
