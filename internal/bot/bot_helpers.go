@@ -181,6 +181,24 @@ func appendBlocksAsNewTurn(rec *convstore.Record, text string, next []blocks.Blo
 	rec.ResponseBlocks = append(rec.ResponseBlocks, next)
 }
 
+func appendBlocksToLastTurn(rec *convstore.Record, next []blocks.Block) {
+	if len(next) == 0 {
+		return
+	}
+	if len(rec.History) == 0 {
+		appendBlocksToFirstTurn(rec, next)
+		return
+	}
+	for len(rec.ResponseBlocks) < len(rec.History) {
+		rec.ResponseBlocks = append(rec.ResponseBlocks, nil)
+	}
+	if len(rec.ResponseBlocks) > len(rec.History) {
+		panic(fmt.Sprintf("appendBlocksToLastTurn: ResponseBlocks (%d) longer than History (%d)", len(rec.ResponseBlocks), len(rec.History)))
+	}
+	last := len(rec.History) - 1
+	rec.ResponseBlocks[last] = append(rec.ResponseBlocks[last], next...)
+}
+
 // isAgentTimeout reports whether err came from a wall-clock or idle
 // timeout in shLines — used to surface a more actionable error message
 // to the user than the generic "something went wrong" fallback.
@@ -195,7 +213,7 @@ func latestPRURLFromEmitter(emit blocks.Emitter) string {
 	return ""
 }
 
-func (b *Bot) handleFreshSandboxCreateError(ctx context.Context, rec *convstore.Record, recorder *blocks.Recorder, requestID string, err error, emit blocks.Emitter) {
+func (b *Bot) handleFreshSandboxCreateError(ctx context.Context, rec *convstore.Record, recorder *blocks.Recorder, requestID string, err error, emit blocks.Emitter, mode appendMode) {
 	cancelled := liveRunCancelled(ctx)
 	if cancelled {
 		b.log.Info("sandbox create stopped", "request_id", requestID, "error", err)
@@ -212,7 +230,7 @@ func (b *Bot) handleFreshSandboxCreateError(ctx context.Context, rec *convstore.
 	// row hasn't been written yet; the dispatcher treats an empty
 	// sandbox with existing blocks as retry-pending rather than
 	// asking for a repo again.
-	appendBlocksToFirstTurn(rec, recorder.Snapshot())
+	appendFreshRunBlocks(rec, mode, recorder.Snapshot())
 	if uerr := b.convs.Upsert(context.Background(), *rec); uerr != nil {
 		b.log.Error("convstore upsert (sandbox create fail)", "error", uerr)
 	}
@@ -223,12 +241,12 @@ func (b *Bot) handleFreshSandboxCreateError(ctx context.Context, rec *convstore.
 	b.markRunState(ctx, runstore.StateFailed, err)
 }
 
-func (b *Bot) handleFreshAgentRunError(ctx context.Context, sb *daytona.Sandbox, rec *convstore.Record, recorder *blocks.Recorder, requestID, branch string, runErr error, emit blocks.Emitter) {
+func (b *Bot) handleFreshAgentRunError(ctx context.Context, sb *daytona.Sandbox, rec *convstore.Record, recorder *blocks.Recorder, requestID, branch string, runErr error, emit blocks.Emitter, mode appendMode) {
 	if liveRunCancelled(ctx) {
 		b.log.Info("agent run stopped", "sandbox", sb.ID, "request_id", requestID, "error", runErr)
 		b.cleanupSandboxWithTimeout(sb, "cancelled fresh run")
 		emit.Result("Stopped", fmt.Sprintf("Stopped the run and archived sandbox `%s`.", sb.ID))
-		appendBlocksToFirstTurn(rec, recorder.Snapshot())
+		appendFreshRunBlocks(rec, mode, recorder.Snapshot())
 		if err := b.convs.Upsert(context.Background(), *rec); err != nil {
 			b.log.Error("convstore upsert (agent stopped)", "error", err)
 		}
@@ -256,7 +274,7 @@ func (b *Bot) handleFreshAgentRunError(ctx context.Context, sb *daytona.Sandbox,
 	if pr := latestPRURLFromEmitter(emit); pr != "" {
 		rec.PRURL = pr
 	}
-	appendBlocksToFirstTurn(rec, recorder.Snapshot())
+	appendFreshRunBlocks(rec, mode, recorder.Snapshot())
 	if err := b.convs.Upsert(ctx, *rec); err != nil {
 		b.log.Error("convstore upsert (agent fail)", "error", err)
 	}

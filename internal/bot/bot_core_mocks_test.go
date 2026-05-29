@@ -3,6 +3,7 @@ package bot
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -386,14 +387,18 @@ func TestHandleRequestNoPRRetryUsesExistingSandboxAndOriginalHistory(t *testing.
 	}
 }
 
-func TestHandleRequestRetryAfterFailureUsesNewRequest(t *testing.T) {
+func TestHandleRequestRetryAfterFailurePreservesOriginalHistory(t *testing.T) {
 	convs := &fakeConversationStore{
 		rec: convstore.Record{
 			OrgID:       "org_test",
 			ThreadID:    "thread-1",
 			GitHubOwner: "hetchyhq",
 			GitHubRepo:  "hetchy",
-			History:     []string{"old failed request"},
+			History:     []string{"old failed request", "previous retry"},
+			ResponseBlocks: [][]blocks.Block{
+				{{Kind: blocks.KindError, Title: "Agent failed", Body: "previous failure"}},
+				{{Kind: blocks.KindError, Title: "Still failed", Body: "previous retry failure"}},
+			},
 		},
 		attachments: []convstore.Attachment{
 			{ID: "old", OrgID: "org_test", ThreadID: "thread-1", TurnIndex: 0, Filename: "old.txt", Data: []byte("old")},
@@ -423,8 +428,11 @@ func TestHandleRequestRetryAfterFailureUsesNewRequest(t *testing.T) {
 		t.Fatalf("expected repo access error, got calls=%v", emit.Calls)
 	}
 	rec := convs.lastUpsert(t)
-	if got := rec.History; len(got) != 1 || got[0] != "retry with better prompt" {
-		t.Fatalf("retry path should replace first-turn request, got %#v", got)
+	if got := rec.History; len(got) != 3 || got[0] != "old failed request" || got[1] != "previous retry" || got[2] != "retry with better prompt" {
+		t.Fatalf("retry path should preserve original request and append retry, got %#v", got)
+	}
+	if len(rec.ResponseBlocks) != 3 || len(rec.ResponseBlocks[0]) == 0 || len(rec.ResponseBlocks[1]) == 0 || len(rec.ResponseBlocks[2]) == 0 {
+		t.Fatalf("retry path should keep first turn blocks and write retry blocks, got %#v", rec.ResponseBlocks)
 	}
 	if rec.GitHubOwner != "" || rec.GitHubRepo != "" {
 		t.Fatalf("failed retry repo resolution should return to awaiting-repo state: %+v", rec)
@@ -433,8 +441,15 @@ func TestHandleRequestRetryAfterFailureUsesNewRequest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListAttachmentsForTurn turn 0: %v", err)
 	}
-	if len(turn0) != 1 || turn0[0].Filename != "new.txt" {
-		t.Fatalf("retry should replace turn-0 attachments, got %+v", turn0)
+	if len(turn0) != 1 || turn0[0].Filename != "old.txt" {
+		t.Fatalf("retry should keep turn-0 attachments, got %+v", turn0)
+	}
+	turn2, err := convs.ListAttachmentsForTurn(context.Background(), "org_test", "thread-1", 2)
+	if err != nil {
+		t.Fatalf("ListAttachmentsForTurn turn 2: %v", err)
+	}
+	if len(turn2) != 1 || turn2[0].Filename != "new.txt" {
+		t.Fatalf("retry should save new attachments on retry turn, got %+v", turn2)
 	}
 	turn1, err := convs.ListAttachmentsForTurn(context.Background(), "org_test", "thread-1", 1)
 	if err != nil {
@@ -826,6 +841,122 @@ func TestHandleRequestRequestedRepoOverridesRetryAfterFailure(t *testing.T) {
 	}
 }
 
+func TestHandleRequestRetryAfterFailureRunsWithOriginalRequestContext(t *testing.T) {
+	convs := &fakeConversationStore{
+		rec: convstore.Record{
+			OrgID:       "org_test",
+			ThreadID:    "thread-1",
+			GitHubOwner: "hetchyhq",
+			GitHubRepo:  "hetchy",
+			History: []string{
+				"fix chat autoscroll when user scrolled up",
+				"try again, also preserve manual scroll position during streaming updates",
+			},
+			ResponseBlocks: [][]blocks.Block{
+				{{Kind: blocks.KindError, Title: "Agent failed", Body: "token expired"}},
+				{{Kind: blocks.KindError, Title: "Agent failed", Body: "token still expired"}},
+			},
+		},
+	}
+	b := testCoreBot(convs)
+	b.resolveRepoFn = func(_ context.Context, _, owner, name string) (repoCtx, error) {
+		return repoCtx{Slug: owner + "/" + name, BaseBranch: "main", GitHubToken: "token"}, nil
+	}
+	b.createFn = func(context.Context, any) (*daytona.Sandbox, error) {
+		return &daytona.Sandbox{ID: "sandbox-1"}, nil
+	}
+	var capturedRequest string
+	b.runAgentFn = func(_ context.Context, _ *daytona.Sandbox, _ repoCtx, _ orgcfg.Config, _ agents.Profile, userRequest, _ string, _ string, _ chatTaskOptions, _ ClaudeModel, emit blocks.Emitter) (string, error) {
+		capturedRequest = userRequest
+		emit.Notify("Agent started", "fake runner reached")
+		return "https://github.com/hetchyhq/hetchy/pull/7", nil
+	}
+	b.deleteSandboxSessionFn = func(*daytona.Sandbox, string) {}
+	b.stopAndArchiveFn = func(context.Context, *daytona.Sandbox) {}
+	emit := newCaptureEmitter()
+
+	b.HandleRequest(context.Background(),
+		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant"},
+		"try to complete this task again", "req-2", "thread-1", "user-1",
+		chatTaskOptionPatch{}, nil, nil, ClaudeModelOpus, emit)
+
+	if !strings.Contains(capturedRequest, "fix chat autoscroll when user scrolled up") ||
+		!strings.Contains(capturedRequest, "also preserve manual scroll position") ||
+		!strings.Contains(capturedRequest, "try to complete this task again") {
+		t.Fatalf("retry prompt lost context: %q", capturedRequest)
+	}
+	rec := convs.lastUpsert(t)
+	if got := rec.History; len(got) != 3 || got[0] != "fix chat autoscroll when user scrolled up" || got[1] != "try again, also preserve manual scroll position during streaming updates" || got[2] != "try to complete this task again" {
+		t.Fatalf("retry should append without clobbering original history: %#v", got)
+	}
+	if len(rec.ResponseBlocks) != 3 || len(rec.ResponseBlocks[0]) == 0 || len(rec.ResponseBlocks[1]) == 0 || len(rec.ResponseBlocks[2]) == 0 {
+		t.Fatalf("retry should preserve old blocks and write retry blocks: %#v", rec.ResponseBlocks)
+	}
+}
+
+func TestRetryAfterFailureRequest(t *testing.T) {
+	cases := []struct {
+		name         string
+		history      []string
+		retryText    string
+		wantExact    string
+		wantContains []string
+	}{
+		{name: "empty history and empty retry", wantExact: ""},
+		{name: "empty history and retry text", retryText: "do the thing", wantExact: "do the thing"},
+		{name: "single prior and empty retry", history: []string{"original task"}, wantExact: "original task"},
+		{
+			name:      "single prior and retry text",
+			history:   []string{"original task"},
+			retryText: "try again",
+			wantContains: []string{
+				"ORIGINAL REQUEST:",
+				"original task",
+				"USER RETRY REQUEST:",
+				"try again",
+			},
+		},
+		{
+			name:      "multiple prior messages and retry text",
+			history:   []string{"original task", "first retry context"},
+			retryText: "second retry",
+			wantContains: []string{
+				"ORIGINAL REQUEST:",
+				"original task",
+				"PRIOR RETRY REQUEST 1:",
+				"first retry context",
+				"USER RETRY REQUEST:",
+				"second retry",
+			},
+		},
+		{
+			name:    "multiple prior messages and empty retry",
+			history: []string{"original task", "first retry context"},
+			wantContains: []string{
+				"ORIGINAL REQUEST:",
+				"original task",
+				"PRIOR RETRY REQUEST 1:",
+				"first retry context",
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := retryAfterFailureRequest(convstore.Record{History: tc.history}, tc.retryText)
+			if tc.wantExact != "" || len(tc.wantContains) == 0 {
+				if got != tc.wantExact {
+					t.Fatalf("retryAfterFailureRequest() = %q, want %q", got, tc.wantExact)
+				}
+			}
+			for _, want := range tc.wantContains {
+				if !strings.Contains(got, want) {
+					t.Fatalf("retryAfterFailureRequest() = %q, missing %q", got, want)
+				}
+			}
+		})
+	}
+}
+
 // TestParseRequestedRepo covers the boundary cases the chat HTTP body
 // can produce — a nil pointer (older client), an empty string (cleared
 // picker), and assorted whitespace / URL / .git shapes pulled through
@@ -903,5 +1034,44 @@ func TestChatPersisterSavesProgressWithFakeStore(t *testing.T) {
 	}
 	if len(got.ResponseBlocks) != 1 || len(got.ResponseBlocks[0]) != 1 {
 		t.Fatalf("progress save blocks = %#v, want one recorded block", got.ResponseBlocks)
+	}
+}
+
+func TestChatPersisterSnapshotAppendToLastTurn(t *testing.T) {
+	priorBlocks := [][]blocks.Block{
+		{{Kind: blocks.KindNotify, Title: "turn 0", Status: blocks.StatusDone}},
+		{{Kind: blocks.KindNotify, Title: "turn 1", Status: blocks.StatusDone}},
+	}
+	recorder := blocks.NewRecorder(maxBlocksPerTurn)
+	id := recorder.Start(blocks.KindNotify, "live", nil)
+	recorder.Done(id, "")
+
+	p := newChatPersister(discardLogger(), &fakeConversationStore{}, recorder, convstore.Record{
+		OrgID:          "org_test",
+		ThreadID:       "thread-1",
+		History:        []string{"first", "retry"},
+		ResponseBlocks: priorBlocks,
+	}, appendToLastTurn, time.Hour)
+
+	got := p.snapshot()
+	if len(got.ResponseBlocks) != len(got.History) {
+		t.Fatalf("response block turns = %d, history = %d", len(got.ResponseBlocks), len(got.History))
+	}
+	if len(got.ResponseBlocks) != 2 {
+		t.Fatalf("response block turns = %d, want 2", len(got.ResponseBlocks))
+	}
+	if len(got.ResponseBlocks[0]) != 1 || got.ResponseBlocks[0][0].Title != "turn 0" {
+		t.Fatalf("turn 0 mutated: %#v", got.ResponseBlocks[0])
+	}
+	if len(got.ResponseBlocks[1]) != 2 {
+		t.Fatalf("last turn blocks = %#v, want prior plus live block", got.ResponseBlocks[1])
+	}
+	if got.ResponseBlocks[1][0].Title != "turn 1" || got.ResponseBlocks[1][1].Title != "live" {
+		t.Fatalf("last turn blocks = %#v, want prior then live", got.ResponseBlocks[1])
+	}
+
+	got.ResponseBlocks[0][0].Title = "mutated"
+	if priorBlocks[0][0].Title != "turn 0" {
+		t.Fatalf("snapshot reused prior block storage: %#v", priorBlocks[0])
 	}
 }

@@ -155,7 +155,7 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 			b.markRunState(ctx, runstore.StateFailed, errors.New("unknown agent"))
 			return
 		}
-		if err := b.replaceIncomingAttachmentsForTurn(ctx, oc.OrgID, threadID, 0, incomingAttachments); err != nil {
+		if err := b.saveIncomingAttachments(ctx, oc.OrgID, threadID, len(rec.History), incomingAttachments); err != nil {
 			b.log.Error("save prompt attachments", "error", err, "org", oc.OrgID, "thread", threadID)
 			emit.Error("Attachment upload failed", "Hetchy could not save the attached files for this turn. Try again.")
 			b.markRunState(ctx, runstore.StateFailed, err)
@@ -164,11 +164,11 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 		b.handleRetryAfterFailure(ctx, oc, rec, agent, text, requestID, opts, model, recorder, emit)
 		return
 	case err == nil:
-		saveAttachments := b.saveIncomingAttachments
+		attachmentTurn := 0
 		if rec.GitHubOwner != "" && rec.GitHubRepo != "" {
-			saveAttachments = b.replaceIncomingAttachmentsForTurn
+			attachmentTurn = len(rec.History)
 		}
-		if err := saveAttachments(ctx, oc.OrgID, threadID, 0, incomingAttachments); err != nil {
+		if err := b.saveIncomingAttachments(ctx, oc.OrgID, threadID, attachmentTurn, incomingAttachments); err != nil {
 			b.log.Error("save prompt attachments", "error", err, "org", oc.OrgID, "thread", threadID)
 			emit.Error("Attachment upload failed", "Hetchy could not save the attached files for this turn. Try again.")
 			b.markRunState(ctx, runstore.StateFailed, err)
@@ -449,13 +449,11 @@ func clearRepoOnFailure(rec *convstore.Record) {
 // handleRetryAfterFailure resumes a fresh-agent attempt that
 // previously failed (either before producing a sandbox or after the
 // agent crashed mid-run). The repo was resolved successfully on the
-// prior turn, so we keep it and re-run with the new user message as
-// the request — the repo isn't the problem and forcing the user to
-// retype `owner/name` would be noise. The new message replaces
-// History[0] (this is still the first real turn — the row exists from
-// the entry-Upsert HandleRequest does before the agent even starts,
-// plus any failure blocks the persister recorded mid-run) so a
-// follow-up only sees the request that actually shipped.
+// prior turn, so we keep it and retry in the same chat instead of
+// forcing the user to retype `owner/name`. The retry is appended as a
+// new turn and the fresh sandbox prompt includes the original request,
+// so a "try again" message cannot replace the task context or erase
+// the visible transcript.
 //
 // If the failed attempt left an orphan sandbox (rec.SandboxID set,
 // rec.PRURL empty), archive it best-effort before spawning a fresh
@@ -471,9 +469,44 @@ func (b *Bot) handleRetryAfterFailure(ctx context.Context, oc orgcfg.Config, rec
 		}
 		rec.SandboxID = ""
 	}
-	rec.History = []string{text}
-	rec.ResponseBlocks = nil
+	attachmentTurn := len(rec.History)
+	retryText := strings.TrimSpace(text)
+	userRequest := retryAfterFailureRequest(rec, retryText)
+	// A no-text retry still needs a history slot so History[i] stays paired
+	// with ResponseBlocks[i]. Keep the stored value empty so future retry
+	// prompts ignore it; conversationTurns supplies the display label.
+	appendBlocksAsNewTurn(&rec, retryText, nil)
 	rec.AgentSlug = agent.Slug
 	rec.Model = string(model)
-	b.runFreshAgent(ctx, oc, rec, agent, text, requestID, opts, model, recorder, emit)
+	b.runFreshAgentWithTranscriptMode(ctx, oc, rec, agent, userRequest, requestID, opts, model, recorder, emit, appendToLastTurn, attachmentTurn)
+}
+
+func retryAfterFailureRequest(rec convstore.Record, retryText string) string {
+	retryText = strings.TrimSpace(retryText)
+	var prior []string
+	for _, h := range rec.History {
+		if h = strings.TrimSpace(h); h != "" {
+			prior = append(prior, h)
+		}
+	}
+	switch {
+	case len(prior) == 0:
+		return retryText
+	case retryText == "" && len(prior) == 1:
+		return prior[0]
+	default:
+		var b strings.Builder
+		b.WriteString("The previous attempt did not produce a pull request. Retry the task using the preserved conversation context below.")
+		for i, h := range prior {
+			if i == 0 {
+				fmt.Fprintf(&b, "\n\nORIGINAL REQUEST:\n%s", h)
+				continue
+			}
+			fmt.Fprintf(&b, "\n\nPRIOR RETRY REQUEST %d:\n%s", i, h)
+		}
+		if retryText != "" {
+			fmt.Fprintf(&b, "\n\nUSER RETRY REQUEST:\n%s", retryText)
+		}
+		return b.String()
+	}
 }
