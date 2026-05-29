@@ -118,8 +118,12 @@ func TestAgentSettingsActionHandlerLocksBuiltInsForMutations(t *testing.T) {
 		path string
 		body string
 	}{
+		{name: "update", path: "/settings/org/agents/alice", body: "display_name=Alice"},
 		{name: "attach skill", path: "/settings/org/agents/alice/skills", body: "skill=fix-pr"},
+		{name: "detach skill", path: "/settings/org/agents/alice/skills/delete", body: "skill=fix-pr"},
 		{name: "upload skill", path: "/settings/org/agents/alice/skills/upload", body: ""},
+		{name: "add team", path: "/settings/org/agents/alice/teams", body: "team=Dev"},
+		{name: "remove team", path: "/settings/org/agents/alice/teams/remove", body: "team=Dev"},
 		{name: "delete", path: "/settings/org/agents/alice/delete", body: ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
