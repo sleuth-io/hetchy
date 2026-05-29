@@ -188,10 +188,20 @@ function buildAttachmentsCell(attachments) {
   }
   return '<span class="meta-attachment-list">' + attachments.map(a => {
     const name = a.filename || 'attachment';
-    const url = a.download_url || ('/api/v1/conversations/' + encodeURIComponent(sessionId) + '/attachments/' + encodeURIComponent(a.id || ''));
     const size = a.size_bytes ? ' <span class="meta-attachment-size">' + esc(formatAttachmentSize(a.size_bytes)) + '</span>' : '';
     if (!a.download_url) {
       return '<span class="meta-attachment-link">' + esc(name) + size + '</span>';
+    }
+    const url = a.download_url;
+    // Images open in a modal instead of downloading so reviewers can
+    // glance at screenshots without leaving the chat. Non-image
+    // attachments keep the existing <a download> link behaviour.
+    if (isImageAttachmentMimeType(a.content_type)) {
+      return '<button type="button" class="meta-attachment-link"'
+        + ' data-image-modal-url="' + esc(url) + '"'
+        + ' data-image-modal-name="' + esc(name) + '"'
+        + ' aria-label="Open ' + esc(name) + '">'
+        + esc(name) + size + '</button>';
     }
     return '<a class="meta-attachment-link" href="' + esc(url) + '" download="' + esc(name) + '">'
       + esc(name) + size + '</a>';
@@ -502,6 +512,10 @@ async function loadHistory(opts) {
     const detail = await res.json();
     lastDetail = detail;
     renderMetadata(detail);
+    // The blob: preview URLs minted for in-flight uploads were attached
+    // to chat bubbles inside #log; clearing #log unmounts those
+    // references so the underlying File objects can now be released.
+    revokeTrackedPreviewBlobURLs();
     log.innerHTML = '';
     const turns = Array.isArray(detail.turns) ? detail.turns : [];
     const attachmentsByTurn = attachmentsGroupedByTurn(detail.attachments);
@@ -559,7 +573,7 @@ async function loadHistory(opts) {
         target.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
     } else {
-      log.scrollTop = log.scrollHeight;
+      scrollLogToBottom();
     }
   } catch (e) {
     // Leave the log empty on error; the user can still type a message.

@@ -148,6 +148,7 @@
                     color: inherit; border: 1px solid rgba(255,255,255,.28);
                     font-size: .78rem; line-height: 1.25; text-decoration: none;
                     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  button.msg-attachment { font: inherit; cursor: pointer; }
   .msg-attachment:hover { text-decoration: underline; }
   .bot  { align-self: flex-start; background: #fff; border: 1px solid #ddd;
           border-bottom-left-radius: .25rem; white-space: pre-wrap; }
@@ -387,7 +388,9 @@
                           padding: .1rem .35rem; border-radius: .35rem;
                           background: #eef2f7; color: #0b5ec0;
                           font-size: .75rem; line-height: 1.25;
-                          overflow-wrap: anywhere; }
+                          overflow-wrap: anywhere; text-align: left; }
+  button.meta-attachment-link { font: inherit; border: 0; cursor: pointer; }
+  button.meta-attachment-link:hover { text-decoration: underline; }
   .meta-attachment-size { color: #777; font-size: .7rem; white-space: nowrap; }
 
   /* Skills modal — opened from the "Show all" link in the Skills row.
@@ -414,6 +417,34 @@
   .skills-modal-item { padding: .4rem 1rem; font-size: .85rem;
                        color: #1a1a1a; }
   .skills-modal-item + .skills-modal-item { border-top: 1px solid #f5f5f5; }
+
+  /* Image attachment lightbox — opened from any element tagged
+     data-image-modal-url (chat message attachments, details sidebar
+     attachments). Sizes the dialog to the image up to ~95vw/95vh so
+     screenshots are readable without horizontal scroll. */
+  .image-modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.7);
+                         display: flex; align-items: center; justify-content: center;
+                         z-index: 200; padding: 1rem; }
+  .image-modal { background: #fff; border-radius: .6rem;
+                 box-shadow: 0 12px 32px rgba(0,0,0,.35);
+                 max-width: 95vw; max-height: 95vh;
+                 display: flex; flex-direction: column; overflow: hidden; }
+  .image-modal-head { display: flex; align-items: center;
+                      padding: .55rem .9rem; border-bottom: 1px solid #f0f0f0;
+                      gap: .5rem; }
+  .image-modal-title { flex: 1; margin: 0; font-size: .9rem;
+                       font-weight: 600; color: #1a1a1a;
+                       overflow: hidden; text-overflow: ellipsis;
+                       white-space: nowrap; }
+  .image-modal-close { width: 2rem; height: 2rem; padding: 0; border: 0;
+                       background: none; cursor: pointer; font-size: 1.4rem;
+                       color: #888; line-height: 1; }
+  .image-modal-close:hover { color: #333; }
+  .image-modal-body { display: flex; align-items: center; justify-content: center;
+                      overflow: auto; background: #0d1117; min-height: 0;
+                      min-width: 0; padding: .5rem; }
+  .image-modal-img { display: block; max-width: 100%; max-height: 80vh;
+                     width: auto; height: auto; object-fit: contain; }
 
   .meta-header { display: flex; align-items: center; margin-bottom: .55rem; }
   .meta-header .meta-title { margin-bottom: 0; flex: 1; }
@@ -780,6 +811,13 @@
   html.is-dark .skills-modal-close:hover { color: #e7e7e9; }
   html.is-dark .skills-modal-item { color: #e7e7e9; }
   html.is-dark .skills-modal-item + .skills-modal-item { border-top-color: #2a2a2d; }
+  html.is-dark .image-modal { background: #1c1c1f;
+                              box-shadow: 0 12px 32px rgba(0,0,0,.55); }
+  html.is-dark .image-modal-head { border-bottom-color: #2a2a2d; }
+  html.is-dark .image-modal-title { color: #e7e7e9; }
+  html.is-dark .image-modal-close { color: #8a8a90; }
+  html.is-dark .image-modal-close:hover { color: #e7e7e9; }
+  html.is-dark .image-modal-body { background: #0d1117; }
   html.is-dark #meta-more-btn { color: #8a8a90; }
   html.is-dark #meta-more-btn:hover,
   html.is-dark #meta-more-btn[aria-expanded="true"] { background: #2a2a2e; color: #e7e7e9; }
