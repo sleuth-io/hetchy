@@ -418,11 +418,24 @@ async function send() {
   const previousLastDetail = lastDetail ? JSON.parse(JSON.stringify(lastDetail)) : null;
   const willCreateConversation = !conversationHasServerState;
   const isFirstTurn = log.querySelectorAll('.msg').length === 0;
-  addUserMsg(displayText, attachmentsForTurn.map(file => ({
-    filename: attachmentDisplayName(file),
-    size_bytes: file.size || 0,
-    content_type: file.type || 'application/octet-stream',
-  })));
+  addUserMsg(displayText, attachmentsForTurn.map(file => {
+    const contentType = file.type || 'application/octet-stream';
+    // Blob URLs let the in-flight message show the modal before the
+    // server has persisted the attachment and minted a download_url.
+    // Skipped for non-images because the modal only displays images.
+    // Tracked in chat_image_modal.js so we can revoke when the chat log
+    // is rebuilt from server state and on page unload — otherwise the
+    // File the blob URL keeps alive leaks for the rest of the session.
+    const previewURL = isImageAttachmentMimeType(contentType)
+      ? trackPreviewBlobURL(URL.createObjectURL(file))
+      : '';
+    return {
+      filename: attachmentDisplayName(file),
+      size_bytes: file.size || 0,
+      content_type: contentType,
+      preview_url: previewURL,
+    };
+  }));
   if (lastDetail) lastDetail.task_options = taskOptions;
   if (isFirstTurn || agentChoiceApplies) {
     setModelPickerLocked(true);
