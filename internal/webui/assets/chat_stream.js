@@ -75,7 +75,7 @@ function renderLocalRequestError(message) {
     started_at: now,
     ended_at: now,
   }, { open: true });
-  log.scrollTop = log.scrollHeight;
+  scrollLogToBottom();
 }
 
 async function openChatStream(afterSeq = 0) {
@@ -330,7 +330,7 @@ async function consumeSSEResponse(res, onFirstEvent, state = null) {
             sawTurnEnd = true;
           }
         }
-        log.scrollTop = log.scrollHeight;
+        scrollLogToBottomIfPinned();
       } else if (event === 'block_append') {
         const ref = blockRefs.get(payload.id);
         if (!ref) continue;
