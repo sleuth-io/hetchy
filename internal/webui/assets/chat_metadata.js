@@ -188,11 +188,11 @@ function buildAttachmentsCell(attachments) {
   }
   return '<span class="meta-attachment-list">' + attachments.map(a => {
     const name = a.filename || 'attachment';
-    const url = a.download_url || ('/api/v1/conversations/' + encodeURIComponent(sessionId) + '/attachments/' + encodeURIComponent(a.id || ''));
     const size = a.size_bytes ? ' <span class="meta-attachment-size">' + esc(formatAttachmentSize(a.size_bytes)) + '</span>' : '';
     if (!a.download_url) {
       return '<span class="meta-attachment-link">' + esc(name) + size + '</span>';
     }
+    const url = a.download_url;
     // Images open in a modal instead of downloading so reviewers can
     // glance at screenshots without leaving the chat. Non-image
     // attachments keep the existing <a download> link behaviour.
