@@ -123,6 +123,7 @@ if [[ -n "${HETCHY_ARTIFACT_SLOT_URL:-}" && -n "${HETCHY_ARTIFACT_SLOT_TOKEN:-}"
     printf '%s\n' "$token"
     exit 0
   fi
+  echo "[hetchy] token refresh parse failed; falling back to GITHUB_TOKEN" >&2
 fi
 
 if [[ -n "${GITHUB_TOKEN:-}" ]]; then

@@ -74,6 +74,8 @@ func (a *App) installationToken(ctx context.Context, installationID int64, repoI
 	// the same installation only spends one GitHub API call. The key
 	// includes the scope set so a sandbox token (single repo) and a
 	// sync token (full access) for the same install don't share a flight.
+	// Include minTTL so a sandbox caller (long TTL) and sync caller
+	// (short TTL) do not share a singleflight for the same scope.
 	key := mintKey(installationID, repoIDs) + ":ttl=" + minTTL.String()
 	v, err, _ := a.tokens.flight.Do(key, func() (any, error) {
 		// Re-check the cache: the inflight goroutine may have just

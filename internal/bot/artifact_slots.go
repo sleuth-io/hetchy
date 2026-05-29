@@ -18,6 +18,9 @@ import (
 
 const artifactSlotPath = "/api/artifact-slots"
 const artifactSlotKindGitHubToken = "github_token"
+
+// 8 h covers the longest expected agent run with multiple GitHub token
+// refreshes. Broker tokens are scoped to one repo and live only in memory.
 const artifactRunTokenExpiry = 8 * time.Hour
 
 var defaultArtifactSlotRequests = []artifacts.MintRequest{
@@ -315,7 +318,7 @@ func (b *Bot) artifactSlotsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (b *Bot) artifactGitHubTokenHandler(w http.ResponseWriter, r *http.Request, token string) {
-	if b == nil || b.artifactSlots == nil || b.app == nil {
+	if b == nil || b.artifactSlots == nil || (b.app == nil && b.githubTokenMinTTLFn == nil) {
 		http.Error(w, "github token refresh unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -329,10 +332,11 @@ func (b *Bot) artifactGitHubTokenHandler(w http.ResponseWriter, r *http.Request,
 		http.Error(w, "artifact upload disabled", http.StatusServiceUnavailable)
 		return
 	default:
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		b.log.Warn("github token refresh lookup error", "error", err)
+		http.Error(w, "github token refresh unavailable", http.StatusInternalServerError)
 		return
 	}
-	ghToken, exp, err := b.app.InstallationTokenMinTTL(r.Context(), installationID, []int64{repoID}, sandboxGitHubTokenMinTTL)
+	ghToken, exp, err := b.githubTokenMinTTL(r.Context(), installationID, []int64{repoID}, sandboxGitHubTokenMinTTL)
 	if err != nil {
 		b.log.Warn("github token refresh failed", "installation_id", installationID, "repo_id", repoID, "error", err)
 		http.Error(w, "github token refresh failed", http.StatusInternalServerError)
@@ -342,6 +346,13 @@ func (b *Bot) artifactGitHubTokenHandler(w http.ResponseWriter, r *http.Request,
 		Token:     ghToken,
 		ExpiresAt: exp.UTC().Format(time.RFC3339),
 	})
+}
+
+func (b *Bot) githubTokenMinTTL(ctx context.Context, installationID int64, repoIDs []int64, minTTL time.Duration) (string, time.Time, error) {
+	if b.githubTokenMinTTLFn != nil {
+		return b.githubTokenMinTTLFn(ctx, installationID, repoIDs, minTTL)
+	}
+	return b.app.InstallationTokenMinTTL(ctx, installationID, repoIDs, minTTL)
 }
 
 func bearerToken(header string) string {

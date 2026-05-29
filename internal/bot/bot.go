@@ -177,6 +177,7 @@ type Bot struct {
 	followUpModeFn      followUpModeFunc
 	deleteWorkOSUsersFn func(context.Context, []string) error
 	lookupRepoFn        func(context.Context, string, string, string) (sqlc.GithubRepo, error)
+	githubTokenMinTTLFn func(context.Context, int64, []int64, time.Duration) (string, time.Time, error)
 	// cleanupSandboxByIDFn is called by chatCancelHandler for opportunistic
 	// cleanup of a fresh-run sandbox; overridable in tests.
 	cleanupSandboxByIDFn func(string, string)
