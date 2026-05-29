@@ -20,6 +20,9 @@ This guide covers common issues and their solutions.
 - Check Claude Code output in bot logs
 - Verify GitHub token has repo scope
 - Ensure base branch exists in repository
+- Confirm the Hetchy GitHub App is installed on the target repository — installation tokens are minted from the App credentials at run time, so an uninstalled App surfaces as an early run failure rather than a successful run with no PR
+- For follow-up turns on an existing conversation: if the agent only updated PR metadata or validation notes and no repository files changed, no new commit is created and the existing PR URL is reused — that is by design, not a missing PR
+- Check the Anthropic credential resolution path (`ANTHROPIC_API_KEY` or OAuth token); a missing or revoked credential surfaces as an early run failure with no PR
 
 ## Slack Connection Issues
 
