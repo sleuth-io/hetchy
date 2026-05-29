@@ -129,15 +129,11 @@ echo "[hetchy] checking out branch"
 cd "${SF_WORKDIR}"
 git fetch --prune origin
 git checkout "${SF_BRANCH}"
-ls_remote_rc=0
-git ls-remote --exit-code --heads origin "${SF_BRANCH}" >/dev/null 2>&1 || ls_remote_rc=$?
-if [[ "$ls_remote_rc" -eq 0 ]]; then
+if git rev-parse --verify "refs/remotes/origin/${SF_BRANCH}" >/dev/null 2>&1; then
   echo "[hetchy] syncing ${SF_BRANCH} with origin/${SF_BRANCH}"
   git pull --rebase --autostash origin "${SF_BRANCH}"
-elif [[ "$ls_remote_rc" -eq 2 ]]; then
-  echo "[hetchy] remote branch ${SF_BRANCH} does not exist yet; continuing with local branch"
 else
-  echo "[hetchy] warning: git ls-remote exited ${ls_remote_rc}; skipping pull" >&2
+  echo "[hetchy] remote branch ${SF_BRANCH} does not exist yet; continuing with local branch"
 fi
 
 # Same pre-create as agent.sh — the Playwright MCP server requires
