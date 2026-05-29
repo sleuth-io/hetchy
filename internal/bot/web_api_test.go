@@ -810,6 +810,9 @@ func TestConversationDetailLabelsNoTextRetryTurns(t *testing.T) {
 	pending := rec
 	pending.ResponseBlocks = pending.ResponseBlocks[:1]
 	pendingDetail := b.conversationDetailResponse(context.Background(), "org_test", pending, conversationIncludeOptions{Turns: true})
+	if pendingDetail.Turns[1].Message != "Retry the previous request." {
+		t.Fatalf("pending retry turn message = %q", pendingDetail.Turns[1].Message)
+	}
 	if pendingDetail.Turns[1].ID != detail.Turns[1].ID {
 		t.Fatalf("retry turn ID changed after blocks arrived: before=%q after=%q", pendingDetail.Turns[1].ID, detail.Turns[1].ID)
 	}
