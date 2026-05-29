@@ -29,6 +29,7 @@ func TestRenderChatTemplate(t *testing.T) {
 		`src="/assets/chat_bootstrap.js`,
 		`href="/assets/chat.css`,
 		`src="/assets/chat_core.js`,
+		`src="/assets/chat_image_modal.js`,
 		`src="/assets/chat_stream.js`,
 		`src="/assets/chat_init.js`,
 	} {
@@ -100,6 +101,90 @@ func TestAssetHandlerServesEmbeddedAssets(t *testing.T) {
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("chat.css did not contain expected sidebar menu rule %q", want)
+		}
+	}
+}
+
+// TestChatImageModalAssetWiring checks that the new image-lightbox
+// module is served, exposes the helpers the rest of the chat scripts
+// expect, and that addUserMsg / buildAttachmentsCell pick the modal
+// branch for image attachments rather than the download branch they
+// used to take. The check is intentionally substring-based — these are
+// embedded JS source files, so we can't run them in Go, but the
+// constructs below would fail in a way that's caught by manual review
+// if a future edit reverts the modal behaviour.
+func TestChatImageModalAssetWiring(t *testing.T) {
+	type assetCheck struct {
+		path  string
+		wants []string
+	}
+	checks := []assetCheck{
+		{
+			path: "/assets/chat_image_modal.js",
+			wants: []string{
+				"function isImageAttachmentMimeType",
+				"function openImageModal",
+				"function trackPreviewBlobURL",
+				"function revokeTrackedPreviewBlobURLs",
+				"data-image-modal-url",
+				// Click delegator must bail on modified clicks so
+				// users can still ctrl/cmd-click underlying links.
+				"e.metaKey",
+				"e.ctrlKey",
+				"e.shiftKey",
+				"e.altKey",
+				"e.button !== 0",
+				// Re-entry guard against orphaning a previous modal's
+				// keydown listener.
+				"activeImageModalClose",
+				"beforeunload",
+			},
+		},
+		{
+			path: "/assets/chat_core.js",
+			wants: []string{
+				"isImageAttachmentMimeType",
+				"dataset.imageModalUrl",
+			},
+		},
+		{
+			path: "/assets/chat_metadata.js",
+			wants: []string{
+				"isImageAttachmentMimeType",
+				"data-image-modal-url",
+				"revokeTrackedPreviewBlobURLs",
+			},
+		},
+		{
+			path: "/assets/chat_stream.js",
+			wants: []string{
+				"trackPreviewBlobURL",
+				"URL.createObjectURL(file)",
+			},
+		},
+		{
+			path: "/assets/chat.css",
+			wants: []string{
+				".image-modal-overlay",
+				".image-modal-img",
+				"button.msg-attachment",
+				"button.meta-attachment-link",
+			},
+		},
+	}
+	for _, c := range checks {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, c.path, nil)
+		AssetHandler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Errorf("%s status = %d", c.path, rec.Code)
+			continue
+		}
+		body := rec.Body.String()
+		for _, want := range c.wants {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s missing %q", c.path, want)
+			}
 		}
 	}
 }

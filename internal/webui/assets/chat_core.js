@@ -282,13 +282,29 @@ function addUserMsg(text, attachments = []) {
     list.className = 'msg-attachments';
     for (const attachment of attachments) {
       const name = attachment.filename || attachment.name || 'attachment';
-      const item = document.createElement(attachment.download_url ? 'a' : 'span');
-      item.className = 'msg-attachment';
-      item.textContent = name;
-      if (attachment.download_url) {
+      // preview_url is set on freshly-uploaded files (a local blob: URL
+      // from URL.createObjectURL) so the in-flight chat message can show
+      // the modal before the server has persisted the attachment.
+      // download_url is the server-side route used on reload.
+      const viewURL = attachment.preview_url || attachment.download_url || '';
+      const isImage = isImageAttachmentMimeType(attachment.content_type)
+        && !!viewURL;
+      let item;
+      if (isImage) {
+        item = document.createElement('button');
+        item.type = 'button';
+        item.dataset.imageModalUrl = viewURL;
+        item.dataset.imageModalName = name;
+        item.setAttribute('aria-label', 'Open ' + name);
+      } else if (attachment.download_url) {
+        item = document.createElement('a');
         item.href = attachment.download_url;
         item.download = name;
+      } else {
+        item = document.createElement('span');
       }
+      item.classList.add('msg-attachment');
+      item.textContent = name;
       list.appendChild(item);
     }
     d.appendChild(list);
