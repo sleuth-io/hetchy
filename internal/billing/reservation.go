@@ -42,6 +42,9 @@ func (s *Store) AdmitRun(ctx context.Context, orgID, runID string, credits int, 
 		}
 		account = accountFromRow(row)
 		if account.BillingExempt {
+			// reserved_credits stays 0: comped orgs are never charged. At
+			// finalization, captured_credits will exceed reserved_credits,
+			// which is intentional — it records observational usage only.
 			inserted, err := q.InsertBillingCreditReservation(ctx, sqlc.InsertBillingCreditReservationParams{
 				RunID: runID, OrgID: orgID, Status: ReservationComped,
 			})
@@ -135,13 +138,15 @@ func (s *Store) FinalizeRun(ctx context.Context, runID, terminalState string, en
 		}
 		res := reservationFromRow(resRow)
 		if res.Status == ReservationComped {
-			if err := finalizeRunMeter(ctx, q, runID, endedAt, minutes, 0, terminalState); err != nil {
+			// Record actual credits for visibility in the billing meter, but do not
+			// deduct from the account balance — comped orgs are never charged.
+			if err := finalizeRunMeter(ctx, q, runID, endedAt, minutes, credits, terminalState); err != nil {
 				return err
 			}
 			_, err := q.UpdateBillingCreditReservationCaptured(ctx, sqlc.UpdateBillingCreditReservationCapturedParams{
 				RunID:           runID,
-				CapturedCredits: 0,
-				ReleasedCredits: 0,
+				CapturedCredits: int32(credits),
+				ReleasedCredits: 0, // nothing was reserved, so nothing to release
 				Status:          ReservationComped,
 			})
 			return err
