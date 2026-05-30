@@ -179,7 +179,7 @@ ensure_sx() {
     return 0
   fi
   echo "[hetchy] installing sx"
-  curl -fsSL https://raw.githubusercontent.com/sleuth-io/sx/main/install.sh | bash
+  hetchy_install_sx
   export PATH="$HOME/.local/bin:$PATH"
 }
 

@@ -582,7 +582,11 @@ func (b *Bot) runScript(ctx context.Context, sb *daytona.Sandbox, sessionID, lab
 		}
 	})
 	if _, err := b.shLines(ctx, sb.ID, sb.Process, sessionID, "run-script", runCmd, 60*time.Minute, 15*time.Minute, true, framed.Line); err != nil {
+		reachedAgent := router.ReachedAgent()
 		router.Abort()
+		if !reachedAgent {
+			return "", fmt.Errorf("%w: %w", errAgentSetupBeforeRuntime, err)
+		}
 		return "", err
 	}
 	if durable != nil {
@@ -608,7 +612,7 @@ func (b *Bot) runScript(ctx context.Context, sb *daytona.Sandbox, sessionID, lab
 		// different remediation, so on-call shouldn't have to tail
 		// logs to tell them apart.
 		if !router.ReachedAgent() {
-			return "", fmt.Errorf("setup script for %s exited before invoking the agent runtime — check the sandbox setup block for the failing step", label)
+			return "", fmt.Errorf("%w: setup script for %s exited before invoking the agent runtime — check the sandbox setup block for the failing step", errAgentSetupBeforeRuntime, label)
 		}
 		return "", nil
 	}
