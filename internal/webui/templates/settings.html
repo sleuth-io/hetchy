@@ -676,7 +676,10 @@
   <div class="agent-skills">
     <div class="agent-skills-label">Installed skills</div>
     {{if $a.SkillChips}}
-      <div class="skill-chip-list">
+      {{$installedCount := len $a.SkillChips}}
+      {{$installedCollapsible := gt $installedCount 10}}
+      {{$installedListID := printf "agent-skills-direct-%s" $a.Slug}}
+      <div id="{{$installedListID}}" class="skill-chip-list{{if $installedCollapsible}} skill-chip-list-collapsible is-collapsed{{end}}">
         {{range $a.SkillChips}}
           {{if and $root.IsAdmin (not $a.BuiltIn)}}
           <form method="POST" action="/settings/org/agents/{{$a.Slug}}/skills/delete" class="skill-chip skill-chip-form"
@@ -693,14 +696,27 @@
           {{end}}
         {{end}}
       </div>
+      {{if $installedCollapsible}}
+        <button type="button" class="skill-chip-list-toggle" data-skill-chip-list-toggle
+                aria-expanded="false" aria-controls="{{$installedListID}}"
+                data-expand-label="Show all ({{$installedCount}})" data-collapse-label="Show less">Show all ({{$installedCount}})</button>
+      {{end}}
     {{else}}
       <p class="hint">No directly installed skills.</p>
     {{end}}
     {{if $a.SXSkills}}
+      {{$inheritedCount := len $a.SXSkills}}
+      {{$inheritedCollapsible := gt $inheritedCount 10}}
+      {{$inheritedListID := printf "agent-skills-inherited-%s" $a.Slug}}
       <div class="agent-skills-label agent-skills-label-secondary">Inherited skills from orgs and teams</div>
-      <div class="skill-chip-list">
+      <div id="{{$inheritedListID}}" class="skill-chip-list{{if $inheritedCollapsible}} skill-chip-list-collapsible is-collapsed{{end}}">
         {{range $a.SXSkills}}<span class="skill-chip">{{.}}</span>{{end}}
       </div>
+      {{if $inheritedCollapsible}}
+        <button type="button" class="skill-chip-list-toggle" data-skill-chip-list-toggle
+                aria-expanded="false" aria-controls="{{$inheritedListID}}"
+                data-expand-label="Show all ({{$inheritedCount}})" data-collapse-label="Show less">Show all ({{$inheritedCount}})</button>
+      {{end}}
     {{else if $a.Imported}}
       <p class="hint">Resolved by SX at runtime.</p>
     {{end}}
