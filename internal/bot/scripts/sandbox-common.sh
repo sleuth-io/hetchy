@@ -188,6 +188,107 @@ HETCHY_GH_WRAPPER
   git config --global credential.https://github.com.helper "$HOME/.local/bin/hetchy-git-credential"
 }
 
+hetchy_github_curl() {
+  local token=""
+  if command -v hetchy-github-token >/dev/null 2>&1; then
+    token="$(hetchy-github-token 2>/dev/null || true)"
+  fi
+  if [[ -z "$token" && -n "${GITHUB_TOKEN:-}" ]]; then
+    token="$GITHUB_TOKEN"
+  fi
+  if [[ -n "$token" ]]; then
+    curl -fsSL \
+      -H "Authorization: Bearer ${token}" \
+      -H "Accept: application/vnd.github+json" \
+      -H "X-GitHub-Api-Version: 2022-11-28" \
+      "$@"
+  else
+    curl -fsSL "$@"
+  fi
+}
+
+hetchy_install_sx() {
+  local os arch ext version release_json binary_name url install_dir temp_dir rc
+
+  os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+  arch="$(uname -m)"
+  case "$arch" in
+    x86_64) arch="x86_64" ;;
+    aarch64|arm64) arch="arm64" ;;
+    *)
+      echo "Unsupported architecture: $arch" >&2
+      return 1
+      ;;
+  esac
+
+  case "$os" in
+    linux)
+      os="Linux"
+      ext="tar.gz"
+      ;;
+    darwin)
+      os="Darwin"
+      ext="tar.gz"
+      ;;
+    mingw*|msys*|cygwin*)
+      os="Windows"
+      ext="zip"
+      ;;
+    *)
+      echo "Unsupported OS: $os" >&2
+      return 1
+      ;;
+  esac
+
+  version="${HETCHY_SX_VERSION:-}"
+  if [[ -z "$version" ]]; then
+    echo "Fetching latest release..."
+    release_json="$(hetchy_github_curl https://api.github.com/repos/sleuth-io/sx/releases/latest)" || {
+      echo "Error: Could not fetch latest version" >&2
+      return 1
+    }
+    version="$(printf '%s' "$release_json" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+  fi
+  if [[ -z "$version" ]]; then
+    echo "Error: Could not fetch latest version" >&2
+    return 1
+  fi
+
+  echo "Installing sx ${version} for ${os}_${arch}..."
+  binary_name="sx_${os}_${arch}.${ext}"
+  url="https://github.com/sleuth-io/sx/releases/download/${version}/${binary_name}"
+  install_dir="${INSTALL_DIR:-$HOME/.local/bin}"
+  mkdir -p "$install_dir"
+
+  temp_dir="$(mktemp -d)"
+  if (
+    cd "$temp_dir"
+    echo "Downloading from ${url}..."
+    if ! hetchy_github_curl -o "$binary_name" "$url"; then
+      echo "Error: Failed to download binary" >&2
+      exit 1
+    fi
+    if [[ "$ext" == "tar.gz" ]]; then
+      tar -xzf "$binary_name"
+    else
+      unzip -q "$binary_name"
+    fi
+    chmod +x sx
+    mv sx "$install_dir/"
+  ); then
+    rc=0
+  else
+    rc=$?
+  fi
+  rm -rf "$temp_dir"
+  if [[ $rc -ne 0 ]]; then
+    return "$rc"
+  fi
+
+  echo "sx installed to $install_dir/sx"
+  "$install_dir/sx" --version
+}
+
 save_hetchy_cache_archive() {
   local local_cache_dir="$1"
   local archive="$2"

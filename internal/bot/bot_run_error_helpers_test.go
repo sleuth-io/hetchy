@@ -138,6 +138,45 @@ func TestHandleFreshAgentRunErrorKeepsDurabilityRecoverable(t *testing.T) {
 	}
 }
 
+func TestHandleFreshAgentRunErrorArchivesPreRuntimeSetupFailure(t *testing.T) {
+	convs := &fakeConversationStore{}
+	store := &fakeRunStore{enabled: true}
+	b := testCoreBot(convs)
+	b.runs = store
+	b.workerID = "worker-1"
+	var cleanupSandboxID, cleanupReason string
+	b.cleanupSandboxFn = func(_ context.Context, sb *daytona.Sandbox, reason string) {
+		cleanupSandboxID = sb.ID
+		cleanupReason = reason
+	}
+	rec := convstore.Record{
+		OrgID:     "org_test",
+		ThreadID:  "thread-1",
+		History:   []string{"ship it"},
+		SandboxID: "sandbox-1",
+	}
+	recorder := recorderWithNotifyBlock("Sandbox setup")
+	emit := newCaptureEmitter()
+	ctx := contextWithAgentRun(context.Background(), runstore.Run{ID: "run_1"})
+	runErr := errors.Join(errAgentSetupBeforeRuntime, errors.New("sx install failed"))
+
+	b.handleFreshAgentRunError(ctx, &daytona.Sandbox{ID: "sandbox-1"}, &rec, recorder, "req-1", "feature/sf-1", runErr, emit, appendToFirstTurn)
+
+	if !emit.hasCall("error", "Sandbox setup failed") {
+		t.Fatalf("expected setup failure, got calls=%v", emit.Calls)
+	}
+	if cleanupSandboxID != "sandbox-1" || cleanupReason != "fresh run setup failed" {
+		t.Fatalf("cleanup = (%q, %q), want sandbox-1/fresh run setup failed", cleanupSandboxID, cleanupReason)
+	}
+	got := convs.lastUpsert(t)
+	if got.SandboxID != "" {
+		t.Fatalf("sandbox id = %q, want cleared", got.SandboxID)
+	}
+	if last := lastRunState(t, store); last.state != runstore.StateFailed || !strings.Contains(last.lastErr, errAgentSetupBeforeRuntime.Error()) {
+		t.Fatalf("run state = %+v, want failed/pre-runtime setup", last)
+	}
+}
+
 // TestHandleFreshAgentRunErrorPreservesPRURLOnCancel makes sure that a
 // user pressing Stop after the agent has already opened a PR doesn't
 // drop the PR URL from the chat. The streaming emitter observes the
@@ -273,6 +312,55 @@ func TestHandleFollowUpRunErrorProjectsPRVerificationFailure(t *testing.T) {
 	}
 	if last := lastRunState(t, store); last.state != runstore.StateFailed || !strings.Contains(last.lastErr, errReportedPRNotVerified.Error()) {
 		t.Fatalf("run state = %+v, want failed/PR verification", last)
+	}
+}
+
+func TestHandleFollowUpRunErrorStopsPreRuntimeSetupFailure(t *testing.T) {
+	convs := &fakeConversationStore{}
+	store := &fakeRunStore{enabled: true, getRun: runstore.Run{ID: "run_1", SessionID: "session-latest"}}
+	b := testCoreBot(convs)
+	b.runs = store
+	b.workerID = "worker-1"
+	var deletedSession, stoppedSandboxID string
+	b.deleteSandboxSessionFn = func(_ *daytona.Sandbox, sessionID string) {
+		deletedSession = sessionID
+	}
+	b.stopAndArchiveFn = func(_ context.Context, sb *daytona.Sandbox) {
+		stoppedSandboxID = sb.ID
+	}
+	rec := convstore.Record{
+		OrgID:     "org_test",
+		ThreadID:  "thread-1",
+		History:   []string{"first turn"},
+		Branch:    "feature/sf-1",
+		PRURL:     "https://github.com/hetchyhq/hetchy/pull/1",
+		SandboxID: "sandbox-1",
+	}
+	recorder := recorderWithNotifyBlock("Sandbox setup")
+	emit := newCaptureEmitter()
+	ctx := contextWithAgentRun(context.Background(), runstore.Run{ID: "run_1"})
+	runErr := errors.Join(errAgentSetupBeforeRuntime, errors.New("sx install failed"))
+
+	b.handleFollowUpRunError(ctx, &daytona.Sandbox{ID: "sandbox-1"}, &rec, "follow up", recorder, "req-2", runErr, emit)
+
+	if !emit.hasCall("error", "Sandbox setup failed") {
+		t.Fatalf("expected setup failure, got calls=%v", emit.Calls)
+	}
+	got := convs.lastUpsert(t)
+	if got.PRURL != "https://github.com/hetchyhq/hetchy/pull/1" {
+		t.Fatalf("follow-up setup failure should keep existing PRURL, got %q", got.PRURL)
+	}
+	if len(got.History) != 2 || got.History[1] != "follow up" {
+		t.Fatalf("history = %#v, want appended follow-up", got.History)
+	}
+	if deletedSession != "session-latest" {
+		t.Fatalf("deleted session = %q, want session-latest", deletedSession)
+	}
+	if stoppedSandboxID != "sandbox-1" {
+		t.Fatalf("stopped sandbox = %q, want sandbox-1", stoppedSandboxID)
+	}
+	if last := lastRunState(t, store); last.state != runstore.StateFailed || !strings.Contains(last.lastErr, errAgentSetupBeforeRuntime.Error()) {
+		t.Fatalf("run state = %+v, want failed/pre-runtime setup", last)
 	}
 }
 

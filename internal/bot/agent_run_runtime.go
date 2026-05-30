@@ -25,7 +25,10 @@ const (
 	agentRunStaleHeartbeat = 45 * time.Second
 )
 
-var errAgentRunDurability = errors.New("agent run durability failure")
+var (
+	errAgentRunDurability      = errors.New("agent run durability failure")
+	errAgentSetupBeforeRuntime = errors.New("agent setup exited before runtime")
+)
 
 type agentRunContextKey struct{}
 type agentRunEmitterContextKey struct{}

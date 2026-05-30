@@ -265,6 +265,18 @@ func (b *Bot) handleFreshAgentRunError(ctx context.Context, sb *daytona.Sandbox,
 		b.markRunState(ctx, runstore.StateRecovering, runErr)
 		return
 	}
+	if errors.Is(runErr, errAgentSetupBeforeRuntime) {
+		b.log.Error("agent setup failed before runtime; archiving sandbox", "sandbox", sb.ID, "request_id", requestID, "error", runErr)
+		b.cleanupSandboxWithTimeout(sb, "fresh run setup failed")
+		emit.Error("Sandbox setup failed", fmt.Sprintf("Sandbox `%s` failed before the agent started and was archived. Reply here to retry.", sb.ID))
+		rec.SandboxID = ""
+		appendFreshRunBlocks(rec, mode, recorder.Snapshot())
+		if err := b.convs.Upsert(context.Background(), *rec); err != nil {
+			b.log.Error("convstore upsert (agent setup fail)", "error", err)
+		}
+		b.markRunState(ctx, runstore.StateFailed, runErr)
+		return
+	}
 
 	b.log.Error("agent run failed", "sandbox", sb.ID, "request_id", requestID, "error", runErr)
 	if isAgentTimeout(runErr) {
@@ -310,6 +322,18 @@ func (b *Bot) handleFollowUpRunError(ctx context.Context, sb *daytona.Sandbox, r
 	if errors.Is(err, errAgentRunDurability) {
 		b.log.Error("follow-up durability failed; leaving run recoverable", "sandbox", sb.ID, "request_id", requestID, "error", err)
 		b.markRunState(ctx, runstore.StateRecovering, err)
+		return
+	}
+	if errors.Is(err, errAgentSetupBeforeRuntime) {
+		b.log.Error("follow-up setup failed before runtime; stopping sandbox", "sandbox", sb.ID, "request_id", requestID, "error", err)
+		emit.Error("Sandbox setup failed", fmt.Sprintf("Sandbox `%s` failed before the agent started and was stopped. Send another message to retry.", sb.ID))
+		appendBlocksAsNewTurn(rec, text, recorder.Snapshot())
+		if uerr := b.convs.Upsert(ctx, *rec); uerr != nil {
+			b.log.Error("convstore upsert (follow-up setup fail)", "error", uerr)
+		}
+		b.markRunState(ctx, runstore.StateFailed, err)
+		b.deleteSandboxSession(sb, b.currentAgentRunSessionID(ctx, "followup-"+requestID))
+		b.stopAndArchiveSandbox(ctx, sb)
 		return
 	}
 
