@@ -568,3 +568,19 @@
       if (!confirm('Revoke ' + name + '?')) e.preventDefault();
     });
   });
+
+  // Long skill lists on an agent card stay collapsed to the first 10
+  // chips. The toggle button references its list via aria-controls so
+  // assistive tech can announce the expanded state correctly.
+  document.querySelectorAll('[data-skill-chip-list-toggle]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = btn.getAttribute('aria-controls');
+      const list = id ? document.getElementById(id) : btn.previousElementSibling;
+      if (!list || !list.classList.contains('skill-chip-list-collapsible')) return;
+      const collapsed = list.classList.toggle('is-collapsed');
+      btn.textContent = collapsed
+        ? (btn.dataset.expandLabel || 'Show all')
+        : (btn.dataset.collapseLabel || 'Show less');
+      btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    });
+  });

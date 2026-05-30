@@ -251,6 +251,14 @@
   .skill-chip-remove { border: 0; background: transparent; color: inherit; opacity: .55;
                        cursor: pointer; font: inherit; line-height: 1; padding: 0 .05rem; }
   .skill-chip-remove:hover { opacity: 1; }
+  /* Collapse skill lists past the first 10 chips. JS toggles is-collapsed
+     on .skill-chip-list-collapsible. The nth-child rule applies to both
+     span chips and form chips since they're direct children of the list. */
+  .skill-chip-list-collapsible.is-collapsed > :nth-child(n+11) { display: none; }
+  .skill-chip-list-toggle { background: none; border: 0; padding: .15rem 0;
+                            margin-top: .35rem; color: #0b74c8; cursor: pointer;
+                            font-family: inherit; font-size: .78rem; }
+  .skill-chip-list-toggle:hover { text-decoration: underline; }
   .agent-team-editor { margin-top: 1rem; padding-top: .85rem; border-top: 1px solid #f0f0f0; }
   .agent-team-editor .agent-command-form { margin-top: .65rem; }
   .agent-card-footer { display: flex; align-items: flex-end; justify-content: space-between;
@@ -800,6 +808,8 @@
   html.is-dark .agent-title h3 { color: #f5f5f7; }
   html.is-dark .agent-title code,
   html.is-dark .skill-chip { background: #2e2e33; color: #d4d4d8; }
+  html.is-dark .skill-chip-list-toggle { color: #6fb6ff; }
+  html.is-dark .skill-chip-list-toggle:hover { color: #8cc4ff; }
   html.is-dark .agent-badge { background: #2e2e33; border-color: #3a3a3f; color: #b8b8bc; }
   html.is-dark .agent-card p { color: #9a9aa0; }
   html.is-dark .agent-profile-form { border-top-color: #2e2e33; }

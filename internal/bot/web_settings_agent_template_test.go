@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -173,6 +174,99 @@ func TestSettingsTemplate_RendersAgentsTab(t *testing.T) {
 		if strings.Contains(body, n) {
 			t.Errorf("agents tab should not render %q", n)
 		}
+	}
+}
+
+func TestSettingsTemplate_CollapsesLongSkillLists(t *testing.T) {
+	b := newBypassBot(t)
+
+	makeChips := func(prefix string, n int) []agentSkillChipView {
+		out := make([]agentSkillChipView, n)
+		for i := range n {
+			name := fmt.Sprintf("%s-%02d", prefix, i+1)
+			out[i] = agentSkillChipView{Name: name, DisplayName: name}
+		}
+		return out
+	}
+	makeNames := func(prefix string, n int) []string {
+		out := make([]string, n)
+		for i := range n {
+			out[i] = fmt.Sprintf("%s-%02d", prefix, i+1)
+		}
+		return out
+	}
+
+	// 12 direct skills + 11 inherited skills → both should collapse.
+	// "shorty" only has 8 direct skills, so it must render as-is.
+	render := func() string {
+		rec := httptest.NewRecorder()
+		b.renderTemplate(rec, webui.Settings, map[string]any{
+			"OrgID": "org_y", "OrgName": "Acme", "Email": "u@y", "PrincipalUserID": "user_me",
+			"IsAdmin": true, "Tab": "agents", "SavedMessage": "", "SXEnabled": true,
+			"Agents": []agentSettingsView{},
+			"CustomAgents": []agentSettingsView{
+				{
+					Slug:        "longy",
+					DisplayName: "Longy",
+					Description: "Has many skills.",
+					SkillChips:  makeChips("direct", 12),
+					SXSkills:    makeNames("inherit", 11),
+				},
+				{
+					Slug:        "shorty",
+					DisplayName: "Shorty",
+					Description: "Has few skills.",
+					SkillChips:  makeChips("short", 8),
+				},
+			},
+			"BuiltInAgents": []agentSettingsView{},
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+		}
+		return rec.Body.String()
+	}
+
+	body := render()
+
+	collapsibleCount := strings.Count(body, "skill-chip-list-collapsible is-collapsed")
+	if collapsibleCount != 2 {
+		t.Fatalf("expected 2 collapsible chip lists (direct + inherited on longy), got %d", collapsibleCount)
+	}
+	for _, want := range []string{
+		`data-expand-label="Show all (12)"`,
+		`data-collapse-label="Show less"`,
+		`>Show all (12)</button>`,
+		`data-expand-label="Show all (11)"`,
+		`>Show all (11)</button>`,
+		`aria-controls="agent-skills-direct-longy"`,
+		`aria-controls="agent-skills-inherited-longy"`,
+		`id="agent-skills-direct-longy"`,
+		`id="agent-skills-inherited-longy"`,
+		`aria-expanded="false"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("collapsible chip list missing %q", want)
+		}
+	}
+
+	// Shorty's 8 chips must not be wrapped in a collapsible list. Locate
+	// the chip-list opening tag immediately preceding the first shorty chip.
+	before, _, ok := strings.Cut(body, "short-01")
+	if !ok {
+		t.Fatalf("shorty chips missing from body")
+	}
+	shortListStart := strings.LastIndex(before, `<div id="agent-skills-direct-shorty"`)
+	if shortListStart < 0 {
+		t.Fatalf("could not locate shorty chip list opening tag")
+	}
+	shortListClose := strings.Index(body[shortListStart:], ">")
+	if shortListClose < 0 {
+		t.Fatalf("malformed shorty chip list tag")
+	}
+	shortListTag := body[shortListStart : shortListStart+shortListClose+1]
+	if strings.Contains(shortListTag, "skill-chip-list-collapsible") {
+		t.Errorf("8-chip list should not be collapsible, got %q", shortListTag)
 	}
 }
 
