@@ -134,6 +134,64 @@ func TestLooksLikeMissingSXAssetIgnoresUnrelatedErrors(t *testing.T) {
 	}
 }
 
+func TestFetchSkillZipFallsBackToPublicVaultWhenOrgVaultUnconfigured(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	publicDir := filepath.Join(root, "hetchyhq", "hetchy-sx-vault")
+	if err := os.MkdirAll(publicDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	publicClient, err := sxlib.OpenPath(publicDir, sxlib.PathOptions{Actor: sxlib.Actor{Email: "admin@example.com"}})
+	if err != nil {
+		t.Fatalf("OpenPath public: %v", err)
+	}
+	if err := publicClient.PutSkillZip(ctx, sxlib.SkillZipSpec{
+		Name:        "golang-pro",
+		Version:     "1",
+		Description: "Idiomatic Go patterns.",
+		ZipData:     testSkillZip(t, "golang-pro"),
+	}); err != nil {
+		t.Fatalf("seed public skill: %v", err)
+	}
+
+	m := &Manager{publicVaultURL: "file://" + publicDir}
+	got, err := m.FetchSkillZip(ctx, "org_test", Actor{Name: "Admin"}, "golang-pro")
+	if err != nil {
+		t.Fatalf("FetchSkillZip: %v", err)
+	}
+	if got.Name != "golang-pro" {
+		t.Fatalf("name = %q, want golang-pro", got.Name)
+	}
+	if got.Type != "skill" {
+		t.Fatalf("type = %q, want skill", got.Type)
+	}
+	if len(got.Data) == 0 {
+		t.Fatalf("zip data empty")
+	}
+}
+
+func TestFetchSkillZipReportsDisabledPublicVaultWhenOrgVaultUnconfigured(t *testing.T) {
+	m := &Manager{publicVaultURL: ""}
+	_, err := m.FetchSkillZip(context.Background(), "org_test", Actor{Name: "Admin"}, "golang-pro")
+	if err == nil {
+		t.Fatalf("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "no SX vault is configured") {
+		t.Fatalf("error = %q, want unconfigured-org guidance", err.Error())
+	}
+}
+
+func TestFetchSkillZipSurfacesPublicVaultOpenErrors(t *testing.T) {
+	m := &Manager{publicVaultURL: "file:///nonexistent/hetchy-vault-does-not-exist"}
+	_, err := m.FetchSkillZip(context.Background(), "org_test", Actor{Name: "Admin"}, "golang-pro")
+	if err == nil {
+		t.Fatalf("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "open public SX vault") {
+		t.Fatalf("error = %q, want vault-open prefix so the underlying cause is visible", err.Error())
+	}
+}
+
 func TestInstallSkillForAgentCopiesPrefixedPublicSkillUnderCanonicalName(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()

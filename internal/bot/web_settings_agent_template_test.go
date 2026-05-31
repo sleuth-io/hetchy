@@ -63,6 +63,10 @@ func TestSettingsTemplate_RendersAgentsTab(t *testing.T) {
 				PersonaAsset: "hetchy-bot",
 				SXTeams:      []string{"Frontend"},
 				SXSkills:     []string{"fix-pr", "webapp-testing"},
+				SXSkillChips: []agentSkillChipView{
+					{Name: "fix-pr", DisplayName: "fix-pr"},
+					{Name: "webapp-testing", DisplayName: "webapp-testing"},
+				},
 				VaultBackend: "skills_new",
 				Imported:     true,
 				SkillOptions: hetchySkillOptions,

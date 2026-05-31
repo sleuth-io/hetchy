@@ -25,6 +25,7 @@ type agentSettingsView struct {
 	TeamOptions   []agentTeamOptionView
 	CanAddTeam    bool
 	SXSkills      []string
+	SXSkillChips  []agentSkillChipView
 	VaultBackend  string
 	SyncStatus    string
 	SyncError     string
@@ -159,6 +160,7 @@ func (b *Bot) populateAgentSettingsTabData(ctx context.Context, orgID string, da
 			TeamOptions:   agentTeamOptions,
 			CanAddTeam:    canAddTeam,
 			SXSkills:      displaySkillNames(inheritedSkillNames(sxSkills, directSkillNames)),
+			SXSkillChips:  agentSkillChips(inheritedSkillNames(sxSkills, directSkillNames)),
 			VaultBackend:  vaultBackend,
 			SyncStatus:    a.SyncStatus,
 			SyncError:     a.SyncError,
