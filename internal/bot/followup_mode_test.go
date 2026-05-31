@@ -70,12 +70,32 @@ func TestDecideFollowUpModeForcesChangeForMissingProofRemediation(t *testing.T) 
 	}
 }
 
+func TestDecideFollowUpModeForcesChangeForBrokenPriorOutput(t *testing.T) {
+	b := &Bot{
+		log: discardLogger(),
+		followUpModeFn: func(context.Context, orgcfg.Config, convstore.Record, string) followUpModeDecision {
+			return followUpModeDecision{Mode: followUpModeInspect, Confidence: 0.92, Reason: "asks why rendering failed"}
+		},
+	}
+	request := "The last screenshot where the skill couldn't be rendered seems like a bug. Why can't that skill be rendered?"
+	decision := b.decideFollowUpMode(context.Background(), orgcfg.Config{}, convstore.Record{}, request)
+	if decision.Mode != followUpModeChange {
+		t.Fatalf("mode = %q, want change", decision.Mode)
+	}
+	if !strings.Contains(decision.Reason, "remediation") {
+		t.Fatalf("reason = %q, want remediation override", decision.Reason)
+	}
+}
+
 func TestPriorWorkRemediationRequestAvoidsCommitInspectFalsePositive(t *testing.T) {
 	if isPriorWorkRemediationRequest("what's missing in this commit message?") {
 		t.Fatal("commit inspection question should not force change mode")
 	}
 	if !isPriorWorkRemediationRequest("the PR body is missing proof") {
 		t.Fatal("missing proof in PR body should force change mode")
+	}
+	if !isPriorWorkRemediationRequest("the screenshot where the skill couldn't be rendered seems like a bug") {
+		t.Fatal("broken rendered skill screenshot should force change mode")
 	}
 }
 
@@ -87,10 +107,12 @@ func TestFollowUpModeTimeoutAllowsRoutineLLMLatency(t *testing.T) {
 
 func TestFollowUpModeSystemPromptTreatsPriorDeliverableComplaintsAsChange(t *testing.T) {
 	for _, want := range []string{
-		"missing prior-run deliverables",
+		"prior-run output",
 		"you didn't attach proof",
 		"the PR body lacks evidence",
 		"rerun validation",
+		"the screenshot shows a bug",
+		`even when phrased as "why"`,
 	} {
 		if !strings.Contains(followUpModeSystemPrompt, want) {
 			t.Fatalf("follow-up mode system prompt missing %q\n%s", want, followUpModeSystemPrompt)
