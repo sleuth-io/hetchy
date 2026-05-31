@@ -2,12 +2,82 @@ package sxsync
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
 
 	sxlib "github.com/sleuth-io/sx/pkg/sxvault"
 )
+
+// AssetZip is the value sxsync returns when callers need the raw zip bytes
+// of an installed asset (e.g. to render SKILL.md and list the skill's files
+// in the UI). It is a narrow re-export of sxlib's AssetZip so callers do not
+// need to depend on the sxvault package directly.
+type AssetZip struct {
+	Name        string
+	Version     string
+	Type        string
+	Description string
+	Data        []byte
+}
+
+// FetchSkillZip pulls a skill asset's zip from the org's active vault, then
+// falls back to the public vault if the active vault does not have it. The
+// fallback matches the install path used by attachAgentSkillFromSettings, so
+// the UI can show skill files even when an org is still relying on
+// Hetchy-default skills that haven't been copied into its own vault yet.
+func (m *Manager) FetchSkillZip(ctx context.Context, orgID string, actor Actor, name string) (AssetZip, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return AssetZip{}, errors.New("skill name is required")
+	}
+	var out AssetZip
+	err := m.withGitVaultGuardIfConfigured(ctx, orgID, func(ctx context.Context, gv *GitVaultView) error {
+		handle, err := m.openOrgVault(ctx, orgID, actor, gv)
+		if err != nil {
+			return err
+		}
+		if zip, err := handle.Client.GetAssetZip(ctx, name, ""); err == nil {
+			out = assetZipFromLib(zip)
+			return nil
+		} else if !looksLikeMissingSXAsset(err) {
+			return err
+		}
+		public, ok, err := m.openPublicVault(ctx, actor)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("skill %q was not found in the active SX vault and the public SX vault is disabled", name)
+		}
+		var lastErr error
+		for _, candidate := range publicSkillCandidates(m.publicVaultURL, name) {
+			zip, err := public.GetAssetZip(ctx, candidate, "")
+			if err != nil {
+				lastErr = err
+				continue
+			}
+			out = assetZipFromLib(zip)
+			return nil
+		}
+		if lastErr != nil {
+			return fmt.Errorf("skill %q was not found in the active SX vault or public SX vault: %w", name, lastErr)
+		}
+		return fmt.Errorf("skill %q was not found", name)
+	})
+	return out, err
+}
+
+func assetZipFromLib(z sxlib.AssetZip) AssetZip {
+	return AssetZip{
+		Name:        z.Name,
+		Version:     z.Version,
+		Type:        z.Type,
+		Description: z.Description,
+		Data:        z.Data,
+	}
+}
 
 func (m *Manager) ListSkills(ctx context.Context, orgID string, actor Actor) ([]SkillSummary, error) {
 	var skills []SkillSummary

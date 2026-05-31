@@ -584,3 +584,4 @@
       btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
     });
   });
+

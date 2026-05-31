@@ -61,6 +61,8 @@ func (b *Bot) runWeb(ctx context.Context) error {
 	mux.Handle("/settings/org/sx-vault/delete", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.sxVaultSettingsHandler))))
 	mux.Handle("/settings/org/agents/", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.agentSettingsActionHandler))))
 	mux.Handle("/settings/org/agents", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.agentSettingsActionHandler))))
+	mux.Handle("/settings/org/agent-doc", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.agentDocHandler))))
+	mux.Handle("/settings/org/skill-doc", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.skillDocHandler))))
 	mux.Handle("/settings/org/repositories/flavor", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.repoFlavorSettingsHandler))))
 	mux.Handle("/settings/org/billing/topup-settings", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.billingTopupSettingsHandler))))
 	mux.Handle("/billing/checkout", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.billingCheckoutHandler))))

@@ -58,6 +58,10 @@ type fakeSXManager struct {
 
 	configuredRepo string
 	configureErr   error
+
+	fetchedSkill    string
+	fetchedSkillZip sxsync.AssetZip
+	fetchSkillErr   error
 }
 
 func (f *fakeSXManager) CheckCache() (sxsync.CacheStatus, error) {
@@ -139,4 +143,9 @@ func (f *fakeSXManager) DeleteGitVault(context.Context, string) error {
 func (f *fakeSXManager) ConfigureExistingGitVault(_ context.Context, _ string, repo string) (sxsync.GitVaultView, error) {
 	f.configuredRepo = repo
 	return sxsync.GitVaultView{Configured: true, RepositorySlug: repo}, f.configureErr
+}
+
+func (f *fakeSXManager) FetchSkillZip(_ context.Context, _ string, _ sxsync.Actor, name string) (sxsync.AssetZip, error) {
+	f.fetchedSkill = name
+	return f.fetchedSkillZip, f.fetchSkillErr
 }

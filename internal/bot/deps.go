@@ -69,6 +69,7 @@ type sxManager interface {
 	GitVault(context.Context, string) (sxsync.GitVaultView, error)
 	ListSkills(context.Context, string, sxsync.Actor) ([]sxsync.SkillSummary, error)
 	ListTeams(context.Context, string, sxsync.Actor) ([]sxsync.TeamSummary, error)
+	FetchSkillZip(context.Context, string, sxsync.Actor, string) (sxsync.AssetZip, error)
 	SyncAgents(context.Context, string, sxsync.Actor) ([]agents.Profile, error)
 	SaveAgent(context.Context, string, sxsync.Actor, agents.Profile, string) (agents.Profile, error)
 	DeleteAgent(context.Context, string, sxsync.Actor, string) error

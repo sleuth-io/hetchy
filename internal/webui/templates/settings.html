@@ -657,6 +657,22 @@
 
   <p>{{$a.Description}}</p>
 
+  <div class="agent-files">
+    <div class="agent-skills-label">Installed agent files</div>
+    <ul class="agent-file-list">
+      <li>
+        <button type="button" class="agent-file-link" data-open-agent-doc="{{$a.Slug}}" data-agent-display-name="{{$a.DisplayName}}">
+          <svg class="agent-file-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3.5 1.5h6L12.5 4.5v9A1 1 0 0 1 11.5 14.5h-8A1 1 0 0 1 2.5 13.5v-11A1 1 0 0 1 3.5 1.5z"/>
+            <path d="M9 1.5v3h3.5"/>
+            <path d="M5 8h6M5 10.5h6M5 5.5h2"/>
+          </svg>
+          <span>AGENTS.md</span>
+        </button>
+      </li>
+    </ul>
+  </div>
+
   {{if and $root.IsAdmin (not $a.BuiltIn) (not $a.RemoteBacked) (not $a.Imported) (not $a.VaultBackend)}}
   <form method="POST" action="/settings/org/agents/{{$a.Slug}}" class="agent-edit-form agent-profile-form">
     <div class="agent-form-grid">
@@ -688,11 +704,11 @@
                 data-confirm-action="Remove"
                 data-confirm-progress="Removing...">
             <input type="hidden" name="skill" value="{{.Name}}">
-            <span>{{.DisplayName}}</span>
+            <button type="button" class="skill-chip-name" data-open-skill-doc="{{.Name}}" data-skill-display-name="{{.DisplayName}}">{{.DisplayName}}</button>
             <button type="submit" class="skill-chip-remove" aria-label="Remove {{.DisplayName}}">x</button>
           </form>
           {{else}}
-          <span class="skill-chip">{{.DisplayName}}</span>
+          <button type="button" class="skill-chip skill-chip-button" data-open-skill-doc="{{.Name}}" data-skill-display-name="{{.DisplayName}}">{{.DisplayName}}</button>
           {{end}}
         {{end}}
       </div>
@@ -710,7 +726,7 @@
       {{$inheritedListID := printf "agent-skills-inherited-%s" $a.Slug}}
       <div class="agent-skills-label agent-skills-label-secondary">Inherited skills from orgs and teams</div>
       <div id="{{$inheritedListID}}" class="skill-chip-list{{if $inheritedCollapsible}} skill-chip-list-collapsible is-collapsed{{end}}">
-        {{range $a.SXSkills}}<span class="skill-chip">{{.}}</span>{{end}}
+        {{range $a.SXSkillChips}}<button type="button" class="skill-chip skill-chip-button" data-open-skill-doc="{{.Name}}" data-skill-display-name="{{.DisplayName}}">{{.DisplayName}}</button>{{end}}
       </div>
       {{if $inheritedCollapsible}}
         <button type="button" class="skill-chip-list-toggle" data-skill-chip-list-toggle
@@ -902,6 +918,31 @@
   {{end}}
   {{template "settings_confirm_dialog" .}}
   {{template "modal_agent_create" .}}
+  {{template "modal_agent_details" .}}
+{{end}}
+
+{{define "modal_agent_details"}}
+<dialog class="api-modal agent-details-modal" id="modal-agent-details" aria-labelledby="agent-details-title">
+  <div class="agent-details-body">
+    <header class="agent-details-head">
+      <h2 id="agent-details-title">Loading...</h2>
+      <button type="button" class="agent-details-close" data-close-modal aria-label="Close">x</button>
+    </header>
+    <div class="agent-details-grid">
+      <section class="agent-details-doc">
+        <div class="agent-details-file-meta" data-agent-details-meta hidden></div>
+        <div class="agent-details-loading" data-agent-details-loading>Loading...</div>
+        <div class="agent-details-error" data-agent-details-error hidden></div>
+        <article class="agent-details-rendered markdown-body" data-agent-details-rendered hidden></article>
+        <pre class="agent-details-raw" data-agent-details-raw hidden></pre>
+      </section>
+      <aside class="agent-details-sidebar" data-agent-details-sidebar hidden>
+        <h3>Files</h3>
+        <ul class="agent-details-file-list" data-agent-details-file-list></ul>
+      </aside>
+    </div>
+  </div>
+</dialog>
 {{end}}
 
 {{define "modal_agent_create"}}
@@ -1501,5 +1542,6 @@
 {{end}}
 
 <script src="{{assetPath "settings.js"}}"></script>
+<script src="{{assetPath "agent_details_modal.js"}}"></script>
 </body>
 </html>
