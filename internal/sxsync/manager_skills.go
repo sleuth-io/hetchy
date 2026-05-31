@@ -27,6 +27,10 @@ type AssetZip struct {
 // fallback matches the install path used by attachAgentSkillFromSettings, so
 // the UI can show skill files even when an org is still relying on
 // Hetchy-default skills that haven't been copied into its own vault yet.
+//
+// Orgs without any SX vault configured can still render Hetchy-default skills
+// straight from the public vault, since the chips for those skills come from
+// built-in agent profiles that ship with Hetchy.
 func (m *Manager) FetchSkillZip(ctx context.Context, orgID string, actor Actor, name string) (AssetZip, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -34,21 +38,28 @@ func (m *Manager) FetchSkillZip(ctx context.Context, orgID string, actor Actor, 
 	}
 	var out AssetZip
 	err := m.withGitVaultGuardIfConfigured(ctx, orgID, func(ctx context.Context, gv *GitVaultView) error {
-		handle, err := m.openOrgVault(ctx, orgID, actor, gv)
-		if err != nil {
-			return err
+		handle, openErr := m.openOrgVault(ctx, orgID, actor, gv)
+		if openErr != nil && !errors.Is(openErr, ErrNotConfigured) {
+			return openErr
 		}
-		if zip, err := handle.Client.GetAssetZip(ctx, name, ""); err == nil {
-			out = assetZipFromLib(zip)
-			return nil
-		} else if !looksLikeMissingSXAsset(err) {
-			return err
+		if openErr == nil {
+			zip, zerr := handle.Client.GetAssetZip(ctx, name, "")
+			if zerr == nil {
+				out = assetZipFromLib(zip)
+				return nil
+			}
+			if !looksLikeMissingSXAsset(zerr) {
+				return zerr
+			}
 		}
-		public, ok, err := m.openPublicVault(ctx, actor)
-		if err != nil {
-			return err
+		public, ok, perr := m.openPublicVault(ctx, actor)
+		if perr != nil {
+			return fmt.Errorf("open public SX vault for skill %q: %w", name, perr)
 		}
 		if !ok {
+			if errors.Is(openErr, ErrNotConfigured) {
+				return fmt.Errorf("skill %q cannot be rendered: no SX vault is configured for this org and the public SX vault is disabled", name)
+			}
 			return fmt.Errorf("skill %q was not found in the active SX vault and the public SX vault is disabled", name)
 		}
 		var lastErr error
