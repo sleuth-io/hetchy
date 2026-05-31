@@ -93,7 +93,7 @@ func applyFollowUpModeSafeguards(decision followUpModeDecision, userRequest stri
 		return followUpModeDecision{
 			Mode:       followUpModeChange,
 			Confidence: decision.Confidence,
-			Reason:     "latest request appears to ask for remediation of a missing prior-run deliverable; forcing change mode",
+			Reason:     "latest request appears to ask for remediation of prior-run output; forcing change mode",
 		}
 	}
 	return decision
@@ -106,6 +106,18 @@ func isPriorWorkRemediationRequest(userRequest string) bool {
 	}
 
 	defectSignals := []string{
+		"bug",
+		"broken",
+		"doesn't work",
+		"does not work",
+		"isn't working",
+		"is not working",
+		"can't",
+		"cannot",
+		"couldn't",
+		"could not",
+		"won't",
+		"will not",
 		"you didn't",
 		"you did not",
 		"you forgot",
@@ -143,6 +155,12 @@ func isPriorWorkRemediationRequest(userRequest string) bool {
 		"pull request",
 		"checks",
 		"push",
+		"render",
+		"rendered",
+		"skill",
+		"agent file",
+		"modal",
+		"screen",
 	}
 
 	hasDefect := containsAnySubstring(s, defectSignals)
@@ -271,7 +289,7 @@ Return only a strict JSON object with this schema:
 {"mode":"change|inspect|answer_only","confidence":0.0,"reason":"short explanation"}
 
 Modes:
-- change: the user wants code, files, commits, pushes, PR updates, validation, or fixes. Also use change for complaints or corrections about missing prior-run deliverables, such as "you didn't attach proof", "the PR body lacks evidence", "you forgot to wait for checks", "rerun validation", or "add the screenshot". These require remediation, not just inspection. Use change for any ambiguous request.
+- change: the user wants code, files, commits, pushes, PR updates, validation, or fixes. Also use change for complaints or corrections about prior-run output, such as "you didn't attach proof", "the PR body lacks evidence", "you forgot to wait for checks", "rerun validation", "add the screenshot", "the screenshot shows a bug", "it can't render", or "this should be able to render". These require remediation, not just inspection, even when phrased as "why". Use change for any ambiguous request.
 - inspect: the user wants investigation, logs, status, review, explanation grounded in repo/runtime state, or anomaly analysis, but did not ask to modify code or PR state.
 - answer_only: the user wants a simple conversational answer and does not need repo inspection, validation, git, or PR work.
 

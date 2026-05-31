@@ -153,7 +153,10 @@ ensure_sx() {
     return 0
   fi
   echo "[hetchy] installing sx"
-  hetchy_install_sx
+  if ! hetchy_install_sx; then
+    echo "[hetchy] WARNING: sx install failed; continuing without newly refreshed skills"
+    return 0
+  fi
   export PATH="$HOME/.local/bin:$PATH"
 }
 
@@ -235,17 +238,24 @@ run_sx_install() {
   fi
 
   echo "[hetchy] refreshing sx skills (${label})"
+  if ! command -v sx >/dev/null 2>&1; then
+    echo "[hetchy] WARNING: sx unavailable for skills refresh (${label}); continuing without newly refreshed skills"
+    return 0
+  fi
   # See agent.sh for the rationale on running sx inside the checkout:
   # the target dir's git remote URL is what scopes per-repo skills,
   # and a follow-up run starts in $HOME for some daytona images so a
   # plain --target without an explicit cd has historically dropped to
   # global scope.
-  (cd "$SF_WORKDIR" && \
+  if ! (cd "$SF_WORKDIR" && \
     SX_CONFIG_DIR="$config_dir" \
     SX_CACHE_DIR="$cache_dir" \
     SX_BOT="$sx_bot" \
     SX_BOT_KEY="$sx_bot_key" \
-      sx install --profile "$profile" --client=claude-code --target "$SF_WORKDIR")
+      sx install --profile "$profile" --client=claude-code --target "$SF_WORKDIR"); then
+    echo "[hetchy] WARNING: sx skills refresh (${label}) failed; continuing without newly refreshed skills"
+    return 0
+  fi
   if [[ -n "$marker" ]]; then
     find "$marker_dir" -maxdepth 1 -type f -name "${label}.*.succeeded" ! -name "$(basename "$marker")" -delete 2>/dev/null || true
     : > "$marker"
