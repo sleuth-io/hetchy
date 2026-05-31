@@ -166,6 +166,39 @@ func TestSkillDocHandlerRequiresName(t *testing.T) {
 	}
 }
 
+func TestSkillDocHandlerWithoutSXReturns503(t *testing.T) {
+	b := newBypassOrgBot(t, "member")
+	// b.sx left nil to simulate an org/dev environment with no SX vault.
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/settings/org/skill-doc?name=fix-pr", nil)
+	b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.skillDocHandler))).ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d", rec.Code)
+	}
+}
+
+func TestTruncateRunesBytesPreservesUTF8(t *testing.T) {
+	// Two ASCII bytes (4 bytes total), followed by a 3-byte Japanese char.
+	in := "ab" + "あ" // "あ" is 3 bytes (0xE3 0x81 0x82)
+	// Cap at 4 bytes: should keep "ab" only since including "あ" would land mid-codepoint.
+	got := truncateRunesBytes(in, 4)
+	if got != "ab" {
+		t.Fatalf("got %q, want %q", got, "ab")
+	}
+	// Cap at 3 bytes: keep "ab", drop the 3-byte rune since 2+3 > 3.
+	if got := truncateRunesBytes(in, 3); got != "ab" {
+		t.Fatalf("3-byte cap got %q", got)
+	}
+	// Cap at 5 with two runes that fit exactly: "ab" (2 bytes) + 3-byte rune = 5 bytes.
+	if got := truncateRunesBytes(in, 5); got != "abあ" {
+		t.Fatalf("exact-fit cap got %q", got)
+	}
+	// No-op when under cap.
+	if got := truncateRunesBytes("hi", 1024); got != "hi" {
+		t.Fatalf("under-cap got %q", got)
+	}
+}
+
 func TestSkillDocHandlerSurfaceFetchErrors(t *testing.T) {
 	sx := &fakeSXManager{fetchSkillErr: errors.New("boom")}
 	b := newBypassOrgBot(t, "member")

@@ -11,6 +11,7 @@ import (
 	"path"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/extension"
@@ -111,7 +112,7 @@ func (b *Bot) skillDocHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	requestedPath := strings.TrimSpace(r.URL.Query().Get("path"))
 	if b.sx == nil {
-		http.Error(w, "sx vault is not configured", http.StatusBadRequest)
+		http.Error(w, "sx vault is not configured", http.StatusServiceUnavailable)
 		return
 	}
 	zip, err := b.fetchSkillZip(r.Context(), p, name)
@@ -209,12 +210,28 @@ func agentFrontmatterDescriptionForDoc(values ...string) string {
 		if value == "" {
 			continue
 		}
-		if len(value) > 1024 {
-			value = value[:1024]
-		}
-		return value
+		return truncateRunesBytes(value, 1024)
 	}
 	return "Custom Hetchy agent"
+}
+
+// truncateRunesBytes returns value clipped to at most maxBytes bytes without
+// splitting a UTF-8 rune. A naive value[:maxBytes] slice can land mid-codepoint
+// and corrupt the trailing character, which would then end up inside the
+// frontmatter YAML returned to the client.
+func truncateRunesBytes(value string, maxBytes int) string {
+	if len(value) <= maxBytes {
+		return value
+	}
+	cut := 0
+	for i, r := range value {
+		size := utf8.RuneLen(r)
+		if size < 0 || i+size > maxBytes {
+			break
+		}
+		cut = i + size
+	}
+	return value[:cut]
 }
 
 func firstNonEmptyDoc(values ...string) string {
