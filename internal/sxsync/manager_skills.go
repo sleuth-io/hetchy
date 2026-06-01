@@ -308,9 +308,19 @@ func looksLikeMissingSXAsset(err error) bool {
 	if strings.Contains(msg, "not found") && (strings.Contains(msg, "asset") || strings.Contains(msg, "skill")) {
 		return true
 	}
-	// Skills.new currently returns an opaque HTTP 500 when installing an asset
-	// on a bot before that asset exists in the active vault.
-	return msg == "http 500" || strings.Contains(msg, "returned error 500")
+	// Skills.new returns opaque HTTP 500s when installing an asset on a bot
+	// before that asset exists in the active vault, and HTTP 502s from its
+	// edge layer when reading a skill asset whose name does not exist (e.g.
+	// a display label like "Bootstrap Spec System" instead of the slug
+	// "bootstrap-spec-system"). Treat both as "not present in this vault,
+	// try the next candidate" so the slug fallback and public vault fallback
+	// downstream get a chance to resolve the asset.
+	for _, marker := range [...]string{"http 500", "http 502", "returned error 500", "returned error 502"} {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func putSkillZipWithReturnedName(ctx context.Context, target *sxlib.Client, spec sxlib.SkillZipSpec) (string, error) {

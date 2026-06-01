@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -147,6 +148,9 @@ func TestLooksLikeMissingSXAssetRecognizesOpaqueInstallErrors(t *testing.T) {
 		{name: "skill not found", err: errors.New(`skill "fix-pr" not found`)},
 		{name: "bare skills new 500", err: errors.New("HTTP 500")},
 		{name: "returned 500", err: errors.New(`returned error 500: {"errors":[{"message":"internal"}]}`)},
+		{name: "bare skills new 502", err: errors.New("HTTP 502")},
+		{name: "wrapped skills new 502", err: fmt.Errorf("sxvault: listing versions for %q: HTTP 502: bad gateway", "Bootstrap Spec System")},
+		{name: "returned 502", err: errors.New(`returned error 502: <html>Bad Gateway</html>`)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if !looksLikeMissingSXAsset(tc.err) {
@@ -164,6 +168,8 @@ func TestLooksLikeMissingSXAssetIgnoresUnrelatedErrors(t *testing.T) {
 		{name: "nil"},
 		{name: "permission", err: errors.New("permission denied")},
 		{name: "forbidden", err: errors.New("HTTP 403")},
+		{name: "service unavailable", err: errors.New("HTTP 503")},
+		{name: "gateway timeout", err: errors.New("HTTP 504")},
 		{name: "object missing without asset context", err: errors.New("object not found")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
