@@ -601,7 +601,8 @@ func (f *billingTopupEligibilityDB) QueryRow(_ context.Context, query string, ar
 	switch {
 	case strings.Contains(query, "EnsureBillingAccount"):
 		return billingTopupAccountRow{account: f.account}
-	case strings.Contains(query, "EnsureBillingTopupSettings"):
+	case strings.Contains(query, "EnsureBillingTopupSettings"),
+		strings.Contains(query, "ResetBillingTopupMonthlyUsage"):
 		return billingTopupSettingsRow{orgID: f.account.OrgID}
 	case strings.Contains(query, "UpdateBillingStripeCustomer"):
 		f.setStripeCustomerCalls++
