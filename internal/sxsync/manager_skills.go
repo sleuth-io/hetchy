@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"slices"
 	"strings"
 
@@ -43,15 +44,13 @@ func (m *Manager) FetchSkillZip(ctx context.Context, orgID string, actor Actor, 
 			return openErr
 		}
 		if openErr == nil {
-			for _, candidate := range orgSkillCandidates(name) {
-				zip, zerr := handle.Client.GetAssetZip(ctx, candidate, "")
-				if zerr == nil {
-					out = assetZipFromLib(zip)
-					return nil
-				}
-				if !looksLikeMissingSXAsset(zerr) {
-					return zerr
-				}
+			found, zip, fetchErr := m.fetchSkillFromOrgVault(ctx, orgID, handle, name)
+			if fetchErr != nil {
+				return fetchErr
+			}
+			if found {
+				out = zip
+				return nil
 			}
 		}
 		public, ok, perr := m.openPublicVault(ctx, actor)
@@ -80,6 +79,58 @@ func (m *Manager) FetchSkillZip(ctx context.Context, orgID string, actor Actor, 
 		return fmt.Errorf("skill %q was not found", name)
 	})
 	return out, err
+}
+
+// fetchSkillFromOrgVault retrieves a skill asset from the active org vault.
+// For skills.new-backed vaults we use a direct-HTTP fetch helper that
+// bypasses sxlib.GetAssetZip; see fetchSkillsNewSkillZip for the reason. For
+// git-backed vaults sxlib's read path works correctly so we route through it
+// unchanged. Returns (found, zip, err): when found is false and err is nil,
+// the asset is missing from this vault and the caller should fall back to
+// the public vault.
+func (m *Manager) fetchSkillFromOrgVault(ctx context.Context, orgID string, handle VaultHandle, name string) (bool, AssetZip, error) {
+	if handle.Backend == BackendSkillsNew {
+		sxKey, err := m.skillsNewKey(ctx, orgID)
+		if err != nil {
+			return false, AssetZip{}, err
+		}
+		serverURL, httpClient := m.skillsNewHTTPConfig()
+		for _, candidate := range orgSkillCandidates(name) {
+			zip, ferr := fetchSkillsNewSkillZip(ctx, httpClient, serverURL, sxKey, candidate)
+			if ferr == nil {
+				return true, zip, nil
+			}
+			if !looksLikeMissingSXAsset(ferr) {
+				return false, AssetZip{}, ferr
+			}
+		}
+		return false, AssetZip{}, nil
+	}
+	for _, candidate := range orgSkillCandidates(name) {
+		zip, zerr := handle.Client.GetAssetZip(ctx, candidate, "")
+		if zerr == nil {
+			return true, assetZipFromLib(zip), nil
+		}
+		if !looksLikeMissingSXAsset(zerr) {
+			return false, AssetZip{}, zerr
+		}
+	}
+	return false, AssetZip{}, nil
+}
+
+// skillsNewHTTPConfig resolves the server URL and HTTP client used for the
+// direct-fetch path. Both fall back to production defaults; tests inject
+// overrides via the Manager struct.
+func (m *Manager) skillsNewHTTPConfig() (string, *http.Client) {
+	serverURL := strings.TrimSpace(m.skillsNewServerURL)
+	if serverURL == "" {
+		serverURL = sxlib.DefaultSkillsNewURL
+	}
+	client := m.skillsNewHTTPClient
+	if client == nil {
+		client = http.DefaultClient
+	}
+	return serverURL, client
 }
 
 func assetZipFromLib(z sxlib.AssetZip) AssetZip {
