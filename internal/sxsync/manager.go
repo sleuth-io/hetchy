@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -44,6 +45,14 @@ type Manager struct {
 	gitOps              chan struct{}
 	orgLocksMu          sync.Mutex
 	orgLocks            map[string]chan struct{}
+
+	// skillsNewServerURL and skillsNewHTTPClient back the direct-HTTP skill
+	// fetch path that works around skills.new's broken metadata.toml
+	// endpoint (see fetchSkillsNewSkillZip). Production code leaves them
+	// zero-valued and uses sxlib.DefaultSkillsNewURL + http.DefaultClient;
+	// tests override these to point at an httptest server.
+	skillsNewServerURL  string
+	skillsNewHTTPClient *http.Client
 }
 
 func NewManager(d *db.Store, orgs *orgcfg.Store, agents *agents.Store, app *githubapp.App) *Manager {
