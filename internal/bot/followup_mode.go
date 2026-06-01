@@ -89,6 +89,13 @@ func normalizeFollowUpMode(mode followUpMode) followUpMode {
 }
 
 func applyFollowUpModeSafeguards(decision followUpModeDecision, userRequest string) followUpModeDecision {
+	if decision.Mode != followUpModeChange && shouldStartNewPRFromFollowUp(userRequest) {
+		return followUpModeDecision{
+			Mode:       followUpModeChange,
+			Confidence: decision.Confidence,
+			Reason:     "latest request asks for a new pull request; forcing change mode",
+		}
+	}
 	if decision.Mode != followUpModeChange && isPriorWorkRemediationRequest(userRequest) {
 		return followUpModeDecision{
 			Mode:       followUpModeChange,
@@ -289,7 +296,7 @@ Return only a strict JSON object with this schema:
 {"mode":"change|inspect|answer_only","confidence":0.0,"reason":"short explanation"}
 
 Modes:
-- change: the user wants code, files, commits, pushes, PR updates, validation, or fixes. Also use change for complaints or corrections about prior-run output, such as "you didn't attach proof", "the PR body lacks evidence", "you forgot to wait for checks", "rerun validation", "add the screenshot", "the screenshot shows a bug", "it can't render", or "this should be able to render". These require remediation, not just inspection, even when phrased as "why". Use change for any ambiguous request.
+- change: the user wants code, files, commits, pushes, PR updates, validation, fixes, or a new/separate pull request. Also use change for complaints or corrections about prior-run output, such as "you didn't attach proof", "the PR body lacks evidence", "you forgot to wait for checks", "rerun validation", "add the screenshot", "the screenshot shows a bug", "it can't render", or "this should be able to render". These require remediation, not just inspection, even when phrased as "why". Use change for any ambiguous request.
 - inspect: the user wants investigation, logs, status, review, explanation grounded in repo/runtime state, or anomaly analysis, but did not ask to modify code or PR state.
 - answer_only: the user wants a simple conversational answer and does not need repo inspection, validation, git, or PR work.
 

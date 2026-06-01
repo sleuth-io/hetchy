@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
+	sdkerrors "github.com/daytonaio/daytona/libs/sdk-go/pkg/errors"
 
 	"github.com/hetchyhq/hetchy/internal/agents"
 	"github.com/hetchyhq/hetchy/internal/blocks"
@@ -612,6 +613,123 @@ func TestHandleRequestFollowUpSuccessUsesMocks(t *testing.T) {
 	}
 	if got := rec.History; len(got) != 2 || got[1] != "follow up" {
 		t.Fatalf("follow-up should append new turn, history=%#v", got)
+	}
+}
+
+func TestHandleRequestFollowUpResumeConflictCreatesReplacementSandbox(t *testing.T) {
+	convs := &fakeConversationStore{
+		rec: convstore.Record{
+			OrgID:       "org_test",
+			ThreadID:    "thread-1",
+			SandboxID:   "sandbox-old",
+			Branch:      "feature/sf-old",
+			PRURL:       "https://github.com/hetchyhq/hetchy/pull/1",
+			GitHubOwner: "hetchyhq",
+			GitHubRepo:  "hetchy",
+			History:     []string{"first request"},
+		},
+	}
+	b := testCoreBot(convs)
+	b.resolveRepoFn = func(context.Context, string, string, string) (repoCtx, error) {
+		return repoCtx{Slug: "hetchyhq/hetchy", BaseBranch: "main", GitHubToken: "token"}, nil
+	}
+	b.getSandboxFn = func(_ context.Context, id string) (*daytona.Sandbox, error) {
+		if id != "sandbox-old" {
+			t.Fatalf("getSandbox id = %q, want sandbox-old", id)
+		}
+		return &daytona.Sandbox{ID: id}, nil
+	}
+	b.resumeSandboxFn = func(context.Context, *daytona.Sandbox, blocks.Emitter) error {
+		return sdkerrors.NewDaytonaError("Conflict: Sandbox state change in progress", 409, nil)
+	}
+	createCalls := 0
+	b.createFn = func(context.Context, any) (*daytona.Sandbox, error) {
+		createCalls++
+		return &daytona.Sandbox{ID: "sandbox-new"}, nil
+	}
+	b.runFollowUpFn = func(_ context.Context, sb *daytona.Sandbox, _ repoCtx, _ orgcfg.Config, rec convstore.Record, _ agents.Profile, text, _ string, _ chatTaskOptions, _ ClaudeModel, _ followUpMode, emit blocks.Emitter) (string, error) {
+		if sb.ID != "sandbox-new" || rec.SandboxID != "sandbox-new" || rec.Branch != "feature/sf-old" || text != "follow up" {
+			t.Fatalf("unexpected replacement follow-up args: sandbox=%s rec=%+v text=%q", sb.ID, rec, text)
+		}
+		emit.Notify("Follow-up started", "replacement reached")
+		return "https://github.com/hetchyhq/hetchy/pull/1", nil
+	}
+	b.deleteSandboxSessionFn = func(*daytona.Sandbox, string) {}
+	b.stopAndArchiveFn = func(context.Context, *daytona.Sandbox) {}
+	emit := newCaptureEmitter()
+
+	b.HandleRequest(context.Background(),
+		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant"},
+		"follow up", "req-2", "thread-1", "user-1",
+		chatTaskOptionPatch{}, nil, nil, ClaudeModelOpus, emit)
+
+	if createCalls != 1 {
+		t.Fatalf("replacement sandbox create calls = %d, want 1", createCalls)
+	}
+	if !emit.hasCall("notify", "Sandbox replaced") {
+		t.Fatalf("expected replacement notice, got calls=%v", emit.Calls)
+	}
+	if !emit.hasCall("result", "Done!") {
+		t.Fatalf("expected follow-up success result, got calls=%v", emit.Calls)
+	}
+	rec := convs.lastUpsert(t)
+	if rec.SandboxID != "sandbox-new" || rec.Branch != "feature/sf-old" {
+		t.Fatalf("final record should use replacement sandbox and preserve branch: %+v", rec)
+	}
+}
+
+func TestHandleRequestFollowUpNewPRStartsFreshRun(t *testing.T) {
+	convs := &fakeConversationStore{
+		rec: convstore.Record{
+			OrgID:       "org_test",
+			ThreadID:    "thread-1",
+			SandboxID:   "sandbox-old",
+			Branch:      "feature/sf-old",
+			PRURL:       "https://github.com/hetchyhq/hetchy/pull/1",
+			GitHubOwner: "hetchyhq",
+			GitHubRepo:  "hetchy",
+			History:     []string{"first request"},
+		},
+	}
+	b := testCoreBot(convs)
+	b.resolveRepoFn = func(context.Context, string, string, string) (repoCtx, error) {
+		return repoCtx{Slug: "hetchyhq/hetchy", BaseBranch: "main", GitHubToken: "token"}, nil
+	}
+	b.createFn = func(context.Context, any) (*daytona.Sandbox, error) {
+		return &daytona.Sandbox{ID: "sandbox-new"}, nil
+	}
+	b.branchNameFn = func(context.Context, orgcfg.Config, string) string {
+		return "feature/sf-new"
+	}
+	b.followUpModeFn = func(context.Context, orgcfg.Config, convstore.Record, string) followUpModeDecision {
+		return followUpModeDecision{Mode: followUpModeChange, Confidence: 1, Reason: "new PR requested"}
+	}
+	var gotRequest string
+	b.runAgentFn = func(_ context.Context, sb *daytona.Sandbox, _ repoCtx, _ orgcfg.Config, _ agents.Profile, userRequest, _ string, branch string, _ chatTaskOptions, _ ClaudeModel, _ blocks.Emitter) (string, error) {
+		if sb.ID != "sandbox-new" || branch != "feature/sf-new" {
+			t.Fatalf("fresh run target = sandbox %s branch %s", sb.ID, branch)
+		}
+		gotRequest = userRequest
+		return "https://github.com/hetchyhq/hetchy/pull/2", nil
+	}
+	b.deleteSandboxSessionFn = func(*daytona.Sandbox, string) {}
+	b.stopAndArchiveFn = func(context.Context, *daytona.Sandbox) {}
+	emit := newCaptureEmitter()
+
+	b.HandleRequest(context.Background(),
+		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant"},
+		"fix it and open a new PR", "req-2", "thread-1", "user-1",
+		chatTaskOptionPatch{}, nil, nil, ClaudeModelOpus, emit)
+
+	if !strings.Contains(gotRequest, "Create a NEW pull request") || !strings.Contains(gotRequest, "https://github.com/hetchyhq/hetchy/pull/1") {
+		t.Fatalf("new PR request missing prior context:\n%s", gotRequest)
+	}
+	rec := convs.lastUpsert(t)
+	if rec.SandboxID != "sandbox-new" || rec.Branch != "feature/sf-new" || rec.PRURL != "https://github.com/hetchyhq/hetchy/pull/2" {
+		t.Fatalf("new PR record = %+v", rec)
+	}
+	if got := rec.History; len(got) != 2 || got[1] != "fix it and open a new PR" {
+		t.Fatalf("history = %#v", got)
 	}
 }
 

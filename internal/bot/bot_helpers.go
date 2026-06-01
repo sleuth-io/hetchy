@@ -235,9 +235,11 @@ func (b *Bot) handleFreshSandboxCreateError(ctx context.Context, rec *convstore.
 		b.log.Error("convstore upsert (sandbox create fail)", "error", uerr)
 	}
 	if cancelled {
+		b.markRunOutcome(ctx, runstore.OutcomeCancelledBeforePR, map[string]any{"phase": "sandbox_create"})
 		b.markRunState(ctx, runstore.StateCancelled, err)
 		return
 	}
+	b.markRunOutcome(ctx, runstore.OutcomeFailedSetup, map[string]any{"phase": "sandbox_create"})
 	b.markRunState(ctx, runstore.StateFailed, err)
 }
 
@@ -257,6 +259,11 @@ func (b *Bot) handleFreshAgentRunError(ctx context.Context, sb *daytona.Sandbox,
 		if err := b.convs.Upsert(context.Background(), *rec); err != nil {
 			b.log.Error("convstore upsert (agent stopped)", "error", err)
 		}
+		outcome := runstore.OutcomeCancelledBeforePR
+		if rec.PRURL != "" {
+			outcome = runstore.OutcomeCancelledAfterPR
+		}
+		b.markRunOutcome(ctx, outcome, map[string]any{"phase": "agent", "pr_url": rec.PRURL})
 		b.markRunState(ctx, runstore.StateCancelled, runErr)
 		return
 	}
@@ -274,6 +281,7 @@ func (b *Bot) handleFreshAgentRunError(ctx context.Context, sb *daytona.Sandbox,
 		if err := b.convs.Upsert(context.Background(), *rec); err != nil {
 			b.log.Error("convstore upsert (agent setup fail)", "error", err)
 		}
+		b.markRunOutcome(ctx, runstore.OutcomeFailedSetup, map[string]any{"phase": "pre_runtime"})
 		b.markRunState(ctx, runstore.StateFailed, runErr)
 		return
 	}
@@ -297,6 +305,13 @@ func (b *Bot) handleFreshAgentRunError(ctx context.Context, sb *daytona.Sandbox,
 	if err := b.convs.Upsert(ctx, *rec); err != nil {
 		b.log.Error("convstore upsert (agent fail)", "error", err)
 	}
+	outcome := runstore.OutcomeFailedRuntime
+	if isAgentTimeout(runErr) {
+		outcome = runstore.OutcomeFailedTimeout
+	} else if errors.Is(runErr, errReportedPRNotVerified) {
+		outcome = runstore.OutcomeFailedPRValidation
+	}
+	b.markRunOutcome(ctx, outcome, map[string]any{"phase": "agent", "branch": branch, "pr_url": rec.PRURL})
 	b.markRunState(ctx, runstore.StateFailed, runErr)
 }
 
@@ -315,6 +330,11 @@ func (b *Bot) handleFollowUpRunError(ctx context.Context, sb *daytona.Sandbox, r
 		if uerr := b.convs.Upsert(context.Background(), *rec); uerr != nil {
 			b.log.Error("convstore upsert (follow-up stopped)", "error", uerr)
 		}
+		outcome := runstore.OutcomeCancelledBeforePR
+		if rec.PRURL != "" {
+			outcome = runstore.OutcomeCancelledAfterPR
+		}
+		b.markRunOutcome(ctx, outcome, map[string]any{"phase": "followup", "pr_url": rec.PRURL})
 		b.markRunState(ctx, runstore.StateCancelled, err)
 		b.deleteSandboxSession(sb, b.currentAgentRunSessionID(ctx, "followup-"+requestID))
 		return
@@ -331,6 +351,7 @@ func (b *Bot) handleFollowUpRunError(ctx context.Context, sb *daytona.Sandbox, r
 		if uerr := b.convs.Upsert(ctx, *rec); uerr != nil {
 			b.log.Error("convstore upsert (follow-up setup fail)", "error", uerr)
 		}
+		b.markRunOutcome(ctx, runstore.OutcomeFailedSetup, map[string]any{"phase": "followup_pre_runtime", "pr_url": rec.PRURL})
 		b.markRunState(ctx, runstore.StateFailed, err)
 		b.deleteSandboxSession(sb, b.currentAgentRunSessionID(ctx, "followup-"+requestID))
 		b.stopAndArchiveSandbox(ctx, sb)
@@ -350,6 +371,11 @@ func (b *Bot) handleFollowUpRunError(ctx context.Context, sb *daytona.Sandbox, r
 	if uerr := b.convs.Upsert(ctx, *rec); uerr != nil {
 		b.log.Error("convstore upsert (follow-up agent fail)", "error", uerr)
 	}
+	outcome := runstore.OutcomeFailedRuntime
+	if errors.Is(err, errReportedPRNotVerified) {
+		outcome = runstore.OutcomeFailedPRValidation
+	}
+	b.markRunOutcome(ctx, outcome, map[string]any{"phase": "followup", "branch": rec.Branch, "pr_url": rec.PRURL})
 	b.markRunState(ctx, runstore.StateFailed, err)
 	b.deleteSandboxSession(sb, b.currentAgentRunSessionID(ctx, "followup-"+requestID))
 }
@@ -373,11 +399,24 @@ func isTransientError(err error) bool {
 	}
 	var dayErr *sdkerrors.DaytonaError
 	if errors.As(err, &dayErr) {
+		if isDaytonaStateChangeConflict(dayErr) {
+			return true
+		}
 		return dayErr.StatusCode == 0 ||
 			dayErr.StatusCode == http.StatusTooManyRequests ||
 			(dayErr.StatusCode >= 500 && dayErr.StatusCode < 600)
 	}
 	return false
+}
+
+func isDaytonaStateChangeConflict(err error) bool {
+	var dayErr *sdkerrors.DaytonaError
+	if !errors.As(err, &dayErr) {
+		return false
+	}
+	msg := strings.ToLower(dayErr.Message)
+	return dayErr.StatusCode == http.StatusConflict &&
+		(strings.Contains(msg, "state change in progress") || strings.Contains(msg, "state transition"))
 }
 
 func shellQuote(s string) string {

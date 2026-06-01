@@ -66,6 +66,9 @@ type AgentRun struct {
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 	CommandStep     string             `json:"command_step"`
+	Outcome         string             `json:"outcome"`
+	OutcomeDetail   []byte             `json:"outcome_detail"`
+	QualityScore    *int32             `json:"quality_score"`
 }
 
 type AgentRunEvent struct {
@@ -302,4 +305,5 @@ type RepoSetupSpec struct {
 	CreatedAt            pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
 	LessonsMd            string             `json:"lessons_md"`
+	ValidationCapability []byte             `json:"validation_capability"`
 }

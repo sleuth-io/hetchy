@@ -53,6 +53,13 @@ func TestIsTransientError_4xxIsNotTransient(t *testing.T) {
 	}
 }
 
+func TestIsTransientError_DaytonaStateChangeConflictIsTransient(t *testing.T) {
+	err := sdkerrors.NewDaytonaError("Conflict: Sandbox state change in progress", 409, nil)
+	if !isTransientError(err) {
+		t.Error("state-change conflict should be retried")
+	}
+}
+
 func TestIsTransientError_NetworkFailureIsTransient(t *testing.T) {
 	// StatusCode==0 represents a network-level failure.
 	err := sdkerrors.NewDaytonaError("connection refused", 0, nil)

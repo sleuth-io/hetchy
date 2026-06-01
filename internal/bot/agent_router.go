@@ -71,6 +71,10 @@ const sxSkillsMarkerPrefix = "[hetchy:sx-skills] "
 // the API rendering layer share a single source of truth.
 const SXSkillsMetaKey = "sx_skills"
 
+const toolingDegradedMarkerPrefix = "[hetchy:tooling-degraded] "
+
+const ToolingDegradedMetaKey = "tooling_degraded"
+
 const maxSuppressedSetupTailLines = 20
 
 func newAgentLineRouter(emit blocks.Emitter) *agentLineRouter {
@@ -102,6 +106,10 @@ func (r *agentLineRouter) Line(line string) {
 		r.emitSXSkills(rest)
 		return
 	}
+	if rest, ok := strings.CutPrefix(line, toolingDegradedMarkerPrefix); ok {
+		r.emitToolingDegraded(rest)
+		return
+	}
 	// The marker line itself is logged as the last setup step, then
 	// the parser takes over. Exact-match — see setupSwitchMarker*.
 	if line == setupSwitchMarkerClaude || line == setupSwitchMarkerCodex {
@@ -120,6 +128,31 @@ func (r *agentLineRouter) Line(line string) {
 		return
 	}
 	r.appendSetup(line)
+}
+
+func (r *agentLineRouter) emitToolingDegraded(payload string) {
+	label, message, ok := strings.Cut(payload, "|")
+	if !ok {
+		label = "tooling"
+		message = payload
+	}
+	label = strings.TrimSpace(label)
+	message = strings.TrimSpace(message)
+	if label == "" {
+		label = "tooling"
+	}
+	title := "Tooling degraded"
+	if message == "" {
+		message = "A sandbox tooling check reported degraded capability."
+	}
+	id := r.emit.Start(blocks.KindNotify, title, map[string]any{
+		ToolingDegradedMetaKey: map[string]string{
+			"label":   label,
+			"message": message,
+		},
+	})
+	r.emit.Append(id, message)
+	r.emit.Done(id, label)
 }
 
 // emitSXSkills parses the comma-separated payload from a "[hetchy:sx-

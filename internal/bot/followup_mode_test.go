@@ -87,6 +87,22 @@ func TestDecideFollowUpModeForcesChangeForBrokenPriorOutput(t *testing.T) {
 	}
 }
 
+func TestDecideFollowUpModeForcesChangeForNewPRRequest(t *testing.T) {
+	b := &Bot{
+		log: discardLogger(),
+		followUpModeFn: func(context.Context, orgcfg.Config, convstore.Record, string) followUpModeDecision {
+			return followUpModeDecision{Mode: followUpModeAnswerOnly, Confidence: 0.9, Reason: "looks conversational"}
+		},
+	}
+	decision := b.decideFollowUpMode(context.Background(), orgcfg.Config{}, convstore.Record{}, "fix that and open a new PR")
+	if decision.Mode != followUpModeChange {
+		t.Fatalf("mode = %q, want change", decision.Mode)
+	}
+	if !strings.Contains(decision.Reason, "new pull request") {
+		t.Fatalf("reason = %q, want new pull request override", decision.Reason)
+	}
+}
+
 func TestPriorWorkRemediationRequestAvoidsCommitInspectFalsePositive(t *testing.T) {
 	if isPriorWorkRemediationRequest("what's missing in this commit message?") {
 		t.Fatal("commit inspection question should not force change mode")
@@ -112,6 +128,7 @@ func TestFollowUpModeSystemPromptTreatsPriorDeliverableComplaintsAsChange(t *tes
 		"the PR body lacks evidence",
 		"rerun validation",
 		"the screenshot shows a bug",
+		"new/separate pull request",
 		`even when phrased as "why"`,
 	} {
 		if !strings.Contains(followUpModeSystemPrompt, want) {

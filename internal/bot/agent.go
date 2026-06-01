@@ -166,16 +166,14 @@ func (b *Bot) ensureBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo
 	spec, err := b.bootstrap.GetSpec(ctx, repo.InstallID, repo.RepoID, "")
 	switch {
 	case err == nil:
-		// Spec exists; treat it as fresh and return it. The drift-
-		// detection logic itself is fully implemented in
-		// bootstrap.CheckSpec / IsStale (see drift.go) — the gap is
-		// the wiring call from this branch. We deliberately don't
-		// wire it yet because the only detect path we have today
-		// re-clones the repo, which is multi-minute and runs on
-		// every task. Wire here when a cheaper "has anything
-		// material changed since last bootstrap?" signal lands
-		// (e.g. a repo-tree hash from the GitHub App webhook).
-		return spec, nil
+		refreshed, refreshErr := b.refreshExistingBootstrapSpec(ctx, sb, repo, oc, requestID, spec, emit)
+		if refreshErr != nil {
+			b.log.Warn("bootstrap drift check failed; using saved spec",
+				"request_id", requestID, "repo", repo.Slug, "error", refreshErr)
+			emit.Notify("Bootstrap check skipped", "Hetchy could not refresh the saved repo setup spec before this run, so it will reuse the last saved version.")
+			return spec, nil
+		}
+		return refreshed, nil
 	case errors.Is(err, bootstrap.ErrNotFound):
 		// Fall through and bootstrap.
 	default:
@@ -270,6 +268,112 @@ func (b *Bot) ensureBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo
 	return spec, nil
 }
 
+func (b *Bot) refreshExistingBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, requestID string, spec *bootstrap.Spec, emit blocks.Emitter) (*bootstrap.Spec, error) {
+	sessionID := "bootstrap-check-" + requestID
+	if err := b.createBootstrapSession(ctx, sb, sessionID); err != nil {
+		return nil, fmt.Errorf("create bootstrap check session: %w", err)
+	}
+	defer func() {
+		b.deleteSandboxSession(sb, sessionID)
+	}()
+
+	wd := repoWorkdir(repo.Slug)
+	if err := b.prepareBootstrapCheckout(ctx, sb, sessionID, repo, oc, emit); err != nil {
+		return nil, err
+	}
+	hints, tempRoot, err := b.detectBootstrapHints(ctx, sb, sessionID, wd)
+	if err != nil {
+		return nil, fmt.Errorf("detect: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(tempRoot) }()
+
+	stale := bootstrap.IsStale(hints, spec)
+	needsHeal := stale || spec.ValidationStatus == bootstrap.StatusStale || spec.ValidationStatus == bootstrap.StatusFailing
+	if !needsHeal {
+		return spec, nil
+	}
+
+	reason := "the repo setup spec is stale"
+	if spec.ValidationStatus == bootstrap.StatusFailing {
+		reason = "the saved repo setup spec is failing"
+	}
+	emit.Notify("Bootstrap auto-heal", fmt.Sprintf("%s; regenerating setup/start/health before the agent runs.", reason))
+
+	suppliedSecrets, err := b.bootstrap.GetSecrets(ctx, repo.InstallID, repo.RepoID, "")
+	if err != nil {
+		return nil, fmt.Errorf("get secrets: %w", err)
+	}
+	runner, err := b.newBootstrapRunner(ctx, sb, sessionID, repo, oc, emit)
+	if err != nil {
+		return nil, err
+	}
+	failureLog := spec.BootstrapLog
+	if failureLog == "" {
+		failureLog = fmt.Sprintf("stale=%t validation_status=%s current_fingerprint=%s saved_fingerprint=%s",
+			stale, spec.ValidationStatus, bootstrap.Fingerprint(hints), spec.SourceFingerprint)
+	}
+	res, err := b.runBootstrapAutoHeal(ctx, runner, bootstrap.AutoHealInput{
+		OwnerRepo:       repo.Slug,
+		Path:            spec.Path,
+		PriorSpec:       spec,
+		FailureLog:      failureLog,
+		Hints:           hints,
+		SuppliedSecrets: suppliedSecrets,
+		RepoDir:         wd,
+	})
+	if err != nil && errors.Is(err, bootstrap.ErrLoopFailed) && res != nil {
+		b.persistFailingBootstrap(ctx, res, repo, hints)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("bootstrap.AutoHeal: %w", err)
+	}
+	if res == nil || res.Spec == nil {
+		return nil, errors.New("bootstrap auto-heal produced no spec")
+	}
+	refreshed, err := b.saveBootstrapSpecResult(ctx, res, repo)
+	if err != nil {
+		return nil, fmt.Errorf("save auto-healed spec: %w", err)
+	}
+	emit.Notify("Bootstrap auto-heal complete",
+		fmt.Sprintf("Saved `%s` setup version %d for `%s` (status: %s).",
+			refreshed.Kind, refreshed.SpecVersion, repo.Slug, refreshed.ValidationStatus))
+	return refreshed, nil
+}
+
+func (b *Bot) prepareBootstrapCheckout(ctx context.Context, sb *daytona.Sandbox, sessionID string, repo repoCtx, oc orgcfg.Config, emit blocks.Emitter) error {
+	wd := repoWorkdir(repo.Slug)
+	cloneEnv := map[string]string{
+		"SF_REPO":        repo.Slug,
+		"SF_WORKDIR":     wd,
+		"SF_BASE_BRANCH": repo.BaseBranch,
+		"GITHUB_TOKEN":   repo.GitHubToken,
+	}
+	addDaytonaCacheEnv(cloneEnv, b.cfg, oc, repo, repo.CacheMounted)
+	if err := b.runBootstrapInlineScript(ctx, sb, sessionID, "setup-clone", setupCloneScript, cloneEnv, emit); err != nil {
+		return fmt.Errorf("setup-clone: %w", err)
+	}
+	return nil
+}
+
+func (b *Bot) newBootstrapRunner(ctx context.Context, sb *daytona.Sandbox, sessionID string, repo repoCtx, oc orgcfg.Config, emit blocks.Emitter) (bootstrap.Runner, error) {
+	authKey, authVal := claudeAuthEnv(oc)
+	b.log.Info("claude auth", "method", authKey, "token", maskToken(authVal), "request_id", sessionID)
+	baseEnv := map[string]string{
+		authKey:                authVal,
+		"GITHUB_TOKEN":         repo.GitHubToken,
+		"HETCHY_CLAUDE_MODEL":  string(ClaudeModelOpus),
+		"HETCHY_CLAUDE_EFFORT": "high",
+	}
+	addDaytonaCacheEnv(baseEnv, b.cfg, oc, repo, repo.CacheMounted)
+	return &botRunner{
+		b:         b,
+		sb:        sb,
+		sessionID: sessionID,
+		emit:      emit,
+		baseEnv:   baseEnv,
+	}, nil
+}
+
 func (b *Bot) createBootstrapSession(ctx context.Context, sb *daytona.Sandbox, sessionID string) error {
 	if b.createBootstrapSessionFn != nil {
 		return b.createBootstrapSessionFn(ctx, sb, sessionID)
@@ -308,6 +412,13 @@ func (b *Bot) runBootstrapLoop(ctx context.Context, runner bootstrap.Runner, in 
 	return bootstrap.Run(ctx, runner, in)
 }
 
+func (b *Bot) runBootstrapAutoHeal(ctx context.Context, runner bootstrap.Runner, in bootstrap.AutoHealInput) (*bootstrap.LoopResult, error) {
+	if b.bootstrapAutoHealFn != nil {
+		return b.bootstrapAutoHealFn(ctx, runner, in)
+	}
+	return bootstrap.AutoHeal(ctx, runner, in)
+}
+
 // persistFailingBootstrap saves a StatusFailing spec row from a
 // partial bootstrap result so AutoHeal has prior context to bias on
 // the next attempt. Best-effort: any error here just gets logged —
@@ -328,10 +439,12 @@ func (b *Bot) persistFailingBootstrap(ctx context.Context, res *bootstrap.LoopRe
 	kind := ""
 	var requiredSecrets []bootstrap.Secret
 	var deferred []string
+	var capability bootstrap.ValidationCapability
 	if res.Manifest != nil {
 		kind = res.Manifest.Kind
 		requiredSecrets = res.Manifest.RequiredSecrets
 		deferred = res.Manifest.DeferredCapabilities
+		capability = res.Manifest.ValidationCapability
 	}
 	failingSpec := &bootstrap.Spec{
 		InstallationID:       repo.InstallID,
@@ -345,6 +458,7 @@ func (b *Bot) persistFailingBootstrap(ctx context.Context, res *bootstrap.LoopRe
 		LessonsMD:            res.PartialScripts.Lessons,
 		RequiredSecrets:      requiredSecrets,
 		DeferredCapabilities: deferred,
+		ValidationCapability: capability,
 		SourceFingerprint:    bootstrap.Fingerprint(hints),
 		ValidationStatus:     bootstrap.StatusFailing,
 		BootstrapLog:         truncateLogTail(res.Log),

@@ -284,6 +284,31 @@ func TestAgentLineRouter_EmitsEmptySkillsMarker(t *testing.T) {
 	}
 }
 
+func TestAgentLineRouter_CapturesToolingDegradedMarker(t *testing.T) {
+	emit := newCaptureEmitter()
+	r := newAgentLineRouter(emit)
+	r.Line("[hetchy:tooling-degraded] sx-org-skills|sx skills refresh failed")
+	_ = r.Finish()
+
+	if len(emit.Blocks) != 1 {
+		t.Fatalf("blocks = %+v, want one degraded tooling block", emit.Blocks)
+	}
+	block := emit.Blocks[0]
+	if block.Kind != blocks.KindNotify || block.Title != "Tooling degraded" || block.Status != blocks.StatusDone {
+		t.Fatalf("degraded block = %+v", block)
+	}
+	meta, ok := block.Meta[ToolingDegradedMetaKey].(map[string]string)
+	if !ok {
+		t.Fatalf("meta[%s] = %T, want map[string]string", ToolingDegradedMetaKey, block.Meta[ToolingDegradedMetaKey])
+	}
+	if meta["label"] != "sx-org-skills" || meta["message"] != "sx skills refresh failed" {
+		t.Fatalf("meta = %+v", meta)
+	}
+	if !strings.Contains(block.Body.String(), "sx skills refresh failed") {
+		t.Fatalf("body = %q", block.Body.String())
+	}
+}
+
 func TestAgentLineRouter_AbortPreservesSuppressedSetupTail(t *testing.T) {
 	emit := newCaptureEmitter()
 	r := newAgentLineRouter(emit)

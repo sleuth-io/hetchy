@@ -60,7 +60,7 @@ WHERE id = $1
 RETURNING id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
           user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
           lease_owner, lease_expires_at, heartbeat_at, last_error,
-          created_at, updated_at, command_step
+          created_at, updated_at, command_step, outcome, outcome_detail, quality_score
 `
 
 type ClaimAgentRunForCancelParams struct {
@@ -94,6 +94,9 @@ func (q *Queries) ClaimAgentRunForCancel(ctx context.Context, arg ClaimAgentRunF
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.CommandStep,
+		&i.Outcome,
+		&i.OutcomeDetail,
+		&i.QualityScore,
 	)
 	return i, err
 }
@@ -111,7 +114,7 @@ WHERE id = $3
 RETURNING id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
           user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
           lease_owner, lease_expires_at, heartbeat_at, last_error,
-          created_at, updated_at, command_step
+          created_at, updated_at, command_step, outcome, outcome_detail, quality_score
 `
 
 type ClaimAgentRunLeaseParams struct {
@@ -145,6 +148,9 @@ func (q *Queries) ClaimAgentRunLease(ctx context.Context, arg ClaimAgentRunLease
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.CommandStep,
+		&i.Outcome,
+		&i.OutcomeDetail,
+		&i.QualityScore,
 	)
 	return i, err
 }
@@ -162,7 +168,7 @@ WHERE id = $3
 RETURNING id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
           user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
           lease_owner, lease_expires_at, heartbeat_at, last_error,
-          created_at, updated_at, command_step
+          created_at, updated_at, command_step, outcome, outcome_detail, quality_score
 `
 
 type ClaimAgentRunLeaseFromOwnerParams struct {
@@ -202,6 +208,9 @@ func (q *Queries) ClaimAgentRunLeaseFromOwner(ctx context.Context, arg ClaimAgen
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.CommandStep,
+		&i.Outcome,
+		&i.OutcomeDetail,
+		&i.QualityScore,
 	)
 	return i, err
 }
@@ -220,7 +229,7 @@ WHERE id = $3
 RETURNING id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
           user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
           lease_owner, lease_expires_at, heartbeat_at, last_error,
-          created_at, updated_at, command_step
+          created_at, updated_at, command_step, outcome, outcome_detail, quality_score
 `
 
 type ClaimStaleAgentRunLeaseParams struct {
@@ -260,6 +269,9 @@ func (q *Queries) ClaimStaleAgentRunLease(ctx context.Context, arg ClaimStaleAge
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.CommandStep,
+		&i.Outcome,
+		&i.OutcomeDetail,
+		&i.QualityScore,
 	)
 	return i, err
 }
@@ -276,7 +288,7 @@ ON CONFLICT DO NOTHING
 RETURNING id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
           user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
           lease_owner, lease_expires_at, heartbeat_at, last_error,
-          created_at, updated_at, command_step
+          created_at, updated_at, command_step, outcome, outcome_detail, quality_score
 `
 
 type CreateAgentRunParams struct {
@@ -324,6 +336,9 @@ func (q *Queries) CreateAgentRun(ctx context.Context, arg CreateAgentRunParams) 
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.CommandStep,
+		&i.Outcome,
+		&i.OutcomeDetail,
+		&i.QualityScore,
 	)
 	return i, err
 }
@@ -332,7 +347,7 @@ const getActiveAgentRunForThread = `-- name: GetActiveAgentRunForThread :one
 SELECT id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
        user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
        lease_owner, lease_expires_at, heartbeat_at, last_error,
-       created_at, updated_at, command_step
+       created_at, updated_at, command_step, outcome, outcome_detail, quality_score
 FROM agent_runs
 WHERE org_id = $1 AND thread_id = $2
   AND state IN ('preparing', 'running', 'recovering', 'finalizing')
@@ -370,6 +385,9 @@ func (q *Queries) GetActiveAgentRunForThread(ctx context.Context, arg GetActiveA
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.CommandStep,
+		&i.Outcome,
+		&i.OutcomeDetail,
+		&i.QualityScore,
 	)
 	return i, err
 }
@@ -378,7 +396,7 @@ const getAgentRun = `-- name: GetAgentRun :one
 SELECT id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
        user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
        lease_owner, lease_expires_at, heartbeat_at, last_error,
-       created_at, updated_at, command_step
+       created_at, updated_at, command_step, outcome, outcome_detail, quality_score
 FROM agent_runs
 WHERE id = $1
 `
@@ -408,6 +426,9 @@ func (q *Queries) GetAgentRun(ctx context.Context, id string) (AgentRun, error) 
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.CommandStep,
+		&i.Outcome,
+		&i.OutcomeDetail,
+		&i.QualityScore,
 	)
 	return i, err
 }
@@ -416,7 +437,7 @@ const getAgentRunByRequest = `-- name: GetAgentRunByRequest :one
 SELECT id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
        user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
        lease_owner, lease_expires_at, heartbeat_at, last_error,
-       created_at, updated_at, command_step
+       created_at, updated_at, command_step, outcome, outcome_detail, quality_score
 FROM agent_runs
 WHERE org_id = $1 AND request_id = $2
   AND state IN ('preparing', 'running', 'recovering', 'finalizing')
@@ -452,6 +473,9 @@ func (q *Queries) GetAgentRunByRequest(ctx context.Context, arg GetAgentRunByReq
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.CommandStep,
+		&i.Outcome,
+		&i.OutcomeDetail,
+		&i.QualityScore,
 	)
 	return i, err
 }
@@ -460,7 +484,7 @@ const getLatestAgentRunForThread = `-- name: GetLatestAgentRunForThread :one
 SELECT id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
        user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
        lease_owner, lease_expires_at, heartbeat_at, last_error,
-       created_at, updated_at, command_step
+       created_at, updated_at, command_step, outcome, outcome_detail, quality_score
 FROM agent_runs
 WHERE org_id = $1 AND thread_id = $2
 ORDER BY created_at DESC
@@ -497,6 +521,9 @@ func (q *Queries) GetLatestAgentRunForThread(ctx context.Context, arg GetLatestA
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.CommandStep,
+		&i.Outcome,
+		&i.OutcomeDetail,
+		&i.QualityScore,
 	)
 	return i, err
 }
@@ -505,7 +532,7 @@ const listActiveAgentRunsForLeaseOwnerPrefix = `-- name: ListActiveAgentRunsForL
 SELECT id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
        user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
        lease_owner, lease_expires_at, heartbeat_at, last_error,
-       created_at, updated_at, command_step
+       created_at, updated_at, command_step, outcome, outcome_detail, quality_score
 FROM agent_runs
 WHERE state IN ('preparing', 'running', 'recovering', 'finalizing')
   AND LEFT(lease_owner, LENGTH($1::text)) = $1::text
@@ -549,6 +576,9 @@ func (q *Queries) ListActiveAgentRunsForLeaseOwnerPrefix(ctx context.Context, ar
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.CommandStep,
+			&i.Outcome,
+			&i.OutcomeDetail,
+			&i.QualityScore,
 		); err != nil {
 			return nil, err
 		}
@@ -604,7 +634,7 @@ const listExpiredAgentRuns = `-- name: ListExpiredAgentRuns :many
 SELECT id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
        user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
        lease_owner, lease_expires_at, heartbeat_at, last_error,
-       created_at, updated_at, command_step
+       created_at, updated_at, command_step, outcome, outcome_detail, quality_score
 FROM agent_runs
 WHERE state IN ('preparing', 'running', 'recovering', 'finalizing')
   AND (lease_expires_at IS NULL OR lease_expires_at < NOW())
@@ -643,6 +673,9 @@ func (q *Queries) ListExpiredAgentRuns(ctx context.Context, limit int32) ([]Agen
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.CommandStep,
+			&i.Outcome,
+			&i.OutcomeDetail,
+			&i.QualityScore,
 		); err != nil {
 			return nil, err
 		}
@@ -658,7 +691,7 @@ const listStaleAgentRuns = `-- name: ListStaleAgentRuns :many
 SELECT id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
        user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
        lease_owner, lease_expires_at, heartbeat_at, last_error,
-       created_at, updated_at, command_step
+       created_at, updated_at, command_step, outcome, outcome_detail, quality_score
 FROM agent_runs
 WHERE state IN ('preparing', 'running', 'recovering', 'finalizing')
   AND (heartbeat_at IS NULL OR heartbeat_at < NOW() - $1::interval)
@@ -702,6 +735,9 @@ func (q *Queries) ListStaleAgentRuns(ctx context.Context, arg ListStaleAgentRuns
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.CommandStep,
+			&i.Outcome,
+			&i.OutcomeDetail,
+			&i.QualityScore,
 		); err != nil {
 			return nil, err
 		}
@@ -830,6 +866,36 @@ type UpdateAgentRunLogCursorParams struct {
 
 func (q *Queries) UpdateAgentRunLogCursor(ctx context.Context, arg UpdateAgentRunLogCursorParams) error {
 	_, err := q.db.Exec(ctx, updateAgentRunLogCursor, arg.ID, arg.LogCursor, arg.LeaseOwner)
+	return err
+}
+
+const updateAgentRunOutcome = `-- name: UpdateAgentRunOutcome :exec
+UPDATE agent_runs
+   SET outcome = $2,
+       outcome_detail = $3,
+       quality_score = $4,
+       updated_at = NOW()
+WHERE id = $1
+  AND lease_owner = $5
+  AND state IN ('preparing', 'running', 'recovering', 'finalizing', 'succeeded', 'failed', 'cancelled')
+`
+
+type UpdateAgentRunOutcomeParams struct {
+	ID            string `json:"id"`
+	Outcome       string `json:"outcome"`
+	OutcomeDetail []byte `json:"outcome_detail"`
+	QualityScore  *int32 `json:"quality_score"`
+	LeaseOwner    string `json:"lease_owner"`
+}
+
+func (q *Queries) UpdateAgentRunOutcome(ctx context.Context, arg UpdateAgentRunOutcomeParams) error {
+	_, err := q.db.Exec(ctx, updateAgentRunOutcome,
+		arg.ID,
+		arg.Outcome,
+		arg.OutcomeDetail,
+		arg.QualityScore,
+		arg.LeaseOwner,
+	)
 	return err
 }
 

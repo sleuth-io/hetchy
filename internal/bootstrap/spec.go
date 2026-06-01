@@ -86,6 +86,7 @@ type Spec struct {
 	RequiredSecrets      []Secret
 	DeferredCapabilities []string
 	SuggestedRepoChanges []string
+	ValidationCapability ValidationCapability
 
 	SourceFingerprint string
 
@@ -99,11 +100,31 @@ type Spec struct {
 // /tmp/hetchy-spec/manifest.json. It is the wire format between the
 // agent's bootstrap loop and the host harness.
 type Manifest struct {
-	Kind                 string    `json:"kind"`
-	Services             []Service `json:"services"`
-	RequiredSecrets      []Secret  `json:"required_secrets"`
-	DeferredCapabilities []string  `json:"deferred_capabilities,omitempty"`
-	SuggestedRepoChanges []string  `json:"suggested_repo_changes,omitempty"`
+	Kind                 string               `json:"kind"`
+	Services             []Service            `json:"services"`
+	RequiredSecrets      []Secret             `json:"required_secrets"`
+	DeferredCapabilities []string             `json:"deferred_capabilities,omitempty"`
+	SuggestedRepoChanges []string             `json:"suggested_repo_changes,omitempty"`
+	ValidationCapability ValidationCapability `json:"validation_capability,omitempty"`
+}
+
+// ValidationCapability is the repeatable testability contract for a repo.
+// The executable scripts say how to start the app; this says how future
+// runs should prove changed behavior after editing code.
+type ValidationCapability struct {
+	CanRunUI           bool     `json:"can_run_ui,omitempty"`
+	DefaultURL         string   `json:"default_url,omitempty"`
+	HealthRoute        string   `json:"health_route,omitempty"`
+	BrowserSmokeTarget string   `json:"browser_smoke_target,omitempty"`
+	TestCommands       []string `json:"test_commands,omitempty"`
+	BuildCommand       string   `json:"build_command,omitempty"`
+	ReloadCommand      string   `json:"reload_command,omitempty"`
+	AuthBypass         string   `json:"auth_bypass,omitempty"`
+	SeedData           string   `json:"seed_data,omitempty"`
+	RequiredMocks      []string `json:"required_mocks,omitempty"`
+	SlowOrFlakyTests   []string `json:"slow_or_flaky_tests,omitempty"`
+	EvidenceRequired   []string `json:"evidence_required,omitempty"`
+	Notes              string   `json:"notes,omitempty"`
 }
 
 // ParseManifest decodes the JSON the bootstrap loop captured from the

@@ -286,15 +286,9 @@ func TestFollowupScript_EmbeddedAndWellFormed(t *testing.T) {
 			t.Errorf("followupScript missing %q", line)
 		}
 	}
-	// Follow-up should NOT contain initial-run setup steps. We assert
-	// on the followup-only body, because the shared sandbox-common.sh
-	// prepended to every script defines the cache-aware clone helper
-	// (git clone is part of its fallback path) — but followup.sh never
-	// invokes that helper, since the sandbox already has a checkout
-	// from the initial agent.sh run.
-	if strings.Contains(followupScriptBody, "git clone") {
-		t.Error("followup.sh body should not clone — it reuses an existing sandbox")
-	}
+	// Follow-up should not run the full initial repo preparation helper.
+	// It may clone only when resume conflict recovery moves the turn into a
+	// replacement sandbox whose workdir is empty.
 	if strings.Contains(followupScriptBody, "hetchy_prepare_repo_workdir") {
 		t.Error("followup.sh should not invoke hetchy_prepare_repo_workdir — the workdir is already populated")
 	}

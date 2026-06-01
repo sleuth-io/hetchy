@@ -80,6 +80,11 @@ WHETHER IT SUCCEEDED before assuming you can hit a live URL:
 		}
 		b.WriteString("\n")
 	}
+	if capability := renderValidationCapability(spec.ValidationCapability); capability != "" {
+		b.WriteString("Repo validation capability contract:\n")
+		b.WriteString(capability)
+		b.WriteString("\n")
+	}
 	if strings.TrimSpace(spec.LessonsMD) != "" {
 		b.WriteString("Repo-specific bootstrap lessons you must obey:\n\n")
 		b.WriteString(truncate(spec.LessonsMD, 2500))
@@ -245,6 +250,46 @@ valid outcome.
 `)
 
 	return b.String()
+}
+
+func renderValidationCapability(v ValidationCapability) string {
+	var lines []string
+	add := func(label, value string) {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			lines = append(lines, fmt.Sprintf("  - %s: %s", label, value))
+		}
+	}
+	addList := func(label string, values []string) {
+		var cleaned []string
+		for _, value := range values {
+			if value = strings.TrimSpace(value); value != "" {
+				cleaned = append(cleaned, value)
+			}
+		}
+		if len(cleaned) > 0 {
+			lines = append(lines, fmt.Sprintf("  - %s: %s", label, strings.Join(cleaned, "; ")))
+		}
+	}
+	if v.CanRunUI {
+		lines = append(lines, "  - UI validation: available")
+	}
+	add("default URL", v.DefaultURL)
+	add("health route", v.HealthRoute)
+	add("browser smoke target", v.BrowserSmokeTarget)
+	addList("canonical test commands", v.TestCommands)
+	add("build command", v.BuildCommand)
+	add("reload command", v.ReloadCommand)
+	add("auth bypass", v.AuthBypass)
+	add("seed data", v.SeedData)
+	addList("required mocks", v.RequiredMocks)
+	addList("slow or flaky tests", v.SlowOrFlakyTests)
+	addList("required evidence", v.EvidenceRequired)
+	add("notes", v.Notes)
+	if len(lines) == 0 {
+		return ""
+	}
+	return strings.Join(lines, "\n") + "\n"
 }
 
 // MergeIntoAgentPrompt returns the full prompt for an agent run that

@@ -111,6 +111,11 @@ func cloneBootstrapSpec(spec *bootstrap.Spec) *bootstrap.Spec {
 	out.RequiredSecrets = append([]bootstrap.Secret(nil), spec.RequiredSecrets...)
 	out.DeferredCapabilities = append([]string(nil), spec.DeferredCapabilities...)
 	out.SuggestedRepoChanges = append([]string(nil), spec.SuggestedRepoChanges...)
+	out.ValidationCapability = spec.ValidationCapability
+	out.ValidationCapability.TestCommands = append([]string(nil), spec.ValidationCapability.TestCommands...)
+	out.ValidationCapability.RequiredMocks = append([]string(nil), spec.ValidationCapability.RequiredMocks...)
+	out.ValidationCapability.SlowOrFlakyTests = append([]string(nil), spec.ValidationCapability.SlowOrFlakyTests...)
+	out.ValidationCapability.EvidenceRequired = append([]string(nil), spec.ValidationCapability.EvidenceRequired...)
 	return &out
 }
 

@@ -5,7 +5,7 @@ INSERT INTO repo_setup_specs (
     installation_id, repo_id, path,
     spec_version, kind,
     setup_script, start_script, health_check, stop_script, lessons_md,
-    services, required_secrets, deferred_capabilities, suggested_repo_changes,
+    services, required_secrets, deferred_capabilities, suggested_repo_changes, validation_capability,
     source_fingerprint,
     validation_status, last_validated_at,
     success_count, failure_count, bootstrap_log,
@@ -14,10 +14,10 @@ INSERT INTO repo_setup_specs (
     $1, $2, $3,
     $4, $5,
     $6, $7, $8, $9, $10,
-    $11, $12, $13, $14,
-    $15,
-    $16, $17,
-    $18, $19, $20,
+    $11, $12, $13, $14, $15,
+    $16,
+    $17, $18,
+    $19, $20, $21,
     NOW()
 )
 ON CONFLICT (installation_id, repo_id, path) DO UPDATE SET
@@ -32,6 +32,7 @@ ON CONFLICT (installation_id, repo_id, path) DO UPDATE SET
     required_secrets       = EXCLUDED.required_secrets,
     deferred_capabilities  = EXCLUDED.deferred_capabilities,
     suggested_repo_changes = EXCLUDED.suggested_repo_changes,
+    validation_capability  = EXCLUDED.validation_capability,
     source_fingerprint     = EXCLUDED.source_fingerprint,
     validation_status      = EXCLUDED.validation_status,
     last_validated_at      = EXCLUDED.last_validated_at,
@@ -53,7 +54,7 @@ INSERT INTO repo_setup_specs (
     installation_id, repo_id, path,
     spec_version, kind,
     setup_script, start_script, health_check, stop_script, lessons_md,
-    services, required_secrets, deferred_capabilities, suggested_repo_changes,
+    services, required_secrets, deferred_capabilities, suggested_repo_changes, validation_capability,
     source_fingerprint,
     validation_status, last_validated_at,
     success_count, failure_count, bootstrap_log,
@@ -62,10 +63,10 @@ INSERT INTO repo_setup_specs (
     $1, $2, $3,
     $4, $5,
     $6, $7, $8, $9, $10,
-    $11, $12, $13, $14,
-    $15,
-    $16, NULL,
-    0, 1, $17,
+    $11, $12, $13, $14, $15,
+    $16,
+    $17, NULL,
+    0, 1, $18,
     NOW()
 )
 ON CONFLICT (installation_id, repo_id, path) DO UPDATE SET
@@ -80,6 +81,7 @@ ON CONFLICT (installation_id, repo_id, path) DO UPDATE SET
     required_secrets       = EXCLUDED.required_secrets,
     deferred_capabilities  = EXCLUDED.deferred_capabilities,
     suggested_repo_changes = EXCLUDED.suggested_repo_changes,
+    validation_capability  = EXCLUDED.validation_capability,
     source_fingerprint     = EXCLUDED.source_fingerprint,
     validation_status      = EXCLUDED.validation_status,
     failure_count          = repo_setup_specs.failure_count + 1,

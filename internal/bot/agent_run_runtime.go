@@ -192,6 +192,12 @@ func (b *Bot) markRunState(ctx context.Context, state string, err error) {
 	}
 }
 
+func (b *Bot) markRunOutcome(ctx context.Context, outcome string, detail map[string]any) {
+	if run, ok := agentRunFromContext(ctx); ok && b.runs != nil {
+		b.runs.UpdateOutcome(context.Background(), run.ID, outcome, detail, nil, b.workerID)
+	}
+}
+
 func (b *Bot) markRunFinalizing(ctx context.Context) {
 	b.markRunState(ctx, runstore.StateFinalizing, nil)
 }

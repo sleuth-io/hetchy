@@ -90,6 +90,10 @@ func (s *Store) SaveSpec(ctx context.Context, spec *Spec) error {
 	if err != nil {
 		return fmt.Errorf("bootstrap: marshal suggestions: %w", err)
 	}
+	validationCapability, err := json.Marshal(spec.ValidationCapability)
+	if err != nil {
+		return fmt.Errorf("bootstrap: marshal validation capability: %w", err)
+	}
 	var stop *string
 	if spec.StopScript != "" {
 		v := postgresText(spec.StopScript)
@@ -127,6 +131,7 @@ func (s *Store) SaveSpec(ctx context.Context, spec *Spec) error {
 		RequiredSecrets:      required,
 		DeferredCapabilities: deferred,
 		SuggestedRepoChanges: suggestions,
+		ValidationCapability: validationCapability,
 		SourceFingerprint:    postgresText(spec.SourceFingerprint),
 		ValidationStatus:     postgresText(string(spec.ValidationStatus)),
 		LastValidatedAt:      lastValidated,
@@ -168,6 +173,10 @@ func (s *Store) SaveFailingSpec(ctx context.Context, spec *Spec) error {
 	if err != nil {
 		return fmt.Errorf("bootstrap: marshal suggestions: %w", err)
 	}
+	validationCapability, err := json.Marshal(spec.ValidationCapability)
+	if err != nil {
+		return fmt.Errorf("bootstrap: marshal validation capability: %w", err)
+	}
 	var stop *string
 	if spec.StopScript != "" {
 		v := postgresText(spec.StopScript)
@@ -193,6 +202,7 @@ func (s *Store) SaveFailingSpec(ctx context.Context, spec *Spec) error {
 		RequiredSecrets:      required,
 		DeferredCapabilities: deferred,
 		SuggestedRepoChanges: suggestions,
+		ValidationCapability: validationCapability,
 		SourceFingerprint:    postgresText(spec.SourceFingerprint),
 		ValidationStatus:     postgresText(string(spec.ValidationStatus)),
 		BootstrapLog:         bootLog,
@@ -395,6 +405,11 @@ func rowToSpec(row sqlc.RepoSetupSpec) (*Spec, error) {
 	}
 	if err := json.Unmarshal(row.SuggestedRepoChanges, &spec.SuggestedRepoChanges); err != nil {
 		return nil, fmt.Errorf("bootstrap: decode suggestions: %w", err)
+	}
+	if len(row.ValidationCapability) > 0 {
+		if err := json.Unmarshal(row.ValidationCapability, &spec.ValidationCapability); err != nil {
+			return nil, fmt.Errorf("bootstrap: decode validation capability: %w", err)
+		}
 	}
 	return spec, nil
 }

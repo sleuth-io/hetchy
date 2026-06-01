@@ -208,6 +208,7 @@ func ResultFromArtifacts(ctx context.Context, runner Runner, in LoopInput, log s
 		RequiredSecrets:      manifest.RequiredSecrets,
 		DeferredCapabilities: manifest.DeferredCapabilities,
 		SuggestedRepoChanges: manifest.SuggestedRepoChanges,
+		ValidationCapability: manifest.ValidationCapability,
 		SourceFingerprint:    Fingerprint(in.Hints),
 		ValidationStatus:     status,
 	}
