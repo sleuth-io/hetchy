@@ -248,13 +248,14 @@
                 font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   .skill-chip-form { border: 0; margin: 0; display: inline-flex; align-items: center;
                      gap: .25rem; padding: 0; }
-  .skill-chip-button { border: 0; cursor: pointer; font: inherit;
-                       font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .skill-chip-button { border: 0; cursor: pointer; color: inherit;
+                       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                       font-size: .76rem; text-decoration: underline; }
   .skill-chip-button:hover { background: #e3e7ec; }
   .skill-chip-name { border: 0; background: transparent; color: inherit; cursor: pointer;
                      font: inherit; padding: 0; margin: 0;
-                     font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-  .skill-chip-name:hover { text-decoration: underline; }
+                     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                     text-decoration: underline; }
   .skill-chip-remove { border: 0; background: transparent; color: inherit; opacity: .55;
                        cursor: pointer; font: inherit; line-height: 1; padding: 0 .05rem; }
   .skill-chip-remove:hover { opacity: 1; }
