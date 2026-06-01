@@ -117,6 +117,8 @@ else
   echo "[hetchy] env scan: $(env | { grep -E '^(ANTHROPIC_|CLAUDE_)' || true; } | cut -d= -f1 | sort | tr '\n' ' ')"
 fi
 
+hetchy_container_preflight "followup"
+
 echo "[hetchy] refreshing git credential"
 # The sandbox may have been archived/unarchived across multiple requests,
 # so the token agent.sh baked into git config or origin may be expired
@@ -124,6 +126,13 @@ echo "[hetchy] refreshing git credential"
 # plain GitHub URL, then add the fresh installation token rewrite minted
 # for this follow-up run.
 hetchy_configure_git_auth
+
+if [[ ! -d "${SF_WORKDIR}/.git" ]]; then
+  echo "[hetchy] repo workdir missing; cloning ${SF_REPO}"
+  rm -rf "${SF_WORKDIR}"
+  mkdir -p "$(dirname "${SF_WORKDIR}")"
+  git clone "https://github.com/${SF_REPO}.git" "${SF_WORKDIR}"
+fi
 
 echo "[hetchy] checking out branch"
 cd "${SF_WORKDIR}"
@@ -154,6 +163,7 @@ ensure_sx() {
   fi
   echo "[hetchy] installing sx"
   if ! hetchy_install_sx; then
+    hetchy_tooling_degraded "sx-install" "sx install failed"
     echo "[hetchy] WARNING: sx install failed; continuing without newly refreshed skills"
     return 0
   fi
@@ -239,6 +249,7 @@ run_sx_install() {
 
   echo "[hetchy] refreshing sx skills (${label})"
   if ! command -v sx >/dev/null 2>&1; then
+    hetchy_tooling_degraded "sx-${label}" "sx unavailable for skills refresh"
     echo "[hetchy] WARNING: sx unavailable for skills refresh (${label}); continuing without newly refreshed skills"
     return 0
   fi
@@ -253,6 +264,7 @@ run_sx_install() {
     SX_BOT="$sx_bot" \
     SX_BOT_KEY="$sx_bot_key" \
       sx install --profile "$profile" --client=claude-code --target "$SF_WORKDIR"); then
+    hetchy_tooling_degraded "sx-${label}" "sx skills refresh failed"
     echo "[hetchy] WARNING: sx skills refresh (${label}) failed; continuing without newly refreshed skills"
     return 0
   fi

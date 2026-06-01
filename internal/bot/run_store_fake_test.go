@@ -71,6 +71,7 @@ type fakeRunStore struct {
 	updateSessions  []string
 	updateCommands  []fakeRunCommandUpdate
 	updateStates    []fakeRunStateUpdate
+	updateOutcomes  []fakeRunOutcomeUpdate
 	updateCursors   []int64
 }
 
@@ -137,6 +138,13 @@ type fakeRunStateUpdate struct {
 	state      string
 	lastErr    string
 	leaseOwner string
+}
+
+type fakeRunOutcomeUpdate struct {
+	outcome      string
+	detail       map[string]any
+	qualityScore *int32
+	leaseOwner   string
 }
 
 func (f *fakeRunStore) Enabled() bool {
@@ -208,6 +216,12 @@ func (f *fakeRunStore) UpdateState(_ context.Context, _, state, lastErr, leaseOw
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.updateStates = append(f.updateStates, fakeRunStateUpdate{state: state, lastErr: lastErr, leaseOwner: leaseOwner})
+}
+
+func (f *fakeRunStore) UpdateOutcome(_ context.Context, _, outcome string, detail map[string]any, qualityScore *int32, leaseOwner string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.updateOutcomes = append(f.updateOutcomes, fakeRunOutcomeUpdate{outcome: outcome, detail: detail, qualityScore: qualityScore, leaseOwner: leaseOwner})
 }
 
 func (f *fakeRunStore) TouchLease(_ context.Context, runID, leaseOwner string, d time.Duration) {

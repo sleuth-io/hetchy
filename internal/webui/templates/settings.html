@@ -561,6 +561,11 @@
         <div class="cred-panel{{if eq $activeTab "git-vault"}} active{{end}}" data-settings-panel="git-vault">
           {{if $gitVault.Configured}}
             <p class="hint">Active vault: <code>{{$gitVault.RepositorySlug}}</code></p>
+            {{with .SXGitRuntimeHealth}}
+              {{if and .Checked (not .OK)}}
+                <div class="error-banner">SX Git Vault runtime check failed: {{.Error}}</div>
+              {{end}}
+            {{end}}
             {{if .IsAdmin}}
             <div class="integration-actions">
               <form method="POST" action="/settings/org/sx-vault/delete"

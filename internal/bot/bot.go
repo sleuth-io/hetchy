@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"maps"
 	"os"
+	"os/exec"
 	"path"
 	"strings"
 	"time"
@@ -85,21 +86,22 @@ const sandboxReadySSETag = "sandbox_ready"
 // together. It owns no per-request mutable state; conversation state lives
 // in the database.
 type Bot struct {
-	cfg       Config
-	log       *slog.Logger
-	daytona   *daytona.Client
-	cacheVols daytonaCacheVolumeService
-	store     *db.Store
-	orgs      orgStore
-	convs     conversationStore
-	runs      runStore
-	billing   *billing.Service
-	agents    *agents.Store
-	apiKeys   *apikeys.Store
-	sx        sxManager
-	auth      *auth.Service
-	slack     *slackManager
-	bootstrap bootstrapStore
+	cfg                Config
+	log                *slog.Logger
+	daytona            *daytona.Client
+	cacheVols          daytonaCacheVolumeService
+	store              *db.Store
+	orgs               orgStore
+	convs              conversationStore
+	runs               runStore
+	billing            *billing.Service
+	agents             *agents.Store
+	apiKeys            *apikeys.Store
+	sx                 sxManager
+	sxGitRuntimeHealth sxGitRuntimeHealth
+	auth               *auth.Service
+	slack              *slackManager
+	bootstrap          bootstrapStore
 	// artifacts is the S3 presigner used to mint per-request proof
 	// artifact upload slots for the validation prompt. Nil when
 	// HETCHY_S3_BUCKET / HETCHY_S3_REGION aren't configured.
@@ -153,6 +155,7 @@ type Bot struct {
 	runInlineScriptFn         inlineScriptFunc
 	detectViaSandboxFn        bootstrapDetectFunc
 	bootstrapRunFn            bootstrapRunFunc
+	bootstrapAutoHealFn       bootstrapAutoHealFunc
 	recoverRunFn              recoveryLaunchFunc
 	validateRecoveredPRFn     recoveredPRValidationFunc
 	getSandboxFn              func(context.Context, string) (*daytona.Sandbox, error)
@@ -186,6 +189,38 @@ type Bot struct {
 	// tests set it to 1 ms so the ticker fires without sleeping.
 	heartbeatInterval time.Duration
 	workerID          string
+}
+
+type sxGitRuntimeHealth struct {
+	Checked bool
+	OK      bool
+	GitPath string
+	Version string
+	Error   string
+}
+
+func checkSXGitRuntimeHealth(ctx context.Context) sxGitRuntimeHealth {
+	health := sxGitRuntimeHealth{Checked: true}
+	gitPath, err := exec.LookPath("git")
+	if err != nil {
+		health.Error = err.Error()
+		return health
+	}
+	health.GitPath = gitPath
+	out, err := exec.CommandContext(ctx, gitPath, "--version").CombinedOutput()
+	version := strings.TrimSpace(string(out))
+	if err != nil {
+		if version == "" {
+			version = err.Error()
+		} else {
+			version = version + ": " + err.Error()
+		}
+		health.Error = version
+		return health
+	}
+	health.OK = true
+	health.Version = version
+	return health
 }
 
 // New constructs a Bot from config and a logger. It opens the database
@@ -334,6 +369,19 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 		GitOperationTimeout: time.Duration(cfg.SXGitOperationTimeoutSeconds) * time.Second,
 		MaxConcurrentGitOps: cfg.SXGitMaxConcurrentOps,
 	})
+	gitHealthCtx, cancelGitHealth := context.WithTimeout(context.Background(), 2*time.Second)
+	b.sxGitRuntimeHealth = checkSXGitRuntimeHealth(gitHealthCtx)
+	cancelGitHealth()
+	if !b.sxGitRuntimeHealth.OK {
+		log.Warn("sx git vault health check failed",
+			"error", b.sxGitRuntimeHealth.Error,
+		)
+	} else {
+		log.Info("sx git vault health check ok",
+			"git_path", b.sxGitRuntimeHealth.GitPath,
+			"git_version", b.sxGitRuntimeHealth.Version,
+		)
+	}
 	if status, err := b.sx.CheckCache(); err != nil {
 		if cfg.SXCacheDir != "" {
 			store.Close()

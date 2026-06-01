@@ -50,6 +50,8 @@ type bootstrapDetectFunc func(context.Context, *daytona.Sandbox, string, string)
 
 type bootstrapRunFunc func(context.Context, bootstrap.Runner, bootstrap.LoopInput) (*bootstrap.LoopResult, error)
 
+type bootstrapAutoHealFunc func(context.Context, bootstrap.Runner, bootstrap.AutoHealInput) (*bootstrap.LoopResult, error)
+
 type recoveryLaunchFunc func(context.Context, runstore.Run, bool)
 
 type recoveredPRValidationFunc func(context.Context, runstore.Run, string) (string, string, error)
@@ -102,6 +104,7 @@ type runStore interface {
 	UpdateSession(context.Context, string, string, string)
 	UpdateCommand(context.Context, string, string, string, string, string, time.Duration)
 	UpdateState(context.Context, string, string, string, string)
+	UpdateOutcome(context.Context, string, string, map[string]any, *int32, string)
 	TouchLease(context.Context, string, string, time.Duration)
 	UpdateLogCursor(context.Context, string, int64, string)
 	ListExpired(context.Context, int32) ([]runstore.Run, error)

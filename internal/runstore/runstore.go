@@ -2,6 +2,7 @@ package runstore
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -25,6 +26,18 @@ const (
 	StateCancelled  = "cancelled"
 )
 
+const (
+	OutcomeCompletedWithVerifiedPR = "completed_with_verified_pr"
+	OutcomeCompletedNoPR           = "completed_no_pr"
+	OutcomeFailedSetup             = "failed_setup"
+	OutcomeFailedRuntime           = "failed_runtime"
+	OutcomeFailedPRValidation      = "failed_pr_validation"
+	OutcomeFailedTimeout           = "failed_timeout"
+	OutcomeCancelledBeforePR       = "cancelled_before_pr"
+	OutcomeCancelledAfterPR        = "cancelled_after_pr"
+	OutcomeDegradedMissingSkills   = "degraded_missing_skills"
+)
+
 const agentRunEventPageLimit int32 = 5000
 
 type Run struct {
@@ -46,6 +59,9 @@ type Run struct {
 	LeaseExpiresAt  time.Time
 	HeartbeatAt     time.Time
 	LastError       string
+	Outcome         string
+	OutcomeDetail   []byte
+	QualityScore    *int32
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
 }
@@ -200,6 +216,26 @@ func (s *Store) UpdateState(ctx context.Context, id, state, lastErr, leaseOwner 
 		return
 	}
 	_ = s.db.Queries.UpdateAgentRunState(ctx, sqlc.UpdateAgentRunStateParams{ID: id, State: state, LastError: lastErr, LeaseOwner: leaseOwner})
+}
+
+func (s *Store) UpdateOutcome(ctx context.Context, id, outcome string, detail map[string]any, qualityScore *int32, leaseOwner string) {
+	if !s.Enabled() || id == "" {
+		return
+	}
+	if detail == nil {
+		detail = map[string]any{}
+	}
+	raw, err := json.Marshal(detail)
+	if err != nil {
+		raw = []byte(`{"error":"marshal outcome detail"}`)
+	}
+	_ = s.db.Queries.UpdateAgentRunOutcome(ctx, sqlc.UpdateAgentRunOutcomeParams{
+		ID:            id,
+		Outcome:       outcome,
+		OutcomeDetail: raw,
+		QualityScore:  qualityScore,
+		LeaseOwner:    leaseOwner,
+	})
 }
 
 func (s *Store) TouchLease(ctx context.Context, id, leaseOwner string, leaseDuration time.Duration) {
@@ -481,6 +517,9 @@ func fromRunRow(row sqlc.AgentRun) Run {
 		LeaseExpiresAt:  row.LeaseExpiresAt.Time,
 		HeartbeatAt:     row.HeartbeatAt.Time,
 		LastError:       row.LastError,
+		Outcome:         row.Outcome,
+		OutcomeDetail:   append([]byte(nil), row.OutcomeDetail...),
+		QualityScore:    row.QualityScore,
 		CreatedAt:       row.CreatedAt.Time,
 		UpdatedAt:       row.UpdatedAt.Time,
 	}

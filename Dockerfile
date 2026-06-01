@@ -34,8 +34,8 @@ RUN sandbox_version="${SANDBOX_VERSION:-$(./scripts/sandbox-version.sh)}" && \
 # Runtime stage
 FROM alpine:latest
 
-# Install ca-certificates for HTTPS requests
-RUN apk add --no-cache ca-certificates tzdata
+# Install runtime tools needed by Git-backed SX vaults.
+RUN apk add --no-cache ca-certificates git tzdata
 
 # Create non-root user
 RUN addgroup -g 1000 appuser && \

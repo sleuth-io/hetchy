@@ -139,6 +139,8 @@ else
   echo "[hetchy] env scan: $(env | { grep -E '^(ANTHROPIC_|CLAUDE_)' || true; } | cut -d= -f1 | sort | tr '\n' ' ')"
 fi
 
+hetchy_container_preflight "agent"
+
 echo "[hetchy] setting up git auth"
 hetchy_configure_git_auth
 
@@ -180,6 +182,7 @@ ensure_sx() {
   fi
   echo "[hetchy] installing sx"
   if ! hetchy_install_sx; then
+    hetchy_tooling_degraded "sx-install" "sx install failed"
     echo "[hetchy] WARNING: sx install failed; continuing without newly refreshed skills"
     return 0
   fi
@@ -265,6 +268,7 @@ run_sx_install() {
 
   echo "[hetchy] refreshing sx skills (${label})"
   if ! command -v sx >/dev/null 2>&1; then
+    hetchy_tooling_degraded "sx-${label}" "sx unavailable for skills refresh"
     echo "[hetchy] WARNING: sx unavailable for skills refresh (${label}); continuing without newly refreshed skills"
     return 0
   fi
@@ -280,6 +284,7 @@ run_sx_install() {
     SX_BOT="$sx_bot" \
     SX_BOT_KEY="$sx_bot_key" \
       sx install --profile "$profile" --client=claude-code --target "$SF_WORKDIR"); then
+    hetchy_tooling_degraded "sx-${label}" "sx skills refresh failed"
     echo "[hetchy] WARNING: sx skills refresh (${label}) failed; continuing without newly refreshed skills"
     return 0
   fi

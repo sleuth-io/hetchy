@@ -132,7 +132,22 @@ Manifest schema:
     ],
     "suggested_repo_changes": [
       "Add an AGENTS.md with a 'make bootstrap' target"
-    ]
+    ],
+    "validation_capability": {
+      "can_run_ui": true,
+      "default_url": "http://localhost:3000",
+      "health_route": "/health",
+      "browser_smoke_target": "http://localhost:3000/settings",
+      "test_commands": ["npm test -- --runInBand", "go test ./..."],
+      "build_command": "npm run build",
+      "reload_command": "/tmp/hetchy-spec/stop.sh && /tmp/hetchy-spec/start.sh && /tmp/hetchy-spec/health.sh",
+      "auth_bypass": "Set AUTH_BYPASS=1 and use user@example.test",
+      "seed_data": "setup.sh creates a demo account",
+      "required_mocks": ["Stripe webhook calls are mocked"],
+      "slow_or_flaky_tests": ["npm run e2e:full"],
+      "evidence_required": ["screenshot", "curl"],
+      "notes": "Use Playwright for UI changes; use curl for API endpoints."
+    }
   }
 
 Process:
@@ -224,7 +239,13 @@ Process:
      browser installation. The screenshot must show real content — not
      an error page or blank screen.
 
-  10. Populate suggested_repo_changes if you hit friction that a small
+  10. Populate validation_capability with the repeatable test contract
+     future runs should follow after editing code: canonical tests,
+     build/reload command, default URL, browser smoke target, auth
+     bypass/seed user, known mocks, flaky tests to avoid, and proof
+     artifacts expected by reviewers.
+
+  11. Populate suggested_repo_changes if you hit friction that a small
      repo change would have eliminated. Examples: add a 'make bootstrap'
      target; expose required env vars via a --print-required-env flag;
      add a docker-compose profile that starts with bypass flags. ~3 max.

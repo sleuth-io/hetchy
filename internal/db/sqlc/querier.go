@@ -203,6 +203,7 @@ type Querier interface {
 	UpdateAgentRunCommand(ctx context.Context, arg UpdateAgentRunCommandParams) error
 	UpdateAgentRunKind(ctx context.Context, arg UpdateAgentRunKindParams) error
 	UpdateAgentRunLogCursor(ctx context.Context, arg UpdateAgentRunLogCursorParams) error
+	UpdateAgentRunOutcome(ctx context.Context, arg UpdateAgentRunOutcomeParams) error
 	UpdateAgentRunSandbox(ctx context.Context, arg UpdateAgentRunSandboxParams) error
 	UpdateAgentRunSession(ctx context.Context, arg UpdateAgentRunSessionParams) error
 	UpdateAgentRunState(ctx context.Context, arg UpdateAgentRunStateParams) error

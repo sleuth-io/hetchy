@@ -57,6 +57,48 @@ hetchy_file_size_bytes() {
   fi
 }
 
+hetchy_tooling_degraded() {
+  local label="$1"
+  shift || true
+  local message="$*"
+  echo "[hetchy:tooling-degraded] ${label}|${message}"
+}
+
+hetchy_container_preflight() {
+  local label="${1:-agent}"
+  local -a required=(bash base64 curl git gh)
+  local -a missing=()
+  local tool
+
+  echo "[hetchy] container preflight (${label})"
+  for tool in "${required[@]}"; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+      missing+=("$tool")
+    fi
+  done
+  if [[ "${#missing[@]}" -gt 0 ]]; then
+    local joined
+    joined="$(IFS=,; printf '%s' "${missing[*]}")"
+    hetchy_tooling_degraded "container-preflight" "missing required tools: ${joined}"
+    echo "[hetchy] container preflight failed: missing required tools (${joined})" >&2
+    # Exit 64 means required container tooling is absent before the agent can run.
+    exit 64
+  fi
+
+  local -a optional=(jq node npm pnpm python3 go playwright codex claude)
+  local -a unavailable=()
+  for tool in "${optional[@]}"; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+      unavailable+=("$tool")
+    fi
+  done
+  if [[ "${#unavailable[@]}" -gt 0 ]]; then
+    local joined
+    joined="$(IFS=,; printf '%s' "${unavailable[*]}")"
+    echo "[hetchy] container preflight warning: optional tools unavailable (${joined})"
+  fi
+}
+
 restore_hetchy_cache_archive() {
   local archive="$1"
   local local_cache_dir="$2"

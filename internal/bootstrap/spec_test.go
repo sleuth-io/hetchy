@@ -34,7 +34,13 @@ func TestParseManifest(t *testing.T) {
 				{"name": "GITHUB_APP_ID", "user_supplied": true, "hint": "App ID from GitHub"}
 			],
 			"deferred_capabilities": ["Real authentication (AUTH_BYPASS=1)"],
-			"suggested_repo_changes": ["Add a make bootstrap target"]
+			"suggested_repo_changes": ["Add a make bootstrap target"],
+			"validation_capability": {
+				"can_run_ui": true,
+				"default_url": "http://localhost:8080",
+				"test_commands": ["go test ./..."],
+				"evidence_required": ["screenshot"]
+			}
 		}`)
 		m, err := ParseManifest(raw)
 		if err != nil {
@@ -48,6 +54,9 @@ func TestParseManifest(t *testing.T) {
 		}
 		if !m.HasDeferred() {
 			t.Error("expected HasDeferred=true")
+		}
+		if !m.ValidationCapability.CanRunUI || m.ValidationCapability.DefaultURL != "http://localhost:8080" || len(m.ValidationCapability.TestCommands) != 1 {
+			t.Errorf("validation capability: %+v", m.ValidationCapability)
 		}
 	})
 
