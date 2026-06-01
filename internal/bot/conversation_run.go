@@ -306,87 +306,12 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 		return
 	}
 
-	sb, err := b.getSandbox(ctx, rec.SandboxID)
-	if err != nil {
-		if liveRunCancelled(ctx) {
-			emit.Result("Stopped", "Stopped before the sandbox was resumed.")
-			appendBlocksAsNewTurn(&rec, text, recorder.Snapshot())
-			if err := b.convs.Upsert(context.Background(), rec); err != nil {
-				b.log.Error("convstore upsert (follow-up stopped before sandbox get)", "error", err)
-			}
-			b.markRunOutcome(ctx, runstore.OutcomeCancelledAfterPR, map[string]any{"phase": "sandbox_get", "pr_url": rec.PRURL})
-			b.markRunState(ctx, runstore.StateCancelled, nil)
-			return
-		}
-		b.log.Error("sandbox get failed", "sandbox", rec.SandboxID, "request_id", requestID, "error", err)
-		emit.Error("Sandbox missing", fmt.Sprintf("Could not find sandbox `%s` — it may have been archived or removed. Start a new chat to continue.", rec.SandboxID))
-		appendBlocksAsNewTurn(&rec, text, recorder.Snapshot())
-		if err := b.convs.Upsert(ctx, rec); err != nil {
-			b.log.Error("convstore upsert (follow-up sandbox missing)", "error", err)
-		}
-		b.markRunOutcome(ctx, runstore.OutcomeFailedSetup, map[string]any{"phase": "sandbox_get", "sandbox_id": rec.SandboxID, "pr_url": rec.PRURL})
-		b.markRunState(ctx, runstore.StateFailed, err)
+	sb, updatedRec, updatedRepo, ok := b.prepareFollowUpSandbox(ctx, oc, rec, repo, flavor, text, requestID, recorder, emit)
+	if !ok {
 		return
 	}
-	// Follow-ups reuse the conversation sandbox. Do not let the cancel
-	// handler archive it; stopping this turn should leave the chat able to
-	// continue on the same sandbox.
-	setLiveRunSandboxID(ctx, sb.ID, false)
-	if err := b.resumeSandboxForRun(ctx, sb, emit); err != nil {
-		if liveRunCancelled(ctx) {
-			emit.Result("Stopped", fmt.Sprintf("Stopped this turn. Sandbox `%s` is still available; send another message to continue.", sb.ID))
-			appendBlocksAsNewTurn(&rec, text, recorder.Snapshot())
-			if err := b.convs.Upsert(context.Background(), rec); err != nil {
-				b.log.Error("convstore upsert (follow-up stopped during resume)", "error", err)
-			}
-			b.markRunOutcome(ctx, runstore.OutcomeCancelledAfterPR, map[string]any{"phase": "sandbox_resume", "sandbox_id": sb.ID, "pr_url": rec.PRURL})
-			b.markRunState(ctx, runstore.StateCancelled, err)
-			return
-		}
-		replaced := false
-		if isDaytonaStateChangeConflict(err) {
-			replacement, updatedRepo, replaceErr := b.createFollowUpReplacementSandbox(ctx, oc, repo, flavor)
-			if replaceErr == nil {
-				b.log.Warn("sandbox resume conflicted; continuing in replacement sandbox",
-					"old_sandbox", sb.ID,
-					"new_sandbox", replacement.ID,
-					"request_id", requestID,
-					"branch", rec.Branch,
-					"error", err,
-				)
-				emit.Notify("Sandbox replaced", fmt.Sprintf("Daytona is still changing state for `%s`, so Hetchy created `%s` and will continue from `%s`.", sb.ID, replacement.ID, rec.Branch))
-				sb = replacement
-				repo = updatedRepo
-				rec.SandboxID = replacement.ID
-				b.markRunSandbox(ctx, replacement.ID)
-				setLiveRunSandboxID(ctx, replacement.ID, false)
-				if uerr := b.convs.Upsert(context.Background(), rec); uerr != nil {
-					b.log.Error("convstore upsert (replacement sandbox)", "error", uerr)
-				}
-				replaced = true
-			} else {
-				b.log.Error("sandbox replacement after resume conflict failed", "sandbox", sb.ID, "request_id", requestID, "error", replaceErr)
-			}
-		}
-		if !replaced {
-			b.log.Error("sandbox resume failed", "sandbox", sb.ID, "request_id", requestID, "error", err)
-			var timeoutErr *sdkerrors.DaytonaTimeoutError
-			title := "Sandbox resume failed"
-			msg := fmt.Sprintf("Could not start sandbox `%s`. Try again, or open a fresh chat.", sb.ID)
-			if errors.As(err, &timeoutErr) {
-				title = "Sandbox slow to start"
-				msg = fmt.Sprintf("Sandbox `%s` is taking unusually long to start. Wait a moment and reload, or open a fresh chat if it persists.", sb.ID)
-			}
-			emit.Error(title, msg)
-			appendBlocksAsNewTurn(&rec, text, recorder.Snapshot())
-			if err := b.convs.Upsert(ctx, rec); err != nil {
-				b.log.Error("convstore upsert (follow-up sandbox resume)", "error", err)
-			}
-			b.markRunOutcome(ctx, runstore.OutcomeFailedSetup, map[string]any{"phase": "sandbox_resume", "sandbox_id": sb.ID, "pr_url": rec.PRURL})
-			b.markRunState(ctx, runstore.StateFailed, err)
-			return
-		}
-	}
+	rec = updatedRec
+	repo = updatedRepo
 
 	agentText, err := b.promptWithSandboxAttachments(ctx, sb, rec.OrgID, rec.ThreadID, len(rec.History), requestID, text, emit)
 	if err != nil {
@@ -453,6 +378,98 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 	b.markRunState(ctx, runstore.StateSucceeded, nil)
 	b.deleteSandboxSession(sb, b.currentAgentRunSessionID(ctx, "followup-"+requestID))
 	b.stopAndArchiveSandbox(ctx, sb)
+}
+
+func (b *Bot) prepareFollowUpSandbox(ctx context.Context, oc orgcfg.Config, rec convstore.Record, repo repoCtx, flavor billing.Flavor, text, requestID string, recorder *blocks.Recorder, emit blocks.Emitter) (*daytona.Sandbox, convstore.Record, repoCtx, bool) {
+	sb, err := b.getSandbox(ctx, rec.SandboxID)
+	if err != nil {
+		if liveRunCancelled(ctx) {
+			emit.Result("Stopped", "Stopped before the sandbox was resumed.")
+			appendBlocksAsNewTurn(&rec, text, recorder.Snapshot())
+			if err := b.convs.Upsert(context.Background(), rec); err != nil {
+				b.log.Error("convstore upsert (follow-up stopped before sandbox get)", "error", err)
+			}
+			b.markRunOutcome(ctx, runstore.OutcomeCancelledAfterPR, map[string]any{"phase": "sandbox_get", "pr_url": rec.PRURL})
+			b.markRunState(ctx, runstore.StateCancelled, nil)
+			return nil, rec, repo, false
+		}
+		b.log.Error("sandbox get failed", "sandbox", rec.SandboxID, "request_id", requestID, "error", err)
+		emit.Error("Sandbox missing", fmt.Sprintf("Could not find sandbox `%s` — it may have been archived or removed. Start a new chat to continue.", rec.SandboxID))
+		appendBlocksAsNewTurn(&rec, text, recorder.Snapshot())
+		if err := b.convs.Upsert(ctx, rec); err != nil {
+			b.log.Error("convstore upsert (follow-up sandbox missing)", "error", err)
+		}
+		b.markRunOutcome(ctx, runstore.OutcomeFailedSetup, map[string]any{"phase": "sandbox_get", "sandbox_id": rec.SandboxID, "pr_url": rec.PRURL})
+		b.markRunState(ctx, runstore.StateFailed, err)
+		return nil, rec, repo, false
+	}
+
+	// Follow-ups reuse the conversation sandbox. Do not let the cancel
+	// handler archive it; stopping this turn should leave the chat able to
+	// continue on the same sandbox.
+	setLiveRunSandboxID(ctx, sb.ID, false)
+	if err := b.resumeSandboxForRun(ctx, sb, emit); err == nil {
+		return sb, rec, repo, true
+	} else if liveRunCancelled(ctx) {
+		emit.Result("Stopped", fmt.Sprintf("Stopped this turn. Sandbox `%s` is still available; send another message to continue.", sb.ID))
+		appendBlocksAsNewTurn(&rec, text, recorder.Snapshot())
+		if err := b.convs.Upsert(context.Background(), rec); err != nil {
+			b.log.Error("convstore upsert (follow-up stopped during resume)", "error", err)
+		}
+		b.markRunOutcome(ctx, runstore.OutcomeCancelledAfterPR, map[string]any{"phase": "sandbox_resume", "sandbox_id": sb.ID, "pr_url": rec.PRURL})
+		b.markRunState(ctx, runstore.StateCancelled, err)
+		return nil, rec, repo, false
+	} else if replacement, updatedRepo, replaced := b.tryReplaceConflictedFollowUpSandbox(ctx, oc, sb, repo, flavor, rec, requestID, err, emit); replaced {
+		rec.SandboxID = replacement.ID
+		return replacement, rec, updatedRepo, true
+	} else {
+		b.handleFollowUpSandboxResumeError(ctx, sb, rec, text, requestID, recorder, err, emit)
+		return nil, rec, repo, false
+	}
+}
+
+func (b *Bot) tryReplaceConflictedFollowUpSandbox(ctx context.Context, oc orgcfg.Config, sb *daytona.Sandbox, repo repoCtx, flavor billing.Flavor, rec convstore.Record, requestID string, resumeErr error, emit blocks.Emitter) (*daytona.Sandbox, repoCtx, bool) {
+	if !isDaytonaStateChangeConflict(resumeErr) {
+		return nil, repo, false
+	}
+	replacement, updatedRepo, err := b.createFollowUpReplacementSandbox(ctx, oc, repo, flavor)
+	if err != nil {
+		b.log.Error("sandbox replacement after resume conflict failed", "sandbox", sb.ID, "request_id", requestID, "error", err)
+		return nil, repo, false
+	}
+	b.log.Warn("sandbox resume conflicted; continuing in replacement sandbox",
+		"old_sandbox", sb.ID,
+		"new_sandbox", replacement.ID,
+		"request_id", requestID,
+		"branch", rec.Branch,
+		"error", resumeErr,
+	)
+	emit.Notify("Sandbox replaced", fmt.Sprintf("Daytona is still changing state for `%s`, so Hetchy created `%s` and will continue from `%s`.", sb.ID, replacement.ID, rec.Branch))
+	b.markRunSandbox(ctx, replacement.ID)
+	setLiveRunSandboxID(ctx, replacement.ID, false)
+	rec.SandboxID = replacement.ID
+	if err := b.convs.Upsert(context.Background(), rec); err != nil {
+		b.log.Error("convstore upsert (replacement sandbox)", "error", err)
+	}
+	return replacement, updatedRepo, true
+}
+
+func (b *Bot) handleFollowUpSandboxResumeError(ctx context.Context, sb *daytona.Sandbox, rec convstore.Record, text, requestID string, recorder *blocks.Recorder, err error, emit blocks.Emitter) {
+	b.log.Error("sandbox resume failed", "sandbox", sb.ID, "request_id", requestID, "error", err)
+	var timeoutErr *sdkerrors.DaytonaTimeoutError
+	title := "Sandbox resume failed"
+	msg := fmt.Sprintf("Could not start sandbox `%s`. Try again, or open a fresh chat.", sb.ID)
+	if errors.As(err, &timeoutErr) {
+		title = "Sandbox slow to start"
+		msg = fmt.Sprintf("Sandbox `%s` is taking unusually long to start. Wait a moment and reload, or open a fresh chat if it persists.", sb.ID)
+	}
+	emit.Error(title, msg)
+	appendBlocksAsNewTurn(&rec, text, recorder.Snapshot())
+	if err := b.convs.Upsert(ctx, rec); err != nil {
+		b.log.Error("convstore upsert (follow-up sandbox resume)", "error", err)
+	}
+	b.markRunOutcome(ctx, runstore.OutcomeFailedSetup, map[string]any{"phase": "sandbox_resume", "sandbox_id": sb.ID, "pr_url": rec.PRURL})
+	b.markRunState(ctx, runstore.StateFailed, err)
 }
 
 func (b *Bot) createFollowUpReplacementSandbox(ctx context.Context, oc orgcfg.Config, repo repoCtx, flavor billing.Flavor) (*daytona.Sandbox, repoCtx, error) {

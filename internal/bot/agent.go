@@ -297,7 +297,7 @@ func (b *Bot) refreshExistingBootstrapSpec(ctx context.Context, sb *daytona.Sand
 	if spec.ValidationStatus == bootstrap.StatusFailing {
 		reason = "the saved repo setup spec is failing"
 	}
-	emit.Notify("Bootstrap auto-heal", fmt.Sprintf("%s; regenerating setup/start/health before the agent runs.", reason))
+	emit.Notify("Bootstrap auto-heal", reason+"; regenerating setup/start/health before the agent runs.")
 
 	suppliedSecrets, err := b.bootstrap.GetSecrets(ctx, repo.InstallID, repo.RepoID, "")
 	if err != nil {

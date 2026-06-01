@@ -105,7 +105,7 @@ type Manifest struct {
 	RequiredSecrets      []Secret             `json:"required_secrets"`
 	DeferredCapabilities []string             `json:"deferred_capabilities,omitempty"`
 	SuggestedRepoChanges []string             `json:"suggested_repo_changes,omitempty"`
-	ValidationCapability ValidationCapability `json:"validation_capability,omitempty"`
+	ValidationCapability ValidationCapability `json:"validation_capability,omitzero"`
 }
 
 // ValidationCapability is the repeatable testability contract for a repo.
