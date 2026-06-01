@@ -43,13 +43,15 @@ func (m *Manager) FetchSkillZip(ctx context.Context, orgID string, actor Actor, 
 			return openErr
 		}
 		if openErr == nil {
-			zip, zerr := handle.Client.GetAssetZip(ctx, name, "")
-			if zerr == nil {
-				out = assetZipFromLib(zip)
-				return nil
-			}
-			if !looksLikeMissingSXAsset(zerr) {
-				return zerr
+			for _, candidate := range orgSkillCandidates(name) {
+				zip, zerr := handle.Client.GetAssetZip(ctx, candidate, "")
+				if zerr == nil {
+					out = assetZipFromLib(zip)
+					return nil
+				}
+				if !looksLikeMissingSXAsset(zerr) {
+					return zerr
+				}
 			}
 		}
 		public, ok, perr := m.openPublicVault(ctx, actor)
@@ -63,7 +65,7 @@ func (m *Manager) FetchSkillZip(ctx context.Context, orgID string, actor Actor, 
 			return fmt.Errorf("skill %q was not found in the active SX vault and the public SX vault is disabled", name)
 		}
 		var lastErr error
-		for _, candidate := range publicSkillCandidates(m.publicVaultURL, name) {
+		for _, candidate := range fetchSkillCandidates(m.publicVaultURL, name) {
 			zip, err := public.GetAssetZip(ctx, candidate, "")
 			if err != nil {
 				lastErr = err

@@ -279,6 +279,41 @@ func publicSkillCandidates(publicVaultURL, name string) []string {
 	return out
 }
 
+// fetchSkillCandidates returns the names to try when reading a skill asset
+// for display in the detail modal. It layers the slugified form on top of
+// publicSkillCandidates so the read-only fetch path can bridge the Skills.new
+// case where BotInstalledSkill.name is the human-readable display label
+// (e.g. "Bootstrap Spec System") while the asset is keyed by slug
+// ("bootstrap-spec-system"). The slug fallback is deliberately scoped to the
+// fetch path; the install path (copySkillFromPublicVault) keeps the stricter
+// publicSkillCandidates list so an admin-supplied name isn't silently
+// rewritten into a different vault asset.
+func fetchSkillCandidates(publicVaultURL, name string) []string {
+	out := publicSkillCandidates(publicVaultURL, name)
+	if slug := agents.NormalizeSlug(name); slug != "" && !slices.Contains(out, slug) {
+		out = append(out, slug)
+	}
+	return out
+}
+
+// orgSkillCandidates returns the names to try when looking up a skill in the
+// org's active vault. The raw name is tried first because admins can upload
+// assets under any name they like; the slugified fallback bridges the
+// Skills.new case where BotInstalledSkill.name is the human-readable label
+// (e.g. "Bootstrap Spec System") while the underlying asset is keyed by slug
+// ("bootstrap-spec-system").
+func orgSkillCandidates(name string) []string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
+	out := []string{name}
+	if slug := agents.NormalizeSlug(name); slug != "" && !slices.Contains(out, slug) {
+		out = append(out, slug)
+	}
+	return out
+}
+
 func publicVaultSkillPrefix(publicVaultURL string) string {
 	publicVaultURL = strings.TrimSpace(publicVaultURL)
 	if publicVaultURL == "" {
