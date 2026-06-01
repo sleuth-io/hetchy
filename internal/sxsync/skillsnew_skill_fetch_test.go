@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	sxlib "github.com/sleuth-io/sx/pkg/sxvault"
@@ -904,6 +905,75 @@ func TestSkillsNewSlugsForNameMovesExactSlugMatchFirst(t *testing.T) {
 	}
 	if len(slugs) == 0 || slugs[0] != "fix-pr" {
 		t.Fatalf("slugs = %+v, want fix-pr first via exact-slug-match boost", slugs)
+	}
+}
+
+// TestSkillsNewSlugsForNamePropagatesSearchError ensures a transient
+// skills.new search failure (e.g. backend 5xx) bubbles up rather than
+// being swallowed as "no slugs found". Returning nil/nil here would make
+// the caller short-circuit to the public vault on a temporary outage,
+// hiding the underlying problem and silently serving the wrong asset
+// when one exists in the public vault under a colliding slug.
+func TestSkillsNewSlugsForNamePropagatesSearchError(t *testing.T) {
+	ctx := context.Background()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+
+	client, err := sxlib.OpenSkillsNew(srv.URL, "sk_test")
+	if err != nil {
+		t.Fatalf("OpenSkillsNew: %v", err)
+	}
+	slugs, err := skillsNewSlugsForName(ctx, client, "Anything", nil)
+	if err == nil {
+		t.Fatalf("err = nil, want propagated search failure")
+	}
+	if slugs != nil {
+		t.Fatalf("slugs = %+v, want nil on error", slugs)
+	}
+	if !strings.Contains(err.Error(), "search skills.new vault for") {
+		t.Fatalf("err = %v, want wrapped 'search skills.new vault' message", err)
+	}
+}
+
+// TestSkillsNewSlugsForNamePropagatesSlugifiedRetryError covers the
+// second search round-trip: when the raw query returns zero hits we
+// retry with the slugified form. A failure on that retry must propagate
+// for the same reason as the first-call test — silent fallthrough on a
+// transient skills.new error would mask the failure.
+func TestSkillsNewSlugsForNamePropagatesSlugifiedRetryError(t *testing.T) {
+	ctx := context.Background()
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/graphql" {
+			http.NotFound(w, r)
+			return
+		}
+		// First call: succeed with empty result set so the helper
+		// proceeds to the slugified retry. Second call: 500.
+		if calls.Add(1) == 1 {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":{"vault":{"assets":{"nodes":[]}}}}`))
+			return
+		}
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+
+	client, err := sxlib.OpenSkillsNew(srv.URL, "sk_test")
+	if err != nil {
+		t.Fatalf("OpenSkillsNew: %v", err)
+	}
+	slugs, err := skillsNewSlugsForName(ctx, client, "Renamed Skill", nil)
+	if err == nil {
+		t.Fatalf("err = nil, want propagated retry-search failure")
+	}
+	if slugs != nil {
+		t.Fatalf("slugs = %+v, want nil on error", slugs)
+	}
+	if got := calls.Load(); got < 2 {
+		t.Fatalf("calls = %d, want at least 2 (raw + slugified retry)", got)
 	}
 }
 

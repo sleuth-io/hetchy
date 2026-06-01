@@ -220,11 +220,19 @@ func skillsNewSlugsForName(ctx context.Context, client *sxlib.Client, name strin
 	return out, nil
 }
 
+// skillsNewSearchLimit is the page size used for the rename-fallback
+// search. The Sleuth backend silently caps ListAssetsWithOptions at 50
+// regardless of the value we pass (see sxlib's ListOptions doc), so this
+// is set to that ceiling: under-asking would mean an asset whose chip
+// name happens to be a common token (e.g. "agent") could be ranked
+// outside our page and the modal would 502 with no observable signal.
+const skillsNewSearchLimit = 50
+
 func searchSkillsNewSlugs(ctx context.Context, client *sxlib.Client, query string) ([]string, error) {
 	assets, err := client.ListAssetsWithOptions(ctx, sxlib.ListOptions{
 		Type:   "skill",
 		Search: query,
-		Limit:  20,
+		Limit:  skillsNewSearchLimit,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("search skills.new vault for %q: %w", query, err)
