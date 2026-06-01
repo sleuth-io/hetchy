@@ -98,6 +98,46 @@ func TestPublicSkillCandidatesRecognizesRepositoryPrefixedNames(t *testing.T) {
 	}
 }
 
+// publicSkillCandidates intentionally does NOT include the slugified display
+// name: the install path (copySkillFromPublicVault) feeds admin-supplied
+// names straight through, and silently rewriting "Fix PR" to "fix-pr" there
+// could pull a different vault asset onto a bot than the admin requested.
+func TestPublicSkillCandidatesDoesNotSlugifyDisplayName(t *testing.T) {
+	got := publicSkillCandidates("https://github.com/hetchyhq/hetchy-sx-vault.git", "Bootstrap Spec System")
+	want := []string{"Bootstrap Spec System"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("publicSkillCandidates = %+v, want %+v", got, want)
+	}
+}
+
+func TestFetchSkillCandidatesAppendsSlugifiedDisplayName(t *testing.T) {
+	got := fetchSkillCandidates("https://github.com/hetchyhq/hetchy-sx-vault.git", "Bootstrap Spec System")
+	want := []string{"Bootstrap Spec System", "bootstrap-spec-system"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("fetchSkillCandidates = %+v, want %+v", got, want)
+	}
+	// Already a slug: no duplicate slug appended.
+	got = fetchSkillCandidates("https://github.com/hetchyhq/hetchy-sx-vault.git", "fix-pr")
+	want = []string{"fix-pr"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("fetchSkillCandidates dedup = %+v, want %+v", got, want)
+	}
+}
+
+func TestOrgSkillCandidatesFallsBackToSlug(t *testing.T) {
+	got := orgSkillCandidates("Bootstrap Spec System")
+	want := []string{"Bootstrap Spec System", "bootstrap-spec-system"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("orgSkillCandidates = %+v, want %+v", got, want)
+	}
+	if got := orgSkillCandidates("fix-pr"); strings.Join(got, ",") != "fix-pr" {
+		t.Fatalf("orgSkillCandidates dedup = %+v", got)
+	}
+	if got := orgSkillCandidates(" "); got != nil {
+		t.Fatalf("orgSkillCandidates blank = %+v, want nil", got)
+	}
+}
+
 func TestLooksLikeMissingSXAssetRecognizesOpaqueInstallErrors(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -131,6 +171,39 @@ func TestLooksLikeMissingSXAssetIgnoresUnrelatedErrors(t *testing.T) {
 				t.Fatalf("looksLikeMissingSXAsset(%v) = true, want false", tc.err)
 			}
 		})
+	}
+}
+
+func TestFetchSkillZipResolvesDisplayNameToSlugAgainstPublicVault(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	publicDir := filepath.Join(root, "hetchyhq", "hetchy-sx-vault")
+	if err := os.MkdirAll(publicDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	publicClient, err := sxlib.OpenPath(publicDir, sxlib.PathOptions{Actor: sxlib.Actor{Email: "admin@example.com"}})
+	if err != nil {
+		t.Fatalf("OpenPath public: %v", err)
+	}
+	if err := publicClient.PutSkillZip(ctx, sxlib.SkillZipSpec{
+		Name:        "bootstrap-spec-system",
+		Version:     "1",
+		Description: "Bootstrap spec.",
+		ZipData:     testSkillZip(t, "bootstrap-spec-system"),
+	}); err != nil {
+		t.Fatalf("seed public skill: %v", err)
+	}
+
+	m := &Manager{publicVaultURL: "file://" + publicDir}
+	got, err := m.FetchSkillZip(ctx, "org_test", Actor{Name: "Admin"}, "Bootstrap Spec System")
+	if err != nil {
+		t.Fatalf("FetchSkillZip with display name: %v", err)
+	}
+	if got.Name != "bootstrap-spec-system" {
+		t.Fatalf("name = %q, want slug bootstrap-spec-system", got.Name)
+	}
+	if len(got.Data) == 0 {
+		t.Fatalf("zip data empty")
 	}
 }
 
