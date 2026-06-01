@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	sxlib "github.com/sleuth-io/sx/pkg/sxvault"
+
+	"github.com/hetchyhq/hetchy/internal/agents"
 )
 
 // AssetZip is the value sxsync returns when callers need the raw zip bytes
@@ -95,8 +97,35 @@ func (m *Manager) fetchSkillFromOrgVault(ctx context.Context, orgID string, hand
 			return false, AssetZip{}, err
 		}
 		serverURL, httpClient := m.skillsNewHTTPConfig()
+		tried := map[string]struct{}{}
 		for _, candidate := range orgSkillCandidates(name) {
+			tried[candidate] = struct{}{}
 			zip, ferr := fetchSkillsNewSkillZip(ctx, httpClient, serverURL, sxKey, candidate)
+			if ferr == nil {
+				return true, zip, nil
+			}
+			if !looksLikeMissingSXAsset(ferr) {
+				return false, AssetZip{}, ferr
+			}
+		}
+		// The candidates above are string transformations of the chip's
+		// stored name. They cover the common case where the chip carries
+		// the slug or something that slugifies cleanly to it. They do
+		// NOT cover skills that were renamed on skills.new after they
+		// were created: in that case the chip stores the new display
+		// label (the BotInstalledSkill.name field returned by the
+		// skills.new GraphQL API) while the asset is still keyed by the
+		// original slug. Ask the vault directly — ListAssetsWithOptions
+		// returns slug as AssetSummary.Name on skills.new (see sxlib's
+		// sleuth.go listAssetsByType), and the GraphQL search indexes
+		// the display name, so this resolves the display→slug mapping
+		// without any local guessing.
+		slugs, err := skillsNewSlugsForName(ctx, handle.Client, name, tried)
+		if err != nil {
+			return false, AssetZip{}, err
+		}
+		for _, slug := range slugs {
+			zip, ferr := fetchSkillsNewSkillZip(ctx, httpClient, serverURL, sxKey, slug)
 			if ferr == nil {
 				return true, zip, nil
 			}
@@ -116,6 +145,103 @@ func (m *Manager) fetchSkillFromOrgVault(ctx context.Context, orgID string, hand
 		}
 	}
 	return false, AssetZip{}, nil
+}
+
+// skillsNewSlugsForName searches the skills.new org vault for skills matching
+// the given chip name and returns their canonical slugs in match order. The
+// returned slice excludes any slug we've already tried — callers seed
+// `tried` with the candidates they attempted before falling back; a nil
+// `tried` is treated as "nothing tried yet" so test callers and any future
+// use sites don't have to construct an empty map. The skills.new GraphQL
+// search ranks/fuzzy-matches against name and description, so for chips
+// that carry a renamed asset's display label the top result is the
+// original asset's slug. Empty results are not an error: the asset is simply
+// missing from this vault and the caller should fall through to the public
+// vault.
+func skillsNewSlugsForName(ctx context.Context, client *sxlib.Client, name string, tried map[string]struct{}) ([]string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" || client == nil {
+		return nil, nil
+	}
+	slugs, err := searchSkillsNewSlugs(ctx, client, name)
+	if err != nil {
+		return nil, err
+	}
+	// Some skills.new servers tokenize the search at whitespace, others
+	// match the raw string. If the raw query returned nothing (e.g.
+	// because the indexed name normalizes spaces away), retry with the
+	// slugified form so a "Renamed Skill" → "renamed-skill" → matching
+	// asset still surfaces. This costs one extra round trip only when
+	// the first search misses entirely, which is the cold-cache rare
+	// path the modal already absorbs.
+	if len(slugs) == 0 {
+		if slug := agents.NormalizeSlug(name); slug != "" && slug != name {
+			retry, retryErr := searchSkillsNewSlugs(ctx, client, slug)
+			if retryErr != nil {
+				return nil, retryErr
+			}
+			slugs = retry
+		}
+	}
+	wantSlug := agents.NormalizeSlug(name)
+	// `tried` filters slugs we already attempted in the outer candidate
+	// loop; `seen` dedupes within this single response. Keeping them
+	// separate avoids touching the caller's map and keeps the helper
+	// usable in unit tests that pass nil for `tried`.
+	seen := make(map[string]struct{}, len(slugs))
+	out := make([]string, 0, len(slugs))
+	for _, slug := range slugs {
+		slug = strings.TrimSpace(slug)
+		if slug == "" {
+			continue
+		}
+		if _, dup := seen[slug]; dup {
+			continue
+		}
+		seen[slug] = struct{}{}
+		if _, already := tried[slug]; already {
+			continue
+		}
+		out = append(out, slug)
+	}
+	// If skills.new's search returned an exact-slug match (e.g. because
+	// the chip's value happened to slugify to a real slug), bring it to
+	// the front. Skills.new's GraphQL ranking is opaque and version-
+	// dependent; this keeps the read path deterministic for the common
+	// case without depending on server-side scoring.
+	if wantSlug != "" {
+		for i, slug := range out {
+			if slug == wantSlug && i > 0 {
+				out[0], out[i] = out[i], out[0]
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
+// skillsNewSearchLimit is the page size used for the rename-fallback
+// search. The Sleuth backend silently caps ListAssetsWithOptions at 50
+// regardless of the value we pass (see sxlib's ListOptions doc), so this
+// is set to that ceiling: under-asking would mean an asset whose chip
+// name happens to be a common token (e.g. "agent") could be ranked
+// outside our page and the modal would 502 with no observable signal.
+const skillsNewSearchLimit = 50
+
+func searchSkillsNewSlugs(ctx context.Context, client *sxlib.Client, query string) ([]string, error) {
+	assets, err := client.ListAssetsWithOptions(ctx, sxlib.ListOptions{
+		Type:   "skill",
+		Search: query,
+		Limit:  skillsNewSearchLimit,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("search skills.new vault for %q: %w", query, err)
+	}
+	out := make([]string, 0, len(assets))
+	for _, asset := range assets {
+		out = append(out, asset.Name)
+	}
+	return out, nil
 }
 
 // skillsNewHTTPConfig resolves the server URL and HTTP client used for the
