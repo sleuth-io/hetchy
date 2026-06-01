@@ -389,7 +389,11 @@ func (b *Bot) prepareFollowUpSandbox(ctx context.Context, oc orgcfg.Config, rec 
 			if err := b.convs.Upsert(context.Background(), rec); err != nil {
 				b.log.Error("convstore upsert (follow-up stopped before sandbox get)", "error", err)
 			}
-			b.markRunOutcome(ctx, runstore.OutcomeCancelledAfterPR, map[string]any{"phase": "sandbox_get", "pr_url": rec.PRURL})
+			outcome := runstore.OutcomeCancelledBeforePR
+			if rec.PRURL != "" {
+				outcome = runstore.OutcomeCancelledAfterPR
+			}
+			b.markRunOutcome(ctx, outcome, map[string]any{"phase": "sandbox_get", "pr_url": rec.PRURL})
 			b.markRunState(ctx, runstore.StateCancelled, nil)
 			return nil, rec, repo, false
 		}
@@ -416,10 +420,17 @@ func (b *Bot) prepareFollowUpSandbox(ctx context.Context, oc orgcfg.Config, rec 
 		if err := b.convs.Upsert(context.Background(), rec); err != nil {
 			b.log.Error("convstore upsert (follow-up stopped during resume)", "error", err)
 		}
-		b.markRunOutcome(ctx, runstore.OutcomeCancelledAfterPR, map[string]any{"phase": "sandbox_resume", "sandbox_id": sb.ID, "pr_url": rec.PRURL})
+		outcome := runstore.OutcomeCancelledBeforePR
+		if rec.PRURL != "" {
+			outcome = runstore.OutcomeCancelledAfterPR
+		}
+		b.markRunOutcome(ctx, outcome, map[string]any{"phase": "sandbox_resume", "sandbox_id": sb.ID, "pr_url": rec.PRURL})
 		b.markRunState(ctx, runstore.StateCancelled, err)
 		return nil, rec, repo, false
-	} else if replacement, updatedRepo, replaced := b.tryReplaceConflictedFollowUpSandbox(ctx, oc, sb, repo, flavor, rec, requestID, err, emit); replaced {
+	} else if replacement, updatedRepo, replaced, replaceErr := b.tryReplaceConflictedFollowUpSandbox(ctx, oc, sb, repo, flavor, rec, requestID, err, emit); replaceErr != nil {
+		b.handleFollowUpReplacementSandboxError(ctx, sb, rec, text, requestID, recorder, err, replaceErr, emit)
+		return nil, rec, repo, false
+	} else if replaced {
 		rec.SandboxID = replacement.ID
 		return replacement, rec, updatedRepo, true
 	} else {
@@ -428,14 +439,14 @@ func (b *Bot) prepareFollowUpSandbox(ctx context.Context, oc orgcfg.Config, rec 
 	}
 }
 
-func (b *Bot) tryReplaceConflictedFollowUpSandbox(ctx context.Context, oc orgcfg.Config, sb *daytona.Sandbox, repo repoCtx, flavor billing.Flavor, rec convstore.Record, requestID string, resumeErr error, emit blocks.Emitter) (*daytona.Sandbox, repoCtx, bool) {
+func (b *Bot) tryReplaceConflictedFollowUpSandbox(ctx context.Context, oc orgcfg.Config, sb *daytona.Sandbox, repo repoCtx, flavor billing.Flavor, rec convstore.Record, requestID string, resumeErr error, emit blocks.Emitter) (*daytona.Sandbox, repoCtx, bool, error) {
 	if !isDaytonaStateChangeConflict(resumeErr) {
-		return nil, repo, false
+		return nil, repo, false, nil
 	}
 	replacement, updatedRepo, err := b.createFollowUpReplacementSandbox(ctx, oc, repo, flavor)
 	if err != nil {
 		b.log.Error("sandbox replacement after resume conflict failed", "sandbox", sb.ID, "request_id", requestID, "error", err)
-		return nil, repo, false
+		return nil, repo, true, err
 	}
 	b.log.Warn("sandbox resume conflicted; continuing in replacement sandbox",
 		"old_sandbox", sb.ID,
@@ -451,7 +462,7 @@ func (b *Bot) tryReplaceConflictedFollowUpSandbox(ctx context.Context, oc orgcfg
 	if err := b.convs.Upsert(context.Background(), rec); err != nil {
 		b.log.Error("convstore upsert (replacement sandbox)", "error", err)
 	}
-	return replacement, updatedRepo, true
+	return replacement, updatedRepo, true, nil
 }
 
 func (b *Bot) handleFollowUpSandboxResumeError(ctx context.Context, sb *daytona.Sandbox, rec convstore.Record, text, requestID string, recorder *blocks.Recorder, err error, emit blocks.Emitter) {
@@ -470,6 +481,22 @@ func (b *Bot) handleFollowUpSandboxResumeError(ctx context.Context, sb *daytona.
 	}
 	b.markRunOutcome(ctx, runstore.OutcomeFailedSetup, map[string]any{"phase": "sandbox_resume", "sandbox_id": sb.ID, "pr_url": rec.PRURL})
 	b.markRunState(ctx, runstore.StateFailed, err)
+}
+
+func (b *Bot) handleFollowUpReplacementSandboxError(ctx context.Context, sb *daytona.Sandbox, rec convstore.Record, text, requestID string, recorder *blocks.Recorder, resumeErr, replaceErr error, emit blocks.Emitter) {
+	b.log.Error("sandbox replacement failed after resume conflict",
+		"sandbox", sb.ID,
+		"request_id", requestID,
+		"resume_error", resumeErr,
+		"replacement_error", replaceErr)
+	emit.Error("Sandbox replacement failed",
+		fmt.Sprintf("Daytona is still changing state for `%s`, and Hetchy could not create a replacement sandbox. Try again in a minute, or open a fresh chat if it persists.", sb.ID))
+	appendBlocksAsNewTurn(&rec, text, recorder.Snapshot())
+	if err := b.convs.Upsert(ctx, rec); err != nil {
+		b.log.Error("convstore upsert (follow-up sandbox replacement)", "error", err)
+	}
+	b.markRunOutcome(ctx, runstore.OutcomeFailedSetup, map[string]any{"phase": "sandbox_replacement", "sandbox_id": sb.ID, "pr_url": rec.PRURL})
+	b.markRunState(ctx, runstore.StateFailed, replaceErr)
 }
 
 func (b *Bot) createFollowUpReplacementSandbox(ctx context.Context, oc orgcfg.Config, repo repoCtx, flavor billing.Flavor) (*daytona.Sandbox, repoCtx, error) {
@@ -608,11 +635,14 @@ func freshRequestAllowsNoPR(userRequest string) bool {
 	}
 	questionSignals := []string{
 		"can i ",
+		"can you ",
 		"can you tell",
 		"could i ",
+		"could you ",
 		"do we ",
 		"does ",
 		"explain ",
+		"help me understand",
 		"how ",
 		"is ",
 		"tell me ",

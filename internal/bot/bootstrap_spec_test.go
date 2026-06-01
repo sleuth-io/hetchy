@@ -218,7 +218,7 @@ func TestTruncateLogTailSanitizesInvalidUTF8(t *testing.T) {
 	}
 }
 
-func TestEnsureBootstrapSpecReturnsExistingFreshSpecAfterDriftCheck(t *testing.T) {
+func TestEnsureBootstrapSpecReturnsExistingFreshSpecWithoutSandboxCheck(t *testing.T) {
 	hintsRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(hintsRoot, "go.mod"), []byte("module example.com/app\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -267,8 +267,8 @@ func TestEnsureBootstrapSpecReturnsExistingFreshSpecAfterDriftCheck(t *testing.T
 	if spec.Kind != "go" {
 		t.Fatalf("spec = %+v", spec)
 	}
-	if !created || !cloned || !detected {
-		t.Fatalf("drift check did not run: created=%t cloned=%t detected=%t", created, cloned, detected)
+	if created || cloned || detected {
+		t.Fatalf("fresh spec should not run sandbox drift check: created=%t cloned=%t detected=%t", created, cloned, detected)
 	}
 	if len(boot.savedSpecs) != 0 || len(boot.failingSpecs) != 0 {
 		t.Fatalf("unexpected writes: saved=%d failing=%d", len(boot.savedSpecs), len(boot.failingSpecs))
@@ -291,7 +291,7 @@ func TestEnsureBootstrapSpecAutoHealsStaleExistingSpec(t *testing.T) {
 			StartScript:       "old start",
 			HealthCheck:       "old health",
 			SourceFingerprint: "sha256:old",
-			ValidationStatus:  bootstrap.StatusValidated,
+			ValidationStatus:  bootstrap.StatusStale,
 			BootstrapLog:      "old failure",
 		},
 	}
@@ -344,5 +344,134 @@ func TestEnsureBootstrapSpecAutoHealsStaleExistingSpec(t *testing.T) {
 	}
 	if len(boot.savedSpecs) != 1 || boot.savedSpecs[0].SpecVersion != 4 {
 		t.Fatalf("saved specs = %+v", boot.savedSpecs)
+	}
+}
+
+func TestEnsureBootstrapSpecSkipsFailingAutoHealAfterCap(t *testing.T) {
+	hintsRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(hintsRoot, "package.json"), []byte(`{"scripts":{"dev":"vite"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	hints := &bootstrap.Hints{Path: hintsRoot, PackageJSON: &bootstrap.PackageJSON{Path: "package.json", Scripts: map[string]string{"dev": "vite"}}}
+	boot := &fakeBootstrapStore{
+		spec: &bootstrap.Spec{
+			InstallationID:    11,
+			RepoID:            22,
+			SpecVersion:       3,
+			Kind:              "node",
+			SetupScript:       "npm install",
+			StartScript:       "npm run dev",
+			HealthCheck:       "curl -f http://localhost:5173",
+			SourceFingerprint: bootstrap.Fingerprint(hints),
+			ValidationStatus:  bootstrap.StatusFailing,
+			FailureCount:      maxFailingBootstrapAutoHealAttempts,
+			BootstrapLog:      "still failing",
+		},
+	}
+	var autoHealCalled bool
+	b := &Bot{
+		log:       discardLogger(),
+		bootstrap: boot,
+		createBootstrapSessionFn: func(context.Context, *daytona.Sandbox, string) error {
+			return nil
+		},
+		runInlineScriptFn: func(context.Context, *daytona.Sandbox, string, string, string, map[string]string, blocks.Emitter) error {
+			return nil
+		},
+		detectViaSandboxFn: func(context.Context, *daytona.Sandbox, string, string) (*bootstrap.Hints, string, error) {
+			return hints, hintsRoot, nil
+		},
+		bootstrapAutoHealFn: func(context.Context, bootstrap.Runner, bootstrap.AutoHealInput) (*bootstrap.LoopResult, error) {
+			autoHealCalled = true
+			return nil, errors.New("auto-heal should not run")
+		},
+		deleteSandboxSessionFn: func(*daytona.Sandbox, string) {},
+	}
+	emit := newCaptureEmitter()
+
+	spec, err := b.ensureBootstrapSpec(context.Background(), &daytona.Sandbox{ID: "sandbox-1"}, repoCtx{
+		Slug:        "hetchyhq/web",
+		BaseBranch:  "main",
+		GitHubToken: "ghs_test",
+		InstallID:   11,
+		RepoID:      22,
+	}, orgcfg.Config{AnthropicAPIKey: "sk-ant"}, "req-heal", emit)
+	if err != nil {
+		t.Fatalf("ensureBootstrapSpec: %v", err)
+	}
+	if autoHealCalled {
+		t.Fatal("auto-heal should be capped for repeatedly failing specs")
+	}
+	if spec.ValidationStatus != bootstrap.StatusFailing || spec.FailureCount != maxFailingBootstrapAutoHealAttempts {
+		t.Fatalf("spec = %+v", spec)
+	}
+	if len(boot.savedSpecs) != 0 || len(boot.failingSpecs) != 0 {
+		t.Fatalf("unexpected writes: saved=%d failing=%d", len(boot.savedSpecs), len(boot.failingSpecs))
+	}
+	if !emit.hasCall("notify", "Bootstrap auto-heal skipped") {
+		t.Fatalf("bootstrap notifications = %+v", emit.Calls)
+	}
+}
+
+func TestBootstrapAutoHealDecisionHelpers(t *testing.T) {
+	tests := []struct {
+		name        string
+		stale       bool
+		spec        *bootstrap.Spec
+		wantRefresh bool
+		wantHeal    bool
+		wantCapped  bool
+	}{
+		{
+			name:        "validated skips refresh",
+			spec:        &bootstrap.Spec{ValidationStatus: bootstrap.StatusValidated},
+			wantRefresh: false,
+			wantHeal:    false,
+		},
+		{
+			name:        "stale status refreshes",
+			spec:        &bootstrap.Spec{ValidationStatus: bootstrap.StatusStale},
+			wantRefresh: true,
+			wantHeal:    true,
+		},
+		{
+			name:        "fingerprint stale heals",
+			stale:       true,
+			spec:        &bootstrap.Spec{ValidationStatus: bootstrap.StatusValidated},
+			wantRefresh: false,
+			wantHeal:    true,
+		},
+		{
+			name:        "failing below cap refreshes and heals",
+			spec:        &bootstrap.Spec{ValidationStatus: bootstrap.StatusFailing, FailureCount: maxFailingBootstrapAutoHealAttempts - 1},
+			wantRefresh: true,
+			wantHeal:    true,
+		},
+		{
+			name:        "failing at cap skips",
+			spec:        &bootstrap.Spec{ValidationStatus: bootstrap.StatusFailing, FailureCount: maxFailingBootstrapAutoHealAttempts},
+			wantRefresh: false,
+			wantHeal:    false,
+			wantCapped:  true,
+		},
+		{
+			name:        "nil spec skips",
+			spec:        nil,
+			wantRefresh: false,
+			wantHeal:    false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shouldRefreshExistingBootstrapSpec(tt.spec); got != tt.wantRefresh {
+				t.Fatalf("shouldRefreshExistingBootstrapSpec = %t, want %t", got, tt.wantRefresh)
+			}
+			if got := shouldAutoHealExistingBootstrapSpec(tt.stale, tt.spec); got != tt.wantHeal {
+				t.Fatalf("shouldAutoHealExistingBootstrapSpec = %t, want %t", got, tt.wantHeal)
+			}
+			if got := failingBootstrapAutoHealCapped(tt.stale, tt.spec); got != tt.wantCapped {
+				t.Fatalf("failingBootstrapAutoHealCapped = %t, want %t", got, tt.wantCapped)
+			}
+		})
 	}
 }

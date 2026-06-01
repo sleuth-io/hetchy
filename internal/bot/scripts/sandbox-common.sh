@@ -81,6 +81,7 @@ hetchy_container_preflight() {
     joined="$(IFS=,; printf '%s' "${missing[*]}")"
     hetchy_tooling_degraded "container-preflight" "missing required tools: ${joined}"
     echo "[hetchy] container preflight failed: missing required tools (${joined})" >&2
+    # Exit 64 means required container tooling is absent before the agent can run.
     exit 64
   fi
 
@@ -94,7 +95,6 @@ hetchy_container_preflight() {
   if [[ "${#unavailable[@]}" -gt 0 ]]; then
     local joined
     joined="$(IFS=,; printf '%s' "${unavailable[*]}")"
-    hetchy_tooling_degraded "container-preflight" "optional tools unavailable: ${joined}"
     echo "[hetchy] container preflight warning: optional tools unavailable (${joined})"
   fi
 }

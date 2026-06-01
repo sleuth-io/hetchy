@@ -21,6 +21,8 @@ import (
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
 )
 
+const maxFailingBootstrapAutoHealAttempts int32 = 3
+
 func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, agent agents.Profile, userRequest, requestID, branch string, opts chatTaskOptions, model ClaudeModel, emit blocks.Emitter) (string, error) {
 	model = normalizeClaudeModel(model)
 	provider := modelProvider(model)
@@ -166,6 +168,12 @@ func (b *Bot) ensureBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo
 	spec, err := b.bootstrap.GetSpec(ctx, repo.InstallID, repo.RepoID, "")
 	switch {
 	case err == nil:
+		if !shouldRefreshExistingBootstrapSpec(spec) {
+			if failingBootstrapAutoHealCapped(false, spec) {
+				b.notifyBootstrapAutoHealCapped(repo, requestID, spec, emit)
+			}
+			return spec, nil
+		}
 		refreshed, refreshErr := b.refreshExistingBootstrapSpec(ctx, sb, repo, oc, requestID, spec, emit)
 		if refreshErr != nil {
 			b.log.Warn("bootstrap drift check failed; using saved spec",
@@ -288,8 +296,11 @@ func (b *Bot) refreshExistingBootstrapSpec(ctx context.Context, sb *daytona.Sand
 	defer func() { _ = os.RemoveAll(tempRoot) }()
 
 	stale := bootstrap.IsStale(hints, spec)
-	needsHeal := stale || spec.ValidationStatus == bootstrap.StatusStale || spec.ValidationStatus == bootstrap.StatusFailing
+	needsHeal := shouldAutoHealExistingBootstrapSpec(stale, spec)
 	if !needsHeal {
+		if failingBootstrapAutoHealCapped(stale, spec) {
+			b.notifyBootstrapAutoHealCapped(repo, requestID, spec, emit)
+		}
 		return spec, nil
 	}
 
@@ -338,6 +349,52 @@ func (b *Bot) refreshExistingBootstrapSpec(ctx context.Context, sb *daytona.Sand
 		fmt.Sprintf("Saved `%s` setup version %d for `%s` (status: %s).",
 			refreshed.Kind, refreshed.SpecVersion, repo.Slug, refreshed.ValidationStatus))
 	return refreshed, nil
+}
+
+func shouldRefreshExistingBootstrapSpec(spec *bootstrap.Spec) bool {
+	if spec == nil {
+		return false
+	}
+	switch spec.ValidationStatus {
+	case bootstrap.StatusStale:
+		return true
+	case bootstrap.StatusFailing:
+		return spec.FailureCount < maxFailingBootstrapAutoHealAttempts
+	case bootstrap.StatusValidated, bootstrap.StatusPartial:
+		return false
+	default:
+		return false
+	}
+}
+
+func shouldAutoHealExistingBootstrapSpec(stale bool, spec *bootstrap.Spec) bool {
+	if spec == nil {
+		return false
+	}
+	if stale || spec.ValidationStatus == bootstrap.StatusStale {
+		return true
+	}
+	if spec.ValidationStatus != bootstrap.StatusFailing {
+		return false
+	}
+	return spec.FailureCount < maxFailingBootstrapAutoHealAttempts
+}
+
+func failingBootstrapAutoHealCapped(stale bool, spec *bootstrap.Spec) bool {
+	return spec != nil &&
+		!stale &&
+		spec.ValidationStatus == bootstrap.StatusFailing &&
+		spec.FailureCount >= maxFailingBootstrapAutoHealAttempts
+}
+
+func (b *Bot) notifyBootstrapAutoHealCapped(repo repoCtx, requestID string, spec *bootstrap.Spec, emit blocks.Emitter) {
+	b.log.Warn("bootstrap auto-heal skipped after repeated failures",
+		"repo", repo.Slug,
+		"request_id", requestID,
+		"failure_count", spec.FailureCount,
+		"max_attempts", maxFailingBootstrapAutoHealAttempts)
+	emit.Notify("Bootstrap auto-heal skipped",
+		fmt.Sprintf("The saved repo setup spec is still failing after %d attempts, so Hetchy will reuse it instead of retrying auto-heal on every run.", spec.FailureCount))
 }
 
 func (b *Bot) prepareBootstrapCheckout(ctx context.Context, sb *daytona.Sandbox, sessionID string, repo repoCtx, oc orgcfg.Config, emit blocks.Emitter) error {

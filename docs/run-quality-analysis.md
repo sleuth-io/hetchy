@@ -1,4 +1,4 @@
-# Hetchy Run Quality Analysis - 2026-06-01
+# Hetchy Run Quality Analysis
 
 ## Scope And Data
 
