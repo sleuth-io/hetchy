@@ -273,6 +273,130 @@ func TestFetchSkillsNewSkillZipURLEncodesNamesWithSpaces(t *testing.T) {
 	}
 }
 
+func TestFetchSkillsNewSkillZipTreatsHTMLListAsMissing(t *testing.T) {
+	// Regression for the "Durable Run Store and Recovery" 502: when the bot
+	// has a skill installed under a multi-word display label, the raw
+	// candidate URL on skills.new resolves to the Nuxt SPA HTML catch-all
+	// rather than a real version list. Without this guard the HTML lines
+	// were parsed as bogus versions and pushed into the zip URL, surfacing
+	// as a 502 on the modal instead of falling through to the slug
+	// candidate or the public vault.
+	ctx := context.Background()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/list.txt"):
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write([]byte("<!DOCTYPE html><html><body>nuxt spa</body></html>"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	_, err := fetchSkillsNewSkillZip(ctx, srv.Client(), srv.URL, "", "Durable Run Store and Recovery")
+	if err == nil {
+		t.Fatalf("expected error, got nil")
+	}
+	if !looksLikeMissingSXAsset(err) {
+		t.Fatalf("looksLikeMissingSXAsset(%v) = false, want true so caller falls through to the slug candidate / public vault", err)
+	}
+}
+
+func TestFetchSkillFromOrgVaultFallsThroughWhenListReturnsSPA(t *testing.T) {
+	// End-to-end version of the regression above against the manager-level
+	// helper. The display-name candidate hits the SPA HTML route on
+	// list.txt (skills.new's catch-all behavior for unknown asset paths),
+	// and the slug fallback resolves to the actual asset. The manager must
+	// report (found=true) and surface the slug-keyed zip, not bubble up a
+	// 502 from the bogus HTML-as-version detour.
+	ctx := context.Background()
+	zipBytes := skillZipWithMetadata(t, "durable-run-lifecycle", "1", "Durable run lifecycle.")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rel := strings.TrimPrefix(r.URL.Path, "/api/skills/assets/")
+		parts := strings.Split(rel, "/")
+		name := parts[0]
+		switch {
+		case len(parts) == 2 && parts[1] == "list.txt" && name == "durable-run-lifecycle":
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			_, _ = w.Write([]byte("1\n"))
+		case len(parts) == 3 && strings.HasSuffix(parts[2], ".zip") && name == "durable-run-lifecycle":
+			w.Header().Set("Content-Type", "application/zip")
+			_, _ = w.Write(zipBytes)
+		default:
+			// SPA catch-all for unknown asset paths, including the
+			// raw display-name candidate's list.txt request.
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write([]byte("<!DOCTYPE html><html><body>nuxt spa</body></html>"))
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	m := &Manager{
+		skillsNewServerURL:  srv.URL,
+		skillsNewHTTPClient: srv.Client(),
+	}
+	found, got, err := m.fetchSkillFromOrgVault(ctx, "org_test", VaultHandle{Backend: BackendSkillsNew}, "Durable Run Lifecycle")
+	if err != nil {
+		t.Fatalf("fetchSkillFromOrgVault: %v", err)
+	}
+	if !found {
+		t.Fatalf("found = false, want true via slug fallback after the display-name candidate hit the SPA catch-all")
+	}
+	if got.Name != "durable-run-lifecycle" {
+		t.Fatalf("name = %q, want slug durable-run-lifecycle", got.Name)
+	}
+}
+
+func TestFetchSkillsNewSkillZipTreatsUnreadableMetadataAsMissing(t *testing.T) {
+	// A valid-looking zip body whose metadata.toml fails to parse (e.g.
+	// because skills.new stored a corrupt or non-TOML payload under that
+	// filename) must surface as a missing-asset signal so FetchSkillZip
+	// can fall through to the public vault. Before this guard the TOML
+	// parse error bubbled up as a 502 on the modal.
+	ctx := context.Background()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	mw, err := zw.Create("metadata.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Embedded NULs and a stray bracket make this fail BurntSushi/toml's
+	// parser the same way zip bytes would, which is the failure mode the
+	// original 502 fix targeted at the metadata.toml endpoint level.
+	_, _ = mw.Write([]byte("not = valid = toml \x00 ["))
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/list.txt"):
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			_, _ = w.Write([]byte("1\n"))
+		case strings.HasSuffix(r.URL.Path, ".zip"):
+			w.Header().Set("Content-Type", "application/zip")
+			_, _ = w.Write(buf.Bytes())
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	_, err = fetchSkillsNewSkillZip(ctx, srv.Client(), srv.URL, "", "broken-metadata")
+	if err == nil {
+		t.Fatalf("expected error, got nil")
+	}
+	if !looksLikeMissingSXAsset(err) {
+		t.Fatalf("looksLikeMissingSXAsset(%v) = false, want true so caller falls through to the public vault", err)
+	}
+	// Pin that the error came from the new metadata-parse fallthrough,
+	// not from an earlier guard (looksLikeZipPayload, version-list parse,
+	// etc.); a future refactor that bypassed the metadata-parse branch
+	// could otherwise keep this test green while regressing the fix.
+	if !strings.Contains(err.Error(), "unreadable metadata") {
+		t.Fatalf("err = %q, want it to contain the metadata-parse wrap so we know the test exercises that branch", err.Error())
+	}
+}
+
 func TestParseSkillsNewVersionList(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -284,6 +408,16 @@ func TestParseSkillsNewVersionList(t *testing.T) {
 		{"single", "1\n", []string{"1"}},
 		{"multiple with trailing newline", "1\n2\n10\n", []string{"1", "2", "10"}},
 		{"with blanks", "1\n\n2\n   \n3\n", []string{"1", "2", "3"}},
+		// Skills.new can serve the Nuxt SPA HTML (or a JSON error envelope)
+		// for asset paths it doesn't recognize instead of returning 404.
+		// Each of these would otherwise be parsed line-by-line into bogus
+		// "versions" and pushed into the downstream zip URL, breaking the
+		// public-vault fallback. parseSkillsNewVersionList must reject them
+		// as a whole.
+		{"single-line html spa", "<!DOCTYPE html><html><body>nuxt spa</body></html>\n", nil},
+		{"multi-line html spa", "<!DOCTYPE html>\n<html>\n<head></head>\n<body>nuxt</body>\n</html>\n", nil},
+		{"json error envelope", "{\"error\":\"not found\"}\n", nil},
+		{"version with bracket on later line", "1.0.0\n<div>oops</div>\n", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := parseSkillsNewVersionList([]byte(tc.in))
@@ -294,6 +428,34 @@ func TestParseSkillsNewVersionList(t *testing.T) {
 				if got[i] != tc.want[i] {
 					t.Fatalf("got %v, want %v", got, tc.want)
 				}
+			}
+		})
+	}
+}
+
+func TestLooksLikeSkillsNewVersionToken(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{"empty", "", false},
+		{"integer", "1", true},
+		{"semver", "1.0.0", true},
+		{"semver with prerelease", "1.0.0-beta.1", true},
+		{"prefixed v", "v2", true},
+		{"semver with build", "1.0.0+sha", true},
+		{"opening angle bracket", "<!DOCTYPE", false},
+		{"closing angle bracket", "html>", false},
+		{"json fragment", "{\"x\":1}", false},
+		{"contains space", "1 0", false},
+		{"contains quote", "1.0\"", false},
+		{"contains slash", "1/0", false},
+		{"too long", strings.Repeat("a", 65), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := looksLikeSkillsNewVersionToken(tc.in); got != tc.want {
+				t.Fatalf("looksLikeSkillsNewVersionToken(%q) = %v, want %v", tc.in, got, tc.want)
 			}
 		})
 	}
