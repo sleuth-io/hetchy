@@ -372,7 +372,9 @@ func (b *Bot) handleFollowUpRunError(ctx context.Context, sb *daytona.Sandbox, r
 		b.log.Error("convstore upsert (follow-up agent fail)", "error", uerr)
 	}
 	outcome := runstore.OutcomeFailedRuntime
-	if errors.Is(err, errReportedPRNotVerified) {
+	if isAgentTimeout(err) {
+		outcome = runstore.OutcomeFailedTimeout
+	} else if errors.Is(err, errReportedPRNotVerified) {
 		outcome = runstore.OutcomeFailedPRValidation
 	}
 	b.markRunOutcome(ctx, outcome, map[string]any{"phase": "followup", "branch": rec.Branch, "pr_url": rec.PRURL})
@@ -399,9 +401,6 @@ func isTransientError(err error) bool {
 	}
 	var dayErr *sdkerrors.DaytonaError
 	if errors.As(err, &dayErr) {
-		if isDaytonaStateChangeConflict(dayErr) {
-			return true
-		}
 		return dayErr.StatusCode == 0 ||
 			dayErr.StatusCode == http.StatusTooManyRequests ||
 			(dayErr.StatusCode >= 500 && dayErr.StatusCode < 600)

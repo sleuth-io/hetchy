@@ -200,7 +200,7 @@ func (b *Bot) runFreshAgentWithTranscriptModeAndKind(ctx context.Context, oc org
 			b.markRunState(ctx, runstore.StateFailed, err)
 			return
 		}
-		b.markRunOutcome(ctx, runstore.OutcomeCompletedNoPR, map[string]any{"reason": "classified_answer_or_inspect"})
+		b.markCompletedRunOutcome(ctx, recorder.Snapshot(), runstore.OutcomeCompletedNoPR, map[string]any{"reason": "classified_answer_or_inspect"})
 		b.markRunState(ctx, runstore.StateSucceeded, nil)
 		b.deleteSandboxSession(sb, b.currentAgentRunSessionID(ctx, "agent-"+requestID))
 		b.stopAndArchiveSandbox(ctx, sb)
@@ -223,7 +223,7 @@ func (b *Bot) runFreshAgentWithTranscriptModeAndKind(ctx context.Context, oc org
 		b.markRunState(ctx, runstore.StateFailed, err)
 		return
 	}
-	b.markRunOutcome(ctx, runstore.OutcomeCompletedWithVerifiedPR, map[string]any{"pr_url": prURL, "branch": branch})
+	b.markCompletedRunOutcome(ctx, recorder.Snapshot(), runstore.OutcomeCompletedWithVerifiedPR, map[string]any{"pr_url": prURL, "branch": branch})
 	b.markRunState(ctx, runstore.StateSucceeded, nil)
 	b.deleteSandboxSession(sb, b.currentAgentRunSessionID(ctx, "agent-"+requestID))
 	b.stopAndArchiveSandbox(ctx, sb)
@@ -371,9 +371,9 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 		return
 	}
 	if prURL != "" {
-		b.markRunOutcome(ctx, runstore.OutcomeCompletedWithVerifiedPR, map[string]any{"pr_url": prURL, "branch": rec.Branch})
+		b.markCompletedRunOutcome(ctx, recorder.Snapshot(), runstore.OutcomeCompletedWithVerifiedPR, map[string]any{"pr_url": prURL, "branch": rec.Branch})
 	} else {
-		b.markRunOutcome(ctx, runstore.OutcomeCompletedNoPR, map[string]any{"reason": "followup_no_new_pr", "existing_pr_url": rec.PRURL})
+		b.markCompletedRunOutcome(ctx, recorder.Snapshot(), runstore.OutcomeCompletedNoPR, map[string]any{"reason": "followup_no_new_pr", "existing_pr_url": rec.PRURL})
 	}
 	b.markRunState(ctx, runstore.StateSucceeded, nil)
 	b.deleteSandboxSession(sb, b.currentAgentRunSessionID(ctx, "followup-"+requestID))
@@ -549,12 +549,24 @@ func newPRFollowUpRequest(rec convstore.Record, userRequest string) string {
 	if rec.PRURL != "" {
 		fmt.Fprintf(&b, "\n\nEXISTING PR TO TREAT AS CONTEXT ONLY:\n%s", rec.PRURL)
 	}
-	if len(rec.History) > 0 {
+	if history := boundedNewPRHistory(rec.History); history != "" {
 		b.WriteString("\n\nCONVERSATION SO FAR:\n")
-		b.WriteString(strings.Join(rec.History, "\n---\n"))
+		b.WriteString(history)
 	}
 	fmt.Fprintf(&b, "\n\nLATEST USER REQUEST:\n%s", userRequest)
 	return b.String()
+}
+
+func boundedNewPRHistory(history []string) string {
+	const maxTurns = 6
+	const maxRunes = 8000
+	if len(history) == 0 {
+		return ""
+	}
+	if len(history) > maxTurns {
+		history = history[len(history)-maxTurns:]
+	}
+	return truncate(strings.Join(history, "\n---\n"), maxRunes)
 }
 
 func noPullRequestResultBody(followup bool) string {

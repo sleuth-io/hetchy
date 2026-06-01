@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"strconv"
 	"strings"
@@ -194,7 +195,61 @@ func (b *Bot) markRunState(ctx context.Context, state string, err error) {
 
 func (b *Bot) markRunOutcome(ctx context.Context, outcome string, detail map[string]any) {
 	if run, ok := agentRunFromContext(ctx); ok && b.runs != nil {
+		// quality_score is intentionally left nil here. It will be populated
+		// by a later GitHub-enrichment pass once review/check/merge data is
+		// available after the run reaches a terminal outcome.
 		b.runs.UpdateOutcome(context.Background(), run.ID, outcome, detail, nil, b.workerID)
+	}
+}
+
+func (b *Bot) markCompletedRunOutcome(ctx context.Context, transcript []blocks.Block, outcome string, detail map[string]any) {
+	if degraded, ok := sxToolingDegradation(transcript); ok {
+		detail = cloneOutcomeDetail(detail)
+		detail["completion_outcome"] = outcome
+		detail["tooling_degraded"] = degraded
+		outcome = runstore.OutcomeDegradedMissingSkills
+	}
+	b.markRunOutcome(ctx, outcome, detail)
+}
+
+func cloneOutcomeDetail(in map[string]any) map[string]any {
+	out := make(map[string]any, len(in)+2)
+	maps.Copy(out, in)
+	return out
+}
+
+func sxToolingDegradation(transcript []blocks.Block) ([]map[string]string, bool) {
+	var degraded []map[string]string
+	for _, block := range transcript {
+		if block.Meta == nil {
+			continue
+		}
+		raw, ok := block.Meta[ToolingDegradedMetaKey]
+		if !ok {
+			continue
+		}
+		label, message := toolingDegradedFields(raw)
+		if label == "" || (label != "sx-install" && !strings.HasPrefix(label, "sx-")) {
+			continue
+		}
+		degraded = append(degraded, map[string]string{
+			"label":   label,
+			"message": message,
+		})
+	}
+	return degraded, len(degraded) > 0
+}
+
+func toolingDegradedFields(raw any) (string, string) {
+	switch value := raw.(type) {
+	case map[string]string:
+		return strings.TrimSpace(value["label"]), strings.TrimSpace(value["message"])
+	case map[string]any:
+		label, _ := value["label"].(string)
+		message, _ := value["message"].(string)
+		return strings.TrimSpace(label), strings.TrimSpace(message)
+	default:
+		return "", ""
 	}
 }
 

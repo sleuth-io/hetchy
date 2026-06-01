@@ -53,10 +53,10 @@ func TestIsTransientError_4xxIsNotTransient(t *testing.T) {
 	}
 }
 
-func TestIsTransientError_DaytonaStateChangeConflictIsTransient(t *testing.T) {
+func TestIsTransientError_DaytonaStateChangeConflictIsNotTransient(t *testing.T) {
 	err := sdkerrors.NewDaytonaError("Conflict: Sandbox state change in progress", 409, nil)
-	if !isTransientError(err) {
-		t.Error("state-change conflict should be retried")
+	if isTransientError(err) {
+		t.Error("state-change conflict should be handled explicitly by resume recovery")
 	}
 }
 
