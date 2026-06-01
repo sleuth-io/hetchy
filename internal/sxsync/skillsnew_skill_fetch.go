@@ -87,7 +87,13 @@ func fetchSkillsNewSkillZip(ctx context.Context, httpClient *http.Client, server
 
 	meta, err := parseSkillsNewMetadataFromZip(body)
 	if err != nil {
-		return AssetZip{}, fmt.Errorf("sxvault: parsing metadata for %q@%s: %w", name, version, err)
+		// A zip we can't extract metadata from is functionally
+		// indistinguishable from a missing asset for the modal: there is no
+		// description, no type, and no canonical name to render. Surface it
+		// as a missing-asset signal so FetchSkillZip can fall through to the
+		// public vault instead of bubbling up a 502. The original parse
+		// error is wrapped for log diagnostics.
+		return AssetZip{}, fmt.Errorf("sxvault: asset %q@%s not found in vault (unreadable metadata): %w", name, version, err)
 	}
 	canonical := strings.TrimSpace(meta.Asset.Name)
 	if canonical == "" {
@@ -119,9 +125,44 @@ func parseSkillsNewVersionList(body []byte) []string {
 		if v == "" {
 			continue
 		}
+		if !looksLikeSkillsNewVersionToken(v) {
+			// Skills.new falls back to its Nuxt SPA (HTML) or a JSON
+			// error envelope for asset paths it doesn't recognize
+			// instead of returning 404. Without this check those
+			// responses get parsed line-by-line as "versions" and the
+			// downstream zip URL gets constructed with bogus path
+			// segments, surfacing as a 502 on the modal instead of
+			// the missing-asset signal the caller expects. Bail on
+			// the whole body the moment we see a token that couldn't
+			// have come from the version list endpoint.
+			return nil
+		}
 		out = append(out, v)
 	}
 	return out
+}
+
+// looksLikeSkillsNewVersionToken returns true when v could plausibly be a
+// version published by skills.new. The /list.txt endpoint normally returns
+// short tokens like "1", "1.0.0", or "v2-beta"; anything containing
+// whitespace, angle brackets, quotes, or other punctuation is almost
+// certainly a Nuxt SPA HTML page or a JSON error envelope rather than a
+// real version string.
+func looksLikeSkillsNewVersionToken(v string) bool {
+	if v == "" || len(v) > 64 {
+		return false
+	}
+	for _, r := range v {
+		switch {
+		case r >= '0' && r <= '9':
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r == '.', r == '-', r == '_', r == '+':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // pickHighestSkillsNewVersion mirrors sxlib's highestSemver: take the
