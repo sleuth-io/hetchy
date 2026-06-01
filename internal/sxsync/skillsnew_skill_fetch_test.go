@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -196,9 +197,14 @@ func TestFetchSkillsNewSkillZipSurfacesNon2xxErrors(t *testing.T) {
 func TestFetchSkillsNewSkillZipForwardsAuthToken(t *testing.T) {
 	ctx := context.Background()
 	zipBytes := skillZipWithMetadata(t, "do-after-coding", "1", "Run prepush.")
-	var sawAuth string
+	var (
+		authMu  sync.Mutex
+		sawAuth string
+	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authMu.Lock()
 		sawAuth = r.Header.Get("Authorization")
+		authMu.Unlock()
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/list.txt"):
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -215,8 +221,11 @@ func TestFetchSkillsNewSkillZipForwardsAuthToken(t *testing.T) {
 	if _, err := fetchSkillsNewSkillZip(ctx, srv.Client(), srv.URL, "sk_test_123", "do-after-coding"); err != nil {
 		t.Fatalf("fetchSkillsNewSkillZip: %v", err)
 	}
-	if sawAuth != "Bearer sk_test_123" {
-		t.Fatalf("Authorization header = %q, want %q", sawAuth, "Bearer sk_test_123")
+	authMu.Lock()
+	got := sawAuth
+	authMu.Unlock()
+	if got != "Bearer sk_test_123" {
+		t.Fatalf("Authorization header = %q, want %q", got, "Bearer sk_test_123")
 	}
 }
 
@@ -228,14 +237,18 @@ func TestFetchSkillsNewSkillZipURLEncodesNamesWithSpaces(t *testing.T) {
 	// URLs at the production server when both candidates are attempted.
 	ctx := context.Background()
 	zipBytes := skillZipWithMetadata(t, "Bootstrap Spec System", "1", "Spec it.")
-	var seenPath string
+	var (
+		pathMu   sync.Mutex
+		seenPath string
+	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Capture the escaped path for assertion; net/http exposes the
-		// raw request URI in RequestURI but EscapedPath is the safer
-		// programmatic accessor.
+		pathMu.Lock()
 		if seenPath == "" {
+			// net/http exposes the raw request URI in RequestURI but
+			// EscapedPath is the safer programmatic accessor.
 			seenPath = r.URL.EscapedPath()
 		}
+		pathMu.Unlock()
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/list.txt"):
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -252,8 +265,11 @@ func TestFetchSkillsNewSkillZipURLEncodesNamesWithSpaces(t *testing.T) {
 	if _, err := fetchSkillsNewSkillZip(ctx, srv.Client(), srv.URL, "", "Bootstrap Spec System"); err != nil {
 		t.Fatalf("fetchSkillsNewSkillZip: %v", err)
 	}
-	if !strings.Contains(seenPath, "Bootstrap%20Spec%20System") {
-		t.Fatalf("first request path = %q, want %%20-escaped spaces", seenPath)
+	pathMu.Lock()
+	got := seenPath
+	pathMu.Unlock()
+	if !strings.Contains(got, "Bootstrap%20Spec%20System") {
+		t.Fatalf("first request path = %q, want %%20-escaped spaces", got)
 	}
 }
 
@@ -342,6 +358,34 @@ func TestParseSkillsNewMetadataFromZipReadsAssetSection(t *testing.T) {
 	}
 	if meta.Asset.Description != "Fix PRs in a loop." {
 		t.Fatalf("description = %q, want metadata description", meta.Asset.Description)
+	}
+}
+
+// TestParseSkillsNewMetadataFromZipMatchesNestedMetadataPath guards the
+// nested-layout case: some skill zips store files under a name-prefixed
+// subdirectory. A strict root-level match would skip the metadata.toml,
+// return "metadata.toml not found", trigger the missing-asset fallthrough,
+// and silently serve the wrong content from the public vault.
+func TestParseSkillsNewMetadataFromZipMatchesNestedMetadataPath(t *testing.T) {
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	mw, err := zw.Create("bootstrap-spec-system/metadata.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = fmt.Fprint(mw, "[asset]\nname = \"bootstrap-spec-system\"\nversion = \"1\"\ntype = \"skill\"\ndescription = \"Nested layout.\"\n")
+	if _, err := zw.Create("bootstrap-spec-system/SKILL.md"); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	meta, err := parseSkillsNewMetadataFromZip(buf.Bytes())
+	if err != nil {
+		t.Fatalf("parse nested metadata.toml: %v", err)
+	}
+	if meta.Asset.Description != "Nested layout." {
+		t.Fatalf("description = %q, want metadata-derived description", meta.Asset.Description)
 	}
 }
 

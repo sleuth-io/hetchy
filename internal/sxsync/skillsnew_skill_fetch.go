@@ -10,12 +10,19 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path"
 	"strings"
 
 	"github.com/BurntSushi/toml"
 	"github.com/Masterminds/semver/v3"
 	sxlib "github.com/sleuth-io/sx/pkg/sxvault"
 )
+
+// maxSkillZipResponseBytes caps the size of a single response body we'll
+// read from skills.new. A real skill zip is well under a megabyte; this cap
+// is generous but keeps a hostile or misconfigured upstream from exhausting
+// process memory on the skill-doc read path.
+const maxSkillZipResponseBytes = 50 << 20
 
 // skillsNewAssetMetadata is the subset of metadata.toml we surface to the UI
 // when rendering a skill modal. Skills.new's asset zips always include a
@@ -153,7 +160,7 @@ func skillsNewGetAuthorized(ctx context.Context, httpClient *http.Client, urlStr
 		return nil, "", err
 	}
 	defer resp.Body.Close()
-	body, readErr := io.ReadAll(resp.Body)
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxSkillZipResponseBytes))
 	if readErr != nil {
 		return nil, resp.Header.Get("Content-Type"), fmt.Errorf("read response body: %w", readErr)
 	}
@@ -190,7 +197,11 @@ func parseSkillsNewMetadataFromZip(zipBytes []byte) (skillsNewAssetMetadata, err
 		if f.FileInfo().IsDir() {
 			continue
 		}
-		if !strings.EqualFold(f.Name, "metadata.toml") {
+		// Some skill zips store assets under a name-prefixed subdirectory
+		// (e.g. bootstrap-spec-system/metadata.toml). Match on the base
+		// name so those layouts resolve instead of falling through to the
+		// public vault and silently returning wrong content.
+		if !strings.EqualFold(path.Base(f.Name), "metadata.toml") {
 			continue
 		}
 		rc, err := f.Open()

@@ -122,15 +122,11 @@ func (m *Manager) fetchSkillFromOrgVault(ctx context.Context, orgID string, hand
 // direct-fetch path. Both fall back to production defaults; tests inject
 // overrides via the Manager struct.
 func (m *Manager) skillsNewHTTPConfig() (string, *http.Client) {
-	serverURL := ""
-	var client *http.Client
-	if m != nil {
-		serverURL = strings.TrimSpace(m.skillsNewServerURL)
-		client = m.skillsNewHTTPClient
-	}
+	serverURL := strings.TrimSpace(m.skillsNewServerURL)
 	if serverURL == "" {
 		serverURL = sxlib.DefaultSkillsNewURL
 	}
+	client := m.skillsNewHTTPClient
 	if client == nil {
 		client = http.DefaultClient
 	}
