@@ -443,6 +443,7 @@ func TestRefreshBootstrapSpecGenerationUpgradeFailurePersistsFailingSpec(t *test
 			BootstrapLog:        "old bootstrap log",
 		},
 	}
+	var autoHealInput bootstrap.AutoHealInput
 	b := &Bot{
 		log:       discardLogger(),
 		bootstrap: boot,
@@ -455,7 +456,8 @@ func TestRefreshBootstrapSpecGenerationUpgradeFailurePersistsFailingSpec(t *test
 		detectViaSandboxFn: func(context.Context, *daytona.Sandbox, string, string) (*bootstrap.Hints, string, error) {
 			return hints, hintsRoot, nil
 		},
-		bootstrapAutoHealFn: func(context.Context, bootstrap.Runner, bootstrap.AutoHealInput) (*bootstrap.LoopResult, error) {
+		bootstrapAutoHealFn: func(_ context.Context, _ bootstrap.Runner, in bootstrap.AutoHealInput) (*bootstrap.LoopResult, error) {
+			autoHealInput = in
 			return &bootstrap.LoopResult{
 				Manifest: &bootstrap.Manifest{Kind: "node"},
 				PartialScripts: bootstrap.PartialScripts{
@@ -479,6 +481,9 @@ func TestRefreshBootstrapSpecGenerationUpgradeFailurePersistsFailingSpec(t *test
 	}, orgcfg.Config{AnthropicAPIKey: "sk-ant"}, "req-generation-fail", boot.spec, newCaptureEmitter())
 	if err == nil || !errors.Is(err, bootstrap.ErrLoopFailed) {
 		t.Fatalf("refreshExistingBootstrapSpec error = %v, want ErrLoopFailed", err)
+	}
+	if autoHealInput.PriorSpec == nil || !strings.Contains(autoHealInput.FailureLog, "saved_generation") {
+		t.Fatalf("auto-heal input missing generation context = %+v", autoHealInput)
 	}
 	if len(boot.savedSpecs) != 0 {
 		t.Fatalf("saved specs = %+v, want none", boot.savedSpecs)
