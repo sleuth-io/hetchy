@@ -346,6 +346,9 @@ func (b *Bot) refreshExistingBootstrapSpec(ctx context.Context, sb *daytona.Sand
 		RepoDir:         wd,
 	})
 	if err != nil && errors.Is(err, bootstrap.ErrLoopFailed) && res != nil {
+		// Save the failed attempt at the current bootstrap generation so a
+		// failed upgrade consumes the generation bump; future tasks then use
+		// the normal failing-spec retry cap instead of bypassing forever.
 		b.persistFailingBootstrap(ctx, res, repo, hints)
 		if generationUpgrade {
 			b.log.Warn("bootstrap generation upgrade failed",

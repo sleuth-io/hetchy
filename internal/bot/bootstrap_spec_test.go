@@ -422,6 +422,85 @@ func TestEnsureBootstrapSpecAutoHealsOldBootstrapGeneration(t *testing.T) {
 	}
 }
 
+func TestRefreshBootstrapSpecGenerationUpgradeFailurePersistsFailingSpec(t *testing.T) {
+	hintsRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(hintsRoot, "package.json"), []byte(`{"scripts":{"dev":"vite"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	hints := &bootstrap.Hints{Path: hintsRoot, PackageJSON: &bootstrap.PackageJSON{Path: "package.json", Scripts: map[string]string{"dev": "vite"}}}
+	boot := &fakeBootstrapStore{
+		spec: &bootstrap.Spec{
+			InstallationID:      11,
+			RepoID:              22,
+			SpecVersion:         3,
+			BootstrapGeneration: bootstrap.CurrentBootstrapGeneration - 1,
+			Kind:                "node",
+			SetupScript:         "old setup",
+			StartScript:         "old start",
+			HealthCheck:         "old health",
+			SourceFingerprint:   bootstrap.Fingerprint(hints),
+			ValidationStatus:    bootstrap.StatusValidated,
+			BootstrapLog:        "old bootstrap log",
+		},
+	}
+	b := &Bot{
+		log:       discardLogger(),
+		bootstrap: boot,
+		createBootstrapSessionFn: func(context.Context, *daytona.Sandbox, string) error {
+			return nil
+		},
+		runInlineScriptFn: func(context.Context, *daytona.Sandbox, string, string, string, map[string]string, blocks.Emitter) error {
+			return nil
+		},
+		detectViaSandboxFn: func(context.Context, *daytona.Sandbox, string, string) (*bootstrap.Hints, string, error) {
+			return hints, hintsRoot, nil
+		},
+		bootstrapAutoHealFn: func(context.Context, bootstrap.Runner, bootstrap.AutoHealInput) (*bootstrap.LoopResult, error) {
+			return &bootstrap.LoopResult{
+				Manifest: &bootstrap.Manifest{Kind: "node"},
+				PartialScripts: bootstrap.PartialScripts{
+					Setup:   "npm install",
+					Start:   "npm run dev",
+					Health:  "curl -f http://localhost:5173",
+					Lessons: "- failed upgrade\n",
+				},
+				Log: "generation upgrade failed",
+			}, fmt.Errorf("%w: health check failed", bootstrap.ErrLoopFailed)
+		},
+		deleteSandboxSessionFn: func(*daytona.Sandbox, string) {},
+	}
+
+	_, err := b.refreshExistingBootstrapSpec(context.Background(), &daytona.Sandbox{ID: "sandbox-1"}, repoCtx{
+		Slug:        "hetchyhq/web",
+		BaseBranch:  "main",
+		GitHubToken: "ghs_test",
+		InstallID:   11,
+		RepoID:      22,
+	}, orgcfg.Config{AnthropicAPIKey: "sk-ant"}, "req-generation-fail", boot.spec, newCaptureEmitter())
+	if err == nil || !errors.Is(err, bootstrap.ErrLoopFailed) {
+		t.Fatalf("refreshExistingBootstrapSpec error = %v, want ErrLoopFailed", err)
+	}
+	if len(boot.savedSpecs) != 0 {
+		t.Fatalf("saved specs = %+v, want none", boot.savedSpecs)
+	}
+	if len(boot.failingSpecs) != 1 {
+		t.Fatalf("failing specs = %+v, want one", boot.failingSpecs)
+	}
+	failing := boot.failingSpecs[0]
+	if failing.BootstrapGeneration != bootstrap.CurrentBootstrapGeneration {
+		t.Fatalf("failing bootstrap_generation = %d, want %d", failing.BootstrapGeneration, bootstrap.CurrentBootstrapGeneration)
+	}
+	if failing.ValidationStatus != bootstrap.StatusFailing {
+		t.Fatalf("failing validation_status = %s, want %s", failing.ValidationStatus, bootstrap.StatusFailing)
+	}
+	if failing.SetupScript != "npm install" || failing.StartScript != "npm run dev" || failing.HealthCheck != "curl -f http://localhost:5173" {
+		t.Fatalf("failing scripts = setup %q start %q health %q", failing.SetupScript, failing.StartScript, failing.HealthCheck)
+	}
+	if failing.BootstrapLog != "generation upgrade failed" {
+		t.Fatalf("failing bootstrap log = %q", failing.BootstrapLog)
+	}
+}
+
 func TestEnsureBootstrapSpecSkipsFailingAutoHealAfterCap(t *testing.T) {
 	hintsRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(hintsRoot, "package.json"), []byte(`{"scripts":{"dev":"vite"}}`), 0o644); err != nil {
