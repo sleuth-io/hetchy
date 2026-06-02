@@ -353,7 +353,7 @@ func (b *Bot) refreshExistingBootstrapSpec(ctx context.Context, sb *daytona.Sand
 				"request_id", requestID,
 				"saved_generation", spec.BootstrapGeneration,
 				"current_generation", bootstrap.CurrentBootstrapGeneration,
-				"failure_count", spec.FailureCount,
+				"prior_failure_count", spec.FailureCount,
 				"max_attempts", maxFailingBootstrapAutoHealAttempts)
 		}
 	}
