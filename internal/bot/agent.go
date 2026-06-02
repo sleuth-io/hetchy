@@ -347,6 +347,17 @@ func (b *Bot) refreshExistingBootstrapSpec(ctx context.Context, sb *daytona.Sand
 	})
 	if err != nil && errors.Is(err, bootstrap.ErrLoopFailed) && res != nil {
 		b.persistFailingBootstrap(ctx, res, repo, hints)
+		if generationUpgrade &&
+			spec.ValidationStatus == bootstrap.StatusFailing &&
+			spec.FailureCount >= maxFailingBootstrapAutoHealAttempts {
+			b.log.Warn("bootstrap generation upgrade failed for capped spec",
+				"repo", repo.Slug,
+				"request_id", requestID,
+				"saved_generation", spec.BootstrapGeneration,
+				"current_generation", bootstrap.CurrentBootstrapGeneration,
+				"failure_count", spec.FailureCount,
+				"max_attempts", maxFailingBootstrapAutoHealAttempts)
+		}
 	}
 	if err != nil {
 		return nil, fmt.Errorf("bootstrap.AutoHeal: %w", err)
