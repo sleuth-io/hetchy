@@ -26,6 +26,13 @@ import (
 
 var errEmptyManifest = errors.New("bootstrap: manifest is empty")
 
+// CurrentBootstrapGeneration is the version of the bootstrap prompt,
+// manifest contract, and validation expectations this binary knows how
+// to produce. Bump this when existing validated specs should be
+// regenerated through auto-heal so they pick up new schema/prompt
+// behavior, not just when one saved repo's scripts changed.
+const CurrentBootstrapGeneration int32 = 2
+
 // ValidationStatus mirrors the CHECK constraint on
 // repo_setup_specs.validation_status.
 type ValidationStatus string
@@ -74,7 +81,14 @@ type Spec struct {
 	Path           string
 
 	SpecVersion int32
-	Kind        string
+	// BootstrapGeneration records which global bootstrap prompt/schema
+	// generation produced this spec. SpecVersion is per-repo and bumps
+	// on auto-heal/self-learning; BootstrapGeneration is global and lets
+	// old validated rows refresh when the application revs the contract.
+	// The zero value is treated as old, so tests that expect a current
+	// saved spec should set this to CurrentBootstrapGeneration.
+	BootstrapGeneration int32
+	Kind                string
 
 	SetupScript string
 	StartScript string
@@ -146,4 +160,13 @@ func ParseManifest(data []byte) (*Manifest, error) {
 // in the loop.
 func (m *Manifest) HasDeferred() bool {
 	return len(m.DeferredCapabilities) > 0
+}
+
+// NeedsGenerationUpgrade reports whether a saved spec predates the
+// current bootstrap prompt/schema generation. Zero can occur only in
+// in-memory tests or malformed rows; treat it as old so the runtime
+// fails toward regeneration instead of silently trusting an unversioned
+// spec.
+func NeedsGenerationUpgrade(spec *Spec) bool {
+	return spec != nil && spec.BootstrapGeneration < CurrentBootstrapGeneration
 }
