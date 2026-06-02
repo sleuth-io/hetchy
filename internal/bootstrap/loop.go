@@ -198,6 +198,7 @@ func ResultFromArtifacts(ctx context.Context, runner Runner, in LoopInput, log s
 	spec := &Spec{
 		Path:                 in.Path,
 		SpecVersion:          1,
+		BootstrapGeneration:  CurrentBootstrapGeneration,
 		Kind:                 manifest.Kind,
 		SetupScript:          string(setup),
 		StartScript:          string(start),

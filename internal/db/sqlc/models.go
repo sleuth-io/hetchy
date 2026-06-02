@@ -306,4 +306,5 @@ type RepoSetupSpec struct {
 	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
 	LessonsMd            string             `json:"lessons_md"`
 	ValidationCapability []byte             `json:"validation_capability"`
+	BootstrapGeneration  int32              `json:"bootstrap_generation"`
 }

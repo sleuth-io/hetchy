@@ -105,6 +105,9 @@ func TestAutoHealBumpsSpecVersion(t *testing.T) {
 	if res.Spec.SpecVersion != 4 {
 		t.Errorf("spec_version should bump to 4, got %d", res.Spec.SpecVersion)
 	}
+	if res.Spec.BootstrapGeneration != CurrentBootstrapGeneration {
+		t.Errorf("bootstrap_generation should be current, got %d", res.Spec.BootstrapGeneration)
+	}
 
 	// AutoHeal must feed the prior-spec context through to the agent
 	// via the prompt; otherwise the heal run is indistinguishable from

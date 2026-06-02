@@ -74,6 +74,9 @@ func TestLoopSuccess(t *testing.T) {
 	if res.Spec.ValidationStatus != StatusValidated {
 		t.Errorf("status: got %q want validated", res.Spec.ValidationStatus)
 	}
+	if res.Spec.BootstrapGeneration != CurrentBootstrapGeneration {
+		t.Errorf("bootstrap_generation: got %d want %d", res.Spec.BootstrapGeneration, CurrentBootstrapGeneration)
+	}
 	if res.Spec.Kind != "go-web" {
 		t.Errorf("kind: %q", res.Spec.Kind)
 	}

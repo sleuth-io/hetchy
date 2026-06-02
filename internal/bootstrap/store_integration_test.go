@@ -94,16 +94,17 @@ func TestSpecRoundTrip(t *testing.T) {
 	ctx := context.Background()
 
 	original := &Spec{
-		InstallationID: installID,
-		RepoID:         repoID,
-		Path:           "",
-		SpecVersion:    1,
-		Kind:           "go-web+postgres",
-		SetupScript:    "#!/usr/bin/env bash\nset -e\ngo build ./...\n",
-		StartScript:    "#!/usr/bin/env bash\nexec ./dist/hetchy\n",
-		HealthCheck:    "curl -fsS http://localhost:8080/",
-		StopScript:     "pkill -f dist/hetchy",
-		LessonsMD:      "- Restart the app after rebuilding before HTTP validation.\n",
+		InstallationID:      installID,
+		RepoID:              repoID,
+		Path:                "",
+		SpecVersion:         1,
+		BootstrapGeneration: CurrentBootstrapGeneration,
+		Kind:                "go-web+postgres",
+		SetupScript:         "#!/usr/bin/env bash\nset -e\ngo build ./...\n",
+		StartScript:         "#!/usr/bin/env bash\nexec ./dist/hetchy\n",
+		HealthCheck:         "curl -fsS http://localhost:8080/",
+		StopScript:          "pkill -f dist/hetchy",
+		LessonsMD:           "- Restart the app after rebuilding before HTTP validation.\n",
 		Services: []Service{{
 			Name: "web", Port: 8080, URL: "http://localhost:8080", Kind: "ui",
 		}},
@@ -137,6 +138,9 @@ func TestSpecRoundTrip(t *testing.T) {
 	// the timestamps are set on the DB side and aren't on the input Spec.
 	if read.Kind != original.Kind {
 		t.Errorf("kind: got %q want %q", read.Kind, original.Kind)
+	}
+	if read.BootstrapGeneration != original.BootstrapGeneration {
+		t.Errorf("bootstrap_generation: got %d want %d", read.BootstrapGeneration, original.BootstrapGeneration)
 	}
 	if read.SetupScript != original.SetupScript {
 		t.Error("setup_script mismatch")

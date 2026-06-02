@@ -3,7 +3,7 @@
 -- name: UpsertRepoSetupSpec :one
 INSERT INTO repo_setup_specs (
     installation_id, repo_id, path,
-    spec_version, kind,
+    spec_version, bootstrap_generation, kind,
     setup_script, start_script, health_check, stop_script, lessons_md,
     services, required_secrets, deferred_capabilities, suggested_repo_changes, validation_capability,
     source_fingerprint,
@@ -12,16 +12,17 @@ INSERT INTO repo_setup_specs (
     updated_at
 ) VALUES (
     $1, $2, $3,
-    $4, $5,
-    $6, $7, $8, $9, $10,
-    $11, $12, $13, $14, $15,
-    $16,
-    $17, $18,
-    $19, $20, $21,
+    $4, $5, $6,
+    $7, $8, $9, $10, $11,
+    $12, $13, $14, $15, $16,
+    $17,
+    $18, $19,
+    $20, $21, $22,
     NOW()
 )
 ON CONFLICT (installation_id, repo_id, path) DO UPDATE SET
     spec_version           = EXCLUDED.spec_version,
+    bootstrap_generation   = EXCLUDED.bootstrap_generation,
     kind                   = EXCLUDED.kind,
     setup_script           = EXCLUDED.setup_script,
     start_script           = EXCLUDED.start_script,
@@ -52,7 +53,7 @@ RETURNING *;
 -- accurate across retries.
 INSERT INTO repo_setup_specs (
     installation_id, repo_id, path,
-    spec_version, kind,
+    spec_version, bootstrap_generation, kind,
     setup_script, start_script, health_check, stop_script, lessons_md,
     services, required_secrets, deferred_capabilities, suggested_repo_changes, validation_capability,
     source_fingerprint,
@@ -61,16 +62,17 @@ INSERT INTO repo_setup_specs (
     updated_at
 ) VALUES (
     $1, $2, $3,
-    $4, $5,
-    $6, $7, $8, $9, $10,
-    $11, $12, $13, $14, $15,
-    $16,
-    $17, NULL,
-    0, 1, $18,
+    $4, $5, $6,
+    $7, $8, $9, $10, $11,
+    $12, $13, $14, $15, $16,
+    $17,
+    $18, NULL,
+    0, 1, $19,
     NOW()
 )
 ON CONFLICT (installation_id, repo_id, path) DO UPDATE SET
     spec_version           = EXCLUDED.spec_version,
+    bootstrap_generation   = EXCLUDED.bootstrap_generation,
     kind                   = EXCLUDED.kind,
     setup_script           = EXCLUDED.setup_script,
     start_script           = EXCLUDED.start_script,

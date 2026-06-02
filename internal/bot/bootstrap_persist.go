@@ -13,6 +13,9 @@ func (b *Bot) saveBootstrapSpecResult(ctx context.Context, res *bootstrap.LoopRe
 	}
 	res.Spec.InstallationID = repo.InstallID
 	res.Spec.RepoID = repo.RepoID
+	if res.Spec.BootstrapGeneration <= 0 {
+		res.Spec.BootstrapGeneration = bootstrap.CurrentBootstrapGeneration
+	}
 	res.Spec.BootstrapLog = truncateLogTail(res.Log)
 	if err := b.bootstrap.SaveSpec(ctx, res.Spec); err != nil {
 		return nil, err

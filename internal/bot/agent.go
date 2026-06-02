@@ -169,7 +169,7 @@ func (b *Bot) ensureBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo
 	switch {
 	case err == nil:
 		if !shouldRefreshExistingBootstrapSpec(spec) {
-			if failingBootstrapAutoHealCapped(false, spec) {
+			if failingBootstrapAutoHealCapped(false, false, spec) {
 				b.notifyBootstrapAutoHealCapped(repo, requestID, spec, emit)
 			}
 			return spec, nil
@@ -296,16 +296,20 @@ func (b *Bot) refreshExistingBootstrapSpec(ctx context.Context, sb *daytona.Sand
 	defer func() { _ = os.RemoveAll(tempRoot) }()
 
 	stale := bootstrap.IsStale(hints, spec)
-	needsHeal := shouldAutoHealExistingBootstrapSpec(stale, spec)
+	generationUpgrade := bootstrap.NeedsGenerationUpgrade(spec)
+	needsHeal := shouldAutoHealExistingBootstrapSpec(stale, generationUpgrade, spec)
 	if !needsHeal {
-		if failingBootstrapAutoHealCapped(stale, spec) {
+		if failingBootstrapAutoHealCapped(stale, generationUpgrade, spec) {
 			b.notifyBootstrapAutoHealCapped(repo, requestID, spec, emit)
 		}
 		return spec, nil
 	}
 
 	reason := "the repo setup spec is stale"
-	if spec.ValidationStatus == bootstrap.StatusFailing {
+	if generationUpgrade {
+		reason = fmt.Sprintf("the saved repo setup spec was produced by bootstrap generation %d; current generation is %d",
+			spec.BootstrapGeneration, bootstrap.CurrentBootstrapGeneration)
+	} else if spec.ValidationStatus == bootstrap.StatusFailing {
 		reason = "the saved repo setup spec is failing"
 	}
 	emit.Notify("Bootstrap auto-heal", reason+"; regenerating setup/start/health before the agent runs.")
@@ -319,9 +323,18 @@ func (b *Bot) refreshExistingBootstrapSpec(ctx context.Context, sb *daytona.Sand
 		return nil, err
 	}
 	failureLog := spec.BootstrapLog
+	if generationUpgrade {
+		prefix := fmt.Sprintf("bootstrap generation upgrade required: saved_generation=%d current_generation=%d\n",
+			spec.BootstrapGeneration, bootstrap.CurrentBootstrapGeneration)
+		if failureLog != "" {
+			failureLog = prefix + "\n" + failureLog
+		} else {
+			failureLog = prefix
+		}
+	}
 	if failureLog == "" {
-		failureLog = fmt.Sprintf("stale=%t validation_status=%s current_fingerprint=%s saved_fingerprint=%s",
-			stale, spec.ValidationStatus, bootstrap.Fingerprint(hints), spec.SourceFingerprint)
+		failureLog = fmt.Sprintf("stale=%t generation_upgrade=%t validation_status=%s current_fingerprint=%s saved_fingerprint=%s",
+			stale, generationUpgrade, spec.ValidationStatus, bootstrap.Fingerprint(hints), spec.SourceFingerprint)
 	}
 	res, err := b.runBootstrapAutoHeal(ctx, runner, bootstrap.AutoHealInput{
 		OwnerRepo:       repo.Slug,
@@ -355,6 +368,9 @@ func shouldRefreshExistingBootstrapSpec(spec *bootstrap.Spec) bool {
 	if spec == nil {
 		return false
 	}
+	if bootstrap.NeedsGenerationUpgrade(spec) {
+		return true
+	}
 	switch spec.ValidationStatus {
 	case bootstrap.StatusStale:
 		return true
@@ -367,9 +383,12 @@ func shouldRefreshExistingBootstrapSpec(spec *bootstrap.Spec) bool {
 	}
 }
 
-func shouldAutoHealExistingBootstrapSpec(stale bool, spec *bootstrap.Spec) bool {
+func shouldAutoHealExistingBootstrapSpec(stale, generationUpgrade bool, spec *bootstrap.Spec) bool {
 	if spec == nil {
 		return false
+	}
+	if generationUpgrade {
+		return true
 	}
 	if stale || spec.ValidationStatus == bootstrap.StatusStale {
 		return true
@@ -380,9 +399,10 @@ func shouldAutoHealExistingBootstrapSpec(stale bool, spec *bootstrap.Spec) bool 
 	return spec.FailureCount < maxFailingBootstrapAutoHealAttempts
 }
 
-func failingBootstrapAutoHealCapped(stale bool, spec *bootstrap.Spec) bool {
+func failingBootstrapAutoHealCapped(stale, generationUpgrade bool, spec *bootstrap.Spec) bool {
 	return spec != nil &&
 		!stale &&
+		!generationUpgrade &&
 		spec.ValidationStatus == bootstrap.StatusFailing &&
 		spec.FailureCount >= maxFailingBootstrapAutoHealAttempts
 }
@@ -507,6 +527,7 @@ func (b *Bot) persistFailingBootstrap(ctx context.Context, res *bootstrap.LoopRe
 		InstallationID:       repo.InstallID,
 		RepoID:               repo.RepoID,
 		SpecVersion:          1,
+		BootstrapGeneration:  bootstrap.CurrentBootstrapGeneration,
 		Kind:                 kind,
 		SetupScript:          res.PartialScripts.Setup,
 		StartScript:          res.PartialScripts.Start,

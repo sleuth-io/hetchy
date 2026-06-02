@@ -226,11 +226,12 @@ func TestEnsureBootstrapSpecReturnsExistingFreshSpecWithoutSandboxCheck(t *testi
 	hints := &bootstrap.Hints{Path: hintsRoot, GoMod: &bootstrap.GoMod{Path: "go.mod", Module: "example.com/app"}}
 	boot := &fakeBootstrapStore{
 		spec: &bootstrap.Spec{
-			InstallationID:    11,
-			RepoID:            22,
-			Kind:              "go",
-			SourceFingerprint: bootstrap.Fingerprint(hints),
-			ValidationStatus:  bootstrap.StatusValidated,
+			InstallationID:      11,
+			RepoID:              22,
+			BootstrapGeneration: bootstrap.CurrentBootstrapGeneration,
+			Kind:                "go",
+			SourceFingerprint:   bootstrap.Fingerprint(hints),
+			ValidationStatus:    bootstrap.StatusValidated,
 		},
 	}
 	var created, cloned, detected bool
@@ -283,16 +284,17 @@ func TestEnsureBootstrapSpecAutoHealsStaleExistingSpec(t *testing.T) {
 	hints := &bootstrap.Hints{Path: hintsRoot, PackageJSON: &bootstrap.PackageJSON{Path: "package.json", Scripts: map[string]string{"dev": "vite"}}}
 	boot := &fakeBootstrapStore{
 		spec: &bootstrap.Spec{
-			InstallationID:    11,
-			RepoID:            22,
-			SpecVersion:       3,
-			Kind:              "node",
-			SetupScript:       "old setup",
-			StartScript:       "old start",
-			HealthCheck:       "old health",
-			SourceFingerprint: "sha256:old",
-			ValidationStatus:  bootstrap.StatusStale,
-			BootstrapLog:      "old failure",
+			InstallationID:      11,
+			RepoID:              22,
+			SpecVersion:         3,
+			BootstrapGeneration: bootstrap.CurrentBootstrapGeneration,
+			Kind:                "node",
+			SetupScript:         "old setup",
+			StartScript:         "old start",
+			HealthCheck:         "old health",
+			SourceFingerprint:   "sha256:old",
+			ValidationStatus:    bootstrap.StatusStale,
+			BootstrapLog:        "old failure",
 		},
 	}
 	var autoHealInput bootstrap.AutoHealInput
@@ -347,6 +349,79 @@ func TestEnsureBootstrapSpecAutoHealsStaleExistingSpec(t *testing.T) {
 	}
 }
 
+func TestEnsureBootstrapSpecAutoHealsOldBootstrapGeneration(t *testing.T) {
+	hintsRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(hintsRoot, "package.json"), []byte(`{"scripts":{"dev":"vite"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	hints := &bootstrap.Hints{Path: hintsRoot, PackageJSON: &bootstrap.PackageJSON{Path: "package.json", Scripts: map[string]string{"dev": "vite"}}}
+	boot := &fakeBootstrapStore{
+		spec: &bootstrap.Spec{
+			InstallationID:      11,
+			RepoID:              22,
+			SpecVersion:         3,
+			BootstrapGeneration: bootstrap.CurrentBootstrapGeneration - 1,
+			Kind:                "node",
+			SetupScript:         "old setup",
+			StartScript:         "old start",
+			HealthCheck:         "old health",
+			SourceFingerprint:   bootstrap.Fingerprint(hints),
+			ValidationStatus:    bootstrap.StatusValidated,
+			BootstrapLog:        "old bootstrap log",
+		},
+	}
+	var autoHealInput bootstrap.AutoHealInput
+	b := &Bot{
+		log:       discardLogger(),
+		bootstrap: boot,
+		createBootstrapSessionFn: func(context.Context, *daytona.Sandbox, string) error {
+			return nil
+		},
+		runInlineScriptFn: func(context.Context, *daytona.Sandbox, string, string, string, map[string]string, blocks.Emitter) error {
+			return nil
+		},
+		detectViaSandboxFn: func(context.Context, *daytona.Sandbox, string, string) (*bootstrap.Hints, string, error) {
+			return hints, hintsRoot, nil
+		},
+		bootstrapAutoHealFn: func(_ context.Context, _ bootstrap.Runner, in bootstrap.AutoHealInput) (*bootstrap.LoopResult, error) {
+			autoHealInput = in
+			return &bootstrap.LoopResult{
+				Spec: &bootstrap.Spec{
+					SpecVersion:         in.PriorSpec.SpecVersion + 1,
+					BootstrapGeneration: bootstrap.CurrentBootstrapGeneration,
+					Kind:                "node",
+					SetupScript:         "npm install",
+					StartScript:         "npm run dev",
+					HealthCheck:         "curl -f http://localhost:5173",
+					ValidationStatus:    bootstrap.StatusValidated,
+				},
+				Log: "healed generation",
+			}, nil
+		},
+		deleteSandboxSessionFn: func(*daytona.Sandbox, string) {},
+	}
+
+	spec, err := b.ensureBootstrapSpec(context.Background(), &daytona.Sandbox{ID: "sandbox-1"}, repoCtx{
+		Slug:        "hetchyhq/web",
+		BaseBranch:  "main",
+		GitHubToken: "ghs_test",
+		InstallID:   11,
+		RepoID:      22,
+	}, orgcfg.Config{AnthropicAPIKey: "sk-ant"}, "req-generation", newCaptureEmitter())
+	if err != nil {
+		t.Fatalf("ensureBootstrapSpec: %v", err)
+	}
+	if autoHealInput.PriorSpec == nil || !strings.Contains(autoHealInput.FailureLog, "saved_generation") {
+		t.Fatalf("auto-heal input missing generation context = %+v", autoHealInput)
+	}
+	if spec.BootstrapGeneration != bootstrap.CurrentBootstrapGeneration || spec.SpecVersion != 4 {
+		t.Fatalf("healed spec = %+v", spec)
+	}
+	if len(boot.savedSpecs) != 1 || boot.savedSpecs[0].BootstrapGeneration != bootstrap.CurrentBootstrapGeneration {
+		t.Fatalf("saved specs = %+v", boot.savedSpecs)
+	}
+}
+
 func TestEnsureBootstrapSpecSkipsFailingAutoHealAfterCap(t *testing.T) {
 	hintsRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(hintsRoot, "package.json"), []byte(`{"scripts":{"dev":"vite"}}`), 0o644); err != nil {
@@ -355,17 +430,18 @@ func TestEnsureBootstrapSpecSkipsFailingAutoHealAfterCap(t *testing.T) {
 	hints := &bootstrap.Hints{Path: hintsRoot, PackageJSON: &bootstrap.PackageJSON{Path: "package.json", Scripts: map[string]string{"dev": "vite"}}}
 	boot := &fakeBootstrapStore{
 		spec: &bootstrap.Spec{
-			InstallationID:    11,
-			RepoID:            22,
-			SpecVersion:       3,
-			Kind:              "node",
-			SetupScript:       "npm install",
-			StartScript:       "npm run dev",
-			HealthCheck:       "curl -f http://localhost:5173",
-			SourceFingerprint: bootstrap.Fingerprint(hints),
-			ValidationStatus:  bootstrap.StatusFailing,
-			FailureCount:      maxFailingBootstrapAutoHealAttempts,
-			BootstrapLog:      "still failing",
+			InstallationID:      11,
+			RepoID:              22,
+			SpecVersion:         3,
+			BootstrapGeneration: bootstrap.CurrentBootstrapGeneration,
+			Kind:                "node",
+			SetupScript:         "npm install",
+			StartScript:         "npm run dev",
+			HealthCheck:         "curl -f http://localhost:5173",
+			SourceFingerprint:   bootstrap.Fingerprint(hints),
+			ValidationStatus:    bootstrap.StatusFailing,
+			FailureCount:        maxFailingBootstrapAutoHealAttempts,
+			BootstrapLog:        "still failing",
 		},
 	}
 	var autoHealCalled bool
@@ -424,35 +500,47 @@ func TestBootstrapAutoHealDecisionHelpers(t *testing.T) {
 	}{
 		{
 			name:        "validated skips refresh",
-			spec:        &bootstrap.Spec{ValidationStatus: bootstrap.StatusValidated},
+			spec:        &bootstrap.Spec{BootstrapGeneration: bootstrap.CurrentBootstrapGeneration, ValidationStatus: bootstrap.StatusValidated},
 			wantRefresh: false,
 			wantHeal:    false,
 		},
 		{
 			name:        "stale status refreshes",
-			spec:        &bootstrap.Spec{ValidationStatus: bootstrap.StatusStale},
+			spec:        &bootstrap.Spec{BootstrapGeneration: bootstrap.CurrentBootstrapGeneration, ValidationStatus: bootstrap.StatusStale},
 			wantRefresh: true,
 			wantHeal:    true,
 		},
 		{
 			name:        "fingerprint stale heals",
 			stale:       true,
-			spec:        &bootstrap.Spec{ValidationStatus: bootstrap.StatusValidated},
+			spec:        &bootstrap.Spec{BootstrapGeneration: bootstrap.CurrentBootstrapGeneration, ValidationStatus: bootstrap.StatusValidated},
 			wantRefresh: false,
 			wantHeal:    true,
 		},
 		{
+			name:        "old bootstrap generation refreshes and heals",
+			spec:        &bootstrap.Spec{BootstrapGeneration: bootstrap.CurrentBootstrapGeneration - 1, ValidationStatus: bootstrap.StatusValidated},
+			wantRefresh: true,
+			wantHeal:    true,
+		},
+		{
 			name:        "failing below cap refreshes and heals",
-			spec:        &bootstrap.Spec{ValidationStatus: bootstrap.StatusFailing, FailureCount: maxFailingBootstrapAutoHealAttempts - 1},
+			spec:        &bootstrap.Spec{BootstrapGeneration: bootstrap.CurrentBootstrapGeneration, ValidationStatus: bootstrap.StatusFailing, FailureCount: maxFailingBootstrapAutoHealAttempts - 1},
 			wantRefresh: true,
 			wantHeal:    true,
 		},
 		{
 			name:        "failing at cap skips",
-			spec:        &bootstrap.Spec{ValidationStatus: bootstrap.StatusFailing, FailureCount: maxFailingBootstrapAutoHealAttempts},
+			spec:        &bootstrap.Spec{BootstrapGeneration: bootstrap.CurrentBootstrapGeneration, ValidationStatus: bootstrap.StatusFailing, FailureCount: maxFailingBootstrapAutoHealAttempts},
 			wantRefresh: false,
 			wantHeal:    false,
 			wantCapped:  true,
+		},
+		{
+			name:        "old bootstrap generation bypasses failing cap",
+			spec:        &bootstrap.Spec{BootstrapGeneration: bootstrap.CurrentBootstrapGeneration - 1, ValidationStatus: bootstrap.StatusFailing, FailureCount: maxFailingBootstrapAutoHealAttempts},
+			wantRefresh: true,
+			wantHeal:    true,
 		},
 		{
 			name:        "nil spec skips",
@@ -466,10 +554,11 @@ func TestBootstrapAutoHealDecisionHelpers(t *testing.T) {
 			if got := shouldRefreshExistingBootstrapSpec(tt.spec); got != tt.wantRefresh {
 				t.Fatalf("shouldRefreshExistingBootstrapSpec = %t, want %t", got, tt.wantRefresh)
 			}
-			if got := shouldAutoHealExistingBootstrapSpec(tt.stale, tt.spec); got != tt.wantHeal {
+			generationUpgrade := bootstrap.NeedsGenerationUpgrade(tt.spec)
+			if got := shouldAutoHealExistingBootstrapSpec(tt.stale, generationUpgrade, tt.spec); got != tt.wantHeal {
 				t.Fatalf("shouldAutoHealExistingBootstrapSpec = %t, want %t", got, tt.wantHeal)
 			}
-			if got := failingBootstrapAutoHealCapped(tt.stale, tt.spec); got != tt.wantCapped {
+			if got := failingBootstrapAutoHealCapped(tt.stale, generationUpgrade, tt.spec); got != tt.wantCapped {
 				t.Fatalf("failingBootstrapAutoHealCapped = %t, want %t", got, tt.wantCapped)
 			}
 		})

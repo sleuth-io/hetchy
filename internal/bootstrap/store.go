@@ -121,6 +121,7 @@ func (s *Store) SaveSpec(ctx context.Context, spec *Spec) error {
 		RepoID:               spec.RepoID,
 		Path:                 postgresText(spec.Path),
 		SpecVersion:          spec.SpecVersion,
+		BootstrapGeneration:  bootstrapGenerationForSave(spec.BootstrapGeneration),
 		Kind:                 postgresText(spec.Kind),
 		SetupScript:          postgresText(spec.SetupScript),
 		StartScript:          postgresText(spec.StartScript),
@@ -192,6 +193,7 @@ func (s *Store) SaveFailingSpec(ctx context.Context, spec *Spec) error {
 		RepoID:               spec.RepoID,
 		Path:                 postgresText(spec.Path),
 		SpecVersion:          spec.SpecVersion,
+		BootstrapGeneration:  bootstrapGenerationForSave(spec.BootstrapGeneration),
 		Kind:                 postgresText(spec.Kind),
 		SetupScript:          postgresText(spec.SetupScript),
 		StartScript:          postgresText(spec.StartScript),
@@ -244,6 +246,13 @@ func (s *Store) MarkApplied(
 // those bytes, but pgx/Postgres reject them with SQLSTATE 22021.
 func postgresText(s string) string {
 	return strings.ToValidUTF8(s, "\uFFFD")
+}
+
+func bootstrapGenerationForSave(generation int32) int32 {
+	if generation <= 0 {
+		return CurrentBootstrapGeneration
+	}
+	return generation
 }
 
 // SecretValues holds the plaintext values the user has supplied for a
@@ -374,19 +383,20 @@ func (s *Store) DeclareRequiredSecret(ctx context.Context, installationID, repoI
 // the typed Spec.
 func rowToSpec(row sqlc.RepoSetupSpec) (*Spec, error) {
 	spec := &Spec{
-		InstallationID:    row.InstallationID,
-		RepoID:            row.RepoID,
-		Path:              row.Path,
-		SpecVersion:       row.SpecVersion,
-		Kind:              row.Kind,
-		SetupScript:       row.SetupScript,
-		StartScript:       row.StartScript,
-		HealthCheck:       row.HealthCheck,
-		LessonsMD:         row.LessonsMd,
-		SourceFingerprint: row.SourceFingerprint,
-		ValidationStatus:  ValidationStatus(row.ValidationStatus),
-		SuccessCount:      row.SuccessCount,
-		FailureCount:      row.FailureCount,
+		InstallationID:      row.InstallationID,
+		RepoID:              row.RepoID,
+		Path:                row.Path,
+		SpecVersion:         row.SpecVersion,
+		BootstrapGeneration: row.BootstrapGeneration,
+		Kind:                row.Kind,
+		SetupScript:         row.SetupScript,
+		StartScript:         row.StartScript,
+		HealthCheck:         row.HealthCheck,
+		LessonsMD:           row.LessonsMd,
+		SourceFingerprint:   row.SourceFingerprint,
+		ValidationStatus:    ValidationStatus(row.ValidationStatus),
+		SuccessCount:        row.SuccessCount,
+		FailureCount:        row.FailureCount,
 	}
 	if row.StopScript != nil {
 		spec.StopScript = *row.StopScript
