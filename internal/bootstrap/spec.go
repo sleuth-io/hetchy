@@ -85,6 +85,8 @@ type Spec struct {
 	// generation produced this spec. SpecVersion is per-repo and bumps
 	// on auto-heal/self-learning; BootstrapGeneration is global and lets
 	// old validated rows refresh when the application revs the contract.
+	// The zero value is treated as old, so tests that expect a current
+	// saved spec should set this to CurrentBootstrapGeneration.
 	BootstrapGeneration int32
 	Kind                string
 
