@@ -3,6 +3,7 @@ package bot
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +18,7 @@ import (
 	"github.com/hetchyhq/hetchy/internal/convstore"
 	"github.com/hetchyhq/hetchy/internal/db/sqlc"
 	"github.com/hetchyhq/hetchy/internal/runstore"
+	"github.com/hetchyhq/hetchy/internal/sxsync"
 )
 
 // TestExtractSXSkillsSurvivesPersistenceRoundTrip pins the contract
@@ -496,6 +498,107 @@ func TestAgentsHandlerOverlaysRemoteTeamsAndSkills(t *testing.T) {
 	}
 }
 
+func TestAgentsHandlerFallsBackWhenSXSyncFails(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+	}{
+		{name: "not configured", err: sxsync.ErrNotConfigured},
+		{name: "sync error", err: errors.New("sync failed")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			b := newBypassOrgBot(t, "member")
+			b.sx = &fakeSXManager{syncAgentsErr: tc.err}
+			handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.agentsHandler)))
+
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/agents", nil)
+			handler.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+			}
+			body := rec.Body.String()
+			if !strings.Contains(body, `"slug":"bob"`) || strings.Contains(body, `"sx_teams"`) {
+				t.Fatalf("agents response did not use local fallback profiles: %s", body)
+			}
+		})
+	}
+}
+
+func TestOverlayAgentRemoteState(t *testing.T) {
+	local := agents.Profile{
+		Slug:         "bob",
+		DisplayName:  "Local Bob",
+		Description:  "Local description",
+		SXBot:        "local-bot",
+		PersonaAsset: "local/persona.md",
+		Skills:       []string{"local-skill"},
+		SXTeams:      []string{"Local"},
+		SXSkills:     []string{"local-sx"},
+		VaultBackend: "local-backend",
+	}
+	remote := agents.Profile{
+		Slug:         "bob",
+		DisplayName:  "Remote Bob",
+		Description:  "Remote description",
+		SXBot:        "remote-bot",
+		PersonaAsset: "remote/persona.md",
+		Skills:       []string{"remote-skill"},
+		SXTeams:      []string{"Platform", "Infra"},
+		SXSkills:     []string{"database-migrations", "golang-patterns"},
+		VaultBackend: "skills-new",
+	}
+
+	got := overlayAgentRemoteState(local, remote)
+
+	if got.DisplayName != "Remote Bob" || got.Description != "Remote description" ||
+		got.SXBot != "remote-bot" || got.PersonaAsset != "remote/persona.md" ||
+		got.VaultBackend != "skills-new" {
+		t.Fatalf("remote scalar metadata was not overlaid: %+v", got)
+	}
+	if strings.Join(got.Skills, ",") != "remote-skill" {
+		t.Fatalf("skills = %+v", got.Skills)
+	}
+	if strings.Join(got.SXTeams, ",") != "Platform,Infra" {
+		t.Fatalf("sx teams = %+v", got.SXTeams)
+	}
+	if strings.Join(got.SXSkills, ",") != "database-migrations,golang-patterns" {
+		t.Fatalf("sx skills = %+v", got.SXSkills)
+	}
+}
+
+func TestOverlayAgentRemoteStatePreservesLocalScalarsWhenRemoteBlank(t *testing.T) {
+	local := agents.Profile{
+		Slug:         "bob",
+		DisplayName:  "Local Bob",
+		Description:  "Local description",
+		SXBot:        "local-bot",
+		PersonaAsset: "local/persona.md",
+		VaultBackend: "local-backend",
+	}
+	remote := agents.Profile{
+		Slug:         "bob",
+		DisplayName:  " ",
+		Description:  "\t",
+		SXBot:        "\n",
+		PersonaAsset: " ",
+		VaultBackend: " ",
+	}
+
+	got := overlayAgentRemoteState(local, remote)
+
+	if got.DisplayName != local.DisplayName || got.Description != local.Description ||
+		got.SXBot != local.SXBot || got.PersonaAsset != local.PersonaAsset ||
+		got.VaultBackend != local.VaultBackend {
+		t.Fatalf("blank remote metadata should preserve local scalars: %+v", got)
+	}
+	if len(got.SXTeams) != 0 || len(got.SXSkills) != 0 {
+		t.Fatalf("remote empty slices should overlay as empty slices: %+v", got)
+	}
+}
+
 func TestFilterRepositoriesForPicker(t *testing.T) {
 	rows := []sqlc.GithubRepo{
 		{Owner: "acme", Name: "ui", DefaultBranch: "main"},
@@ -769,6 +872,72 @@ func TestAgentInboxHandlerAggregatesRunsAndPRs(t *testing.T) {
 	}
 }
 
+func TestLatestRunsForInboxDedupesThreads(t *testing.T) {
+	b := newBypassOrgBot(t, "member")
+	store := &fakeRunStore{
+		enabled: true,
+		latestRuns: map[string]runstore.Run{
+			"thread-1": {ID: "run-1", ThreadID: "thread-1", State: runstore.StateSucceeded},
+			"thread-2": {ID: "run-2", ThreadID: "thread-2", State: runstore.StateRunning},
+		},
+	}
+	b.runs = store
+
+	got := b.latestRunsForInbox(context.Background(), "org_test", []convstore.Record{
+		{ThreadID: "thread-1"},
+		{ThreadID: ""},
+		{ThreadID: "thread-2"},
+		{ThreadID: "thread-1"},
+	})
+
+	if len(got) != 2 || got["thread-1"].ID != "run-1" || got["thread-2"].ID != "run-2" {
+		t.Fatalf("latest runs = %+v", got)
+	}
+	if len(store.latestBatchCalls) != 1 {
+		t.Fatalf("latest batch calls = %+v, want one call", store.latestBatchCalls)
+	}
+	if strings.Join(store.latestBatchCalls[0], ",") != "thread-1,thread-2" {
+		t.Fatalf("latest batch thread IDs = %+v", store.latestBatchCalls[0])
+	}
+	if store.latestCalls != 0 {
+		t.Fatalf("LatestForThread calls = %d, want 0", store.latestCalls)
+	}
+}
+
+func TestLatestRunsForInboxReturnsEmptyWhenUnavailable(t *testing.T) {
+	b := newBypassOrgBot(t, "member")
+	if got := b.latestRunsForInbox(context.Background(), "org_test", []convstore.Record{{ThreadID: "thread-1"}}); len(got) != 0 {
+		t.Fatalf("nil run store result = %+v, want empty", got)
+	}
+
+	disabled := &fakeRunStore{enabled: false}
+	b.runs = disabled
+	if got := b.latestRunsForInbox(context.Background(), "org_test", []convstore.Record{{ThreadID: "thread-1"}}); len(got) != 0 {
+		t.Fatalf("disabled run store result = %+v, want empty", got)
+	}
+	if len(disabled.latestBatchCalls) != 0 {
+		t.Fatalf("disabled store latest batch calls = %+v, want none", disabled.latestBatchCalls)
+	}
+
+	emptyIDs := &fakeRunStore{enabled: true}
+	b.runs = emptyIDs
+	if got := b.latestRunsForInbox(context.Background(), "org_test", []convstore.Record{{ThreadID: ""}}); len(got) != 0 {
+		t.Fatalf("empty thread IDs result = %+v, want empty", got)
+	}
+	if len(emptyIDs.latestBatchCalls) != 0 {
+		t.Fatalf("empty thread IDs batch calls = %+v, want none", emptyIDs.latestBatchCalls)
+	}
+
+	errored := &fakeRunStore{enabled: true, latestBatchErr: context.Canceled}
+	b.runs = errored
+	if got := b.latestRunsForInbox(context.Background(), "org_test", []convstore.Record{{ThreadID: "thread-1"}}); len(got) != 0 {
+		t.Fatalf("errored latest batch result = %+v, want empty", got)
+	}
+	if len(errored.latestBatchCalls) != 1 {
+		t.Fatalf("errored latest batch calls = %+v, want one call", errored.latestBatchCalls)
+	}
+}
+
 func TestAgentInboxRunTimestampPrefersConversationUpdatedAtWithoutRun(t *testing.T) {
 	createdAt := time.Date(2026, 6, 1, 9, 0, 0, 0, time.UTC)
 	updatedAt := time.Date(2026, 6, 2, 10, 30, 0, 0, time.UTC)
@@ -942,6 +1111,249 @@ func TestAgentInboxCurrentStepUsesRunEvents(t *testing.T) {
 			got := agentInboxCurrentStep(tc.run, tc.events)
 			if got != tc.want {
 				t.Fatalf("current step = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAgentInboxCommandStepLabels(t *testing.T) {
+	friendlyCases := []struct {
+		step string
+		want string
+	}{
+		{step: "setup-clone-write", want: "Preparing the repository."},
+		{step: "bootstrap-write", want: "Bootstrapping the repository."},
+		{step: "write-env", want: "Preparing the sandbox command."},
+		{step: "run-script", want: "Running the agent."},
+		{step: "custom-step", want: "custom step."},
+		{step: " ", want: ""},
+	}
+	for _, tc := range friendlyCases {
+		t.Run("friendly "+tc.step, func(t *testing.T) {
+			if got := friendlyRunCommandStep(tc.step); got != tc.want {
+				t.Fatalf("friendlyRunCommandStep(%q) = %q, want %q", tc.step, got, tc.want)
+			}
+		})
+	}
+
+	currentCases := []struct {
+		step string
+		want string
+	}{
+		{step: "", want: ""},
+		{step: "bootstrap-run-bootstrap", want: "Bootstrap"},
+		{step: "setup-clone-run", want: "Sandbox"},
+		{step: "detect-tar", want: "Sandbox"},
+		{step: "write-script", want: "Sandbox"},
+		{step: "run-script", want: "Coding"},
+		{step: "review-checks", want: "Validating"},
+		{step: "unknown-step", want: ""},
+	}
+	for _, tc := range currentCases {
+		t.Run("current "+tc.step, func(t *testing.T) {
+			if got := currentStepFromCommand(tc.step); got != tc.want {
+				t.Fatalf("currentStepFromCommand(%q) = %q, want %q", tc.step, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAgentInboxLifecycleStepText(t *testing.T) {
+	cases := []struct {
+		text string
+		want string
+	}{
+		{text: "", want: ""},
+		{text: "recovering run after worker restart", want: "Recovering"},
+		{text: "starting sandbox", want: "Starting"},
+		{text: "resuming previous session", want: "Resuming"},
+		{text: "archive sandbox", want: "Cleanup"},
+		{text: "agent learned a bootstrap spec", want: "Learning"},
+		{text: "bootstrapping repository", want: "Bootstrap"},
+		{text: "sx skills installed", want: "Skills"},
+		{text: "gh pr create https://github.com/hetchyhq/hetchy/pull/321", want: "PR"},
+		{text: "cloning repo checkout", want: "Sandbox"},
+		{text: "validation proof accepted", want: "Validating"},
+		{text: "ordinary coding update", want: ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.text, func(t *testing.T) {
+			if got := currentStepFromLifecycleText(tc.text); got != tc.want {
+				t.Fatalf("currentStepFromLifecycleText(%q) = %q, want %q", tc.text, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAgentInboxStatusAndStateLabels(t *testing.T) {
+	cases := []struct {
+		state   string
+		outcome string
+		status  string
+		label   string
+	}{
+		{state: runstore.StatePreparing, status: "running", label: "Waiting for latest activity."},
+		{state: runstore.StateRunning, status: "running", label: "Waiting for latest activity."},
+		{state: runstore.StateRecovering, status: "running", label: "Waiting for latest activity."},
+		{state: runstore.StateFinalizing, status: "running", label: "Waiting for latest activity."},
+		{state: runstore.StateFailed, outcome: runstore.OutcomeCompletedNoPR, status: "needs_input", label: "Run finished without a pull request."},
+		{state: runstore.StateFailed, status: "failed", label: "Run failed."},
+		{state: runstore.StateCancelled, status: "cancelled", label: "Run was stopped."},
+		{state: runstore.StateSucceeded, status: "done", label: "Run is complete."},
+		{state: "unknown", status: "done", label: "Run is complete."},
+	}
+	for _, tc := range cases {
+		t.Run(tc.state+" "+tc.outcome, func(t *testing.T) {
+			if got := agentInboxStatus(tc.state, tc.outcome); got != tc.status {
+				t.Fatalf("agentInboxStatus(%q, %q) = %q, want %q", tc.state, tc.outcome, got, tc.status)
+			}
+			if got := agentInboxStateLabel(tc.state, tc.outcome); got != tc.label {
+				t.Fatalf("agentInboxStateLabel(%q, %q) = %q, want %q", tc.state, tc.outcome, got, tc.label)
+			}
+		})
+	}
+}
+
+func TestAgentInboxStepKindClassification(t *testing.T) {
+	cases := []struct {
+		name string
+		kind blocks.Kind
+		text string
+		want string
+	}{
+		{name: "setup default", kind: blocks.KindSetup, text: "installing dependencies", want: "Sandbox"},
+		{name: "notify pr", kind: blocks.KindNotify, text: "PR opened", want: "PR"},
+		{name: "notify fallback", kind: blocks.KindNotify, text: "validation proof accepted", want: "Validating"},
+		{name: "agent pr", kind: blocks.KindClaudeText, text: "created PR https://github.com/hetchyhq/hetchy/pull/1", want: "PR"},
+		{name: "agent coding", kind: blocks.KindToolUse, text: "reading files", want: "Coding"},
+		{name: "result pr", kind: blocks.KindResult, text: "https://github.com/hetchyhq/hetchy/pull/1", want: "PR"},
+		{name: "result validation", kind: blocks.KindResult, text: "done", want: "Validating"},
+		{name: "error lifecycle", kind: blocks.KindError, text: "recovering from stale run", want: "Recovering"},
+		{name: "unknown lifecycle", kind: "", text: "sandbox ready", want: "Sandbox"},
+		{name: "blank", kind: blocks.KindClaudeText, text: "", want: ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := currentStepFromKindAndText(tc.kind, tc.text); got != tc.want {
+				t.Fatalf("currentStepFromKindAndText(%q, %q) = %q, want %q", tc.kind, tc.text, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAgentInboxNotifyStepText(t *testing.T) {
+	cases := []struct {
+		text string
+		want string
+	}{
+		{text: "starting", want: "Starting"},
+		{text: "resuming run", want: "Resuming"},
+		{text: "attachments uploaded", want: "Attachments"},
+		{text: "sandbox replaced", want: "Sandbox"},
+		{text: "pull request opened", want: "PR"},
+		{text: "tooling degraded", want: "Skills"},
+		{text: "agent learned bootstrap spec", want: "Learning"},
+		{text: "bootstrap skipped", want: "Bootstrap"},
+		{text: "status check passed", want: "Validating"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.text, func(t *testing.T) {
+			if got := currentStepFromNotifyText(tc.text); got != tc.want {
+				t.Fatalf("currentStepFromNotifyText(%q) = %q, want %q", tc.text, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAgentInboxMilestones(t *testing.T) {
+	cases := []struct {
+		name string
+		rec  convstore.Record
+		run  runstore.Run
+		has  bool
+		want []string
+	}{
+		{
+			name: "no run with prompt",
+			rec:  convstore.Record{History: []string{"Ship it"}},
+			want: []string{"done", "pending", "pending", "pending", "pending"},
+		},
+		{
+			name: "no run with pr",
+			rec:  convstore.Record{History: []string{"Ship it"}, PRURL: "https://github.com/hetchyhq/hetchy/pull/1"},
+			want: []string{"done", "done", "done", "done", "done"},
+		},
+		{
+			name: "preparing before sandbox",
+			run:  runstore.Run{State: runstore.StatePreparing},
+			has:  true,
+			want: []string{"done", "current", "pending", "pending", "pending"},
+		},
+		{
+			name: "running bootstrap command",
+			run:  runstore.Run{State: runstore.StateRunning, SandboxID: "sandbox-1", CommandStep: "bootstrap-run-bootstrap"},
+			has:  true,
+			want: []string{"done", "current", "pending", "pending", "pending"},
+		},
+		{
+			name: "running before pr",
+			run:  runstore.Run{State: runstore.StateRunning, SandboxID: "sandbox-1", CommandStep: "run-script"},
+			has:  true,
+			want: []string{"done", "done", "current", "pending", "pending"},
+		},
+		{
+			name: "running after pr",
+			rec:  convstore.Record{PRURL: "https://github.com/hetchyhq/hetchy/pull/1"},
+			run:  runstore.Run{State: runstore.StateRunning, SandboxID: "sandbox-1", CommandStep: "run-script"},
+			has:  true,
+			want: []string{"done", "done", "done", "done", "current"},
+		},
+		{
+			name: "succeeded without pr",
+			run:  runstore.Run{State: runstore.StateSucceeded, SandboxID: "sandbox-1"},
+			has:  true,
+			want: []string{"done", "done", "done", "pending", "pending"},
+		},
+		{
+			name: "failed with pr",
+			rec:  convstore.Record{PRURL: "https://github.com/hetchyhq/hetchy/pull/1"},
+			run:  runstore.Run{State: runstore.StateFailed, SandboxID: "sandbox-1"},
+			has:  true,
+			want: []string{"done", "done", "done", "done", "pending"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := agentInboxMilestones(tc.rec, tc.run, tc.has)
+			if len(got) != len(tc.want) {
+				t.Fatalf("milestone len = %d, want %d: %+v", len(got), len(tc.want), got)
+			}
+			for i, want := range tc.want {
+				if got[i].State != want {
+					t.Fatalf("milestone %d state = %q, want %q: %+v", i, got[i].State, want, got)
+				}
+			}
+		})
+	}
+}
+
+func TestPullRequestNumber(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want string
+	}{
+		{raw: "", want: ""},
+		{raw: "not a url", want: ""},
+		{raw: "https://example.com/hetchyhq/hetchy/pull/321", want: ""},
+		{raw: "https://github.com/hetchyhq/hetchy/pull/not-a-number", want: ""},
+		{raw: "https://github.com/hetchyhq/hetchy/pull/321", want: "321"},
+		{raw: "https://github.com/hetchyhq/hetchy/pull/321/files", want: "321"},
+		{raw: "https://github.com/hetchyhq/hetchy/pull/321?tab=checks", want: "321"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.raw, func(t *testing.T) {
+			if got := pullRequestNumber(tc.raw); got != tc.want {
+				t.Fatalf("pullRequestNumber(%q) = %q, want %q", tc.raw, got, tc.want)
 			}
 		})
 	}
