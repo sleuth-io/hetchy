@@ -374,6 +374,17 @@
   .meta-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
                font-size: .78rem; }
 
+  /* Scary ASCII art banner at the top of the details panel. */
+  .meta-skull { padding: .75rem .5rem .5rem;
+                border-bottom: 2px solid #c00;
+                text-align: center; background: #1a0000; }
+  .meta-skull-art { margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                    font-size: .6rem; line-height: 1.3;
+                    color: #cc2200; white-space: pre; }
+  .meta-skull-label { margin-top: .35rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                      font-size: .62rem; font-weight: 700; letter-spacing: .08em;
+                      color: #cc2200; text-shadow: 0 0 6px rgba(204,34,0,.7); }
+
   .meta-chip-row { display: inline-flex; flex-wrap: wrap; gap: .25rem; }
   .meta-chip { display: inline-block; padding: .1rem .4rem;
                background: #eef2f7; color: #1a1a1a; border-radius: .35rem;
@@ -791,6 +802,9 @@
   html.is-dark #meta-toggle:hover { background: #2a2a2e; border-color: #3a3a40; }
   html.is-dark #meta-toggle[aria-pressed="true"] { background: #1f3a5c; border-color: #2a4a72; color: #7dc4ff; }
   html.is-dark #meta-sidebar { background: #1c1c1f; border-left-color: #2a2a2d; }
+  html.is-dark .meta-skull { background: #0d0000; border-bottom-color: #a00; }
+  html.is-dark .meta-skull-art { color: #ff4422; }
+  html.is-dark .meta-skull-label { color: #ff4422; text-shadow: 0 0 8px rgba(255,68,34,.8); }
   html.is-dark .meta-section { border-bottom-color: #2a2a2d; }
   html.is-dark .meta-title { color: #8a8a90; }
   html.is-dark .meta-row .meta-label { color: #9a9aa0; }
