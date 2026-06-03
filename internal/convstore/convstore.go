@@ -120,14 +120,18 @@ func (s *Store) Get(ctx context.Context, orgID, threadID string) (Record, error)
 	return rec, nil
 }
 
-// SearchOptions filters and pages a sidebar list query. Empty CreatorID
-// and Query mean "no filter"; Limit/Offset drive the "Load more" pager.
+// SearchOptions filters and pages a sidebar list query. Empty filter
+// booleans mean "no filter"; Query still uses empty string as "no
+// filter"; Limit/Offset drive the "Load more" pager.
 // Limit must be > 0; the handler clamps before calling.
 type SearchOptions struct {
-	CreatorID string
-	Query     string
-	Limit     int
-	Offset    int
+	CreatorID       string
+	FilterCreatorID bool
+	AgentSlug       string
+	FilterAgentSlug bool
+	Query           string
+	Limit           int
+	Offset          int
 }
 
 // ilikeEscaper backslash-escapes the three characters Postgres
@@ -160,11 +164,14 @@ func (s *Store) Search(ctx context.Context, orgID string, opts SearchOptions) ([
 		return nil, nil
 	}
 	rows, err := s.db.Queries.SearchConversations(ctx, sqlc.SearchConversationsParams{
-		OrgID:     orgID,
-		CreatorID: opts.CreatorID,
-		Query:     escapeILIKEWildcards(opts.Query),
-		Lim:       int32(opts.Limit),
-		Off:       int32(opts.Offset),
+		OrgID:           orgID,
+		FilterCreatorID: opts.FilterCreatorID,
+		CreatorID:       opts.CreatorID,
+		FilterAgentSlug: opts.FilterAgentSlug,
+		AgentSlug:       opts.AgentSlug,
+		Query:           escapeILIKEWildcards(opts.Query),
+		Lim:             int32(opts.Limit),
+		Off:             int32(opts.Offset),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("search conversations: %w", err)

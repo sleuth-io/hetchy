@@ -72,6 +72,40 @@ func TestRenderChatTemplate(t *testing.T) {
 	}
 }
 
+func TestRenderAgentInboxTemplate(t *testing.T) {
+	rec := httptest.NewRecorder()
+	Render(slog.New(slog.NewTextHandler(io.Discard, nil)), rec, AgentInbox, map[string]any{
+		"Email":           "u@example.com",
+		"DisplayName":     "Test User",
+		"GravatarURL":     "https://example.com/avatar.png",
+		"UserID":          "user_test",
+		"OpenAIEnabled":   true,
+		"DefaultRepoSlug": "hetchyhq/hetchy",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`data-current-user-id="user_test"`,
+		`data-default-repo-slug="hetchyhq/hetchy"`,
+		`href="/assets/agent_inbox.css`,
+		`src="/assets/chat_blocks.js`,
+		`src="/assets/agent_inbox.js`,
+		`id="agent-menu-btn"`,
+		`id="work-search"`,
+		`data-status-filter="running"`,
+		`id="task-tools-popover"`,
+		`id="task-repo-popover"`,
+		`id="new-task-dialog"`,
+		`id="chat-detail-dialog"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("rendered agent inbox template missing %q", want)
+		}
+	}
+}
+
 func TestAssetHandlerServesEmbeddedAssets(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/assets/chat_core.js", nil)

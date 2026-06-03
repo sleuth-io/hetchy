@@ -1,0 +1,1243 @@
+(function () {
+  const currentUserID = document.body.dataset.currentUserId || '';
+  const defaultRepoSlug = (document.body.dataset.defaultRepoSlug || '').trim();
+  const openAIEnabled = document.body.dataset.openaiEnabled === '1';
+  const inboxLimit = 80;
+  const pollMs = 4000;
+  const hiddenPollMs = 15000;
+  const detailPollMs = 5000;
+  const initialVisibleRuns = 8;
+  const maxPromptAttachments = 5;
+  const maxPromptAttachmentBytes = 10 * 1024 * 1024;
+  const noAgentID = '__no_agent__';
+  const unknownUserID = '__unknown_user__';
+
+  const modelOptions = [
+    { value: 'opus', label: 'Opus', description: 'Most capable', provider: 'anthropic' },
+    { value: 'sonnet', label: 'Sonnet', description: 'Balanced everyday work', provider: 'anthropic' },
+    { value: 'haiku', label: 'Haiku', description: 'Fastest', provider: 'anthropic' },
+  ];
+  if (openAIEnabled) {
+    modelOptions.push(
+      { value: 'gpt-frontier', label: 'GPT Frontier', description: 'Most capable GPT', provider: 'openai' },
+      { value: 'gpt-balanced', label: 'GPT Balanced', description: 'Balanced everyday work', provider: 'openai' },
+      { value: 'gpt-fastest', label: 'GPT Fastest', description: 'Fastest', provider: 'openai' },
+    );
+  }
+
+  const state = {
+    mode: 'agent',
+    selectedID: '',
+    statusFilter: 'all',
+    navQuery: '',
+    workQuery: '',
+    workSearchKey: '',
+    workSearch: null,
+    workSearchInFlight: false,
+    workSearchTimer: null,
+    data: { runs: [], pull_requests: [], counts: {} },
+    agents: [],
+    members: [],
+    repos: [],
+    reposLoaded: false,
+    repoSearch: '',
+    repoLoadToken: 0,
+    selectedRunLimit: initialVisibleRuns,
+    fetchInFlight: false,
+    pollTimer: null,
+    detailTimer: null,
+    activeChatID: '',
+    activeDetail: null,
+    pendingFollowups: {},
+    taskAttachments: [],
+    followupAttachments: [],
+    selectedTaskRepo: defaultRepoSlug,
+    selectedTaskAgent: '',
+    selectedTaskModel: readStoredModel(),
+  };
+
+  function byID(id) { return document.getElementById(id); }
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, ch => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    })[ch]);
+  }
+  function compact(s, fallback) {
+    s = String(s || '').trim();
+    return s || fallback || '';
+  }
+  function humanizeSlug(slug) {
+    slug = compact(slug, '');
+    if (!slug) return 'No agent';
+    return slug.split(/[-_]+/).filter(Boolean).map(part =>
+      part.charAt(0).toUpperCase() + part.slice(1)
+    ).join(' ');
+  }
+  function agentName(slug) {
+    slug = compact(slug, '');
+    if (!slug) return 'No agent';
+    const found = state.agents.find(agent => agent.slug === slug);
+    return found ? found.display_name : humanizeSlug(slug);
+  }
+  function userName(userID) {
+    userID = compact(userID, '');
+    if (!userID || userID === unknownUserID) return 'Unknown user';
+    const found = state.members.find(member => member.user_id === userID);
+    if (found) return found.display_name || found.email || userID;
+    if (userID === currentUserID) return 'You';
+    return userID;
+  }
+  function modelLabel(value) {
+    const found = modelOptions.find(model => model.value === value);
+    return found ? found.label : 'Opus';
+  }
+  function statusLabel(status) {
+    switch (status) {
+    case 'running': return 'Running';
+    case 'needs_input': return 'Needs input';
+    case 'failed': return 'Failed';
+    case 'cancelled': return 'Cancelled';
+    case 'done': return 'Done';
+    default: return humanizeSlug(status || 'done');
+    }
+  }
+  function relativeTime(value) {
+    const d = new Date(value);
+    if (isNaN(d.getTime())) return '';
+    const sec = Math.max(0, Math.round((Date.now() - d.getTime()) / 1000));
+    if (sec < 60) return 'just now';
+    const min = Math.round(sec / 60);
+    if (min < 60) return min + 'm ago';
+    const hr = Math.round(min / 60);
+    if (hr < 24) return hr + 'h ago';
+    const day = Math.round(hr / 24);
+    return day + 'd ago';
+  }
+
+  function showToast(key, message, kind, timeoutMs) {
+    const stack = byID('toast-stack');
+    if (!stack) return;
+    let el = stack.querySelector('[data-toast-key="' + key + '"]');
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'toast';
+      el.dataset.toastKey = key;
+      stack.appendChild(el);
+    }
+    el.className = 'toast ' + (kind || 'warn');
+    el.textContent = message;
+    if (timeoutMs !== 0) {
+      clearTimeout(el._toastTimer);
+      el._toastTimer = setTimeout(() => el.remove(), timeoutMs || 3500);
+    }
+  }
+
+  async function fetchJSON(path) {
+    const res = await fetch(path, { headers: { Accept: 'application/json' } });
+    if (!res.ok) throw new Error(path + ' failed: ' + res.status);
+    return await res.json();
+  }
+
+  async function loadSupportData() {
+    const [agents, members] = await Promise.all([
+      fetchJSON('/api/v1/agents').catch(() => []),
+      fetchJSON('/api/v1/members').catch(() => []),
+    ]);
+    state.agents = Array.isArray(agents) ? agents : [];
+    state.members = Array.isArray(members) ? members : [];
+    renderAgentSelects();
+    loadRepos('');
+  }
+
+  async function loadRepos(query) {
+    const token = ++state.repoLoadToken;
+    const params = new URLSearchParams();
+    if (query) params.set('q', query);
+    const path = '/api/v1/repositories' + (params.toString() ? '?' + params.toString() : '');
+    try {
+      const repos = await fetchJSON(path);
+      if (token !== state.repoLoadToken) return;
+      state.repos = Array.isArray(repos) ? repos : [];
+      state.reposLoaded = true;
+    } catch (e) {
+      if (token !== state.repoLoadToken) return;
+      state.repos = [];
+      state.reposLoaded = true;
+    }
+    renderRepoPicker();
+  }
+
+  async function fetchInbox() {
+    if (state.fetchInFlight) return;
+    state.fetchInFlight = true;
+    try {
+      const params = new URLSearchParams();
+      params.set('limit', String(inboxLimit));
+      const data = await fetchJSON('/api/v1/agent-inbox?' + params.toString());
+      state.data = data || { runs: [], pull_requests: [], counts: {} };
+      ensureSelection();
+      renderAll();
+      if (state.activeChatID) loadChatDetail(state.activeChatID, { quiet: true });
+    } catch (e) {
+      showToast('sync', 'Could not refresh work state.', 'warn');
+    } finally {
+      state.fetchInFlight = false;
+      schedulePoll();
+    }
+  }
+
+  function schedulePoll(delay) {
+    clearTimeout(state.pollTimer);
+    state.pollTimer = setTimeout(fetchInbox, delay || (document.hidden ? hiddenPollMs : pollMs));
+  }
+  function pollSoon() {
+    schedulePoll(650);
+  }
+
+  function currentWorkSearchKey() {
+    return [state.mode, state.selectedID, state.workQuery.trim()].join('\n');
+  }
+  function addSelectedGroupParams(params) {
+    if (state.mode === 'user') {
+      params.set('creator_id', state.selectedID === unknownUserID ? '' : state.selectedID);
+    } else {
+      params.set('agent_slug', state.selectedID === noAgentID ? '' : state.selectedID);
+    }
+  }
+  async function fetchWorkSearch() {
+    const query = state.workQuery.trim();
+    if (!query || !state.selectedID || state.workSearchInFlight) {
+      if (!query) {
+        state.workSearchKey = '';
+        state.workSearch = null;
+        renderAll();
+      }
+      return;
+    }
+    const key = currentWorkSearchKey();
+    state.workSearchInFlight = true;
+    try {
+      const params = new URLSearchParams();
+      params.set('limit', String(inboxLimit));
+      params.set('q', query);
+      addSelectedGroupParams(params);
+      const data = await fetchJSON('/api/v1/agent-inbox?' + params.toString());
+      if (currentWorkSearchKey() !== key) return;
+      state.workSearchKey = key;
+      state.workSearch = data || { runs: [], pull_requests: [] };
+      renderAll();
+    } catch (e) {
+      if (currentWorkSearchKey() === key) {
+        state.workSearchKey = key;
+        state.workSearch = { runs: [], pull_requests: [] };
+        renderAll();
+      }
+      showToast('work-search', 'Could not search chats for this view.', 'warn');
+    } finally {
+      state.workSearchInFlight = false;
+      if (state.workQuery.trim() && state.workSearchKey !== currentWorkSearchKey()) {
+        scheduleWorkSearch();
+      }
+    }
+  }
+  function scheduleWorkSearch() {
+    clearTimeout(state.workSearchTimer);
+    if (!state.workQuery.trim()) {
+      state.workSearchKey = '';
+      state.workSearch = null;
+      renderAll();
+      return;
+    }
+    state.workSearchTimer = setTimeout(fetchWorkSearch, 250);
+  }
+
+  function allRuns() {
+    return Array.isArray(state.data.runs) ? state.data.runs : [];
+  }
+  function allPRs() {
+    return Array.isArray(state.data.pull_requests) ? state.data.pull_requests : [];
+  }
+  function activeSearchData() {
+    if (!state.workQuery) return null;
+    const key = currentWorkSearchKey();
+    if (state.workSearchKey !== key) return null;
+    return state.workSearch || { runs: [], pull_requests: [] };
+  }
+  function activeRuns() {
+    const search = activeSearchData();
+    return search ? (Array.isArray(search.runs) ? search.runs : []) : allRuns();
+  }
+  function activePRs() {
+    const search = activeSearchData();
+    return search ? (Array.isArray(search.pull_requests) ? search.pull_requests : []) : allPRs();
+  }
+  function groupIDForRun(run) {
+    if (state.mode === 'user') return compact(run.creator_id, unknownUserID);
+    return compact(run.agent_slug, noAgentID);
+  }
+  function runMatchesSelectedGroup(run) {
+    return !!state.selectedID && groupIDForRun(run) === state.selectedID;
+  }
+  function groupName(id) {
+    if (state.mode === 'user') return userName(id);
+    return id === noAgentID ? 'No agent' : agentName(id);
+  }
+  function buildGroups() {
+    const groups = new Map();
+    for (const run of allRuns()) {
+      const id = groupIDForRun(run);
+      if (!groups.has(id)) {
+        groups.set(id, { id, name: groupName(id), runs: [], active: 0 });
+      }
+      const group = groups.get(id);
+      group.runs.push(run);
+      if (run.status === 'running') group.active += 1;
+    }
+    let out = Array.from(groups.values());
+    const needle = state.navQuery.trim().toLowerCase();
+    if (needle) {
+      out = out.filter(group => group.name.toLowerCase().includes(needle));
+    }
+    return out.sort((a, b) => {
+      if (a.active !== b.active) return b.active - a.active;
+      const at = Math.max.apply(null, a.runs.map(run => Date.parse(run.updated_at) || 0));
+      const bt = Math.max.apply(null, b.runs.map(run => Date.parse(run.updated_at) || 0));
+      return bt - at;
+    });
+  }
+  function buildAllGroups() {
+    const prev = state.navQuery;
+    state.navQuery = '';
+    const groups = buildGroups();
+    state.navQuery = prev;
+    return groups;
+  }
+  function ensureSelection() {
+    const groups = buildAllGroups();
+    if (!groups.length) {
+      state.selectedID = '';
+      return;
+    }
+    if (!state.selectedID || !groups.some(group => group.id === state.selectedID)) {
+      state.selectedID = groups[0].id;
+      state.selectedRunLimit = initialVisibleRuns;
+    }
+  }
+
+  function renderAll() {
+    renderSummary();
+    renderGroups();
+    renderRuns();
+    renderPRs();
+  }
+
+  function renderSummary() {
+    const counts = selectedGroupCounts();
+    byID('summary-running').textContent = String(counts.running);
+    byID('summary-needs-input').textContent = String(counts.needs_input);
+    byID('summary-failed').textContent = String(counts.failed);
+    byID('summary-ready-prs').textContent = String(counts.ready_prs);
+    document.querySelectorAll('[data-status-filter]').forEach(btn => {
+      btn.classList.toggle('is-active', btn.dataset.statusFilter === state.statusFilter);
+    });
+  }
+
+  function selectedGroupRuns() {
+    if (!state.selectedID) return [];
+    return activeRuns().filter(runMatchesSelectedGroup);
+  }
+  function readyConversationIDs() {
+    return new Set(activePRs()
+      .filter(pr => pr.validation_passed && pr.review_passed)
+      .map(pr => pr.conversation_id));
+  }
+  function selectedGroupCounts() {
+    const readyIDs = readyConversationIDs();
+    return selectedGroupRuns().reduce((counts, run) => {
+      if (run.status === 'running') counts.running++;
+      if (run.status === 'needs_input') counts.needs_input++;
+      if (run.status === 'failed') counts.failed++;
+      if (readyIDs.has(run.conversation_id)) counts.ready_prs++;
+      return counts;
+    }, { running: 0, needs_input: 0, failed: 0, ready_prs: 0 });
+  }
+
+  function renderGroups() {
+    const list = byID('group-list');
+    const groups = buildGroups();
+    if (!groups.length) {
+      list.innerHTML = '<div class="empty">No work found.</div>';
+      return;
+    }
+    list.innerHTML = groups.map(group => {
+      const activeClass = group.id === state.selectedID ? ' is-active' : '';
+      const countClass = group.active > 0 ? ' has-active' : '';
+      const sub = group.active > 0 ? group.active + ' running' : group.runs.length + ' recent';
+      return '<button class="group-item' + activeClass + '" type="button" data-group-id="' + esc(group.id) + '">'
+        + '<span><span class="group-name">' + esc(group.name) + '</span><span class="group-sub">' + esc(sub) + '</span></span>'
+        + '<span class="group-count' + countClass + '">' + esc(group.runs.length) + '</span>'
+        + '</button>';
+    }).join('');
+  }
+
+  function selectedRuns() {
+    let runs = selectedGroupRuns();
+    if (state.statusFilter === 'ready_pr') {
+      const readyIDs = readyConversationIDs();
+      runs = runs.filter(run => readyIDs.has(run.conversation_id));
+    } else if (state.statusFilter !== 'all') {
+      runs = runs.filter(run => run.status === state.statusFilter);
+    }
+    return runs.sort(compareRuns);
+  }
+  function sidebarPRs() {
+    const runsByConversation = new Map(allRuns().map(run => [run.conversation_id, run]));
+    return allPRs().filter(pr => {
+      const run = runsByConversation.get(pr.conversation_id);
+      if (run) return runMatchesSelectedGroup(run);
+      if (state.mode === 'agent') {
+        const slug = compact(pr.agent_slug, noAgentID);
+        return slug === state.selectedID;
+      }
+      return false;
+    });
+  }
+  function compareRuns(a, b) {
+    const rank = { running: 0, needs_input: 1, failed: 2, done: 3, cancelled: 4 };
+    const ar = rank[a.status] == null ? 5 : rank[a.status];
+    const br = rank[b.status] == null ? 5 : rank[b.status];
+    if (ar !== br) return ar - br;
+    return (Date.parse(b.updated_at) || 0) - (Date.parse(a.updated_at) || 0);
+  }
+
+  function renderRuns() {
+    const title = groupName(state.selectedID);
+    byID('selection-title').textContent = title || 'Agent work';
+    byID('work-title').textContent = title || 'Recent work';
+    const workSearch = byID('work-search');
+    if (workSearch) {
+      workSearch.placeholder = 'Search ' + (title || 'this view') + ' chats';
+    }
+    byID('work-subtitle').textContent = state.statusFilter === 'all'
+      ? (state.workQuery ? 'Matching chats for this group.' : 'Recent work, with active runs first.')
+      : statusLabel(state.statusFilter) + ' work for this group.';
+
+    const list = byID('run-list');
+    const runs = selectedRuns();
+    if (state.workQuery && !activeSearchData()) {
+      list.innerHTML = '<div class="empty">Searching chats...</div>';
+      byID('show-more-btn').hidden = true;
+      return;
+    }
+    if (!runs.length) {
+      list.innerHTML = '<div class="empty">No matching work.</div>';
+      byID('show-more-btn').hidden = true;
+      return;
+    }
+    const visible = runs.slice(0, state.selectedRunLimit);
+    list.innerHTML = visible.map(renderRunCard).join('');
+    const more = byID('show-more-btn');
+    more.hidden = runs.length <= state.selectedRunLimit;
+    more.textContent = 'Show more';
+  }
+
+  function renderRunCard(run) {
+    const agent = agentName(run.agent_slug);
+    const repo = compact(run.repository, 'No repository');
+    const meta = [
+      esc(agent),
+      esc(repo),
+      esc(relativeTime(run.updated_at)),
+      '<a class="chat-link" href="/?session=' + encodeURIComponent(run.conversation_id) + '" data-open-chat="' + esc(run.conversation_id) + '">Chat details</a>',
+    ].join(' - ');
+    const isActive = run.status === 'running';
+    const activeDetails = isActive
+      ? '<div class="active-run-details">'
+        + renderMilestones(run.milestones || [])
+        + '<div class="live-panel">'
+        + '<div class="activity-current">'
+        + '<div class="activity-head"><span class="activity-kicker">Current step</span><a class="activity-detail-link" href="/?session=' + encodeURIComponent(run.conversation_id) + '" data-open-chat="' + esc(run.conversation_id) + '">Full chat details</a></div>'
+        + '<div class="activity-step"><span class="activity-dot"></span><span class="activity-step-text">' + esc(run.activity || 'Run is active.') + '</span></div>'
+        + '</div>'
+        + '</div>'
+        + '</div>'
+      : '';
+    return '<article class="run-card' + (isActive ? ' has-live' : '') + '" data-run-card="' + esc(run.conversation_id) + '">'
+      + '<div class="run-top">'
+      + '<div><div class="run-title">' + esc(run.title) + '</div><div class="run-meta">' + meta + '</div></div>'
+      + '<span class="pill ' + esc(run.status) + '">' + esc(statusLabel(run.status)) + '</span>'
+      + '</div>'
+      + activeDetails
+      + '</article>';
+  }
+  function renderMilestones(milestones) {
+    if (!Array.isArray(milestones) || !milestones.length) return '';
+    return '<div class="milestones">' + milestones.map(m => {
+      const cls = m.state === 'done' ? ' is-done' : (m.state === 'current' ? ' is-current' : '');
+      return '<div class="milestone' + cls + '"><span class="milestone-dot"></span><span class="milestone-label">' + esc(m.label) + '</span></div>';
+    }).join('') + '</div>';
+  }
+
+  function renderPRs() {
+    const prs = sidebarPRs().slice().sort((a, b) => {
+      const ar = a.validation_passed && a.review_passed ? 0 : 1;
+      const br = b.validation_passed && b.review_passed ? 0 : 1;
+      if (ar !== br) return ar - br;
+      return (Date.parse(b.updated_at) || 0) - (Date.parse(a.updated_at) || 0);
+    });
+    byID('pr-count').textContent = String(prs.length);
+    const list = byID('pr-list');
+    if (!prs.length) {
+      list.innerHTML = '<div class="empty">No pull requests yet.</div>';
+      return;
+    }
+    list.innerHTML = prs.map(pr => {
+      const number = pr.number ? '#' + pr.number : 'PR';
+      const validation = pr.validation_required ? pr.validation_passed : true;
+      const review = pr.review_required ? pr.review_passed : true;
+      return '<article class="pr-card">'
+        + '<div class="pr-main">'
+        + '<a class="pr-title" href="' + esc(pr.url) + '" target="_blank" rel="noopener">' + esc(number + ' ' + pr.title) + '</a>'
+        + '<div class="pr-meta">'
+        + '<span>' + esc(agentName(pr.agent_slug)) + ' - <a class="pr-chat" href="/?session=' + encodeURIComponent(pr.conversation_id) + '" data-open-chat="' + esc(pr.conversation_id) + '">chat</a></span>'
+        + '</div>'
+        + '</div>'
+        + '<div class="pr-checks" aria-label="Validation and review status">'
+        + prCheckHTML('Validation', validation, validation ? 'Validation passed' : 'Validation pending')
+        + prCheckHTML('Review', review, review ? 'Review checks passed' : 'Review checks pending')
+        + '</div>'
+        + '</article>';
+    }).join('');
+  }
+  function prCheckHTML(label, done, title) {
+    return '<span class="pr-check ' + (done ? 'is-checked' : '') + '" title="' + esc(title) + '">' + esc(label) + '</span>';
+  }
+
+  function renderAgentSelects() {
+    renderAgentPicker();
+    renderModelPicker();
+    renderRepoPicker();
+    updateTaskToolsButton();
+  }
+  function readStoredModel() {
+    try {
+      const value = localStorage.getItem('hetchy.model');
+      if (modelOptions.some(model => model.value === value)) return value;
+    } catch (e) {}
+    return 'opus';
+  }
+  function repoSlug(repo) {
+    if (!repo || !repo.owner || !repo.name) return '';
+    return repo.owner + '/' + repo.name;
+  }
+  function repoChoicesForPicker() {
+    const choices = [];
+    const seen = new Set();
+    const selected = compact(state.selectedTaskRepo, '');
+    if (!selected) {
+      choices.push({ slug: '', label: 'Choose repository', placeholder: true });
+    } else {
+      choices.push({ slug: selected, label: selected });
+      seen.add(selected);
+    }
+    const needle = state.repoSearch.trim().toLowerCase();
+    for (const repo of state.repos) {
+      const slug = repoSlug(repo);
+      if (!slug || seen.has(slug)) continue;
+      if (needle && !slug.toLowerCase().includes(needle)) continue;
+      seen.add(slug);
+      choices.push({ slug, label: slug });
+    }
+    return choices;
+  }
+  function renderRepoPicker() {
+    const label = byID('task-repo-label');
+    if (label) label.textContent = compact(state.selectedTaskRepo, 'Choose repository');
+    const btn = byID('task-repo-btn');
+    if (btn) {
+      const current = compact(state.selectedTaskRepo, 'Choose repository');
+      btn.title = 'Repository: ' + current;
+      btn.setAttribute('aria-label', 'Choose repository. Current: ' + current);
+    }
+    const options = byID('task-repo-options');
+    if (!options) return;
+    const choices = repoChoicesForPicker();
+    options.innerHTML = choices.map(choice =>
+      '<button class="repo-choice' + (choice.slug === state.selectedTaskRepo ? ' is-selected' : '') + '" type="button" role="option"'
+      + ' data-repo-slug="' + esc(choice.slug) + '" aria-selected="' + (choice.slug === state.selectedTaskRepo ? 'true' : 'false') + '"'
+      + (choice.placeholder ? ' disabled aria-disabled="true"' : '') + '>'
+      + '<span class="repo-choice-name">' + esc(choice.label) + '</span>'
+      + '</button>'
+    ).join('');
+    const serverResults = choices.filter(choice => choice.slug && choice.slug !== state.selectedTaskRepo).length;
+    if (!state.reposLoaded) {
+      options.insertAdjacentHTML('beforeend', '<div class="repo-empty">Loading repositories...</div>');
+    } else if (serverResults === 0) {
+      options.insertAdjacentHTML('beforeend',
+        '<div class="repo-empty">' + esc(state.repoSearch.trim() ? 'No repositories match "' + state.repoSearch.trim() + '".' : 'No repositories available.') + '</div>'
+      );
+    }
+  }
+  function renderAgentPicker() {
+    const label = byID('task-agent-label');
+    if (label) label.textContent = state.selectedTaskAgent ? agentName(state.selectedTaskAgent) : 'No agent';
+    const options = byID('task-agent-options');
+    if (!options) return;
+    const choices = [{ slug: '', display_name: 'No agent', description: 'Use Hetchy without a specialized persona.' }].concat(state.agents);
+    options.innerHTML = choices.map(agent =>
+      '<button class="agent-choice' + ((agent.slug || '') === state.selectedTaskAgent ? ' is-selected' : '') + '" type="button" data-agent-slug="' + esc(agent.slug || '') + '">'
+      + '<span class="agent-choice-name">' + esc(agent.display_name || agent.slug || 'No agent') + '</span>'
+      + (agent.description ? '<span class="agent-choice-desc">' + esc(agent.description) + '</span>' : '')
+      + '</button>'
+    ).join('');
+  }
+  const modelProviderHeadings = { anthropic: 'Claude', openai: 'GPT' };
+  function renderModelPicker() {
+    const label = byID('task-model-label');
+    if (label) label.textContent = modelLabel(state.selectedTaskModel);
+    const options = byID('task-model-options');
+    if (!options) return;
+    const providers = new Set(modelOptions.map(model => model.provider || 'anthropic'));
+    const showHeadings = providers.size > 1;
+    let lastProvider = '';
+    options.innerHTML = modelOptions.map(model => {
+      const provider = model.provider || 'anthropic';
+      const heading = showHeadings && provider !== lastProvider
+        ? '<div class="model-provider-heading">' + esc(modelProviderHeadings[provider] || provider) + '</div>'
+        : '';
+      lastProvider = provider;
+      return heading
+        + '<button class="model-choice' + (model.value === state.selectedTaskModel ? ' is-selected' : '') + '" type="button" data-model-value="' + esc(model.value) + '">'
+        + '<span class="model-choice-name">' + esc(model.label) + '</span>'
+        + '<span class="model-choice-desc">' + esc(model.description || '') + '</span>'
+        + (model.value === state.selectedTaskModel ? '<span class="model-check">&#10003;</span>' : '')
+        + '</button>';
+    }).join('');
+    const btn = byID('task-model-btn');
+    if (btn) {
+      const current = modelLabel(state.selectedTaskModel);
+      btn.title = 'Model: ' + current;
+      btn.setAttribute('aria-label', 'Choose model. Current: ' + current);
+    }
+  }
+  function updateTaskToolsButton() {
+    document.querySelectorAll('#task-tools-popover .tools-checkbox-row').forEach(row => {
+      const box = row.querySelector('input[type="checkbox"]');
+      row.classList.toggle('is-checked', !!(box && box.checked));
+    });
+  }
+  function closePopover(id, buttonID) {
+    const popover = byID(id);
+    const btn = byID(buttonID);
+    if (popover) popover.hidden = true;
+    if (btn) btn.setAttribute('aria-expanded', 'false');
+  }
+  function openOnlyPopover(id, buttonID) {
+    [
+      ['task-tools-popover', 'task-tools-btn'],
+      ['task-repo-popover', 'task-repo-btn'],
+      ['task-agent-popover', 'task-agent-btn'],
+      ['task-model-popover', 'task-model-btn'],
+      ['agent-menu', 'agent-menu-btn'],
+      ['user-menu-dropdown', 'user-menu-btn'],
+    ].forEach(pair => {
+      if (pair[0] === id) return;
+      closePopover(pair[0], pair[1]);
+    });
+    const popover = byID(id);
+    const btn = byID(buttonID);
+    if (popover) popover.hidden = false;
+    if (btn) btn.setAttribute('aria-expanded', 'true');
+  }
+  function togglePopover(id, buttonID) {
+    const popover = byID(id);
+    if (!popover) return;
+    if (popover.hidden) openOnlyPopover(id, buttonID);
+    else closePopover(id, buttonID);
+  }
+
+  function openDialog(id) {
+    const dialog = byID(id);
+    if (!dialog) return;
+    if (dialog.showModal) dialog.showModal();
+    else dialog.setAttribute('open', '');
+  }
+  function closeDialog(id) {
+    const dialog = byID(id);
+    if (!dialog) return;
+    if (dialog.close) dialog.close();
+    else dialog.removeAttribute('open');
+  }
+
+  function openNewTask() {
+    byID('task-input').value = '';
+    state.selectedTaskRepo = defaultRepoSlug;
+    state.selectedTaskAgent = '';
+    state.selectedTaskModel = readStoredModel();
+    state.taskAttachments = [];
+    renderAttachmentList('task');
+    if (state.mode === 'agent' && state.selectedID !== noAgentID) {
+      state.selectedTaskAgent = state.selectedID;
+    }
+    state.repoSearch = '';
+    if (byID('task-repo-search')) byID('task-repo-search').value = '';
+    renderAgentSelects();
+    openDialog('new-task-dialog');
+    byID('task-input').focus();
+  }
+
+  async function submitNewTask(event) {
+    event.preventDefault();
+    const text = byID('task-input').value.trim();
+    if (!text) {
+      showToast('new-task-empty', 'Enter a task before dispatching.', 'warn');
+      return;
+    }
+    const conversationID = newConversationID();
+    let payload;
+    try {
+      payload = await taskPayload(text, conversationID);
+    } catch (e) {
+      if (e && e.message === 'missing-repo') {
+        showToast('new-task-repo', 'Choose a repository before starting a chat.', 'warn');
+        return;
+      }
+      showToast('attachment-read', 'Could not read one of the selected files.', 'error');
+      return;
+    }
+    closeDialog('new-task-dialog');
+    showToast('task-started', 'Task dispatched.', 'success', 2200);
+    state.selectedRunLimit = initialVisibleRuns;
+    backgroundTurn('/api/v1/conversations', payload);
+  }
+
+  async function taskPayload(text, conversationID) {
+    const repo = compact(state.selectedTaskRepo, '');
+    const agent = compact(state.selectedTaskAgent, '');
+    const model = compact(state.selectedTaskModel, 'opus');
+    if (!repo) {
+      throw new Error('missing-repo');
+    }
+    try { localStorage.setItem('hetchy.model', model); } catch (e) {}
+    const payload = {
+      text,
+      conversation_id: conversationID,
+      session_id: conversationID,
+      model,
+      validate: byID('task-validate').checked,
+      review_code_before_push: byID('task-review').checked,
+      action_pr_checks_for_done: byID('task-pr-checks').checked,
+    };
+    if (repo) payload.repository = repo;
+    if (agent) payload.agent_slug = agent;
+    payload.attachments = await attachmentPayloads('task');
+    return payload;
+  }
+
+  function newConversationID() {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+    return 'chat_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
+  }
+
+  async function backgroundTurn(path, payload) {
+    pollSoon();
+    let res;
+    try {
+      res = await fetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+    } catch (e) {
+      showToast('turn-network', 'Could not start the run. Network error.', 'error');
+      pollSoon();
+      return;
+    }
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      showToast('turn-error', text || ('Run request failed: ' + res.status), 'error', 6000);
+      pollSoon();
+      return;
+    }
+    await consumeSSE(res, pollSoon).catch(() => pollSoon());
+    pollSoon();
+  }
+
+  async function consumeSSE(res, onEvent) {
+    if (!res.body) return;
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const read = await reader.read();
+      if (read.done) break;
+      buf += decoder.decode(read.value, { stream: true });
+      const parts = buf.split('\n\n');
+      buf = parts.pop();
+      for (const part of parts) {
+        if (!part || part.startsWith(':')) continue;
+        onEvent();
+      }
+    }
+  }
+
+  async function openChat(conversationID) {
+    state.activeChatID = conversationID;
+    openDialog('chat-detail-dialog');
+    byID('chat-log').innerHTML = '<div class="empty">Loading...</div>';
+    await loadChatDetail(conversationID);
+    startDetailPoll();
+  }
+  function startDetailPoll() {
+    clearInterval(state.detailTimer);
+    state.detailTimer = setInterval(() => {
+      if (state.activeChatID && byID('chat-detail-dialog').open) {
+        loadChatDetail(state.activeChatID, { quiet: true });
+      }
+    }, detailPollMs);
+  }
+  async function loadChatDetail(conversationID, opts) {
+    try {
+      const detail = await fetchJSON('/api/v1/conversations/' + encodeURIComponent(conversationID) + '?include=turns,attachments');
+      state.activeDetail = detail;
+      renderChatDetail(detail);
+    } catch (e) {
+      if (!opts || !opts.quiet) byID('chat-log').innerHTML = '<div class="empty">Could not load chat details.</div>';
+    }
+  }
+
+  function renderChatDetail(detail) {
+    byID('chat-detail-title').textContent = detail.title || 'Chat details';
+    byID('chat-detail-sub').textContent = [agentName(detail.agent_slug), detail.status || 'idle', detail.id].filter(Boolean).join(' - ');
+    byID('detail-state').textContent = detail.status || '-';
+    byID('detail-agent').textContent = agentName(detail.agent_slug);
+    byID('detail-chat').textContent = detail.id || '-';
+    const repo = detail.github_owner && detail.github_repo ? detail.github_owner + '/' + detail.github_repo : '-';
+    byID('detail-repo').textContent = repo;
+    byID('detail-branch').textContent = detail.branch || '-';
+    byID('detail-pr').innerHTML = detail.pr_url
+      ? '<a href="' + esc(detail.pr_url) + '" target="_blank" rel="noopener">' + esc(detail.pr_url) + '</a>'
+      : '-';
+    byID('followup-repo-chip').textContent = repo;
+    byID('followup-agent-chip').textContent = agentName(detail.agent_slug);
+    byID('followup-model-chip').textContent = modelLabel(detail.model || 'opus');
+
+    const turns = Array.isArray(detail.turns) ? detail.turns : [];
+    const pending = visiblePendingFollowups(detail.id, turns);
+    if (!turns.length && !pending.length) {
+      byID('chat-log').innerHTML = '<div class="empty">No turns yet.</div>';
+      return;
+    }
+    const log = byID('chat-log');
+    log.innerHTML = '';
+    for (let i = 0; i < turns.length; i++) {
+      const turn = turns[i] || {};
+      appendUserMessage(log, turn.message || '');
+      renderTurnBlocks(log, Array.isArray(turn.blocks) ? turn.blocks : [], i === turns.length - 1);
+    }
+    pending.forEach(item => renderPendingFollowup(log, item));
+    log.scrollTop = log.scrollHeight;
+  }
+  function appendUserMessage(parent, text) {
+    const msg = document.createElement('div');
+    msg.className = 'chat-message user';
+    msg.textContent = text || '';
+    parent.appendChild(msg);
+  }
+  function renderTurnBlocks(parent, blocks, isLastTurn) {
+    if (!blocks.length) return;
+    if (typeof renderBlock !== 'function' || typeof openPhase !== 'function') {
+      renderFallbackBlocks(parent, blocks);
+      return;
+    }
+    const turn = document.createElement('div');
+    turn.className = 'bot-turn';
+    parent.appendChild(turn);
+    let phase = null;
+    let phaseLastEndedAt = '';
+    for (const b of blocks) {
+      if (b.kind === 'claude_text') {
+        if (phase) closeDetailPhase(phase, phaseLastEndedAt || b.ended_at);
+        phase = openPhase(turn, b.title, b.started_at);
+        phase.proseRaw = b.body || '';
+        phase.proseEl.innerHTML = renderMarkdown(phase.proseRaw);
+        phaseLastEndedAt = b.ended_at || '';
+      } else if (b.kind === 'tool_use') {
+        if (!phase) phase = openPhase(turn, '', b.started_at);
+        addToolToPhase(phase, {
+          id: b.id,
+          title: b.title,
+          summary: b.summary,
+          status: b.status,
+          started_at: b.started_at,
+          ended_at: b.ended_at,
+        });
+        if (b.ended_at) phaseLastEndedAt = b.ended_at;
+      } else {
+        if (phase) {
+          closeDetailPhase(phase, phaseLastEndedAt);
+          phase = null;
+          phaseLastEndedAt = '';
+        }
+        renderBlock(turn, b, { open: isLastTurn && (b.kind === 'result' || b.kind === 'error') });
+      }
+    }
+    if (phase) closeDetailPhase(phase, phaseLastEndedAt);
+  }
+  function closeDetailPhase(phase, endedAt) {
+    closePhase(phase, endedAt);
+    if (phase && phase.el) phase.el.open = true;
+  }
+  function renderFallbackBlocks(parent, blocks) {
+    blocks.forEach(block => {
+      const box = document.createElement('div');
+      box.className = 'chat-block' + (block.kind === 'error' || block.status === 'error' ? ' bot' : '');
+      box.innerHTML = '<div class="chat-block-title"></div><div class="chat-block-body"></div>';
+      box.querySelector('.chat-block-title').textContent = compact(block.title || block.kind, 'Update');
+      box.querySelector('.chat-block-body').textContent = compact(block.body || block.summary, '');
+      parent.appendChild(box);
+    });
+  }
+  function visiblePendingFollowups(conversationID, turns) {
+    const pending = pendingFollowupsFor(conversationID);
+    if (!pending.length) return pending;
+    const persisted = new Set((turns || []).map(turn => compact(turn.message, '')));
+    const visible = pending.filter(item => !persisted.has(item.text));
+    state.pendingFollowups[conversationID] = visible;
+    return visible;
+  }
+  function pendingFollowupsFor(conversationID) {
+    return state.pendingFollowups[conversationID] || [];
+  }
+  function addPendingFollowup(conversationID, text) {
+    const pending = pendingFollowupsFor(conversationID).slice();
+    pending.push({ text });
+    state.pendingFollowups[conversationID] = pending;
+  }
+  function renderPendingFollowup(parent, item) {
+    appendUserMessage(parent, item.text);
+    const box = document.createElement('div');
+    box.className = 'chat-block pending-followup';
+    box.innerHTML = '<div class="chat-block-title">Follow-up queued</div>'
+      + '<div class="chat-block-body">Hetchy will resume this conversation with the existing context.</div>';
+    parent.appendChild(box);
+  }
+
+  async function sendFollowup() {
+    const detail = state.activeDetail;
+    const text = byID('followup-input').value.trim();
+    if (!detail || !detail.id || !text) return;
+    let attachments;
+    try {
+      attachments = await attachmentPayloads('followup');
+    } catch (e) {
+      showToast('attachment-read', 'Could not read one of the selected files.', 'error');
+      return;
+    }
+    byID('followup-input').value = '';
+    addPendingFollowup(detail.id, text);
+    renderChatDetail(detail);
+    const payload = {
+      text,
+      conversation_id: detail.id,
+      session_id: detail.id,
+      model: detail.model || 'opus',
+      task_options: detail.task_options || {},
+      attachments,
+    };
+    if (detail.agent_slug) payload.agent_slug = detail.agent_slug;
+    if (detail.github_owner && detail.github_repo) payload.repository = detail.github_owner + '/' + detail.github_repo;
+    state.followupAttachments = [];
+    renderAttachmentList('followup');
+    backgroundTurn('/api/v1/conversations/' + encodeURIComponent(detail.id) + '/turns', payload);
+  }
+
+  function attachmentsFor(kind) {
+    return kind === 'followup' ? state.followupAttachments : state.taskAttachments;
+  }
+  function setAttachments(kind, files) {
+    if (kind === 'followup') state.followupAttachments = files;
+    else state.taskAttachments = files;
+  }
+  function inputForAttachments(kind) {
+    return byID(kind === 'followup' ? 'followup-attachment-input' : 'task-attachment-input');
+  }
+  function listForAttachments(kind) {
+    return byID(kind === 'followup' ? 'followup-attachment-list' : 'task-attachment-list');
+  }
+  function addAttachments(kind, files) {
+    const current = attachmentsFor(kind).slice();
+    for (const file of files) {
+      if (current.length >= maxPromptAttachments) {
+        showToast('attachment-limit', 'Maximum of 5 attachments per prompt.', 'warn');
+        break;
+      }
+      if (file.size > maxPromptAttachmentBytes) {
+        showToast('attachment-size', file.name + ' is larger than 10 MB.', 'warn');
+        continue;
+      }
+      current.push(file);
+    }
+    setAttachments(kind, current);
+    renderAttachmentList(kind);
+  }
+  function renderAttachmentList(kind) {
+    const list = listForAttachments(kind);
+    const files = attachmentsFor(kind);
+    if (!list) return;
+    list.hidden = files.length === 0;
+    list.innerHTML = files.map((file, index) =>
+      '<span class="attachment-chip">'
+      + '<span class="attachment-chip-name">' + esc(file.name || 'attachment') + '</span>'
+      + '<button class="attachment-remove" type="button" data-remove-attachment="' + esc(kind) + '" data-attachment-index="' + index + '" aria-label="Remove attachment">x</button>'
+      + '</span>'
+    ).join('');
+  }
+  async function attachmentPayloads(kind) {
+    const files = attachmentsFor(kind);
+    if (!files.length) return [];
+    return Promise.all(files.map(fileToAttachmentPayload));
+  }
+  function fileToAttachmentPayload(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataURL = String(reader.result || '');
+        const comma = dataURL.indexOf(',');
+        resolve({
+          filename: file.name || 'attachment',
+          content_type: file.type || 'application/octet-stream',
+          data_base64: comma >= 0 ? dataURL.slice(comma + 1) : dataURL,
+          source: 'web',
+        });
+      };
+      reader.onerror = () => reject(reader.error || new Error('read attachment failed'));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function bindEvents() {
+    byID('mode-agent').addEventListener('click', () => {
+      state.mode = 'agent';
+      state.selectedID = '';
+      state.selectedRunLimit = initialVisibleRuns;
+      state.workSearchKey = '';
+      state.workSearch = null;
+      byID('mode-agent').classList.add('is-active');
+      byID('mode-user').classList.remove('is-active');
+      ensureSelection();
+      renderAll();
+      scheduleWorkSearch();
+    });
+    byID('mode-user').addEventListener('click', () => {
+      state.mode = 'user';
+      state.selectedID = '';
+      state.selectedRunLimit = initialVisibleRuns;
+      state.workSearchKey = '';
+      state.workSearch = null;
+      byID('mode-user').classList.add('is-active');
+      byID('mode-agent').classList.remove('is-active');
+      ensureSelection();
+      renderAll();
+      scheduleWorkSearch();
+    });
+    byID('group-list').addEventListener('click', e => {
+      const btn = e.target.closest('[data-group-id]');
+      if (!btn) return;
+      state.selectedID = btn.dataset.groupId;
+      state.selectedRunLimit = initialVisibleRuns;
+      state.workSearchKey = '';
+      state.workSearch = null;
+      renderAll();
+      scheduleWorkSearch();
+    });
+    byID('nav-search').addEventListener('input', e => {
+      state.navQuery = e.target.value.trim();
+      renderGroups();
+    });
+    byID('work-search').addEventListener('input', e => {
+      state.workQuery = e.target.value.trim();
+      state.selectedRunLimit = initialVisibleRuns;
+      state.workSearchKey = '';
+      state.workSearch = null;
+      renderAll();
+      scheduleWorkSearch();
+    });
+    document.querySelectorAll('[data-status-filter]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        state.statusFilter = btn.dataset.statusFilter;
+        state.selectedRunLimit = initialVisibleRuns;
+        renderAll();
+      });
+    });
+    byID('show-more-btn').addEventListener('click', () => {
+      state.selectedRunLimit += initialVisibleRuns;
+      renderRuns();
+    });
+    byID('new-task-btn').addEventListener('click', openNewTask);
+    byID('new-task-form').addEventListener('submit', submitNewTask);
+    byID('agent-menu-btn').addEventListener('click', e => {
+      e.stopPropagation();
+      togglePopover('agent-menu', 'agent-menu-btn');
+    });
+    byID('task-tools-btn').addEventListener('click', e => {
+      e.stopPropagation();
+      togglePopover('task-tools-popover', 'task-tools-btn');
+    });
+    byID('task-repo-btn').addEventListener('click', e => {
+      e.stopPropagation();
+      togglePopover('task-repo-popover', 'task-repo-btn');
+      if (!byID('task-repo-popover').hidden) {
+        requestAnimationFrame(() => {
+          byID('task-repo-search').focus();
+          byID('task-repo-search').select();
+        });
+      }
+    });
+    byID('task-agent-btn').addEventListener('click', e => {
+      e.stopPropagation();
+      togglePopover('task-agent-popover', 'task-agent-btn');
+    });
+    byID('task-model-btn').addEventListener('click', e => {
+      e.stopPropagation();
+      togglePopover('task-model-popover', 'task-model-btn');
+    });
+    byID('task-attach-files-btn').addEventListener('click', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      inputForAttachments('task').click();
+    });
+    byID('task-tools-popover').addEventListener('change', e => {
+      if (e.target.matches('input[type="checkbox"]')) updateTaskToolsButton();
+    });
+    byID('task-repo-search').addEventListener('input', e => {
+      state.repoSearch = e.target.value;
+      renderRepoPicker();
+      clearTimeout(byID('task-repo-search')._debounce);
+      byID('task-repo-search')._debounce = setTimeout(() => loadRepos(state.repoSearch.trim()), 180);
+    });
+    byID('task-repo-search').addEventListener('keydown', e => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const first = byID('task-repo-options').querySelector('.repo-choice[data-repo-slug]:not([data-repo-slug=""])');
+        if (first) {
+          state.selectedTaskRepo = first.dataset.repoSlug;
+          closePopover('task-repo-popover', 'task-repo-btn');
+          renderRepoPicker();
+          byID('task-input').focus();
+        }
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        closePopover('task-repo-popover', 'task-repo-btn');
+        byID('task-repo-btn').focus();
+      }
+    });
+    byID('followup-send-btn').addEventListener('click', sendFollowup);
+    byID('followup-input').addEventListener('keydown', e => {
+      if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        sendFollowup();
+      }
+    });
+    document.addEventListener('click', e => {
+      const repoChoice = e.target.closest('[data-repo-slug]');
+      if (repoChoice && repoChoice.closest('#task-repo-options')) {
+        state.selectedTaskRepo = repoChoice.dataset.repoSlug;
+        closePopover('task-repo-popover', 'task-repo-btn');
+        renderRepoPicker();
+        byID('task-input').focus();
+        return;
+      }
+      const agentChoice = e.target.closest('[data-agent-slug]');
+      if (agentChoice && agentChoice.closest('#task-agent-options')) {
+        state.selectedTaskAgent = agentChoice.dataset.agentSlug;
+        closePopover('task-agent-popover', 'task-agent-btn');
+        renderAgentPicker();
+        byID('task-input').focus();
+        return;
+      }
+      const modelChoice = e.target.closest('[data-model-value]');
+      if (modelChoice && modelChoice.closest('#task-model-options')) {
+        state.selectedTaskModel = modelChoice.dataset.modelValue;
+        try { localStorage.setItem('hetchy.model', state.selectedTaskModel); } catch (err) {}
+        closePopover('task-model-popover', 'task-model-btn');
+        renderModelPicker();
+        byID('task-input').focus();
+        return;
+      }
+      const attachBtn = e.target.closest('[data-attach-target]');
+      if (attachBtn) {
+        const input = inputForAttachments(attachBtn.dataset.attachTarget);
+        if (input) input.click();
+        return;
+      }
+      const removeAttachment = e.target.closest('[data-remove-attachment]');
+      if (removeAttachment) {
+        const kind = removeAttachment.dataset.removeAttachment;
+        const index = Number(removeAttachment.dataset.attachmentIndex);
+        const files = attachmentsFor(kind).slice();
+        if (Number.isInteger(index)) files.splice(index, 1);
+        setAttachments(kind, files);
+        renderAttachmentList(kind);
+        return;
+      }
+      const closeBtn = e.target.closest('[data-close-dialog]');
+      if (closeBtn) {
+        closeDialog(closeBtn.dataset.closeDialog);
+        if (closeBtn.dataset.closeDialog === 'chat-detail-dialog') {
+          state.activeChatID = '';
+          clearInterval(state.detailTimer);
+        }
+        return;
+      }
+      const chat = e.target.closest('[data-open-chat]');
+      if (chat) {
+        e.preventDefault();
+        openChat(chat.dataset.openChat);
+        return;
+      }
+      const card = e.target.closest('[data-run-card]');
+      if (card && !e.target.closest('a')) {
+        openChat(card.dataset.runCard);
+        return;
+      }
+      if (!e.target.closest('.composer-popover') && !e.target.closest('.floating-menu')) {
+        closePopover('task-tools-popover', 'task-tools-btn');
+        closePopover('task-repo-popover', 'task-repo-btn');
+        closePopover('task-agent-popover', 'task-agent-btn');
+        closePopover('task-model-popover', 'task-model-btn');
+        closePopover('agent-menu', 'agent-menu-btn');
+      }
+    });
+    byID('user-menu-btn').addEventListener('click', () => {
+      const menu = byID('user-menu-dropdown');
+      const open = menu.hidden;
+      menu.hidden = !open;
+      byID('user-menu-btn').setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+    inputForAttachments('task').addEventListener('change', e => {
+      addAttachments('task', Array.from(e.target.files || []));
+      e.target.value = '';
+      closePopover('task-tools-popover', 'task-tools-btn');
+      byID('task-input').focus();
+    });
+    inputForAttachments('followup').addEventListener('change', e => {
+      addAttachments('followup', Array.from(e.target.files || []));
+      e.target.value = '';
+    });
+    document.addEventListener('visibilitychange', () => {
+      schedulePoll(document.hidden ? hiddenPollMs : 250);
+    });
+  }
+
+  async function init() {
+    bindEvents();
+    renderAgentSelects();
+    await loadSupportData();
+    await fetchInbox();
+  }
+
+  init();
+})();

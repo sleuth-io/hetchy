@@ -272,10 +272,11 @@ func (b *Bot) conversationsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	recs, err := b.convs.Search(r.Context(), p.OrgID, convstore.SearchOptions{
-		CreatorID: q.Get("user"),
-		Query:     queryStr,
-		Limit:     limit,
-		Offset:    offset,
+		CreatorID:       q.Get("user"),
+		FilterCreatorID: strings.TrimSpace(q.Get("user")) != "",
+		Query:           queryStr,
+		Limit:           limit,
+		Offset:          offset,
 	})
 	if err != nil {
 		b.log.Error("search conversations", "error", err, "org", p.OrgID)

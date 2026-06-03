@@ -645,6 +645,127 @@ func TestConversationsHandlerListUsesLiveStatusOnly(t *testing.T) {
 	}
 }
 
+func TestAgentInboxHandlerAggregatesRunsAndPRs(t *testing.T) {
+	updatedAt := time.Date(2026, 6, 2, 10, 30, 0, 0, time.UTC)
+	b := newBypassOrgBot(t, "member")
+	b.convs = &fakeConversationStore{searchResult: []convstore.Record{{
+		OrgID:       "org_test",
+		ThreadID:    "thread-1",
+		History:     []string{"Ship the agent UI"},
+		PRURL:       "https://github.com/hetchyhq/hetchy/pull/321",
+		GitHubOwner: "hetchyhq",
+		GitHubRepo:  "hetchy",
+		CreatorID:   "user_test",
+		AgentSlug:   "alice",
+		TaskOptions: map[string]bool{
+			chatTaskValidateKey:              true,
+			chatTaskReviewCodeBeforePushKey:  true,
+			chatTaskActionPRChecksForDoneKey: true,
+		},
+		UpdatedAt: updatedAt,
+	}}}
+	b.runs = &fakeRunStore{
+		enabled: true,
+		latestRun: runstore.Run{
+			ID:          "run-1",
+			OrgID:       "org_test",
+			ThreadID:    "thread-1",
+			RunKind:     "fresh",
+			State:       runstore.StateRunning,
+			Outcome:     runstore.OutcomeCompletedWithVerifiedPR,
+			CommandStep: "run-script",
+			Branch:      "feature/agent-ui",
+			UpdatedAt:   updatedAt,
+		},
+		events: []runstore.Event{
+			{Seq: 1, Event: "block_start", Data: runEventForTest(t, "block_start", sseEvent{ID: "p1", Kind: blocks.KindSetup, Title: "Sandbox setup"}).Data},
+			{Seq: 2, Event: "block_append", Data: runEventForTest(t, "block_append", sseEvent{ID: "p1", Delta: "Running validation\n"}).Data},
+		},
+	}
+	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.agentInboxHandler)))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/agent-inbox", nil)
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	var got agentInboxResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v body=%q", err, rec.Body.String())
+	}
+	if got.Counts.Running != 1 || got.Counts.ReadyPRs != 1 || got.Counts.Conversations != 1 {
+		t.Fatalf("counts = %+v", got.Counts)
+	}
+	if len(got.Runs) != 1 {
+		t.Fatalf("runs len = %d", len(got.Runs))
+	}
+	run := got.Runs[0]
+	if run.ConversationID != "thread-1" || run.Status != "running" || run.Activity != "Running validation" {
+		t.Fatalf("run summary = %+v", run)
+	}
+	if run.PRNumber != "321" || run.Repository != "hetchyhq/hetchy" || run.AgentSlug != "alice" {
+		t.Fatalf("run metadata = %+v", run)
+	}
+	if len(got.PullRequests) != 1 || !got.PullRequests[0].ValidationPassed || !got.PullRequests[0].ReviewPassed {
+		t.Fatalf("pull requests = %+v", got.PullRequests)
+	}
+}
+
+func TestAgentInboxHandlerPassesAgentAndCreatorFilters(t *testing.T) {
+	b := newBypassOrgBot(t, "member")
+	fake := &fakeConversationStore{}
+	b.convs = fake
+	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.agentInboxHandler)))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/agent-inbox?q=review&agent_slug=alice&creator_id=user_test", nil)
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	if len(fake.searchOpts) != 1 {
+		t.Fatalf("search calls = %d, want 1", len(fake.searchOpts))
+	}
+	opts := fake.searchOpts[0]
+	if opts.Query != "review" || opts.AgentSlug != "alice" || !opts.FilterAgentSlug ||
+		opts.CreatorID != "user_test" || !opts.FilterCreatorID {
+		t.Fatalf("search opts = %+v", opts)
+	}
+}
+
+func TestAgentInboxPRReadinessRequiresVerifiedOutcome(t *testing.T) {
+	base := agentInboxRun{
+		ConversationID: "thread-1",
+		Title:          "Ship it",
+		State:          runstore.StateSucceeded,
+		PRURL:          "https://github.com/hetchyhq/hetchy/pull/321",
+		TaskOptions: map[string]bool{
+			chatTaskValidateKey:             true,
+			chatTaskReviewCodeBeforePushKey: true,
+		},
+	}
+
+	got := agentInboxPRForRun(base)
+	if !got.ValidationPassed || !got.ReviewPassed {
+		t.Fatalf("blank succeeded outcome should use legacy fallback: %+v", got)
+	}
+
+	base.Outcome = runstore.OutcomeCompletedNoPR
+	got = agentInboxPRForRun(base)
+	if got.ValidationPassed || got.ReviewPassed {
+		t.Fatalf("completed_no_pr should not pass required checks: %+v", got)
+	}
+
+	base.Outcome = runstore.OutcomeCompletedWithVerifiedPR
+	got = agentInboxPRForRun(base)
+	if !got.ValidationPassed || !got.ReviewPassed {
+		t.Fatalf("verified PR should pass required checks: %+v", got)
+	}
+}
+
 func TestConversationCollectionHandlerMethodNotAllowedSetsAllow(t *testing.T) {
 	b := newBypassOrgBot(t, "member")
 	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -412,23 +412,27 @@ SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updat
        github_owner, github_repo, custom_title, creator_id, agent_slug, model, task_options
 FROM conversations
 WHERE org_id = $1
-  AND ($2::text = '' OR creator_id = $2)
+  AND (NOT $2::bool OR creator_id = $3)
+  AND (NOT $4::bool OR agent_slug = $5)
   AND (
-    $3::text = ''
-    OR custom_title ILIKE '%' || $3 || '%' ESCAPE '\'
-    OR history[1]    ILIKE '%' || $3 || '%' ESCAPE '\'
+    $6::text = ''
+    OR custom_title ILIKE '%' || $6 || '%' ESCAPE '\'
+    OR history[1]    ILIKE '%' || $6 || '%' ESCAPE '\'
   )
 ORDER BY created_at DESC, thread_id DESC
-LIMIT $5
-OFFSET $4
+LIMIT $8
+OFFSET $7
 `
 
 type SearchConversationsParams struct {
-	OrgID     string `json:"org_id"`
-	CreatorID string `json:"creator_id"`
-	Query     string `json:"query"`
-	Off       int32  `json:"off"`
-	Lim       int32  `json:"lim"`
+	OrgID           string `json:"org_id"`
+	FilterCreatorID bool   `json:"filter_creator_id"`
+	CreatorID       string `json:"creator_id"`
+	FilterAgentSlug bool   `json:"filter_agent_slug"`
+	AgentSlug       string `json:"agent_slug"`
+	Query           string `json:"query"`
+	Off             int32  `json:"off"`
+	Lim             int32  `json:"lim"`
 }
 
 type SearchConversationsRow struct {
@@ -450,14 +454,14 @@ type SearchConversationsRow struct {
 	TaskOptions    []byte             `json:"task_options"`
 }
 
-// Backs the sidebar list. Filters by optional creator_id and an
-// optional case-insensitive substring match against either the
+// Backs the sidebar list. Filters by optional creator_id, optional
+// agent_slug, and an optional case-insensitive substring match against either the
 // custom_title or the first user message (history[1] — Postgres
 // arrays are 1-indexed; out-of-range yields NULL, and NULL ILIKE
 // pattern is NULL, which evaluates as falsy in WHERE so an empty
 // history harmlessly fails to match).
 //
-// Pass empty strings to skip a filter; LIMIT/OFFSET drive the
+// Pass false filter booleans to skip identity filters; LIMIT/OFFSET drive the
 // "Load more" pager. The ESCAPE '\' clause makes the literal '\'
 // character the escape — caller is expected to backslash-escape
 // '%', '_' and '\' in the user-typed query so they read as
@@ -488,7 +492,10 @@ type SearchConversationsRow struct {
 func (q *Queries) SearchConversations(ctx context.Context, arg SearchConversationsParams) ([]SearchConversationsRow, error) {
 	rows, err := q.db.Query(ctx, searchConversations,
 		arg.OrgID,
+		arg.FilterCreatorID,
 		arg.CreatorID,
+		arg.FilterAgentSlug,
+		arg.AgentSlug,
 		arg.Query,
 		arg.Off,
 		arg.Lim,

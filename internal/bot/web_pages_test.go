@@ -110,6 +110,56 @@ func TestIndexHandler_OpenAIEnabled(t *testing.T) {
 	}
 }
 
+func TestIndexHandler_AgentUIFeatureFlagSelectsSPA(t *testing.T) {
+	b := newBypassOrgBot(t, "admin")
+	b.workOSOrgHasFeatureFlagFn = func(_ context.Context, orgID, slug string) (bool, error) {
+		if orgID != "org_test" || slug != workOSAgentUIFlagSlug {
+			t.Fatalf("feature flag lookup = (%q, %q), want org_test/%s", orgID, slug, workOSAgentUIFlagSlug)
+		}
+		return true, nil
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	b.auth.Middleware(http.HandlerFunc(b.indexHandler)).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `src="/assets/agent_inbox.js`) {
+		t.Fatalf("agent inbox template missing agent_inbox.js, body=%s", body)
+	}
+	if !strings.Contains(body, `href="/assets/agent_inbox.css`) {
+		t.Fatalf("agent inbox template missing agent_inbox.css, body=%s", body)
+	}
+	if strings.Contains(body, `src="/assets/chat_core.js`) {
+		t.Fatalf("agent inbox template should not load old chat runtime")
+	}
+}
+
+func TestIndexHandler_AgentUIFeatureFlagOffUsesOldChat(t *testing.T) {
+	b := newBypassOrgBot(t, "admin")
+	b.workOSOrgHasFeatureFlagFn = func(context.Context, string, string) (bool, error) {
+		return false, nil
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	b.auth.Middleware(http.HandlerFunc(b.indexHandler)).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `src="/assets/chat_core.js`) {
+		t.Fatalf("old chat template missing chat_core.js, body=%s", body)
+	}
+	if strings.Contains(body, `src="/assets/agent_inbox.js`) {
+		t.Fatalf("old chat template should not load agent inbox runtime")
+	}
+}
+
 func TestRequireSameOrigin(t *testing.T) {
 	cases := []struct {
 		name    string

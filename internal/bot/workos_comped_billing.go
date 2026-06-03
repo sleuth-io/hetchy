@@ -13,6 +13,7 @@ import (
 )
 
 const workOSCompedBillingFlagSlug = "hetchy-billing-comped"
+const workOSAgentUIFlagSlug = "hetchy-agent-ui"
 
 func (b *Bot) syncWorkOSCompedBillingForOrg(ctx context.Context, orgID string) (bool, error) {
 	orgID = strings.TrimSpace(orgID)
@@ -33,6 +34,10 @@ func (b *Bot) workOSCompedSyncConfigured() bool {
 	if b == nil || b.billing == nil || !b.billing.Enabled() {
 		return false
 	}
+	return b.workOSOrgFeatureFlagsConfigured()
+}
+
+func (b *Bot) workOSOrgFeatureFlagsConfigured() bool {
 	if b.workOSOrgHasFeatureFlagFn != nil {
 		return true
 	}

@@ -82,6 +82,7 @@ func (b *Bot) runWeb(ctx context.Context) error {
 	})))
 	mux.Handle("/api/v1/repo-secrets", b.apiAuthMiddleware(http.HandlerFunc(b.repoSecretsHandler)))
 	mux.Handle("/api/v1/repo-bootstrap", b.apiAuthMiddleware(http.HandlerFunc(b.repoBootstrapResetHandler)))
+	mux.Handle("/api/v1/agent-inbox", b.apiAuthMiddleware(http.HandlerFunc(b.agentInboxHandler)))
 	mux.Handle("/api/v1/agents", b.apiAuthMiddleware(http.HandlerFunc(b.agentsHandler)))
 	mux.Handle("/api/v1/repositories", b.apiAuthMiddleware(http.HandlerFunc(b.repositoriesHandler)))
 	mux.Handle("/api/v1/members", b.apiAuthMiddleware(http.HandlerFunc(b.membersHandler)))

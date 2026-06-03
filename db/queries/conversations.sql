@@ -5,14 +5,14 @@ FROM conversations
 WHERE org_id = $1 AND thread_id = $2;
 
 -- name: SearchConversations :many
--- Backs the sidebar list. Filters by optional creator_id and an
--- optional case-insensitive substring match against either the
+-- Backs the sidebar list. Filters by optional creator_id, optional
+-- agent_slug, and an optional case-insensitive substring match against either the
 -- custom_title or the first user message (history[1] — Postgres
 -- arrays are 1-indexed; out-of-range yields NULL, and NULL ILIKE
 -- pattern is NULL, which evaluates as falsy in WHERE so an empty
 -- history harmlessly fails to match).
 --
--- Pass empty strings to skip a filter; LIMIT/OFFSET drive the
+-- Pass false filter booleans to skip identity filters; LIMIT/OFFSET drive the
 -- "Load more" pager. The ESCAPE '\' clause makes the literal '\'
 -- character the escape — caller is expected to backslash-escape
 -- '%', '_' and '\' in the user-typed query so they read as
@@ -44,7 +44,8 @@ SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updat
        github_owner, github_repo, custom_title, creator_id, agent_slug, model, task_options
 FROM conversations
 WHERE org_id = $1
-  AND (sqlc.arg(creator_id)::text = '' OR creator_id = sqlc.arg(creator_id))
+  AND (NOT sqlc.arg(filter_creator_id)::bool OR creator_id = sqlc.arg(creator_id))
+  AND (NOT sqlc.arg(filter_agent_slug)::bool OR agent_slug = sqlc.arg(agent_slug))
   AND (
     sqlc.arg(query)::text = ''
     OR custom_title ILIKE '%' || sqlc.arg(query) || '%' ESCAPE '\'

@@ -24,6 +24,7 @@ var files embed.FS
 type Template string
 
 const (
+	AgentInbox Template = "agent_inbox"
 	Chat       Template = "chat"
 	Landing    Template = "landing"
 	Onboarding Template = "onboarding"
@@ -33,6 +34,7 @@ const (
 )
 
 var templateFiles = map[Template]string{
+	AgentInbox: "templates/agent_inbox.html",
 	Chat:       "chat.html",
 	Landing:    "templates/landing.html",
 	Onboarding: "templates/onboarding.html",

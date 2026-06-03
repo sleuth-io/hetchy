@@ -155,14 +155,14 @@ type Querier interface {
 	SaveConversationProgress(ctx context.Context, arg SaveConversationProgressParams) error
 	SaveConversationRunMetadata(ctx context.Context, arg SaveConversationRunMetadataParams) error
 	SaveConversationTaskOptions(ctx context.Context, arg SaveConversationTaskOptionsParams) error
-	// Backs the sidebar list. Filters by optional creator_id and an
-	// optional case-insensitive substring match against either the
+	// Backs the sidebar list. Filters by optional creator_id, optional
+	// agent_slug, and an optional case-insensitive substring match against either the
 	// custom_title or the first user message (history[1] — Postgres
 	// arrays are 1-indexed; out-of-range yields NULL, and NULL ILIKE
 	// pattern is NULL, which evaluates as falsy in WHERE so an empty
 	// history harmlessly fails to match).
 	//
-	// Pass empty strings to skip a filter; LIMIT/OFFSET drive the
+	// Pass false filter booleans to skip identity filters; LIMIT/OFFSET drive the
 	// "Load more" pager. The ESCAPE '\' clause makes the literal '\'
 	// character the escape — caller is expected to backslash-escape
 	// '%', '_' and '\' in the user-typed query so they read as
