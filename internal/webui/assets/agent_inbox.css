@@ -353,26 +353,37 @@ h1 {
 }
 
 .summary-strip {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 1px;
-  border-bottom: 1px solid var(--line);
-  background: var(--line);
+  width: min(100%, 980px);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin: 0 auto;
+  padding: 10px 24px 0;
+  border-bottom: 0;
+  background: transparent;
 }
 .summary-item {
-  min-height: 56px;
+  min-height: 24px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 18px;
+  gap: 4px;
+  padding: 0 0 3px;
   border: 0;
-  background: var(--surface);
-  color: var(--ink);
+  border-bottom: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
   text-align: left;
+  font-size: .78rem;
+  font-weight: 600;
 }
-.summary-item.is-active { box-shadow: inset 0 -2px 0 var(--accent); }
-.summary-value { font-size: 1rem; font-weight: 750; }
-.summary-label { color: var(--muted); font-size: .78rem; font-weight: 600; }
+.summary-item[hidden] { display: none; }
+.summary-item:hover { color: var(--ink); }
+.summary-item.is-active {
+  color: var(--ink);
+  border-bottom-color: var(--accent);
+}
+.summary-value { font-weight: 700; }
+.summary-label { color: inherit; }
 
 .work-panel {
   width: min(100%, 980px);
@@ -1782,11 +1793,9 @@ html.is-dark .user-menu-dropdown .item:hover {
 }
 html.is-dark .group-count { background: #303036; color: #c4c4c8; }
 html.is-dark .group-count.has-active { background: #1a2f48; color: var(--accent); }
-html.is-dark .topbar,
-html.is-dark .summary-item {
+html.is-dark .topbar {
   background: var(--surface);
 }
-html.is-dark .summary-strip { background: var(--line); }
 html.is-dark .pill { background: #303036; color: #c4c4c8; }
 html.is-dark .pill.running { background: #1a2f48; color: var(--accent); }
 html.is-dark .pill.needs_input { background: #332713; color: var(--warn); }

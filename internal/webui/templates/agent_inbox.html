@@ -83,24 +83,28 @@
 
     <section class="summary-strip" aria-label="Work summary">
       <button class="summary-item" type="button" data-status-filter="all">
-        <span class="summary-value" id="summary-all">0</span>
         <span class="summary-label">All</span>
+        <span class="summary-value" id="summary-all">0</span>
       </button>
       <button class="summary-item" type="button" data-status-filter="running">
-        <span class="summary-value" id="summary-running">0</span>
         <span class="summary-label">Running</span>
+        <span class="summary-value" id="summary-running">0</span>
       </button>
       <button class="summary-item" type="button" data-status-filter="needs_input">
-        <span class="summary-value" id="summary-needs-input">0</span>
         <span class="summary-label">Needs input</span>
+        <span class="summary-value" id="summary-needs-input">0</span>
       </button>
       <button class="summary-item" type="button" data-status-filter="failed">
-        <span class="summary-value" id="summary-failed">0</span>
         <span class="summary-label">Failed</span>
+        <span class="summary-value" id="summary-failed">0</span>
+      </button>
+      <button class="summary-item" type="button" data-status-filter="cancelled">
+        <span class="summary-label">Canceled</span>
+        <span class="summary-value" id="summary-cancelled">0</span>
       </button>
       <button class="summary-item" type="button" data-status-filter="ready_pr">
-        <span class="summary-value" id="summary-ready-prs">0</span>
         <span class="summary-label">Ready PRs</span>
+        <span class="summary-value" id="summary-ready-prs">0</span>
       </button>
     </section>
 
@@ -127,7 +131,7 @@
 
   <aside class="pr-sidebar" aria-label="Pull requests">
     <div class="pr-head">
-      <h2>Pull requests</h2>
+      <h2>Ready Pull Requests</h2>
       <span id="pr-count">0</span>
     </div>
     <div id="pr-list" class="pr-list">

@@ -117,7 +117,7 @@
     case 'running': return 'Running';
     case 'needs_input': return 'Needs input';
     case 'failed': return 'Failed';
-    case 'cancelled': return 'Cancelled';
+    case 'cancelled': return 'Canceled';
     case 'done': return 'Done';
     default: return humanizeSlug(status || 'done');
     }
@@ -442,13 +442,28 @@
 
   function renderSummary() {
     const counts = selectedGroupCounts();
-    byID('summary-all').textContent = String(selectedGroupRuns().length);
+    const allCount = selectedGroupRuns().length;
+    const filterCounts = {
+      all: allCount,
+      running: counts.running,
+      needs_input: counts.needs_input,
+      failed: counts.failed,
+      cancelled: counts.cancelled,
+      ready_pr: counts.ready_prs,
+    };
+    if (state.statusFilter !== 'all' && !filterCounts[state.statusFilter]) {
+      state.statusFilter = 'all';
+    }
+    byID('summary-all').textContent = String(allCount);
     byID('summary-running').textContent = String(counts.running);
     byID('summary-needs-input').textContent = String(counts.needs_input);
     byID('summary-failed').textContent = String(counts.failed);
+    byID('summary-cancelled').textContent = String(counts.cancelled);
     byID('summary-ready-prs').textContent = String(counts.ready_prs);
     document.querySelectorAll('[data-status-filter]').forEach(btn => {
-      btn.classList.toggle('is-active', btn.dataset.statusFilter === state.statusFilter);
+      const filter = btn.dataset.statusFilter || 'all';
+      btn.hidden = filter !== 'all' && !filterCounts[filter];
+      btn.classList.toggle('is-active', filter === state.statusFilter);
     });
   }
 
@@ -467,9 +482,10 @@
       if (run.status === 'running') counts.running++;
       if (run.status === 'needs_input') counts.needs_input++;
       if (run.status === 'failed') counts.failed++;
+      if (run.status === 'cancelled') counts.cancelled++;
       if (readyIDs.has(run.conversation_id)) counts.ready_prs++;
       return counts;
-    }, { running: 0, needs_input: 0, failed: 0, ready_prs: 0 });
+    }, { running: 0, needs_input: 0, failed: 0, cancelled: 0, ready_prs: 0 });
   }
 
   function updateNavSearchPlaceholder() {
