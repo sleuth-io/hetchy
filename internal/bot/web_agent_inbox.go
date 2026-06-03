@@ -444,10 +444,10 @@ func lastMeaningfulActivityLine(s string) string {
 			useful = append(useful, line)
 		}
 	}
-	for i := len(useful) - 1; i >= 0; i-- {
-		return useful[i]
+	if len(useful) == 0 {
+		return ""
 	}
-	return ""
+	return useful[len(useful)-1]
 }
 
 func activityLineIsUseful(line string) bool {
