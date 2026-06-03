@@ -706,6 +706,9 @@ func TestAgentInboxHandlerAggregatesRunsAndPRs(t *testing.T) {
 	if run.ConversationID != "thread-1" || run.Status != "running" || run.Activity != "Running validation" {
 		t.Fatalf("run summary = %+v", run)
 	}
+	if run.CurrentStep != "Sandbox" {
+		t.Fatalf("current_step = %q, want Sandbox", run.CurrentStep)
+	}
 	if run.PRNumber != "321" || run.Repository != "hetchyhq/hetchy" || run.AgentSlug != "alice" {
 		t.Fatalf("run metadata = %+v", run)
 	}
@@ -739,6 +742,146 @@ func TestAgentInboxActivityFallsBackToBlockTitleForFenceOnlyDelta(t *testing.T) 
 	got := agentInboxActivity(runstore.Run{CommandStep: "run-script"}, events)
 	if got != "Reading current code" {
 		t.Fatalf("activity = %q, want block title fallback", got)
+	}
+}
+
+func TestAgentInboxActivitySkipsStructuralFragments(t *testing.T) {
+	events := []runstore.Event{
+		{Seq: 1, Event: "block_start", Data: runEventForTest(t, "block_start", sseEvent{ID: "p1", Kind: blocks.KindClaudeText, Title: "Thinking"}).Data},
+		{Seq: 2, Event: "block_append", Data: runEventForTest(t, "block_append", sseEvent{ID: "p1", Delta: "I'll inspect the active card"}).Data},
+		{Seq: 3, Event: "block_append", Data: runEventForTest(t, "block_append", sseEvent{ID: "p1", Delta: "\n{\n}"}).Data},
+	}
+
+	got := agentInboxActivity(runstore.Run{CommandStep: "run-script"}, events)
+	if got != "I'll inspect the active card" {
+		t.Fatalf("activity = %q, want meaningful text before structural fragments", got)
+	}
+}
+
+func TestAgentInboxActivitySkipsFencedCodeFragments(t *testing.T) {
+	events := []runstore.Event{
+		{Seq: 1, Event: "block_start", Data: runEventForTest(t, "block_start", sseEvent{ID: "p1", Kind: blocks.KindClaudeText, Title: "Thinking"}).Data},
+		{Seq: 2, Event: "block_append", Data: runEventForTest(t, "block_append", sseEvent{ID: "p1", Delta: "I'll update the settings payload:\n```json\n{\n  \"theme\": \"dark\"\n}\n```"}).Data},
+	}
+
+	got := agentInboxActivity(runstore.Run{CommandStep: "run-script"}, events)
+	if got != "I'll update the settings payload:" {
+		t.Fatalf("activity = %q, want prose outside fenced code", got)
+	}
+}
+
+func TestAgentInboxActivityUsesToolTitleInsteadOfJSONBody(t *testing.T) {
+	events := []runstore.Event{
+		{Seq: 1, Event: "block_start", Data: runEventForTest(t, "block_start", sseEvent{ID: "p1", Kind: blocks.KindToolUse, Title: "Running find /home/daytona/work/hetchy"}).Data},
+		{Seq: 2, Event: "block_append", Data: runEventForTest(t, "block_append", sseEvent{ID: "p1", Delta: "{\n  \"command\": \"find internal -name '*.go'\"\n}"}).Data},
+	}
+
+	got := agentInboxActivity(runstore.Run{CommandStep: "run-script"}, events)
+	if got != "Running find /home/daytona/work/hetchy" {
+		t.Fatalf("activity = %q, want tool title", got)
+	}
+}
+
+func TestAgentInboxCurrentStepUsesRunEvents(t *testing.T) {
+	tests := []struct {
+		name   string
+		run    runstore.Run
+		events []runstore.Event
+		want   string
+	}{
+		{
+			name: "starting before sandbox",
+			run:  runstore.Run{State: runstore.StatePreparing},
+			want: "Starting",
+		},
+		{
+			name: "bootstrap command",
+			run:  runstore.Run{State: runstore.StatePreparing, CommandStep: "bootstrap-run-bootstrap"},
+			want: "Bootstrap",
+		},
+		{
+			name: "sandbox setup event",
+			run:  runstore.Run{State: runstore.StateRunning, SandboxID: "sandbox-1", CommandStep: "run-script"},
+			events: []runstore.Event{
+				{Seq: 1, Event: "block_start", Data: runEventForTest(t, "block_start", sseEvent{ID: "p1", Kind: blocks.KindSetup, Title: "Sandbox setup"}).Data},
+			},
+			want: "Sandbox",
+		},
+		{
+			name: "coding event",
+			run:  runstore.Run{State: runstore.StateRunning, SandboxID: "sandbox-1", CommandStep: "run-script"},
+			events: []runstore.Event{
+				{Seq: 1, Event: "block_start", Data: runEventForTest(t, "block_start", sseEvent{ID: "p1", Kind: blocks.KindClaudeText, Title: "I'll inspect the code"}).Data},
+			},
+			want: "Coding",
+		},
+		{
+			name: "validation tool event",
+			run:  runstore.Run{State: runstore.StateRunning, SandboxID: "sandbox-1", CommandStep: "run-script"},
+			events: []runstore.Event{
+				{Seq: 1, Event: "block_start", Data: runEventForTest(t, "block_start", sseEvent{ID: "p1", Kind: blocks.KindToolUse, Title: "Running go test ./internal/bot"}).Data},
+			},
+			want: "Validating",
+		},
+		{
+			name: "finalizing state",
+			run:  runstore.Run{State: runstore.StateFinalizing, SandboxID: "sandbox-1", CommandStep: "run-script"},
+			want: "Validating",
+		},
+		{
+			name: "recovering state",
+			run:  runstore.Run{State: runstore.StateRecovering, SandboxID: "sandbox-1", CommandStep: "run-script"},
+			want: "Recovering",
+		},
+		{
+			name: "resuming sandbox",
+			run:  runstore.Run{State: runstore.StateRunning, SandboxID: "sandbox-1", CommandStep: "run-script"},
+			events: []runstore.Event{
+				{Seq: 1, Event: "block_start", Data: runEventForTest(t, "block_start", sseEvent{ID: "p1", Kind: blocks.KindSetup, Title: "Resuming sandbox"}).Data},
+			},
+			want: "Resuming",
+		},
+		{
+			name: "skills notify",
+			run:  runstore.Run{State: runstore.StateRunning, SandboxID: "sandbox-1", CommandStep: "run-script"},
+			events: []runstore.Event{
+				{Seq: 1, Event: "block_start", Data: runEventForTest(t, "block_start", sseEvent{ID: "p1", Kind: blocks.KindNotify, Title: "12 skills available"}).Data},
+			},
+			want: "Skills",
+		},
+		{
+			name: "attachments notify",
+			run:  runstore.Run{State: runstore.StateRunning, SandboxID: "sandbox-1", CommandStep: "run-script"},
+			events: []runstore.Event{
+				{Seq: 1, Event: "block_start", Data: runEventForTest(t, "block_start", sseEvent{ID: "p1", Kind: blocks.KindNotify, Title: "Attachments"}).Data},
+			},
+			want: "Attachments",
+		},
+		{
+			name: "learning notify",
+			run:  runstore.Run{State: runstore.StateFinalizing, SandboxID: "sandbox-1", CommandStep: "run-script"},
+			events: []runstore.Event{
+				{Seq: 1, Event: "block_start", Data: runEventForTest(t, "block_start", sseEvent{ID: "p1", Kind: blocks.KindNotify, Title: "Bootstrap spec — improved"}).Data},
+			},
+			want: "Learning",
+		},
+		{
+			name: "cleanup setup",
+			run:  runstore.Run{State: runstore.StateRunning, SandboxID: "sandbox-1", CommandStep: "run-script"},
+			events: []runstore.Event{
+				{Seq: 1, Event: "block_start", Data: runEventForTest(t, "block_start", sseEvent{ID: "p1", Kind: blocks.KindSetup, Title: "Sandbox cleanup"}).Data},
+			},
+			want: "Cleanup",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := agentInboxCurrentStep(tc.run, tc.events)
+			if got != tc.want {
+				t.Fatalf("current step = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 

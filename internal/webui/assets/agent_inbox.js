@@ -657,11 +657,10 @@
     });
   }
   function compareRuns(a, b) {
-    const rank = { running: 0, needs_input: 1, failed: 2, done: 3, cancelled: 4 };
-    const ar = rank[a.status] == null ? 5 : rank[a.status];
-    const br = rank[b.status] == null ? 5 : rank[b.status];
-    if (ar !== br) return ar - br;
-    return (Date.parse(b.updated_at) || 0) - (Date.parse(a.updated_at) || 0);
+    const at = Date.parse(a.updated_at) || Date.parse(a.created_at) || 0;
+    const bt = Date.parse(b.updated_at) || Date.parse(b.created_at) || 0;
+    if (at !== bt) return bt - at;
+    return compact(a.title, '').localeCompare(compact(b.title, ''));
   }
 
   function renderRuns() {
@@ -684,7 +683,7 @@
       workSearch.placeholder = 'Search ' + (title || 'this view') + ' chats';
     }
     byID('work-subtitle').textContent = state.statusFilter === 'all'
-      ? (state.workQuery ? 'Matching chats for this group.' : 'Recent work, with active runs first.')
+      ? (state.workQuery ? 'Matching chats for this group.' : 'Recent work, newest first.')
       : statusLabel(state.statusFilter) + ' work for this group.';
 
     const list = byID('run-list');
@@ -761,6 +760,8 @@
       + '</article>';
   }
   function currentMilestoneLabel(run) {
+    const currentStep = compact(run.current_step, '');
+    if (currentStep) return currentStep;
     const milestones = Array.isArray(run.milestones) ? run.milestones : [];
     const current = milestones.find(m => m && m.state === 'current' && m.label);
     if (current) return current.label;
@@ -770,8 +771,7 @@
   }
   function renderActivityMarkdown(text, fallback) {
     const raw = compact(text, '');
-    const likelyEmptyFence = /^`{3,}\s*$/.test(raw);
-    let html = raw && !likelyEmptyFence
+    let html = activityTextIsUseful(raw)
       ? (typeof renderMarkdown === 'function' ? renderMarkdown(raw) : esc(raw))
       : '';
     if (!renderedText(html)) {
@@ -785,6 +785,11 @@
     const scratch = document.createElement('div');
     scratch.innerHTML = html;
     return scratch.textContent.trim();
+  }
+  function activityTextIsUseful(text) {
+    text = compact(text, '');
+    if (!text || /^`{3,}\s*$/.test(text) || /^~{3,}\s*$/.test(text)) return false;
+    return /[A-Za-z0-9]/.test(text);
   }
 
   function renderPRs() {
