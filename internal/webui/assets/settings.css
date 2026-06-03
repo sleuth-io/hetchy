@@ -7,6 +7,9 @@
   /* Sidebar */
   .sidebar { background: #fafafa; border-right: 1px solid #e8e8e8;
              padding: 1.25rem 1rem; min-width: 0; }
+  .sidebar .ascii-art { font-family: ui-monospace, monospace; font-size: .7rem;
+                        color: #c4c4cc; line-height: 1.4; text-align: center;
+                        margin: 0 0 .85rem; padding: 0; background: none; border: none; }
   .sidebar h2 { font-size: .95rem; margin: 0 0 .15rem; color: #222;
                 white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .sidebar .subhead { font-size: .75rem; color: #888; margin: 0 0 1rem; }
