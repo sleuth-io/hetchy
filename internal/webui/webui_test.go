@@ -32,6 +32,7 @@ func TestRenderChatTemplate(t *testing.T) {
 		`src="/assets/chat_image_modal.js`,
 		`src="/assets/chat_stream.js`,
 		`src="/assets/chat_init.js`,
+		`id="meta-ascii-art"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("rendered chat template missing %q", want)
