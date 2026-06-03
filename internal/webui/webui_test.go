@@ -72,6 +72,26 @@ func TestRenderChatTemplate(t *testing.T) {
 	}
 }
 
+func TestAgentInboxUsesSharedRepoStorageKey(t *testing.T) {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/assets/agent_inbox.js", nil)
+	AssetHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"const repoStorageKey = 'hetchy.repo.' + currentUserID",
+		"localStorage.getItem(repoStorageKey)",
+		"localStorage.setItem(repoStorageKey, state.selectedTaskRepo)",
+		"state.selectedTaskRepo = initialTaskRepoSlug()",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("agent_inbox.js missing %q", want)
+		}
+	}
+}
+
 func TestRenderAgentInboxTemplate(t *testing.T) {
 	rec := httptest.NewRecorder()
 	Render(slog.New(slog.NewTextHandler(io.Discard, nil)), rec, AgentInbox, map[string]any{

@@ -1,6 +1,7 @@
 (function () {
   const currentUserID = document.body.dataset.currentUserId || '';
   const defaultRepoSlug = (document.body.dataset.defaultRepoSlug || '').trim();
+  const repoStorageKey = 'hetchy.repo.' + currentUserID;
   const openAIEnabled = document.body.dataset.openaiEnabled === '1';
   const inboxLimit = 80;
   const pollMs = 4000;
@@ -53,7 +54,7 @@
     pendingFollowups: {},
     taskAttachments: [],
     followupAttachments: [],
-    selectedTaskRepo: defaultRepoSlug,
+    selectedTaskRepo: initialTaskRepoSlug(),
     selectedTaskAgent: '',
     selectedTaskModel: readStoredModel(),
     runActionConversationID: '',
@@ -71,6 +72,33 @@
   function compact(s, fallback) {
     s = String(s || '').trim();
     return s || fallback || '';
+  }
+  function readStoredRepoSlug() {
+    try {
+      const saved = localStorage.getItem(repoStorageKey);
+      if (saved === null) return null;
+      const trimmed = saved.trim();
+      if (!trimmed) return null;
+      if (trimmed === '__hetchy_no_repository__') return null;
+      return trimmed;
+    } catch (e) {
+      return null;
+    }
+  }
+  function initialTaskRepoSlug() {
+    const stored = readStoredRepoSlug();
+    return stored === null ? defaultRepoSlug : stored;
+  }
+  function persistTaskRepoSlug() {
+    try {
+      if (state.selectedTaskRepo) localStorage.setItem(repoStorageKey, state.selectedTaskRepo);
+      else localStorage.removeItem(repoStorageKey);
+    } catch (e) {}
+  }
+  function chooseTaskRepo(slug) {
+    state.selectedTaskRepo = compact(slug, '');
+    persistTaskRepoSlug();
+    renderRepoPicker();
   }
   function humanizeSlug(slug) {
     slug = compact(slug, '');
@@ -1087,7 +1115,7 @@
 
   function openNewTask() {
     byID('task-input').value = '';
-    state.selectedTaskRepo = defaultRepoSlug;
+    state.selectedTaskRepo = initialTaskRepoSlug();
     state.selectedTaskAgent = '';
     state.selectedTaskModel = readStoredModel();
     state.taskAttachments = [];
@@ -1862,9 +1890,8 @@
         e.preventDefault();
         const first = byID('task-repo-options').querySelector('.repo-choice[data-repo-slug]:not([data-repo-slug=""])');
         if (first) {
-          state.selectedTaskRepo = first.dataset.repoSlug;
+          chooseTaskRepo(first.dataset.repoSlug);
           closePopover('task-repo-popover', 'task-repo-btn');
-          renderRepoPicker();
           byID('task-input').focus();
         }
       } else if (e.key === 'Escape') {
@@ -1890,9 +1917,8 @@
       if (!e.target.closest('#run-action-menu')) closeRunActionMenu();
       const repoChoice = e.target.closest('[data-repo-slug]');
       if (repoChoice && repoChoice.closest('#task-repo-options')) {
-        state.selectedTaskRepo = repoChoice.dataset.repoSlug;
+        chooseTaskRepo(repoChoice.dataset.repoSlug);
         closePopover('task-repo-popover', 'task-repo-btn');
-        renderRepoPicker();
         byID('task-input').focus();
         return;
       }

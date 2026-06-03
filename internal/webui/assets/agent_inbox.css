@@ -306,6 +306,10 @@ a { color: inherit; }
   gap: 8px;
   flex-shrink: 0;
 }
+.topbar-menu-wrap {
+  position: relative;
+  display: inline-flex;
+}
 .topbar-actions .floating-menu {
   left: auto;
   right: 0;

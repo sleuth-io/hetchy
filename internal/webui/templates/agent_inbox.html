@@ -68,6 +68,18 @@
         <p id="selection-subtitle" class="selection-subtitle">Recent work, active first.</p>
       </div>
       <div class="topbar-actions">
+        <div class="topbar-menu-wrap">
+          <button id="agent-menu-btn" class="icon-button" type="button" aria-label="Agent settings" aria-haspopup="menu" aria-expanded="false">
+            <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="1"/>
+              <circle cx="19" cy="12" r="1"/>
+              <circle cx="5" cy="12" r="1"/>
+            </svg>
+          </button>
+          <div id="agent-menu" class="floating-menu" role="menu" hidden>
+            <a href="/settings/org?tab=agents" role="menuitem">Agent settings</a>
+          </div>
+        </div>
         <button id="new-task-btn" class="primary-button" type="button">
           <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 5v14"/>
@@ -84,16 +96,6 @@
             <path d="m3.5 12 .5.5 1.5-1.5"/>
           </svg>
         </button>
-        <button id="agent-menu-btn" class="icon-button" type="button" aria-label="Agent settings" aria-haspopup="menu" aria-expanded="false">
-          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="1"/>
-            <circle cx="19" cy="12" r="1"/>
-            <circle cx="5" cy="12" r="1"/>
-          </svg>
-        </button>
-        <div id="agent-menu" class="floating-menu" role="menu" hidden>
-          <a href="/settings/org?tab=agents" role="menuitem">Agent settings</a>
-        </div>
       </div>
     </header>
 
