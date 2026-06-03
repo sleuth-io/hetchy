@@ -357,6 +357,14 @@
                   border-left: 1px solid #e5e5e5; display: flex;
                   flex-direction: column; min-height: 0; overflow-y: auto; }
   html.meta-hidden #meta-sidebar { display: none; }
+  #meta-scary { padding: 1rem 1rem .75rem; border-bottom: 2px solid #e00;
+                background: #1a0000; text-align: center; flex-shrink: 0; }
+  .meta-ascii-art { font-family: monospace; font-size: .62rem; line-height: 1.25;
+                    color: #cc0000; white-space: pre; margin: 0 0 .4rem;
+                    text-shadow: 0 0 6px #ff0000; display: block; }
+  .meta-scary-label { font-size: .65rem; font-weight: 700; letter-spacing: .12em;
+                      color: #ff2222; text-transform: uppercase;
+                      text-shadow: 0 0 8px #ff0000; }
   .meta-section { padding: .85rem 1rem; border-bottom: 1px solid #f0f0f0; }
   .meta-section:last-child { border-bottom: 0; }
   .meta-title { font-size: .7rem; font-weight: 600; text-transform: uppercase;
@@ -791,6 +799,9 @@
   html.is-dark #meta-toggle:hover { background: #2a2a2e; border-color: #3a3a40; }
   html.is-dark #meta-toggle[aria-pressed="true"] { background: #1f3a5c; border-color: #2a4a72; color: #7dc4ff; }
   html.is-dark #meta-sidebar { background: #1c1c1f; border-left-color: #2a2a2d; }
+  html.is-dark #meta-scary { background: #0d0000; border-bottom-color: #aa0000; }
+  html.is-dark .meta-ascii-art { color: #ff3333; text-shadow: 0 0 8px #ff0000; }
+  html.is-dark .meta-scary-label { color: #ff4444; text-shadow: 0 0 10px #ff2200; }
   html.is-dark .meta-section { border-bottom-color: #2a2a2d; }
   html.is-dark .meta-title { color: #8a8a90; }
   html.is-dark .meta-row .meta-label { color: #9a9aa0; }
