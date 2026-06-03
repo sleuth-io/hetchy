@@ -357,6 +357,11 @@
                   border-left: 1px solid #e5e5e5; display: flex;
                   flex-direction: column; min-height: 0; overflow-y: auto; }
   html.meta-hidden #meta-sidebar { display: none; }
+  #meta-ascii-art { background: #1a0000; border-bottom: 2px solid #6b0000;
+                    text-align: center; padding: .75rem .5rem .5rem; }
+  #meta-ascii-art pre { margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                        font-size: .58rem; line-height: 1.35; color: #cc2200;
+                        white-space: pre; letter-spacing: .02em; }
   .meta-section { padding: .85rem 1rem; border-bottom: 1px solid #f0f0f0; }
   .meta-section:last-child { border-bottom: 0; }
   .meta-title { font-size: .7rem; font-weight: 600; text-transform: uppercase;
