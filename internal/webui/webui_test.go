@@ -105,6 +105,9 @@ func TestRenderAgentInboxTemplate(t *testing.T) {
 		`id="chat-meta-toggle"`,
 		`id="chat-meta-scrim"`,
 		`id="chat-meta"`,
+		`id="run-action-menu"`,
+		`id="run-rename-dialog"`,
+		`id="run-delete-dialog"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("rendered agent inbox template missing %q", want)

@@ -156,6 +156,32 @@
   </aside>
 </div>
 <div id="agent-overlay-scrim" hidden></div>
+<div id="run-action-menu" class="run-action-menu" role="menu" hidden>
+  <button id="run-rename-action" class="run-action-menu-item" type="button" role="menuitem">Rename</button>
+  <button id="run-delete-action" class="run-action-menu-item danger" type="button" role="menuitem">Delete</button>
+</div>
+
+<dialog class="agent-dialog" id="run-rename-dialog" aria-labelledby="run-rename-title">
+  <div class="agent-dialog-body">
+    <h3 id="run-rename-title">Rename chat</h3>
+    <input type="text" id="run-rename-input" maxlength="200" autocomplete="off">
+  </div>
+  <div class="agent-dialog-actions">
+    <button class="agent-dialog-cancel" id="run-rename-cancel" type="button">Cancel</button>
+    <button class="agent-dialog-save" id="run-rename-save" type="button">Save</button>
+  </div>
+</dialog>
+
+<dialog class="agent-dialog" id="run-delete-dialog" aria-labelledby="run-delete-title">
+  <div class="agent-dialog-body">
+    <h3 id="run-delete-title">Delete chat?</h3>
+    <p>This will permanently delete this chat. This action cannot be undone.</p>
+  </div>
+  <div class="agent-dialog-actions">
+    <button class="agent-dialog-cancel" id="run-delete-cancel" type="button">Cancel</button>
+    <button class="agent-dialog-delete" id="run-delete-confirm" type="button">Delete</button>
+  </div>
+</dialog>
 
 <dialog class="task-dialog" id="new-task-dialog">
   <form method="dialog" class="task-shell" id="new-task-form">

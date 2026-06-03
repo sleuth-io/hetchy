@@ -56,8 +56,11 @@
     selectedTaskRepo: defaultRepoSlug,
     selectedTaskAgent: '',
     selectedTaskModel: readStoredModel(),
+    runActionConversationID: '',
+    runActionTitle: '',
   };
   let detailIsDownloading = false;
+  let activeRunActionButton = null;
 
   function byID(id) { return document.getElementById(id); }
   function esc(s) {
@@ -602,6 +605,7 @@
   }
 
   function renderRuns() {
+    closeRunActionMenu();
     const title = groupName(state.selectedID);
     byID('selection-title').textContent = title || 'Agent work';
     byID('selection-subtitle').textContent = state.selectedID ? groupDescription(state.selectedID) : 'Recent work, active first.';
@@ -662,7 +666,7 @@
       ? '<div class="active-run-details">'
         + '<div class="live-panel">'
         + '<div class="activity-current">'
-        + '<div class="activity-head"><span class="activity-kicker">' + esc(currentMilestoneLabel(run)) + '</span></div>'
+        + '<div class="activity-head"><span class="activity-eyebrow">Current step</span><span class="activity-kicker"><span class="activity-kicker-text">' + esc(currentMilestoneLabel(run)) + '</span></span></div>'
         + '<div class="activity-message">' + renderActivityMarkdown(run.activity || 'Run is active.') + '</div>'
         + '</div>'
         + '</div>'
@@ -671,7 +675,12 @@
     return '<article class="run-card' + (isActive ? ' has-live' : '') + '" data-run-card="' + esc(run.conversation_id) + '" role="button" tabindex="0" aria-label="Open chat details for ' + esc(run.title) + '">'
       + '<div class="run-top">'
       + '<div><div class="run-title">' + esc(run.title) + '</div><div class="run-meta">' + meta + '</div></div>'
+      + '<div class="run-state-actions">'
+      + '<button class="run-action-button" type="button" data-run-actions="' + esc(run.conversation_id) + '" data-run-title="' + esc(run.title) + '" aria-label="Chat actions" aria-haspopup="menu" aria-expanded="false">'
+      + '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>'
+      + '</button>'
       + '<span class="pill ' + esc(run.status) + '">' + esc(statusLabel(run.status)) + '</span>'
+      + '</div>'
       + '</div>'
       + activeDetails
       + '</article>';
@@ -844,6 +853,7 @@
     if (btn) btn.setAttribute('aria-expanded', 'false');
   }
   function openOnlyPopover(id, buttonID) {
+    closeRunActionMenu();
     [
       ['task-tools-popover', 'task-tools-btn'],
       ['task-repo-popover', 'task-repo-btn'],
@@ -865,6 +875,146 @@
     if (!popover) return;
     if (popover.hidden) openOnlyPopover(id, buttonID);
     else closePopover(id, buttonID);
+  }
+  function closeRunActionMenu() {
+    if (activeRunActionButton) {
+      activeRunActionButton.setAttribute('aria-expanded', 'false');
+      activeRunActionButton = null;
+    }
+    const menu = byID('run-action-menu');
+    if (menu) menu.hidden = true;
+    state.runActionConversationID = '';
+    state.runActionTitle = '';
+  }
+  function openRunActionMenu(btn) {
+    if (!btn) return;
+    if (activeRunActionButton === btn && !byID('run-action-menu').hidden) {
+      closeRunActionMenu();
+      return;
+    }
+    closeRunActionMenu();
+    [
+      ['task-tools-popover', 'task-tools-btn'],
+      ['task-repo-popover', 'task-repo-btn'],
+      ['task-agent-popover', 'task-agent-btn'],
+      ['task-model-popover', 'task-model-btn'],
+      ['agent-menu', 'agent-menu-btn'],
+      ['user-menu-dropdown', 'user-menu-btn'],
+    ].forEach(pair => closePopover(pair[0], pair[1]));
+    activeRunActionButton = btn;
+    state.runActionConversationID = btn.dataset.runActions || '';
+    state.runActionTitle = btn.dataset.runTitle || '';
+    btn.setAttribute('aria-expanded', 'true');
+    const menu = byID('run-action-menu');
+    const rect = btn.getBoundingClientRect();
+    menu.style.top = (rect.bottom + 5) + 'px';
+    menu.style.left = '';
+    menu.style.right = Math.max(8, window.innerWidth - rect.right) + 'px';
+    menu.hidden = false;
+  }
+  function openRunRenameDialog(conversationID, currentTitle) {
+    if (!conversationID) return;
+    const input = byID('run-rename-input');
+    input.value = currentTitle || '';
+    input.dataset.conversationId = conversationID || '';
+    openDialog('run-rename-dialog');
+    requestAnimationFrame(() => {
+      input.focus();
+      input.select();
+    });
+  }
+  function openRunDeleteDialog(conversationID) {
+    if (!conversationID) return;
+    const dialog = byID('run-delete-dialog');
+    dialog.dataset.conversationId = conversationID || '';
+    openDialog('run-delete-dialog');
+  }
+  function updateConversationTitle(conversationID, title) {
+    const update = run => {
+      if (run && run.conversation_id === conversationID) run.title = title;
+    };
+    if (Array.isArray(state.data.runs)) state.data.runs.forEach(update);
+    if (Array.isArray(state.data.pull_requests)) {
+      state.data.pull_requests.forEach(pr => {
+        if (pr && pr.conversation_id === conversationID) pr.title = title;
+      });
+    }
+    if (state.workSearch) {
+      if (Array.isArray(state.workSearch.runs)) state.workSearch.runs.forEach(update);
+      if (Array.isArray(state.workSearch.pull_requests)) {
+        state.workSearch.pull_requests.forEach(pr => {
+          if (pr && pr.conversation_id === conversationID) pr.title = title;
+        });
+      }
+    }
+    if (state.activeDetail && state.activeDetail.id === conversationID) {
+      state.activeDetail.title = title;
+      byID('chat-detail-title').textContent = title;
+    }
+  }
+  function removeConversation(conversationID) {
+    const notConversation = item => item && item.conversation_id !== conversationID;
+    if (Array.isArray(state.data.runs)) state.data.runs = state.data.runs.filter(notConversation);
+    if (Array.isArray(state.data.pull_requests)) state.data.pull_requests = state.data.pull_requests.filter(notConversation);
+    if (state.workSearch) {
+      if (Array.isArray(state.workSearch.runs)) state.workSearch.runs = state.workSearch.runs.filter(notConversation);
+      if (Array.isArray(state.workSearch.pull_requests)) state.workSearch.pull_requests = state.workSearch.pull_requests.filter(notConversation);
+    }
+    if (state.activeChatID === conversationID) {
+      closeDialog('chat-detail-dialog');
+      state.activeChatID = '';
+      state.activeDetail = null;
+    }
+    ensureSelection();
+  }
+  async function saveRunRename() {
+    const input = byID('run-rename-input');
+    const conversationID = input.dataset.conversationId || '';
+    const title = input.value.trim();
+    if (!conversationID || !title) return;
+    let res;
+    try {
+      res = await fetch('/api/v1/conversations/' + encodeURIComponent(conversationID), {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title }),
+      });
+    } catch (err) {
+      showToast('run-rename-network', 'Could not rename chat. Network error.', 'error');
+      return;
+    }
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      showToast('run-rename-error', text || 'Could not rename chat.', 'error', 5000);
+      return;
+    }
+    closeDialog('run-rename-dialog');
+    updateConversationTitle(conversationID, title);
+    renderAll();
+    showToast('run-renamed', 'Chat renamed.', 'success', 2200);
+    pollSoon();
+  }
+  async function confirmRunDelete() {
+    const dialog = byID('run-delete-dialog');
+    const conversationID = dialog.dataset.conversationId || '';
+    if (!conversationID) return;
+    let res;
+    try {
+      res = await fetch('/api/v1/conversations/' + encodeURIComponent(conversationID), { method: 'DELETE' });
+    } catch (err) {
+      showToast('run-delete-network', 'Could not delete chat. Network error.', 'error');
+      return;
+    }
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      showToast('run-delete-error', text || 'Could not delete chat.', 'error', 6000);
+      return;
+    }
+    closeDialog('run-delete-dialog');
+    removeConversation(conversationID);
+    renderAll();
+    showToast('run-deleted', 'Chat deleted.', 'success', 2200);
+    pollSoon();
   }
   function updateResponsivePanelButtons() {
     const root = document.documentElement;
@@ -1612,6 +1762,29 @@
       state.selectedRunLimit += initialVisibleRuns;
       renderRuns();
     });
+    byID('run-rename-action').addEventListener('click', e => {
+      e.stopPropagation();
+      const conversationID = state.runActionConversationID;
+      const title = state.runActionTitle;
+      closeRunActionMenu();
+      openRunRenameDialog(conversationID, title);
+    });
+    byID('run-delete-action').addEventListener('click', e => {
+      e.stopPropagation();
+      const conversationID = state.runActionConversationID;
+      closeRunActionMenu();
+      openRunDeleteDialog(conversationID);
+    });
+    byID('run-rename-cancel').addEventListener('click', () => closeDialog('run-rename-dialog'));
+    byID('run-rename-save').addEventListener('click', saveRunRename);
+    byID('run-rename-input').addEventListener('keydown', e => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        saveRunRename();
+      }
+    });
+    byID('run-delete-cancel').addEventListener('click', () => closeDialog('run-delete-dialog'));
+    byID('run-delete-confirm').addEventListener('click', confirmRunDelete);
     byID('agent-nav-toggle').addEventListener('click', e => {
       e.stopPropagation();
       toggleResponsivePanel('nav');
@@ -1626,6 +1799,7 @@
       if (e.key === 'Escape') {
         closeResponsivePanels();
         closeChatMetaPanel();
+        closeRunActionMenu();
       }
     });
     byID('chat-meta-toggle').addEventListener('click', e => {
@@ -1635,6 +1809,7 @@
     byID('chat-meta-scrim').addEventListener('click', closeChatMetaPanel);
     byID('run-list').addEventListener('keydown', e => {
       if (e.key !== 'Enter' && e.key !== ' ') return;
+      if (e.target.closest('[data-run-actions]')) return;
       const card = e.target.closest('[data-run-card]');
       if (!card) return;
       e.preventDefault();
@@ -1706,6 +1881,13 @@
       }
     });
     document.addEventListener('click', e => {
+      const runActionBtn = e.target.closest('[data-run-actions]');
+      if (runActionBtn) {
+        e.preventDefault();
+        openRunActionMenu(runActionBtn);
+        return;
+      }
+      if (!e.target.closest('#run-action-menu')) closeRunActionMenu();
       const repoChoice = e.target.closest('[data-repo-slug]');
       if (repoChoice && repoChoice.closest('#task-repo-options')) {
         state.selectedTaskRepo = repoChoice.dataset.repoSlug;

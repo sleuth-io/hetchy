@@ -480,6 +480,38 @@ h1 {
   gap: 12px;
   align-items: start;
 }
+.run-state-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.run-action-button {
+  width: 1.55rem;
+  height: 1.55rem;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: .35rem;
+  background: transparent;
+  color: var(--muted);
+  opacity: .68;
+}
+.run-card:hover .run-action-button,
+.run-card:focus-within .run-action-button,
+.run-action-button[aria-expanded="true"] {
+  opacity: 1;
+}
+.run-action-button:hover,
+.run-action-button[aria-expanded="true"] {
+  background: var(--hover);
+  color: var(--ink);
+}
+.run-action-button svg {
+  width: .92rem;
+  height: .92rem;
+  stroke-width: 2.2;
+}
 .run-title {
   min-width: 0;
   color: var(--ink);
@@ -538,27 +570,52 @@ h1 {
 }
 .activity-current {
   display: grid;
-  gap: 5px;
+  gap: 4px;
   min-width: 0;
   transition: opacity .18s ease, transform .18s ease;
 }
 .activity-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  display: grid;
+  gap: 3px;
   min-width: 0;
 }
-.activity-kicker {
+.activity-eyebrow {
   min-width: 0;
   color: var(--muted);
-  font-size: .72rem;
-  font-weight: 700;
-  letter-spacing: .02em;
-  text-transform: uppercase;
+  font-size: .68rem;
+  font-weight: 650;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.activity-kicker {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--ink);
+  font-size: .82rem;
+  font-weight: 750;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.activity-kicker-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.activity-kicker::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px rgba(11,147,246,.16);
+  animation: activity-glow 1.8s ease-in-out infinite;
 }
 .activity-message {
   min-width: 0;
@@ -594,6 +651,107 @@ h1 {
   padding: 0;
   background: transparent;
   white-space: pre-wrap;
+}
+@keyframes activity-glow {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(11,147,246,.14); }
+  50% { box-shadow: 0 0 0 5px rgba(11,147,246,.24); }
+}
+
+.run-action-menu {
+  position: fixed;
+  z-index: 220;
+  min-width: 132px;
+  padding: .25rem 0;
+  border: 1px solid var(--line);
+  border-radius: .45rem;
+  background: var(--surface);
+  box-shadow: var(--menu-shadow);
+}
+.run-action-menu[hidden] { display: none; }
+.run-action-menu-item {
+  width: 100%;
+  min-height: 2rem;
+  display: block;
+  padding: .45rem .85rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: .83rem;
+  text-align: left;
+}
+.run-action-menu-item:hover {
+  background: var(--hover);
+}
+.run-action-menu-item.danger {
+  color: var(--danger);
+}
+.run-action-menu-item.danger:hover {
+  background: #fff0ee;
+}
+
+.agent-dialog {
+  width: min(26rem, calc(100vw - 32px));
+  color: var(--ink);
+  background: var(--surface);
+}
+.agent-dialog .agent-dialog-body {
+  padding: 1.25rem 1.25rem 1rem;
+}
+.agent-dialog h3 {
+  margin: 0 0 .75rem;
+  font-size: 1rem;
+  font-weight: 650;
+}
+.agent-dialog p {
+  margin: 0 0 .75rem;
+  color: var(--muted);
+  font-size: .88rem;
+  line-height: 1.35;
+}
+.agent-dialog input[type="text"] {
+  width: 100%;
+  padding: .5rem .65rem;
+  border: 1px solid var(--line-strong);
+  border-radius: .45rem;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: .9rem;
+  outline: none;
+}
+.agent-dialog input[type="text"]:focus {
+  border-color: var(--accent);
+}
+.agent-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: .5rem;
+  padding: .85rem 1.25rem;
+  border-top: 1px solid var(--line);
+}
+.agent-dialog-cancel,
+.agent-dialog-save,
+.agent-dialog-delete {
+  min-height: 2rem;
+  padding: 0 .9rem;
+  border-radius: .45rem;
+  font-size: .86rem;
+  font-weight: 600;
+}
+.agent-dialog-cancel {
+  border: 1px solid var(--line-strong);
+  background: var(--control);
+  color: var(--ink);
+}
+.agent-dialog-save {
+  border: 0;
+  background: var(--accent);
+  color: #fff;
+}
+.agent-dialog-delete {
+  border: 0;
+  background: var(--danger);
+  color: #fff;
 }
 
 .show-more {
@@ -2136,6 +2294,18 @@ html.is-dark .live-panel {
   border-color: var(--line-strong);
 }
 html.is-dark .activity-message { color: #d0d0d4; }
+html.is-dark .run-action-menu-item.danger:hover {
+  background: #3a1c1c;
+}
+html.is-dark .agent-dialog-delete:hover {
+  background: #991b1b;
+}
+html.is-dark .agent-dialog-save:hover {
+  background: var(--accent-dark);
+}
+html.is-dark .agent-dialog-cancel:hover {
+  background: var(--control-strong);
+}
 html.is-dark .pr-chat,
 html.is-dark .pr-check,
 html.is-dark .run-meta,
