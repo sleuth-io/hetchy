@@ -227,7 +227,7 @@ across rotations, so there's no traffic dip.
 #### Backfill stored pull request state
 
 Hetchy stores GitHub pull request state from GitHub App webhooks so the
-agent inbox can hide PRs that are already closed or merged. If the
+app UI can hide PRs that are already closed or merged. If the
 columns were just added, webhooks were disabled, or you need to refresh
 old rows, run the one-shot backfill after migrations are applied:
 

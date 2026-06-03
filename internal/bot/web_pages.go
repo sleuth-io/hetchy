@@ -14,8 +14,8 @@ import (
 
 func (b *Bot) indexHandler(w http.ResponseWriter, r *http.Request) {
 	rootPath := r.URL.Path == "/"
-	agentInboxPath := isAgentInboxSPAPath(r.URL.Path)
-	if !rootPath && !agentInboxPath {
+	appPath := isAppSPAPath(r.URL.Path)
+	if !rootPath && !appPath {
 		http.NotFound(w, r)
 		return
 	}
@@ -64,18 +64,18 @@ func (b *Bot) indexHandler(w http.ResponseWriter, r *http.Request) {
 			b.log.Warn("org config fetch for chat page failed", "error", err, "org", p.OrgID)
 		}
 	}
-	b.renderTemplate(w, webui.AgentInbox, map[string]any{
+	b.renderTemplate(w, webui.App, map[string]any{
 		"Email":           p.Email,
 		"DisplayName":     displayName,
 		"GravatarURL":     webui.GravatarURL(p.Email),
 		"UserID":          p.UserID,
 		"OpenAIEnabled":   openaiEnabled,
 		"DefaultRepoSlug": defaultRepoSlug,
-		"InboxLimit":      agentInboxLimitDefault,
+		"AppDataLimit":    appDataLimitDefault,
 	})
 }
 
-func isAgentInboxSPAPath(path string) bool {
+func isAppSPAPath(path string) bool {
 	return path == "/agents" || strings.HasPrefix(path, "/agents/") ||
 		path == "/users" || strings.HasPrefix(path, "/users/") ||
 		path == "/chats" || strings.HasPrefix(path, "/chats/")

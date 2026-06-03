@@ -12,7 +12,7 @@ import (
 	"github.com/hetchyhq/hetchy/internal/runstore"
 )
 
-func agentInboxStatus(state, outcome string) string {
+func appDataStatus(state, outcome string) string {
 	switch state {
 	case runstore.StatePreparing, runstore.StateRunning, runstore.StateRecovering, runstore.StateFinalizing:
 		return "running"
@@ -30,8 +30,8 @@ func agentInboxStatus(state, outcome string) string {
 	}
 }
 
-func agentInboxStateLabel(state, outcome string) string {
-	switch agentInboxStatus(state, outcome) {
+func appDataStateLabel(state, outcome string) string {
+	switch appDataStatus(state, outcome) {
 	case "running":
 		return "Waiting for latest activity."
 	case "needs_input":
@@ -45,12 +45,12 @@ func agentInboxStateLabel(state, outcome string) string {
 	}
 }
 
-func agentInboxActivity(run runstore.Run, events []runstore.Event) string {
-	return agentInboxActivityFromEvents(run, runActivityEventsFromStore(events))
+func appDataActivity(run runstore.Run, events []runstore.Event) string {
+	return appDataActivityFromEvents(run, runActivityEventsFromStore(events))
 }
 
-func agentInboxActivityFromEvents(run runstore.Run, events []runActivityEvent) string {
-	summary := summarizeAgentInboxEvents(events)
+func appDataActivityFromEvents(run runstore.Run, events []runActivityEvent) string {
+	summary := summarizeAppDataEvents(events)
 	blocks := summary.blocks
 	blockOrder := summary.order
 	for i := len(events) - 1; i >= 0; i-- {
@@ -82,16 +82,16 @@ func agentInboxActivityFromEvents(run runstore.Run, events []runActivityEvent) s
 	return friendlyRunCommandStep(run.CommandStep)
 }
 
-func summarizeAgentInboxEvents(events []runActivityEvent) agentInboxEventSummary {
-	blocks := map[string]*agentInboxActivityBlock{}
+func summarizeAppDataEvents(events []runActivityEvent) appDataEventSummary {
+	blocks := map[string]*appDataActivityBlock{}
 	blockOrder := make([]string, 0)
-	rememberBlock := func(payload sseEvent) *agentInboxActivityBlock {
+	rememberBlock := func(payload sseEvent) *appDataActivityBlock {
 		if payload.ID == "" {
 			return nil
 		}
 		block := blocks[payload.ID]
 		if block == nil {
-			block = &agentInboxActivityBlock{}
+			block = &appDataActivityBlock{}
 			blocks[payload.ID] = block
 			blockOrder = append(blockOrder, payload.ID)
 		}
@@ -113,22 +113,22 @@ func summarizeAgentInboxEvents(events []runActivityEvent) agentInboxEventSummary
 			block.body.WriteString(payload.Delta)
 		}
 	}
-	return agentInboxEventSummary{blocks: blocks, order: blockOrder}
+	return appDataEventSummary{blocks: blocks, order: blockOrder}
 }
 
-type agentInboxEventSummary struct {
-	blocks map[string]*agentInboxActivityBlock
+type appDataEventSummary struct {
+	blocks map[string]*appDataActivityBlock
 	order  []string
 }
 
-type agentInboxActivityBlock struct {
+type appDataActivityBlock struct {
 	kind    blocks.Kind
 	title   string
 	summary string
 	body    strings.Builder
 }
 
-func activityTextForBlock(block *agentInboxActivityBlock) string {
+func activityTextForBlock(block *appDataActivityBlock) string {
 	if block == nil {
 		return ""
 	}
@@ -227,11 +227,11 @@ func friendlyRunCommandStep(step string) string {
 	}
 }
 
-func agentInboxCurrentStep(run runstore.Run, events []runstore.Event) string {
-	return agentInboxCurrentStepFromEvents(run, runActivityEventsFromStore(events))
+func appDataCurrentStep(run runstore.Run, events []runstore.Event) string {
+	return appDataCurrentStepFromEvents(run, runActivityEventsFromStore(events))
 }
 
-func agentInboxCurrentStepFromEvents(run runstore.Run, events []runActivityEvent) string {
+func appDataCurrentStepFromEvents(run runstore.Run, events []runActivityEvent) string {
 	if run.State == runstore.StateRecovering {
 		return "Recovering"
 	}
@@ -241,7 +241,7 @@ func agentInboxCurrentStepFromEvents(run runstore.Run, events []runActivityEvent
 		}
 		return "Starting"
 	}
-	summary := summarizeAgentInboxEvents(events)
+	summary := summarizeAppDataEvents(events)
 	for i := len(events) - 1; i >= 0; i-- {
 		payload := events[i].payload
 		switch events[i].name {
@@ -277,7 +277,7 @@ func agentInboxCurrentStepFromEvents(run runstore.Run, events []runActivityEvent
 	}
 }
 
-func currentStepFromBlock(block *agentInboxActivityBlock, payload sseEvent) string {
+func currentStepFromBlock(block *appDataActivityBlock, payload sseEvent) string {
 	kind := payload.Kind
 	var title, summary, body string
 	if block != nil {
@@ -466,8 +466,8 @@ func containsAny(s string, needles ...string) bool {
 	return false
 }
 
-func agentInboxMilestones(rec convstore.Record, run runstore.Run, hasRun bool) []agentInboxMilestone {
-	labels := []agentInboxMilestone{
+func appDataMilestones(rec convstore.Record, run runstore.Run, hasRun bool) []appDataMilestone {
+	labels := []appDataMilestone{
 		{Key: "start", Label: "Start", State: "pending"},
 		{Key: "bootstrap", Label: "Bootstrap", State: "pending"},
 		{Key: "run", Label: "Run", State: "pending"},

@@ -12,19 +12,19 @@ import (
 )
 
 const (
-	agentInboxLimitDefault = 80
-	agentInboxLimitMax     = 100
-	agentInboxQueryMax     = 256
+	appDataLimitDefault = 80
+	appDataLimitMax     = 100
+	appDataQueryMax     = 256
 )
 
-type agentInboxResponse struct {
-	GeneratedAt  string                  `json:"generated_at"`
-	Counts       agentInboxCounts        `json:"counts"`
-	Runs         []agentInboxRun         `json:"runs"`
-	PullRequests []agentInboxPullRequest `json:"pull_requests"`
+type appDataResponse struct {
+	GeneratedAt  string               `json:"generated_at"`
+	Counts       appDataCounts        `json:"counts"`
+	Runs         []appDataRun         `json:"runs"`
+	PullRequests []appDataPullRequest `json:"pull_requests"`
 }
 
-type agentInboxCounts struct {
+type appDataCounts struct {
 	Running       int `json:"running"`
 	NeedsInput    int `json:"needs_input"`
 	Failed        int `json:"failed"`
@@ -33,38 +33,38 @@ type agentInboxCounts struct {
 	Conversations int `json:"conversations"`
 }
 
-type agentInboxRun struct {
-	ID             string                `json:"id"`
-	ConversationID string                `json:"conversation_id"`
-	Title          string                `json:"title"`
-	State          string                `json:"state"`
-	Outcome        string                `json:"outcome,omitempty"`
-	Status         string                `json:"status"`
-	AgentSlug      string                `json:"agent_slug"`
-	CreatorID      string                `json:"creator_id,omitempty"`
-	Repository     string                `json:"repository,omitempty"`
-	Branch         string                `json:"branch,omitempty"`
-	PRURL          string                `json:"pr_url,omitempty"`
-	PRNumber       string                `json:"pr_number,omitempty"`
-	PRState        string                `json:"pr_state,omitempty"`
-	PRMerged       bool                  `json:"pr_merged,omitempty"`
-	CommandStep    string                `json:"command_step,omitempty"`
-	CurrentStep    string                `json:"current_step,omitempty"`
-	Activity       string                `json:"activity,omitempty"`
-	TurnCount      int                   `json:"turn_count"`
-	UpdatedAt      string                `json:"updated_at"`
-	CreatedAt      string                `json:"created_at,omitempty"`
-	Milestones     []agentInboxMilestone `json:"milestones"`
-	TaskOptions    map[string]bool       `json:"task_options,omitempty"`
+type appDataRun struct {
+	ID             string             `json:"id"`
+	ConversationID string             `json:"conversation_id"`
+	Title          string             `json:"title"`
+	State          string             `json:"state"`
+	Outcome        string             `json:"outcome,omitempty"`
+	Status         string             `json:"status"`
+	AgentSlug      string             `json:"agent_slug"`
+	CreatorID      string             `json:"creator_id,omitempty"`
+	Repository     string             `json:"repository,omitempty"`
+	Branch         string             `json:"branch,omitempty"`
+	PRURL          string             `json:"pr_url,omitempty"`
+	PRNumber       string             `json:"pr_number,omitempty"`
+	PRState        string             `json:"pr_state,omitempty"`
+	PRMerged       bool               `json:"pr_merged,omitempty"`
+	CommandStep    string             `json:"command_step,omitempty"`
+	CurrentStep    string             `json:"current_step,omitempty"`
+	Activity       string             `json:"activity,omitempty"`
+	TurnCount      int                `json:"turn_count"`
+	UpdatedAt      string             `json:"updated_at"`
+	CreatedAt      string             `json:"created_at,omitempty"`
+	Milestones     []appDataMilestone `json:"milestones"`
+	TaskOptions    map[string]bool    `json:"task_options,omitempty"`
 }
 
-type agentInboxMilestone struct {
+type appDataMilestone struct {
 	Key   string `json:"key"`
 	Label string `json:"label"`
 	State string `json:"state"`
 }
 
-type agentInboxPullRequest struct {
+type appDataPullRequest struct {
 	ConversationID     string `json:"conversation_id"`
 	Title              string `json:"title"`
 	URL                string `json:"url"`
@@ -82,7 +82,7 @@ type agentInboxPullRequest struct {
 	UpdatedAt          string `json:"updated_at"`
 }
 
-func (b *Bot) agentInboxHandler(w http.ResponseWriter, r *http.Request) {
+func (b *Bot) appDataHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.Header().Set("Allow", "GET")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -90,10 +90,10 @@ func (b *Bot) agentInboxHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	p, _ := auth.FromContext(r.Context())
 	q := r.URL.Query()
-	limit := parseClampedInt(q.Get("limit"), agentInboxLimitDefault, 1, agentInboxLimitMax)
+	limit := parseClampedInt(q.Get("limit"), appDataLimitDefault, 1, appDataLimitMax)
 	queryStr := strings.TrimSpace(q.Get("q"))
-	if runes := []rune(queryStr); len(runes) > agentInboxQueryMax {
-		queryStr = string(runes[:agentInboxQueryMax])
+	if runes := []rune(queryStr); len(runes) > appDataQueryMax {
+		queryStr = string(runes[:appDataQueryMax])
 	}
 	creatorID := q.Get("creator_id")
 	agentSlug := q.Get("agent_slug")
@@ -108,20 +108,20 @@ func (b *Bot) agentInboxHandler(w http.ResponseWriter, r *http.Request) {
 		Offset:          0,
 	})
 	if err != nil {
-		b.log.Error("agent inbox search conversations", "error", err, "org", p.OrgID)
+		b.log.Error("app data search conversations", "error", err, "org", p.OrgID)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	resp := agentInboxResponse{
+	resp := appDataResponse{
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
-		Runs:        make([]agentInboxRun, 0, len(recs)),
+		Runs:        make([]appDataRun, 0, len(recs)),
 	}
 	agentSlugs := map[string]struct{}{}
-	latestRuns := b.latestRunsForInbox(r.Context(), p.OrgID, recs)
+	latestRuns := b.latestRunsForAppData(r.Context(), p.OrgID, recs)
 	for _, rec := range recs {
 		run, hasRun := latestRuns[rec.ThreadID]
-		item := b.agentInboxRunForConversation(r.Context(), p.OrgID, rec, run, hasRun)
+		item := b.appDataRunForConversation(r.Context(), p.OrgID, rec, run, hasRun)
 		resp.Runs = append(resp.Runs, item)
 		resp.Counts.Conversations++
 		if item.AgentSlug != "" {
@@ -135,8 +135,8 @@ func (b *Bot) agentInboxHandler(w http.ResponseWriter, r *http.Request) {
 		case "failed":
 			resp.Counts.Failed++
 		}
-		if item.PRURL != "" && agentInboxPRIsActionable(item) {
-			pr := agentInboxPRForRun(item)
+		if item.PRURL != "" && appDataPRIsActionable(item) {
+			pr := appDataPRForRun(item)
 			resp.PullRequests = append(resp.PullRequests, pr)
 			if pr.ValidationPassed && pr.ReviewPassed {
 				resp.Counts.ReadyPRs++
@@ -147,32 +147,32 @@ func (b *Bot) agentInboxHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, resp)
 }
 
-func (b *Bot) agentInboxRunForConversation(ctx context.Context, orgID string, rec convstore.Record, run runstore.Run, hasRun bool) agentInboxRun {
+func (b *Bot) appDataRunForConversation(ctx context.Context, orgID string, rec convstore.Record, run runstore.Run, hasRun bool) appDataRun {
 	state := "idle"
 	outcome := ""
 	commandStep := ""
 	currentStep := ""
 	activity := ""
-	milestones := agentInboxMilestones(rec, run, false)
+	milestones := appDataMilestones(rec, run, false)
 	if hasRun {
 		state = run.State
 		outcome = run.Outcome
 		commandStep = run.CommandStep
-		milestones = agentInboxMilestones(rec, run, true)
+		milestones = appDataMilestones(rec, run, true)
 		if !isTerminalRunState(run.State) {
 			events, err := b.runs.EventsAfterLimit(ctx, run.ID, 0, 5000)
 			if err != nil {
-				b.log.Warn("agent inbox run events", "org", orgID, "thread", rec.ThreadID, "run", run.ID, "error", err)
+				b.log.Warn("app data run events", "org", orgID, "thread", rec.ThreadID, "run", run.ID, "error", err)
 			}
-			activity = agentInboxActivity(run, events)
-			currentStep = agentInboxCurrentStep(run, events)
+			activity = appDataActivity(run, events)
+			currentStep = appDataCurrentStep(run, events)
 		}
 	}
-	if b.live != nil && b.live.Get(orgID, rec.ThreadID) != nil && agentInboxStatus(state, outcome) != "running" {
+	if b.live != nil && b.live.Get(orgID, rec.ThreadID) != nil && appDataStatus(state, outcome) != "running" {
 		state = runstore.StateRunning
 	}
 	if activity == "" {
-		activity = agentInboxStateLabel(state, outcome)
+		activity = appDataStateLabel(state, outcome)
 	}
 	repo := ""
 	if rec.GitHubOwner != "" && rec.GitHubRepo != "" {
@@ -182,13 +182,13 @@ func (b *Bot) agentInboxRunForConversation(ctx context.Context, orgID string, re
 	if hasRun && run.ID != "" {
 		id = run.ID
 	}
-	return agentInboxRun{
+	return appDataRun{
 		ID:             id,
 		ConversationID: rec.ThreadID,
 		Title:          conversationTitle(rec),
 		State:          state,
 		Outcome:        outcome,
-		Status:         agentInboxStatus(state, outcome),
+		Status:         appDataStatus(state, outcome),
 		AgentSlug:      rec.AgentSlug,
 		CreatorID:      rec.CreatorID,
 		Repository:     repo,
@@ -201,14 +201,14 @@ func (b *Bot) agentInboxRunForConversation(ctx context.Context, orgID string, re
 		CurrentStep:    currentStep,
 		Activity:       activity,
 		TurnCount:      len(rec.History),
-		UpdatedAt:      agentInboxRunTimestamp(rec, run, hasRun),
+		UpdatedAt:      appDataRunTimestamp(rec, run, hasRun),
 		CreatedAt:      formatOptionalTime(rec.CreatedAt),
 		Milestones:     milestones,
 		TaskOptions:    rec.TaskOptions,
 	}
 }
 
-func agentInboxRunTimestamp(rec convstore.Record, run runstore.Run, hasRun bool) string {
+func appDataRunTimestamp(rec convstore.Record, run runstore.Run, hasRun bool) string {
 	if hasRun && !run.UpdatedAt.IsZero() {
 		return run.UpdatedAt.UTC().Format(time.RFC3339)
 	}
@@ -218,7 +218,7 @@ func agentInboxRunTimestamp(rec convstore.Record, run runstore.Run, hasRun bool)
 	return formatOptionalTime(rec.CreatedAt)
 }
 
-func (b *Bot) latestRunsForInbox(ctx context.Context, orgID string, recs []convstore.Record) map[string]runstore.Run {
+func (b *Bot) latestRunsForAppData(ctx context.Context, orgID string, recs []convstore.Record) map[string]runstore.Run {
 	out := map[string]runstore.Run{}
 	if b.runs == nil || !b.runs.Enabled() {
 		return out
@@ -240,13 +240,13 @@ func (b *Bot) latestRunsForInbox(ctx context.Context, orgID string, recs []convs
 	}
 	runs, err := b.runs.LatestForThreads(ctx, orgID, threadIDs)
 	if err != nil {
-		b.log.Warn("agent inbox latest runs", "org", orgID, "threads", len(threadIDs), "error", err)
+		b.log.Warn("app data latest runs", "org", orgID, "threads", len(threadIDs), "error", err)
 		return out
 	}
 	return runs
 }
 
-func agentInboxPRForRun(run agentInboxRun) agentInboxPullRequest {
+func appDataPRForRun(run appDataRun) appDataPullRequest {
 	validationRequired := chatTaskOptionEnabled(run.TaskOptions, chatTaskValidateKey)
 	reviewRequired := chatTaskOptionEnabled(run.TaskOptions, chatTaskReviewCodeBeforePushKey) ||
 		chatTaskOptionEnabled(run.TaskOptions, chatTaskActionPRChecksForDoneKey)
@@ -254,7 +254,7 @@ func agentInboxPRForRun(run agentInboxRun) agentInboxPullRequest {
 	legacySucceeded := run.Outcome == "" && run.State == runstore.StateSucceeded
 	validationPassed := !validationRequired || verified || legacySucceeded
 	reviewPassed := !reviewRequired || verified || legacySucceeded
-	return agentInboxPullRequest{
+	return appDataPullRequest{
 		ConversationID:     run.ConversationID,
 		Title:              run.Title,
 		URL:                run.PRURL,
@@ -273,7 +273,7 @@ func agentInboxPRForRun(run agentInboxRun) agentInboxPullRequest {
 	}
 }
 
-func agentInboxPRIsActionable(run agentInboxRun) bool {
+func appDataPRIsActionable(run appDataRun) bool {
 	if strings.TrimSpace(run.PRURL) == "" || run.PRMerged {
 		return false
 	}

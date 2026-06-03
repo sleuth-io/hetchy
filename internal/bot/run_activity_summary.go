@@ -25,11 +25,11 @@ func (s *liveRunActivitySummary) Record(name string, payload sseEvent) {
 }
 
 func (s *liveRunActivitySummary) Activity(run runstore.Run) string {
-	return agentInboxActivityFromEvents(run, s.events)
+	return appDataActivityFromEvents(run, s.events)
 }
 
 func (s *liveRunActivitySummary) CurrentStep(run runstore.Run) string {
-	return agentInboxCurrentStepFromEvents(run, s.events)
+	return appDataCurrentStepFromEvents(run, s.events)
 }
 
 func runActivityEventsFromStore(events []runstore.Event) []runActivityEvent {

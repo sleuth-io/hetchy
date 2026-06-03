@@ -413,7 +413,7 @@
     syncResponsivePanels();
     renderAgentSelects();
     await loadSupportData();
-    await fetchInbox();
+    await fetchAppData();
     scheduleWorkSearch();
   }
 

@@ -110,7 +110,7 @@ func TestIndexHandler_OpenAIEnabled(t *testing.T) {
 	}
 }
 
-func TestIndexHandler_RendersAgentInbox(t *testing.T) {
+func TestIndexHandler_RendersApp(t *testing.T) {
 	b := newBypassOrgBot(t, "admin")
 
 	rec := httptest.NewRecorder()
@@ -121,21 +121,21 @@ func TestIndexHandler_RendersAgentInbox(t *testing.T) {
 		t.Fatalf("status = %d", rec.Code)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, `src="/assets/agent_inbox.js`) {
-		t.Fatalf("agent inbox template missing agent_inbox.js, body=%s", body)
+	if !strings.Contains(body, `src="/assets/app.js`) {
+		t.Fatalf("app template missing app.js, body=%s", body)
 	}
-	if !strings.Contains(body, `src="/assets/agent_inbox_events.js`) {
-		t.Fatalf("agent inbox template missing split agent inbox runtime, body=%s", body)
+	if !strings.Contains(body, `src="/assets/app_events.js`) {
+		t.Fatalf("app template missing split app runtime, body=%s", body)
 	}
-	if !strings.Contains(body, `href="/assets/agent_inbox.css`) {
-		t.Fatalf("agent inbox template missing agent_inbox.css, body=%s", body)
+	if !strings.Contains(body, `href="/assets/app.css`) {
+		t.Fatalf("app template missing app.css, body=%s", body)
 	}
-	if !strings.Contains(body, `href="/assets/agent_inbox_responsive.css`) {
-		t.Fatalf("agent inbox template missing split agent inbox styles, body=%s", body)
+	if !strings.Contains(body, `href="/assets/app_responsive.css`) {
+		t.Fatalf("app template missing split app styles, body=%s", body)
 	}
 }
 
-func TestIndexHandler_RendersAgentInboxSPAPaths(t *testing.T) {
+func TestIndexHandler_RendersAppSPAPaths(t *testing.T) {
 	b := newBypassOrgBot(t, "admin")
 
 	for _, path := range []string{"/agents/hetchy-bot", "/users/user_test", "/chats/chat_test"} {
@@ -147,11 +147,11 @@ func TestIndexHandler_RendersAgentInboxSPAPaths(t *testing.T) {
 			if rec.Code != http.StatusOK {
 				t.Fatalf("status = %d", rec.Code)
 			}
-			if !strings.Contains(rec.Body.String(), `src="/assets/agent_inbox.js`) {
-				t.Fatalf("agent inbox template missing agent_inbox.js, body=%s", rec.Body.String())
+			if !strings.Contains(rec.Body.String(), `src="/assets/app.js`) {
+				t.Fatalf("app template missing app.js, body=%s", rec.Body.String())
 			}
-			if !strings.Contains(rec.Body.String(), `src="/assets/agent_inbox_events.js`) {
-				t.Fatalf("agent inbox template missing split agent inbox runtime, body=%s", rec.Body.String())
+			if !strings.Contains(rec.Body.String(), `src="/assets/app_events.js`) {
+				t.Fatalf("app template missing split app runtime, body=%s", rec.Body.String())
 			}
 		})
 	}
@@ -198,8 +198,8 @@ func TestPageTemplates_RenderFavicon(t *testing.T) {
 		data any
 	}{
 		{
-			name: "agent inbox",
-			body: webui.AgentInbox,
+			name: "runtime app",
+			body: webui.App,
 			data: map[string]any{
 				"Email":       "u@x",
 				"DisplayName": "Test User",
@@ -433,13 +433,13 @@ func TestProfileTemplate_Renders(t *testing.T) {
 	}
 }
 
-// TestAgentInboxTemplate_SidebarUserMenu verifies the inbox renders the
+// TestAppTemplate_SidebarUserMenu verifies the app renders the
 // user menu at the bottom of the sidebar (with User settings,
 // Organization settings, and Log out entries).
-func TestAgentInboxTemplate_SidebarUserMenu(t *testing.T) {
+func TestAppTemplate_SidebarUserMenu(t *testing.T) {
 	b := newBypassBot(t)
 	rec := httptest.NewRecorder()
-	b.renderTemplate(rec, webui.AgentInbox, map[string]any{
+	b.renderTemplate(rec, webui.App, map[string]any{
 		"Email":       "ada@example.com",
 		"DisplayName": "Ada Lovelace",
 		"GravatarURL": "https://example.com/avatar.png",

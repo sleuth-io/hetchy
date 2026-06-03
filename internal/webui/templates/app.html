@@ -8,15 +8,15 @@
 <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
 <script src="{{assetPath "theme_bootstrap.js"}}"></script>
-<link rel="stylesheet" href="{{assetPath "agent_inbox.css"}}">
-<link rel="stylesheet" href="{{assetPath "agent_inbox_layout.css"}}">
-<link rel="stylesheet" href="{{assetPath "agent_inbox_work.css"}}">
-<link rel="stylesheet" href="{{assetPath "agent_inbox_dialogs.css"}}">
-<link rel="stylesheet" href="{{assetPath "agent_inbox_chat.css"}}">
-<link rel="stylesheet" href="{{assetPath "agent_inbox_agent_docs.css"}}">
-<link rel="stylesheet" href="{{assetPath "agent_inbox_responsive.css"}}">
+<link rel="stylesheet" href="{{assetPath "app.css"}}">
+<link rel="stylesheet" href="{{assetPath "app_layout.css"}}">
+<link rel="stylesheet" href="{{assetPath "app_work.css"}}">
+<link rel="stylesheet" href="{{assetPath "app_dialogs.css"}}">
+<link rel="stylesheet" href="{{assetPath "app_chat.css"}}">
+<link rel="stylesheet" href="{{assetPath "app_agent_docs.css"}}">
+<link rel="stylesheet" href="{{assetPath "app_responsive.css"}}">
 </head>
-<body data-current-user-id="{{.UserID}}" data-openai-enabled="{{if .OpenAIEnabled}}1{{else}}0{{end}}" data-default-repo-slug="{{.DefaultRepoSlug}}" data-inbox-limit="{{or .InboxLimit 80}}">
+<body data-current-user-id="{{.UserID}}" data-openai-enabled="{{if .OpenAIEnabled}}1{{else}}0{{end}}" data-default-repo-slug="{{.DefaultRepoSlug}}" data-app-data-limit="{{or .AppDataLimit 80}}">
 <div id="toast-stack" aria-live="polite" aria-atomic="true"></div>
 
 <div class="agent-app">
@@ -393,13 +393,13 @@
   </div>
 </dialog>
 
-<script src="{{assetPath "chat_blocks.js"}}"></script>
-<script src="{{assetPath "chat_image_modal.js"}}"></script>
-<script src="{{assetPath "agent_inbox.js"}}"></script>
-<script src="{{assetPath "agent_inbox_runs.js"}}"></script>
-<script src="{{assetPath "agent_inbox_agent_docs.js"}}"></script>
-<script src="{{assetPath "agent_inbox_controls.js"}}"></script>
-<script src="{{assetPath "agent_inbox_detail.js"}}"></script>
-<script src="{{assetPath "agent_inbox_events.js"}}"></script>
+<script src="{{assetPath "chat_detail_blocks.js"}}"></script>
+<script src="{{assetPath "image_modal.js"}}"></script>
+<script src="{{assetPath "app.js"}}"></script>
+<script src="{{assetPath "app_runs.js"}}"></script>
+<script src="{{assetPath "app_agent_docs.js"}}"></script>
+<script src="{{assetPath "app_controls.js"}}"></script>
+<script src="{{assetPath "app_detail.js"}}"></script>
+<script src="{{assetPath "app_events.js"}}"></script>
 </body>
 </html>

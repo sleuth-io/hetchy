@@ -77,7 +77,7 @@ type slackEmitter struct {
 	// the live message falls back to if no activity summary is available.
 	current string
 
-	// activity tracks the same event shape the agent inbox cards use
+	// activity tracks the same event shape the app data cards use
 	// so Slack's live message can show the same high-level stage and
 	// latest useful activity without querying persisted run events.
 	activity liveRunActivitySummary

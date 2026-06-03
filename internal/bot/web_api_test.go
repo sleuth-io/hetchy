@@ -790,7 +790,7 @@ func TestConversationsHandlerListUsesLiveStatusOnly(t *testing.T) {
 	}
 }
 
-func TestAgentInboxHandlerAggregatesRunsAndPRs(t *testing.T) {
+func TestAppDataHandlerAggregatesRunsAndPRs(t *testing.T) {
 	conversationUpdatedAt := time.Date(2026, 6, 2, 10, 30, 0, 0, time.UTC)
 	runUpdatedAt := time.Date(2026, 5, 29, 14, 15, 0, 0, time.UTC)
 	b := newBypassOrgBot(t, "member")
@@ -828,16 +828,16 @@ func TestAgentInboxHandlerAggregatesRunsAndPRs(t *testing.T) {
 			{Seq: 2, Event: "block_append", Data: runEventForTest(t, "block_append", sseEvent{ID: "p1", Delta: "Running validation\n"}).Data},
 		},
 	}
-	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.agentInboxHandler)))
+	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.appDataHandler)))
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/agent-inbox", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/app-data", nil)
 	handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
 	}
-	var got agentInboxResponse
+	var got appDataResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("unmarshal: %v body=%q", err, rec.Body.String())
 	}
@@ -872,7 +872,7 @@ func TestAgentInboxHandlerAggregatesRunsAndPRs(t *testing.T) {
 	}
 }
 
-func TestLatestRunsForInboxDedupesThreads(t *testing.T) {
+func TestLatestRunsForAppDataDedupesThreads(t *testing.T) {
 	b := newBypassOrgBot(t, "member")
 	store := &fakeRunStore{
 		enabled: true,
@@ -883,7 +883,7 @@ func TestLatestRunsForInboxDedupesThreads(t *testing.T) {
 	}
 	b.runs = store
 
-	got := b.latestRunsForInbox(context.Background(), "org_test", []convstore.Record{
+	got := b.latestRunsForAppData(context.Background(), "org_test", []convstore.Record{
 		{ThreadID: "thread-1"},
 		{ThreadID: ""},
 		{ThreadID: "thread-2"},
@@ -904,15 +904,15 @@ func TestLatestRunsForInboxDedupesThreads(t *testing.T) {
 	}
 }
 
-func TestLatestRunsForInboxReturnsEmptyWhenUnavailable(t *testing.T) {
+func TestLatestRunsForAppDataReturnsEmptyWhenUnavailable(t *testing.T) {
 	b := newBypassOrgBot(t, "member")
-	if got := b.latestRunsForInbox(context.Background(), "org_test", []convstore.Record{{ThreadID: "thread-1"}}); len(got) != 0 {
+	if got := b.latestRunsForAppData(context.Background(), "org_test", []convstore.Record{{ThreadID: "thread-1"}}); len(got) != 0 {
 		t.Fatalf("nil run store result = %+v, want empty", got)
 	}
 
 	disabled := &fakeRunStore{enabled: false}
 	b.runs = disabled
-	if got := b.latestRunsForInbox(context.Background(), "org_test", []convstore.Record{{ThreadID: "thread-1"}}); len(got) != 0 {
+	if got := b.latestRunsForAppData(context.Background(), "org_test", []convstore.Record{{ThreadID: "thread-1"}}); len(got) != 0 {
 		t.Fatalf("disabled run store result = %+v, want empty", got)
 	}
 	if len(disabled.latestBatchCalls) != 0 {
@@ -921,7 +921,7 @@ func TestLatestRunsForInboxReturnsEmptyWhenUnavailable(t *testing.T) {
 
 	emptyIDs := &fakeRunStore{enabled: true}
 	b.runs = emptyIDs
-	if got := b.latestRunsForInbox(context.Background(), "org_test", []convstore.Record{{ThreadID: ""}}); len(got) != 0 {
+	if got := b.latestRunsForAppData(context.Background(), "org_test", []convstore.Record{{ThreadID: ""}}); len(got) != 0 {
 		t.Fatalf("empty thread IDs result = %+v, want empty", got)
 	}
 	if len(emptyIDs.latestBatchCalls) != 0 {
@@ -930,7 +930,7 @@ func TestLatestRunsForInboxReturnsEmptyWhenUnavailable(t *testing.T) {
 
 	errored := &fakeRunStore{enabled: true, latestBatchErr: context.Canceled}
 	b.runs = errored
-	if got := b.latestRunsForInbox(context.Background(), "org_test", []convstore.Record{{ThreadID: "thread-1"}}); len(got) != 0 {
+	if got := b.latestRunsForAppData(context.Background(), "org_test", []convstore.Record{{ThreadID: "thread-1"}}); len(got) != 0 {
 		t.Fatalf("errored latest batch result = %+v, want empty", got)
 	}
 	if len(errored.latestBatchCalls) != 1 {
@@ -938,11 +938,11 @@ func TestLatestRunsForInboxReturnsEmptyWhenUnavailable(t *testing.T) {
 	}
 }
 
-func TestAgentInboxRunTimestampPrefersConversationUpdatedAtWithoutRun(t *testing.T) {
+func TestAppDataRunTimestampPrefersConversationUpdatedAtWithoutRun(t *testing.T) {
 	createdAt := time.Date(2026, 6, 1, 9, 0, 0, 0, time.UTC)
 	updatedAt := time.Date(2026, 6, 2, 10, 30, 0, 0, time.UTC)
 
-	got := agentInboxRunTimestamp(convstore.Record{
+	got := appDataRunTimestamp(convstore.Record{
 		CreatedAt: createdAt,
 		UpdatedAt: updatedAt,
 	}, runstore.Run{}, false)
@@ -951,69 +951,69 @@ func TestAgentInboxRunTimestampPrefersConversationUpdatedAtWithoutRun(t *testing
 	}
 }
 
-func TestAgentInboxActivityUsesAccumulatedBlockText(t *testing.T) {
+func TestAppDataActivityUsesAccumulatedBlockText(t *testing.T) {
 	events := []runstore.Event{
 		{Seq: 1, Event: "block_start", Data: runEventForTest(t, "block_start", sseEvent{ID: "p1", Kind: blocks.KindClaudeText, Title: "Thinking"}).Data},
 		{Seq: 2, Event: "block_append", Data: runEventForTest(t, "block_append", sseEvent{ID: "p1", Delta: "I'll inspect the UI"}).Data},
 		{Seq: 3, Event: "block_append", Data: runEventForTest(t, "block_append", sseEvent{ID: "p1", Delta: "\n```"}).Data},
 	}
 
-	got := agentInboxActivity(runstore.Run{CommandStep: "run-script"}, events)
+	got := appDataActivity(runstore.Run{CommandStep: "run-script"}, events)
 	if got != "I'll inspect the UI" {
 		t.Fatalf("activity = %q, want accumulated text before fence", got)
 	}
 }
 
-func TestAgentInboxActivityFallsBackToBlockTitleForFenceOnlyDelta(t *testing.T) {
+func TestAppDataActivityFallsBackToBlockTitleForFenceOnlyDelta(t *testing.T) {
 	events := []runstore.Event{
 		{Seq: 1, Event: "block_start", Data: runEventForTest(t, "block_start", sseEvent{ID: "p1", Kind: blocks.KindClaudeText, Title: "Reading current code"}).Data},
 		{Seq: 2, Event: "block_append", Data: runEventForTest(t, "block_append", sseEvent{ID: "p1", Delta: "```tsx"}).Data},
 	}
 
-	got := agentInboxActivity(runstore.Run{CommandStep: "run-script"}, events)
+	got := appDataActivity(runstore.Run{CommandStep: "run-script"}, events)
 	if got != "Reading current code" {
 		t.Fatalf("activity = %q, want block title fallback", got)
 	}
 }
 
-func TestAgentInboxActivitySkipsStructuralFragments(t *testing.T) {
+func TestAppDataActivitySkipsStructuralFragments(t *testing.T) {
 	events := []runstore.Event{
 		{Seq: 1, Event: "block_start", Data: runEventForTest(t, "block_start", sseEvent{ID: "p1", Kind: blocks.KindClaudeText, Title: "Thinking"}).Data},
 		{Seq: 2, Event: "block_append", Data: runEventForTest(t, "block_append", sseEvent{ID: "p1", Delta: "I'll inspect the active card"}).Data},
 		{Seq: 3, Event: "block_append", Data: runEventForTest(t, "block_append", sseEvent{ID: "p1", Delta: "\n{\n}"}).Data},
 	}
 
-	got := agentInboxActivity(runstore.Run{CommandStep: "run-script"}, events)
+	got := appDataActivity(runstore.Run{CommandStep: "run-script"}, events)
 	if got != "I'll inspect the active card" {
 		t.Fatalf("activity = %q, want meaningful text before structural fragments", got)
 	}
 }
 
-func TestAgentInboxActivitySkipsFencedCodeFragments(t *testing.T) {
+func TestAppDataActivitySkipsFencedCodeFragments(t *testing.T) {
 	events := []runstore.Event{
 		{Seq: 1, Event: "block_start", Data: runEventForTest(t, "block_start", sseEvent{ID: "p1", Kind: blocks.KindClaudeText, Title: "Thinking"}).Data},
 		{Seq: 2, Event: "block_append", Data: runEventForTest(t, "block_append", sseEvent{ID: "p1", Delta: "I'll update the settings payload:\n```json\n{\n  \"theme\": \"dark\"\n}\n```"}).Data},
 	}
 
-	got := agentInboxActivity(runstore.Run{CommandStep: "run-script"}, events)
+	got := appDataActivity(runstore.Run{CommandStep: "run-script"}, events)
 	if got != "I'll update the settings payload:" {
 		t.Fatalf("activity = %q, want prose outside fenced code", got)
 	}
 }
 
-func TestAgentInboxActivityUsesToolTitleInsteadOfJSONBody(t *testing.T) {
+func TestAppDataActivityUsesToolTitleInsteadOfJSONBody(t *testing.T) {
 	events := []runstore.Event{
 		{Seq: 1, Event: "block_start", Data: runEventForTest(t, "block_start", sseEvent{ID: "p1", Kind: blocks.KindToolUse, Title: "Running find /home/daytona/work/hetchy"}).Data},
 		{Seq: 2, Event: "block_append", Data: runEventForTest(t, "block_append", sseEvent{ID: "p1", Delta: "{\n  \"command\": \"find internal -name '*.go'\"\n}"}).Data},
 	}
 
-	got := agentInboxActivity(runstore.Run{CommandStep: "run-script"}, events)
+	got := appDataActivity(runstore.Run{CommandStep: "run-script"}, events)
 	if got != "Running find /home/daytona/work/hetchy" {
 		t.Fatalf("activity = %q, want tool title", got)
 	}
 }
 
-func TestAgentInboxCurrentStepUsesRunEvents(t *testing.T) {
+func TestAppDataCurrentStepUsesRunEvents(t *testing.T) {
 	tests := []struct {
 		name   string
 		run    runstore.Run
@@ -1108,7 +1108,7 @@ func TestAgentInboxCurrentStepUsesRunEvents(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := agentInboxCurrentStep(tc.run, tc.events)
+			got := appDataCurrentStep(tc.run, tc.events)
 			if got != tc.want {
 				t.Fatalf("current step = %q, want %q", got, tc.want)
 			}
@@ -1116,7 +1116,7 @@ func TestAgentInboxCurrentStepUsesRunEvents(t *testing.T) {
 	}
 }
 
-func TestAgentInboxCommandStepLabels(t *testing.T) {
+func TestAppDataCommandStepLabels(t *testing.T) {
 	friendlyCases := []struct {
 		step string
 		want string
@@ -1158,7 +1158,7 @@ func TestAgentInboxCommandStepLabels(t *testing.T) {
 	}
 }
 
-func TestAgentInboxLifecycleStepText(t *testing.T) {
+func TestAppDataLifecycleStepText(t *testing.T) {
 	cases := []struct {
 		text string
 		want string
@@ -1185,7 +1185,7 @@ func TestAgentInboxLifecycleStepText(t *testing.T) {
 	}
 }
 
-func TestAgentInboxStatusAndStateLabels(t *testing.T) {
+func TestAppDataStatusAndStateLabels(t *testing.T) {
 	cases := []struct {
 		state   string
 		outcome string
@@ -1204,17 +1204,17 @@ func TestAgentInboxStatusAndStateLabels(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.state+" "+tc.outcome, func(t *testing.T) {
-			if got := agentInboxStatus(tc.state, tc.outcome); got != tc.status {
-				t.Fatalf("agentInboxStatus(%q, %q) = %q, want %q", tc.state, tc.outcome, got, tc.status)
+			if got := appDataStatus(tc.state, tc.outcome); got != tc.status {
+				t.Fatalf("appDataStatus(%q, %q) = %q, want %q", tc.state, tc.outcome, got, tc.status)
 			}
-			if got := agentInboxStateLabel(tc.state, tc.outcome); got != tc.label {
-				t.Fatalf("agentInboxStateLabel(%q, %q) = %q, want %q", tc.state, tc.outcome, got, tc.label)
+			if got := appDataStateLabel(tc.state, tc.outcome); got != tc.label {
+				t.Fatalf("appDataStateLabel(%q, %q) = %q, want %q", tc.state, tc.outcome, got, tc.label)
 			}
 		})
 	}
 }
 
-func TestAgentInboxStepKindClassification(t *testing.T) {
+func TestAppDataStepKindClassification(t *testing.T) {
 	cases := []struct {
 		name string
 		kind blocks.Kind
@@ -1241,7 +1241,7 @@ func TestAgentInboxStepKindClassification(t *testing.T) {
 	}
 }
 
-func TestAgentInboxNotifyStepText(t *testing.T) {
+func TestAppDataNotifyStepText(t *testing.T) {
 	cases := []struct {
 		text string
 		want string
@@ -1265,7 +1265,7 @@ func TestAgentInboxNotifyStepText(t *testing.T) {
 	}
 }
 
-func TestAgentInboxMilestones(t *testing.T) {
+func TestAppDataMilestones(t *testing.T) {
 	cases := []struct {
 		name string
 		rec  convstore.Record
@@ -1324,7 +1324,7 @@ func TestAgentInboxMilestones(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := agentInboxMilestones(tc.rec, tc.run, tc.has)
+			got := appDataMilestones(tc.rec, tc.run, tc.has)
 			if len(got) != len(tc.want) {
 				t.Fatalf("milestone len = %d, want %d: %+v", len(got), len(tc.want), got)
 			}
@@ -1359,7 +1359,7 @@ func TestPullRequestNumber(t *testing.T) {
 	}
 }
 
-func TestAgentInboxHandlerExcludesClosedAndMergedPRs(t *testing.T) {
+func TestAppDataHandlerExcludesClosedAndMergedPRs(t *testing.T) {
 	updatedAt := time.Date(2026, 6, 2, 10, 30, 0, 0, time.UTC)
 	noRequiredChecks := map[string]bool{
 		chatTaskValidateKey:              false,
@@ -1403,16 +1403,16 @@ func TestAgentInboxHandlerExcludesClosedAndMergedPRs(t *testing.T) {
 			UpdatedAt:   updatedAt,
 		},
 	}}
-	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.agentInboxHandler)))
+	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.appDataHandler)))
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/agent-inbox", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/app-data", nil)
 	handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
 	}
-	var got agentInboxResponse
+	var got appDataResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("unmarshal: %v body=%q", err, rec.Body.String())
 	}
@@ -1424,14 +1424,14 @@ func TestAgentInboxHandlerExcludesClosedAndMergedPRs(t *testing.T) {
 	}
 }
 
-func TestAgentInboxHandlerPassesAgentAndCreatorFilters(t *testing.T) {
+func TestAppDataHandlerPassesAgentAndCreatorFilters(t *testing.T) {
 	b := newBypassOrgBot(t, "member")
 	fake := &fakeConversationStore{}
 	b.convs = fake
-	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.agentInboxHandler)))
+	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.appDataHandler)))
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/agent-inbox?q=review&agent_slug=alice&creator_id=user_test", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/app-data?q=review&agent_slug=alice&creator_id=user_test", nil)
 	handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -1447,8 +1447,8 @@ func TestAgentInboxHandlerPassesAgentAndCreatorFilters(t *testing.T) {
 	}
 }
 
-func TestAgentInboxPRReadinessRequiresVerifiedOutcome(t *testing.T) {
-	base := agentInboxRun{
+func TestAppDataPRReadinessRequiresVerifiedOutcome(t *testing.T) {
+	base := appDataRun{
 		ConversationID: "thread-1",
 		Title:          "Ship it",
 		State:          runstore.StateSucceeded,
@@ -1459,19 +1459,19 @@ func TestAgentInboxPRReadinessRequiresVerifiedOutcome(t *testing.T) {
 		},
 	}
 
-	got := agentInboxPRForRun(base)
+	got := appDataPRForRun(base)
 	if !got.ValidationPassed || !got.ReviewPassed {
 		t.Fatalf("blank succeeded outcome should use legacy fallback: %+v", got)
 	}
 
 	base.Outcome = runstore.OutcomeCompletedNoPR
-	got = agentInboxPRForRun(base)
+	got = appDataPRForRun(base)
 	if got.ValidationPassed || got.ReviewPassed {
 		t.Fatalf("completed_no_pr should not pass required checks: %+v", got)
 	}
 
 	base.Outcome = runstore.OutcomeCompletedWithVerifiedPR
-	got = agentInboxPRForRun(base)
+	got = appDataPRForRun(base)
 	if !got.ValidationPassed || !got.ReviewPassed {
 		t.Fatalf("verified PR should pass required checks: %+v", got)
 	}

@@ -27,17 +27,17 @@ func TestConversationPRStateFromGitHub(t *testing.T) {
 	}
 }
 
-func TestAgentInboxPRIsActionable(t *testing.T) {
-	if !agentInboxPRIsActionable(agentInboxRun{PRURL: "https://github.com/acme/repo/pull/1"}) {
+func TestAppDataPRIsActionable(t *testing.T) {
+	if !appDataPRIsActionable(appDataRun{PRURL: "https://github.com/acme/repo/pull/1"}) {
 		t.Fatal("unknown PR state should stay actionable until backfilled")
 	}
-	if !agentInboxPRIsActionable(agentInboxRun{PRURL: "https://github.com/acme/repo/pull/1", PRState: githubPRStateOpen}) {
+	if !appDataPRIsActionable(appDataRun{PRURL: "https://github.com/acme/repo/pull/1", PRState: githubPRStateOpen}) {
 		t.Fatal("open PR should be actionable")
 	}
-	if agentInboxPRIsActionable(agentInboxRun{PRURL: "https://github.com/acme/repo/pull/1", PRState: githubPRStateClosed}) {
+	if appDataPRIsActionable(appDataRun{PRURL: "https://github.com/acme/repo/pull/1", PRState: githubPRStateClosed}) {
 		t.Fatal("closed PR should not be actionable")
 	}
-	if agentInboxPRIsActionable(agentInboxRun{PRURL: "https://github.com/acme/repo/pull/1", PRMerged: true}) {
+	if appDataPRIsActionable(appDataRun{PRURL: "https://github.com/acme/repo/pull/1", PRMerged: true}) {
 		t.Fatal("merged PR should not be actionable")
 	}
 }

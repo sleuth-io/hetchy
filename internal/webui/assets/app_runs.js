@@ -33,13 +33,13 @@
     renderRepoPicker();
   }
 
-  async function fetchInbox() {
+  async function fetchAppData() {
     if (state.fetchInFlight) return;
     state.fetchInFlight = true;
     try {
       const params = new URLSearchParams();
-      params.set('limit', String(inboxLimit));
-      const data = await fetchJSON('/api/v1/agent-inbox?' + params.toString());
+      params.set('limit', String(appDataLimit));
+      const data = await fetchJSON('/api/v1/app-data?' + params.toString());
       state.data = data || { runs: [], pull_requests: [], counts: {} };
       ensureSelection();
       renderAll();
@@ -55,7 +55,7 @@
 
   function schedulePoll(delay) {
     clearTimeout(state.pollTimer);
-    state.pollTimer = setTimeout(fetchInbox, delay || (document.hidden ? hiddenPollMs : pollMs));
+    state.pollTimer = setTimeout(fetchAppData, delay || (document.hidden ? hiddenPollMs : pollMs));
   }
   function pollSoon() {
     schedulePoll(650);
@@ -143,10 +143,10 @@
     state.workSearchInFlight = true;
     try {
       const params = new URLSearchParams();
-      params.set('limit', String(inboxLimit));
+      params.set('limit', String(appDataLimit));
       params.set('q', query);
       addSelectedGroupParams(params);
-      const data = await fetchJSON('/api/v1/agent-inbox?' + params.toString());
+      const data = await fetchJSON('/api/v1/app-data?' + params.toString());
       if (currentWorkSearchKey() !== key) return;
       state.workSearchKey = key;
       state.workSearch = data || { runs: [], pull_requests: [] };

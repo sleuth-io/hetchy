@@ -9,14 +9,14 @@ import (
 	"testing"
 )
 
-func TestAgentInboxUsesSharedRepoStorageKey(t *testing.T) {
+func TestAppUsesSharedRepoStorageKey(t *testing.T) {
 	var parts []string
 	for _, name := range []string{
-		"agent_inbox.js",
-		"agent_inbox_runs.js",
-		"agent_inbox_controls.js",
-		"agent_inbox_detail.js",
-		"agent_inbox_events.js",
+		"app.js",
+		"app_runs.js",
+		"app_controls.js",
+		"app_detail.js",
+		"app_events.js",
 	} {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, "/assets/"+name, nil)
@@ -34,14 +34,14 @@ func TestAgentInboxUsesSharedRepoStorageKey(t *testing.T) {
 		"state.selectedTaskRepo = initialTaskRepoSlug()",
 	} {
 		if !strings.Contains(body, want) {
-			t.Fatalf("agent_inbox.js missing %q", want)
+			t.Fatalf("app.js missing %q", want)
 		}
 	}
 }
 
-func TestRenderAgentInboxTemplate(t *testing.T) {
+func TestRenderAppTemplate(t *testing.T) {
 	rec := httptest.NewRecorder()
-	Render(slog.New(slog.NewTextHandler(io.Discard, nil)), rec, AgentInbox, map[string]any{
+	Render(slog.New(slog.NewTextHandler(io.Discard, nil)), rec, App, map[string]any{
 		"Email":           "u@example.com",
 		"DisplayName":     "Test User",
 		"GravatarURL":     "https://example.com/avatar.png",
@@ -56,19 +56,19 @@ func TestRenderAgentInboxTemplate(t *testing.T) {
 	for _, want := range []string{
 		`data-current-user-id="user_test"`,
 		`data-default-repo-slug="hetchyhq/hetchy"`,
-		`data-inbox-limit="80"`,
-		`href="/assets/agent_inbox.css`,
-		`href="/assets/agent_inbox_layout.css`,
-		`href="/assets/agent_inbox_work.css`,
-		`href="/assets/agent_inbox_dialogs.css`,
-		`href="/assets/agent_inbox_chat.css`,
-		`href="/assets/agent_inbox_responsive.css`,
-		`src="/assets/chat_blocks.js`,
-		`src="/assets/agent_inbox.js`,
-		`src="/assets/agent_inbox_runs.js`,
-		`src="/assets/agent_inbox_controls.js`,
-		`src="/assets/agent_inbox_detail.js`,
-		`src="/assets/agent_inbox_events.js`,
+		`data-app-data-limit="80"`,
+		`href="/assets/app.css`,
+		`href="/assets/app_layout.css`,
+		`href="/assets/app_work.css`,
+		`href="/assets/app_dialogs.css`,
+		`href="/assets/app_chat.css`,
+		`href="/assets/app_responsive.css`,
+		`src="/assets/chat_detail_blocks.js`,
+		`src="/assets/app.js`,
+		`src="/assets/app_runs.js`,
+		`src="/assets/app_controls.js`,
+		`src="/assets/app_detail.js`,
+		`src="/assets/app_events.js`,
 		`id="agent-menu-btn"`,
 		`id="agent-nav-toggle"`,
 		`id="pr-sidebar-toggle"`,
@@ -87,14 +87,14 @@ func TestRenderAgentInboxTemplate(t *testing.T) {
 		`id="run-delete-dialog"`,
 	} {
 		if !strings.Contains(body, want) {
-			t.Fatalf("rendered agent inbox template missing %q", want)
+			t.Fatalf("rendered app template missing %q", want)
 		}
 	}
 }
 
 func TestAssetHandlerServesEmbeddedAssets(t *testing.T) {
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/assets/agent_inbox.js", nil)
+	req := httptest.NewRequest(http.MethodGet, "/assets/app.js", nil)
 	AssetHandler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
@@ -103,11 +103,11 @@ func TestAssetHandlerServesEmbeddedAssets(t *testing.T) {
 		t.Fatalf("Cache-Control = %q, want immutable for fingerprinted asset URLs", got)
 	}
 	if !strings.Contains(rec.Body.String(), "document.body.dataset.currentUserId") {
-		t.Fatalf("agent_inbox.js did not contain expected bootstrapped user-id read")
+		t.Fatalf("app.js did not contain expected bootstrapped user-id read")
 	}
 
 	rec = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodGet, "/assets/agent_inbox.css", nil)
+	req = httptest.NewRequest(http.MethodGet, "/assets/app.css", nil)
 	AssetHandler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
@@ -119,7 +119,7 @@ func TestAssetHandlerServesEmbeddedAssets(t *testing.T) {
 		".primary-button",
 	} {
 		if !strings.Contains(body, want) {
-			t.Fatalf("agent_inbox.css did not contain expected rule %q", want)
+			t.Fatalf("app.css did not contain expected rule %q", want)
 		}
 	}
 }
@@ -139,7 +139,7 @@ func TestChatImageModalAssetWiring(t *testing.T) {
 	}
 	checks := []assetCheck{
 		{
-			path: "/assets/chat_image_modal.js",
+			path: "/assets/image_modal.js",
 			wants: []string{
 				"function isImageAttachmentMimeType",
 				"function openImageModal",
@@ -160,21 +160,21 @@ func TestChatImageModalAssetWiring(t *testing.T) {
 			},
 		},
 		{
-			path: "/assets/agent_inbox_detail.js",
+			path: "/assets/app_detail.js",
 			wants: []string{
 				"isImageAttachment",
 				"data-image-modal-url",
 			},
 		},
 		{
-			path: "/assets/agent_inbox_detail.js",
+			path: "/assets/app_detail.js",
 			wants: []string{
 				"data-image-modal-url",
 				"class=\"meta-attachment-link\"",
 			},
 		},
 		{
-			path: "/assets/agent_inbox_chat.css",
+			path: "/assets/app_chat.css",
 			wants: []string{
 				".image-modal-overlay",
 				".image-modal-img",

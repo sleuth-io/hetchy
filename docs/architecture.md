@@ -43,7 +43,7 @@ hetchy/
 │   │   ├── web_api.go      # JSON API handlers
 │   │   ├── web_test.go     # Tests for web server behaviour
 │   ├── webui/              # Embedded templates and static browser assets
-│   │   ├── templates/      # Page templates, including the agent inbox shell
+│   │   ├── templates/      # Page templates, including the app shell
 │   │   └── assets/         # CSS and JavaScript served under /assets/
 │   ├── db/                 # Database connection and generated queries
 │   │   ├── db.go           # pgxpool connection helper (Open / Close)

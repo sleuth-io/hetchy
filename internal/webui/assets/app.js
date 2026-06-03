@@ -2,7 +2,7 @@
   var defaultRepoSlug = (document.body.dataset.defaultRepoSlug || '').trim();
   var repoStorageKey = 'hetchy.repo.' + currentUserID;
   var openAIEnabled = document.body.dataset.openaiEnabled === '1';
-  var inboxLimit = Math.max(1, parseInt(document.body.dataset.inboxLimit || '80', 10) || 80);
+  var appDataLimit = Math.max(1, parseInt(document.body.dataset.appDataLimit || '80', 10) || 80);
   var pollMs = 4000;
   var detailPollMs = 1800;
   var hiddenPollMs = 15000;
@@ -375,7 +375,7 @@
     const current = window.location.pathname + window.location.search;
     if (next === current) return;
     const method = opts && opts.replace ? 'replaceState' : 'pushState';
-    window.history[method]({ agentInbox: true }, '', next);
+    window.history[method]({ app: true }, '', next);
   }
   function resetScopedWorkSearch() {
     state.selectedRunLimit = initialVisibleRuns;
