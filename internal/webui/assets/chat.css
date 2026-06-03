@@ -371,6 +371,14 @@
   .meta-row.is-empty .meta-value { color: #b8b8b8; }
   .meta-empty { padding: 1rem; font-size: .82rem; color: #888;
                 text-align: center; }
+  /* Spooky decorative skull at the top of the right panel. Purely
+     ornamental — aria-hidden in markup so screen readers skip it. */
+  #meta-ascii-art { margin: 0; padding: .85rem 1rem .6rem;
+                    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                    font-size: .7rem; line-height: 1.1; color: #8a1a1a;
+                    text-align: center; white-space: pre;
+                    border-bottom: 1px solid #f0f0f0;
+                    text-shadow: 0 0 4px rgba(178, 34, 34, .35); }
   .meta-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
                font-size: .78rem; }
 
@@ -798,6 +806,8 @@
   html.is-dark .meta-row .meta-value a { color: #7dc4ff; }
   html.is-dark .meta-row.is-empty .meta-value { color: #555a60; }
   html.is-dark .meta-empty { color: #8a8a90; }
+  html.is-dark #meta-ascii-art { color: #ff6464; border-bottom-color: #2a2a2d;
+                                 text-shadow: 0 0 6px rgba(255, 60, 60, .5); }
   html.is-dark .meta-chip { background: #2a2f3a; color: #e7e7e9; }
   html.is-dark .meta-attachment-link { background: #2a2f3a; color: #7dc4ff; }
   html.is-dark .meta-attachment-size { color: #9a9aa0; }
