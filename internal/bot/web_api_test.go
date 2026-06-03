@@ -717,6 +717,31 @@ func TestAgentInboxHandlerAggregatesRunsAndPRs(t *testing.T) {
 	}
 }
 
+func TestAgentInboxActivityUsesAccumulatedBlockText(t *testing.T) {
+	events := []runstore.Event{
+		{Seq: 1, Event: "block_start", Data: runEventForTest(t, "block_start", sseEvent{ID: "p1", Kind: blocks.KindClaudeText, Title: "Thinking"}).Data},
+		{Seq: 2, Event: "block_append", Data: runEventForTest(t, "block_append", sseEvent{ID: "p1", Delta: "I'll inspect the UI"}).Data},
+		{Seq: 3, Event: "block_append", Data: runEventForTest(t, "block_append", sseEvent{ID: "p1", Delta: "\n```"}).Data},
+	}
+
+	got := agentInboxActivity(runstore.Run{CommandStep: "run-script"}, events)
+	if got != "I'll inspect the UI" {
+		t.Fatalf("activity = %q, want accumulated text before fence", got)
+	}
+}
+
+func TestAgentInboxActivityFallsBackToBlockTitleForFenceOnlyDelta(t *testing.T) {
+	events := []runstore.Event{
+		{Seq: 1, Event: "block_start", Data: runEventForTest(t, "block_start", sseEvent{ID: "p1", Kind: blocks.KindClaudeText, Title: "Reading current code"}).Data},
+		{Seq: 2, Event: "block_append", Data: runEventForTest(t, "block_append", sseEvent{ID: "p1", Delta: "```tsx"}).Data},
+	}
+
+	got := agentInboxActivity(runstore.Run{CommandStep: "run-script"}, events)
+	if got != "Reading current code" {
+		t.Fatalf("activity = %q, want block title fallback", got)
+	}
+}
+
 func TestAgentInboxHandlerExcludesClosedAndMergedPRs(t *testing.T) {
 	updatedAt := time.Date(2026, 6, 2, 10, 30, 0, 0, time.UTC)
 	noRequiredChecks := map[string]bool{

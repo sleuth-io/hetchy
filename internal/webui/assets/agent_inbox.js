@@ -8,6 +8,7 @@
   const detailPollMs = 1800;
   const hiddenPollMs = 15000;
   const detailScrollBottomThreshold = 50;
+  const recentRunWindowMs = 7 * 24 * 60 * 60 * 1000;
   const initialVisibleRuns = 8;
   const maxPromptAttachments = 5;
   const maxPromptAttachmentBytes = 10 * 1024 * 1024;
@@ -447,10 +448,16 @@
     return String(a.id || '').localeCompare(String(b.id || ''), undefined, { sensitivity: 'base' });
   }
   function makeEmptyGroup(id) {
-    return { id, name: groupName(id), runs: [], active: 0, section: '' };
+    return { id, name: groupName(id), runs: [], active: 0, recent: 0, readyPRs: 0, section: '' };
+  }
+  function runIsRecent(run) {
+    const ts = Date.parse(run.updated_at || run.created_at || '');
+    if (!Number.isFinite(ts)) return false;
+    return Date.now() - ts <= recentRunWindowMs;
   }
   function buildRunGroups() {
     const groups = new Map();
+    const readyIDs = readyConversationIDsFrom(allPRs());
     for (const run of allRuns()) {
       const id = groupIDForRun(run);
       if (!groups.has(id)) {
@@ -459,6 +466,8 @@
       const group = groups.get(id);
       group.runs.push(run);
       if (run.status === 'running') group.active += 1;
+      if (runIsRecent(run)) group.recent += 1;
+      if (readyIDs.has(run.conversation_id)) group.readyPRs += 1;
     }
     return groups;
   }
@@ -567,7 +576,10 @@
     return activeRuns().filter(runMatchesSelectedGroup);
   }
   function readyConversationIDs() {
-    return new Set(activePRs()
+    return readyConversationIDsFrom(activePRs());
+  }
+  function readyConversationIDsFrom(prs) {
+    return new Set((prs || [])
       .filter(pr => pr.validation_passed && pr.review_passed)
       .map(pr => pr.conversation_id));
   }
@@ -612,11 +624,11 @@
       }
       if (group.section) previousSection = group.section;
       const activeClass = group.id === state.selectedID ? ' is-active' : '';
-      const countClass = group.active > 0 ? ' has-active' : '';
-      const sub = group.active > 0 ? group.active + ' running' : group.runs.length + ' recent';
+      const countClass = group.readyPRs > 0 ? ' has-ready-prs' : '';
+      const sub = group.active > 0 ? group.active + ' running' : group.recent + ' recent';
       html.push('<button class="group-item' + activeClass + '" type="button" data-group-id="' + esc(group.id) + '">'
         + '<span><span class="group-name">' + esc(group.name) + '</span><span class="group-sub">' + esc(sub) + '</span></span>'
-        + '<span class="group-count' + countClass + '">' + esc(group.runs.length) + '</span>'
+        + '<span class="group-count' + countClass + '">' + esc(group.readyPRs) + '</span>'
         + '</button>');
     }
     list.innerHTML = html.join('');
@@ -729,7 +741,7 @@
         + '<div class="live-panel">'
         + '<div class="activity-current">'
         + '<div class="activity-head"><span class="activity-eyebrow">Current step</span><span class="activity-kicker"><span class="activity-kicker-text">' + esc(currentMilestoneLabel(run)) + '</span></span></div>'
-        + '<div class="activity-message">' + renderActivityMarkdown(run.activity, currentMilestoneLabel(run) + ' is running.') + '</div>'
+        + '<div class="activity-message">' + renderActivityMarkdown(run.activity, 'Waiting for latest activity.') + '</div>'
         + '</div>'
         + '</div>'
         + '</div>'
@@ -763,7 +775,7 @@
       ? (typeof renderMarkdown === 'function' ? renderMarkdown(raw) : esc(raw))
       : '';
     if (!renderedText(html)) {
-      const next = compact(fallback, 'Run is active.');
+      const next = compact(fallback, 'Waiting for latest activity.');
       html = typeof renderMarkdown === 'function' ? renderMarkdown(next) : esc(next);
     }
     return html;
@@ -1006,6 +1018,12 @@
     dialog.dataset.conversationId = conversationID || '';
     openDialog('run-delete-dialog');
   }
+  function openRunStopDialog(conversationID) {
+    if (!conversationID) return;
+    const dialog = byID('run-stop-dialog');
+    dialog.dataset.conversationId = conversationID || '';
+    openDialog('run-stop-dialog');
+  }
   function updateConversationTitle(conversationID, title) {
     const update = run => {
       if (run && run.conversation_id === conversationID) run.title = title;
@@ -1093,6 +1111,22 @@
     showToast('run-deleted', 'Chat deleted.', 'success', 2200);
     pollSoon();
   }
+  async function confirmRunStop() {
+    const dialog = byID('run-stop-dialog');
+    const conversationID = dialog.dataset.conversationId || '';
+    if (!conversationID) return;
+    const btn = byID('run-stop-confirm');
+    btn.disabled = true;
+    btn.textContent = 'Stopping...';
+    try {
+      closeDialog('run-stop-dialog');
+      await cancelConversation(conversationID);
+    } finally {
+      dialog.dataset.conversationId = '';
+      btn.disabled = false;
+      btn.textContent = 'Stop run';
+    }
+  }
   function updateResponsivePanelButtons() {
     const root = document.documentElement;
     const navBtn = byID('agent-nav-toggle');
@@ -1158,6 +1192,14 @@
       closeChatMetaPanel();
       stopDetailPoll();
       updateFollowupRunState(false);
+    }
+    if (id === 'run-stop-dialog') {
+      dialog.dataset.conversationId = '';
+      const btn = byID('run-stop-confirm');
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = 'Stop run';
+      }
     }
     if (dialog.close) dialog.close();
     else dialog.removeAttribute('open');
@@ -1736,7 +1778,8 @@
     });
     if (!latest) return;
     if (!blockHasDetailActivity(latest)) latest.classList.add('blk-awaiting-next');
-    latest.open = true;
+    const latestIsTool = latest.classList.contains('blk-kind-tool_use');
+    latest.open = !latestIsTool;
     const parentPhase = latest.closest('details.blk-kind-phase');
     if (parentPhase && parentPhase !== latest) {
       clearDetailActivity(parentPhase);
@@ -1793,7 +1836,7 @@
 
   function handleFollowupAction() {
     if (conversationIsRunning(state.activeChatID)) {
-      cancelConversation(state.activeChatID);
+      openRunStopDialog(state.activeChatID);
       return;
     }
     sendFollowup();
@@ -1978,6 +2021,8 @@
     });
     byID('run-delete-cancel').addEventListener('click', () => closeDialog('run-delete-dialog'));
     byID('run-delete-confirm').addEventListener('click', confirmRunDelete);
+    byID('run-stop-cancel').addEventListener('click', () => closeDialog('run-stop-dialog'));
+    byID('run-stop-confirm').addEventListener('click', confirmRunStop);
     byID('agent-nav-toggle').addEventListener('click', e => {
       e.stopPropagation();
       toggleResponsivePanel('nav');
@@ -2080,7 +2125,7 @@
       if (stopRunBtn) {
         e.preventDefault();
         closeRunActionMenu();
-        cancelConversation(stopRunBtn.dataset.stopRun);
+        openRunStopDialog(stopRunBtn.dataset.stopRun);
         return;
       }
       const runActionBtn = e.target.closest('[data-run-actions]');

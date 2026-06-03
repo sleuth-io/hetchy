@@ -185,6 +185,17 @@
   </div>
 </dialog>
 
+<dialog class="agent-dialog" id="run-stop-dialog" aria-labelledby="run-stop-title">
+  <div class="agent-dialog-body">
+    <h3 id="run-stop-title">Stop run?</h3>
+    <p>This will cancel the active run. Hetchy will keep the chat history and any work already saved.</p>
+  </div>
+  <div class="agent-dialog-actions">
+    <button class="agent-dialog-cancel" id="run-stop-cancel" type="button">Cancel</button>
+    <button class="agent-dialog-delete" id="run-stop-confirm" type="button">Stop run</button>
+  </div>
+</dialog>
+
 <dialog class="task-dialog" id="new-task-dialog">
   <form method="dialog" class="task-shell" id="new-task-form">
     <header class="dialog-head">

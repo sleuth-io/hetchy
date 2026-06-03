@@ -208,7 +208,7 @@ a { color: inherit; }
   font-size: .72rem;
   font-weight: 650;
 }
-.group-count.has-active { background: #dff0ff; color: #075a99; }
+.group-count.has-ready-prs { background: #dff0ff; color: #075a99; }
 .group-separator {
   border-top: 1px solid var(--line);
   margin: 7px 10px;
@@ -1539,6 +1539,7 @@ dialog::backdrop { background: rgba(0,0,0,.35); }
   border-radius: 0;
   background: transparent;
 }
+.blk-kind-tool_use[open] { border-color: transparent; }
 .blk-kind-tool_use > summary {
   padding: .2rem .25rem;
   cursor: default;
@@ -2303,7 +2304,7 @@ html.is-dark .user-menu-dropdown .item:hover {
   background: var(--hover);
 }
 html.is-dark .group-count { background: #303036; color: #c4c4c8; }
-html.is-dark .group-count.has-active { background: #1a2f48; color: var(--accent); }
+html.is-dark .group-count.has-ready-prs { background: #1a2f48; color: var(--accent); }
 html.is-dark .topbar {
   background: var(--surface);
 }
@@ -2520,6 +2521,7 @@ html.is-dark .blk-kind-tool_use {
   background: transparent;
   border-color: transparent;
 }
+html.is-dark .blk-kind-tool_use[open] { border-color: transparent; }
 html.is-dark .toast.warn { background: #332713; border-color: #805f1d; }
 html.is-dark .toast.error { background: #351919; border-color: #8a3535; }
 html.is-dark .toast.success { background: #17301e; border-color: #2d7040; }

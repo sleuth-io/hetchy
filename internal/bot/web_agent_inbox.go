@@ -288,7 +288,7 @@ func agentInboxStatus(state, outcome string) string {
 func agentInboxStateLabel(state, outcome string) string {
 	switch agentInboxStatus(state, outcome) {
 	case "running":
-		return "Run is active."
+		return "Waiting for latest activity."
 	case "needs_input":
 		return "Run finished without a pull request."
 	case "failed":
@@ -301,6 +301,36 @@ func agentInboxStateLabel(state, outcome string) string {
 }
 
 func agentInboxActivity(run runstore.Run, events []runstore.Event) string {
+	blocks := map[string]*agentInboxActivityBlock{}
+	blockOrder := make([]string, 0)
+	rememberBlock := func(payload sseEvent) *agentInboxActivityBlock {
+		if payload.ID == "" {
+			return nil
+		}
+		block := blocks[payload.ID]
+		if block == nil {
+			block = &agentInboxActivityBlock{}
+			blocks[payload.ID] = block
+			blockOrder = append(blockOrder, payload.ID)
+		}
+		if payload.Title != "" {
+			block.title = payload.Title
+		}
+		if payload.Summary != "" {
+			block.summary = payload.Summary
+		}
+		return block
+	}
+	for _, event := range events {
+		var payload sseEvent
+		if err := json.Unmarshal(event.Data, &payload); err != nil {
+			continue
+		}
+		block := rememberBlock(payload)
+		if block != nil && event.Event == "block_append" {
+			block.body.WriteString(payload.Delta)
+		}
+	}
 	for i := len(events) - 1; i >= 0; i-- {
 		var payload sseEvent
 		if err := json.Unmarshal(events[i].Data, &payload); err != nil {
@@ -312,7 +342,7 @@ func agentInboxActivity(run runstore.Run, events []runstore.Event) string {
 				return text
 			}
 		case "block_append":
-			if line := lastNonEmptyLine(payload.Delta); line != "" {
+			if line := activityTextForBlock(blocks[payload.ID]); line != "" {
 				return line
 			}
 		case "block_start":
@@ -320,12 +350,36 @@ func agentInboxActivity(run runstore.Run, events []runstore.Event) string {
 				return payload.Title
 			}
 		case "block_done":
-			if payload.Summary != "" {
-				return payload.Summary
+			if line := activityTextForBlock(blocks[payload.ID]); line != "" {
+				return line
 			}
 		}
 	}
+	for i := len(blockOrder) - 1; i >= 0; i-- {
+		if line := activityTextForBlock(blocks[blockOrder[i]]); line != "" {
+			return line
+		}
+	}
 	return friendlyRunCommandStep(run.CommandStep)
+}
+
+type agentInboxActivityBlock struct {
+	title   string
+	summary string
+	body    strings.Builder
+}
+
+func activityTextForBlock(block *agentInboxActivityBlock) string {
+	if block == nil {
+		return ""
+	}
+	if line := lastMeaningfulActivityLine(block.body.String()); line != "" {
+		return line
+	}
+	if text := strings.TrimSpace(block.title); text != "" {
+		return text
+	}
+	return strings.TrimSpace(block.summary)
 }
 
 func compactActivityText(parts ...string) string {
@@ -339,7 +393,7 @@ func compactActivityText(parts ...string) string {
 	return strings.Join(clean, ": ")
 }
 
-func lastNonEmptyLine(s string) string {
+func lastMeaningfulActivityLine(s string) string {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return ""
@@ -347,11 +401,19 @@ func lastNonEmptyLine(s string) string {
 	lines := strings.Split(s, "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
 		line := strings.TrimSpace(lines[i])
-		if line != "" {
+		if line != "" && !isMarkdownFenceLine(line) {
 			return line
 		}
 	}
 	return ""
+}
+
+func isMarkdownFenceLine(line string) bool {
+	line = strings.TrimSpace(line)
+	if len(line) < 3 {
+		return false
+	}
+	return strings.HasPrefix(line, "```") || strings.HasPrefix(line, "~~~")
 }
 
 func friendlyRunCommandStep(step string) string {
