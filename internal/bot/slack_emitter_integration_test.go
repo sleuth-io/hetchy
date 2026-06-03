@@ -386,8 +386,10 @@ func TestSlackEmitter_ClaudeTextFailDoesNotPostStepError(t *testing.T) {
 
 	e.Fail(textID, "stream failed")
 
-	if calls := fs.Calls(); len(calls) != 0 {
-		t.Fatalf("failed claude text should not post a Slack step error, got %+v", calls)
+	for _, c := range fs.Calls() {
+		if strings.Contains(c.Text, ":x:") {
+			t.Fatalf("failed claude text should not post a Slack step error, got %+v", fs.Calls())
+		}
 	}
 }
 

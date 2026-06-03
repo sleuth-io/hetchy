@@ -1,7 +1,6 @@
 package bot
 
 import (
-	"encoding/json"
 	"net/url"
 	"regexp"
 	"strings"
@@ -47,15 +46,16 @@ func agentInboxStateLabel(state, outcome string) string {
 }
 
 func agentInboxActivity(run runstore.Run, events []runstore.Event) string {
+	return agentInboxActivityFromEvents(run, runActivityEventsFromStore(events))
+}
+
+func agentInboxActivityFromEvents(run runstore.Run, events []runActivityEvent) string {
 	summary := summarizeAgentInboxEvents(events)
 	blocks := summary.blocks
 	blockOrder := summary.order
 	for i := len(events) - 1; i >= 0; i-- {
-		var payload sseEvent
-		if err := json.Unmarshal(events[i].Data, &payload); err != nil {
-			continue
-		}
-		switch events[i].Event {
+		payload := events[i].payload
+		switch events[i].name {
 		case "heartbeat":
 			if text := compactActivityText(payload.Title, payload.Delta); text != "" && activityLineIsUseful(text) {
 				return text
@@ -82,7 +82,7 @@ func agentInboxActivity(run runstore.Run, events []runstore.Event) string {
 	return friendlyRunCommandStep(run.CommandStep)
 }
 
-func summarizeAgentInboxEvents(events []runstore.Event) agentInboxEventSummary {
+func summarizeAgentInboxEvents(events []runActivityEvent) agentInboxEventSummary {
 	blocks := map[string]*agentInboxActivityBlock{}
 	blockOrder := make([]string, 0)
 	rememberBlock := func(payload sseEvent) *agentInboxActivityBlock {
@@ -107,12 +107,9 @@ func summarizeAgentInboxEvents(events []runstore.Event) agentInboxEventSummary {
 		return block
 	}
 	for _, event := range events {
-		var payload sseEvent
-		if err := json.Unmarshal(event.Data, &payload); err != nil {
-			continue
-		}
+		payload := event.payload
 		block := rememberBlock(payload)
-		if block != nil && event.Event == "block_append" {
+		if block != nil && event.name == "block_append" {
 			block.body.WriteString(payload.Delta)
 		}
 	}
@@ -231,6 +228,10 @@ func friendlyRunCommandStep(step string) string {
 }
 
 func agentInboxCurrentStep(run runstore.Run, events []runstore.Event) string {
+	return agentInboxCurrentStepFromEvents(run, runActivityEventsFromStore(events))
+}
+
+func agentInboxCurrentStepFromEvents(run runstore.Run, events []runActivityEvent) string {
 	if run.State == runstore.StateRecovering {
 		return "Recovering"
 	}
@@ -242,11 +243,8 @@ func agentInboxCurrentStep(run runstore.Run, events []runstore.Event) string {
 	}
 	summary := summarizeAgentInboxEvents(events)
 	for i := len(events) - 1; i >= 0; i-- {
-		var payload sseEvent
-		if err := json.Unmarshal(events[i].Data, &payload); err != nil {
-			continue
-		}
-		switch events[i].Event {
+		payload := events[i].payload
+		switch events[i].name {
 		case "heartbeat":
 			if step := currentStepFromLifecycleText(compactActivityText(payload.Title, payload.Delta)); step != "" {
 				return step

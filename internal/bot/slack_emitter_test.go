@@ -96,6 +96,59 @@ func TestNotifyIcon(t *testing.T) {
 	}
 }
 
+func TestSlackEmitterLiveSummaryUsesStageAndActivity(t *testing.T) {
+	e, _ := newTestSlackEmitter(t, "")
+
+	id := e.Start(blocks.KindClaudeText, "Thinking", nil)
+	e.Append(id, "I'll inspect the UI")
+
+	e.mu.Lock()
+	got := e.renderLive()
+	e.mu.Unlock()
+
+	if !strings.Contains(got, ":large_blue_circle: *Coding*") {
+		t.Fatalf("live summary should show coding stage, got %q", got)
+	}
+	if !strings.Contains(got, "I'll inspect the UI") {
+		t.Fatalf("live summary should show latest assistant activity, got %q", got)
+	}
+}
+
+func TestSlackEmitterLiveSummaryUsesValidationStage(t *testing.T) {
+	e, _ := newTestSlackEmitter(t, "")
+
+	id := e.Start(blocks.KindToolUse, "Running go test ./internal/bot", nil)
+	e.Append(id, "{\n  \"command\": \"go test ./internal/bot\"\n}")
+
+	e.mu.Lock()
+	got := e.renderLive()
+	e.mu.Unlock()
+
+	if !strings.Contains(got, ":large_blue_circle: *Validating*") {
+		t.Fatalf("live summary should show validating stage, got %q", got)
+	}
+	if !strings.Contains(got, "Running go test ./internal/bot") {
+		t.Fatalf("live summary should prefer tool title over JSON body, got %q", got)
+	}
+}
+
+func TestSlackEmitterHeartbeatUpdatesLiveSummary(t *testing.T) {
+	e, _ := newTestSlackEmitter(t, "")
+
+	e.Heartbeat("Still bootstrapping", "First-time repo setup has been running for 1m — still in progress.", "1m")
+
+	e.mu.Lock()
+	got := e.renderLive()
+	e.mu.Unlock()
+
+	if !strings.Contains(got, ":large_blue_circle: *Bootstrap*") {
+		t.Fatalf("heartbeat should update stage, got %q", got)
+	}
+	if !strings.Contains(got, "First-time repo setup") {
+		t.Fatalf("heartbeat should update latest activity, got %q", got)
+	}
+}
+
 // compactRequest cleans up the user's prompt for inclusion in the
 // terminal-state live message header. Multi-line prompts must
 // collapse to one line, pathological lengths must truncate, and

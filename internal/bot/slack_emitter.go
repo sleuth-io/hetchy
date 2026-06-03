@@ -24,7 +24,8 @@ import (
 //
 // Layout of the live message:
 //
-//	:hourglass_flowing_sand: <current activity title>
+//	:large_blue_circle: *Coding*
+//	Reading internal/bot/slack_emitter.go
 //	Read 4 · Edit 3 · Bash 2 · 1m 23s
 //
 // The live message is created lazily on the first non-Notify block so
@@ -73,8 +74,13 @@ type slackEmitter struct {
 	counters map[string]int
 
 	// current is the title of the most recently started block; what
-	// the user sees on the "Currently:" line of the live message.
+	// the live message falls back to if no activity summary is available.
 	current string
+
+	// activity tracks the same event shape the agent inbox cards use
+	// so Slack's live message can show the same high-level stage and
+	// latest useful activity without querying persisted run events.
+	activity liveRunActivitySummary
 
 	// lastUpdate throttles UpdateMessage calls. A burst of tool
 	// invocations can otherwise easily exceed Slack's chat.update
@@ -115,11 +121,12 @@ func newSlackEmitter(log *slog.Logger, cli *slack.Client, channel, threadTS, use
 	}
 }
 
-func (e *slackEmitter) Start(kind blocks.Kind, title string, _ map[string]any) string {
+func (e *slackEmitter) Start(kind blocks.Kind, title string, meta map[string]any) string {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	id := "s" + strconv.FormatUint(e.idGen.Add(1), 10)
 	e.open[id] = openBlock{kind: kind, title: title}
+	e.activity.Record("block_start", sseEvent{ID: id, Kind: kind, Title: title, Meta: meta})
 	// Notify/Result/Error blocks usually arrive through blocks.Tee as
 	// Start + optional Append + Done/Fail. Wait for the close so the
 	// posted Slack message includes the appended body. Terminal blocks
@@ -127,22 +134,15 @@ func (e *slackEmitter) Start(kind blocks.Kind, title string, _ map[string]any) s
 	if kind == blocks.KindNotify || kind == blocks.KindResult || kind == blocks.KindError {
 		return id
 	}
-	// Claude text is useful in the full transcript but a poor live-status
-	// header: the assistant often says "Done!" before Hetchy has finished
-	// validating, reflecting on bootstrap specs, persisting, and archiving.
-	// Keep the live Slack slot focused on setup/tool/final states.
-	if kind == blocks.KindClaudeText {
-		return id
-	}
 	e.current = title
 	e.refreshLive()
 	return id
 }
 
-// Append only buffers body text for one-shot Slack messages. Streaming
-// Claude/tool body deltas are intentionally not rendered on Slack: the
-// live message is a one-line status, and per-token edits would burn the
-// rate limit anyway.
+// Append buffers body text for one-shot Slack messages and updates the
+// shared activity summary for the live status slot. Edits are still
+// throttled by refreshLive; Slack gets a compact latest-line view, not
+// a separate chat.update for every token.
 func (e *slackEmitter) Append(id, delta string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -150,14 +150,15 @@ func (e *slackEmitter) Append(id, delta string) {
 	if !ok {
 		return
 	}
-	if b.kind != blocks.KindNotify && b.kind != blocks.KindResult && b.kind != blocks.KindError {
-		return
-	}
 	b.body += delta
 	e.open[id] = b
+	e.activity.Record("block_append", sseEvent{ID: id, Delta: delta})
+	if b.kind != blocks.KindNotify && b.kind != blocks.KindResult && b.kind != blocks.KindError {
+		e.refreshLive()
+	}
 }
 
-func (e *slackEmitter) Done(id, _ string) {
+func (e *slackEmitter) Done(id, summary string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	b, ok := e.open[id]
@@ -165,6 +166,7 @@ func (e *slackEmitter) Done(id, _ string) {
 	if !ok {
 		return
 	}
+	e.activity.Record("block_done", sseEvent{ID: id, Status: blocks.StatusDone, Summary: summary})
 	// Notify, Result, and Error are posted via their dedicated
 	// helpers; closing the matching block doesn't need to update
 	// the live message.
@@ -178,9 +180,6 @@ func (e *slackEmitter) Done(id, _ string) {
 	}
 	if b.kind == blocks.KindError {
 		e.postErrorLocked(b.title, b.body)
-		return
-	}
-	if b.kind == blocks.KindClaudeText {
 		return
 	}
 	if cat := categorise(b.kind, b.title); cat != "" {
@@ -204,6 +203,7 @@ func (e *slackEmitter) Fail(id, summary string) {
 		// the design exists to avoid. Match the Done() guard.
 		return
 	}
+	e.activity.Record("block_done", sseEvent{ID: id, Status: blocks.StatusError, Summary: summary})
 	if b.kind == blocks.KindError {
 		if summary != "" {
 			if b.body != "" {
@@ -230,9 +230,6 @@ func (e *slackEmitter) Fail(id, summary string) {
 		e.postNotifyLocked(b.title, b.body)
 		return
 	}
-	if b.kind == blocks.KindClaudeText {
-		return
-	}
 	// Non-terminal block failures are common while Claude explores:
 	// a missing file, a probing `ls`, a failed browser navigation, or
 	// a shell command whose non-zero exit is useful information rather
@@ -246,6 +243,13 @@ func (e *slackEmitter) Fail(id, summary string) {
 	if e.current == b.title {
 		e.current = ""
 	}
+	e.refreshLive()
+}
+
+func (e *slackEmitter) Heartbeat(title, body, elapsed string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.activity.Record("heartbeat", sseEvent{Title: title, Delta: body, Elapsed: elapsed})
 	e.refreshLive()
 }
 
@@ -403,24 +407,36 @@ func (e *slackEmitter) flushNow(now time.Time) {
 // command title containing `<!channel>` would otherwise broadcast on
 // the very first PostMessage of the live message.
 func (e *slackEmitter) renderLive() string {
-	icon := ":hourglass_flowing_sand:"
-	header := "Working…"
-	if e.current != "" {
-		header = mrkdwnEscape(e.current)
-	}
 	if e.terminated {
+		icon := ":white_check_mark:"
+		header := "Done"
 		if e.lastTerminalKind == blocks.KindError {
 			icon = ":x:"
 			header = "Stopped"
-		} else {
-			icon = ":white_check_mark:"
-			header = "Done"
 		}
 		if r := compactRequest(e.request); r != "" {
 			header += " — " + mrkdwnEscape(r)
 		}
+		parts := []string{icon + " " + header}
+		tail := e.renderCountersAndElapsed()
+		if tail != "" {
+			parts = append(parts, tail)
+		}
+		return strings.Join(parts, "\n")
 	}
-	parts := []string{icon + " " + header}
+	run := liveRunActivityFallback()
+	step := e.activity.CurrentStep(run)
+	if step == "" {
+		step = "Working"
+	}
+	activity := e.activity.Activity(run)
+	if activity == "" {
+		activity = e.current
+	}
+	parts := []string{":large_blue_circle: *" + mrkdwnEscape(step) + "*"}
+	if activity != "" && !strings.EqualFold(strings.TrimSpace(activity), strings.TrimSpace(step)) {
+		parts = append(parts, mrkdwnEscape(activity))
+	}
 	tail := e.renderCountersAndElapsed()
 	if tail != "" {
 		parts = append(parts, tail)
