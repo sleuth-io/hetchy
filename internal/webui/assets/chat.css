@@ -359,7 +359,8 @@
   html.meta-hidden #meta-sidebar { display: none; }
   #meta-ascii-art { background: #1a0000; border-bottom: 2px solid #6b0000;
                     text-align: center; padding: .75rem .5rem .5rem; }
-  #meta-ascii-art pre { margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  #meta-ascii-art pre { display: inline-block; text-align: left; margin: 0;
+                        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
                         font-size: .58rem; line-height: 1.35; color: #cc2200;
                         white-space: pre; letter-spacing: .02em; }
   .meta-section { padding: .85rem 1rem; border-bottom: 1px solid #f0f0f0; }
@@ -796,6 +797,8 @@
   html.is-dark #meta-toggle:hover { background: #2a2a2e; border-color: #3a3a40; }
   html.is-dark #meta-toggle[aria-pressed="true"] { background: #1f3a5c; border-color: #2a4a72; color: #7dc4ff; }
   html.is-dark #meta-sidebar { background: #1c1c1f; border-left-color: #2a2a2d; }
+  html.is-dark #meta-ascii-art { background: #200000; border-bottom-color: #4a0000; }
+  html.is-dark #meta-ascii-art pre { color: #ff3300; }
   html.is-dark .meta-section { border-bottom-color: #2a2a2d; }
   html.is-dark .meta-title { color: #8a8a90; }
   html.is-dark .meta-row .meta-label { color: #9a9aa0; }

@@ -422,6 +422,30 @@ func TestChatTemplate_SidebarUserMenu(t *testing.T) {
 	}
 }
 
+func TestChatTemplate_AsciiArtPanel(t *testing.T) {
+	b := newBypassBot(t)
+	rec := httptest.NewRecorder()
+	b.renderTemplate(rec, webui.Chat, map[string]any{
+		"Email":       "ada@example.com",
+		"DisplayName": "Ada Lovelace",
+		"GravatarURL": "https://example.com/avatar.png",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, w := range []string{
+		`id="meta-ascii-art"`,
+		`aria-hidden="true"`,
+		`B E W A R E`,
+		`dare`,
+	} {
+		if !strings.Contains(body, w) {
+			t.Errorf("chat template missing %q in ascii art panel", w)
+		}
+	}
+}
+
 func TestRunWeb_StartsAndStopsCleanly(t *testing.T) {
 	b := newBypassBot(t)
 	// Without a slack manager this would crash on Run; only exercise runWeb directly.
