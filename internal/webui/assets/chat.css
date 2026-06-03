@@ -371,6 +371,12 @@
   .meta-row.is-empty .meta-value { color: #b8b8b8; }
   .meta-empty { padding: 1rem; font-size: .82rem; color: #888;
                 text-align: center; }
+  .meta-ascii-art { padding: .6rem 0 .5rem; text-align: center;
+                    border-bottom: 1px solid #f0f0f0; }
+  .meta-ascii-art pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                        font-size: .6rem; line-height: 1.35; color: #c0392b;
+                        margin: 0; white-space: pre; display: inline-block;
+                        text-align: left; }
   .meta-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
                font-size: .78rem; }
 
@@ -791,6 +797,8 @@
   html.is-dark #meta-toggle:hover { background: #2a2a2e; border-color: #3a3a40; }
   html.is-dark #meta-toggle[aria-pressed="true"] { background: #1f3a5c; border-color: #2a4a72; color: #7dc4ff; }
   html.is-dark #meta-sidebar { background: #1c1c1f; border-left-color: #2a2a2d; }
+  html.is-dark .meta-ascii-art { border-bottom-color: #2a2a2d; }
+  html.is-dark .meta-ascii-art pre { color: #ff6b6b; }
   html.is-dark .meta-section { border-bottom-color: #2a2a2d; }
   html.is-dark .meta-title { color: #8a8a90; }
   html.is-dark .meta-row .meta-label { color: #9a9aa0; }
