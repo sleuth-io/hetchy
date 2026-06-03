@@ -138,6 +138,28 @@ func TestIndexHandler_AgentUIFeatureFlagSelectsSPA(t *testing.T) {
 	}
 }
 
+func TestIndexHandler_AgentUIFeatureFlagSelectsSPAPaths(t *testing.T) {
+	b := newBypassOrgBot(t, "admin")
+	b.workOSOrgHasFeatureFlagFn = func(context.Context, string, string) (bool, error) {
+		return true, nil
+	}
+
+	for _, path := range []string{"/agents/hetchy-bot", "/users/user_test", "/chats/chat_test"} {
+		t.Run(path, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			b.auth.Middleware(http.HandlerFunc(b.indexHandler)).ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d", rec.Code)
+			}
+			if !strings.Contains(rec.Body.String(), `src="/assets/agent_inbox.js`) {
+				t.Fatalf("agent inbox template missing agent_inbox.js, body=%s", rec.Body.String())
+			}
+		})
+	}
+}
+
 func TestIndexHandler_AgentUIFeatureFlagOffUsesOldChat(t *testing.T) {
 	b := newBypassOrgBot(t, "admin")
 	b.workOSOrgHasFeatureFlagFn = func(context.Context, string, string) (bool, error) {
@@ -157,6 +179,21 @@ func TestIndexHandler_AgentUIFeatureFlagOffUsesOldChat(t *testing.T) {
 	}
 	if strings.Contains(body, `src="/assets/agent_inbox.js`) {
 		t.Fatalf("old chat template should not load agent inbox runtime")
+	}
+}
+
+func TestIndexHandler_AgentUIFeatureFlagOffRejectsSPAPaths(t *testing.T) {
+	b := newBypassOrgBot(t, "admin")
+	b.workOSOrgHasFeatureFlagFn = func(context.Context, string, string) (bool, error) {
+		return false, nil
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/agents/hetchy-bot", nil)
+	b.auth.Middleware(http.HandlerFunc(b.indexHandler)).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
 	}
 }
 

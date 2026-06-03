@@ -14,7 +14,9 @@ import (
 )
 
 func (b *Bot) indexHandler(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
+	rootPath := r.URL.Path == "/"
+	agentInboxPath := isAgentInboxSPAPath(r.URL.Path)
+	if !rootPath && !agentInboxPath {
 		http.NotFound(w, r)
 		return
 	}
@@ -69,6 +71,10 @@ func (b *Bot) indexHandler(w http.ResponseWriter, r *http.Request) {
 	} else if enabled {
 		page = webui.AgentInbox
 	}
+	if agentInboxPath && page != webui.AgentInbox {
+		http.NotFound(w, r)
+		return
+	}
 	b.renderTemplate(w, page, map[string]any{
 		"Email":           p.Email,
 		"DisplayName":     displayName,
@@ -77,6 +83,12 @@ func (b *Bot) indexHandler(w http.ResponseWriter, r *http.Request) {
 		"OpenAIEnabled":   openaiEnabled,
 		"DefaultRepoSlug": defaultRepoSlug,
 	})
+}
+
+func isAgentInboxSPAPath(path string) bool {
+	return path == "/agents" || strings.HasPrefix(path, "/agents/") ||
+		path == "/users" || strings.HasPrefix(path, "/users/") ||
+		path == "/chats" || strings.HasPrefix(path, "/chats/")
 }
 
 func (b *Bot) agentUIEnabledForOrg(ctx context.Context, orgID string) (bool, error) {

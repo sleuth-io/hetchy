@@ -15,6 +15,8 @@
   const detailMaxSkillPreview = 4;
   const noAgentID = '__no_agent__';
   const unknownUserID = '__unknown_user__';
+  const routeEmptyGroupSegment = '-';
+  const validStatusFilters = new Set(['all', 'running', 'needs_input', 'failed', 'cancelled', 'ready_pr']);
 
   const modelOptions = [
     { value: 'opus', label: 'Opus', description: 'Most capable', provider: 'anthropic' },
@@ -63,6 +65,9 @@
     runActionTitle: '',
     stopInFlightFor: '',
     detailStickToBottom: true,
+    routeChatID: '',
+    applyingRoute: false,
+    suppressChatCloseSync: false,
   };
   let detailIsDownloading = false;
   let activeRunActionButton = null;
@@ -217,6 +222,128 @@
     return ct.startsWith('image/');
   }
 
+  function encodeRouteSegment(value) {
+    return encodeURIComponent(String(value || ''));
+  }
+  function decodeRouteSegment(value) {
+    try {
+      return decodeURIComponent(String(value || ''));
+    } catch (e) {
+      return String(value || '');
+    }
+  }
+  function routeSegmentForSelectedGroup() {
+    if (!state.selectedID) return '';
+    if (state.mode === 'agent' && state.selectedID === noAgentID) return routeEmptyGroupSegment;
+    if (state.mode === 'user' && state.selectedID === unknownUserID) return routeEmptyGroupSegment;
+    return state.selectedID;
+  }
+  function selectedGroupFromRoute(mode, params, segments) {
+    if (mode === 'user') {
+      if (segments[0] === 'users' && segments.length > 1) {
+        const segment = decodeRouteSegment(segments[1]);
+        return segment === routeEmptyGroupSegment ? unknownUserID : segment;
+      }
+      if (params.has('user')) return compact(params.get('user'), unknownUserID);
+      if (params.has('creator_id')) return compact(params.get('creator_id'), unknownUserID);
+      return '';
+    }
+    if (segments[0] === 'agents' && segments.length > 1) {
+      const segment = decodeRouteSegment(segments[1]);
+      return segment === routeEmptyGroupSegment ? noAgentID : segment;
+    }
+    if (params.has('agent')) return compact(params.get('agent'), noAgentID);
+    if (params.has('agent_slug')) return compact(params.get('agent_slug'), noAgentID);
+    return '';
+  }
+  function parseRoute() {
+    const params = new URLSearchParams(window.location.search);
+    const segments = window.location.pathname.split('/').filter(Boolean);
+    let mode = 'agent';
+    const modeParam = compact(params.get('mode') || params.get('view'), '').toLowerCase();
+    if (segments[0] === 'users' || modeParam === 'user' || modeParam === 'users') mode = 'user';
+    if (segments[0] === 'agents' || modeParam === 'agent' || modeParam === 'agents') mode = 'agent';
+
+    let routeChatID = '';
+    if (segments[0] === 'chats' && segments.length > 1) {
+      routeChatID = decodeRouteSegment(segments[1]);
+    }
+    routeChatID = compact(params.get('session') || params.get('chat') || routeChatID, '');
+
+    const status = compact(params.get('status') || params.get('filter'), 'all');
+    return {
+      mode,
+      selectedID: selectedGroupFromRoute(mode, params, segments),
+      statusFilter: validStatusFilters.has(status) ? status : 'all',
+      navQuery: compact(params.get('nav'), ''),
+      workQuery: compact(params.get('q') || params.get('search'), ''),
+      routeChatID,
+    };
+  }
+  function setModeButtonState() {
+    const agentBtn = byID('mode-agent');
+    const userBtn = byID('mode-user');
+    if (agentBtn) agentBtn.classList.toggle('is-active', state.mode === 'agent');
+    if (userBtn) userBtn.classList.toggle('is-active', state.mode === 'user');
+  }
+  function syncRouteInputs() {
+    setModeButtonState();
+    const navSearch = byID('nav-search');
+    const workSearch = byID('work-search');
+    if (navSearch && navSearch.value !== state.navQuery) navSearch.value = state.navQuery;
+    if (workSearch && workSearch.value !== state.workQuery) workSearch.value = state.workQuery;
+  }
+  function applyRouteState() {
+    const route = parseRoute();
+    state.applyingRoute = true;
+    state.mode = route.mode;
+    state.selectedID = route.selectedID;
+    state.statusFilter = route.statusFilter;
+    state.navQuery = route.navQuery;
+    state.workQuery = route.workQuery;
+    state.routeChatID = route.routeChatID;
+    state.selectedRunLimit = initialVisibleRuns;
+    state.workSearchKey = '';
+    state.workSearch = null;
+    syncRouteInputs();
+    state.applyingRoute = false;
+  }
+  function currentRouteURL() {
+    const params = new URLSearchParams();
+    let path;
+    if (state.activeChatID) {
+      path = '/chats/' + encodeRouteSegment(state.activeChatID);
+      params.set('view', state.mode === 'user' ? 'users' : 'agents');
+      if (state.mode === 'user') {
+        params.set('user', state.selectedID === unknownUserID ? '' : state.selectedID);
+      } else {
+        params.set('agent', state.selectedID === noAgentID ? '' : state.selectedID);
+      }
+    } else {
+      const base = state.mode === 'user' ? '/users' : '/agents';
+      const group = routeSegmentForSelectedGroup();
+      path = group ? base + '/' + encodeRouteSegment(group) : base;
+    }
+    if (state.statusFilter && state.statusFilter !== 'all') params.set('status', state.statusFilter);
+    if (state.workQuery.trim()) params.set('q', state.workQuery.trim());
+    if (state.navQuery.trim()) params.set('nav', state.navQuery.trim());
+    const query = params.toString();
+    return path + (query ? '?' + query : '');
+  }
+  function syncRouteURL(opts) {
+    if (state.applyingRoute || !window.history || !window.history.pushState) return;
+    const next = currentRouteURL();
+    const current = window.location.pathname + window.location.search;
+    if (next === current) return;
+    const method = opts && opts.replace ? 'replaceState' : 'pushState';
+    window.history[method]({ agentInbox: true }, '', next);
+  }
+  function resetScopedWorkSearch() {
+    state.selectedRunLimit = initialVisibleRuns;
+    state.workSearchKey = '';
+    state.workSearch = null;
+  }
+
   function showToast(key, message, kind, timeoutMs) {
     const stack = byID('toast-stack');
     if (!stack) return;
@@ -280,6 +407,8 @@
       state.data = data || { runs: [], pull_requests: [], counts: {} };
       ensureSelection();
       renderAll();
+      openRouteChat();
+      syncRouteURL({ replace: true });
     } catch (e) {
       showToast('sync', 'Could not refresh work state.', 'warn');
     } finally {
@@ -409,6 +538,16 @@
       return;
     }
     state.workSearchTimer = setTimeout(fetchWorkSearch, 250);
+  }
+
+  function openRouteChat() {
+    const conversationID = compact(state.routeChatID, '');
+    if (!conversationID) {
+      if (state.activeChatID) closeActiveChat({ syncURL: false });
+      return;
+    }
+    if (state.activeChatID === conversationID && byID('chat-detail-dialog')?.open) return;
+    openChat(conversationID, { syncURL: false });
   }
 
   function allRuns() {
@@ -1061,11 +1200,10 @@
       if (Array.isArray(state.workSearch.pull_requests)) state.workSearch.pull_requests = state.workSearch.pull_requests.filter(notConversation);
     }
     if (state.activeChatID === conversationID) {
-      closeDialog('chat-detail-dialog');
-      state.activeChatID = '';
-      state.activeDetail = null;
+      closeActiveChat({ replace: true });
     }
     ensureSelection();
+    syncRouteURL({ replace: true });
   }
   async function saveRunRename() {
     const input = byID('run-rename-input');
@@ -1206,8 +1344,23 @@
         btn.textContent = 'Stop run';
       }
     }
-    if (dialog.close) dialog.close();
+    if (dialog.close && dialog.open) dialog.close();
     else dialog.removeAttribute('open');
+  }
+  function clearActiveChatState(opts) {
+    const hadChat = !!state.activeChatID;
+    state.activeChatID = '';
+    state.routeChatID = '';
+    state.activeDetail = null;
+    if (hadChat && (!opts || opts.syncURL !== false)) {
+      syncRouteURL({ replace: !!(opts && opts.replace) });
+    }
+  }
+  function closeActiveChat(opts) {
+    state.suppressChatCloseSync = true;
+    closeDialog('chat-detail-dialog');
+    state.suppressChatCloseSync = false;
+    clearActiveChatState(opts);
   }
 
   function openNewTask() {
@@ -1354,12 +1507,14 @@
     }
   }
 
-  async function openChat(conversationID) {
+  async function openChat(conversationID, opts) {
     state.activeChatID = conversationID;
+    state.routeChatID = conversationID;
     state.detailStickToBottom = true;
     closeChatMetaPanel();
     stopDetailPoll();
     openDialog('chat-detail-dialog');
+    if (!opts || opts.syncURL !== false) syncRouteURL();
     byID('chat-log').innerHTML = '<div class="empty">Loading...</div>';
     await loadChatDetail(conversationID);
     scheduleDetailPoll(250);
@@ -1367,7 +1522,7 @@
   async function loadChatDetail(conversationID, opts) {
     try {
       const detail = await fetchJSON('/api/v1/conversations/' + encodeURIComponent(conversationID) + '?include=turns,attachments');
-      if (state.activeChatID && state.activeChatID !== conversationID) return null;
+      if (state.activeChatID !== conversationID) return null;
       state.activeDetail = detail;
       renderChatDetail(detail, opts || {});
       return detail;
@@ -1947,49 +2102,44 @@
     byID('mode-agent').addEventListener('click', () => {
       state.mode = 'agent';
       state.selectedID = '';
-      state.selectedRunLimit = initialVisibleRuns;
-      state.workSearchKey = '';
-      state.workSearch = null;
-      byID('mode-agent').classList.add('is-active');
-      byID('mode-user').classList.remove('is-active');
+      resetScopedWorkSearch();
+      setModeButtonState();
       ensureSelection();
       renderAll();
       scheduleWorkSearch();
+      syncRouteURL();
     });
     byID('mode-user').addEventListener('click', () => {
       state.mode = 'user';
       state.selectedID = '';
-      state.selectedRunLimit = initialVisibleRuns;
-      state.workSearchKey = '';
-      state.workSearch = null;
-      byID('mode-user').classList.add('is-active');
-      byID('mode-agent').classList.remove('is-active');
+      resetScopedWorkSearch();
+      setModeButtonState();
       ensureSelection();
       renderAll();
       scheduleWorkSearch();
+      syncRouteURL();
     });
     byID('group-list').addEventListener('click', e => {
       const btn = e.target.closest('[data-group-id]');
       if (!btn) return;
       state.selectedID = btn.dataset.groupId;
-      state.selectedRunLimit = initialVisibleRuns;
-      state.workSearchKey = '';
-      state.workSearch = null;
+      resetScopedWorkSearch();
       renderAll();
       scheduleWorkSearch();
+      syncRouteURL();
       if (window.matchMedia('(max-width: 820px)').matches) closeResponsivePanels();
     });
     byID('nav-search').addEventListener('input', e => {
       state.navQuery = e.target.value.trim();
       renderGroups();
+      syncRouteURL({ replace: true });
     });
     byID('work-search').addEventListener('input', e => {
       state.workQuery = e.target.value.trim();
-      state.selectedRunLimit = initialVisibleRuns;
-      state.workSearchKey = '';
-      state.workSearch = null;
+      resetScopedWorkSearch();
       renderAll();
       scheduleWorkSearch();
+      syncRouteURL({ replace: true });
     });
     document.querySelectorAll('[data-status-filter]').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -1997,6 +2147,7 @@
         state.statusFilter = state.statusFilter === next && next !== 'all' ? 'all' : next;
         state.selectedRunLimit = initialVisibleRuns;
         renderAll();
+        syncRouteURL();
       });
     });
     byID('show-more-btn').addEventListener('click', () => {
@@ -2182,9 +2333,10 @@
       }
       const closeBtn = e.target.closest('[data-close-dialog]');
       if (closeBtn) {
-        closeDialog(closeBtn.dataset.closeDialog);
         if (closeBtn.dataset.closeDialog === 'chat-detail-dialog') {
-          state.activeChatID = '';
+          closeActiveChat();
+        } else {
+          closeDialog(closeBtn.dataset.closeDialog);
         }
         return;
       }
@@ -2214,6 +2366,18 @@
       menu.hidden = !open;
       byID('user-menu-btn').setAttribute('aria-expanded', open ? 'true' : 'false');
     });
+    byID('chat-detail-dialog').addEventListener('close', () => {
+      if (state.suppressChatCloseSync || !state.activeChatID) return;
+      clearActiveChatState();
+    });
+    window.addEventListener('popstate', () => {
+      applyRouteState();
+      ensureSelection();
+      renderAll();
+      scheduleWorkSearch();
+      syncResponsivePanels();
+      openRouteChat();
+    });
     inputForAttachments('task').addEventListener('change', e => {
       addAttachments('task', Array.from(e.target.files || []));
       e.target.value = '';
@@ -2232,10 +2396,12 @@
 
   async function init() {
     bindEvents();
+    applyRouteState();
     syncResponsivePanels();
     renderAgentSelects();
     await loadSupportData();
     await fetchInbox();
+    scheduleWorkSearch();
   }
 
   init();
