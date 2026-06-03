@@ -818,6 +818,57 @@
     if (popover.hidden) openOnlyPopover(id, buttonID);
     else closePopover(id, buttonID);
   }
+  function updateResponsivePanelButtons() {
+    const root = document.documentElement;
+    const navBtn = byID('agent-nav-toggle');
+    const prBtn = byID('pr-sidebar-toggle');
+    if (navBtn) navBtn.setAttribute('aria-expanded', root.classList.contains('agent-nav-open') ? 'true' : 'false');
+    if (prBtn) prBtn.setAttribute('aria-expanded', root.classList.contains('agent-pr-open') ? 'true' : 'false');
+  }
+  function closeResponsivePanels() {
+    document.documentElement.classList.remove('agent-nav-open', 'agent-pr-open');
+    updateResponsivePanelButtons();
+  }
+  function toggleResponsivePanel(panel) {
+    const root = document.documentElement;
+    if (panel === 'nav') {
+      root.classList.toggle('agent-nav-open');
+      root.classList.remove('agent-pr-open');
+    } else if (panel === 'pr') {
+      root.classList.toggle('agent-pr-open');
+      root.classList.remove('agent-nav-open');
+    }
+    updateResponsivePanelButtons();
+  }
+  function syncResponsivePanels() {
+    const root = document.documentElement;
+    if (!window.matchMedia('(max-width: 820px)').matches) root.classList.remove('agent-nav-open');
+    if (!window.matchMedia('(max-width: 1180px)').matches) root.classList.remove('agent-pr-open');
+    if (!window.matchMedia('(max-width: 820px)').matches) closeChatMetaPanel();
+    updateResponsivePanelButtons();
+  }
+  function updateChatMetaButton() {
+    const dialog = byID('chat-detail-dialog');
+    const btn = byID('chat-meta-toggle');
+    if (!dialog || !btn) return;
+    btn.setAttribute('aria-expanded', dialog.classList.contains('chat-meta-open') ? 'true' : 'false');
+  }
+  function closeChatMetaPanel() {
+    const dialog = byID('chat-detail-dialog');
+    const scrim = byID('chat-meta-scrim');
+    if (dialog) dialog.classList.remove('chat-meta-open');
+    if (scrim) scrim.hidden = true;
+    updateChatMetaButton();
+  }
+  function toggleChatMetaPanel() {
+    const dialog = byID('chat-detail-dialog');
+    const scrim = byID('chat-meta-scrim');
+    if (!dialog) return;
+    const opening = !dialog.classList.contains('chat-meta-open');
+    dialog.classList.toggle('chat-meta-open', opening);
+    if (scrim) scrim.hidden = !opening;
+    updateChatMetaButton();
+  }
 
   function openDialog(id) {
     const dialog = byID(id);
@@ -828,6 +879,7 @@
   function closeDialog(id) {
     const dialog = byID(id);
     if (!dialog) return;
+    if (id === 'chat-detail-dialog') closeChatMetaPanel();
     if (dialog.close) dialog.close();
     else dialog.removeAttribute('open');
   }
@@ -948,6 +1000,7 @@
 
   async function openChat(conversationID) {
     state.activeChatID = conversationID;
+    closeChatMetaPanel();
     openDialog('chat-detail-dialog');
     byID('chat-log').innerHTML = '<div class="empty">Loading...</div>';
     await loadChatDetail(conversationID);
@@ -1424,6 +1477,7 @@
       state.workSearch = null;
       renderAll();
       scheduleWorkSearch();
+      if (window.matchMedia('(max-width: 820px)').matches) closeResponsivePanels();
     });
     byID('nav-search').addEventListener('input', e => {
       state.navQuery = e.target.value.trim();
@@ -1449,6 +1503,27 @@
       state.selectedRunLimit += initialVisibleRuns;
       renderRuns();
     });
+    byID('agent-nav-toggle').addEventListener('click', e => {
+      e.stopPropagation();
+      toggleResponsivePanel('nav');
+    });
+    byID('pr-sidebar-toggle').addEventListener('click', e => {
+      e.stopPropagation();
+      toggleResponsivePanel('pr');
+    });
+    byID('agent-overlay-scrim').addEventListener('click', closeResponsivePanels);
+    window.addEventListener('resize', syncResponsivePanels);
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape') {
+        closeResponsivePanels();
+        closeChatMetaPanel();
+      }
+    });
+    byID('chat-meta-toggle').addEventListener('click', e => {
+      e.stopPropagation();
+      toggleChatMetaPanel();
+    });
+    byID('chat-meta-scrim').addEventListener('click', closeChatMetaPanel);
     byID('run-list').addEventListener('keydown', e => {
       if (e.key !== 'Enter' && e.key !== ' ') return;
       const card = e.target.closest('[data-run-card]');
@@ -1614,6 +1689,7 @@
 
   async function init() {
     bindEvents();
+    syncResponsivePanels();
     renderAgentSelects();
     await loadSupportData();
     await fetchInbox();

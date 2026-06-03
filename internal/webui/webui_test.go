@@ -93,12 +93,18 @@ func TestRenderAgentInboxTemplate(t *testing.T) {
 		`src="/assets/chat_blocks.js`,
 		`src="/assets/agent_inbox.js`,
 		`id="agent-menu-btn"`,
+		`id="agent-nav-toggle"`,
+		`id="pr-sidebar-toggle"`,
+		`id="agent-overlay-scrim"`,
 		`id="work-search"`,
 		`data-status-filter="running"`,
 		`id="task-tools-popover"`,
 		`id="task-repo-popover"`,
 		`id="new-task-dialog"`,
 		`id="chat-detail-dialog"`,
+		`id="chat-meta-toggle"`,
+		`id="chat-meta-scrim"`,
+		`id="chat-meta"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("rendered agent inbox template missing %q", want)

@@ -14,7 +14,7 @@
 <div id="toast-stack" aria-live="polite" aria-atomic="true"></div>
 
 <div class="agent-app">
-  <aside class="agent-sidebar">
+  <aside id="agent-sidebar" class="agent-sidebar">
     <div class="sidebar-head">
       <div class="mode-toggle" role="group" aria-label="Group work by">
         <button id="mode-agent" class="mode-button is-active" type="button">Agents</button>
@@ -54,6 +54,13 @@
 
   <main class="work-main">
     <header class="topbar">
+      <button id="agent-nav-toggle" class="icon-button mobile-panel-button" type="button" aria-label="Open agents and users" aria-controls="agent-sidebar" aria-expanded="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 6h16"/>
+          <path d="M4 12h16"/>
+          <path d="M4 18h16"/>
+        </svg>
+      </button>
       <div class="topbar-title">
         <div class="selection-title-row">
           <h1 id="selection-title">Agent work</h1>
@@ -67,6 +74,15 @@
             <path d="M5 12h14"/>
           </svg>
           <span>New chat</span>
+        </button>
+        <button id="pr-sidebar-toggle" class="icon-button pr-panel-button" type="button" aria-label="Open ready pull requests" aria-controls="pr-sidebar" aria-expanded="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M7 7h10"/>
+            <path d="M7 12h10"/>
+            <path d="M7 17h6"/>
+            <path d="m3.5 7 .5.5 1.5-1.5"/>
+            <path d="m3.5 12 .5.5 1.5-1.5"/>
+          </svg>
         </button>
         <button id="agent-menu-btn" class="icon-button" type="button" aria-label="Agent settings" aria-haspopup="menu" aria-expanded="false">
           <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
@@ -129,7 +145,7 @@
     </section>
   </main>
 
-  <aside class="pr-sidebar" aria-label="Pull requests">
+  <aside id="pr-sidebar" class="pr-sidebar" aria-label="Pull requests">
     <div class="pr-head">
       <h2>Ready Pull Requests</h2>
       <span id="pr-count">0</span>
@@ -139,6 +155,7 @@
     </div>
   </aside>
 </div>
+<div id="agent-overlay-scrim" hidden></div>
 
 <dialog class="task-dialog" id="new-task-dialog">
   <form method="dialog" class="task-shell" id="new-task-form">
@@ -275,12 +292,24 @@
         <h2 id="chat-detail-title">Chat details</h2>
         <p id="chat-detail-sub">Loading...</p>
       </div>
-      <button class="icon-button close-button" type="button" data-close-dialog="chat-detail-dialog" aria-label="Close">
-        <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M18 6 6 18"/>
-          <path d="m6 6 12 12"/>
-        </svg>
-      </button>
+      <div class="chat-head-actions">
+        <button id="chat-meta-toggle" class="icon-button chat-meta-toggle" type="button" aria-label="Show chat details" aria-controls="chat-meta" aria-expanded="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M7 7h10"/>
+            <path d="M7 12h10"/>
+            <path d="M7 17h6"/>
+            <circle cx="4" cy="7" r=".5"/>
+            <circle cx="4" cy="12" r=".5"/>
+            <circle cx="4" cy="17" r=".5"/>
+          </svg>
+        </button>
+        <button class="icon-button close-button" type="button" data-close-dialog="chat-detail-dialog" aria-label="Close">
+          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M18 6 6 18"/>
+            <path d="m6 6 12 12"/>
+          </svg>
+        </button>
+      </div>
     </header>
     <div class="chat-body">
       <section class="chat-pane">
@@ -307,7 +336,8 @@
           </div>
         </div>
       </section>
-      <aside class="chat-meta" aria-label="Chat metadata">
+      <div id="chat-meta-scrim" class="chat-meta-scrim" hidden></div>
+      <aside id="chat-meta" class="chat-meta" aria-label="Chat metadata">
         <div id="detail-meta-content">
           <div class="meta-empty">No chat details yet.</div>
         </div>
