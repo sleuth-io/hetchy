@@ -2,12 +2,9 @@ package bot
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"strings"
 	"time"
-
-	"github.com/jackc/pgx/v5"
 
 	"github.com/hetchyhq/hetchy/internal/auth"
 	"github.com/hetchyhq/hetchy/internal/convstore"
@@ -243,9 +240,7 @@ func (b *Bot) latestRunsForInbox(ctx context.Context, orgID string, recs []convs
 	}
 	runs, err := b.runs.LatestForThreads(ctx, orgID, threadIDs)
 	if err != nil {
-		if !errors.Is(err, pgx.ErrNoRows) {
-			b.log.Warn("agent inbox latest runs", "org", orgID, "threads", len(threadIDs), "error", err)
-		}
+		b.log.Warn("agent inbox latest runs", "org", orgID, "threads", len(threadIDs), "error", err)
 		return out
 	}
 	return runs
