@@ -346,28 +346,77 @@
     if (state.mode === 'user') return userName(id);
     return id === noAgentID ? 'No agent' : agentName(id);
   }
-  function buildGroups() {
+  function compareGroupsByName(a, b) {
+    const byName = String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base' });
+    if (byName !== 0) return byName;
+    return String(a.id || '').localeCompare(String(b.id || ''), undefined, { sensitivity: 'base' });
+  }
+  function makeEmptyGroup(id) {
+    return { id, name: groupName(id), runs: [], active: 0, section: '' };
+  }
+  function buildRunGroups() {
     const groups = new Map();
     for (const run of allRuns()) {
       const id = groupIDForRun(run);
       if (!groups.has(id)) {
-        groups.set(id, { id, name: groupName(id), runs: [], active: 0 });
+        groups.set(id, makeEmptyGroup(id));
       }
       const group = groups.get(id);
       group.runs.push(run);
       if (run.status === 'running') group.active += 1;
     }
-    let out = Array.from(groups.values());
+    return groups;
+  }
+  function buildAgentGroups() {
+    const groups = buildRunGroups();
+    for (const agent of state.agents) {
+      const id = compact(agent.slug, '');
+      if (!id) continue;
+      if (!groups.has(id)) groups.set(id, makeEmptyGroup(id));
+    }
+    if (!groups.has(noAgentID)) groups.set(noAgentID, makeEmptyGroup(noAgentID));
+
+    const custom = [];
+    const builtIn = [];
+    let noAgent = null;
+    for (const group of groups.values()) {
+      if (group.id === noAgentID) {
+        group.section = 'none';
+        noAgent = group;
+        continue;
+      }
+      const agent = agentForSlug(group.id);
+      if (agent && agent.built_in) {
+        group.section = 'builtin';
+        builtIn.push(group);
+      } else {
+        group.section = 'custom';
+        custom.push(group);
+      }
+    }
+    const out = custom.sort(compareGroupsByName);
+    if (noAgent) out.push(noAgent);
+    out.push.apply(out, builtIn.sort(compareGroupsByName));
+    return out;
+  }
+  function buildGroups() {
+    let out;
+    if (state.mode === 'agent') {
+      out = buildAgentGroups();
+    } else {
+      const groups = buildRunGroups();
+      out = Array.from(groups.values()).sort((a, b) => {
+        if (a.active !== b.active) return b.active - a.active;
+        const at = Math.max.apply(null, a.runs.map(run => Date.parse(run.updated_at) || 0));
+        const bt = Math.max.apply(null, b.runs.map(run => Date.parse(run.updated_at) || 0));
+        return bt - at;
+      });
+    }
     const needle = state.navQuery.trim().toLowerCase();
     if (needle) {
       out = out.filter(group => group.name.toLowerCase().includes(needle));
     }
-    return out.sort((a, b) => {
-      if (a.active !== b.active) return b.active - a.active;
-      const at = Math.max.apply(null, a.runs.map(run => Date.parse(run.updated_at) || 0));
-      const bt = Math.max.apply(null, b.runs.map(run => Date.parse(run.updated_at) || 0));
-      return bt - at;
-    });
+    return out;
   }
   function buildAllGroups() {
     const prev = state.navQuery;
@@ -383,7 +432,8 @@
       return;
     }
     if (!state.selectedID || !groups.some(group => group.id === state.selectedID)) {
-      state.selectedID = groups[0].id;
+      const firstWithWork = groups.find(group => group.runs.length > 0);
+      state.selectedID = (firstWithWork || groups[0]).id;
       state.selectedRunLimit = initialVisibleRuns;
     }
   }
@@ -443,15 +493,22 @@
       list.innerHTML = '<div class="empty">No work found.</div>';
       return;
     }
-    list.innerHTML = groups.map(group => {
+    const html = [];
+    let previousSection = '';
+    for (const group of groups) {
+      if (group.section && previousSection && group.section !== previousSection) {
+        html.push('<div class="group-separator" role="separator"></div>');
+      }
+      if (group.section) previousSection = group.section;
       const activeClass = group.id === state.selectedID ? ' is-active' : '';
       const countClass = group.active > 0 ? ' has-active' : '';
       const sub = group.active > 0 ? group.active + ' running' : group.runs.length + ' recent';
-      return '<button class="group-item' + activeClass + '" type="button" data-group-id="' + esc(group.id) + '">'
+      html.push('<button class="group-item' + activeClass + '" type="button" data-group-id="' + esc(group.id) + '">'
         + '<span><span class="group-name">' + esc(group.name) + '</span><span class="group-sub">' + esc(sub) + '</span></span>'
         + '<span class="group-count' + countClass + '">' + esc(group.runs.length) + '</span>'
-        + '</button>';
-    }).join('');
+        + '</button>');
+    }
+    list.innerHTML = html.join('');
   }
 
   function selectedRuns() {

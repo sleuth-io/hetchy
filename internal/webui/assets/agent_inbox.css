@@ -206,6 +206,10 @@ a { color: inherit; }
   font-weight: 650;
 }
 .group-count.has-active { background: #dff0ff; color: #075a99; }
+.group-separator {
+  border-top: 1px solid var(--line);
+  margin: 7px 10px;
+}
 
 .user-menu {
   position: relative;

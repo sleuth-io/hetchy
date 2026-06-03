@@ -224,6 +224,34 @@ the new PEM into Doppler, redeploy, then delete the old key on
 GitHub. Cached installation tokens stay valid for up to an hour
 across rotations, so there's no traffic dip.
 
+#### Backfill stored pull request state
+
+Hetchy stores GitHub pull request state from GitHub App webhooks so the
+agent inbox can hide PRs that are already closed or merged. If the
+columns were just added, webhooks were disabled, or you need to refresh
+old rows, run the one-shot backfill after migrations are applied:
+
+```bash
+make build
+doppler run -- ./dist/hetchy --backfill-pr-states
+```
+
+Useful flags:
+
+```bash
+# Scan more than the default 1000 conversations.
+doppler run -- ./dist/hetchy --backfill-pr-states --backfill-pr-states-limit 5000
+
+# Refresh rows even if they already have pr_state_checked_at.
+doppler run -- ./dist/hetchy --backfill-pr-states --backfill-pr-states-force
+```
+
+The command writes only the stored PR state columns on matching
+conversations. It logs start, candidate count, periodic progress, row
+failures, and final counts. In a deployed container the binary is
+`/app/hetchy`; run the same flags with that binary and the target
+environment's normal secrets loaded.
+
 ### 4. Set Up Daytona Cloud
 
 Set in Doppler:
