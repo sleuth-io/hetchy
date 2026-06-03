@@ -184,6 +184,31 @@ func TestSlackEmitter_RoutineProgressNotifiesAreSilent(t *testing.T) {
 	}
 }
 
+func TestSlackEmitter_StateChangeNotifiesPost(t *testing.T) {
+	e, fs := newTestSlackEmitter(t, "")
+	emit := blocks.Tee(blocks.NewRecorder(0), e)
+
+	emit.Notify("Sandbox replaced", "Daytona was still changing state, so Hetchy created a replacement.")
+	emit.Notify("Starting new PR", "Creating a fresh branch for a new pull request.")
+
+	calls := fs.Calls()
+	if len(calls) != 2 {
+		t.Fatalf("want 2 state-change notify posts, got %d: %+v", len(calls), calls)
+	}
+	for _, want := range []string{"Sandbox replaced", "Starting new PR"} {
+		found := false
+		for _, c := range calls {
+			if strings.Contains(c.Text, want) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("missing Slack notify %q in calls %+v", want, calls)
+		}
+	}
+}
+
 // TestSlackEmitter_FailUnknownIDIsNoOp pins the long-flagged regression:
 // Fail() with an unregistered id (double-terminate, post-Abort) used
 // to post a spurious ":x: Step failed" into the thread, the exact

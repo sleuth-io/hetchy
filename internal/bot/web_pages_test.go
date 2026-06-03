@@ -110,14 +110,8 @@ func TestIndexHandler_OpenAIEnabled(t *testing.T) {
 	}
 }
 
-func TestIndexHandler_AgentUIFeatureFlagSelectsSPA(t *testing.T) {
+func TestIndexHandler_RendersAgentInbox(t *testing.T) {
 	b := newBypassOrgBot(t, "admin")
-	b.workOSOrgHasFeatureFlagFn = func(_ context.Context, orgID, slug string) (bool, error) {
-		if orgID != "org_test" || slug != workOSAgentUIFlagSlug {
-			t.Fatalf("feature flag lookup = (%q, %q), want org_test/%s", orgID, slug, workOSAgentUIFlagSlug)
-		}
-		return true, nil
-	}
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -139,16 +133,10 @@ func TestIndexHandler_AgentUIFeatureFlagSelectsSPA(t *testing.T) {
 	if !strings.Contains(body, `href="/assets/agent_inbox_responsive.css`) {
 		t.Fatalf("agent inbox template missing split agent inbox styles, body=%s", body)
 	}
-	if strings.Contains(body, `src="/assets/chat_core.js`) {
-		t.Fatalf("agent inbox template should not load old chat runtime")
-	}
 }
 
-func TestIndexHandler_AgentUIFeatureFlagSelectsSPAPaths(t *testing.T) {
+func TestIndexHandler_RendersAgentInboxSPAPaths(t *testing.T) {
 	b := newBypassOrgBot(t, "admin")
-	b.workOSOrgHasFeatureFlagFn = func(context.Context, string, string) (bool, error) {
-		return true, nil
-	}
 
 	for _, path := range []string{"/agents/hetchy-bot", "/users/user_test", "/chats/chat_test"} {
 		t.Run(path, func(t *testing.T) {
@@ -166,43 +154,6 @@ func TestIndexHandler_AgentUIFeatureFlagSelectsSPAPaths(t *testing.T) {
 				t.Fatalf("agent inbox template missing split agent inbox runtime, body=%s", rec.Body.String())
 			}
 		})
-	}
-}
-
-func TestIndexHandler_AgentUIFeatureFlagOffUsesOldChat(t *testing.T) {
-	b := newBypassOrgBot(t, "admin")
-	b.workOSOrgHasFeatureFlagFn = func(context.Context, string, string) (bool, error) {
-		return false, nil
-	}
-
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	b.auth.Middleware(http.HandlerFunc(b.indexHandler)).ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d", rec.Code)
-	}
-	body := rec.Body.String()
-	if !strings.Contains(body, `src="/assets/chat_core.js`) {
-		t.Fatalf("old chat template missing chat_core.js, body=%s", body)
-	}
-	if strings.Contains(body, `src="/assets/agent_inbox.js`) {
-		t.Fatalf("old chat template should not load agent inbox runtime")
-	}
-}
-
-func TestIndexHandler_AgentUIFeatureFlagOffRejectsSPAPaths(t *testing.T) {
-	b := newBypassOrgBot(t, "admin")
-	b.workOSOrgHasFeatureFlagFn = func(context.Context, string, string) (bool, error) {
-		return false, nil
-	}
-
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/agents/hetchy-bot", nil)
-	b.auth.Middleware(http.HandlerFunc(b.indexHandler)).ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want 404", rec.Code)
 	}
 }
 
@@ -247,8 +198,8 @@ func TestPageTemplates_RenderFavicon(t *testing.T) {
 		data any
 	}{
 		{
-			name: "chat",
-			body: webui.Chat,
+			name: "agent inbox",
+			body: webui.AgentInbox,
 			data: map[string]any{
 				"Email":       "u@x",
 				"DisplayName": "Test User",
@@ -482,14 +433,13 @@ func TestProfileTemplate_Renders(t *testing.T) {
 	}
 }
 
-// TestChatTemplate_SidebarUserMenu verifies the chat page renders the
+// TestAgentInboxTemplate_SidebarUserMenu verifies the inbox renders the
 // user menu at the bottom of the sidebar (with User settings,
-// Organization settings, and Log out entries) and no longer shows the
-// old top-nav bar with a separate Settings link.
-func TestChatTemplate_SidebarUserMenu(t *testing.T) {
+// Organization settings, and Log out entries).
+func TestAgentInboxTemplate_SidebarUserMenu(t *testing.T) {
 	b := newBypassBot(t)
 	rec := httptest.NewRecorder()
-	b.renderTemplate(rec, webui.Chat, map[string]any{
+	b.renderTemplate(rec, webui.AgentInbox, map[string]any{
 		"Email":       "ada@example.com",
 		"DisplayName": "Ada Lovelace",
 		"GravatarURL": "https://example.com/avatar.png",
@@ -499,7 +449,7 @@ func TestChatTemplate_SidebarUserMenu(t *testing.T) {
 	}
 	body := rec.Body.String()
 	for _, w := range []string{
-		`id="sidebar"`,
+		`id="agent-sidebar"`,
 		`class="user-menu"`,
 		`id="user-menu-btn"`,
 		`href="/settings/profile"`,
@@ -512,9 +462,6 @@ func TestChatTemplate_SidebarUserMenu(t *testing.T) {
 		if !strings.Contains(body, w) {
 			t.Errorf("chat template missing %q", w)
 		}
-	}
-	if strings.Contains(body, `id="topbar"`) {
-		t.Errorf("chat template should no longer render the top nav bar")
 	}
 }
 

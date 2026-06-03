@@ -1,7 +1,6 @@
 package bot
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -65,17 +64,7 @@ func (b *Bot) indexHandler(w http.ResponseWriter, r *http.Request) {
 			b.log.Warn("org config fetch for chat page failed", "error", err, "org", p.OrgID)
 		}
 	}
-	page := webui.Chat
-	if enabled, err := b.agentUIEnabledForOrg(r.Context(), p.OrgID); err != nil {
-		b.log.Warn("workos agent UI flag lookup failed", "error", err, "org", p.OrgID)
-	} else if enabled {
-		page = webui.AgentInbox
-	}
-	if agentInboxPath && page != webui.AgentInbox {
-		http.NotFound(w, r)
-		return
-	}
-	b.renderTemplate(w, page, map[string]any{
+	b.renderTemplate(w, webui.AgentInbox, map[string]any{
 		"Email":           p.Email,
 		"DisplayName":     displayName,
 		"GravatarURL":     webui.GravatarURL(p.Email),
@@ -90,13 +79,6 @@ func isAgentInboxSPAPath(path string) bool {
 	return path == "/agents" || strings.HasPrefix(path, "/agents/") ||
 		path == "/users" || strings.HasPrefix(path, "/users/") ||
 		path == "/chats" || strings.HasPrefix(path, "/chats/")
-}
-
-func (b *Bot) agentUIEnabledForOrg(ctx context.Context, orgID string) (bool, error) {
-	if b == nil || !b.workOSOrgFeatureFlagsConfigured() {
-		return false, nil
-	}
-	return b.workOSOrgHasFeatureFlag(ctx, orgID, workOSAgentUIFlagSlug)
 }
 
 func (b *Bot) onboardingHandler(w http.ResponseWriter, r *http.Request) {

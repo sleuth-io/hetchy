@@ -74,8 +74,13 @@ type Record struct {
 	// TaskOptions is a generic per-chat bag for composer task toggles.
 	// Missing keys are meaningful: callers decide their own defaults.
 	TaskOptions map[string]bool
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	// AwaitingRepo is true only after Hetchy explicitly asked the user
+	// to choose a repository for this conversation. Slack uses this to
+	// attach a bare owner/name reply without matching unrelated repo-less
+	// conversations.
+	AwaitingRepo bool
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 // Attachment is a user-supplied file attached to one prompt turn.
@@ -266,6 +271,7 @@ func (s *Store) Upsert(ctx context.Context, r Record) error {
 		AgentSlug:      r.AgentSlug,
 		Model:          r.Model,
 		TaskOptions:    encodeTaskOptions(r.TaskOptions),
+		AwaitingRepo:   r.AwaitingRepo,
 	})
 	if err != nil {
 		return fmt.Errorf("upsert conversation: %w", err)
@@ -517,6 +523,7 @@ type rowFields struct {
 	CreatorID                                 string
 	AgentSlug, Model                          string
 	TaskOptions                               []byte
+	AwaitingRepo                              bool
 	CreatedAt, UpdatedAt                      pgtype.Timestamptz
 }
 
@@ -550,6 +557,7 @@ func recordFromFields(f rowFields) (Record, error) {
 		AgentSlug:        f.AgentSlug,
 		Model:            f.Model,
 		TaskOptions:      taskOptions,
+		AwaitingRepo:     f.AwaitingRepo,
 		CreatedAt:        f.CreatedAt.Time,
 		UpdatedAt:        f.UpdatedAt.Time,
 	}, nil
@@ -564,8 +572,9 @@ func recordFromGetRow(row sqlc.GetConversationRow) (Record, error) {
 		ResponseBlocks: row.ResponseBlocks,
 		GithubOwner:    row.GithubOwner, GithubRepo: row.GithubRepo,
 		CustomTitle: row.CustomTitle, CreatorID: row.CreatorID, AgentSlug: row.AgentSlug, Model: row.Model,
-		TaskOptions: row.TaskOptions,
-		CreatedAt:   row.CreatedAt, UpdatedAt: row.UpdatedAt,
+		TaskOptions:  row.TaskOptions,
+		AwaitingRepo: row.AwaitingRepo,
+		CreatedAt:    row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	})
 }
 
@@ -578,8 +587,9 @@ func recordFromSearchRow(row sqlc.SearchConversationsRow) (Record, error) {
 		ResponseBlocks: row.ResponseBlocks,
 		GithubOwner:    row.GithubOwner, GithubRepo: row.GithubRepo,
 		CustomTitle: row.CustomTitle, CreatorID: row.CreatorID, AgentSlug: row.AgentSlug, Model: row.Model,
-		TaskOptions: row.TaskOptions,
-		CreatedAt:   row.CreatedAt, UpdatedAt: row.UpdatedAt,
+		TaskOptions:  row.TaskOptions,
+		AwaitingRepo: row.AwaitingRepo,
+		CreatedAt:    row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	})
 }
 

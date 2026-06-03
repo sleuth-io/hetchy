@@ -557,9 +557,8 @@ func (b *Bot) serveConversationDetail(w http.ResponseWriter, r *http.Request, th
 			http.Error(w, "title is required", http.StatusBadRequest)
 			return
 		}
-		// Cap server-side at 200 runes — the chat.html input has the same
-		// maxlength, but a direct API client could otherwise persist an
-		// unbounded string into the DB.
+		// Cap server-side at 200 runes because direct API clients bypass
+		// the browser input limit.
 		if runes := []rune(title); len(runes) > 200 {
 			http.Error(w, "title must be 200 characters or fewer", http.StatusBadRequest)
 			return

@@ -546,12 +546,11 @@ func (b *Bot) chatCancelHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
-// chatStreamHandler is the reattach endpoint. Hit by chat.html on
-// page load: if a live run is in flight for this (org, session) the
-// browser receives the full event history (replayed) followed by
-// the live event stream until the run ends. If no run is active,
-// returns 404 — the client falls back to /api/v1/conversations to
-// render the persisted snapshot.
+// chatStreamHandler is the reattach endpoint. If a live run is in
+// flight for this (org, session), the browser receives the full event
+// history followed by the live event stream until the run ends. If no
+// run is active, returns 404 so the client can render the persisted
+// snapshot from /api/v1/conversations.
 func (b *Bot) chatStreamHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

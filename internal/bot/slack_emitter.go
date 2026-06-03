@@ -557,7 +557,10 @@ func notifyIcon(title string) string {
 // available" are already represented by the edited live status message.
 func isSlackPostedNotify(title string) bool {
 	title = strings.TrimSpace(title)
-	if title == "Starting" || title == "Resuming" {
+	if title == "Starting" ||
+		title == "Resuming" ||
+		title == "Sandbox replaced" ||
+		title == "Starting new PR" {
 		return true
 	}
 	return strings.Contains(title, "?") || strings.HasPrefix(title, "Try ")

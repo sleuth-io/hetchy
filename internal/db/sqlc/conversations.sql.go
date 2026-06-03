@@ -44,7 +44,7 @@ func (q *Queries) DeleteConversationAttachmentsForTurn(ctx context.Context, arg 
 const getConversation = `-- name: GetConversation :one
 SELECT org_id, thread_id, sandbox_id, branch, pr_url, pr_state, pr_merged, pr_merged_at, pr_closed_at,
        pr_state_checked_at, history, created_at, updated_at, response_blocks,
-       github_owner, github_repo, custom_title, creator_id, agent_slug, model, task_options
+       github_owner, github_repo, custom_title, creator_id, agent_slug, model, task_options, awaiting_repo
 FROM conversations
 WHERE org_id = $1 AND thread_id = $2
 `
@@ -76,6 +76,7 @@ type GetConversationRow struct {
 	AgentSlug        string             `json:"agent_slug"`
 	Model            string             `json:"model"`
 	TaskOptions      []byte             `json:"task_options"`
+	AwaitingRepo     bool               `json:"awaiting_repo"`
 }
 
 func (q *Queries) GetConversation(ctx context.Context, arg GetConversationParams) (GetConversationRow, error) {
@@ -103,6 +104,7 @@ func (q *Queries) GetConversation(ctx context.Context, arg GetConversationParams
 		&i.AgentSlug,
 		&i.Model,
 		&i.TaskOptions,
+		&i.AwaitingRepo,
 	)
 	return i, err
 }
@@ -569,7 +571,7 @@ func (q *Queries) SaveConversationTaskOptions(ctx context.Context, arg SaveConve
 const searchConversations = `-- name: SearchConversations :many
 SELECT org_id, thread_id, sandbox_id, branch, pr_url, pr_state, pr_merged, pr_merged_at, pr_closed_at,
        pr_state_checked_at, history, created_at, updated_at, response_blocks,
-       github_owner, github_repo, custom_title, creator_id, agent_slug, model, task_options
+       github_owner, github_repo, custom_title, creator_id, agent_slug, model, task_options, awaiting_repo
 FROM conversations
 WHERE org_id = $1
   AND (NOT $2::bool OR creator_id = $3)
@@ -617,6 +619,7 @@ type SearchConversationsRow struct {
 	AgentSlug        string             `json:"agent_slug"`
 	Model            string             `json:"model"`
 	TaskOptions      []byte             `json:"task_options"`
+	AwaitingRepo     bool               `json:"awaiting_repo"`
 }
 
 // Backs the sidebar list. Filters by optional creator_id, optional
@@ -694,6 +697,7 @@ func (q *Queries) SearchConversations(ctx context.Context, arg SearchConversatio
 			&i.AgentSlug,
 			&i.Model,
 			&i.TaskOptions,
+			&i.AwaitingRepo,
 		); err != nil {
 			return nil, err
 		}
@@ -708,9 +712,9 @@ func (q *Queries) SearchConversations(ctx context.Context, arg SearchConversatio
 const upsertConversation = `-- name: UpsertConversation :one
 INSERT INTO conversations (
     org_id, thread_id, sandbox_id, branch, pr_url, history, response_blocks,
-    github_owner, github_repo, creator_id, agent_slug, model, task_options
+    github_owner, github_repo, creator_id, agent_slug, model, task_options, awaiting_repo
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
 )
 ON CONFLICT (org_id, thread_id) DO UPDATE SET
     sandbox_id      = EXCLUDED.sandbox_id,
@@ -743,10 +747,11 @@ ON CONFLICT (org_id, thread_id) DO UPDATE SET
     agent_slug      = EXCLUDED.agent_slug,
     model           = EXCLUDED.model,
     task_options    = EXCLUDED.task_options,
+    awaiting_repo   = EXCLUDED.awaiting_repo,
     updated_at      = NOW()
 RETURNING org_id, thread_id, sandbox_id, branch, pr_url, pr_state, pr_merged, pr_merged_at, pr_closed_at,
           pr_state_checked_at, history, created_at, updated_at, response_blocks,
-          github_owner, github_repo, custom_title, creator_id, agent_slug, model, task_options
+          github_owner, github_repo, custom_title, creator_id, agent_slug, model, task_options, awaiting_repo
 `
 
 type UpsertConversationParams struct {
@@ -763,6 +768,7 @@ type UpsertConversationParams struct {
 	AgentSlug      string   `json:"agent_slug"`
 	Model          string   `json:"model"`
 	TaskOptions    []byte   `json:"task_options"`
+	AwaitingRepo   bool     `json:"awaiting_repo"`
 }
 
 type UpsertConversationRow struct {
@@ -787,6 +793,7 @@ type UpsertConversationRow struct {
 	AgentSlug        string             `json:"agent_slug"`
 	Model            string             `json:"model"`
 	TaskOptions      []byte             `json:"task_options"`
+	AwaitingRepo     bool               `json:"awaiting_repo"`
 }
 
 func (q *Queries) UpsertConversation(ctx context.Context, arg UpsertConversationParams) (UpsertConversationRow, error) {
@@ -804,6 +811,7 @@ func (q *Queries) UpsertConversation(ctx context.Context, arg UpsertConversation
 		arg.AgentSlug,
 		arg.Model,
 		arg.TaskOptions,
+		arg.AwaitingRepo,
 	)
 	var i UpsertConversationRow
 	err := row.Scan(
@@ -828,6 +836,7 @@ func (q *Queries) UpsertConversation(ctx context.Context, arg UpsertConversation
 		&i.AgentSlug,
 		&i.Model,
 		&i.TaskOptions,
+		&i.AwaitingRepo,
 	)
 	return i, err
 }

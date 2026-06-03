@@ -206,6 +206,7 @@ func (b *Bot) HandleRequest(ctx context.Context, oc orgcfg.Config, text, request
 			AgentSlug:      agent.Slug,
 			Model:          string(model),
 			TaskOptions:    taskOptions,
+			AwaitingRepo:   true,
 		}
 		if err := b.convs.Upsert(ctx, partial); err != nil {
 			b.log.Error("convstore upsert (awaiting repo)", "error", err, "org", oc.OrgID, "thread", threadID)
@@ -272,6 +273,7 @@ func (b *Bot) handlePendingConversation(ctx context.Context, oc orgcfg.Config, r
 			b.markRunState(ctx, runstore.StateFailed, errors.New("unknown agent"))
 			return
 		}
+		rec.AwaitingRepo = false
 		if requestedRepoOK {
 			rec.GitHubOwner = requestedOwner
 			rec.GitHubRepo = requestedName
@@ -291,6 +293,7 @@ func (b *Bot) handlePendingConversation(ctx context.Context, oc orgcfg.Config, r
 	if requestedRepoOK {
 		rec.GitHubOwner = requestedOwner
 		rec.GitHubRepo = requestedName
+		rec.AwaitingRepo = false
 		rec.AgentSlug = agent.Slug
 		rec.Model = string(model)
 		originalRequest := text
@@ -429,6 +432,7 @@ func (b *Bot) handleAwaitingRepoReply(ctx context.Context, oc orgcfg.Config, rec
 	}
 	rec.GitHubOwner = owner
 	rec.GitHubRepo = name
+	rec.AwaitingRepo = false
 	rec.AgentSlug = agent.Slug
 	rec.Model = string(model)
 	originalRequest := rec.History[0]
@@ -444,6 +448,7 @@ func (b *Bot) handleAwaitingRepoReply(ctx context.Context, oc orgcfg.Config, rec
 func clearRepoOnFailure(rec *convstore.Record) {
 	rec.GitHubOwner = ""
 	rec.GitHubRepo = ""
+	rec.AwaitingRepo = true
 }
 
 // handleRetryAfterFailure resumes a fresh-agent attempt that

@@ -173,6 +173,7 @@ type Conversation struct {
 	PrMergedAt       pgtype.Timestamptz `json:"pr_merged_at"`
 	PrClosedAt       pgtype.Timestamptz `json:"pr_closed_at"`
 	PrStateCheckedAt pgtype.Timestamptz `json:"pr_state_checked_at"`
+	AwaitingRepo     bool               `json:"awaiting_repo"`
 }
 
 type ConversationAttachment struct {

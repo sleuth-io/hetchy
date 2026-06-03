@@ -363,6 +363,9 @@ func (b *Bot) handleSlackEvent(ctx context.Context, oc orgcfg.Config, ev incomin
 			)
 		}
 	}
+	if isFollowUp && !isRepoAnswer {
+		hasRequestedRepo = false
+	}
 
 	reaction := "eyes"
 	if isFollowUp {
@@ -570,11 +573,11 @@ func (b *Bot) findUniqueSlackPendingRepoConversation(ctx context.Context, orgID 
 }
 
 func slackPendingRepoConversationIsRecent(rec convstore.Record, now time.Time) bool {
-	return rec.CreatedAt.IsZero() || !rec.CreatedAt.Before(now.Add(-slackPendingRepoFallbackWindow))
+	return !rec.CreatedAt.IsZero() && !rec.CreatedAt.Before(now.Add(-slackPendingRepoFallbackWindow))
 }
 
 func slackConversationAwaitingRepo(rec convstore.Record) bool {
-	return rec.SandboxID == "" && rec.GitHubOwner == "" && rec.GitHubRepo == "" && len(rec.History) > 0
+	return rec.AwaitingRepo && len(rec.History) > 0
 }
 
 func slackTextIsRepo(text string) bool {

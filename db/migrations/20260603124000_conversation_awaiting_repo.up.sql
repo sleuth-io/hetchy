@@ -1,0 +1,2 @@
+ALTER TABLE conversations
+    ADD COLUMN awaiting_repo BOOLEAN NOT NULL DEFAULT FALSE;

@@ -212,6 +212,9 @@ func TestHandleSlackEvent_NaturalAgentPhrasePersistsPendingRepoPrompt(t *testing
 	if rec.GitHubOwner != "" || rec.GitHubRepo != "" || rec.SandboxID != "" {
 		t.Fatalf("pending repo prompt should not start a sandbox yet: %+v", rec)
 	}
+	if !rec.AwaitingRepo {
+		t.Fatal("pending repo prompt should persist awaiting_repo=true")
+	}
 }
 
 func TestHandleSlackEvent_NaturalAgentPhraseUsesInlineRepo(t *testing.T) {
@@ -268,11 +271,12 @@ func TestHandleSlackEvent_RepoOnlyReplyFallsBackToPendingConversation(t *testing
 		func(string, string) (string, error) { return "", nil },
 	)
 	pending := convstore.Record{
-		OrgID:     "org_test",
-		ThreadID:  "111.000",
-		History:   []string{"make the page responsive"},
-		AgentSlug: "alice",
-		CreatedAt: time.Now(),
+		OrgID:        "org_test",
+		ThreadID:     "111.000",
+		History:      []string{"make the page responsive"},
+		AgentSlug:    "alice",
+		AwaitingRepo: true,
+		CreatedAt:    time.Now(),
 	}
 	baseConvs := &fakeConversationStore{
 		rec:          pending,
@@ -315,6 +319,94 @@ func TestHandleSlackEvent_RepoOnlyReplyFallsBackToPendingConversation(t *testing
 		if strings.Contains(c.Text, "Which repository?") {
 			t.Fatalf("repo-only reply should not create a second repo prompt; calls=%+v", fs.Calls())
 		}
+	}
+}
+
+func TestFindSlackPendingRepoConversationRequiresExplicitRecentPrompt(t *testing.T) {
+	now := time.Now()
+	b := &Bot{
+		log: discardLogger(),
+		convs: &fakeConversationStore{searchResult: []convstore.Record{
+			{
+				OrgID:     "org_test",
+				ThreadID:  "no-sentinel",
+				History:   []string{"explain this without code"},
+				CreatedAt: now,
+			},
+			{
+				OrgID:        "org_test",
+				ThreadID:     "zero-created-at",
+				History:      []string{"build a thing"},
+				AwaitingRepo: true,
+			},
+		}},
+	}
+	if rec, ok := b.findSlackPendingRepoConversation(context.Background(), "org_test", "", now); ok {
+		t.Fatalf("matched non-explicit or undated pending conversation: %+v", rec)
+	}
+
+	b.convs = &fakeConversationStore{searchResult: []convstore.Record{{
+		OrgID:        "org_test",
+		ThreadID:     "repo-prompt",
+		History:      []string{"build a thing"},
+		AwaitingRepo: true,
+		CreatedAt:    now,
+	}}}
+	rec, ok := b.findSlackPendingRepoConversation(context.Background(), "org_test", "", now)
+	if !ok || rec.ThreadID != "repo-prompt" {
+		t.Fatalf("expected explicit recent repo prompt match, got %+v ok=%v", rec, ok)
+	}
+}
+
+func TestHandleSlackEvent_FollowUpRepoMentionDoesNotOverrideConversationRepo(t *testing.T) {
+	fs := newFakeSlackServer(t)
+	cli := slack.New("xoxb-test", slack.OptionAPIURL(fs.URL()))
+	resolver, _, _ := newTestResolver(
+		func(string) (string, error) { return "dylan@example.com", nil },
+		func(string, string) (string, error) { return "user-1", nil },
+	)
+	baseConvs := &fakeConversationStore{
+		rec: convstore.Record{
+			OrgID:       "org_test",
+			ThreadID:    "111.000",
+			History:     []string{"original request"},
+			GitHubOwner: "acme",
+			GitHubRepo:  "repo",
+			AgentSlug:   "alice",
+		},
+	}
+	convs := &threadCheckingConversationStore{
+		fakeConversationStore: baseConvs,
+		wantOrg:               "org_test",
+		wantThread:            "111.000",
+	}
+	var gotOwner, gotName string
+	b := &Bot{
+		log:        discardLogger(),
+		cfg:        Config{WebPort: "3000"},
+		convs:      convs,
+		slackUsers: resolver,
+		agents:     agents.NewStore(nil),
+		resolveRepoFn: func(_ context.Context, _, owner, name string) (repoCtx, error) {
+			gotOwner, gotName = owner, name
+			return repoCtx{}, errors.New("repo denied")
+		},
+		retryBackoff: 0,
+	}
+
+	b.handleSlackEvent(context.Background(), orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant"}, incoming{
+		channel:  "C123",
+		user:     "U1",
+		ts:       "222.333",
+		threadTS: "111.000",
+		text:     "retry this, similar to google/wire",
+	}, cli)
+
+	if gotOwner != "acme" || gotName != "repo" {
+		t.Fatalf("repo resolver got %s/%s, want preserved acme/repo", gotOwner, gotName)
+	}
+	if workingMsg := findWorkingMsg(t, fs); !strings.Contains(workingMsg, "session=111.000") {
+		t.Fatalf("working link should stay on existing thread, got %q", workingMsg)
 	}
 }
 

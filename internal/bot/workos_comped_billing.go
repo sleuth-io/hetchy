@@ -13,7 +13,6 @@ import (
 )
 
 const workOSCompedBillingFlagSlug = "hetchy-billing-comped"
-const workOSAgentUIFlagSlug = "hetchy-agent-ui"
 
 func (b *Bot) syncWorkOSCompedBillingForOrg(ctx context.Context, orgID string) (bool, error) {
 	orgID = strings.TrimSpace(orgID)

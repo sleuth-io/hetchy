@@ -62,6 +62,7 @@ func (b *Bot) runFreshAgentWithTranscriptModeAndKind(ctx context.Context, oc org
 		b.markRunState(ctx, runstore.StateFailed, err)
 		return
 	}
+	rec.AwaitingRepo = false
 
 	flavor, ok := b.admitBillingForRun(ctx, oc.OrgID, rec.GitHubOwner, rec.GitHubRepo, emit)
 	if !ok {

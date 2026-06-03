@@ -1,5 +1,5 @@
-// Theme bootstrap — see chat.html for the rationale. Inlined per-page so
-// the page paints in the chosen theme on first frame.
+// Theme bootstrap. Loaded before CSS so the page paints in the chosen
+// theme on first frame.
 (function(){
   var mq = window.matchMedia('(prefers-color-scheme: dark)');
   function apply(){
