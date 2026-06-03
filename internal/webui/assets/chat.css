@@ -373,10 +373,8 @@
                 text-align: center; }
   .meta-ascii-art { padding: .6rem 0 .5rem; text-align: center;
                     border-bottom: 1px solid #f0f0f0; }
-  .meta-ascii-art pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-                        font-size: .6rem; line-height: 1.35; color: #c0392b;
-                        margin: 0; white-space: pre; display: inline-block;
-                        text-align: left; }
+  .meta-ascii-art pre { font-size: .6rem; line-height: 1.35; color: #c0392b;
+                        margin: 0; display: inline-block; text-align: left; }
   .meta-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
                font-size: .78rem; }
 
