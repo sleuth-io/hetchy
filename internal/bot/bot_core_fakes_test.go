@@ -17,6 +17,7 @@ type fakeConversationStore struct {
 	getErr          error
 	searchResult    []convstore.Record
 	searchErr       error
+	searchOpts      []convstore.SearchOptions
 	saveProgressErr error
 	upsertErr       error
 	deleteErr       error
@@ -37,9 +38,10 @@ func (f *fakeConversationStore) Get(context.Context, string, string) (convstore.
 	return cloneRecord(f.rec), nil
 }
 
-func (f *fakeConversationStore) Search(context.Context, string, convstore.SearchOptions) ([]convstore.Record, error) {
+func (f *fakeConversationStore) Search(_ context.Context, _ string, opts convstore.SearchOptions) ([]convstore.Record, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.searchOpts = append(f.searchOpts, opts)
 	if f.searchErr != nil {
 		return nil, f.searchErr
 	}

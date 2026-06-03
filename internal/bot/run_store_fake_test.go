@@ -20,9 +20,12 @@ type fakeRunStore struct {
 	getRun runstore.Run
 	getErr error
 
-	latestRun   runstore.Run
-	latestErr   error
-	latestCalls int
+	latestRun        runstore.Run
+	latestErr        error
+	latestCalls      int
+	latestRuns       map[string]runstore.Run
+	latestBatchErr   error
+	latestBatchCalls [][]string
 
 	activeRun runstore.Run
 	activeErr error
@@ -174,6 +177,42 @@ func (f *fakeRunStore) LatestForThread(context.Context, string, string) (runstor
 	defer f.mu.Unlock()
 	f.latestCalls++
 	return f.latestRun, f.latestErr
+}
+
+func (f *fakeRunStore) LatestForThreads(_ context.Context, _ string, threadIDs []string) (map[string]runstore.Run, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	ids := append([]string(nil), threadIDs...)
+	f.latestBatchCalls = append(f.latestBatchCalls, ids)
+	if f.latestBatchErr != nil {
+		return nil, f.latestBatchErr
+	}
+	if f.latestErr != nil {
+		return nil, f.latestErr
+	}
+	out := make(map[string]runstore.Run, len(threadIDs))
+	if f.latestRuns != nil {
+		for _, id := range threadIDs {
+			if run, ok := f.latestRuns[id]; ok {
+				out[id] = run
+			}
+		}
+		return out, nil
+	}
+	if f.latestRun.ID == "" {
+		return out, nil
+	}
+	for _, id := range threadIDs {
+		if f.latestRun.ThreadID != "" && f.latestRun.ThreadID != id {
+			continue
+		}
+		run := f.latestRun
+		if run.ThreadID == "" {
+			run.ThreadID = id
+		}
+		out[id] = run
+	}
+	return out, nil
 }
 
 func (f *fakeRunStore) ActiveForThread(context.Context, string, string) (runstore.Run, error) {

@@ -42,8 +42,9 @@ func (q *Queries) DeleteConversationAttachmentsForTurn(ctx context.Context, arg 
 }
 
 const getConversation = `-- name: GetConversation :one
-SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, response_blocks,
-       github_owner, github_repo, custom_title, creator_id, agent_slug, model, task_options
+SELECT org_id, thread_id, sandbox_id, branch, pr_url, pr_state, pr_merged, pr_merged_at, pr_closed_at,
+       pr_state_checked_at, history, created_at, updated_at, response_blocks,
+       github_owner, github_repo, custom_title, creator_id, agent_slug, model, task_options, awaiting_repo
 FROM conversations
 WHERE org_id = $1 AND thread_id = $2
 `
@@ -54,22 +55,28 @@ type GetConversationParams struct {
 }
 
 type GetConversationRow struct {
-	OrgID          string             `json:"org_id"`
-	ThreadID       string             `json:"thread_id"`
-	SandboxID      string             `json:"sandbox_id"`
-	Branch         string             `json:"branch"`
-	PrUrl          string             `json:"pr_url"`
-	History        []string           `json:"history"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
-	ResponseBlocks [][]byte           `json:"response_blocks"`
-	GithubOwner    string             `json:"github_owner"`
-	GithubRepo     string             `json:"github_repo"`
-	CustomTitle    string             `json:"custom_title"`
-	CreatorID      string             `json:"creator_id"`
-	AgentSlug      string             `json:"agent_slug"`
-	Model          string             `json:"model"`
-	TaskOptions    []byte             `json:"task_options"`
+	OrgID            string             `json:"org_id"`
+	ThreadID         string             `json:"thread_id"`
+	SandboxID        string             `json:"sandbox_id"`
+	Branch           string             `json:"branch"`
+	PrUrl            string             `json:"pr_url"`
+	PrState          string             `json:"pr_state"`
+	PrMerged         bool               `json:"pr_merged"`
+	PrMergedAt       pgtype.Timestamptz `json:"pr_merged_at"`
+	PrClosedAt       pgtype.Timestamptz `json:"pr_closed_at"`
+	PrStateCheckedAt pgtype.Timestamptz `json:"pr_state_checked_at"`
+	History          []string           `json:"history"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	ResponseBlocks   [][]byte           `json:"response_blocks"`
+	GithubOwner      string             `json:"github_owner"`
+	GithubRepo       string             `json:"github_repo"`
+	CustomTitle      string             `json:"custom_title"`
+	CreatorID        string             `json:"creator_id"`
+	AgentSlug        string             `json:"agent_slug"`
+	Model            string             `json:"model"`
+	TaskOptions      []byte             `json:"task_options"`
+	AwaitingRepo     bool               `json:"awaiting_repo"`
 }
 
 func (q *Queries) GetConversation(ctx context.Context, arg GetConversationParams) (GetConversationRow, error) {
@@ -81,6 +88,11 @@ func (q *Queries) GetConversation(ctx context.Context, arg GetConversationParams
 		&i.SandboxID,
 		&i.Branch,
 		&i.PrUrl,
+		&i.PrState,
+		&i.PrMerged,
+		&i.PrMergedAt,
+		&i.PrClosedAt,
+		&i.PrStateCheckedAt,
 		&i.History,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -92,6 +104,7 @@ func (q *Queries) GetConversation(ctx context.Context, arg GetConversationParams
 		&i.AgentSlug,
 		&i.Model,
 		&i.TaskOptions,
+		&i.AwaitingRepo,
 	)
 	return i, err
 }
@@ -230,6 +243,54 @@ func (q *Queries) ListConversationAttachmentsForTurn(ctx context.Context, arg Li
 	return items, nil
 }
 
+const listConversationPRStateBackfillCandidates = `-- name: ListConversationPRStateBackfillCandidates :many
+SELECT org_id, thread_id, github_owner, github_repo, pr_url
+FROM conversations
+WHERE pr_url <> ''
+  AND ($1::bool OR pr_state_checked_at IS NULL)
+ORDER BY updated_at DESC, thread_id DESC
+LIMIT $2
+`
+
+type ListConversationPRStateBackfillCandidatesParams struct {
+	Force bool  `json:"force"`
+	Lim   int32 `json:"lim"`
+}
+
+type ListConversationPRStateBackfillCandidatesRow struct {
+	OrgID       string `json:"org_id"`
+	ThreadID    string `json:"thread_id"`
+	GithubOwner string `json:"github_owner"`
+	GithubRepo  string `json:"github_repo"`
+	PrUrl       string `json:"pr_url"`
+}
+
+func (q *Queries) ListConversationPRStateBackfillCandidates(ctx context.Context, arg ListConversationPRStateBackfillCandidatesParams) ([]ListConversationPRStateBackfillCandidatesRow, error) {
+	rows, err := q.db.Query(ctx, listConversationPRStateBackfillCandidates, arg.Force, arg.Lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListConversationPRStateBackfillCandidatesRow
+	for rows.Next() {
+		var i ListConversationPRStateBackfillCandidatesRow
+		if err := rows.Scan(
+			&i.OrgID,
+			&i.ThreadID,
+			&i.GithubOwner,
+			&i.GithubRepo,
+			&i.PrUrl,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const renameConversation = `-- name: RenameConversation :execrows
 UPDATE conversations SET custom_title = $3
 WHERE org_id = $1 AND thread_id = $2
@@ -303,6 +364,86 @@ func (q *Queries) SaveConversationAttachment(ctx context.Context, arg SaveConver
 	return i, err
 }
 
+const saveConversationPRState = `-- name: SaveConversationPRState :exec
+UPDATE conversations
+   SET pr_state            = $1,
+       pr_merged           = $2,
+       pr_merged_at        = $3,
+       pr_closed_at        = $4,
+       pr_state_checked_at = NOW(),
+       updated_at          = NOW()
+WHERE org_id = $5
+  AND thread_id = $6
+`
+
+type SaveConversationPRStateParams struct {
+	PrState    string             `json:"pr_state"`
+	PrMerged   bool               `json:"pr_merged"`
+	PrMergedAt pgtype.Timestamptz `json:"pr_merged_at"`
+	PrClosedAt pgtype.Timestamptz `json:"pr_closed_at"`
+	OrgID      string             `json:"org_id"`
+	ThreadID   string             `json:"thread_id"`
+}
+
+func (q *Queries) SaveConversationPRState(ctx context.Context, arg SaveConversationPRStateParams) error {
+	_, err := q.db.Exec(ctx, saveConversationPRState,
+		arg.PrState,
+		arg.PrMerged,
+		arg.PrMergedAt,
+		arg.PrClosedAt,
+		arg.OrgID,
+		arg.ThreadID,
+	)
+	return err
+}
+
+const saveConversationPRStateByURL = `-- name: SaveConversationPRStateByURL :execrows
+UPDATE conversations
+   SET pr_state            = $1,
+       pr_merged           = $2,
+       pr_merged_at        = $3,
+       pr_closed_at        = $4,
+       pr_state_checked_at = NOW(),
+       updated_at          = NOW()
+WHERE org_id = $5
+  AND lower(github_owner) = lower($6)
+  AND lower(github_repo) = lower($7)
+  AND (
+      pr_url = $8
+      OR pr_url = 'https://github.com/' || $6::text || '/' || $7::text || '/pull/' || $9::int::text
+  )
+`
+
+type SaveConversationPRStateByURLParams struct {
+	PrState     string             `json:"pr_state"`
+	PrMerged    bool               `json:"pr_merged"`
+	PrMergedAt  pgtype.Timestamptz `json:"pr_merged_at"`
+	PrClosedAt  pgtype.Timestamptz `json:"pr_closed_at"`
+	OrgID       string             `json:"org_id"`
+	GithubOwner string             `json:"github_owner"`
+	GithubRepo  string             `json:"github_repo"`
+	PrUrl       string             `json:"pr_url"`
+	PrNumber    int32              `json:"pr_number"`
+}
+
+func (q *Queries) SaveConversationPRStateByURL(ctx context.Context, arg SaveConversationPRStateByURLParams) (int64, error) {
+	result, err := q.db.Exec(ctx, saveConversationPRStateByURL,
+		arg.PrState,
+		arg.PrMerged,
+		arg.PrMergedAt,
+		arg.PrClosedAt,
+		arg.OrgID,
+		arg.GithubOwner,
+		arg.GithubRepo,
+		arg.PrUrl,
+		arg.PrNumber,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const saveConversationProgress = `-- name: SaveConversationProgress :exec
 UPDATE conversations
    SET history         = $3,
@@ -365,6 +506,26 @@ UPDATE conversations
                         WHEN $3::text <> '' THEN $3
                         ELSE pr_url
                     END,
+       pr_state   = CASE
+                        WHEN $3::text <> '' AND $3::text <> pr_url THEN ''
+                        ELSE pr_state
+                    END,
+       pr_merged  = CASE
+                        WHEN $3::text <> '' AND $3::text <> pr_url THEN FALSE
+                        ELSE pr_merged
+                    END,
+       pr_merged_at = CASE
+                        WHEN $3::text <> '' AND $3::text <> pr_url THEN NULL
+                        ELSE pr_merged_at
+                    END,
+       pr_closed_at = CASE
+                        WHEN $3::text <> '' AND $3::text <> pr_url THEN NULL
+                        ELSE pr_closed_at
+                    END,
+       pr_state_checked_at = CASE
+                        WHEN $3::text <> '' AND $3::text <> pr_url THEN NULL
+                        ELSE pr_state_checked_at
+                    END,
        updated_at = NOW()
 WHERE org_id = $4
   AND thread_id = $5
@@ -408,56 +569,67 @@ func (q *Queries) SaveConversationTaskOptions(ctx context.Context, arg SaveConve
 }
 
 const searchConversations = `-- name: SearchConversations :many
-SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, response_blocks,
-       github_owner, github_repo, custom_title, creator_id, agent_slug, model, task_options
+SELECT org_id, thread_id, sandbox_id, branch, pr_url, pr_state, pr_merged, pr_merged_at, pr_closed_at,
+       pr_state_checked_at, history, created_at, updated_at, response_blocks,
+       github_owner, github_repo, custom_title, creator_id, agent_slug, model, task_options, awaiting_repo
 FROM conversations
 WHERE org_id = $1
-  AND ($2::text = '' OR creator_id = $2)
+  AND (NOT $2::bool OR creator_id = $3)
+  AND (NOT $4::bool OR agent_slug = $5)
   AND (
-    $3::text = ''
-    OR custom_title ILIKE '%' || $3 || '%' ESCAPE '\'
-    OR history[1]    ILIKE '%' || $3 || '%' ESCAPE '\'
+    $6::text = ''
+    OR custom_title ILIKE '%' || $6 || '%' ESCAPE '\'
+    OR history[1]    ILIKE '%' || $6 || '%' ESCAPE '\'
   )
 ORDER BY created_at DESC, thread_id DESC
-LIMIT $5
-OFFSET $4
+LIMIT $8
+OFFSET $7
 `
 
 type SearchConversationsParams struct {
-	OrgID     string `json:"org_id"`
-	CreatorID string `json:"creator_id"`
-	Query     string `json:"query"`
-	Off       int32  `json:"off"`
-	Lim       int32  `json:"lim"`
+	OrgID           string `json:"org_id"`
+	FilterCreatorID bool   `json:"filter_creator_id"`
+	CreatorID       string `json:"creator_id"`
+	FilterAgentSlug bool   `json:"filter_agent_slug"`
+	AgentSlug       string `json:"agent_slug"`
+	Query           string `json:"query"`
+	Off             int32  `json:"off"`
+	Lim             int32  `json:"lim"`
 }
 
 type SearchConversationsRow struct {
-	OrgID          string             `json:"org_id"`
-	ThreadID       string             `json:"thread_id"`
-	SandboxID      string             `json:"sandbox_id"`
-	Branch         string             `json:"branch"`
-	PrUrl          string             `json:"pr_url"`
-	History        []string           `json:"history"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
-	ResponseBlocks [][]byte           `json:"response_blocks"`
-	GithubOwner    string             `json:"github_owner"`
-	GithubRepo     string             `json:"github_repo"`
-	CustomTitle    string             `json:"custom_title"`
-	CreatorID      string             `json:"creator_id"`
-	AgentSlug      string             `json:"agent_slug"`
-	Model          string             `json:"model"`
-	TaskOptions    []byte             `json:"task_options"`
+	OrgID            string             `json:"org_id"`
+	ThreadID         string             `json:"thread_id"`
+	SandboxID        string             `json:"sandbox_id"`
+	Branch           string             `json:"branch"`
+	PrUrl            string             `json:"pr_url"`
+	PrState          string             `json:"pr_state"`
+	PrMerged         bool               `json:"pr_merged"`
+	PrMergedAt       pgtype.Timestamptz `json:"pr_merged_at"`
+	PrClosedAt       pgtype.Timestamptz `json:"pr_closed_at"`
+	PrStateCheckedAt pgtype.Timestamptz `json:"pr_state_checked_at"`
+	History          []string           `json:"history"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	ResponseBlocks   [][]byte           `json:"response_blocks"`
+	GithubOwner      string             `json:"github_owner"`
+	GithubRepo       string             `json:"github_repo"`
+	CustomTitle      string             `json:"custom_title"`
+	CreatorID        string             `json:"creator_id"`
+	AgentSlug        string             `json:"agent_slug"`
+	Model            string             `json:"model"`
+	TaskOptions      []byte             `json:"task_options"`
+	AwaitingRepo     bool               `json:"awaiting_repo"`
 }
 
-// Backs the sidebar list. Filters by optional creator_id and an
-// optional case-insensitive substring match against either the
+// Backs the sidebar list. Filters by optional creator_id, optional
+// agent_slug, and an optional case-insensitive substring match against either the
 // custom_title or the first user message (history[1] — Postgres
 // arrays are 1-indexed; out-of-range yields NULL, and NULL ILIKE
 // pattern is NULL, which evaluates as falsy in WHERE so an empty
 // history harmlessly fails to match).
 //
-// Pass empty strings to skip a filter; LIMIT/OFFSET drive the
+// Pass false filter booleans to skip identity filters; LIMIT/OFFSET drive the
 // "Load more" pager. The ESCAPE '\' clause makes the literal '\'
 // character the escape — caller is expected to backslash-escape
 // '%', '_' and '\' in the user-typed query so they read as
@@ -488,7 +660,10 @@ type SearchConversationsRow struct {
 func (q *Queries) SearchConversations(ctx context.Context, arg SearchConversationsParams) ([]SearchConversationsRow, error) {
 	rows, err := q.db.Query(ctx, searchConversations,
 		arg.OrgID,
+		arg.FilterCreatorID,
 		arg.CreatorID,
+		arg.FilterAgentSlug,
+		arg.AgentSlug,
 		arg.Query,
 		arg.Off,
 		arg.Lim,
@@ -506,6 +681,11 @@ func (q *Queries) SearchConversations(ctx context.Context, arg SearchConversatio
 			&i.SandboxID,
 			&i.Branch,
 			&i.PrUrl,
+			&i.PrState,
+			&i.PrMerged,
+			&i.PrMergedAt,
+			&i.PrClosedAt,
+			&i.PrStateCheckedAt,
 			&i.History,
 			&i.CreatedAt,
 			&i.UpdatedAt,
@@ -517,6 +697,7 @@ func (q *Queries) SearchConversations(ctx context.Context, arg SearchConversatio
 			&i.AgentSlug,
 			&i.Model,
 			&i.TaskOptions,
+			&i.AwaitingRepo,
 		); err != nil {
 			return nil, err
 		}
@@ -531,14 +712,34 @@ func (q *Queries) SearchConversations(ctx context.Context, arg SearchConversatio
 const upsertConversation = `-- name: UpsertConversation :one
 INSERT INTO conversations (
     org_id, thread_id, sandbox_id, branch, pr_url, history, response_blocks,
-    github_owner, github_repo, creator_id, agent_slug, model, task_options
+    github_owner, github_repo, creator_id, agent_slug, model, task_options, awaiting_repo
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
 )
 ON CONFLICT (org_id, thread_id) DO UPDATE SET
     sandbox_id      = EXCLUDED.sandbox_id,
     branch          = EXCLUDED.branch,
     pr_url          = EXCLUDED.pr_url,
+    pr_state        = CASE
+                          WHEN EXCLUDED.pr_url <> conversations.pr_url THEN ''
+                          ELSE conversations.pr_state
+                      END,
+    pr_merged       = CASE
+                          WHEN EXCLUDED.pr_url <> conversations.pr_url THEN FALSE
+                          ELSE conversations.pr_merged
+                      END,
+    pr_merged_at    = CASE
+                          WHEN EXCLUDED.pr_url <> conversations.pr_url THEN NULL
+                          ELSE conversations.pr_merged_at
+                      END,
+    pr_closed_at    = CASE
+                          WHEN EXCLUDED.pr_url <> conversations.pr_url THEN NULL
+                          ELSE conversations.pr_closed_at
+                      END,
+    pr_state_checked_at = CASE
+                          WHEN EXCLUDED.pr_url <> conversations.pr_url THEN NULL
+                          ELSE conversations.pr_state_checked_at
+                      END,
     history         = EXCLUDED.history,
     response_blocks = EXCLUDED.response_blocks,
     github_owner    = EXCLUDED.github_owner,
@@ -546,9 +747,11 @@ ON CONFLICT (org_id, thread_id) DO UPDATE SET
     agent_slug      = EXCLUDED.agent_slug,
     model           = EXCLUDED.model,
     task_options    = EXCLUDED.task_options,
+    awaiting_repo   = EXCLUDED.awaiting_repo,
     updated_at      = NOW()
-RETURNING org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, response_blocks,
-          github_owner, github_repo, custom_title, creator_id, agent_slug, model, task_options
+RETURNING org_id, thread_id, sandbox_id, branch, pr_url, pr_state, pr_merged, pr_merged_at, pr_closed_at,
+          pr_state_checked_at, history, created_at, updated_at, response_blocks,
+          github_owner, github_repo, custom_title, creator_id, agent_slug, model, task_options, awaiting_repo
 `
 
 type UpsertConversationParams struct {
@@ -565,25 +768,32 @@ type UpsertConversationParams struct {
 	AgentSlug      string   `json:"agent_slug"`
 	Model          string   `json:"model"`
 	TaskOptions    []byte   `json:"task_options"`
+	AwaitingRepo   bool     `json:"awaiting_repo"`
 }
 
 type UpsertConversationRow struct {
-	OrgID          string             `json:"org_id"`
-	ThreadID       string             `json:"thread_id"`
-	SandboxID      string             `json:"sandbox_id"`
-	Branch         string             `json:"branch"`
-	PrUrl          string             `json:"pr_url"`
-	History        []string           `json:"history"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
-	ResponseBlocks [][]byte           `json:"response_blocks"`
-	GithubOwner    string             `json:"github_owner"`
-	GithubRepo     string             `json:"github_repo"`
-	CustomTitle    string             `json:"custom_title"`
-	CreatorID      string             `json:"creator_id"`
-	AgentSlug      string             `json:"agent_slug"`
-	Model          string             `json:"model"`
-	TaskOptions    []byte             `json:"task_options"`
+	OrgID            string             `json:"org_id"`
+	ThreadID         string             `json:"thread_id"`
+	SandboxID        string             `json:"sandbox_id"`
+	Branch           string             `json:"branch"`
+	PrUrl            string             `json:"pr_url"`
+	PrState          string             `json:"pr_state"`
+	PrMerged         bool               `json:"pr_merged"`
+	PrMergedAt       pgtype.Timestamptz `json:"pr_merged_at"`
+	PrClosedAt       pgtype.Timestamptz `json:"pr_closed_at"`
+	PrStateCheckedAt pgtype.Timestamptz `json:"pr_state_checked_at"`
+	History          []string           `json:"history"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	ResponseBlocks   [][]byte           `json:"response_blocks"`
+	GithubOwner      string             `json:"github_owner"`
+	GithubRepo       string             `json:"github_repo"`
+	CustomTitle      string             `json:"custom_title"`
+	CreatorID        string             `json:"creator_id"`
+	AgentSlug        string             `json:"agent_slug"`
+	Model            string             `json:"model"`
+	TaskOptions      []byte             `json:"task_options"`
+	AwaitingRepo     bool               `json:"awaiting_repo"`
 }
 
 func (q *Queries) UpsertConversation(ctx context.Context, arg UpsertConversationParams) (UpsertConversationRow, error) {
@@ -601,6 +811,7 @@ func (q *Queries) UpsertConversation(ctx context.Context, arg UpsertConversation
 		arg.AgentSlug,
 		arg.Model,
 		arg.TaskOptions,
+		arg.AwaitingRepo,
 	)
 	var i UpsertConversationRow
 	err := row.Scan(
@@ -609,6 +820,11 @@ func (q *Queries) UpsertConversation(ctx context.Context, arg UpsertConversation
 		&i.SandboxID,
 		&i.Branch,
 		&i.PrUrl,
+		&i.PrState,
+		&i.PrMerged,
+		&i.PrMergedAt,
+		&i.PrClosedAt,
+		&i.PrStateCheckedAt,
 		&i.History,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -620,6 +836,7 @@ func (q *Queries) UpsertConversation(ctx context.Context, arg UpsertConversation
 		&i.AgentSlug,
 		&i.Model,
 		&i.TaskOptions,
+		&i.AwaitingRepo,
 	)
 	return i, err
 }

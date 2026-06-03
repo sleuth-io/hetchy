@@ -1,0 +1,443 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hetchy Agent UI - Status Stream</title>
+<style>
+  :root {
+    --bg: #f6f5f2;
+    --paper: #fffdfa;
+    --paper-2: #fbf9f4;
+    --ink: #1e211e;
+    --muted: #687068;
+    --line: #e2ded4;
+    --line-strong: #cbc5b8;
+    --green: #267a55;
+    --green-soft: #e1f2e9;
+    --blue: #336fa1;
+    --blue-soft: #e3eef7;
+    --red: #b7525b;
+    --red-soft: #f9e2e5;
+    --gold: #a57913;
+    --gold-soft: #fbefcf;
+    --shadow: 0 18px 42px rgba(30, 33, 30, .09);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+  }
+  button, textarea, input { font: inherit; }
+  .page {
+    min-height: 100vh;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 360px;
+  }
+  .main {
+    min-width: 0;
+    display: grid;
+    grid-template-rows: auto auto minmax(0, 1fr);
+  }
+  .top {
+    min-height: 64px;
+    padding: 0 28px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--line);
+    background: var(--paper);
+  }
+  .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+  .mark {
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
+    display: grid;
+    place-items: center;
+    background: var(--ink);
+    color: var(--paper);
+    font-weight: 850;
+  }
+  .title { font-weight: 850; font-size: 1.05rem; }
+  .subtitle { color: var(--muted); font-size: .84rem; }
+  .actions { display: flex; gap: 8px; flex-shrink: 0; }
+  .button {
+    min-height: 36px;
+    padding: 0 13px;
+    border-radius: 8px;
+    border: 1px solid var(--line-strong);
+    background: var(--paper);
+    color: var(--ink);
+    font-weight: 760;
+    cursor: pointer;
+  }
+  .button.primary { background: var(--green); color: #fff; border-color: var(--green); }
+  .compose {
+    padding: 22px 28px;
+    background: linear-gradient(180deg, var(--paper), rgba(255,253,250,.68));
+    border-bottom: 1px solid var(--line);
+  }
+  .compose-box {
+    max-width: 980px;
+    margin: 0 auto;
+    background: var(--paper);
+    border: 1px solid var(--line-strong);
+    border-radius: 8px;
+    box-shadow: 0 2px 0 rgba(0,0,0,.02);
+    overflow: hidden;
+  }
+  textarea {
+    width: 100%;
+    min-height: 82px;
+    resize: none;
+    border: 0;
+    outline: 0;
+    padding: 16px 18px;
+    background: transparent;
+    color: var(--ink);
+    line-height: 1.45;
+  }
+  .compose-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 12px;
+    border-top: 1px solid var(--line);
+    background: var(--paper-2);
+  }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; }
+  .chip {
+    min-height: 28px;
+    padding: 5px 9px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: var(--paper);
+    color: var(--muted);
+    font-size: .78rem;
+    font-weight: 740;
+  }
+  .stream {
+    padding: 22px 28px 34px;
+    overflow: auto;
+  }
+  .stream-inner {
+    max-width: 980px;
+    margin: 0 auto;
+    display: grid;
+    gap: 14px;
+  }
+  .day-label {
+    color: var(--muted);
+    font-size: .76rem;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    font-weight: 850;
+    margin-top: 4px;
+  }
+  .status-item {
+    display: grid;
+    grid-template-columns: 44px minmax(0, 1fr);
+    gap: 12px;
+    align-items: start;
+  }
+  .agent-dot {
+    width: 44px;
+    height: 44px;
+    border-radius: 8px;
+    display: grid;
+    place-items: center;
+    background: var(--green);
+    color: #fff;
+    font-weight: 850;
+  }
+  .agent-dot.blue { background: var(--blue); }
+  .agent-dot.red { background: var(--red); }
+  .message {
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    box-shadow: 0 1px 0 rgba(0,0,0,.025);
+    overflow: hidden;
+  }
+  .message.active { border-color: rgba(38,122,85,.36); box-shadow: var(--shadow); }
+  .message-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 14px 16px 8px;
+  }
+  .message-title { font-weight: 820; }
+  .message-time { color: var(--muted); font-size: .78rem; white-space: nowrap; }
+  .message-body {
+    padding: 0 16px 14px;
+    color: var(--muted);
+    line-height: 1.45;
+    font-size: .92rem;
+  }
+  .main-status {
+    margin-top: 12px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 12px;
+    padding: 12px;
+    border-radius: 8px;
+    background: var(--green-soft);
+    color: #143d2c;
+  }
+  .status-copy { min-width: 0; }
+  .status-label { font-size: .74rem; text-transform: uppercase; letter-spacing: .06em; font-weight: 850; }
+  .status-text { margin-top: 3px; font-weight: 760; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .progress {
+    width: 148px;
+    height: 8px;
+    border-radius: 999px;
+    background: rgba(255,255,255,.72);
+    overflow: hidden;
+  }
+  .progress > span { display: block; height: 100%; width: 68%; background: var(--green); border-radius: inherit; }
+  .summary-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    border-top: 1px solid var(--line);
+    background: var(--paper-2);
+  }
+  .summary-cell {
+    padding: 12px 14px;
+    border-right: 1px solid var(--line);
+    min-width: 0;
+  }
+  .summary-cell:last-child { border-right: 0; }
+  .summary-cell strong { display: block; font-size: .92rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .summary-cell span { display: block; margin-top: 2px; color: var(--muted); font-size: .75rem; }
+  .message details {
+    border-top: 1px solid var(--line);
+    background: var(--paper);
+  }
+  .message summary {
+    min-height: 44px;
+    padding: 0 14px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    font-weight: 760;
+  }
+  .detail-body {
+    padding: 0 14px 14px;
+    color: var(--muted);
+    font-size: .84rem;
+    line-height: 1.5;
+  }
+  .detail-body code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    color: #39433e;
+    background: var(--paper-2);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 1px 5px;
+  }
+  .rail {
+    border-left: 1px solid var(--line);
+    background: var(--paper-2);
+    min-width: 0;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .rail-head {
+    min-height: 64px;
+    padding: 0 18px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--line);
+    background: var(--paper);
+  }
+  .rail-title { font-weight: 820; }
+  .rail-scroll { overflow: auto; padding: 16px; display: grid; align-content: start; gap: 14px; }
+  .small-panel {
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 14px;
+  }
+  .small-panel h3 { margin: 0 0 10px; font-size: .92rem; }
+  .mini-list { display: grid; gap: 8px; }
+  .mini-item {
+    display: grid;
+    grid-template-columns: 10px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 9px;
+    min-height: 34px;
+  }
+  .mini-item .sub { font-size: .78rem; }
+  .mini-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--line-strong); }
+  .mini-dot.green { background: var(--green); }
+  .mini-dot.gold { background: var(--gold); }
+  .mini-dot.blue { background: var(--blue); }
+  .ready-card {
+    padding: 12px;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    background: linear-gradient(180deg, #fff, var(--blue-soft));
+  }
+  .ready-card .button { margin-top: 12px; width: 100%; }
+  @media (max-width: 1060px) {
+    .page { grid-template-columns: 1fr; }
+    .rail { display: none; }
+  }
+  @media (max-width: 760px) {
+    .top, .compose, .stream { padding-left: 16px; padding-right: 16px; }
+    .top { align-items: flex-start; flex-direction: column; padding-top: 12px; padding-bottom: 12px; }
+    .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .summary-cell:nth-child(2) { border-right: 0; }
+    .main-status { grid-template-columns: 1fr; }
+    .progress { width: 100%; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <main class="main">
+    <header class="top">
+      <div class="brand">
+        <div class="mark">H</div>
+        <div>
+          <div class="title">Hetchy work stream</div>
+          <div class="subtitle">The agents update their work in place</div>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="button">Archive done</button>
+        <button class="button primary">Start work</button>
+      </div>
+    </header>
+
+    <section class="compose">
+      <div class="compose-box">
+        <textarea>Fix the startup test path for repos with old bootstrap specs, open a PR, and run the review loop.</textarea>
+        <div class="compose-footer">
+          <div class="chips">
+            <span class="chip">hetchyhq/hetchy</span>
+            <span class="chip">Platform Agent</span>
+            <span class="chip">Validate + review</span>
+          </div>
+          <button class="button primary">Send</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="stream">
+      <div class="stream-inner">
+        <div class="day-label">Now</div>
+
+        <article class="status-item">
+          <div class="agent-dot">PL</div>
+          <div class="message active">
+            <div class="message-head">
+              <div>
+                <div class="message-title">Platform Agent is working on bootstrap versioning</div>
+                <div class="subtitle">Started by Dana in Hetchy UI</div>
+              </div>
+              <div class="message-time">4 min ago</div>
+            </div>
+            <div class="message-body">
+              The agent found an old-generation spec path, added a regression test, and is running the final local prepush before updating the pull request.
+              <div class="main-status">
+                <div class="status-copy">
+                  <div class="status-label">Current status</div>
+                  <div class="status-text">Building ./dist/hetchy after lint passed</div>
+                </div>
+                <div class="progress" aria-label="Progress"><span></span></div>
+              </div>
+            </div>
+            <div class="summary-grid">
+              <div class="summary-cell"><strong>Testing</strong><span>Current step</span></div>
+              <div class="summary-cell"><strong>6 files</strong><span>Change scope</span></div>
+              <div class="summary-cell"><strong>PR #249</strong><span>Target</span></div>
+              <div class="summary-cell"><strong>13 min</strong><span>Elapsed</span></div>
+            </div>
+            <details>
+              <summary><span>Show detailed transcript</span><span class="subtitle">11 events</span></summary>
+              <div class="detail-body">
+                Focused tests passed for <code>internal/bootstrap</code> and <code>internal/bot</code>. The agent is waiting for prepush, then it will push the branch and watch GitHub checks.
+              </div>
+            </details>
+          </div>
+        </article>
+
+        <article class="status-item">
+          <div class="agent-dot blue">UI</div>
+          <div class="message">
+            <div class="message-head">
+              <div>
+                <div class="message-title">Interface Agent finished settings link polish</div>
+                <div class="subtitle">Ready for review</div>
+              </div>
+              <div class="message-time">18 min ago</div>
+            </div>
+            <div class="message-body">The branch is pushed, checks are green, and the PR summary is ready.</div>
+            <div class="summary-grid">
+              <div class="summary-cell"><strong>Ready</strong><span>State</span></div>
+              <div class="summary-cell"><strong>2 files</strong><span>Change scope</span></div>
+              <div class="summary-cell"><strong>PR #248</strong><span>Target</span></div>
+              <div class="summary-cell"><strong>6 min</strong><span>Runtime</span></div>
+            </div>
+          </div>
+        </article>
+
+        <article class="status-item">
+          <div class="agent-dot red">RV</div>
+          <div class="message">
+            <div class="message-head">
+              <div>
+                <div class="message-title">Review Agent needs input on SX rollout</div>
+                <div class="subtitle">Waiting on deployment choice</div>
+              </div>
+              <div class="message-time">42 min ago</div>
+            </div>
+            <div class="message-body">The code path is clear, but the rollout changes whether existing sandboxes need a fresh snapshot.</div>
+          </div>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <aside class="rail">
+    <div class="rail-head">
+      <div class="rail-title">Work state</div>
+      <span class="chip">Today</span>
+    </div>
+    <div class="rail-scroll">
+      <section class="small-panel">
+        <h3>Live agents</h3>
+        <div class="mini-list">
+          <div class="mini-item"><span class="mini-dot green"></span><div><div class="title">Platform</div><div class="sub">prepush running</div></div><span class="sub">now</span></div>
+          <div class="mini-item"><span class="mini-dot blue"></span><div><div class="title">Interface</div><div class="sub">ready PR</div></div><span class="sub">18m</span></div>
+          <div class="mini-item"><span class="mini-dot gold"></span><div><div class="title">Review</div><div class="sub">needs input</div></div><span class="sub">42m</span></div>
+        </div>
+      </section>
+      <section class="ready-card">
+        <div class="title">Next ready handoff</div>
+        <div class="subtitle">Billing settings polish is ready to merge after human review.</div>
+        <button class="button">Open pull request</button>
+      </section>
+      <section class="small-panel">
+        <h3>Quality gate</h3>
+        <div class="mini-list">
+          <div class="mini-item"><span class="mini-dot green"></span><div class="title">Local tests</div><span class="sub">pass</span></div>
+          <div class="mini-item"><span class="mini-dot green"></span><div class="title">Lint</div><span class="sub">pass</span></div>
+          <div class="mini-item"><span class="mini-dot gold"></span><div class="title">PR review</div><span class="sub">queued</span></div>
+        </div>
+      </section>
+    </div>
+  </aside>
+</div>
+</body>
+</html>

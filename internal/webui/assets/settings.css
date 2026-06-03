@@ -506,7 +506,7 @@
   .tag-failing   { background: #f7d6d6; color: #a02020; }
   .tag-pending   { background: #f0f2f5; color: #666; font-style: italic; }
 
-  /* App dialogs — same pattern as chat.html's rename/delete modals.
+  /* App dialogs — shared pattern for settings rename/delete modals.
      Drop-in: <dialog class="app-dialog"> with .dlg-body / .dlg-actions
      / .dlg-cancel / .dlg-save | .dlg-delete buttons. */
   dialog.app-dialog { border: none; border-radius: .55rem; padding: 0;

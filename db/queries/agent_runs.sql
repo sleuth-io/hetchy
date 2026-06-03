@@ -50,6 +50,17 @@ WHERE org_id = $1 AND thread_id = $2
 ORDER BY created_at DESC
 LIMIT 1;
 
+-- name: ListLatestAgentRunsForThreads :many
+SELECT DISTINCT ON (thread_id)
+       id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
+       user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
+       lease_owner, lease_expires_at, heartbeat_at, last_error,
+       created_at, updated_at, command_step, outcome, outcome_detail, quality_score
+FROM agent_runs
+WHERE org_id = sqlc.arg(org_id)
+  AND thread_id = ANY(sqlc.arg(thread_ids)::text[])
+ORDER BY thread_id, created_at DESC;
+
 -- name: UpdateAgentRunKind :exec
 UPDATE agent_runs
    SET run_kind = $2,

@@ -33,6 +33,10 @@ func (b *Bot) workOSCompedSyncConfigured() bool {
 	if b == nil || b.billing == nil || !b.billing.Enabled() {
 		return false
 	}
+	return b.workOSOrgFeatureFlagsConfigured()
+}
+
+func (b *Bot) workOSOrgFeatureFlagsConfigured() bool {
 	if b.workOSOrgHasFeatureFlagFn != nil {
 		return true
 	}

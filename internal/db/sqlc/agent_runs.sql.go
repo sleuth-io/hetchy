@@ -687,6 +687,68 @@ func (q *Queries) ListExpiredAgentRuns(ctx context.Context, limit int32) ([]Agen
 	return items, nil
 }
 
+const listLatestAgentRunsForThreads = `-- name: ListLatestAgentRunsForThreads :many
+SELECT DISTINCT ON (thread_id)
+       id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
+       user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
+       lease_owner, lease_expires_at, heartbeat_at, last_error,
+       created_at, updated_at, command_step, outcome, outcome_detail, quality_score
+FROM agent_runs
+WHERE org_id = $1
+  AND thread_id = ANY($2::text[])
+ORDER BY thread_id, created_at DESC
+`
+
+type ListLatestAgentRunsForThreadsParams struct {
+	OrgID     string   `json:"org_id"`
+	ThreadIds []string `json:"thread_ids"`
+}
+
+func (q *Queries) ListLatestAgentRunsForThreads(ctx context.Context, arg ListLatestAgentRunsForThreadsParams) ([]AgentRun, error) {
+	rows, err := q.db.Query(ctx, listLatestAgentRunsForThreads, arg.OrgID, arg.ThreadIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AgentRun
+	for rows.Next() {
+		var i AgentRun
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.ThreadID,
+			&i.RunKind,
+			&i.RequestID,
+			&i.SandboxID,
+			&i.Branch,
+			&i.UserRequest,
+			&i.SessionID,
+			&i.CommandID,
+			&i.CommandStartSeq,
+			&i.State,
+			&i.LogCursor,
+			&i.NextEventSeq,
+			&i.LeaseOwner,
+			&i.LeaseExpiresAt,
+			&i.HeartbeatAt,
+			&i.LastError,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.CommandStep,
+			&i.Outcome,
+			&i.OutcomeDetail,
+			&i.QualityScore,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listStaleAgentRuns = `-- name: ListStaleAgentRuns :many
 SELECT id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
        user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,

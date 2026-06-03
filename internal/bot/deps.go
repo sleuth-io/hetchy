@@ -97,6 +97,7 @@ type runStore interface {
 	Create(context.Context, runstore.Run, string, time.Duration) (runstore.Run, bool, error)
 	Get(context.Context, string) (runstore.Run, error)
 	LatestForThread(context.Context, string, string) (runstore.Run, error)
+	LatestForThreads(context.Context, string, []string) (map[string]runstore.Run, error)
 	ActiveForThread(context.Context, string, string) (runstore.Run, error)
 	UpdateKind(context.Context, string, string, string)
 	UpdateBranch(context.Context, string, string, string)

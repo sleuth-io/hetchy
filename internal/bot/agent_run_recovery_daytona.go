@@ -233,7 +233,13 @@ func (b *Bot) projectRecoveredConversation(ctx context.Context, run runstore.Run
 			rec.ResponseBlocks[0] = turnBlocks
 		}
 	}
-	return b.convs.Upsert(ctx, rec)
+	if err := b.convs.Upsert(ctx, rec); err != nil {
+		return err
+	}
+	if prURL != "" {
+		b.refreshConversationPRStateBestEffort(ctx, rec.OrgID, rec.ThreadID, prURL)
+	}
+	return nil
 }
 
 func blocksFromRunEvents(events []runstore.Event) []blocks.Block {

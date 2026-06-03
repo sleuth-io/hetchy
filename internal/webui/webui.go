@@ -17,14 +17,14 @@ import (
 	"sync"
 )
 
-//go:embed chat.html templates/*.html assets/*
+//go:embed templates/*.html assets/*
 var files embed.FS
 
 // Template identifies one embedded page template.
 type Template string
 
 const (
-	Chat       Template = "chat"
+	App        Template = "app"
 	Landing    Template = "landing"
 	Onboarding Template = "onboarding"
 	Profile    Template = "profile"
@@ -33,7 +33,7 @@ const (
 )
 
 var templateFiles = map[Template]string{
-	Chat:       "chat.html",
+	App:        "templates/app.html",
 	Landing:    "templates/landing.html",
 	Onboarding: "templates/onboarding.html",
 	Profile:    "templates/profile.html",

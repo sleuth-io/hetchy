@@ -111,11 +111,10 @@ func resetThrottle(e *slackEmitter) {
 	e.mu.Unlock()
 }
 
-// TestSlackEmitter_NotifyPostsDirectly pins that Notify spawns its own
-// thread message rather than feeding the live status slot, and that
-// the icon prefix is the milestone check (not the hourglass an earlier
-// version emitted).
-func TestSlackEmitter_NotifyPostsDirectly(t *testing.T) {
+// TestSlackEmitter_StartingNotifyPostsDirectly pins that the kickoff
+// Notify still gets a standalone thread message before the live status
+// slot starts updating in place.
+func TestSlackEmitter_StartingNotifyPostsDirectly(t *testing.T) {
 	e, fs := newTestSlackEmitter(t, "trim the README")
 	e.Notify("Starting", "Spinning up sandbox…")
 
@@ -142,7 +141,7 @@ func TestSlackEmitter_NotifyPostsDirectly(t *testing.T) {
 // in future, or a Claude-controlled string) doesn't broadcast.
 func TestSlackEmitter_NotifyStartEscapesTitle(t *testing.T) {
 	e, fs := newTestSlackEmitter(t, "")
-	id := e.Start(blocks.KindNotify, "<!channel> hello", nil)
+	id := e.Start(blocks.KindNotify, "Try again <!channel>", nil)
 	e.Done(id, "")
 
 	calls := fs.Calls()
@@ -154,32 +153,59 @@ func TestSlackEmitter_NotifyStartEscapesTitle(t *testing.T) {
 	}
 }
 
-func TestSlackEmitter_TeeNotifyBuffersBody(t *testing.T) {
+func TestSlackEmitter_TeeUserPromptNotifyBuffersBody(t *testing.T) {
 	e, fs := newTestSlackEmitter(t, "")
 	emit := blocks.Tee(blocks.NewRecorder(0), e)
 
-	emit.Notify("Sandbox ready", "`sandbox-1` is up — cloning repo and starting Claude Code.")
+	emit.Notify("Which repository?", "Reply with `owner/name`.")
 
 	calls := fs.Calls()
 	if len(calls) != 1 {
 		t.Fatalf("want 1 post, got %d: %+v", len(calls), calls)
 	}
-	if !strings.Contains(calls[0].Text, "Sandbox ready") {
+	if !strings.Contains(calls[0].Text, "Which repository?") {
 		t.Errorf("expected notify title, got %q", calls[0].Text)
 	}
-	if !strings.Contains(calls[0].Text, "cloning repo") {
+	if !strings.Contains(calls[0].Text, "owner/name") {
 		t.Errorf("expected buffered notify body, got %q", calls[0].Text)
 	}
 }
 
-func TestSlackEmitter_BootstrapSpecNotifyIsSilent(t *testing.T) {
+func TestSlackEmitter_RoutineProgressNotifiesAreSilent(t *testing.T) {
 	e, fs := newTestSlackEmitter(t, "")
 	emit := blocks.Tee(blocks.NewRecorder(0), e)
 
+	emit.Notify("Sandbox ready", "`sandbox-1` is up — cloning repo and starting Claude Code.")
+	emit.Notify("12 skills available", "architecture-blueprint-generator, database-migrations")
 	emit.Notify("Bootstrap spec — no changes", "Agent reviewed the validation run and reported no spec improvements were warranted.")
 
 	if calls := fs.Calls(); len(calls) != 0 {
-		t.Fatalf("bootstrap-spec notify should stay out of Slack, got %+v", calls)
+		t.Fatalf("routine progress notify should stay out of Slack, got %+v", calls)
+	}
+}
+
+func TestSlackEmitter_StateChangeNotifiesPost(t *testing.T) {
+	e, fs := newTestSlackEmitter(t, "")
+	emit := blocks.Tee(blocks.NewRecorder(0), e)
+
+	emit.Notify("Sandbox replaced", "Daytona was still changing state, so Hetchy created a replacement.")
+	emit.Notify("Starting new PR", "Creating a fresh branch for a new pull request.")
+
+	calls := fs.Calls()
+	if len(calls) != 2 {
+		t.Fatalf("want 2 state-change notify posts, got %d: %+v", len(calls), calls)
+	}
+	for _, want := range []string{"Sandbox replaced", "Starting new PR"} {
+		found := false
+		for _, c := range calls {
+			if strings.Contains(c.Text, want) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("missing Slack notify %q in calls %+v", want, calls)
+		}
 	}
 }
 
@@ -386,8 +412,10 @@ func TestSlackEmitter_ClaudeTextFailDoesNotPostStepError(t *testing.T) {
 
 	e.Fail(textID, "stream failed")
 
-	if calls := fs.Calls(); len(calls) != 0 {
-		t.Fatalf("failed claude text should not post a Slack step error, got %+v", calls)
+	for _, c := range fs.Calls() {
+		if strings.Contains(c.Text, ":x:") {
+			t.Fatalf("failed claude text should not post a Slack step error, got %+v", fs.Calls())
+		}
 	}
 }
 

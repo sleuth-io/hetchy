@@ -100,6 +100,7 @@ type Querier interface {
 	ListBillingRunMetersByOrg(ctx context.Context, arg ListBillingRunMetersByOrgParams) ([]BillingRunMeter, error)
 	ListConversationAttachments(ctx context.Context, arg ListConversationAttachmentsParams) ([]ListConversationAttachmentsRow, error)
 	ListConversationAttachmentsForTurn(ctx context.Context, arg ListConversationAttachmentsForTurnParams) ([]ConversationAttachment, error)
+	ListConversationPRStateBackfillCandidates(ctx context.Context, arg ListConversationPRStateBackfillCandidatesParams) ([]ListConversationPRStateBackfillCandidatesRow, error)
 	ListExpiredAgentRuns(ctx context.Context, limit int32) ([]AgentRun, error)
 	ListGithubInstallationsByOrg(ctx context.Context, orgID string) ([]GithubAppInstallation, error)
 	ListGithubReposByInstallation(ctx context.Context, installationID int64) ([]GithubRepo, error)
@@ -109,6 +110,7 @@ type Querier interface {
 	ListGithubReposByOrg(ctx context.Context, orgID string) ([]GithubRepo, error)
 	ListGithubTeamMembers(ctx context.Context, arg ListGithubTeamMembersParams) ([]GithubTeamMember, error)
 	ListGithubTeamsByInstallation(ctx context.Context, installationID int64) ([]GithubTeam, error)
+	ListLatestAgentRunsForThreads(ctx context.Context, arg ListLatestAgentRunsForThreadsParams) ([]AgentRun, error)
 	ListOrgAPIKeys(ctx context.Context, orgID string) ([]OrgApiKey, error)
 	// Lists Socket-Mode-installed orgs only. The slackManager iterates
 	// this on startup to open one socket per org.
@@ -135,6 +137,8 @@ type Querier interface {
 	ResetBillingTopupMonthlyUsage(ctx context.Context, arg ResetBillingTopupMonthlyUsageParams) (BillingTopupSetting, error)
 	RevokeOrgAPIKey(ctx context.Context, arg RevokeOrgAPIKeyParams) (int64, error)
 	SaveConversationAttachment(ctx context.Context, arg SaveConversationAttachmentParams) (ConversationAttachment, error)
+	SaveConversationPRState(ctx context.Context, arg SaveConversationPRStateParams) error
+	SaveConversationPRStateByURL(ctx context.Context, arg SaveConversationPRStateByURLParams) (int64, error)
 	// Periodic mid-run snapshot used by chatPersister. Only writes the
 	// handful of fields that change progressively as the agent emits
 	// blocks (history + response_blocks + creator_id). The fields that
@@ -155,14 +159,14 @@ type Querier interface {
 	SaveConversationProgress(ctx context.Context, arg SaveConversationProgressParams) error
 	SaveConversationRunMetadata(ctx context.Context, arg SaveConversationRunMetadataParams) error
 	SaveConversationTaskOptions(ctx context.Context, arg SaveConversationTaskOptionsParams) error
-	// Backs the sidebar list. Filters by optional creator_id and an
-	// optional case-insensitive substring match against either the
+	// Backs the sidebar list. Filters by optional creator_id, optional
+	// agent_slug, and an optional case-insensitive substring match against either the
 	// custom_title or the first user message (history[1] — Postgres
 	// arrays are 1-indexed; out-of-range yields NULL, and NULL ILIKE
 	// pattern is NULL, which evaluates as falsy in WHERE so an empty
 	// history harmlessly fails to match).
 	//
-	// Pass empty strings to skip a filter; LIMIT/OFFSET drive the
+	// Pass false filter booleans to skip identity filters; LIMIT/OFFSET drive the
 	// "Load more" pager. The ESCAPE '\' clause makes the literal '\'
 	// character the escape — caller is expected to backslash-escape
 	// '%', '_' and '\' in the user-typed query so they read as

@@ -13,7 +13,9 @@ import (
 )
 
 func (b *Bot) indexHandler(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
+	rootPath := r.URL.Path == "/"
+	appPath := isAppSPAPath(r.URL.Path)
+	if !rootPath && !appPath {
 		http.NotFound(w, r)
 		return
 	}
@@ -62,14 +64,21 @@ func (b *Bot) indexHandler(w http.ResponseWriter, r *http.Request) {
 			b.log.Warn("org config fetch for chat page failed", "error", err, "org", p.OrgID)
 		}
 	}
-	b.renderTemplate(w, webui.Chat, map[string]any{
+	b.renderTemplate(w, webui.App, map[string]any{
 		"Email":           p.Email,
 		"DisplayName":     displayName,
 		"GravatarURL":     webui.GravatarURL(p.Email),
 		"UserID":          p.UserID,
 		"OpenAIEnabled":   openaiEnabled,
 		"DefaultRepoSlug": defaultRepoSlug,
+		"AppDataLimit":    appDataLimitDefault,
 	})
+}
+
+func isAppSPAPath(path string) bool {
+	return path == "/agents" || strings.HasPrefix(path, "/agents/") ||
+		path == "/users" || strings.HasPrefix(path, "/users/") ||
+		path == "/chats" || strings.HasPrefix(path, "/chats/")
 }
 
 func (b *Bot) onboardingHandler(w http.ResponseWriter, r *http.Request) {

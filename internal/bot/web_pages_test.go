@@ -110,6 +110,53 @@ func TestIndexHandler_OpenAIEnabled(t *testing.T) {
 	}
 }
 
+func TestIndexHandler_RendersApp(t *testing.T) {
+	b := newBypassOrgBot(t, "admin")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	b.auth.Middleware(http.HandlerFunc(b.indexHandler)).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `src="/assets/app.js`) {
+		t.Fatalf("app template missing app.js, body=%s", body)
+	}
+	if !strings.Contains(body, `src="/assets/app_events.js`) {
+		t.Fatalf("app template missing split app runtime, body=%s", body)
+	}
+	if !strings.Contains(body, `href="/assets/app.css`) {
+		t.Fatalf("app template missing app.css, body=%s", body)
+	}
+	if !strings.Contains(body, `href="/assets/app_responsive.css`) {
+		t.Fatalf("app template missing split app styles, body=%s", body)
+	}
+}
+
+func TestIndexHandler_RendersAppSPAPaths(t *testing.T) {
+	b := newBypassOrgBot(t, "admin")
+
+	for _, path := range []string{"/agents/hetchy-bot", "/users/user_test", "/chats/chat_test"} {
+		t.Run(path, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			b.auth.Middleware(http.HandlerFunc(b.indexHandler)).ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d", rec.Code)
+			}
+			if !strings.Contains(rec.Body.String(), `src="/assets/app.js`) {
+				t.Fatalf("app template missing app.js, body=%s", rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), `src="/assets/app_events.js`) {
+				t.Fatalf("app template missing split app runtime, body=%s", rec.Body.String())
+			}
+		})
+	}
+}
+
 func TestRequireSameOrigin(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -151,8 +198,8 @@ func TestPageTemplates_RenderFavicon(t *testing.T) {
 		data any
 	}{
 		{
-			name: "chat",
-			body: webui.Chat,
+			name: "runtime app",
+			body: webui.App,
 			data: map[string]any{
 				"Email":       "u@x",
 				"DisplayName": "Test User",
@@ -386,14 +433,13 @@ func TestProfileTemplate_Renders(t *testing.T) {
 	}
 }
 
-// TestChatTemplate_SidebarUserMenu verifies the chat page renders the
+// TestAppTemplate_SidebarUserMenu verifies the app renders the
 // user menu at the bottom of the sidebar (with User settings,
-// Organization settings, and Log out entries) and no longer shows the
-// old top-nav bar with a separate Settings link.
-func TestChatTemplate_SidebarUserMenu(t *testing.T) {
+// Organization settings, and Log out entries).
+func TestAppTemplate_SidebarUserMenu(t *testing.T) {
 	b := newBypassBot(t)
 	rec := httptest.NewRecorder()
-	b.renderTemplate(rec, webui.Chat, map[string]any{
+	b.renderTemplate(rec, webui.App, map[string]any{
 		"Email":       "ada@example.com",
 		"DisplayName": "Ada Lovelace",
 		"GravatarURL": "https://example.com/avatar.png",
@@ -403,7 +449,7 @@ func TestChatTemplate_SidebarUserMenu(t *testing.T) {
 	}
 	body := rec.Body.String()
 	for _, w := range []string{
-		`id="sidebar"`,
+		`id="agent-sidebar"`,
 		`class="user-menu"`,
 		`id="user-menu-btn"`,
 		`href="/settings/profile"`,
@@ -416,9 +462,6 @@ func TestChatTemplate_SidebarUserMenu(t *testing.T) {
 		if !strings.Contains(body, w) {
 			t.Errorf("chat template missing %q", w)
 		}
-	}
-	if strings.Contains(body, `id="topbar"`) {
-		t.Errorf("chat template should no longer render the top nav bar")
 	}
 }
 

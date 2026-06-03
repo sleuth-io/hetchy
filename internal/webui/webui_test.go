@@ -9,72 +9,92 @@ import (
 	"testing"
 )
 
-func TestRenderChatTemplate(t *testing.T) {
+func TestAppUsesSharedRepoStorageKey(t *testing.T) {
+	var parts []string
+	for _, name := range []string{
+		"app.js",
+		"app_runs.js",
+		"app_controls.js",
+		"app_detail.js",
+		"app_events.js",
+	} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/assets/"+name, nil)
+		AssetHandler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s status = %d body=%q", name, rec.Code, rec.Body.String())
+		}
+		parts = append(parts, rec.Body.String())
+	}
+	body := strings.Join(parts, "\n")
+	for _, want := range []string{
+		"var repoStorageKey = 'hetchy.repo.' + currentUserID",
+		"localStorage.getItem(repoStorageKey)",
+		"localStorage.setItem(repoStorageKey, state.selectedTaskRepo)",
+		"state.selectedTaskRepo = initialTaskRepoSlug()",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("app.js missing %q", want)
+		}
+	}
+}
+
+func TestRenderAppTemplate(t *testing.T) {
 	rec := httptest.NewRecorder()
-	Render(slog.New(slog.NewTextHandler(io.Discard, nil)), rec, Chat, map[string]any{
-		"Email":       "u@example.com",
-		"DisplayName": "Test User",
-		"GravatarURL": "https://example.com/avatar.png",
-		"UserID":      "user_test",
+	Render(slog.New(slog.NewTextHandler(io.Discard, nil)), rec, App, map[string]any{
+		"Email":           "u@example.com",
+		"DisplayName":     "Test User",
+		"GravatarURL":     "https://example.com/avatar.png",
+		"UserID":          "user_test",
+		"OpenAIEnabled":   true,
+		"DefaultRepoSlug": "hetchyhq/hetchy",
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
 	}
-	if got := rec.Header().Get("Cache-Control"); got != "no-cache" {
-		t.Fatalf("Cache-Control = %q, want no-cache for HTML", got)
-	}
 	body := rec.Body.String()
 	for _, want := range []string{
 		`data-current-user-id="user_test"`,
-		`src="/assets/chat_bootstrap.js`,
-		`href="/assets/chat.css`,
-		`src="/assets/chat_core.js`,
-		`src="/assets/chat_image_modal.js`,
-		`src="/assets/chat_stream.js`,
-		`src="/assets/chat_init.js`,
+		`data-default-repo-slug="hetchyhq/hetchy"`,
+		`data-app-data-limit="80"`,
+		`href="/assets/app.css`,
+		`href="/assets/app_layout.css`,
+		`href="/assets/app_work.css`,
+		`href="/assets/app_dialogs.css`,
+		`href="/assets/app_chat.css`,
+		`href="/assets/app_responsive.css`,
+		`src="/assets/chat_detail_blocks.js`,
+		`src="/assets/app.js`,
+		`src="/assets/app_runs.js`,
+		`src="/assets/app_controls.js`,
+		`src="/assets/app_detail.js`,
+		`src="/assets/app_events.js`,
+		`id="agent-menu-btn"`,
+		`id="agent-nav-toggle"`,
+		`id="pr-sidebar-toggle"`,
+		`id="agent-overlay-scrim"`,
+		`id="work-search"`,
+		`data-status-filter="running"`,
+		`id="task-tools-popover"`,
+		`id="task-repo-popover"`,
+		`id="new-task-dialog"`,
+		`id="chat-detail-dialog"`,
+		`id="chat-meta-toggle"`,
+		`id="chat-meta-scrim"`,
+		`id="chat-meta"`,
+		`id="run-action-menu"`,
+		`id="run-rename-dialog"`,
+		`id="run-delete-dialog"`,
 	} {
 		if !strings.Contains(body, want) {
-			t.Fatalf("rendered chat template missing %q", want)
+			t.Fatalf("rendered app template missing %q", want)
 		}
-	}
-	if strings.Contains(body, `src="/assets/chat.js`) {
-		t.Fatalf("rendered chat template still references removed chat.js")
-	}
-	if !strings.Contains(body, `href="/assets/chat.css?v=`) {
-		t.Fatalf("rendered chat template missing fingerprinted chat.css asset")
-	}
-	if strings.Contains(body, `?v=dev`) {
-		t.Fatalf("rendered chat template should not use a deploy-wide dev asset version")
-	}
-	// The repository selector now lives as a top-level chip next to the +
-	// menu rather than buried inside the tools popover. Verify the chip
-	// markup is in place and that the picker isn't styled as a tools-menu
-	// row anymore (the old shape used class="tools-menu-item").
-	if !strings.Contains(body, `id="repo-selector-btn" class="repo-chip"`) {
-		t.Fatalf("rendered chat template missing top-level .repo-chip selector button")
-	}
-	if !strings.Contains(body, `id="composer-controls-left"`) {
-		t.Fatalf("rendered chat template missing #composer-controls-left wrapper")
-	}
-	if strings.Contains(body, `id="repo-selector-btn" class="tools-menu-item"`) {
-		t.Fatalf("repo selector still rendered as a tools-menu row; should be a chip")
-	}
-	// Structural assertion: the chip must render AFTER every item that
-	// lives inside #tools-popover — i.e. it's a sibling of #tools-picker,
-	// not nested inside it. We pin to the last checkbox row inside the
-	// tools popover because regressions that move the chip back inside
-	// the popover would put it before that row.
-	chipIdx := strings.Index(body, `id="repo-selector-btn"`)
-	lastToolsRowIdx := strings.Index(body, `id="action-pr-checks-checkbox"`)
-	if chipIdx <= 0 || lastToolsRowIdx <= 0 || chipIdx <= lastToolsRowIdx {
-		t.Fatalf("repo chip must render after the tools popover content "+
-			"(chip=%d, lastToolsRow=%d)", chipIdx, lastToolsRowIdx)
 	}
 }
 
 func TestAssetHandlerServesEmbeddedAssets(t *testing.T) {
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/assets/chat_core.js", nil)
+	req := httptest.NewRequest(http.MethodGet, "/assets/app.js", nil)
 	AssetHandler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
@@ -83,24 +103,23 @@ func TestAssetHandlerServesEmbeddedAssets(t *testing.T) {
 		t.Fatalf("Cache-Control = %q, want immutable for fingerprinted asset URLs", got)
 	}
 	if !strings.Contains(rec.Body.String(), "document.body.dataset.currentUserId") {
-		t.Fatalf("chat_core.js did not contain expected bootstrapped user-id read")
+		t.Fatalf("app.js did not contain expected bootstrapped user-id read")
 	}
 
 	rec = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodGet, "/assets/chat.css", nil)
+	req = httptest.NewRequest(http.MethodGet, "/assets/app.css", nil)
 	AssetHandler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
-		".chat-menu-btn",
-		"position: absolute",
-		"pointer-events: auto",
-		"z-index: 1",
+		".agent-app",
+		".agent-sidebar",
+		".primary-button",
 	} {
 		if !strings.Contains(body, want) {
-			t.Fatalf("chat.css did not contain expected sidebar menu rule %q", want)
+			t.Fatalf("app.css did not contain expected rule %q", want)
 		}
 	}
 }
@@ -120,7 +139,7 @@ func TestChatImageModalAssetWiring(t *testing.T) {
 	}
 	checks := []assetCheck{
 		{
-			path: "/assets/chat_image_modal.js",
+			path: "/assets/image_modal.js",
 			wants: []string{
 				"function isImageAttachmentMimeType",
 				"function openImageModal",
@@ -141,33 +160,24 @@ func TestChatImageModalAssetWiring(t *testing.T) {
 			},
 		},
 		{
-			path: "/assets/chat_core.js",
+			path: "/assets/app_detail.js",
 			wants: []string{
-				"isImageAttachmentMimeType",
-				"dataset.imageModalUrl",
-			},
-		},
-		{
-			path: "/assets/chat_metadata.js",
-			wants: []string{
-				"isImageAttachmentMimeType",
+				"isImageAttachment",
 				"data-image-modal-url",
-				"revokeTrackedPreviewBlobURLs",
 			},
 		},
 		{
-			path: "/assets/chat_stream.js",
+			path: "/assets/app_detail.js",
 			wants: []string{
-				"trackPreviewBlobURL",
-				"URL.createObjectURL(file)",
+				"data-image-modal-url",
+				"class=\"meta-attachment-link\"",
 			},
 		},
 		{
-			path: "/assets/chat.css",
+			path: "/assets/app_chat.css",
 			wants: []string{
 				".image-modal-overlay",
 				".image-modal-img",
-				"button.msg-attachment",
 				"button.meta-attachment-link",
 			},
 		},

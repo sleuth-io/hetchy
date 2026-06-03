@@ -1,0 +1,405 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hetchy</title>
+<link rel="icon" type="image/svg+xml" id="favicon" href="{{faviconHref}}">
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+<script src="{{assetPath "theme_bootstrap.js"}}"></script>
+<link rel="stylesheet" href="{{assetPath "app.css"}}">
+<link rel="stylesheet" href="{{assetPath "app_layout.css"}}">
+<link rel="stylesheet" href="{{assetPath "app_work.css"}}">
+<link rel="stylesheet" href="{{assetPath "app_dialogs.css"}}">
+<link rel="stylesheet" href="{{assetPath "app_chat.css"}}">
+<link rel="stylesheet" href="{{assetPath "app_agent_docs.css"}}">
+<link rel="stylesheet" href="{{assetPath "app_responsive.css"}}">
+</head>
+<body data-current-user-id="{{.UserID}}" data-openai-enabled="{{if .OpenAIEnabled}}1{{else}}0{{end}}" data-default-repo-slug="{{.DefaultRepoSlug}}" data-app-data-limit="{{or .AppDataLimit 80}}">
+<div id="toast-stack" aria-live="polite" aria-atomic="true"></div>
+
+<div class="agent-app">
+  <aside id="agent-sidebar" class="agent-sidebar">
+    <div class="sidebar-head">
+      <div class="mode-toggle" role="group" aria-label="Group work by">
+        <button id="mode-agent" class="mode-button is-active" type="button">Agents</button>
+        <button id="mode-user" class="mode-button" type="button">Users</button>
+      </div>
+    </div>
+    <div class="search-wrap">
+      <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="7" cy="7" r="4.5"/>
+        <path d="m10.5 10.5 3 3"/>
+      </svg>
+      <input id="nav-search" type="search" placeholder="Search agents" autocomplete="off" aria-label="Search agents">
+    </div>
+    <nav id="group-list" class="group-list" aria-label="Work groups">
+      <div class="empty">Loading...</div>
+    </nav>
+    <div class="user-menu">
+      <button class="user-menu-trigger" id="user-menu-btn" type="button" aria-haspopup="menu" aria-expanded="false">
+        <img class="avatar" src="{{.GravatarURL}}" alt="" referrerpolicy="no-referrer">
+        <span>{{.DisplayName}}</span>
+      </button>
+      <div class="user-menu-dropdown" id="user-menu-dropdown" role="menu" hidden>
+        <div class="user-menu-header">
+          <img class="avatar-lg" src="{{.GravatarURL}}" alt="" referrerpolicy="no-referrer">
+          <div>
+            <div class="name">{{.DisplayName}}</div>
+            <div class="email">{{.Email}}</div>
+          </div>
+        </div>
+        <a class="item" href="/settings/profile" role="menuitem">User settings</a>
+        <a class="item" href="/settings/org" role="menuitem">Organization settings</a>
+        <div class="divider"></div>
+        <a class="item" href="/logout" role="menuitem">Log out</a>
+      </div>
+    </div>
+  </aside>
+
+  <main class="work-main">
+    <header class="topbar">
+      <button id="agent-nav-toggle" class="icon-button mobile-panel-button" type="button" aria-label="Open agents and users" aria-controls="agent-sidebar" aria-expanded="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 6h16"/>
+          <path d="M4 12h16"/>
+          <path d="M4 18h16"/>
+        </svg>
+      </button>
+      <div class="topbar-title">
+        <div class="selection-title-row">
+          <h1 id="selection-title">Agent work</h1>
+        </div>
+        <p id="selection-subtitle" class="selection-subtitle">Recent work, active first.</p>
+      </div>
+      <div class="topbar-actions">
+        <div class="topbar-menu-wrap">
+          <button id="agent-menu-btn" class="icon-button" type="button" aria-label="Agent settings" aria-haspopup="menu" aria-expanded="false">
+            <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="1"/>
+              <circle cx="19" cy="12" r="1"/>
+              <circle cx="5" cy="12" r="1"/>
+            </svg>
+          </button>
+          <div id="agent-menu" class="floating-menu" role="menu" hidden>
+            <a href="/settings/org?tab=agents" role="menuitem">Agent settings</a>
+          </div>
+        </div>
+        <button id="new-task-btn" class="primary-button" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 5v14"/>
+            <path d="M5 12h14"/>
+          </svg>
+          <span>New chat</span>
+        </button>
+        <button id="pr-sidebar-toggle" class="icon-button pr-panel-button" type="button" aria-label="Open ready pull requests" aria-controls="pr-sidebar" aria-expanded="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M7 7h10"/>
+            <path d="M7 12h10"/>
+            <path d="M7 17h6"/>
+            <path d="m3.5 7 .5.5 1.5-1.5"/>
+            <path d="m3.5 12 .5.5 1.5-1.5"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <section class="summary-strip" aria-label="Work summary">
+      <button class="summary-item" type="button" data-status-filter="all">
+        <span class="summary-label">All</span>
+        <span class="summary-value" id="summary-all">0</span>
+      </button>
+      <button class="summary-item" type="button" data-status-filter="running">
+        <span class="summary-label">Running</span>
+        <span class="summary-value" id="summary-running">0</span>
+      </button>
+      <button class="summary-item" type="button" data-status-filter="needs_input">
+        <span class="summary-label">Needs input</span>
+        <span class="summary-value" id="summary-needs-input">0</span>
+      </button>
+      <button class="summary-item" type="button" data-status-filter="failed">
+        <span class="summary-label">Failed</span>
+        <span class="summary-value" id="summary-failed">0</span>
+      </button>
+      <button class="summary-item" type="button" data-status-filter="cancelled">
+        <span class="summary-label">Canceled</span>
+        <span class="summary-value" id="summary-cancelled">0</span>
+      </button>
+      <button class="summary-item" type="button" data-status-filter="ready_pr">
+        <span class="summary-label">Ready PRs</span>
+        <span class="summary-value" id="summary-ready-prs">0</span>
+      </button>
+    </section>
+
+    <section class="work-panel">
+      <div class="panel-head">
+        <div>
+          <h2 id="work-title">Recent work</h2>
+          <p id="work-subtitle">Most recent and active work stays at the top.</p>
+        </div>
+        <div class="work-search-wrap">
+          <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="7" cy="7" r="4.5"/>
+            <path d="m10.5 10.5 3 3"/>
+          </svg>
+          <input id="work-search" type="search" placeholder="Search chats" autocomplete="off" aria-label="Search chats">
+        </div>
+      </div>
+      <div id="run-list" class="run-list">
+        <div class="empty">Loading...</div>
+      </div>
+      <button id="show-more-btn" class="show-more" type="button" hidden>Show more</button>
+    </section>
+  </main>
+
+  <aside id="pr-sidebar" class="pr-sidebar" aria-label="Pull requests">
+    <div class="pr-head">
+      <h2>Ready Pull Requests</h2>
+      <span id="pr-count">0</span>
+    </div>
+    <div id="pr-list" class="pr-list">
+      <div class="empty">No pull requests yet.</div>
+    </div>
+  </aside>
+</div>
+<div id="agent-overlay-scrim" hidden></div>
+<div id="run-action-menu" class="run-action-menu" role="menu" hidden>
+  <button id="run-rename-action" class="run-action-menu-item" type="button" role="menuitem">Rename</button>
+  <button id="run-delete-action" class="run-action-menu-item danger" type="button" role="menuitem">Delete</button>
+</div>
+
+<dialog class="agent-dialog" id="run-rename-dialog" aria-labelledby="run-rename-title">
+  <div class="agent-dialog-body">
+    <h3 id="run-rename-title">Rename chat</h3>
+    <input type="text" id="run-rename-input" maxlength="200" autocomplete="off">
+  </div>
+  <div class="agent-dialog-actions">
+    <button class="agent-dialog-cancel" id="run-rename-cancel" type="button">Cancel</button>
+    <button class="agent-dialog-save" id="run-rename-save" type="button">Save</button>
+  </div>
+</dialog>
+
+<dialog class="agent-dialog" id="run-delete-dialog" aria-labelledby="run-delete-title">
+  <div class="agent-dialog-body">
+    <h3 id="run-delete-title">Delete chat?</h3>
+    <p>This will permanently delete this chat. This action cannot be undone.</p>
+  </div>
+  <div class="agent-dialog-actions">
+    <button class="agent-dialog-cancel" id="run-delete-cancel" type="button">Cancel</button>
+    <button class="agent-dialog-delete" id="run-delete-confirm" type="button">Delete</button>
+  </div>
+</dialog>
+
+<dialog class="agent-dialog" id="run-stop-dialog" aria-labelledby="run-stop-title">
+  <div class="agent-dialog-body">
+    <h3 id="run-stop-title">Stop run?</h3>
+    <p>This will cancel the active run. Hetchy will keep the chat history and any work already saved.</p>
+  </div>
+  <div class="agent-dialog-actions">
+    <button class="agent-dialog-cancel" id="run-stop-cancel" type="button">Cancel</button>
+    <button class="agent-dialog-delete" id="run-stop-confirm" type="button">Stop run</button>
+  </div>
+</dialog>
+
+<dialog class="task-dialog" id="new-task-dialog">
+  <form method="dialog" class="task-shell" id="new-task-form">
+    <header class="dialog-head">
+      <div>
+        <h2>New chat</h2>
+      </div>
+      <button class="icon-button close-button" value="cancel" type="button" data-close-dialog="new-task-dialog" aria-label="Close">
+        <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M18 6 6 18"/>
+          <path d="m6 6 12 12"/>
+        </svg>
+      </button>
+    </header>
+    <div class="composer task-composer">
+      <textarea id="task-input" rows="4" placeholder="Code anything and open a ready pr"></textarea>
+      <input id="task-attachment-input" type="file" multiple hidden>
+      <div id="task-attachment-list" class="attachment-list" hidden></div>
+      <div class="composer-controls">
+        <div class="composer-left">
+          <div class="tools-picker">
+            <button id="task-tools-btn" class="tools-button" type="button" aria-label="Open composer options" aria-expanded="false" title="Options">
+              <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 5v14"/>
+                <path d="M5 12h14"/>
+              </svg>
+            </button>
+            <div id="task-tools-popover" class="composer-popover tools-popover" hidden>
+              <button id="task-attach-files-btn" class="tools-menu-item" type="button">
+                <svg class="tools-menu-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="m21.4 11.6-8.5 8.5a5 5 0 0 1-7.1-7.1l9.2-9.2a3.5 3.5 0 0 1 5 5l-9.2 9.2a2 2 0 1 1-2.8-2.8l8.5-8.5"/>
+                </svg>
+                <span class="tools-menu-label">Add files or photos</span>
+              </button>
+              <div class="tools-divider"></div>
+              <label class="tools-menu-item tools-checkbox-row">
+                <input id="task-validate" type="checkbox" checked>
+                <svg class="tools-menu-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M9 12l2 2 4-5"/>
+                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                </svg>
+                <span class="tools-menu-label">Validate changes</span>
+                <span class="tools-checkmark" aria-hidden="true">&#10003;</span>
+              </label>
+              <label class="tools-menu-item tools-checkbox-row">
+                <input id="task-review" type="checkbox" checked>
+                <svg class="tools-menu-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                  <path d="M14 2v6h6"/>
+                  <path d="m9 15 2 2 4-4"/>
+                </svg>
+                <span class="tools-menu-label">Review code before push</span>
+                <span class="tools-checkmark" aria-hidden="true">&#10003;</span>
+              </label>
+              <label class="tools-menu-item tools-checkbox-row">
+                <input id="task-pr-checks" type="checkbox" checked>
+                <svg class="tools-menu-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21 12a9 9 0 1 1-3-6.7"/>
+                  <path d="M21 3v6h-6"/>
+                  <path d="m9 12 2 2 4-4"/>
+                </svg>
+                <span class="tools-menu-label">Action PR checks for done</span>
+                <span class="tools-checkmark" aria-hidden="true">&#10003;</span>
+              </label>
+            </div>
+          </div>
+          <div class="repo-flyout-root">
+            <button id="task-repo-btn" class="repo-chip" type="button" aria-label="Choose repository" aria-haspopup="listbox" aria-expanded="false" aria-controls="task-repo-popover" title="Choose repository">
+              <svg class="repo-chip-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M4 4h11a3 3 0 0 1 3 3v13"/>
+                <path d="M4 4v15a2 2 0 0 0 2 2h12"/>
+                <path d="M9 8h6"/>
+              </svg>
+              <span id="task-repo-label" class="repo-chip-label">Choose repository</span>
+              <svg class="repo-chip-chevron" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+                <path d="m7 10 5 5 5-5"/>
+              </svg>
+            </button>
+            <div id="task-repo-popover" class="composer-popover repo-popover" role="listbox" aria-label="Repositories" hidden>
+              <div class="repo-search-wrap">
+                <input id="task-repo-search" type="search" autocomplete="off" placeholder="Search repositories..." aria-label="Search repositories">
+              </div>
+              <div id="task-repo-options"></div>
+            </div>
+          </div>
+          <div class="agent-flyout-root">
+            <button id="task-agent-btn" class="agent-chip" type="button" aria-label="Choose agent" aria-haspopup="menu" aria-expanded="false" aria-controls="task-agent-popover" title="Choose agent">
+              <svg class="agent-chip-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 8V4"/>
+                <rect x="6" y="8" width="12" height="10" rx="3"/>
+                <path d="M9 13h.01"/>
+                <path d="M15 13h.01"/>
+              </svg>
+              <span id="task-agent-label" class="agent-chip-label">No agent</span>
+              <svg class="agent-chip-chevron" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+                <path d="m7 10 5 5 5-5"/>
+              </svg>
+            </button>
+            <div id="task-agent-popover" class="composer-popover agent-popover" hidden>
+              <div id="task-agent-options"></div>
+            </div>
+          </div>
+        </div>
+        <div class="composer-actions">
+          <div class="model-picker">
+            <button id="task-model-btn" class="model-button" type="button" aria-label="Choose model" aria-expanded="false" title="Model: Opus">
+              <span id="task-model-label">Opus</span>
+              <svg class="chevron" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+                <path d="m7 10 5 5 5-5"/>
+              </svg>
+            </button>
+            <div id="task-model-popover" class="composer-popover model-popover" hidden>
+              <div class="model-popover-title">Model</div>
+              <div id="task-model-options"></div>
+            </div>
+          </div>
+          <button class="send-button" id="task-send-btn" type="submit" aria-label="Dispatch task">
+            <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 19V5"/>
+              <path d="m5 12 7-7 7 7"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="chat-dialog" id="chat-detail-dialog">
+  <div class="chat-shell">
+    <header class="dialog-head chat-head">
+      <div>
+        <h2 id="chat-detail-title">Chat details</h2>
+        <p id="chat-detail-sub">Loading...</p>
+      </div>
+      <div class="chat-head-actions">
+        <button id="chat-meta-toggle" class="icon-button chat-meta-toggle" type="button" aria-label="Show chat details" aria-controls="chat-meta" aria-expanded="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M7 7h10"/>
+            <path d="M7 12h10"/>
+            <path d="M7 17h6"/>
+            <circle cx="4" cy="7" r=".5"/>
+            <circle cx="4" cy="12" r=".5"/>
+            <circle cx="4" cy="17" r=".5"/>
+          </svg>
+        </button>
+        <button class="icon-button close-button" type="button" data-close-dialog="chat-detail-dialog" aria-label="Close">
+          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M18 6 6 18"/>
+            <path d="m6 6 12 12"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+    <div class="chat-body">
+      <section class="chat-pane">
+        <div id="chat-log" class="chat-log"></div>
+        <div class="composer followup-composer">
+          <textarea id="followup-input" rows="3" placeholder="Add a follow-up to resume this conversation..."></textarea>
+          <input id="followup-attachment-input" type="file" multiple hidden>
+          <div id="followup-attachment-list" class="attachment-list" hidden></div>
+          <div class="composer-controls">
+            <div class="composer-left">
+              <button class="round-tool" type="button" data-attach-target="followup" aria-label="Attach context">+</button>
+              <span class="composer-chip" id="followup-repo-chip">Repository</span>
+              <span class="composer-chip" id="followup-agent-chip">Agent</span>
+            </div>
+            <div class="composer-actions">
+              <span class="composer-chip" id="followup-model-chip">Opus</span>
+              <button class="send-button" id="followup-send-btn" type="button" aria-label="Send follow-up">
+                <svg class="send-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 19V5"/>
+                  <path d="m5 12 7-7 7 7"/>
+                </svg>
+                <svg class="stop-icon" viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
+                  <rect x="7" y="7" width="10" height="10" rx="2"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+      <div id="chat-meta-scrim" class="chat-meta-scrim" hidden></div>
+      <aside id="chat-meta" class="chat-meta" aria-label="Chat metadata">
+        <div id="detail-meta-content">
+          <div class="meta-empty">No chat details yet.</div>
+        </div>
+      </aside>
+    </div>
+  </div>
+</dialog>
+
+<script src="{{assetPath "chat_detail_blocks.js"}}"></script>
+<script src="{{assetPath "image_modal.js"}}"></script>
+<script src="{{assetPath "app.js"}}"></script>
+<script src="{{assetPath "app_runs.js"}}"></script>
+<script src="{{assetPath "app_agent_docs.js"}}"></script>
+<script src="{{assetPath "app_controls.js"}}"></script>
+<script src="{{assetPath "app_detail.js"}}"></script>
+<script src="{{assetPath "app_events.js"}}"></script>
+</body>
+</html>

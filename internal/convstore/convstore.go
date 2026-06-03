@@ -35,13 +35,18 @@ var ErrNotFound = errors.New("convstore: not found")
 // the user saw streamed back for that turn. Each entry is a list of
 // blocks.Block (setup, claude_text, tool_use, notify, result, error).
 type Record struct {
-	OrgID          string
-	ThreadID       string
-	SandboxID      string
-	Branch         string
-	PRURL          string
-	History        []string
-	ResponseBlocks [][]blocks.Block
+	OrgID            string
+	ThreadID         string
+	SandboxID        string
+	Branch           string
+	PRURL            string
+	PRState          string
+	PRMerged         bool
+	PRMergedAt       time.Time
+	PRClosedAt       time.Time
+	PRStateCheckedAt time.Time
+	History          []string
+	ResponseBlocks   [][]blocks.Block
 	// GitHubOwner + GitHubRepo identify the repository this conversation
 	// is targeting. Empty when the conversation has been opened but no
 	// repo has been picked yet (the agent hasn't launched). The bot
@@ -69,8 +74,13 @@ type Record struct {
 	// TaskOptions is a generic per-chat bag for composer task toggles.
 	// Missing keys are meaningful: callers decide their own defaults.
 	TaskOptions map[string]bool
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	// AwaitingRepo is true only after Hetchy explicitly asked the user
+	// to choose a repository for this conversation. Slack uses this to
+	// attach a bare owner/name reply without matching unrelated repo-less
+	// conversations.
+	AwaitingRepo bool
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 // Attachment is a user-supplied file attached to one prompt turn.
@@ -120,14 +130,18 @@ func (s *Store) Get(ctx context.Context, orgID, threadID string) (Record, error)
 	return rec, nil
 }
 
-// SearchOptions filters and pages a sidebar list query. Empty CreatorID
-// and Query mean "no filter"; Limit/Offset drive the "Load more" pager.
+// SearchOptions filters and pages a sidebar list query. Empty filter
+// booleans mean "no filter"; Query still uses empty string as "no
+// filter"; Limit/Offset drive the "Load more" pager.
 // Limit must be > 0; the handler clamps before calling.
 type SearchOptions struct {
-	CreatorID string
-	Query     string
-	Limit     int
-	Offset    int
+	CreatorID       string
+	FilterCreatorID bool
+	AgentSlug       string
+	FilterAgentSlug bool
+	Query           string
+	Limit           int
+	Offset          int
 }
 
 // ilikeEscaper backslash-escapes the three characters Postgres
@@ -160,11 +174,14 @@ func (s *Store) Search(ctx context.Context, orgID string, opts SearchOptions) ([
 		return nil, nil
 	}
 	rows, err := s.db.Queries.SearchConversations(ctx, sqlc.SearchConversationsParams{
-		OrgID:     orgID,
-		CreatorID: opts.CreatorID,
-		Query:     escapeILIKEWildcards(opts.Query),
-		Lim:       int32(opts.Limit),
-		Off:       int32(opts.Offset),
+		OrgID:           orgID,
+		FilterCreatorID: opts.FilterCreatorID,
+		CreatorID:       opts.CreatorID,
+		FilterAgentSlug: opts.FilterAgentSlug,
+		AgentSlug:       opts.AgentSlug,
+		Query:           escapeILIKEWildcards(opts.Query),
+		Lim:             int32(opts.Limit),
+		Off:             int32(opts.Offset),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("search conversations: %w", err)
@@ -254,6 +271,7 @@ func (s *Store) Upsert(ctx context.Context, r Record) error {
 		AgentSlug:      r.AgentSlug,
 		Model:          r.Model,
 		TaskOptions:    encodeTaskOptions(r.TaskOptions),
+		AwaitingRepo:   r.AwaitingRepo,
 	})
 	if err != nil {
 		return fmt.Errorf("upsert conversation: %w", err)
@@ -496,12 +514,16 @@ func decodeTaskOptions(raw []byte) (map[string]bool, error) {
 // identical 14-line builders.
 type rowFields struct {
 	OrgID, ThreadID, SandboxID, Branch, PrUrl string
+	PrState                                   string
+	PrMerged                                  bool
+	PrMergedAt, PrClosedAt, PrStateCheckedAt  pgtype.Timestamptz
 	History                                   []string
 	ResponseBlocks                            [][]byte
 	GithubOwner, GithubRepo, CustomTitle      string
 	CreatorID                                 string
 	AgentSlug, Model                          string
 	TaskOptions                               []byte
+	AwaitingRepo                              bool
 	CreatedAt, UpdatedAt                      pgtype.Timestamptz
 }
 
@@ -516,22 +538,28 @@ func recordFromFields(f rowFields) (Record, error) {
 		taskOptions = map[string]bool{}
 	}
 	return Record{
-		OrgID:          f.OrgID,
-		ThreadID:       f.ThreadID,
-		SandboxID:      f.SandboxID,
-		Branch:         f.Branch,
-		PRURL:          f.PrUrl,
-		History:        f.History,
-		ResponseBlocks: bs,
-		GitHubOwner:    f.GithubOwner,
-		GitHubRepo:     f.GithubRepo,
-		CustomTitle:    f.CustomTitle,
-		CreatorID:      f.CreatorID,
-		AgentSlug:      f.AgentSlug,
-		Model:          f.Model,
-		TaskOptions:    taskOptions,
-		CreatedAt:      f.CreatedAt.Time,
-		UpdatedAt:      f.UpdatedAt.Time,
+		OrgID:            f.OrgID,
+		ThreadID:         f.ThreadID,
+		SandboxID:        f.SandboxID,
+		Branch:           f.Branch,
+		PRURL:            f.PrUrl,
+		PRState:          f.PrState,
+		PRMerged:         f.PrMerged,
+		PRMergedAt:       f.PrMergedAt.Time,
+		PRClosedAt:       f.PrClosedAt.Time,
+		PRStateCheckedAt: f.PrStateCheckedAt.Time,
+		History:          f.History,
+		ResponseBlocks:   bs,
+		GitHubOwner:      f.GithubOwner,
+		GitHubRepo:       f.GithubRepo,
+		CustomTitle:      f.CustomTitle,
+		CreatorID:        f.CreatorID,
+		AgentSlug:        f.AgentSlug,
+		Model:            f.Model,
+		TaskOptions:      taskOptions,
+		AwaitingRepo:     f.AwaitingRepo,
+		CreatedAt:        f.CreatedAt.Time,
+		UpdatedAt:        f.UpdatedAt.Time,
 	}, nil
 }
 
@@ -539,11 +567,14 @@ func recordFromGetRow(row sqlc.GetConversationRow) (Record, error) {
 	return recordFromFields(rowFields{
 		OrgID: row.OrgID, ThreadID: row.ThreadID, SandboxID: row.SandboxID,
 		Branch: row.Branch, PrUrl: row.PrUrl, History: row.History,
+		PrState: row.PrState, PrMerged: row.PrMerged,
+		PrMergedAt: row.PrMergedAt, PrClosedAt: row.PrClosedAt, PrStateCheckedAt: row.PrStateCheckedAt,
 		ResponseBlocks: row.ResponseBlocks,
 		GithubOwner:    row.GithubOwner, GithubRepo: row.GithubRepo,
 		CustomTitle: row.CustomTitle, CreatorID: row.CreatorID, AgentSlug: row.AgentSlug, Model: row.Model,
-		TaskOptions: row.TaskOptions,
-		CreatedAt:   row.CreatedAt, UpdatedAt: row.UpdatedAt,
+		TaskOptions:  row.TaskOptions,
+		AwaitingRepo: row.AwaitingRepo,
+		CreatedAt:    row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	})
 }
 
@@ -551,11 +582,14 @@ func recordFromSearchRow(row sqlc.SearchConversationsRow) (Record, error) {
 	return recordFromFields(rowFields{
 		OrgID: row.OrgID, ThreadID: row.ThreadID, SandboxID: row.SandboxID,
 		Branch: row.Branch, PrUrl: row.PrUrl, History: row.History,
+		PrState: row.PrState, PrMerged: row.PrMerged,
+		PrMergedAt: row.PrMergedAt, PrClosedAt: row.PrClosedAt, PrStateCheckedAt: row.PrStateCheckedAt,
 		ResponseBlocks: row.ResponseBlocks,
 		GithubOwner:    row.GithubOwner, GithubRepo: row.GithubRepo,
 		CustomTitle: row.CustomTitle, CreatorID: row.CreatorID, AgentSlug: row.AgentSlug, Model: row.Model,
-		TaskOptions: row.TaskOptions,
-		CreatedAt:   row.CreatedAt, UpdatedAt: row.UpdatedAt,
+		TaskOptions:  row.TaskOptions,
+		AwaitingRepo: row.AwaitingRepo,
+		CreatedAt:    row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	})
 }
 

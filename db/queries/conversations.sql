@@ -1,18 +1,19 @@
 -- name: GetConversation :one
-SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, response_blocks,
-       github_owner, github_repo, custom_title, creator_id, agent_slug, model, task_options
+SELECT org_id, thread_id, sandbox_id, branch, pr_url, pr_state, pr_merged, pr_merged_at, pr_closed_at,
+       pr_state_checked_at, history, created_at, updated_at, response_blocks,
+       github_owner, github_repo, custom_title, creator_id, agent_slug, model, task_options, awaiting_repo
 FROM conversations
 WHERE org_id = $1 AND thread_id = $2;
 
 -- name: SearchConversations :many
--- Backs the sidebar list. Filters by optional creator_id and an
--- optional case-insensitive substring match against either the
+-- Backs the sidebar list. Filters by optional creator_id, optional
+-- agent_slug, and an optional case-insensitive substring match against either the
 -- custom_title or the first user message (history[1] — Postgres
 -- arrays are 1-indexed; out-of-range yields NULL, and NULL ILIKE
 -- pattern is NULL, which evaluates as falsy in WHERE so an empty
 -- history harmlessly fails to match).
 --
--- Pass empty strings to skip a filter; LIMIT/OFFSET drive the
+-- Pass false filter booleans to skip identity filters; LIMIT/OFFSET drive the
 -- "Load more" pager. The ESCAPE '\' clause makes the literal '\'
 -- character the escape — caller is expected to backslash-escape
 -- '%', '_' and '\' in the user-typed query so they read as
@@ -40,11 +41,13 @@ WHERE org_id = $1 AND thread_id = $2;
 -- when an org grows past a few thousand chats, switch to pg_trgm
 -- + a GIN index on custom_title (and a generated column for
 -- history[1]).
-SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, response_blocks,
-       github_owner, github_repo, custom_title, creator_id, agent_slug, model, task_options
+SELECT org_id, thread_id, sandbox_id, branch, pr_url, pr_state, pr_merged, pr_merged_at, pr_closed_at,
+       pr_state_checked_at, history, created_at, updated_at, response_blocks,
+       github_owner, github_repo, custom_title, creator_id, agent_slug, model, task_options, awaiting_repo
 FROM conversations
 WHERE org_id = $1
-  AND (sqlc.arg(creator_id)::text = '' OR creator_id = sqlc.arg(creator_id))
+  AND (NOT sqlc.arg(filter_creator_id)::bool OR creator_id = sqlc.arg(creator_id))
+  AND (NOT sqlc.arg(filter_agent_slug)::bool OR agent_slug = sqlc.arg(agent_slug))
   AND (
     sqlc.arg(query)::text = ''
     OR custom_title ILIKE '%' || sqlc.arg(query) || '%' ESCAPE '\'
@@ -57,14 +60,34 @@ OFFSET sqlc.arg(off);
 -- name: UpsertConversation :one
 INSERT INTO conversations (
     org_id, thread_id, sandbox_id, branch, pr_url, history, response_blocks,
-    github_owner, github_repo, creator_id, agent_slug, model, task_options
+    github_owner, github_repo, creator_id, agent_slug, model, task_options, awaiting_repo
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
 )
 ON CONFLICT (org_id, thread_id) DO UPDATE SET
     sandbox_id      = EXCLUDED.sandbox_id,
     branch          = EXCLUDED.branch,
     pr_url          = EXCLUDED.pr_url,
+    pr_state        = CASE
+                          WHEN EXCLUDED.pr_url <> conversations.pr_url THEN ''
+                          ELSE conversations.pr_state
+                      END,
+    pr_merged       = CASE
+                          WHEN EXCLUDED.pr_url <> conversations.pr_url THEN FALSE
+                          ELSE conversations.pr_merged
+                      END,
+    pr_merged_at    = CASE
+                          WHEN EXCLUDED.pr_url <> conversations.pr_url THEN NULL
+                          ELSE conversations.pr_merged_at
+                      END,
+    pr_closed_at    = CASE
+                          WHEN EXCLUDED.pr_url <> conversations.pr_url THEN NULL
+                          ELSE conversations.pr_closed_at
+                      END,
+    pr_state_checked_at = CASE
+                          WHEN EXCLUDED.pr_url <> conversations.pr_url THEN NULL
+                          ELSE conversations.pr_state_checked_at
+                      END,
     history         = EXCLUDED.history,
     response_blocks = EXCLUDED.response_blocks,
     github_owner    = EXCLUDED.github_owner,
@@ -72,9 +95,11 @@ ON CONFLICT (org_id, thread_id) DO UPDATE SET
     agent_slug      = EXCLUDED.agent_slug,
     model           = EXCLUDED.model,
     task_options    = EXCLUDED.task_options,
+    awaiting_repo   = EXCLUDED.awaiting_repo,
     updated_at      = NOW()
-RETURNING org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, response_blocks,
-          github_owner, github_repo, custom_title, creator_id, agent_slug, model, task_options;
+RETURNING org_id, thread_id, sandbox_id, branch, pr_url, pr_state, pr_merged, pr_merged_at, pr_closed_at,
+          pr_state_checked_at, history, created_at, updated_at, response_blocks,
+          github_owner, github_repo, custom_title, creator_id, agent_slug, model, task_options, awaiting_repo;
 
 -- name: SaveConversationProgress :exec
 -- Periodic mid-run snapshot used by chatPersister. Only writes the
@@ -118,9 +143,64 @@ UPDATE conversations
                         WHEN sqlc.arg(pr_url)::text <> '' THEN sqlc.arg(pr_url)
                         ELSE pr_url
                     END,
+       pr_state   = CASE
+                        WHEN sqlc.arg(pr_url)::text <> '' AND sqlc.arg(pr_url)::text <> pr_url THEN ''
+                        ELSE pr_state
+                    END,
+       pr_merged  = CASE
+                        WHEN sqlc.arg(pr_url)::text <> '' AND sqlc.arg(pr_url)::text <> pr_url THEN FALSE
+                        ELSE pr_merged
+                    END,
+       pr_merged_at = CASE
+                        WHEN sqlc.arg(pr_url)::text <> '' AND sqlc.arg(pr_url)::text <> pr_url THEN NULL
+                        ELSE pr_merged_at
+                    END,
+       pr_closed_at = CASE
+                        WHEN sqlc.arg(pr_url)::text <> '' AND sqlc.arg(pr_url)::text <> pr_url THEN NULL
+                        ELSE pr_closed_at
+                    END,
+       pr_state_checked_at = CASE
+                        WHEN sqlc.arg(pr_url)::text <> '' AND sqlc.arg(pr_url)::text <> pr_url THEN NULL
+                        ELSE pr_state_checked_at
+                    END,
        updated_at = NOW()
 WHERE org_id = sqlc.arg(org_id)
   AND thread_id = sqlc.arg(thread_id);
+
+-- name: SaveConversationPRState :exec
+UPDATE conversations
+   SET pr_state            = sqlc.arg(pr_state),
+       pr_merged           = sqlc.arg(pr_merged),
+       pr_merged_at        = sqlc.arg(pr_merged_at),
+       pr_closed_at        = sqlc.arg(pr_closed_at),
+       pr_state_checked_at = NOW(),
+       updated_at          = NOW()
+WHERE org_id = sqlc.arg(org_id)
+  AND thread_id = sqlc.arg(thread_id);
+
+-- name: SaveConversationPRStateByURL :execrows
+UPDATE conversations
+   SET pr_state            = sqlc.arg(pr_state),
+       pr_merged           = sqlc.arg(pr_merged),
+       pr_merged_at        = sqlc.arg(pr_merged_at),
+       pr_closed_at        = sqlc.arg(pr_closed_at),
+       pr_state_checked_at = NOW(),
+       updated_at          = NOW()
+WHERE org_id = sqlc.arg(org_id)
+  AND lower(github_owner) = lower(sqlc.arg(github_owner))
+  AND lower(github_repo) = lower(sqlc.arg(github_repo))
+  AND (
+      pr_url = sqlc.arg(pr_url)
+      OR pr_url = 'https://github.com/' || sqlc.arg(github_owner)::text || '/' || sqlc.arg(github_repo)::text || '/pull/' || sqlc.arg(pr_number)::int::text
+  );
+
+-- name: ListConversationPRStateBackfillCandidates :many
+SELECT org_id, thread_id, github_owner, github_repo, pr_url
+FROM conversations
+WHERE pr_url <> ''
+  AND (sqlc.arg(force)::bool OR pr_state_checked_at IS NULL)
+ORDER BY updated_at DESC, thread_id DESC
+LIMIT sqlc.arg(lim);
 
 -- name: SaveConversationTaskOptions :exec
 UPDATE conversations
