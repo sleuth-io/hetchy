@@ -285,6 +285,17 @@ a { color: inherit; }
   min-width: 0;
   position: relative;
 }
+.topbar-actions {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.topbar-actions .floating-menu {
+  left: auto;
+  right: 0;
+}
 .selection-title-row {
   display: flex;
   align-items: center;
@@ -329,7 +340,7 @@ h1 {
 
 .summary-strip {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 1px;
   border-bottom: 1px solid var(--line);
   background: var(--line);
@@ -1170,8 +1181,8 @@ dialog::backdrop { background: rgba(0,0,0,.35); }
 
 .chat-dialog {
   width: min(1480px, calc(100vw - 28px));
-  height: calc(100vh - 28px);
-  max-height: 980px;
+  height: calc(100vh - 16px);
+  max-height: calc(100vh - 16px);
   overflow: hidden;
 }
 .chat-shell {

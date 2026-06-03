@@ -333,6 +333,7 @@
 
   function renderSummary() {
     const counts = selectedGroupCounts();
+    byID('summary-all').textContent = String(selectedGroupRuns().length);
     byID('summary-running').textContent = String(counts.running);
     byID('summary-needs-input').textContent = String(counts.needs_input);
     byID('summary-failed').textContent = String(counts.failed);
@@ -362,7 +363,16 @@
     }, { running: 0, needs_input: 0, failed: 0, ready_prs: 0 });
   }
 
+  function updateNavSearchPlaceholder() {
+    const input = byID('nav-search');
+    if (!input) return;
+    const label = state.mode === 'user' ? 'Search users' : 'Search agents';
+    input.placeholder = label;
+    input.setAttribute('aria-label', label);
+  }
+
   function renderGroups() {
+    updateNavSearchPlaceholder();
     const list = byID('group-list');
     const groups = buildGroups();
     if (!groups.length) {
@@ -413,6 +423,12 @@
   function renderRuns() {
     const title = groupName(state.selectedID);
     byID('selection-title').textContent = title || 'Agent work';
+    const showAgentMenu = state.mode === 'agent' && state.selectedID && state.selectedID !== noAgentID;
+    const agentMenuBtn = byID('agent-menu-btn');
+    if (agentMenuBtn) {
+      agentMenuBtn.hidden = !showAgentMenu;
+      if (!showAgentMenu) closePopover('agent-menu', 'agent-menu-btn');
+    }
     byID('work-title').textContent = title || 'Recent work';
     const workSearch = byID('work-search');
     if (workSearch) {
@@ -859,7 +875,7 @@
     let phaseLastEndedAt = '';
     for (const b of blocks) {
       if (b.kind === 'claude_text') {
-        if (phase) closeDetailPhase(phase, phaseLastEndedAt || b.ended_at);
+        if (phase) closePhase(phase, phaseLastEndedAt || b.ended_at);
         phase = openPhase(turn, b.title, b.started_at);
         phase.proseRaw = b.body || '';
         phase.proseEl.innerHTML = renderMarkdown(phase.proseRaw);
@@ -877,18 +893,14 @@
         if (b.ended_at) phaseLastEndedAt = b.ended_at;
       } else {
         if (phase) {
-          closeDetailPhase(phase, phaseLastEndedAt);
+          closePhase(phase, phaseLastEndedAt);
           phase = null;
           phaseLastEndedAt = '';
         }
         renderBlock(turn, b, { open: isLastTurn && (b.kind === 'result' || b.kind === 'error') });
       }
     }
-    if (phase) closeDetailPhase(phase, phaseLastEndedAt);
-  }
-  function closeDetailPhase(phase, endedAt) {
-    closePhase(phase, endedAt);
-    if (phase && phase.el) phase.el.open = true;
+    if (phase) closePhase(phase, phaseLastEndedAt);
   }
   function renderFallbackBlocks(parent, blocks) {
     blocks.forEach(block => {
@@ -1067,7 +1079,8 @@
     });
     document.querySelectorAll('[data-status-filter]').forEach(btn => {
       btn.addEventListener('click', () => {
-        state.statusFilter = btn.dataset.statusFilter;
+        const next = btn.dataset.statusFilter || 'all';
+        state.statusFilter = state.statusFilter === next && next !== 'all' ? 'all' : next;
         state.selectedRunLimit = initialVisibleRuns;
         renderAll();
       });
