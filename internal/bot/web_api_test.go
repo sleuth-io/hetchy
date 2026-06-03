@@ -646,7 +646,8 @@ func TestConversationsHandlerListUsesLiveStatusOnly(t *testing.T) {
 }
 
 func TestAgentInboxHandlerAggregatesRunsAndPRs(t *testing.T) {
-	updatedAt := time.Date(2026, 6, 2, 10, 30, 0, 0, time.UTC)
+	conversationUpdatedAt := time.Date(2026, 6, 2, 10, 30, 0, 0, time.UTC)
+	runUpdatedAt := time.Date(2026, 5, 29, 14, 15, 0, 0, time.UTC)
 	b := newBypassOrgBot(t, "member")
 	b.convs = &fakeConversationStore{searchResult: []convstore.Record{{
 		OrgID:       "org_test",
@@ -662,7 +663,7 @@ func TestAgentInboxHandlerAggregatesRunsAndPRs(t *testing.T) {
 			chatTaskReviewCodeBeforePushKey:  true,
 			chatTaskActionPRChecksForDoneKey: true,
 		},
-		UpdatedAt: updatedAt,
+		UpdatedAt: conversationUpdatedAt,
 	}}}
 	b.runs = &fakeRunStore{
 		enabled: true,
@@ -675,7 +676,7 @@ func TestAgentInboxHandlerAggregatesRunsAndPRs(t *testing.T) {
 			Outcome:     runstore.OutcomeCompletedWithVerifiedPR,
 			CommandStep: "run-script",
 			Branch:      "feature/agent-ui",
-			UpdatedAt:   updatedAt,
+			UpdatedAt:   runUpdatedAt,
 		},
 		events: []runstore.Event{
 			{Seq: 1, Event: "block_start", Data: runEventForTest(t, "block_start", sseEvent{ID: "p1", Kind: blocks.KindSetup, Title: "Sandbox setup"}).Data},
@@ -707,6 +708,9 @@ func TestAgentInboxHandlerAggregatesRunsAndPRs(t *testing.T) {
 	}
 	if run.PRNumber != "321" || run.Repository != "hetchyhq/hetchy" || run.AgentSlug != "alice" {
 		t.Fatalf("run metadata = %+v", run)
+	}
+	if run.UpdatedAt != runUpdatedAt.Format(time.RFC3339) {
+		t.Fatalf("run updated_at = %q, want latest run timestamp", run.UpdatedAt)
 	}
 	if len(got.PullRequests) != 1 || !got.PullRequests[0].ValidationPassed || !got.PullRequests[0].ReviewPassed {
 		t.Fatalf("pull requests = %+v", got.PullRequests)

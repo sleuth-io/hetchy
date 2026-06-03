@@ -202,11 +202,21 @@ func (b *Bot) agentInboxRunForConversation(ctx context.Context, orgID string, re
 		CommandStep:    commandStep,
 		Activity:       activity,
 		TurnCount:      len(rec.History),
-		UpdatedAt:      rec.UpdatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt:      agentInboxRunTimestamp(rec, run, hasRun),
 		CreatedAt:      formatOptionalTime(rec.CreatedAt),
 		Milestones:     milestones,
 		TaskOptions:    rec.TaskOptions,
 	}
+}
+
+func agentInboxRunTimestamp(rec convstore.Record, run runstore.Run, hasRun bool) string {
+	if hasRun && !run.UpdatedAt.IsZero() {
+		return run.UpdatedAt.UTC().Format(time.RFC3339)
+	}
+	if !rec.CreatedAt.IsZero() {
+		return rec.CreatedAt.UTC().Format(time.RFC3339)
+	}
+	return formatOptionalTime(rec.UpdatedAt)
 }
 
 func (b *Bot) latestRunForInbox(ctx context.Context, orgID, threadID string) (runstore.Run, bool) {
