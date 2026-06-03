@@ -55,10 +55,10 @@
   <main class="work-main">
     <header class="topbar">
       <div class="topbar-title">
-        <div class="eyebrow">Hetchy</div>
         <div class="selection-title-row">
           <h1 id="selection-title">Agent work</h1>
         </div>
+        <p id="selection-subtitle" class="selection-subtitle">Recent work, active first.</p>
       </div>
       <div class="topbar-actions">
         <button id="new-task-btn" class="primary-button" type="button">
@@ -304,21 +304,8 @@
         </div>
       </section>
       <aside class="chat-meta" aria-label="Chat metadata">
-        <div class="meta-section">
-          <h3>Run</h3>
-          <dl>
-            <div><dt>State</dt><dd id="detail-state">-</dd></div>
-            <div><dt>Agent</dt><dd id="detail-agent">-</dd></div>
-            <div><dt>Chat</dt><dd id="detail-chat">-</dd></div>
-          </dl>
-        </div>
-        <div class="meta-section">
-          <h3>Repository</h3>
-          <dl>
-            <div><dt>Repo</dt><dd id="detail-repo">-</dd></div>
-            <div><dt>Branch</dt><dd id="detail-branch">-</dd></div>
-            <div><dt>PR</dt><dd id="detail-pr">-</dd></div>
-          </dl>
+        <div id="detail-meta-content">
+          <div class="meta-empty">No chat details yet.</div>
         </div>
       </aside>
     </div>
@@ -326,6 +313,7 @@
 </dialog>
 
 <script src="{{assetPath "chat_blocks.js"}}"></script>
+<script src="{{assetPath "chat_image_modal.js"}}"></script>
 <script src="{{assetPath "agent_inbox.js"}}"></script>
 </body>
 </html>

@@ -35,7 +35,7 @@ window.addEventListener('beforeunload', revokeTrackedPreviewBlobURLs);
 // clicked while the first modal is still up.
 let activeImageModalClose = null;
 
-function openImageModal(url, filename) {
+function openImageModal(url, filename, trigger) {
   if (!url) return;
   if (activeImageModalClose) activeImageModalClose();
 
@@ -104,7 +104,10 @@ function openImageModal(url, filename) {
   });
   overlay.querySelector('.image-modal-close').addEventListener('click', close);
 
-  document.body.appendChild(overlay);
+  const mountRoot = trigger && typeof trigger.closest === 'function'
+    ? (trigger.closest('dialog[open]') || document.body)
+    : document.body;
+  mountRoot.appendChild(overlay);
   overlay.querySelector('.image-modal-close').focus();
 }
 
@@ -119,5 +122,5 @@ document.addEventListener('click', (e) => {
   const trigger = e.target.closest('[data-image-modal-url]');
   if (!trigger) return;
   e.preventDefault();
-  openImageModal(trigger.dataset.imageModalUrl, trigger.dataset.imageModalName || '');
+  openImageModal(trigger.dataset.imageModalUrl, trigger.dataset.imageModalName || '', trigger);
 });

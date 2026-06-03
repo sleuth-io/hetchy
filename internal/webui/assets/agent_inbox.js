@@ -9,6 +9,7 @@
   const initialVisibleRuns = 8;
   const maxPromptAttachments = 5;
   const maxPromptAttachmentBytes = 10 * 1024 * 1024;
+  const detailMaxSkillPreview = 4;
   const noAgentID = '__no_agent__';
   const unknownUserID = '__unknown_user__';
 
@@ -55,6 +56,7 @@
     selectedTaskAgent: '',
     selectedTaskModel: readStoredModel(),
   };
+  let detailIsDownloading = false;
 
   function byID(id) { return document.getElementById(id); }
   function esc(s) {
@@ -73,19 +75,40 @@
       part.charAt(0).toUpperCase() + part.slice(1)
     ).join(' ');
   }
+  function agentForSlug(slug) {
+    slug = compact(slug, '');
+    if (!slug) return null;
+    return state.agents.find(agent => agent.slug === slug) || null;
+  }
   function agentName(slug) {
     slug = compact(slug, '');
     if (!slug) return 'No agent';
-    const found = state.agents.find(agent => agent.slug === slug);
+    const found = agentForSlug(slug);
     return found ? found.display_name : humanizeSlug(slug);
+  }
+  function memberForUserID(userID) {
+    userID = compact(userID, '');
+    if (!userID || userID === unknownUserID) return null;
+    return state.members.find(member => member.user_id === userID) || null;
   }
   function userName(userID) {
     userID = compact(userID, '');
     if (!userID || userID === unknownUserID) return 'Unknown user';
-    const found = state.members.find(member => member.user_id === userID);
+    const found = memberForUserID(userID);
     if (found) return found.display_name || found.email || userID;
     if (userID === currentUserID) return 'You';
     return userID;
+  }
+  function groupDescription(id) {
+    if (state.mode === 'user') {
+      const found = memberForUserID(id);
+      if (found && found.email) return found.email;
+      return 'Chats started by this user.';
+    }
+    if (id === noAgentID) return 'Chats without a selected agent.';
+    const found = agentForSlug(id);
+    if (found && compact(found.description, '')) return found.description;
+    return 'Recent work for this agent.';
   }
   function modelLabel(value) {
     const found = modelOptions.find(model => model.value === value);
@@ -112,6 +135,50 @@
     if (hr < 24) return hr + 'h ago';
     const day = Math.round(hr / 24);
     return day + 'd ago';
+  }
+  function fullDate(value) {
+    if (!value) return '';
+    const d = new Date(value);
+    if (isNaN(d.getTime())) return '';
+    return d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+  }
+  function safeHttpURL(value) {
+    if (!value) return '';
+    try {
+      const url = new URL(value);
+      return url.protocol === 'https:' || url.protocol === 'http:' ? value : '';
+    } catch (err) {
+      return '';
+    }
+  }
+  function extractPRNumber(value) {
+    if (!value) return '';
+    const match = String(value).match(/\/pull\/(\d+)(?:[/?#]|$)/);
+    return match ? match[1] : '';
+  }
+  function encodeBranchPath(value) {
+    return String(value || '').split('/').map(encodeURIComponent).join('/');
+  }
+  function repoGitHubHref(repoSlug) {
+    repoSlug = compact(repoSlug, '');
+    if (!repoSlug || !repoSlug.includes('/')) return '';
+    return 'https://github.com/' + repoSlug.split('/').map(encodeURIComponent).join('/');
+  }
+  function detailRepoSlug(detail) {
+    if (!detail) return '';
+    const owner = compact(detail.github_owner, '');
+    const repo = compact(detail.github_repo, '');
+    return owner && repo ? owner + '/' + repo : '';
+  }
+  function attachmentSizeLabel(bytes) {
+    const n = Number(bytes) || 0;
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(n < 10 * 1024 ? 1 : 0) + ' KB';
+    return (n / (1024 * 1024)).toFixed(n < 10 * 1024 * 1024 ? 1 : 0) + ' MB';
+  }
+  function isImageAttachment(contentType) {
+    const ct = String(contentType || '').toLowerCase().trim();
+    return ct.startsWith('image/');
   }
 
   function showToast(key, message, kind, timeoutMs) {
@@ -423,13 +490,14 @@
   function renderRuns() {
     const title = groupName(state.selectedID);
     byID('selection-title').textContent = title || 'Agent work';
+    byID('selection-subtitle').textContent = state.selectedID ? groupDescription(state.selectedID) : 'Recent work, active first.';
     const showAgentMenu = state.mode === 'agent' && state.selectedID && state.selectedID !== noAgentID;
     const agentMenuBtn = byID('agent-menu-btn');
     if (agentMenuBtn) {
       agentMenuBtn.hidden = !showAgentMenu;
       if (!showAgentMenu) closePopover('agent-menu', 'agent-menu-btn');
     }
-    byID('work-title').textContent = title || 'Recent work';
+    byID('work-title').textContent = 'Recent work';
     const workSearch = byID('work-search');
     if (workSearch) {
       workSearch.placeholder = 'Search ' + (title || 'this view') + ' chats';
@@ -457,28 +525,37 @@
     more.textContent = 'Show more';
   }
 
+  function renderRunMeta(run, agent, repo) {
+    const parts = ['<span>' + esc(agent) + '</span>'];
+    if (repo && repo !== 'No repository') {
+      parts.push('<span>' + esc(repo) + '</span>');
+    }
+    const prHref = safeHttpURL(run.pr_url || '');
+    if (prHref) {
+      const prLabel = run.pr_number ? '#' + run.pr_number : (extractPRNumber(prHref) ? '#' + extractPRNumber(prHref) : 'PR');
+      parts.push('<a class="run-meta-link" href="' + esc(prHref) + '" target="_blank" rel="noopener">' + esc(prLabel) + '</a>');
+    }
+    parts.push('<span>' + esc(relativeTime(run.updated_at)) + '</span>');
+    return parts.join('<span class="run-meta-separator">-</span>');
+  }
+
   function renderRunCard(run) {
     const agent = agentName(run.agent_slug);
     const repo = compact(run.repository, 'No repository');
-    const meta = [
-      esc(agent),
-      esc(repo),
-      esc(relativeTime(run.updated_at)),
-      '<a class="chat-link" href="/?session=' + encodeURIComponent(run.conversation_id) + '" data-open-chat="' + esc(run.conversation_id) + '">Chat details</a>',
-    ].join(' - ');
+    const meta = renderRunMeta(run, agent, repo);
     const isActive = run.status === 'running';
     const activeDetails = isActive
       ? '<div class="active-run-details">'
         + renderMilestones(run.milestones || [])
         + '<div class="live-panel">'
         + '<div class="activity-current">'
-        + '<div class="activity-head"><span class="activity-kicker">Current step</span><a class="activity-detail-link" href="/?session=' + encodeURIComponent(run.conversation_id) + '" data-open-chat="' + esc(run.conversation_id) + '">Full chat details</a></div>'
+        + '<div class="activity-head"><span class="activity-kicker">Current step</span></div>'
         + '<div class="activity-step"><span class="activity-dot"></span><span class="activity-step-text">' + esc(run.activity || 'Run is active.') + '</span></div>'
         + '</div>'
         + '</div>'
         + '</div>'
       : '';
-    return '<article class="run-card' + (isActive ? ' has-live' : '') + '" data-run-card="' + esc(run.conversation_id) + '">'
+    return '<article class="run-card' + (isActive ? ' has-live' : '') + '" data-run-card="' + esc(run.conversation_id) + '" role="button" tabindex="0" aria-label="Open chat details for ' + esc(run.title) + '">'
       + '<div class="run-top">'
       + '<div><div class="run-title">' + esc(run.title) + '</div><div class="run-meta">' + meta + '</div></div>'
       + '<span class="pill ' + esc(run.status) + '">' + esc(statusLabel(run.status)) + '</span>'
@@ -827,15 +904,8 @@
   function renderChatDetail(detail) {
     byID('chat-detail-title').textContent = detail.title || 'Chat details';
     byID('chat-detail-sub').textContent = [agentName(detail.agent_slug), detail.status || 'idle', detail.id].filter(Boolean).join(' - ');
-    byID('detail-state').textContent = detail.status || '-';
-    byID('detail-agent').textContent = agentName(detail.agent_slug);
-    byID('detail-chat').textContent = detail.id || '-';
-    const repo = detail.github_owner && detail.github_repo ? detail.github_owner + '/' + detail.github_repo : '-';
-    byID('detail-repo').textContent = repo;
-    byID('detail-branch').textContent = detail.branch || '-';
-    byID('detail-pr').innerHTML = detail.pr_url
-      ? '<a href="' + esc(detail.pr_url) + '" target="_blank" rel="noopener">' + esc(detail.pr_url) + '</a>'
-      : '-';
+    renderDetailMetadata(detail);
+    const repo = detailRepoSlug(detail) || '-';
     byID('followup-repo-chip').textContent = repo;
     byID('followup-agent-chip').textContent = agentName(detail.agent_slug);
     byID('followup-model-chip').textContent = modelLabel(detail.model || 'opus');
@@ -856,6 +926,235 @@
     pending.forEach(item => renderPendingFollowup(log, item));
     log.scrollTop = log.scrollHeight;
   }
+
+  function renderDetailMetadata(detail) {
+    const host = byID('detail-meta-content');
+    if (!host) return;
+    if (!detail) {
+      host.innerHTML = '<div class="meta-empty">No chat details yet.</div>';
+      return;
+    }
+
+    const repoSlug = detailRepoSlug(detail);
+    const branch = compact(detail.branch, '');
+    const prURL = compact(detail.pr_url, '');
+    const prHref = safeHttpURL(prURL);
+    const sandbox = compact(detail.sandbox_id, '');
+    const agent = compact(detail.agent_name, '') || (detail.agent_slug ? agentName(detail.agent_slug) : '');
+    const model = compact(detail.model, '');
+    const created = fullDate(detail.created_at || detail.updated_at);
+    const creator = detail.creator_id ? userName(detail.creator_id) : '';
+    const attachments = Array.isArray(detail.attachments) ? detail.attachments : [];
+    const skills = Array.isArray(detail.sx_skills) ? detail.sx_skills : [];
+
+    const repoHref = repoGitHubHref(repoSlug);
+    const repoCell = repoHref
+      ? '<a href="' + esc(repoHref) + '" target="_blank" rel="noopener">' + esc(repoSlug) + '</a>'
+      : '<span>-</span>';
+    const branchCell = repoSlug && branch
+      ? '<a href="' + esc(repoGitHubHref(repoSlug)) + '/tree/' + encodeBranchPath(branch)
+        + '" target="_blank" rel="noopener" class="meta-mono">' + esc(branch) + '</a>'
+      : (branch ? '<span class="meta-mono">' + esc(branch) + '</span>' : '<span>-</span>');
+    let prCell = '<span>-</span>';
+    if (prHref) {
+      const prNumber = extractPRNumber(prHref);
+      prCell = '<a href="' + esc(prHref) + '" target="_blank" rel="noopener">'
+        + esc(prNumber ? '#' + prNumber : prHref) + '</a>';
+    }
+
+    const rows = [
+      { label: 'Agent', html: agent ? '<span>' + esc(agent) + '</span>' : '<span>-</span>', empty: !agent },
+      { label: 'Model', html: model ? '<span>' + esc(modelLabel(model)) + '</span>' : '<span>-</span>', empty: !model },
+      { label: 'Repo', html: repoCell, empty: !repoSlug },
+      { label: 'Branch', html: branchCell, empty: !branch },
+      { label: 'PR', html: prCell, empty: !prHref },
+      { label: 'Attachments', html: buildDetailAttachmentsCell(attachments), empty: attachments.length === 0 },
+      { label: 'Skills', html: buildDetailSkillsCell(skills), empty: skills.length === 0 },
+      { label: 'Sandbox', html: sandbox ? '<span class="meta-mono">' + esc(sandbox) + '</span>' : '<span>-</span>', empty: !sandbox },
+      { label: 'Created by', html: creator ? '<span>' + esc(creator) + '</span>' : '<span>-</span>', empty: !creator },
+      { label: 'Created', html: created ? '<span>' + esc(created) + '</span>' : '<span>-</span>', empty: !created },
+    ];
+
+    const rowHTML = rows.map(row =>
+      '<div class="meta-row' + (row.empty ? ' is-empty' : '') + '">'
+      + '<span class="meta-label">' + esc(row.label) + '</span>'
+      + '<span class="meta-value">' + row.html + '</span>'
+      + '</div>'
+    ).join('');
+
+    host.innerHTML =
+      '<div class="meta-section">'
+      + '<div class="meta-header">'
+      + '<div class="meta-title">Details</div>'
+      + '<div class="meta-more-wrap">'
+      + '<button id="detail-meta-more-btn" type="button" aria-label="More options" aria-haspopup="menu" aria-expanded="false">...</button>'
+      + '<div id="detail-meta-dropdown" role="menu" aria-label="More options" hidden>'
+      + '<button id="detail-download-btn" type="button" role="menuitem" class="meta-dropdown-item">Download</button>'
+      + '</div>'
+      + '</div>'
+      + '</div>'
+      + rowHTML
+      + '</div>';
+
+    setupDetailMetaMenu();
+    setupDetailSkillsTrigger(skills);
+  }
+
+  function buildDetailAttachmentsCell(attachments) {
+    if (!Array.isArray(attachments) || attachments.length === 0) return '<span>-</span>';
+    return '<span class="meta-attachment-list">' + attachments.map(attachment => {
+      const name = attachment.filename || 'attachment';
+      const size = attachment.size_bytes
+        ? ' <span class="meta-attachment-size">' + esc(attachmentSizeLabel(attachment.size_bytes)) + '</span>'
+        : '';
+      if (!attachment.download_url) {
+        return '<span class="meta-attachment-link">' + esc(name) + size + '</span>';
+      }
+      const url = attachment.download_url;
+      if (isImageAttachment(attachment.content_type)) {
+        return '<button type="button" class="meta-attachment-link"'
+          + ' data-image-modal-url="' + esc(url) + '"'
+          + ' data-image-modal-name="' + esc(name) + '"'
+          + ' aria-label="Open ' + esc(name) + '">'
+          + esc(name) + size + '</button>';
+      }
+      return '<a class="meta-attachment-link" href="' + esc(url) + '" download="' + esc(name) + '">'
+        + esc(name) + size + '</a>';
+    }).join('') + '</span>';
+  }
+
+  function buildDetailSkillsCell(skills) {
+    if (!Array.isArray(skills) || skills.length === 0) return '<span>-</span>';
+    const preview = skills.slice(0, detailMaxSkillPreview);
+    const previewHTML = preview.map(name =>
+      '<span class="meta-chip">' + esc(name) + '</span>'
+    ).join('');
+    const remainder = skills.length - preview.length;
+    const trailing = remainder > 0
+      ? ' <button type="button" id="detail-skills-show-all" class="meta-show-all" aria-haspopup="dialog">'
+        + 'Show all (' + esc(String(skills.length)) + ')</button>'
+      : '';
+    return '<span class="meta-chip-row">' + previewHTML + '</span>' + trailing;
+  }
+
+  function setupDetailSkillsTrigger(skills) {
+    const btn = byID('detail-skills-show-all');
+    if (!btn) return;
+    btn.addEventListener('click', () => openDetailSkillsModal(skills));
+  }
+
+  function openDetailSkillsModal(skills) {
+    byID('detail-skills-modal-overlay')?.remove();
+    const overlay = document.createElement('div');
+    overlay.id = 'detail-skills-modal-overlay';
+    overlay.className = 'skills-modal-overlay';
+    const titleID = 'detail-skills-modal-title';
+    const items = skills.map(name => '<li class="skills-modal-item">' + esc(name) + '</li>').join('');
+    overlay.innerHTML =
+      '<div class="skills-modal" role="dialog" aria-modal="true" aria-labelledby="' + titleID + '" tabindex="-1">'
+      + '<div class="skills-modal-head">'
+      + '<h2 class="skills-modal-title" id="' + titleID + '">Installed skills (' + esc(String(skills.length)) + ')</h2>'
+      + '<button type="button" class="skills-modal-close" aria-label="Close">&times;</button>'
+      + '</div>'
+      + '<ul class="skills-modal-list">' + items + '</ul>'
+      + '</div>';
+
+    const dialog = overlay.querySelector('.skills-modal');
+    const previousFocus = document.activeElement;
+    const close = () => {
+      document.removeEventListener('keydown', onKey);
+      overlay.remove();
+      if (previousFocus && typeof previousFocus.focus === 'function' && document.contains(previousFocus)) {
+        previousFocus.focus();
+      }
+    };
+    const focusableSelector = [
+      'a[href]', 'button:not([disabled])', 'input:not([disabled])',
+      'select:not([disabled])', 'textarea:not([disabled])',
+      '[tabindex]:not([tabindex="-1"])',
+    ].join(',');
+    const onKey = e => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        close();
+        return;
+      }
+      if (e.key !== 'Tab') return;
+      const items = Array.from(dialog.querySelectorAll(focusableSelector));
+      if (!items.length) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      const active = document.activeElement;
+      if (e.shiftKey && (active === first || !dialog.contains(active))) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && (active === last || !dialog.contains(active))) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    overlay.addEventListener('click', e => {
+      if (e.target === overlay) close();
+    });
+    overlay.querySelector('.skills-modal-close').addEventListener('click', close);
+    const mount = byID('chat-detail-dialog')?.open ? byID('chat-detail-dialog') : document.body;
+    mount.appendChild(overlay);
+    overlay.querySelector('.skills-modal-close').focus();
+  }
+
+  function setupDetailMetaMenu() {
+    const moreBtn = byID('detail-meta-more-btn');
+    const dropdown = byID('detail-meta-dropdown');
+    const downloadBtn = byID('detail-download-btn');
+    if (!moreBtn || !dropdown) return;
+    moreBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      const opening = dropdown.hidden;
+      dropdown.hidden = !opening;
+      moreBtn.setAttribute('aria-expanded', String(opening));
+      if (opening) dropdown.querySelector('[role="menuitem"]')?.focus();
+    });
+    dropdown.addEventListener('keydown', e => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        closeDetailMetaDropdown();
+        moreBtn.focus();
+      }
+    });
+    if (downloadBtn) downloadBtn.addEventListener('click', downloadActiveConversation);
+  }
+
+  function closeDetailMetaDropdown() {
+    const dropdown = byID('detail-meta-dropdown');
+    const moreBtn = byID('detail-meta-more-btn');
+    if (dropdown) dropdown.hidden = true;
+    if (moreBtn) moreBtn.setAttribute('aria-expanded', 'false');
+  }
+
+  async function downloadActiveConversation() {
+    if (detailIsDownloading || !state.activeChatID) return;
+    detailIsDownloading = true;
+    closeDetailMetaDropdown();
+    try {
+      const detail = await fetchJSON('/api/v1/conversations/' + encodeURIComponent(state.activeChatID) + '?include=turns,attachments');
+      const blob = new Blob([JSON.stringify(detail, null, 2) + '\n'], { type: 'application/json' });
+      const filename = (detail.title || state.activeDetail?.title || 'conversation').replace(/[^a-z0-9_\-. ]/gi, '_') + '.json';
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      showToast('detail-download', 'Failed to download conversation.', 'error');
+    } finally {
+      detailIsDownloading = false;
+    }
+  }
+
   function appendUserMessage(parent, text) {
     const msg = document.createElement('div');
     msg.className = 'chat-message user';
@@ -1089,6 +1388,13 @@
       state.selectedRunLimit += initialVisibleRuns;
       renderRuns();
     });
+    byID('run-list').addEventListener('keydown', e => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      const card = e.target.closest('[data-run-card]');
+      if (!card) return;
+      e.preventDefault();
+      openChat(card.dataset.runCard);
+    });
     byID('new-task-btn').addEventListener('click', openNewTask);
     byID('new-task-form').addEventListener('submit', submitNewTask);
     byID('agent-menu-btn').addEventListener('click', e => {
@@ -1216,6 +1522,7 @@
         openChat(card.dataset.runCard);
         return;
       }
+      if (!e.target.closest('.meta-more-wrap')) closeDetailMetaDropdown();
       if (!e.target.closest('.composer-popover') && !e.target.closest('.floating-menu')) {
         closePopover('task-tools-popover', 'task-tools-btn');
         closePopover('task-repo-popover', 'task-repo-btn');
