@@ -405,12 +405,7 @@
       out = buildAgentGroups();
     } else {
       const groups = buildRunGroups();
-      out = Array.from(groups.values()).sort((a, b) => {
-        if (a.active !== b.active) return b.active - a.active;
-        const at = Math.max.apply(null, a.runs.map(run => Date.parse(run.updated_at) || 0));
-        const bt = Math.max.apply(null, b.runs.map(run => Date.parse(run.updated_at) || 0));
-        return bt - at;
-      });
+      out = Array.from(groups.values()).sort(compareGroupsByName);
     }
     const needle = state.navQuery.trim().toLowerCase();
     if (needle) {
@@ -495,9 +490,14 @@
     }
     const html = [];
     let previousSection = '';
+    let builtInLabelRendered = false;
     for (const group of groups) {
       if (group.section && previousSection && group.section !== previousSection) {
         html.push('<div class="group-separator" role="separator"></div>');
+      }
+      if (group.section === 'builtin' && !builtInLabelRendered) {
+        html.push('<div class="group-section-label">built in agents</div>');
+        builtInLabelRendered = true;
       }
       if (group.section) previousSection = group.section;
       const activeClass = group.id === state.selectedID ? ' is-active' : '';
