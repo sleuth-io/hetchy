@@ -5,7 +5,6 @@
   const inboxLimit = 80;
   const pollMs = 4000;
   const hiddenPollMs = 15000;
-  const detailPollMs = 5000;
   const initialVisibleRuns = 8;
   const maxPromptAttachments = 5;
   const maxPromptAttachmentBytes = 10 * 1024 * 1024;
@@ -46,7 +45,6 @@
     selectedRunLimit: initialVisibleRuns,
     fetchInFlight: false,
     pollTimer: null,
-    detailTimer: null,
     activeChatID: '',
     activeDetail: null,
     pendingFollowups: {},
@@ -244,7 +242,6 @@
       state.data = data || { runs: [], pull_requests: [], counts: {} };
       ensureSelection();
       renderAll();
-      if (state.activeChatID) loadChatDetail(state.activeChatID, { quiet: true });
     } catch (e) {
       showToast('sync', 'Could not refresh work state.', 'warn');
     } finally {
@@ -881,15 +878,6 @@
     openDialog('chat-detail-dialog');
     byID('chat-log').innerHTML = '<div class="empty">Loading...</div>';
     await loadChatDetail(conversationID);
-    startDetailPoll();
-  }
-  function startDetailPoll() {
-    clearInterval(state.detailTimer);
-    state.detailTimer = setInterval(() => {
-      if (state.activeChatID && byID('chat-detail-dialog').open) {
-        loadChatDetail(state.activeChatID, { quiet: true });
-      }
-    }, detailPollMs);
   }
   async function loadChatDetail(conversationID, opts) {
     try {
@@ -1507,7 +1495,6 @@
         closeDialog(closeBtn.dataset.closeDialog);
         if (closeBtn.dataset.closeDialog === 'chat-detail-dialog') {
           state.activeChatID = '';
-          clearInterval(state.detailTimer);
         }
         return;
       }
