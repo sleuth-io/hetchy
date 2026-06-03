@@ -155,6 +155,25 @@ func (s *Store) LatestForThread(ctx context.Context, orgID, threadID string) (Ru
 	return fromRunRow(sqlc.AgentRun(row)), nil
 }
 
+func (s *Store) LatestForThreads(ctx context.Context, orgID string, threadIDs []string) (map[string]Run, error) {
+	out := make(map[string]Run, len(threadIDs))
+	if !s.Enabled() || len(threadIDs) == 0 {
+		return out, nil
+	}
+	rows, err := s.db.Queries.ListLatestAgentRunsForThreads(ctx, sqlc.ListLatestAgentRunsForThreadsParams{
+		OrgID:     orgID,
+		ThreadIds: threadIDs,
+	})
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		run := fromRunRow(sqlc.AgentRun(row))
+		out[run.ThreadID] = run
+	}
+	return out, nil
+}
+
 func (s *Store) ActiveForThread(ctx context.Context, orgID, threadID string) (Run, error) {
 	if !s.Enabled() {
 		return Run{}, pgx.ErrNoRows

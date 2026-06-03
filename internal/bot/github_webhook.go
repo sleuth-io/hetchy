@@ -193,7 +193,7 @@ func (b *Bot) handlePullRequestEvent(ctx context.Context, body []byte) {
 	}
 	installation, err := b.store.Queries.GetGithubInstallation(ctx, p.Installation.ID)
 	if err != nil {
-		b.log.Info("github webhook: pull_request installation not recorded",
+		b.log.Warn("github webhook: pull_request installation not recorded",
 			"installation", p.Installation.ID, "action", p.Action, "error", err)
 		return
 	}

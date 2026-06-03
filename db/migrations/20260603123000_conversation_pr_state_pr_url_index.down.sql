@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS conversations_pr_state_url_lookup_idx;

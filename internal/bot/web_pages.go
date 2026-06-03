@@ -82,6 +82,7 @@ func (b *Bot) indexHandler(w http.ResponseWriter, r *http.Request) {
 		"UserID":          p.UserID,
 		"OpenAIEnabled":   openaiEnabled,
 		"DefaultRepoSlug": defaultRepoSlug,
+		"InboxLimit":      agentInboxLimitDefault,
 	})
 }
 

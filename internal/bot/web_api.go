@@ -190,9 +190,15 @@ func (b *Bot) agentsHandler(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	if err := b.syncSXAgents(r.Context(), p.OrgID, sxActor(p)); err != nil {
-		if b.log != nil {
+	remoteProfiles := []agents.Profile{}
+	if b.sx != nil {
+		var err error
+		remoteProfiles, err = b.sx.SyncAgents(r.Context(), p.OrgID, sxActor(p))
+		if errors.Is(err, sxsync.ErrNotConfigured) {
+			remoteProfiles = nil
+		} else if err != nil && b.log != nil {
 			b.log.Warn("sync sx agents", "error", err, "org", p.OrgID)
+			remoteProfiles = nil
 		}
 	}
 	activeBackend, err := b.activeSXBackend(r.Context(), p.OrgID)
@@ -207,10 +213,20 @@ func (b *Bot) agentsHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
+	remoteBySlug := make(map[string]agents.Profile, len(remoteProfiles))
+	for _, remote := range remoteProfiles {
+		slug := agents.NormalizeSlug(remote.Slug)
+		if slug != "" {
+			remoteBySlug[slug] = remote
+		}
+	}
 	out := make([]agentSummary, 0, len(profiles))
 	for _, a := range profiles {
 		if !a.Enabled {
 			continue
+		}
+		if remote, ok := remoteBySlug[a.Slug]; ok {
+			a = overlayAgentRemoteState(a, remote)
 		}
 		if !agentAvailableForActiveSXBackend(a, activeBackend) {
 			continue
@@ -233,6 +249,28 @@ func (b *Bot) agentsHandler(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, out)
+}
+
+func overlayAgentRemoteState(local, remote agents.Profile) agents.Profile {
+	local.Skills = remote.Skills
+	local.SXTeams = append([]string(nil), remote.SXTeams...)
+	local.SXSkills = append([]string(nil), remote.SXSkills...)
+	if strings.TrimSpace(remote.DisplayName) != "" {
+		local.DisplayName = remote.DisplayName
+	}
+	if strings.TrimSpace(remote.Description) != "" {
+		local.Description = remote.Description
+	}
+	if strings.TrimSpace(remote.SXBot) != "" {
+		local.SXBot = remote.SXBot
+	}
+	if strings.TrimSpace(remote.PersonaAsset) != "" {
+		local.PersonaAsset = remote.PersonaAsset
+	}
+	if strings.TrimSpace(remote.VaultBackend) != "" {
+		local.VaultBackend = remote.VaultBackend
+	}
+	return local
 }
 
 // conversationsListLimitDefault caps a single sidebar page to 20.

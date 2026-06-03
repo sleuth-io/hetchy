@@ -130,8 +130,14 @@ func TestIndexHandler_AgentUIFeatureFlagSelectsSPA(t *testing.T) {
 	if !strings.Contains(body, `src="/assets/agent_inbox.js`) {
 		t.Fatalf("agent inbox template missing agent_inbox.js, body=%s", body)
 	}
+	if !strings.Contains(body, `src="/assets/agent_inbox_events.js`) {
+		t.Fatalf("agent inbox template missing split agent inbox runtime, body=%s", body)
+	}
 	if !strings.Contains(body, `href="/assets/agent_inbox.css`) {
 		t.Fatalf("agent inbox template missing agent_inbox.css, body=%s", body)
+	}
+	if !strings.Contains(body, `href="/assets/agent_inbox_responsive.css`) {
+		t.Fatalf("agent inbox template missing split agent inbox styles, body=%s", body)
 	}
 	if strings.Contains(body, `src="/assets/chat_core.js`) {
 		t.Fatalf("agent inbox template should not load old chat runtime")
@@ -155,6 +161,9 @@ func TestIndexHandler_AgentUIFeatureFlagSelectsSPAPaths(t *testing.T) {
 			}
 			if !strings.Contains(rec.Body.String(), `src="/assets/agent_inbox.js`) {
 				t.Fatalf("agent inbox template missing agent_inbox.js, body=%s", rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), `src="/assets/agent_inbox_events.js`) {
+				t.Fatalf("agent inbox template missing split agent inbox runtime, body=%s", rec.Body.String())
 			}
 		})
 	}

@@ -36,7 +36,10 @@ func (b *Bot) refreshConversationPRState(ctx context.Context, orgID, threadID, r
 }
 
 func (b *Bot) refreshConversationPRStateBestEffort(ctx context.Context, orgID, threadID, rawURL string) {
-	if err := b.refreshConversationPRState(ctx, orgID, threadID, rawURL); err != nil && b != nil && b.log != nil {
+	if b == nil {
+		return
+	}
+	if err := b.refreshConversationPRState(ctx, orgID, threadID, rawURL); err != nil && b.log != nil {
 		b.log.Warn("refresh conversation PR state failed",
 			"org", orgID, "thread", threadID, "pr_url", rawURL, "error", err)
 	}

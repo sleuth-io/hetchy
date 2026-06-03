@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hetchyhq/hetchy/internal/agents"
 	"github.com/hetchyhq/hetchy/internal/auth"
 	"github.com/hetchyhq/hetchy/internal/blocks"
 	"github.com/hetchyhq/hetchy/internal/convstore"
@@ -454,6 +455,47 @@ func TestAgentsHandlerListsFallbackProfiles(t *testing.T) {
 	}
 }
 
+func TestAgentsHandlerOverlaysRemoteTeamsAndSkills(t *testing.T) {
+	b := newBypassOrgBot(t, "member")
+	b.sx = &fakeSXManager{remoteAgents: []agents.Profile{{
+		Slug:        "bob",
+		DisplayName: "Bob",
+		Description: "Remote backend agent.",
+		Skills:      []string{"database-migrations"},
+		SXTeams:     []string{"Platform", "Infra"},
+		SXSkills:    []string{"database-migrations", "golang-patterns"},
+	}}}
+	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.agentsHandler)))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/agents", nil)
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	var got []agentSummary
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v body=%q", err, rec.Body.String())
+	}
+	var bob agentSummary
+	for _, item := range got {
+		if item.Slug == "bob" {
+			bob = item
+			break
+		}
+	}
+	if bob.Slug == "" {
+		t.Fatalf("bob not found in agents response: %+v", got)
+	}
+	if strings.Join(bob.SXTeams, ",") != "Platform,Infra" {
+		t.Fatalf("bob sx teams = %+v", bob.SXTeams)
+	}
+	if strings.Join(bob.SXSkills, ",") != "database-migrations,golang-patterns" {
+		t.Fatalf("bob sx skills = %+v", bob.SXSkills)
+	}
+}
+
 func TestFilterRepositoriesForPicker(t *testing.T) {
 	rows := []sqlc.GithubRepo{
 		{Owner: "acme", Name: "ui", DefaultBranch: "main"},
@@ -715,8 +757,28 @@ func TestAgentInboxHandlerAggregatesRunsAndPRs(t *testing.T) {
 	if run.UpdatedAt != runUpdatedAt.Format(time.RFC3339) {
 		t.Fatalf("run updated_at = %q, want latest run timestamp", run.UpdatedAt)
 	}
+	store := b.runs.(*fakeRunStore)
+	if store.latestCalls != 0 {
+		t.Fatalf("LatestForThread calls = %d, want 0", store.latestCalls)
+	}
+	if len(store.latestBatchCalls) != 1 || len(store.latestBatchCalls[0]) != 1 || store.latestBatchCalls[0][0] != "thread-1" {
+		t.Fatalf("latest batch calls = %+v, want one batch for thread-1", store.latestBatchCalls)
+	}
 	if len(got.PullRequests) != 1 || !got.PullRequests[0].ValidationPassed || !got.PullRequests[0].ReviewPassed {
 		t.Fatalf("pull requests = %+v", got.PullRequests)
+	}
+}
+
+func TestAgentInboxRunTimestampPrefersConversationUpdatedAtWithoutRun(t *testing.T) {
+	createdAt := time.Date(2026, 6, 1, 9, 0, 0, 0, time.UTC)
+	updatedAt := time.Date(2026, 6, 2, 10, 30, 0, 0, time.UTC)
+
+	got := agentInboxRunTimestamp(convstore.Record{
+		CreatedAt: createdAt,
+		UpdatedAt: updatedAt,
+	}, runstore.Run{}, false)
+	if got != updatedAt.Format(time.RFC3339) {
+		t.Fatalf("timestamp = %q, want conversation updated_at", got)
 	}
 }
 

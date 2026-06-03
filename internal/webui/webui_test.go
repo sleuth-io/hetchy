@@ -73,15 +73,25 @@ func TestRenderChatTemplate(t *testing.T) {
 }
 
 func TestAgentInboxUsesSharedRepoStorageKey(t *testing.T) {
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/assets/agent_inbox.js", nil)
-	AssetHandler().ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+	var parts []string
+	for _, name := range []string{
+		"agent_inbox.js",
+		"agent_inbox_runs.js",
+		"agent_inbox_controls.js",
+		"agent_inbox_detail.js",
+		"agent_inbox_events.js",
+	} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/assets/"+name, nil)
+		AssetHandler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s status = %d body=%q", name, rec.Code, rec.Body.String())
+		}
+		parts = append(parts, rec.Body.String())
 	}
-	body := rec.Body.String()
+	body := strings.Join(parts, "\n")
 	for _, want := range []string{
-		"const repoStorageKey = 'hetchy.repo.' + currentUserID",
+		"var repoStorageKey = 'hetchy.repo.' + currentUserID",
 		"localStorage.getItem(repoStorageKey)",
 		"localStorage.setItem(repoStorageKey, state.selectedTaskRepo)",
 		"state.selectedTaskRepo = initialTaskRepoSlug()",
@@ -109,9 +119,19 @@ func TestRenderAgentInboxTemplate(t *testing.T) {
 	for _, want := range []string{
 		`data-current-user-id="user_test"`,
 		`data-default-repo-slug="hetchyhq/hetchy"`,
+		`data-inbox-limit="80"`,
 		`href="/assets/agent_inbox.css`,
+		`href="/assets/agent_inbox_layout.css`,
+		`href="/assets/agent_inbox_work.css`,
+		`href="/assets/agent_inbox_dialogs.css`,
+		`href="/assets/agent_inbox_chat.css`,
+		`href="/assets/agent_inbox_responsive.css`,
 		`src="/assets/chat_blocks.js`,
 		`src="/assets/agent_inbox.js`,
+		`src="/assets/agent_inbox_runs.js`,
+		`src="/assets/agent_inbox_controls.js`,
+		`src="/assets/agent_inbox_detail.js`,
+		`src="/assets/agent_inbox_events.js`,
 		`id="agent-menu-btn"`,
 		`id="agent-nav-toggle"`,
 		`id="pr-sidebar-toggle"`,
