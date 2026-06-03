@@ -360,8 +360,9 @@
   #meta-scary { padding: 1rem 1rem .75rem; border-bottom: 2px solid #e00;
                 background: #1a0000; text-align: center; flex-shrink: 0; }
   .meta-ascii-art { font-family: monospace; font-size: .62rem; line-height: 1.25;
-                    color: #cc0000; white-space: pre; margin: 0 0 .4rem;
-                    text-shadow: 0 0 6px #ff0000; display: block; }
+                    color: #cc0000; white-space: pre; margin: 0 auto .4rem;
+                    text-shadow: 0 0 6px #ff0000; display: inline-block;
+                    text-align: left; }
   .meta-scary-label { font-size: .65rem; font-weight: 700; letter-spacing: .12em;
                       color: #ff2222; text-transform: uppercase;
                       text-shadow: 0 0 8px #ff0000; }
