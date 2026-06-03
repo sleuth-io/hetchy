@@ -152,22 +152,27 @@ type BillingTopupSetting struct {
 }
 
 type Conversation struct {
-	OrgID          string             `json:"org_id"`
-	ThreadID       string             `json:"thread_id"`
-	SandboxID      string             `json:"sandbox_id"`
-	Branch         string             `json:"branch"`
-	PrUrl          string             `json:"pr_url"`
-	History        []string           `json:"history"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
-	GithubOwner    string             `json:"github_owner"`
-	GithubRepo     string             `json:"github_repo"`
-	ResponseBlocks [][]byte           `json:"response_blocks"`
-	CustomTitle    string             `json:"custom_title"`
-	CreatorID      string             `json:"creator_id"`
-	AgentSlug      string             `json:"agent_slug"`
-	Model          string             `json:"model"`
-	TaskOptions    []byte             `json:"task_options"`
+	OrgID            string             `json:"org_id"`
+	ThreadID         string             `json:"thread_id"`
+	SandboxID        string             `json:"sandbox_id"`
+	Branch           string             `json:"branch"`
+	PrUrl            string             `json:"pr_url"`
+	History          []string           `json:"history"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	GithubOwner      string             `json:"github_owner"`
+	GithubRepo       string             `json:"github_repo"`
+	ResponseBlocks   [][]byte           `json:"response_blocks"`
+	CustomTitle      string             `json:"custom_title"`
+	CreatorID        string             `json:"creator_id"`
+	AgentSlug        string             `json:"agent_slug"`
+	Model            string             `json:"model"`
+	TaskOptions      []byte             `json:"task_options"`
+	PrState          string             `json:"pr_state"`
+	PrMerged         bool               `json:"pr_merged"`
+	PrMergedAt       pgtype.Timestamptz `json:"pr_merged_at"`
+	PrClosedAt       pgtype.Timestamptz `json:"pr_closed_at"`
+	PrStateCheckedAt pgtype.Timestamptz `json:"pr_state_checked_at"`
 }
 
 type ConversationAttachment struct {

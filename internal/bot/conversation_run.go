@@ -223,6 +223,7 @@ func (b *Bot) runFreshAgentWithTranscriptModeAndKind(ctx context.Context, oc org
 		b.markRunState(ctx, runstore.StateFailed, err)
 		return
 	}
+	b.refreshConversationPRStateBestEffort(ctx, rec.OrgID, rec.ThreadID, prURL)
 	b.markCompletedRunOutcome(ctx, recorder.Snapshot(), runstore.OutcomeCompletedWithVerifiedPR, map[string]any{"pr_url": prURL, "branch": branch})
 	b.markRunState(ctx, runstore.StateSucceeded, nil)
 	b.deleteSandboxSession(sb, b.currentAgentRunSessionID(ctx, "agent-"+requestID))
@@ -371,6 +372,7 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 		return
 	}
 	if prURL != "" {
+		b.refreshConversationPRStateBestEffort(ctx, rec.OrgID, rec.ThreadID, prURL)
 		b.markCompletedRunOutcome(ctx, recorder.Snapshot(), runstore.OutcomeCompletedWithVerifiedPR, map[string]any{"pr_url": prURL, "branch": rec.Branch})
 	} else {
 		b.markCompletedRunOutcome(ctx, recorder.Snapshot(), runstore.OutcomeCompletedNoPR, map[string]any{"reason": "followup_no_new_pr", "existing_pr_url": rec.PRURL})

@@ -713,6 +713,71 @@ func TestAgentInboxHandlerAggregatesRunsAndPRs(t *testing.T) {
 	}
 }
 
+func TestAgentInboxHandlerExcludesClosedAndMergedPRs(t *testing.T) {
+	updatedAt := time.Date(2026, 6, 2, 10, 30, 0, 0, time.UTC)
+	noRequiredChecks := map[string]bool{
+		chatTaskValidateKey:              false,
+		chatTaskReviewCodeBeforePushKey:  false,
+		chatTaskActionPRChecksForDoneKey: false,
+	}
+	b := newBypassOrgBot(t, "member")
+	b.convs = &fakeConversationStore{searchResult: []convstore.Record{
+		{
+			OrgID:       "org_test",
+			ThreadID:    "thread-open",
+			History:     []string{"open"},
+			PRURL:       "https://github.com/hetchyhq/hetchy/pull/1",
+			PRState:     githubPRStateOpen,
+			GitHubOwner: "hetchyhq",
+			GitHubRepo:  "hetchy",
+			TaskOptions: noRequiredChecks,
+			UpdatedAt:   updatedAt,
+		},
+		{
+			OrgID:       "org_test",
+			ThreadID:    "thread-merged",
+			History:     []string{"merged"},
+			PRURL:       "https://github.com/hetchyhq/hetchy/pull/2",
+			PRState:     githubPRStateClosed,
+			PRMerged:    true,
+			GitHubOwner: "hetchyhq",
+			GitHubRepo:  "hetchy",
+			TaskOptions: noRequiredChecks,
+			UpdatedAt:   updatedAt,
+		},
+		{
+			OrgID:       "org_test",
+			ThreadID:    "thread-closed",
+			History:     []string{"closed"},
+			PRURL:       "https://github.com/hetchyhq/hetchy/pull/3",
+			PRState:     githubPRStateClosed,
+			GitHubOwner: "hetchyhq",
+			GitHubRepo:  "hetchy",
+			TaskOptions: noRequiredChecks,
+			UpdatedAt:   updatedAt,
+		},
+	}}
+	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.agentInboxHandler)))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/agent-inbox", nil)
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	var got agentInboxResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v body=%q", err, rec.Body.String())
+	}
+	if got.Counts.Conversations != 3 || got.Counts.ReadyPRs != 1 {
+		t.Fatalf("counts = %+v", got.Counts)
+	}
+	if len(got.PullRequests) != 1 || got.PullRequests[0].ConversationID != "thread-open" {
+		t.Fatalf("pull requests = %+v", got.PullRequests)
+	}
+}
+
 func TestAgentInboxHandlerPassesAgentAndCreatorFilters(t *testing.T) {
 	b := newBypassOrgBot(t, "member")
 	fake := &fakeConversationStore{}

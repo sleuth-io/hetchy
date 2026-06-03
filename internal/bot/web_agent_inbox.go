@@ -52,6 +52,8 @@ type agentInboxRun struct {
 	Branch         string                `json:"branch,omitempty"`
 	PRURL          string                `json:"pr_url,omitempty"`
 	PRNumber       string                `json:"pr_number,omitempty"`
+	PRState        string                `json:"pr_state,omitempty"`
+	PRMerged       bool                  `json:"pr_merged,omitempty"`
 	CommandStep    string                `json:"command_step,omitempty"`
 	Activity       string                `json:"activity,omitempty"`
 	TurnCount      int                   `json:"turn_count"`
@@ -74,6 +76,8 @@ type agentInboxPullRequest struct {
 	Number             string `json:"number,omitempty"`
 	AgentSlug          string `json:"agent_slug"`
 	Repository         string `json:"repository,omitempty"`
+	PRState            string `json:"pr_state,omitempty"`
+	PRMerged           bool   `json:"pr_merged,omitempty"`
 	State              string `json:"state"`
 	Outcome            string `json:"outcome,omitempty"`
 	ValidationRequired bool   `json:"validation_required"`
@@ -134,7 +138,7 @@ func (b *Bot) agentInboxHandler(w http.ResponseWriter, r *http.Request) {
 		case "failed":
 			resp.Counts.Failed++
 		}
-		if item.PRURL != "" {
+		if item.PRURL != "" && agentInboxPRIsActionable(item) {
 			pr := agentInboxPRForRun(item)
 			resp.PullRequests = append(resp.PullRequests, pr)
 			if pr.ValidationPassed && pr.ReviewPassed {
@@ -193,6 +197,8 @@ func (b *Bot) agentInboxRunForConversation(ctx context.Context, orgID string, re
 		Branch:         firstNonEmpty(run.Branch, rec.Branch),
 		PRURL:          rec.PRURL,
 		PRNumber:       pullRequestNumber(rec.PRURL),
+		PRState:        rec.PRState,
+		PRMerged:       rec.PRMerged,
 		CommandStep:    commandStep,
 		Activity:       activity,
 		TurnCount:      len(rec.History),
@@ -232,6 +238,8 @@ func agentInboxPRForRun(run agentInboxRun) agentInboxPullRequest {
 		Number:             run.PRNumber,
 		AgentSlug:          run.AgentSlug,
 		Repository:         run.Repository,
+		PRState:            run.PRState,
+		PRMerged:           run.PRMerged,
 		State:              run.State,
 		Outcome:            run.Outcome,
 		ValidationRequired: validationRequired,
@@ -240,6 +248,13 @@ func agentInboxPRForRun(run agentInboxRun) agentInboxPullRequest {
 		ReviewPassed:       reviewPassed,
 		UpdatedAt:          run.UpdatedAt,
 	}
+}
+
+func agentInboxPRIsActionable(run agentInboxRun) bool {
+	if strings.TrimSpace(run.PRURL) == "" || run.PRMerged {
+		return false
+	}
+	return strings.ToLower(strings.TrimSpace(run.PRState)) != githubPRStateClosed
 }
 
 func agentInboxStatus(state, outcome string) string {

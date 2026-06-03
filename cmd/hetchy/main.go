@@ -42,6 +42,9 @@ func main() {
 	migrateFlag := flag.Bool("migrate", false, "Apply all pending database migrations and exit")
 	migrateDown := flag.Int("migrate-down", -1, "Roll back N migrations and exit (0 means roll back everything)")
 	migrateStatus := flag.Bool("migrate-status", false, "Print the current schema version and exit")
+	backfillPRStates := flag.Bool("backfill-pr-states", false, "Refresh stored GitHub pull request state for conversations with PR URLs and exit")
+	backfillPRStatesLimit := flag.Int("backfill-pr-states-limit", 1000, "Maximum conversations to scan when backfilling PR state")
+	backfillPRStatesForce := flag.Bool("backfill-pr-states-force", false, "Refresh PR state even for conversations checked before")
 	flag.Parse()
 
 	_ = godotenv.Load()
@@ -55,7 +58,8 @@ func main() {
 	// (e.g. "schema version: N"), so their logs go to stderr to keep stdout clean
 	// for callers like `make db-up` that parse that output.
 	logDest := os.Stdout
-	if *migrateFlag || *migrateDown >= 0 || *migrateStatus {
+	oneShot := *migrateFlag || *migrateDown >= 0 || *migrateStatus || *backfillPRStates
+	if oneShot {
 		logDest = os.Stderr
 	}
 	log := slog.New(slog.NewJSONHandler(logDest, &slog.HandlerOptions{Level: level}))
@@ -70,6 +74,10 @@ func main() {
 
 	if *migrateFlag || *migrateDown >= 0 || *migrateStatus {
 		runMigrate(log, *migrateFlag, *migrateDown, *migrateStatus)
+		return
+	}
+	if *backfillPRStates {
+		runBackfillPRStates(log, *backfillPRStatesLimit, *backfillPRStatesForce)
 		return
 	}
 
@@ -96,6 +104,31 @@ func main() {
 		log.Error("bot stopped with error", "error", err)
 		os.Exit(1)
 	}
+}
+
+func runBackfillPRStates(log *slog.Logger, limit int, force bool) {
+	cfg, err := bot.LoadConfig()
+	if err != nil {
+		log.Error("config load failed", "error", err)
+		os.Exit(1)
+	}
+	b, err := bot.New(cfg, log)
+	if err != nil {
+		log.Error("bot init failed", "error", err)
+		os.Exit(1)
+	}
+	defer b.Close()
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	result, err := b.BackfillConversationPRStates(ctx, limit, force)
+	if err != nil {
+		log.Error("backfill PR states failed", "error", err)
+		os.Exit(1)
+	}
+	fmt.Printf("pr state backfill: scanned=%d updated=%d skipped=%d failed=%d\n",
+		result.Scanned, result.Updated, result.Skipped, result.Failed)
 }
 
 // waitForDB retries a TCP ping against databaseURL until it succeeds or the

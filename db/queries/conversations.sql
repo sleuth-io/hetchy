@@ -1,5 +1,6 @@
 -- name: GetConversation :one
-SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, response_blocks,
+SELECT org_id, thread_id, sandbox_id, branch, pr_url, pr_state, pr_merged, pr_merged_at, pr_closed_at,
+       pr_state_checked_at, history, created_at, updated_at, response_blocks,
        github_owner, github_repo, custom_title, creator_id, agent_slug, model, task_options
 FROM conversations
 WHERE org_id = $1 AND thread_id = $2;
@@ -40,7 +41,8 @@ WHERE org_id = $1 AND thread_id = $2;
 -- when an org grows past a few thousand chats, switch to pg_trgm
 -- + a GIN index on custom_title (and a generated column for
 -- history[1]).
-SELECT org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, response_blocks,
+SELECT org_id, thread_id, sandbox_id, branch, pr_url, pr_state, pr_merged, pr_merged_at, pr_closed_at,
+       pr_state_checked_at, history, created_at, updated_at, response_blocks,
        github_owner, github_repo, custom_title, creator_id, agent_slug, model, task_options
 FROM conversations
 WHERE org_id = $1
@@ -66,6 +68,26 @@ ON CONFLICT (org_id, thread_id) DO UPDATE SET
     sandbox_id      = EXCLUDED.sandbox_id,
     branch          = EXCLUDED.branch,
     pr_url          = EXCLUDED.pr_url,
+    pr_state        = CASE
+                          WHEN EXCLUDED.pr_url <> conversations.pr_url THEN ''
+                          ELSE conversations.pr_state
+                      END,
+    pr_merged       = CASE
+                          WHEN EXCLUDED.pr_url <> conversations.pr_url THEN FALSE
+                          ELSE conversations.pr_merged
+                      END,
+    pr_merged_at    = CASE
+                          WHEN EXCLUDED.pr_url <> conversations.pr_url THEN NULL
+                          ELSE conversations.pr_merged_at
+                      END,
+    pr_closed_at    = CASE
+                          WHEN EXCLUDED.pr_url <> conversations.pr_url THEN NULL
+                          ELSE conversations.pr_closed_at
+                      END,
+    pr_state_checked_at = CASE
+                          WHEN EXCLUDED.pr_url <> conversations.pr_url THEN NULL
+                          ELSE conversations.pr_state_checked_at
+                      END,
     history         = EXCLUDED.history,
     response_blocks = EXCLUDED.response_blocks,
     github_owner    = EXCLUDED.github_owner,
@@ -74,7 +96,8 @@ ON CONFLICT (org_id, thread_id) DO UPDATE SET
     model           = EXCLUDED.model,
     task_options    = EXCLUDED.task_options,
     updated_at      = NOW()
-RETURNING org_id, thread_id, sandbox_id, branch, pr_url, history, created_at, updated_at, response_blocks,
+RETURNING org_id, thread_id, sandbox_id, branch, pr_url, pr_state, pr_merged, pr_merged_at, pr_closed_at,
+          pr_state_checked_at, history, created_at, updated_at, response_blocks,
           github_owner, github_repo, custom_title, creator_id, agent_slug, model, task_options;
 
 -- name: SaveConversationProgress :exec
@@ -119,9 +142,64 @@ UPDATE conversations
                         WHEN sqlc.arg(pr_url)::text <> '' THEN sqlc.arg(pr_url)
                         ELSE pr_url
                     END,
+       pr_state   = CASE
+                        WHEN sqlc.arg(pr_url)::text <> '' AND sqlc.arg(pr_url)::text <> pr_url THEN ''
+                        ELSE pr_state
+                    END,
+       pr_merged  = CASE
+                        WHEN sqlc.arg(pr_url)::text <> '' AND sqlc.arg(pr_url)::text <> pr_url THEN FALSE
+                        ELSE pr_merged
+                    END,
+       pr_merged_at = CASE
+                        WHEN sqlc.arg(pr_url)::text <> '' AND sqlc.arg(pr_url)::text <> pr_url THEN NULL
+                        ELSE pr_merged_at
+                    END,
+       pr_closed_at = CASE
+                        WHEN sqlc.arg(pr_url)::text <> '' AND sqlc.arg(pr_url)::text <> pr_url THEN NULL
+                        ELSE pr_closed_at
+                    END,
+       pr_state_checked_at = CASE
+                        WHEN sqlc.arg(pr_url)::text <> '' AND sqlc.arg(pr_url)::text <> pr_url THEN NULL
+                        ELSE pr_state_checked_at
+                    END,
        updated_at = NOW()
 WHERE org_id = sqlc.arg(org_id)
   AND thread_id = sqlc.arg(thread_id);
+
+-- name: SaveConversationPRState :exec
+UPDATE conversations
+   SET pr_state            = sqlc.arg(pr_state),
+       pr_merged           = sqlc.arg(pr_merged),
+       pr_merged_at        = sqlc.arg(pr_merged_at),
+       pr_closed_at        = sqlc.arg(pr_closed_at),
+       pr_state_checked_at = NOW(),
+       updated_at          = NOW()
+WHERE org_id = sqlc.arg(org_id)
+  AND thread_id = sqlc.arg(thread_id);
+
+-- name: SaveConversationPRStateByURL :execrows
+UPDATE conversations
+   SET pr_state            = sqlc.arg(pr_state),
+       pr_merged           = sqlc.arg(pr_merged),
+       pr_merged_at        = sqlc.arg(pr_merged_at),
+       pr_closed_at        = sqlc.arg(pr_closed_at),
+       pr_state_checked_at = NOW(),
+       updated_at          = NOW()
+WHERE org_id = sqlc.arg(org_id)
+  AND lower(github_owner) = lower(sqlc.arg(github_owner))
+  AND lower(github_repo) = lower(sqlc.arg(github_repo))
+  AND (
+      pr_url = sqlc.arg(pr_url)
+      OR pr_url = 'https://github.com/' || sqlc.arg(github_owner)::text || '/' || sqlc.arg(github_repo)::text || '/pull/' || sqlc.arg(pr_number)::int::text
+  );
+
+-- name: ListConversationPRStateBackfillCandidates :many
+SELECT org_id, thread_id, github_owner, github_repo, pr_url
+FROM conversations
+WHERE pr_url <> ''
+  AND (sqlc.arg(force)::bool OR pr_state_checked_at IS NULL)
+ORDER BY updated_at DESC, thread_id DESC
+LIMIT sqlc.arg(lim);
 
 -- name: SaveConversationTaskOptions :exec
 UPDATE conversations

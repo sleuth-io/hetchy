@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/google/go-github/v66/github"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/hetchyhq/hetchy/internal/db/sqlc"
@@ -142,11 +144,74 @@ func (b *Bot) dispatchGithubEvent(ctx context.Context, event string, body []byte
 		b.handleInstallationEvent(ctx, body)
 	case "installation_repositories":
 		b.handleInstallationReposEvent(ctx, body)
+	case "pull_request":
+		b.handlePullRequestEvent(ctx, body)
 	case "team", "team_add", "membership", "member", "organization":
 		b.handleOrgScopedEvent(ctx, event, body)
 	default:
 		b.log.Debug("github webhook: ignoring event", "event", event)
 	}
+}
+
+func (b *Bot) handlePullRequestEvent(ctx context.Context, body []byte) {
+	var p struct {
+		Action       string `json:"action"`
+		Installation struct {
+			ID int64 `json:"id"`
+		} `json:"installation"`
+		Repository struct {
+			Name     string `json:"name"`
+			FullName string `json:"full_name"`
+			Owner    struct {
+				Login string `json:"login"`
+			} `json:"owner"`
+		} `json:"repository"`
+		PullRequest *github.PullRequest `json:"pull_request"`
+	}
+	if err := json.Unmarshal(body, &p); err != nil {
+		if b.githubWebhookErrLog.allow("pull_request") {
+			b.log.Error("github webhook: parse pull_request event", "error", err)
+		}
+		return
+	}
+	if b.store == nil || p.Installation.ID == 0 || p.PullRequest == nil || p.PullRequest.GetNumber() <= 0 {
+		return
+	}
+	owner := strings.TrimSpace(p.Repository.Owner.Login)
+	repo := strings.TrimSpace(p.Repository.Name)
+	if owner == "" || repo == "" {
+		parts := strings.SplitN(strings.TrimSpace(p.Repository.FullName), "/", 2)
+		if len(parts) == 2 {
+			owner = firstNonEmpty(owner, parts[0])
+			repo = firstNonEmpty(repo, parts[1])
+		}
+	}
+	if owner == "" || repo == "" {
+		b.log.Warn("github webhook: pull_request missing repository slug",
+			"installation", p.Installation.ID, "action", p.Action)
+		return
+	}
+	installation, err := b.store.Queries.GetGithubInstallation(ctx, p.Installation.ID)
+	if err != nil {
+		b.log.Info("github webhook: pull_request installation not recorded",
+			"installation", p.Installation.ID, "action", p.Action, "error", err)
+		return
+	}
+	prURL := p.PullRequest.GetHTMLURL()
+	if prURL == "" {
+		prURL = canonicalGitHubPRURL(owner, repo, p.PullRequest.GetNumber())
+	}
+	rows, err := b.saveConversationPRStateByURL(ctx, installation.OrgID, owner, repo, p.PullRequest.GetNumber(), prURL, p.PullRequest)
+	if err != nil {
+		b.log.Error("github webhook: save pull_request state",
+			"org", installation.OrgID, "repo", owner+"/"+repo, "pr", p.PullRequest.GetNumber(),
+			"action", p.Action, "error", err)
+		return
+	}
+	b.log.Info("github webhook: pull_request state saved",
+		"org", installation.OrgID, "repo", owner+"/"+repo, "pr", p.PullRequest.GetNumber(),
+		"state", p.PullRequest.GetState(), "merged", p.PullRequest.GetMerged(),
+		"action", p.Action, "rows", rows)
 }
 
 // handleInstallationEvent reacts to install lifecycle changes:

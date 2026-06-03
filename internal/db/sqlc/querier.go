@@ -100,6 +100,7 @@ type Querier interface {
 	ListBillingRunMetersByOrg(ctx context.Context, arg ListBillingRunMetersByOrgParams) ([]BillingRunMeter, error)
 	ListConversationAttachments(ctx context.Context, arg ListConversationAttachmentsParams) ([]ListConversationAttachmentsRow, error)
 	ListConversationAttachmentsForTurn(ctx context.Context, arg ListConversationAttachmentsForTurnParams) ([]ConversationAttachment, error)
+	ListConversationPRStateBackfillCandidates(ctx context.Context, arg ListConversationPRStateBackfillCandidatesParams) ([]ListConversationPRStateBackfillCandidatesRow, error)
 	ListExpiredAgentRuns(ctx context.Context, limit int32) ([]AgentRun, error)
 	ListGithubInstallationsByOrg(ctx context.Context, orgID string) ([]GithubAppInstallation, error)
 	ListGithubReposByInstallation(ctx context.Context, installationID int64) ([]GithubRepo, error)
@@ -135,6 +136,8 @@ type Querier interface {
 	ResetBillingTopupMonthlyUsage(ctx context.Context, arg ResetBillingTopupMonthlyUsageParams) (BillingTopupSetting, error)
 	RevokeOrgAPIKey(ctx context.Context, arg RevokeOrgAPIKeyParams) (int64, error)
 	SaveConversationAttachment(ctx context.Context, arg SaveConversationAttachmentParams) (ConversationAttachment, error)
+	SaveConversationPRState(ctx context.Context, arg SaveConversationPRStateParams) error
+	SaveConversationPRStateByURL(ctx context.Context, arg SaveConversationPRStateByURLParams) (int64, error)
 	// Periodic mid-run snapshot used by chatPersister. Only writes the
 	// handful of fields that change progressively as the agent emits
 	// blocks (history + response_blocks + creator_id). The fields that

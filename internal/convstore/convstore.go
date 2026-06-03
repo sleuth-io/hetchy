@@ -35,13 +35,18 @@ var ErrNotFound = errors.New("convstore: not found")
 // the user saw streamed back for that turn. Each entry is a list of
 // blocks.Block (setup, claude_text, tool_use, notify, result, error).
 type Record struct {
-	OrgID          string
-	ThreadID       string
-	SandboxID      string
-	Branch         string
-	PRURL          string
-	History        []string
-	ResponseBlocks [][]blocks.Block
+	OrgID            string
+	ThreadID         string
+	SandboxID        string
+	Branch           string
+	PRURL            string
+	PRState          string
+	PRMerged         bool
+	PRMergedAt       time.Time
+	PRClosedAt       time.Time
+	PRStateCheckedAt time.Time
+	History          []string
+	ResponseBlocks   [][]blocks.Block
 	// GitHubOwner + GitHubRepo identify the repository this conversation
 	// is targeting. Empty when the conversation has been opened but no
 	// repo has been picked yet (the agent hasn't launched). The bot
@@ -503,6 +508,9 @@ func decodeTaskOptions(raw []byte) (map[string]bool, error) {
 // identical 14-line builders.
 type rowFields struct {
 	OrgID, ThreadID, SandboxID, Branch, PrUrl string
+	PrState                                   string
+	PrMerged                                  bool
+	PrMergedAt, PrClosedAt, PrStateCheckedAt  pgtype.Timestamptz
 	History                                   []string
 	ResponseBlocks                            [][]byte
 	GithubOwner, GithubRepo, CustomTitle      string
@@ -523,22 +531,27 @@ func recordFromFields(f rowFields) (Record, error) {
 		taskOptions = map[string]bool{}
 	}
 	return Record{
-		OrgID:          f.OrgID,
-		ThreadID:       f.ThreadID,
-		SandboxID:      f.SandboxID,
-		Branch:         f.Branch,
-		PRURL:          f.PrUrl,
-		History:        f.History,
-		ResponseBlocks: bs,
-		GitHubOwner:    f.GithubOwner,
-		GitHubRepo:     f.GithubRepo,
-		CustomTitle:    f.CustomTitle,
-		CreatorID:      f.CreatorID,
-		AgentSlug:      f.AgentSlug,
-		Model:          f.Model,
-		TaskOptions:    taskOptions,
-		CreatedAt:      f.CreatedAt.Time,
-		UpdatedAt:      f.UpdatedAt.Time,
+		OrgID:            f.OrgID,
+		ThreadID:         f.ThreadID,
+		SandboxID:        f.SandboxID,
+		Branch:           f.Branch,
+		PRURL:            f.PrUrl,
+		PRState:          f.PrState,
+		PRMerged:         f.PrMerged,
+		PRMergedAt:       f.PrMergedAt.Time,
+		PRClosedAt:       f.PrClosedAt.Time,
+		PRStateCheckedAt: f.PrStateCheckedAt.Time,
+		History:          f.History,
+		ResponseBlocks:   bs,
+		GitHubOwner:      f.GithubOwner,
+		GitHubRepo:       f.GithubRepo,
+		CustomTitle:      f.CustomTitle,
+		CreatorID:        f.CreatorID,
+		AgentSlug:        f.AgentSlug,
+		Model:            f.Model,
+		TaskOptions:      taskOptions,
+		CreatedAt:        f.CreatedAt.Time,
+		UpdatedAt:        f.UpdatedAt.Time,
 	}, nil
 }
 
@@ -546,6 +559,8 @@ func recordFromGetRow(row sqlc.GetConversationRow) (Record, error) {
 	return recordFromFields(rowFields{
 		OrgID: row.OrgID, ThreadID: row.ThreadID, SandboxID: row.SandboxID,
 		Branch: row.Branch, PrUrl: row.PrUrl, History: row.History,
+		PrState: row.PrState, PrMerged: row.PrMerged,
+		PrMergedAt: row.PrMergedAt, PrClosedAt: row.PrClosedAt, PrStateCheckedAt: row.PrStateCheckedAt,
 		ResponseBlocks: row.ResponseBlocks,
 		GithubOwner:    row.GithubOwner, GithubRepo: row.GithubRepo,
 		CustomTitle: row.CustomTitle, CreatorID: row.CreatorID, AgentSlug: row.AgentSlug, Model: row.Model,
@@ -558,6 +573,8 @@ func recordFromSearchRow(row sqlc.SearchConversationsRow) (Record, error) {
 	return recordFromFields(rowFields{
 		OrgID: row.OrgID, ThreadID: row.ThreadID, SandboxID: row.SandboxID,
 		Branch: row.Branch, PrUrl: row.PrUrl, History: row.History,
+		PrState: row.PrState, PrMerged: row.PrMerged,
+		PrMergedAt: row.PrMergedAt, PrClosedAt: row.PrClosedAt, PrStateCheckedAt: row.PrStateCheckedAt,
 		ResponseBlocks: row.ResponseBlocks,
 		GithubOwner:    row.GithubOwner, GithubRepo: row.GithubRepo,
 		CustomTitle: row.CustomTitle, CreatorID: row.CreatorID, AgentSlug: row.AgentSlug, Model: row.Model,
