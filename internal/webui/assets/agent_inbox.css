@@ -2244,6 +2244,8 @@ html.is-dark {
 html.is-dark body { background: var(--bg); color: var(--ink); }
 html.is-dark .primary-button { background: #0b93f6; }
 html.is-dark .primary-button:hover { background: #0878c7; }
+html.is-dark #task-send-btn { background: #0b93f6; }
+html.is-dark #task-send-btn:hover { background: #0878c7; }
 html.is-dark .mode-button { color: #c4c4c8; }
 html.is-dark .mode-button.is-active { background: var(--surface); color: var(--ink); }
 html.is-dark .search-wrap,
