@@ -214,18 +214,63 @@ func TestHandleSlackEvent_NaturalAgentPhrasePersistsPendingRepoPrompt(t *testing
 	}
 }
 
-func TestHandleSlackEvent_RepoOnlyReplyFallsBackToPendingConversation(t *testing.T) {
+func TestHandleSlackEvent_NaturalAgentPhraseUsesInlineRepo(t *testing.T) {
 	fs := newFakeSlackServer(t)
 	cli := slack.New("xoxb-test", slack.OptionAPIURL(fs.URL()))
 	resolver, _, _ := newTestResolver(
 		func(string) (string, error) { return "dylan@example.com", nil },
 		func(string, string) (string, error) { return "user-1", nil },
 	)
+	convs := &fakeConversationStore{getErr: convstore.ErrNotFound}
+	var gotOwner, gotName string
+	b := &Bot{
+		log:        discardLogger(),
+		cfg:        Config{WebPort: "3000"},
+		convs:      convs,
+		slackUsers: resolver,
+		agents:     agents.NewStore(nil),
+		resolveRepoFn: func(_ context.Context, _, owner, name string) (repoCtx, error) {
+			gotOwner, gotName = owner, name
+			return repoCtx{}, errors.New("repo denied")
+		},
+		retryBackoff: 0,
+	}
+
+	b.handleSlackEvent(context.Background(), orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant"}, incoming{
+		channel: "C123",
+		user:    "U1",
+		ts:      "111.000",
+		text:    "<@B123> use the frontend to add ascii art in the hetchyhq/hetchy repository",
+	}, cli)
+
+	if gotOwner != "hetchyhq" || gotName != "hetchy" {
+		t.Fatalf("repo resolver got %s/%s, want hetchyhq/hetchy", gotOwner, gotName)
+	}
+	first := convs.upserts[0]
+	if first.AgentSlug != "alice" {
+		t.Fatalf("agent slug = %q, want alice", first.AgentSlug)
+	}
+	if first.GitHubOwner != "hetchyhq" || first.GitHubRepo != "hetchy" {
+		t.Fatalf("initial conversation repo = %s/%s, want hetchyhq/hetchy", first.GitHubOwner, first.GitHubRepo)
+	}
+	for _, c := range fs.Calls() {
+		if strings.Contains(c.Text, "Which repository?") {
+			t.Fatalf("inline repo should not create a repo prompt; calls=%+v", fs.Calls())
+		}
+	}
+}
+
+func TestHandleSlackEvent_RepoOnlyReplyFallsBackToPendingConversation(t *testing.T) {
+	fs := newFakeSlackServer(t)
+	cli := slack.New("xoxb-test", slack.OptionAPIURL(fs.URL()))
+	resolver, _, _ := newTestResolver(
+		func(string) (string, error) { return "", nil },
+		func(string, string) (string, error) { return "", nil },
+	)
 	pending := convstore.Record{
 		OrgID:     "org_test",
 		ThreadID:  "111.000",
 		History:   []string{"make the page responsive"},
-		CreatorID: "user-1",
 		AgentSlug: "alice",
 		CreatedAt: time.Now(),
 	}

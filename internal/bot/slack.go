@@ -25,8 +25,9 @@ var mentionPrefix = regexp.MustCompile(`^<@[A-Z0-9]+>\s*`)
 var leadingSlackMention = regexp.MustCompile(`^<@([A-Z0-9]+)>\s*`)
 var leadingAgentToken = regexp.MustCompile(`^@?([A-Za-z][A-Za-z0-9_-]*)(?::|,)?(?:\s+|$)`)
 var useAgentToPhrase = regexp.MustCompile(`(?i)^use\s+(?:the\s+)?(.+?)\s+to\s+(.+)$`)
+var slackRepoMention = regexp.MustCompile(`(?i)(?:https?://github\.com/|github\.com/)?([A-Za-z0-9][A-Za-z0-9_.-]{0,99})/([A-Za-z0-9][A-Za-z0-9_.-]{0,99})(?:\.git)?(?:[/\s.,;:!?)\]>|]|$)`)
 
-const slackPendingRepoFallbackWindow = 24 * time.Hour
+const slackPendingRepoFallbackWindow = 30 * time.Minute
 
 // slackHandler is the per-org dispatch target. The Bot supplies one of
 // these to slackManager, capturing both the inbound event and the org's
@@ -327,6 +328,7 @@ func (b *Bot) handleSlackEvent(ctx context.Context, oc orgcfg.Config, ev incomin
 	if text == "" {
 		text = "Use the attached file(s) as context."
 	}
+	requestedRepo, hasRequestedRepo := extractSlackRepoMention(text)
 	attachments := b.downloadSlackAttachments(ctx, cli, ev.files)
 
 	// Best-effort attribution: map the Slack author to a hetchy user so
@@ -387,7 +389,11 @@ func (b *Bot) handleSlackEvent(ctx context.Context, oc orgcfg.Config, ev incomin
 		requestedAgentPtr = &requestedAgent
 	}
 	var requestedRepoPtr *string
-	if isRepoAnswer {
+	if hasRequestedRepo {
+		repo := requestedRepo
+		requestedRepoPtr = &repo
+	}
+	if isRepoAnswer && requestedRepoPtr == nil {
 		repo := text
 		requestedRepoPtr = &repo
 	}
@@ -494,10 +500,36 @@ func slackAgentPhraseCandidates(candidate string) []string {
 	return out
 }
 
+func extractSlackRepoMention(text string) (string, bool) {
+	if owner, name, ok := parseOwnerRepo(text); ok {
+		return owner + "/" + name, true
+	}
+	for _, match := range slackRepoMention.FindAllStringSubmatch(text, -1) {
+		if len(match) != 3 {
+			continue
+		}
+		owner := strings.TrimRight(match[1], ".,;:!?)")
+		name := strings.TrimSuffix(strings.TrimRight(match[2], ".,;:!?)"), ".git")
+		if validGitHubName(owner) && validGitHubName(name) {
+			return owner + "/" + name, true
+		}
+	}
+	return "", false
+}
+
 func (b *Bot) findSlackPendingRepoConversation(ctx context.Context, orgID, creatorID string, now time.Time) (convstore.Record, bool) {
-	if b.convs == nil || strings.TrimSpace(creatorID) == "" {
+	if b.convs == nil {
 		return convstore.Record{}, false
 	}
+	if strings.TrimSpace(creatorID) != "" {
+		if rec, ok := b.findSlackPendingRepoConversationForCreator(ctx, orgID, creatorID, now); ok {
+			return rec, true
+		}
+	}
+	return b.findUniqueSlackPendingRepoConversation(ctx, orgID, now)
+}
+
+func (b *Bot) findSlackPendingRepoConversationForCreator(ctx context.Context, orgID, creatorID string, now time.Time) (convstore.Record, bool) {
 	recs, err := b.convs.Search(ctx, orgID, convstore.SearchOptions{
 		CreatorID:       creatorID,
 		FilterCreatorID: true,
@@ -508,15 +540,37 @@ func (b *Bot) findSlackPendingRepoConversation(ctx context.Context, orgID, creat
 		return convstore.Record{}, false
 	}
 	for _, rec := range recs {
-		if !slackConversationAwaitingRepo(rec) {
-			continue
-		}
-		if !rec.CreatedAt.IsZero() && rec.CreatedAt.Before(now.Add(-slackPendingRepoFallbackWindow)) {
+		if !slackConversationAwaitingRepo(rec) || !slackPendingRepoConversationIsRecent(rec, now) {
 			continue
 		}
 		return rec, true
 	}
 	return convstore.Record{}, false
+}
+
+func (b *Bot) findUniqueSlackPendingRepoConversation(ctx context.Context, orgID string, now time.Time) (convstore.Record, bool) {
+	recs, err := b.convs.Search(ctx, orgID, convstore.SearchOptions{Limit: 20})
+	if err != nil {
+		b.log.Warn("slack pending repo conversation search failed", "org", orgID, "error", err)
+		return convstore.Record{}, false
+	}
+	var match convstore.Record
+	count := 0
+	for _, rec := range recs {
+		if !slackConversationAwaitingRepo(rec) || !slackPendingRepoConversationIsRecent(rec, now) {
+			continue
+		}
+		match = rec
+		count++
+		if count > 1 {
+			return convstore.Record{}, false
+		}
+	}
+	return match, count == 1
+}
+
+func slackPendingRepoConversationIsRecent(rec convstore.Record, now time.Time) bool {
+	return rec.CreatedAt.IsZero() || !rec.CreatedAt.Before(now.Add(-slackPendingRepoFallbackWindow))
 }
 
 func slackConversationAwaitingRepo(rec convstore.Record) bool {

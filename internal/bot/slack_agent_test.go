@@ -39,3 +39,28 @@ func TestExtractSlackAgent(t *testing.T) {
 		})
 	}
 }
+
+func TestExtractSlackRepoMention(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+		ok   bool
+	}{
+		{"exact repo", "hetchyhq/hetchy", "hetchyhq/hetchy", true},
+		{"repo in sentence", "add this in the hetchyhq/hetchy repository", "hetchyhq/hetchy", true},
+		{"github url", "use https://github.com/hetchyhq/hetchy please", "hetchyhq/hetchy", true},
+		{"github url path", "see https://github.com/hetchyhq/hetchy/pull/252", "hetchyhq/hetchy", true},
+		{"github git url", "use https://github.com/hetchyhq/hetchy.git please", "hetchyhq/hetchy", true},
+		{"no repo", "use the Hetchy Bot to ship it", "", false},
+		{"invalid repo token", "use acme/web$site", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := extractSlackRepoMention(tc.in)
+			if got != tc.want || ok != tc.ok {
+				t.Fatalf("extractSlackRepoMention(%q) = (%q, %v), want (%q, %v)", tc.in, got, ok, tc.want, tc.ok)
+			}
+		})
+	}
+}
