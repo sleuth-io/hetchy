@@ -445,7 +445,7 @@
     else activeRunActionButton = null;
     const title = groupName(state.selectedID);
     byID('selection-title').textContent = title || 'Agent work';
-    byID('selection-subtitle').textContent = state.selectedID ? agentHeaderSubtitle(state.selectedID) : 'Recent work, active first.';
+    renderAgentHeaderSubtitle(state.selectedID);
     const showAgentMenu = state.mode === 'agent' && state.selectedID && state.selectedID !== noAgentID;
     const agentMenuBtn = byID('agent-menu-btn');
     if (agentMenuBtn) {
