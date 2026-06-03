@@ -4,6 +4,7 @@
   const openAIEnabled = document.body.dataset.openaiEnabled === '1';
   const inboxLimit = 80;
   const pollMs = 4000;
+  const detailPollMs = 1800;
   const hiddenPollMs = 15000;
   const initialVisibleRuns = 8;
   const maxPromptAttachments = 5;
@@ -45,6 +46,8 @@
     selectedRunLimit: initialVisibleRuns,
     fetchInFlight: false,
     pollTimer: null,
+    detailPollTimer: null,
+    detailFetchInFlight: false,
     activeChatID: '',
     activeDetail: null,
     pendingFollowups: {},
@@ -256,6 +259,47 @@
   }
   function pollSoon() {
     schedulePoll(650);
+  }
+  function runForConversation(conversationID) {
+    return allRuns().find(run => run.conversation_id === conversationID) || null;
+  }
+  function detailIsRunning(detail) {
+    return compact(detail && detail.status, '').toLowerCase() === 'running';
+  }
+  function shouldPollActiveDetail() {
+    const dialog = byID('chat-detail-dialog');
+    if (!state.activeChatID || !dialog || !dialog.open) return false;
+    if (state.activeDetail && state.activeDetail.id === state.activeChatID && detailIsRunning(state.activeDetail)) return true;
+    const run = runForConversation(state.activeChatID);
+    return !!run && run.status === 'running';
+  }
+  function stopDetailPoll() {
+    clearTimeout(state.detailPollTimer);
+    state.detailPollTimer = null;
+  }
+  function scheduleDetailPoll(delay) {
+    clearTimeout(state.detailPollTimer);
+    state.detailPollTimer = null;
+    if (!shouldPollActiveDetail()) return;
+    state.detailPollTimer = setTimeout(refreshActiveDetail, delay || (document.hidden ? hiddenPollMs : detailPollMs));
+  }
+  async function refreshActiveDetail() {
+    if (!shouldPollActiveDetail()) {
+      stopDetailPoll();
+      return;
+    }
+    if (state.detailFetchInFlight) {
+      scheduleDetailPoll(detailPollMs);
+      return;
+    }
+    const conversationID = state.activeChatID;
+    state.detailFetchInFlight = true;
+    try {
+      await loadChatDetail(conversationID, { quiet: true, preserveUI: true });
+    } finally {
+      state.detailFetchInFlight = false;
+      if (state.activeChatID === conversationID) scheduleDetailPoll();
+    }
   }
 
   function currentWorkSearchKey() {
@@ -616,11 +660,10 @@
     const isActive = run.status === 'running';
     const activeDetails = isActive
       ? '<div class="active-run-details">'
-        + renderMilestones(run.milestones || [])
         + '<div class="live-panel">'
         + '<div class="activity-current">'
-        + '<div class="activity-head"><span class="activity-kicker">Current step</span></div>'
-        + '<div class="activity-step"><span class="activity-dot"></span><span class="activity-step-text">' + esc(run.activity || 'Run is active.') + '</span></div>'
+        + '<div class="activity-head"><span class="activity-kicker">' + esc(currentMilestoneLabel(run)) + '</span></div>'
+        + '<div class="activity-message">' + renderActivityMarkdown(run.activity || 'Run is active.') + '</div>'
         + '</div>'
         + '</div>'
         + '</div>'
@@ -633,12 +676,17 @@
       + activeDetails
       + '</article>';
   }
-  function renderMilestones(milestones) {
-    if (!Array.isArray(milestones) || !milestones.length) return '';
-    return '<div class="milestones">' + milestones.map(m => {
-      const cls = m.state === 'done' ? ' is-done' : (m.state === 'current' ? ' is-current' : '');
-      return '<div class="milestone' + cls + '"><span class="milestone-dot"></span><span class="milestone-label">' + esc(m.label) + '</span></div>';
-    }).join('') + '</div>';
+  function currentMilestoneLabel(run) {
+    const milestones = Array.isArray(run.milestones) ? run.milestones : [];
+    const current = milestones.find(m => m && m.state === 'current' && m.label);
+    if (current) return current.label;
+    const done = milestones.filter(m => m && m.state === 'done' && m.label);
+    if (done.length) return done[done.length - 1].label;
+    return statusLabel(run.status || 'running');
+  }
+  function renderActivityMarkdown(text) {
+    if (typeof renderMarkdown === 'function') return renderMarkdown(text || '');
+    return esc(text || '');
   }
 
   function renderPRs() {
@@ -879,7 +927,10 @@
   function closeDialog(id) {
     const dialog = byID(id);
     if (!dialog) return;
-    if (id === 'chat-detail-dialog') closeChatMetaPanel();
+    if (id === 'chat-detail-dialog') {
+      closeChatMetaPanel();
+      stopDetailPoll();
+    }
     if (dialog.close) dialog.close();
     else dialog.removeAttribute('open');
   }
@@ -1001,21 +1052,56 @@
   async function openChat(conversationID) {
     state.activeChatID = conversationID;
     closeChatMetaPanel();
+    stopDetailPoll();
     openDialog('chat-detail-dialog');
     byID('chat-log').innerHTML = '<div class="empty">Loading...</div>';
     await loadChatDetail(conversationID);
+    scheduleDetailPoll(250);
   }
   async function loadChatDetail(conversationID, opts) {
     try {
       const detail = await fetchJSON('/api/v1/conversations/' + encodeURIComponent(conversationID) + '?include=turns,attachments');
+      if (state.activeChatID && state.activeChatID !== conversationID) return null;
       state.activeDetail = detail;
-      renderChatDetail(detail);
+      renderChatDetail(detail, opts || {});
+      return detail;
     } catch (e) {
       if (!opts || !opts.quiet) byID('chat-log').innerHTML = '<div class="empty">Could not load chat details.</div>';
+      return null;
     }
   }
 
-  function renderChatDetail(detail) {
+  function detailOpenStateKey(el, index) {
+    if (el.dataset && el.dataset.blockId) return 'block:' + el.dataset.blockId;
+    const title = el.querySelector('.blk-title')?.textContent || '';
+    const startedAt = el.dataset?.startedAt || '';
+    return 'idx:' + index + ':' + title + ':' + startedAt;
+  }
+  function captureDetailUIState(log) {
+    const openStates = new Map();
+    log.querySelectorAll('details.blk').forEach((el, index) => {
+      openStates.set(detailOpenStateKey(el, index), !!el.open);
+    });
+    const scrollBottom = log.scrollHeight - log.scrollTop - log.clientHeight;
+    return {
+      openStates,
+      scrollTop: log.scrollTop,
+      wasPinned: scrollBottom < 24,
+    };
+  }
+  function restoreDetailUIState(log, snapshot) {
+    if (!snapshot) {
+      log.scrollTop = log.scrollHeight;
+      return;
+    }
+    log.querySelectorAll('details.blk').forEach((el, index) => {
+      const key = detailOpenStateKey(el, index);
+      if (snapshot.openStates.has(key)) el.open = snapshot.openStates.get(key);
+    });
+    log.scrollTop = snapshot.wasPinned ? log.scrollHeight : Math.min(snapshot.scrollTop, log.scrollHeight);
+  }
+
+  function renderChatDetail(detail, opts) {
     byID('chat-detail-title').textContent = detail.title || 'Chat details';
     byID('chat-detail-sub').textContent = [agentName(detail.agent_slug), detail.status || 'idle', detail.id].filter(Boolean).join(' - ');
     renderDetailMetadata(detail);
@@ -1026,19 +1112,21 @@
 
     const turns = Array.isArray(detail.turns) ? detail.turns : [];
     const pending = visiblePendingFollowups(detail.id, turns);
+    const log = byID('chat-log');
+    const uiSnapshot = opts && opts.preserveUI ? captureDetailUIState(log) : null;
     if (!turns.length && !pending.length) {
-      byID('chat-log').innerHTML = '<div class="empty">No turns yet.</div>';
+      log.innerHTML = '<div class="empty">No turns yet.</div>';
       return;
     }
-    const log = byID('chat-log');
     log.innerHTML = '';
+    const isRunning = detailIsRunning(detail) || runForConversation(detail.id)?.status === 'running';
     for (let i = 0; i < turns.length; i++) {
       const turn = turns[i] || {};
       appendUserMessage(log, turn.message || '');
-      renderTurnBlocks(log, Array.isArray(turn.blocks) ? turn.blocks : [], i === turns.length - 1);
+      renderTurnBlocks(log, Array.isArray(turn.blocks) ? turn.blocks : [], i === turns.length - 1, isRunning);
     }
     pending.forEach(item => renderPendingFollowup(log, item));
-    log.scrollTop = log.scrollHeight;
+    restoreDetailUIState(log, uiSnapshot);
   }
 
   function renderDetailMetadata(detail) {
@@ -1275,7 +1363,7 @@
     msg.textContent = text || '';
     parent.appendChild(msg);
   }
-  function renderTurnBlocks(parent, blocks, isLastTurn) {
+  function renderTurnBlocks(parent, blocks, isLastTurn, conversationRunning) {
     if (!blocks.length) return;
     if (typeof renderBlock !== 'function' || typeof openPhase !== 'function') {
       renderFallbackBlocks(parent, blocks);
@@ -1286,6 +1374,7 @@
     parent.appendChild(turn);
     let phase = null;
     let phaseLastEndedAt = '';
+    let phaseHasActiveWork = false;
     for (const b of blocks) {
       if (b.kind === 'claude_text') {
         if (phase) closePhase(phase, phaseLastEndedAt || b.ended_at);
@@ -1293,6 +1382,7 @@
         phase.proseRaw = b.body || '';
         phase.proseEl.innerHTML = renderMarkdown(phase.proseRaw);
         phaseLastEndedAt = b.ended_at || '';
+        phaseHasActiveWork = blockIsStillActive(b);
       } else if (b.kind === 'tool_use') {
         if (!phase) phase = openPhase(turn, '', b.started_at);
         addToolToPhase(phase, {
@@ -1304,16 +1394,33 @@
           ended_at: b.ended_at,
         });
         if (b.ended_at) phaseLastEndedAt = b.ended_at;
+        if (blockIsStillActive(b)) phaseHasActiveWork = true;
       } else {
         if (phase) {
           closePhase(phase, phaseLastEndedAt);
           phase = null;
           phaseLastEndedAt = '';
+          phaseHasActiveWork = false;
         }
         renderBlock(turn, b, { open: isLastTurn && (b.kind === 'result' || b.kind === 'error') });
       }
     }
-    if (phase) closePhase(phase, phaseLastEndedAt);
+    if (phase) {
+      if (isLastTurn && conversationRunning && phaseHasActiveWork) {
+        phase.el.classList.add('blk-streaming');
+        phase.el.open = true;
+      } else if (isLastTurn && conversationRunning) {
+        if (typeof markBlockAwaitingNext === 'function') markBlockAwaitingNext(phase.el);
+        else phase.el.classList.add('blk-awaiting-next');
+        phase.el.open = true;
+      } else {
+        closePhase(phase, phaseLastEndedAt);
+      }
+    }
+  }
+  function blockIsStillActive(block) {
+    const status = compact(block && block.status, '').toLowerCase();
+    return status === 'streaming' || status === 'running' || (!!block && !block.ended_at && status !== 'done' && status !== 'succeeded');
   }
   function renderFallbackBlocks(parent, blocks) {
     blocks.forEach(block => {
@@ -1363,7 +1470,9 @@
     }
     byID('followup-input').value = '';
     addPendingFollowup(detail.id, text);
+    detail.status = 'running';
     renderChatDetail(detail);
+    scheduleDetailPoll(650);
     const payload = {
       text,
       conversation_id: detail.id,
@@ -1684,6 +1793,7 @@
     });
     document.addEventListener('visibilitychange', () => {
       schedulePoll(document.hidden ? hiddenPollMs : 250);
+      scheduleDetailPoll(document.hidden ? hiddenPollMs : 250);
     });
   }
 

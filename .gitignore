@@ -62,3 +62,4 @@ state.json.old
 /.playwright-mcp/*
 /.agents/*
 /.gemini/*
+/.playwright-cli/*
