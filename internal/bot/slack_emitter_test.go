@@ -149,6 +149,16 @@ func TestSlackEmitterHeartbeatUpdatesLiveSummary(t *testing.T) {
 	}
 }
 
+func TestLiveRunActivitySummaryCapsEvents(t *testing.T) {
+	var summary liveRunActivitySummary
+	for range liveRunActivityEventCap + 10 {
+		summary.Record("heartbeat", sseEvent{Title: "Still working"})
+	}
+	if got := len(summary.events); got != liveRunActivityEventCap {
+		t.Fatalf("events len = %d, want cap %d", got, liveRunActivityEventCap)
+	}
+}
+
 // compactRequest cleans up the user's prompt for inclusion in the
 // terminal-state live message header. Multi-line prompts must
 // collapse to one line, pathological lengths must truncate, and

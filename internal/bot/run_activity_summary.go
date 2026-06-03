@@ -15,8 +15,13 @@ type liveRunActivitySummary struct {
 	events []runActivityEvent
 }
 
+const liveRunActivityEventCap = 5000
+
 func (s *liveRunActivitySummary) Record(name string, payload sseEvent) {
 	s.events = append(s.events, runActivityEvent{name: name, payload: payload})
+	if len(s.events) > liveRunActivityEventCap {
+		s.events = s.events[len(s.events)-liveRunActivityEventCap:]
+	}
 }
 
 func (s *liveRunActivitySummary) Activity(run runstore.Run) string {
