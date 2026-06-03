@@ -266,7 +266,7 @@
       meta.hidden = !doc.meta;
       loading.hidden = true;
       if (doc.html) {
-        rendered.innerHTML = doc.html;
+        rendered.innerHTML = DOMPurify.sanitize(doc.html);
         rendered.hidden = false;
         raw.hidden = true;
       } else {
@@ -281,6 +281,7 @@
         ).join('');
       }
     } catch (err) {
+      console.warn('agent-doc: failed to load document', err);
       loading.hidden = true;
       errorEl.hidden = false;
       errorEl.textContent = 'Failed to load details.';
