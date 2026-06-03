@@ -17,12 +17,16 @@ import (
 
 	"github.com/hetchyhq/hetchy/internal/agents"
 	"github.com/hetchyhq/hetchy/internal/blocks"
+	"github.com/hetchyhq/hetchy/internal/convstore"
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
 )
 
 var mentionPrefix = regexp.MustCompile(`^<@[A-Z0-9]+>\s*`)
 var leadingSlackMention = regexp.MustCompile(`^<@([A-Z0-9]+)>\s*`)
 var leadingAgentToken = regexp.MustCompile(`^@?([A-Za-z][A-Za-z0-9_-]*)(?::|,)?(?:\s+|$)`)
+var useAgentToPhrase = regexp.MustCompile(`(?i)^use\s+(?:the\s+)?(.+?)\s+to\s+(.+)$`)
+
+const slackPendingRepoFallbackWindow = 24 * time.Hour
 
 // slackHandler is the per-org dispatch target. The Bot supplies one of
 // these to slackManager, capturing both the inbound event and the org's
@@ -325,14 +329,36 @@ func (b *Bot) handleSlackEvent(ctx context.Context, oc orgcfg.Config, ev incomin
 	}
 	attachments := b.downloadSlackAttachments(ctx, cli, ev.files)
 
+	// Best-effort attribution: map the Slack author to a hetchy user so
+	// the chat appears under their LHN filter. Empty string when the
+	// author has no matching org member; HandleRequest tolerates that.
+	creatorID := b.slackUsers.Resolve(ctx, cli, oc.OrgID, ev.user)
+
 	threadID := ev.ts
 	replyTo := ev.ts
 	isFollowUp := false
+	isRepoAnswer := false
 	if ev.threadTS != "" {
 		threadID = ev.threadTS
 		replyTo = ev.threadTS
-		if _, err := b.convs.Get(ctx, oc.OrgID, threadID); err == nil {
+		if rec, err := b.convs.Get(ctx, oc.OrgID, threadID); err == nil {
 			isFollowUp = true
+			isRepoAnswer = slackConversationAwaitingRepo(rec) && slackTextIsRepo(text)
+		}
+	}
+	if !isFollowUp && slackTextIsRepo(text) {
+		if rec, ok := b.findSlackPendingRepoConversation(ctx, oc.OrgID, creatorID, time.Now()); ok {
+			threadID = rec.ThreadID
+			replyTo = rec.ThreadID
+			isFollowUp = true
+			isRepoAnswer = true
+			b.log.Info("slack repo reply matched pending conversation",
+				"org", oc.OrgID,
+				"slack_user", ev.user,
+				"creator_id", creatorID,
+				"event_ts", ev.ts,
+				"thread_id", rec.ThreadID,
+			)
 		}
 	}
 
@@ -354,17 +380,18 @@ func (b *Bot) handleSlackEvent(ctx context.Context, oc orgcfg.Config, ev incomin
 	workingMsg := ":white_check_mark: Working on it…\n_<" + conversationURL + "|View full details>_"
 	replyInThread(b.log, cli, ev.channel, replyTo, workingMsg)
 	emit := newSlackEmitter(b.log, cli, ev.channel, replyTo, ev.user, conversationURL, text)
-	// Best-effort attribution: map the Slack author to a hetchy user so
-	// the chat appears under their LHN filter. Empty string when the
-	// author has no matching org member; HandleRequest tolerates that.
-	creatorID := b.slackUsers.Resolve(ctx, cli, oc.OrgID, ev.user)
 	// Slack has no UI surface for task toggles. Pass an empty patch so
 	// saved values are reused and missing keys default on.
 	var requestedAgentPtr *string
 	if strings.TrimSpace(requestedAgent) != "" {
 		requestedAgentPtr = &requestedAgent
 	}
-	b.HandleRequest(ctx, oc, text, requestID, threadID, creatorID, chatTaskOptionPatch{}, requestedAgentPtr, nil, ClaudeModelOpus, emit, attachments...)
+	var requestedRepoPtr *string
+	if isRepoAnswer {
+		repo := text
+		requestedRepoPtr = &repo
+	}
+	b.HandleRequest(ctx, oc, text, requestID, threadID, creatorID, chatTaskOptionPatch{}, requestedAgentPtr, requestedRepoPtr, ClaudeModelOpus, emit, attachments...)
 	// Reaction bookkeeping: only swap the eyes/recycle that signalled
 	// "working on it" for a final ✓/✗ when the run actually reached a
 	// terminal state. Bot-driven question turns ("Which repository?"
@@ -425,7 +452,80 @@ func (b *Bot) extractSlackAgent(ctx context.Context, orgID, text string, cli *sl
 			return token, rest
 		}
 	}
+	if agentSlug, cleaned, ok := b.extractSlackUseAgentPhrase(ctx, orgID, text, store); ok {
+		return agentSlug, cleaned
+	}
 	return "", text
+}
+
+func (b *Bot) extractSlackUseAgentPhrase(ctx context.Context, orgID, text string, store *agents.Store) (agentSlug, cleaned string, ok bool) {
+	m := useAgentToPhrase.FindStringSubmatch(text)
+	if len(m) != 3 {
+		return "", "", false
+	}
+	candidate := strings.TrimSpace(m[1])
+	rest := strings.TrimSpace(m[2])
+	if candidate == "" || rest == "" {
+		return "", "", false
+	}
+	for _, name := range slackAgentPhraseCandidates(candidate) {
+		if agent, err := store.Resolve(ctx, orgID, name); err == nil {
+			return agent.Slug, rest, true
+		}
+	}
+	return "", "", false
+}
+
+func slackAgentPhraseCandidates(candidate string) []string {
+	candidate = strings.TrimSpace(candidate)
+	if candidate == "" {
+		return nil
+	}
+	out := []string{candidate}
+	lower := strings.ToLower(candidate)
+	for _, suffix := range []string{" agent", " bot"} {
+		if strings.HasSuffix(lower, suffix) {
+			trimmed := strings.TrimSpace(candidate[:len(candidate)-len(suffix)])
+			if trimmed != "" && !slices.Contains(out, trimmed) {
+				out = append(out, trimmed)
+			}
+		}
+	}
+	return out
+}
+
+func (b *Bot) findSlackPendingRepoConversation(ctx context.Context, orgID, creatorID string, now time.Time) (convstore.Record, bool) {
+	if b.convs == nil || strings.TrimSpace(creatorID) == "" {
+		return convstore.Record{}, false
+	}
+	recs, err := b.convs.Search(ctx, orgID, convstore.SearchOptions{
+		CreatorID:       creatorID,
+		FilterCreatorID: true,
+		Limit:           20,
+	})
+	if err != nil {
+		b.log.Warn("slack pending repo conversation search failed", "org", orgID, "creator_id", creatorID, "error", err)
+		return convstore.Record{}, false
+	}
+	for _, rec := range recs {
+		if !slackConversationAwaitingRepo(rec) {
+			continue
+		}
+		if !rec.CreatedAt.IsZero() && rec.CreatedAt.Before(now.Add(-slackPendingRepoFallbackWindow)) {
+			continue
+		}
+		return rec, true
+	}
+	return convstore.Record{}, false
+}
+
+func slackConversationAwaitingRepo(rec convstore.Record) bool {
+	return rec.SandboxID == "" && rec.GitHubOwner == "" && rec.GitHubRepo == "" && len(rec.History) > 0
+}
+
+func slackTextIsRepo(text string) bool {
+	_, _, ok := parseOwnerRepo(text)
+	return ok
 }
 
 func slackMentionCandidateNames(log *slog.Logger, cli *slack.Client, userID string) []string {

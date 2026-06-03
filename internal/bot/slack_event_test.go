@@ -2,8 +2,10 @@ package bot
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
 	"github.com/slack-go/slack"
@@ -170,6 +172,104 @@ func TestHandleSlackEvent_ThreadReplyRoutesAsFollowUp(t *testing.T) {
 	}
 	if rec.SandboxID != "sandbox-1" || rec.PRURL != "https://github.com/acme/repo/pull/7" {
 		t.Fatalf("conversation terminal fields changed unexpectedly: %+v", rec)
+	}
+}
+
+func TestHandleSlackEvent_NaturalAgentPhrasePersistsPendingRepoPrompt(t *testing.T) {
+	fs := newFakeSlackServer(t)
+	cli := slack.New("xoxb-test", slack.OptionAPIURL(fs.URL()))
+	resolver, _, _ := newTestResolver(
+		func(string) (string, error) { return "dylan@example.com", nil },
+		func(string, string) (string, error) { return "user-1", nil },
+	)
+	convs := &fakeConversationStore{getErr: convstore.ErrNotFound}
+	b := &Bot{
+		log:          discardLogger(),
+		cfg:          Config{WebPort: "3000"},
+		convs:        convs,
+		slackUsers:   resolver,
+		agents:       agents.NewStore(nil),
+		retryBackoff: 0,
+	}
+
+	b.handleSlackEvent(context.Background(), orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant"}, incoming{
+		channel: "C123",
+		user:    "U1",
+		ts:      "111.000",
+		text:    "<@B123> use the frontend to make the page responsive",
+	}, cli)
+
+	rec := convs.lastUpsert(t)
+	if rec.ThreadID != "111.000" || rec.CreatorID != "user-1" {
+		t.Fatalf("unexpected pending conversation identity: %+v", rec)
+	}
+	if rec.AgentSlug != "alice" {
+		t.Fatalf("agent slug = %q, want alice", rec.AgentSlug)
+	}
+	if got := rec.History; len(got) != 1 || got[0] != "make the page responsive" {
+		t.Fatalf("history = %#v, want cleaned request", got)
+	}
+	if rec.GitHubOwner != "" || rec.GitHubRepo != "" || rec.SandboxID != "" {
+		t.Fatalf("pending repo prompt should not start a sandbox yet: %+v", rec)
+	}
+}
+
+func TestHandleSlackEvent_RepoOnlyReplyFallsBackToPendingConversation(t *testing.T) {
+	fs := newFakeSlackServer(t)
+	cli := slack.New("xoxb-test", slack.OptionAPIURL(fs.URL()))
+	resolver, _, _ := newTestResolver(
+		func(string) (string, error) { return "dylan@example.com", nil },
+		func(string, string) (string, error) { return "user-1", nil },
+	)
+	pending := convstore.Record{
+		OrgID:     "org_test",
+		ThreadID:  "111.000",
+		History:   []string{"make the page responsive"},
+		CreatorID: "user-1",
+		AgentSlug: "alice",
+		CreatedAt: time.Now(),
+	}
+	baseConvs := &fakeConversationStore{
+		rec:          pending,
+		searchResult: []convstore.Record{pending},
+	}
+	convs := &threadCheckingConversationStore{
+		fakeConversationStore: baseConvs,
+		wantOrg:               "org_test",
+		wantThread:            "111.000",
+	}
+	var gotOwner, gotName string
+	b := &Bot{
+		log:        discardLogger(),
+		cfg:        Config{WebPort: "3000"},
+		convs:      convs,
+		slackUsers: resolver,
+		agents:     agents.NewStore(nil),
+		resolveRepoFn: func(_ context.Context, _, owner, name string) (repoCtx, error) {
+			gotOwner, gotName = owner, name
+			return repoCtx{}, errors.New("repo denied")
+		},
+		retryBackoff: 0,
+	}
+
+	b.handleSlackEvent(context.Background(), orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant"}, incoming{
+		channel: "C123",
+		user:    "U1",
+		ts:      "222.333",
+		text:    "hetchyhq/hetchy",
+	}, cli)
+
+	if gotOwner != "hetchyhq" || gotName != "hetchy" {
+		t.Fatalf("repo resolver got %s/%s, want hetchyhq/hetchy", gotOwner, gotName)
+	}
+	workingMsg := findWorkingMsg(t, fs)
+	if want := "<http://localhost:3000/?session=111.000|View full details>"; !strings.Contains(workingMsg, want) {
+		t.Fatalf("working link should use pending thread; want %q in %q", want, workingMsg)
+	}
+	for _, c := range fs.Calls() {
+		if strings.Contains(c.Text, "Which repository?") {
+			t.Fatalf("repo-only reply should not create a second repo prompt; calls=%+v", fs.Calls())
+		}
 	}
 }
 
