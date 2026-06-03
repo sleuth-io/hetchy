@@ -457,6 +457,23 @@ func TestDeleteAgentFromVaultDoesNotGuessSkillAsset(t *testing.T) {
 	}
 }
 
+func TestDeleteAgentFromVaultIgnoresMissingBot(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	client, err := sxlib.OpenPath(root, sxlib.PathOptions{Actor: sxlib.Actor{Email: "admin@example.com"}})
+	if err != nil {
+		t.Fatalf("OpenPath: %v", err)
+	}
+
+	if err := deleteAgentFromVault(ctx, client, agents.Profile{
+		Slug:         "snuffy",
+		SXBot:        "snuffy",
+		PersonaAsset: "snuffy",
+	}); err != nil {
+		t.Fatalf("deleteAgentFromVault missing bot: %v", err)
+	}
+}
+
 func testSkillZip(t *testing.T, name string) []byte {
 	t.Helper()
 	var buf bytes.Buffer
@@ -501,6 +518,74 @@ func TestShouldImportRemoteAgentRowRevivesDisabledRemoteAgents(t *testing.T) {
 	}
 	if shouldImportRemoteAgentRow(false, agents.Profile{VaultBackend: ""}) {
 		t.Fatal("profiles without a remote vault backend should not be imported")
+	}
+}
+
+func TestShouldPruneMissingRemoteAgent(t *testing.T) {
+	remote := map[string]struct{}{"remote-backed": {}}
+	for _, tc := range []struct {
+		name    string
+		profile agents.Profile
+		want    bool
+	}{
+		{
+			name: "active backend missing",
+			profile: agents.Profile{
+				Slug:         "snuffy",
+				VaultBackend: BackendSkillsNew,
+				Enabled:      true,
+			},
+			want: true,
+		},
+		{
+			name: "legacy local custom missing",
+			profile: agents.Profile{
+				Slug:    "legacy",
+				Enabled: true,
+			},
+			want: true,
+		},
+		{
+			name: "remote present",
+			profile: agents.Profile{
+				Slug:         "remote-backed",
+				VaultBackend: BackendSkillsNew,
+				Enabled:      true,
+			},
+			want: false,
+		},
+		{
+			name: "built in",
+			profile: agents.Profile{
+				Slug:    "bob",
+				Enabled: true,
+				BuiltIn: true,
+			},
+			want: false,
+		},
+		{
+			name: "inactive backend",
+			profile: agents.Profile{
+				Slug:         "reviewer",
+				VaultBackend: BackendGitHubGit,
+				Enabled:      true,
+			},
+			want: false,
+		},
+		{
+			name: "disabled",
+			profile: agents.Profile{
+				Slug:         "disabled",
+				VaultBackend: BackendSkillsNew,
+			},
+			want: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := shouldPruneMissingRemoteAgent(BackendSkillsNew, remote, tc.profile); got != tc.want {
+				t.Fatalf("shouldPruneMissingRemoteAgent() = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 

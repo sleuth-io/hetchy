@@ -6,6 +6,8 @@ package sqlc
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type Querier interface {
@@ -18,8 +20,11 @@ type Querier interface {
 	ClaimStaleAgentRunLease(ctx context.Context, arg ClaimStaleAgentRunLeaseParams) (AgentRun, error)
 	ClearBillingPendingPlanChange(ctx context.Context, orgID string) (BillingAccount, error)
 	CountAgentProfilesByOrg(ctx context.Context, orgID string) (int64, error)
+	CreateAgentJob(ctx context.Context, arg CreateAgentJobParams) (AgentJob, error)
+	CreateAgentJobExecution(ctx context.Context, arg CreateAgentJobExecutionParams) (AgentJobExecution, error)
 	CreateAgentRun(ctx context.Context, arg CreateAgentRunParams) (AgentRun, error)
 	CreateOrgAPIKey(ctx context.Context, arg CreateOrgAPIKeyParams) (OrgApiKey, error)
+	DeleteAgentJob(ctx context.Context, arg DeleteAgentJobParams) (int64, error)
 	DeleteAgentProfilesByOrg(ctx context.Context, orgID string) error
 	// agent_run_events cascade-deletes via FK ON DELETE CASCADE.
 	DeleteAgentRunsByOrg(ctx context.Context, orgID string) error
@@ -51,6 +56,9 @@ type Querier interface {
 	EnsureBillingTopupSettings(ctx context.Context, orgID string) (BillingTopupSetting, error)
 	FinalizeBillingRunMeter(ctx context.Context, arg FinalizeBillingRunMeterParams) (BillingRunMeter, error)
 	GetActiveAgentRunForThread(ctx context.Context, arg GetActiveAgentRunForThreadParams) (AgentRun, error)
+	GetAgentJob(ctx context.Context, arg GetAgentJobParams) (AgentJob, error)
+	GetAgentJobExecution(ctx context.Context, arg GetAgentJobExecutionParams) (AgentJobExecution, error)
+	GetAgentJobForUpdate(ctx context.Context, arg GetAgentJobForUpdateParams) (AgentJob, error)
 	GetAgentProfileBySlug(ctx context.Context, arg GetAgentProfileBySlugParams) (GetAgentProfileBySlugRow, error)
 	GetAgentProfileTemplate(ctx context.Context, slug string) (AgentProfileTemplate, error)
 	GetAgentRun(ctx context.Context, id string) (AgentRun, error)
@@ -71,6 +79,7 @@ type Querier interface {
 	// repeat calls return the same row (and the caller's cached token
 	// stays warm).
 	GetGithubRepoForOrg(ctx context.Context, arg GetGithubRepoForOrgParams) (GithubRepo, error)
+	GetLatestAgentJobExecution(ctx context.Context, arg GetLatestAgentJobExecutionParams) (AgentJobExecution, error)
 	GetLatestAgentRunForThread(ctx context.Context, arg GetLatestAgentRunForThreadParams) (AgentRun, error)
 	GetOrgAPIKeyByHash(ctx context.Context, keyHash []byte) (OrgApiKey, error)
 	GetOrgConfig(ctx context.Context, orgID string) (OrgConfig, error)
@@ -80,6 +89,7 @@ type Querier interface {
 	GetRepoSecretValue(ctx context.Context, arg GetRepoSecretValueParams) (RepoSecretValue, error)
 	GetRepoSetupSpec(ctx context.Context, arg GetRepoSetupSpecParams) (RepoSetupSpec, error)
 	GrantBillingTopupCredits(ctx context.Context, arg GrantBillingTopupCreditsParams) (BillingAccount, error)
+	HasActiveAgentJobExecution(ctx context.Context, jobID string) (bool, error)
 	IncrementBillingTopupMonthlyUsage(ctx context.Context, arg IncrementBillingTopupMonthlyUsageParams) (BillingTopupSetting, error)
 	InsertBillingCreditReservation(ctx context.Context, arg InsertBillingCreditReservationParams) (BillingCreditReservation, error)
 	InsertBillingStripeEvent(ctx context.Context, arg InsertBillingStripeEventParams) (bool, error)
@@ -92,12 +102,16 @@ type Querier interface {
 	// NULL when the user filled it in between the two statements.
 	InsertRepoSecretValueIfAbsent(ctx context.Context, arg InsertRepoSecretValueIfAbsentParams) error
 	ListActiveAgentRunsForLeaseOwnerPrefix(ctx context.Context, arg ListActiveAgentRunsForLeaseOwnerPrefixParams) ([]AgentRun, error)
+	ListAgentJobExecutionsByJob(ctx context.Context, arg ListAgentJobExecutionsByJobParams) ([]AgentJobExecution, error)
+	ListAgentJobsByAgent(ctx context.Context, arg ListAgentJobsByAgentParams) ([]AgentJob, error)
+	ListAgentJobsByOrg(ctx context.Context, orgID string) ([]AgentJob, error)
 	ListAgentProfileTemplates(ctx context.Context) ([]AgentProfileTemplate, error)
 	ListAgentProfilesByOrg(ctx context.Context, orgID string) ([]ListAgentProfilesByOrgRow, error)
 	ListAgentRunEventsFromSeq(ctx context.Context, arg ListAgentRunEventsFromSeqParams) ([]AgentRunEvent, error)
 	ListBillingAccountOrgIDs(ctx context.Context) ([]string, error)
 	ListBillingExemptOrgIDs(ctx context.Context) ([]string, error)
 	ListBillingRunMetersByOrg(ctx context.Context, arg ListBillingRunMetersByOrgParams) ([]BillingRunMeter, error)
+	ListClaimableDueAgentJobs(ctx context.Context, arg ListClaimableDueAgentJobsParams) ([]AgentJob, error)
 	ListConversationAttachments(ctx context.Context, arg ListConversationAttachmentsParams) ([]ListConversationAttachmentsRow, error)
 	ListConversationAttachmentsForTurn(ctx context.Context, arg ListConversationAttachmentsForTurnParams) ([]ConversationAttachment, error)
 	ListConversationPRStateBackfillCandidates(ctx context.Context, arg ListConversationPRStateBackfillCandidatesParams) ([]ListConversationPRStateBackfillCandidatesRow, error)
@@ -133,6 +147,9 @@ type Querier interface {
 	ListStaleAgentRuns(ctx context.Context, arg ListStaleAgentRunsParams) ([]AgentRun, error)
 	LockBillingAccountForUpdate(ctx context.Context, orgID string) (BillingAccount, error)
 	LockBillingTopupSettingsForUpdate(ctx context.Context, orgID string) (BillingTopupSetting, error)
+	MarkAgentJobExecutionFinished(ctx context.Context, arg MarkAgentJobExecutionFinishedParams) (int64, error)
+	MarkAgentJobExecutionRunning(ctx context.Context, arg MarkAgentJobExecutionRunningParams) (int64, error)
+	ReleaseStaleClaimedAgentJobExecutions(ctx context.Context, staleAfter pgtype.Interval) (int64, error)
 	RenameConversation(ctx context.Context, arg RenameConversationParams) (int64, error)
 	ResetBillingTopupMonthlyUsage(ctx context.Context, arg ResetBillingTopupMonthlyUsageParams) (BillingTopupSetting, error)
 	RevokeOrgAPIKey(ctx context.Context, arg RevokeOrgAPIKeyParams) (int64, error)
@@ -201,6 +218,9 @@ type Querier interface {
 	SetBillingPendingPlanChange(ctx context.Context, arg SetBillingPendingPlanChangeParams) (BillingAccount, error)
 	TouchAgentRunLease(ctx context.Context, arg TouchAgentRunLeaseParams) error
 	TouchOrgAPIKeyLastUsed(ctx context.Context, id string) error
+	UpdateAgentJob(ctx context.Context, arg UpdateAgentJobParams) (AgentJob, error)
+	UpdateAgentJobLastRun(ctx context.Context, arg UpdateAgentJobLastRunParams) error
+	UpdateAgentJobNextRun(ctx context.Context, arg UpdateAgentJobNextRunParams) error
 	UpdateAgentProfileName(ctx context.Context, arg UpdateAgentProfileNameParams) (UpdateAgentProfileNameRow, error)
 	UpdateAgentProfileVaultSync(ctx context.Context, arg UpdateAgentProfileVaultSyncParams) (UpdateAgentProfileVaultSyncRow, error)
 	UpdateAgentRunBranch(ctx context.Context, arg UpdateAgentRunBranchParams) error

@@ -8,6 +8,41 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type AgentJob struct {
+	ID              string             `json:"id"`
+	OrgID           string             `json:"org_id"`
+	Name            string             `json:"name"`
+	Definition      string             `json:"definition"`
+	AgentSlug       string             `json:"agent_slug"`
+	PrimaryOwner    string             `json:"primary_owner"`
+	PrimaryRepo     string             `json:"primary_repo"`
+	AdditionalRepos []byte             `json:"additional_repos"`
+	CronSchedule    string             `json:"cron_schedule"`
+	Timezone        string             `json:"timezone"`
+	Enabled         bool               `json:"enabled"`
+	NextRunAt       pgtype.Timestamptz `json:"next_run_at"`
+	LastRunAt       pgtype.Timestamptz `json:"last_run_at"`
+	LastRunID       *string            `json:"last_run_id"`
+	LastError       string             `json:"last_error"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
+type AgentJobExecution struct {
+	ID           string             `json:"id"`
+	JobID        string             `json:"job_id"`
+	OrgID        string             `json:"org_id"`
+	RunID        *string            `json:"run_id"`
+	ScheduledFor pgtype.Timestamptz `json:"scheduled_for"`
+	Status       string             `json:"status"`
+	ClaimedBy    string             `json:"claimed_by"`
+	ClaimedAt    pgtype.Timestamptz `json:"claimed_at"`
+	FinishedAt   pgtype.Timestamptz `json:"finished_at"`
+	Error        string             `json:"error"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+}
+
 type AgentProfile struct {
 	ID                pgtype.UUID        `json:"id"`
 	OrgID             string             `json:"org_id"`
@@ -69,6 +104,9 @@ type AgentRun struct {
 	Outcome         string             `json:"outcome"`
 	OutcomeDetail   []byte             `json:"outcome_detail"`
 	QualityScore    *int32             `json:"quality_score"`
+	TriggerSource   string             `json:"trigger_source"`
+	JobID           *string            `json:"job_id"`
+	JobExecutionID  *string            `json:"job_execution_id"`
 }
 
 type AgentRunEvent struct {

@@ -33,6 +33,7 @@ type agentSettingsView struct {
 	Default       bool
 	Imported      bool
 	RemoteBacked  bool
+	Jobs          []settingsJobView
 }
 
 type agentTemplateView struct {
@@ -83,6 +84,10 @@ func (b *Bot) populateAgentSettingsTabData(ctx context.Context, orgID string, da
 	profiles, err := store.List(ctx, orgID)
 	if err != nil {
 		return fmt.Errorf("load agents: %w", err)
+	}
+	jobsByAgent, err := b.settingsJobsByAgent(ctx, orgID)
+	if err != nil {
+		return err
 	}
 	skillOptions, _ := data["AgentSkillOptions"].([]agentSkillOptionView)
 	teamOptions, _ := data["AgentTeamOptions"].([]agentTeamOptionView)
@@ -168,6 +173,7 @@ func (b *Bot) populateAgentSettingsTabData(ctx context.Context, orgID string, da
 			Default:       a.Slug == agents.DefaultSlug,
 			Imported:      imported,
 			RemoteBacked:  remoteBacked,
+			Jobs:          jobsByAgent[a.Slug],
 		}
 		out = append(out, view)
 		if view.BuiltIn {

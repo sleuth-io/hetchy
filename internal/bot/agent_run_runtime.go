@@ -108,13 +108,26 @@ func (b *Bot) createAgentRun(ctx context.Context, orgID, threadID, requestID, us
 	if b.runs == nil || !b.runs.Enabled() {
 		return runstore.Run{}, true, nil
 	}
+	triggerSource := runstore.TriggerUser
+	jobID := ""
+	jobExecutionID := ""
+	runKind := "chat"
+	if job, ok := jobRunFromContext(ctx); ok {
+		triggerSource = runstore.TriggerJob
+		jobID = job.JobID
+		jobExecutionID = job.ExecutionID
+		runKind = "job"
+	}
 	run := runstore.Run{
-		ID:          stableAgentRunID(orgID, threadID, requestID),
-		OrgID:       orgID,
-		ThreadID:    threadID,
-		RunKind:     "chat",
-		RequestID:   requestID,
-		UserRequest: userRequest,
+		ID:             stableAgentRunID(orgID, threadID, requestID),
+		OrgID:          orgID,
+		ThreadID:       threadID,
+		RunKind:        runKind,
+		RequestID:      requestID,
+		TriggerSource:  triggerSource,
+		JobID:          jobID,
+		JobExecutionID: jobExecutionID,
+		UserRequest:    userRequest,
 	}
 	created, inserted, err := b.runs.Create(ctx, run, b.workerID, agentRunLeaseDuration)
 	if err != nil {

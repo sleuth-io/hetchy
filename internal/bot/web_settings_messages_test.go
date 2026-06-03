@@ -25,6 +25,9 @@ func TestSavedMessage(t *testing.T) {
 		"agent_team_added":           "Team added.",
 		"agent_team_removed":         "Team removed.",
 		"agent_deleted":              "Agent deleted.",
+		"job_saved":                  "Job saved.",
+		"job_started":                "Job started.",
+		"job_deleted":                "Job deleted.",
 	}
 	for in, want := range cases {
 		if got := savedMessage(in); got != want {
