@@ -7,6 +7,7 @@
   const pollMs = 4000;
   const detailPollMs = 1800;
   const hiddenPollMs = 15000;
+  const detailScrollBottomThreshold = 50;
   const initialVisibleRuns = 8;
   const maxPromptAttachments = 5;
   const maxPromptAttachmentBytes = 10 * 1024 * 1024;
@@ -59,6 +60,8 @@
     selectedTaskModel: readStoredModel(),
     runActionConversationID: '',
     runActionTitle: '',
+    stopInFlightFor: '',
+    detailStickToBottom: true,
   };
   let detailIsDownloading = false;
   let activeRunActionButton = null;
@@ -296,6 +299,23 @@
   }
   function detailIsRunning(detail) {
     return compact(detail && detail.status, '').toLowerCase() === 'running';
+  }
+  function conversationIsRunning(conversationID) {
+    if (!conversationID) return false;
+    if (state.activeDetail && state.activeDetail.id === conversationID && detailIsRunning(state.activeDetail)) return true;
+    const run = runForConversation(conversationID);
+    return !!run && run.status === 'running';
+  }
+  function updateFollowupRunState(running) {
+    const btn = byID('followup-send-btn');
+    const input = byID('followup-input');
+    if (!btn) return;
+    const stopping = running && state.stopInFlightFor === state.activeChatID;
+    btn.classList.toggle('is-stop', !!running);
+    btn.disabled = !!stopping;
+    btn.setAttribute('aria-label', running ? (stopping ? 'Stopping' : 'Stop') : 'Send follow-up');
+    btn.title = running ? (stopping ? 'Stopping...' : 'Stop') : 'Send follow-up';
+    if (input) input.setAttribute('aria-disabled', running ? 'true' : 'false');
   }
   function shouldPollActiveDetail() {
     const dialog = byID('chat-detail-dialog');
@@ -633,7 +653,10 @@
   }
 
   function renderRuns() {
-    closeRunActionMenu();
+    const menuWasOpen = !!(state.runActionConversationID && !byID('run-action-menu')?.hidden);
+    const menuConversationID = state.runActionConversationID;
+    if (!menuWasOpen) closeRunActionMenu();
+    else activeRunActionButton = null;
     const title = groupName(state.selectedID);
     byID('selection-title').textContent = title || 'Agent work';
     byID('selection-subtitle').textContent = state.selectedID ? groupDescription(state.selectedID) : 'Recent work, active first.';
@@ -666,6 +689,12 @@
     }
     const visible = runs.slice(0, state.selectedRunLimit);
     list.innerHTML = visible.map(renderRunCard).join('');
+    if (menuWasOpen) {
+      const nextButton = Array.from(list.querySelectorAll('[data-run-actions]'))
+        .find(btn => btn.dataset.runActions === menuConversationID);
+      if (nextButton) openRunActionMenu(nextButton, { force: true });
+      else closeRunActionMenu();
+    }
     const more = byID('show-more-btn');
     more.hidden = runs.length <= state.selectedRunLimit;
     more.textContent = 'Show more';
@@ -690,12 +719,17 @@
     const repo = compact(run.repository, 'No repository');
     const meta = renderRunMeta(run, agent, repo);
     const isActive = run.status === 'running';
+    const stopButton = isActive
+      ? '<button class="run-stop-button" type="button" data-stop-run="' + esc(run.conversation_id) + '" title="Stop run" aria-label="Stop run">'
+        + '<svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><rect x="7" y="7" width="10" height="10" rx="2"/></svg>'
+        + '</button>'
+      : '';
     const activeDetails = isActive
       ? '<div class="active-run-details">'
         + '<div class="live-panel">'
         + '<div class="activity-current">'
         + '<div class="activity-head"><span class="activity-eyebrow">Current step</span><span class="activity-kicker"><span class="activity-kicker-text">' + esc(currentMilestoneLabel(run)) + '</span></span></div>'
-        + '<div class="activity-message">' + renderActivityMarkdown(run.activity || 'Run is active.') + '</div>'
+        + '<div class="activity-message">' + renderActivityMarkdown(run.activity, currentMilestoneLabel(run) + ' is running.') + '</div>'
         + '</div>'
         + '</div>'
         + '</div>'
@@ -704,9 +738,10 @@
       + '<div class="run-top">'
       + '<div><div class="run-title">' + esc(run.title) + '</div><div class="run-meta">' + meta + '</div></div>'
       + '<div class="run-state-actions">'
-      + '<button class="run-action-button" type="button" data-run-actions="' + esc(run.conversation_id) + '" data-run-title="' + esc(run.title) + '" aria-label="Chat actions" aria-haspopup="menu" aria-expanded="false">'
+      + '<button class="run-action-button" type="button" data-run-actions="' + esc(run.conversation_id) + '" data-run-title="' + esc(run.title) + '" data-run-status="' + esc(run.status) + '" aria-label="Chat actions" aria-haspopup="menu" aria-expanded="false">'
       + '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>'
       + '</button>'
+      + stopButton
       + '<span class="pill ' + esc(run.status) + '">' + esc(statusLabel(run.status)) + '</span>'
       + '</div>'
       + '</div>'
@@ -721,9 +756,23 @@
     if (done.length) return done[done.length - 1].label;
     return statusLabel(run.status || 'running');
   }
-  function renderActivityMarkdown(text) {
-    if (typeof renderMarkdown === 'function') return renderMarkdown(text || '');
-    return esc(text || '');
+  function renderActivityMarkdown(text, fallback) {
+    const raw = compact(text, '');
+    const likelyEmptyFence = /^`{3,}\s*$/.test(raw);
+    let html = raw && !likelyEmptyFence
+      ? (typeof renderMarkdown === 'function' ? renderMarkdown(raw) : esc(raw))
+      : '';
+    if (!renderedText(html)) {
+      const next = compact(fallback, 'Run is active.');
+      html = typeof renderMarkdown === 'function' ? renderMarkdown(next) : esc(next);
+    }
+    return html;
+  }
+  function renderedText(html) {
+    if (!html) return '';
+    const scratch = document.createElement('div');
+    scratch.innerHTML = html;
+    return scratch.textContent.trim();
   }
 
   function renderPRs() {
@@ -914,9 +963,9 @@
     state.runActionConversationID = '';
     state.runActionTitle = '';
   }
-  function openRunActionMenu(btn) {
+  function openRunActionMenu(btn, opts) {
     if (!btn) return;
-    if (activeRunActionButton === btn && !byID('run-action-menu').hidden) {
+    if (!opts?.force && activeRunActionButton === btn && !byID('run-action-menu').hidden) {
       closeRunActionMenu();
       return;
     }
@@ -1108,6 +1157,7 @@
     if (id === 'chat-detail-dialog') {
       closeChatMetaPanel();
       stopDetailPoll();
+      updateFollowupRunState(false);
     }
     if (dialog.close) dialog.close();
     else dialog.removeAttribute('open');
@@ -1209,6 +1259,36 @@
     pollSoon();
   }
 
+  async function cancelConversation(conversationID) {
+    conversationID = compact(conversationID, '');
+    if (!conversationID || state.stopInFlightFor) return;
+    state.stopInFlightFor = conversationID;
+    updateFollowupRunState(conversationIsRunning(state.activeChatID));
+    try {
+      const res = await fetch('/api/v1/conversations/' + encodeURIComponent(conversationID) + '/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        showToast('stop-run', body || ('Stop request failed: ' + res.status), 'error', 6000);
+        return;
+      }
+      showToast('stop-run', 'Stop requested.', 'success', 1800);
+      if (state.activeChatID === conversationID) {
+        await loadChatDetail(conversationID, { quiet: true, preserveUI: true });
+      }
+    } catch (e) {
+      showToast('stop-run', 'Could not stop the run. Network error.', 'error', 6000);
+    } finally {
+      state.stopInFlightFor = '';
+      updateFollowupRunState(conversationIsRunning(state.activeChatID));
+      pollSoon();
+      scheduleDetailPoll(650);
+    }
+  }
+
   async function consumeSSE(res, onEvent) {
     if (!res.body) return;
     const reader = res.body.getReader();
@@ -1229,6 +1309,7 @@
 
   async function openChat(conversationID) {
     state.activeChatID = conversationID;
+    state.detailStickToBottom = true;
     closeChatMetaPanel();
     stopDetailPoll();
     openDialog('chat-detail-dialog');
@@ -1255,28 +1336,49 @@
     const startedAt = el.dataset?.startedAt || '';
     return 'idx:' + index + ':' + title + ':' + startedAt;
   }
+  function isDetailLogAtBottom(log) {
+    if (!log) return true;
+    return log.scrollHeight - log.scrollTop - log.clientHeight <= detailScrollBottomThreshold;
+  }
+  function scrollDetailLogToBottom(log) {
+    if (!log) return;
+    log.scrollTop = log.scrollHeight;
+    state.detailStickToBottom = true;
+  }
   function captureDetailUIState(log) {
     const openStates = new Map();
     log.querySelectorAll('details.blk').forEach((el, index) => {
       openStates.set(detailOpenStateKey(el, index), !!el.open);
     });
-    const scrollBottom = log.scrollHeight - log.scrollTop - log.clientHeight;
+    const wasPinned = isDetailLogAtBottom(log);
+    state.detailStickToBottom = wasPinned;
     return {
       openStates,
       scrollTop: log.scrollTop,
-      wasPinned: scrollBottom < 24,
+      wasPinned,
     };
+  }
+  function restoreDetailScrollPosition(log, snapshot) {
+    if (!snapshot) {
+      scrollDetailLogToBottom(log);
+      return;
+    }
+    if (snapshot.wasPinned) scrollDetailLogToBottom(log);
+    else {
+      log.scrollTop = Math.min(snapshot.scrollTop, log.scrollHeight);
+      state.detailStickToBottom = isDetailLogAtBottom(log);
+    }
   }
   function restoreDetailUIState(log, snapshot) {
     if (!snapshot) {
-      log.scrollTop = log.scrollHeight;
+      scrollDetailLogToBottom(log);
       return;
     }
     log.querySelectorAll('details.blk').forEach((el, index) => {
       const key = detailOpenStateKey(el, index);
       if (snapshot.openStates.has(key)) el.open = snapshot.openStates.get(key);
     });
-    log.scrollTop = snapshot.wasPinned ? log.scrollHeight : Math.min(snapshot.scrollTop, log.scrollHeight);
+    restoreDetailScrollPosition(log, snapshot);
   }
 
   function renderChatDetail(detail, opts) {
@@ -1292,12 +1394,13 @@
     const pending = visiblePendingFollowups(detail.id, turns);
     const log = byID('chat-log');
     const uiSnapshot = opts && opts.preserveUI ? captureDetailUIState(log) : null;
+    const isRunning = detailIsRunning(detail) || runForConversation(detail.id)?.status === 'running';
+    updateFollowupRunState(isRunning);
     if (!turns.length && !pending.length) {
       log.innerHTML = '<div class="empty">No turns yet.</div>';
       return;
     }
     log.innerHTML = '';
-    const isRunning = detailIsRunning(detail) || runForConversation(detail.id)?.status === 'running';
     for (let i = 0; i < turns.length; i++) {
       const turn = turns[i] || {};
       appendUserMessage(log, turn.message || '');
@@ -1305,6 +1408,8 @@
     }
     pending.forEach(item => renderPendingFollowup(log, item));
     restoreDetailUIState(log, uiSnapshot);
+    normalizeDetailActivity(log, isRunning);
+    restoreDetailScrollPosition(log, uiSnapshot);
   }
 
   function renderDetailMetadata(detail) {
@@ -1600,6 +1705,57 @@
     const status = compact(block && block.status, '').toLowerCase();
     return status === 'streaming' || status === 'running' || (!!block && !block.ended_at && status !== 'done' && status !== 'succeeded');
   }
+  function normalizeDetailActivity(log, conversationRunning) {
+    if (!log) return;
+    const details = Array.from(log.querySelectorAll('details.blk'));
+    if (!details.length) return;
+    const active = details.filter(blockHasDetailActivity);
+    if (!conversationRunning) {
+      active.forEach(clearDetailActivity);
+      return;
+    }
+    let latest = null;
+    for (let i = active.length - 1; i >= 0; i--) {
+      const candidate = active[i];
+      if (!active.some(other => other !== candidate && candidate.contains(other))) {
+        latest = candidate;
+        break;
+      }
+    }
+    if (!latest) {
+      latest = details.slice().reverse().find(el =>
+        !el.classList.contains('blk-kind-result') && !el.classList.contains('blk-kind-error')
+      );
+      if (latest) latest.classList.add('blk-awaiting-next');
+    }
+    details.forEach(el => {
+      if (el !== latest) {
+        clearDetailActivity(el);
+        el.open = false;
+      }
+    });
+    if (!latest) return;
+    if (!blockHasDetailActivity(latest)) latest.classList.add('blk-awaiting-next');
+    latest.open = true;
+    const parentPhase = latest.closest('details.blk-kind-phase');
+    if (parentPhase && parentPhase !== latest) {
+      clearDetailActivity(parentPhase);
+      parentPhase.open = true;
+    }
+  }
+  function blockHasDetailActivity(el) {
+    return !!el && (
+      el.classList.contains('blk-streaming') ||
+      el.classList.contains('blk-awaiting-next') ||
+      el.classList.contains('blk-live-heartbeat')
+    );
+  }
+  function clearDetailActivity(el) {
+    if (!el) return;
+    el.classList.remove('blk-streaming');
+    el.classList.remove('blk-awaiting-next');
+    el.classList.remove('blk-live-heartbeat');
+  }
   function renderFallbackBlocks(parent, blocks) {
     blocks.forEach(block => {
       const box = document.createElement('div');
@@ -1635,8 +1791,17 @@
     parent.appendChild(box);
   }
 
+  function handleFollowupAction() {
+    if (conversationIsRunning(state.activeChatID)) {
+      cancelConversation(state.activeChatID);
+      return;
+    }
+    sendFollowup();
+  }
+
   async function sendFollowup() {
     const detail = state.activeDetail;
+    if (conversationIsRunning(detail && detail.id)) return;
     const text = byID('followup-input').value.trim();
     if (!detail || !detail.id || !text) return;
     let attachments;
@@ -1835,6 +2000,9 @@
       toggleChatMetaPanel();
     });
     byID('chat-meta-scrim').addEventListener('click', closeChatMetaPanel);
+    byID('chat-log').addEventListener('scroll', () => {
+      state.detailStickToBottom = isDetailLogAtBottom(byID('chat-log'));
+    }, { passive: true });
     byID('run-list').addEventListener('keydown', e => {
       if (e.key !== 'Enter' && e.key !== ' ') return;
       if (e.target.closest('[data-run-actions]')) return;
@@ -1900,7 +2068,7 @@
         byID('task-repo-btn').focus();
       }
     });
-    byID('followup-send-btn').addEventListener('click', sendFollowup);
+    byID('followup-send-btn').addEventListener('click', handleFollowupAction);
     byID('followup-input').addEventListener('keydown', e => {
       if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
         e.preventDefault();
@@ -1908,6 +2076,13 @@
       }
     });
     document.addEventListener('click', e => {
+      const stopRunBtn = e.target.closest('[data-stop-run]');
+      if (stopRunBtn) {
+        e.preventDefault();
+        closeRunActionMenu();
+        cancelConversation(stopRunBtn.dataset.stopRun);
+        return;
+      }
       const runActionBtn = e.target.closest('[data-run-actions]');
       if (runActionBtn) {
         e.preventDefault();

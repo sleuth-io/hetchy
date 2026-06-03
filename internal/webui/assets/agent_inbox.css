@@ -516,6 +516,26 @@ h1 {
   height: .92rem;
   stroke-width: 2.2;
 }
+.run-stop-button {
+  width: 1.55rem;
+  height: 1.55rem;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: .35rem;
+  background: transparent;
+  color: var(--muted);
+}
+.run-stop-button:hover,
+.run-stop-button:focus-visible {
+  background: #ffe7e3;
+  color: var(--danger);
+}
+.run-stop-button svg {
+  width: .82rem;
+  height: .82rem;
+}
 .run-title {
   min-width: 0;
   color: var(--ink);
@@ -672,6 +692,7 @@ h1 {
   box-shadow: var(--menu-shadow);
 }
 .run-action-menu[hidden] { display: none; }
+.run-action-menu-item[hidden] { display: none; }
 .run-action-menu-item {
   width: 100%;
   min-height: 2rem;
@@ -1057,6 +1078,9 @@ dialog::backdrop { background: rgba(0,0,0,.35); }
   height: 1rem;
   stroke-width: 2;
 }
+.send-button .stop-icon { display: none; }
+.send-button.is-stop .send-icon { display: none; }
+.send-button.is-stop .stop-icon { display: block; }
 .chip-input,
 .chip-select,
 .composer-chip {
@@ -1455,6 +1479,7 @@ dialog::backdrop { background: rgba(0,0,0,.35); }
   font-weight: 400;
   flex-shrink: 0;
 }
+.blk.blk-live-heartbeat > summary .blk-summary { color: var(--accent); }
 .blk > summary .blk-time,
 .blk > summary .blk-duration {
   color: #999;
@@ -2295,6 +2320,11 @@ html.is-dark .run-card:focus-visible {
 }
 html.is-dark .run-card:hover .run-title,
 html.is-dark .run-card:focus-visible .run-title { color: var(--accent); }
+html.is-dark .run-stop-button:hover,
+html.is-dark .run-stop-button:focus-visible {
+  background: #3a1c1c;
+  color: var(--danger);
+}
 html.is-dark .live-panel {
   background: #1c1c1f;
   border-color: var(--line-strong);
