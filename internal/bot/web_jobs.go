@@ -26,9 +26,12 @@ type jobAPIResponse struct {
 	CronSchedule        string   `json:"cron_schedule"`
 	ScheduleLabel       string   `json:"schedule_label"`
 	Timezone            string   `json:"timezone"`
+	TimezoneLabel       string   `json:"timezone_label"`
 	Enabled             bool     `json:"enabled"`
 	NextRunAt           string   `json:"next_run_at,omitempty"`
+	NextRunLabel        string   `json:"next_run_label,omitempty"`
 	LastRunAt           string   `json:"last_run_at,omitempty"`
+	LastRunLabel        string   `json:"last_run_label,omitempty"`
 	LastRunID           string   `json:"last_run_id,omitempty"`
 	LastError           string   `json:"last_error,omitempty"`
 	LastExecutionID     string   `json:"last_execution_id,omitempty"`
@@ -347,9 +350,12 @@ func jobAPIFromJob(job jobs.Job) jobAPIResponse {
 		CronSchedule:        job.CronSchedule,
 		ScheduleLabel:       jobScheduleLabel(job.CronSchedule),
 		Timezone:            job.Timezone,
+		TimezoneLabel:       jobTimezoneLabel(job.Timezone),
 		Enabled:             job.Enabled,
 		NextRunAt:           formatJobTime(job.NextRunAt),
+		NextRunLabel:        jobDisplayTime(job.NextRunAt, job.Timezone),
 		LastRunAt:           formatJobTime(job.LastRunAt),
+		LastRunLabel:        jobDisplayTime(job.LastRunAt, job.Timezone),
 		LastRunID:           job.LastRunID,
 		LastError:           job.LastError,
 		LastExecutionID:     job.LastExecutionID,

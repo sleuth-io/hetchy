@@ -1,6 +1,9 @@
 package bot
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestJobScheduleLabel(t *testing.T) {
 	cases := []struct {
@@ -24,5 +27,33 @@ func TestJobScheduleLabel(t *testing.T) {
 				t.Fatalf("jobScheduleLabel(%q) = %q, want %q", tc.cron, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestJobTimezoneLabel(t *testing.T) {
+	cases := []struct {
+		timezone string
+		want     string
+	}{
+		{timezone: "", want: "UTC"},
+		{timezone: "UTC", want: "UTC"},
+		{timezone: "America/Los_Angeles", want: "Los Angeles time"},
+		{timezone: "Europe/London", want: "London time"},
+		{timezone: "PST8PDT", want: "PST8PDT"},
+	}
+	for _, tc := range cases {
+		if got := jobTimezoneLabel(tc.timezone); got != tc.want {
+			t.Fatalf("jobTimezoneLabel(%q) = %q, want %q", tc.timezone, got, tc.want)
+		}
+	}
+}
+
+func TestJobDisplayTimeUsesJobTimezone(t *testing.T) {
+	ts := time.Date(2026, 6, 4, 16, 0, 0, 0, time.UTC)
+	if got := jobDisplayTime(ts, "America/Los_Angeles"); got != "Jun 4 at 9:00 AM" {
+		t.Fatalf("jobDisplayTime LA = %q", got)
+	}
+	if got := jobDisplayTime(ts, "bad/timezone"); got != "Jun 4 at 4:00 PM" {
+		t.Fatalf("jobDisplayTime fallback = %q", got)
 	}
 }

@@ -527,11 +527,17 @@ func TestAgentJobSummaryFromJob(t *testing.T) {
 	if got.ScheduleLabel != "Daily" {
 		t.Fatalf("schedule label = %q", got.ScheduleLabel)
 	}
+	if got.TimezoneLabel != "Los Angeles time" {
+		t.Fatalf("timezone label = %q", got.TimezoneLabel)
+	}
 	if strings.Join(got.AdditionalRepos, ",") != "acme/web" {
 		t.Fatalf("additional repos = %+v", got.AdditionalRepos)
 	}
 	if got.NextRunAt != "2026-06-04T16:00:00Z" || got.LastRunAt != "2026-06-03T16:00:00Z" {
 		t.Fatalf("timestamps = next %q last %q", got.NextRunAt, got.LastRunAt)
+	}
+	if got.NextRunLabel != "Jun 4 at 9:00 AM" || got.LastRunLabel != "Jun 3 at 9:00 AM" {
+		t.Fatalf("time labels = next %q last %q", got.NextRunLabel, got.LastRunLabel)
 	}
 	if got.LastExecutionStatus != jobs.StatusSucceeded {
 		t.Fatalf("last status = %q", got.LastExecutionStatus)

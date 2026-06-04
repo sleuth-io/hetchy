@@ -21,9 +21,12 @@ type settingsJobView struct {
 	CronSchedule        string
 	ScheduleLabel       string
 	Timezone            string
+	TimezoneLabel       string
 	Enabled             bool
 	NextRunAt           string
+	NextRunLabel        string
 	LastRunAt           string
+	LastRunLabel        string
 	LastRunID           string
 	LastError           string
 	LastExecutionStatus string
@@ -127,9 +130,12 @@ func settingsJobFromJob(job jobs.Job, agentLabels map[string]string) settingsJob
 		CronSchedule:        job.CronSchedule,
 		ScheduleLabel:       jobScheduleLabel(job.CronSchedule),
 		Timezone:            job.Timezone,
+		TimezoneLabel:       jobTimezoneLabel(job.Timezone),
 		Enabled:             job.Enabled,
 		NextRunAt:           formatSettingsTime(job.NextRunAt),
+		NextRunLabel:        jobDisplayTime(job.NextRunAt, job.Timezone),
 		LastRunAt:           formatSettingsTime(job.LastRunAt),
+		LastRunLabel:        jobDisplayTime(job.LastRunAt, job.Timezone),
 		LastRunID:           job.LastRunID,
 		LastError:           job.LastError,
 		LastExecutionStatus: job.LastExecutionStatus,

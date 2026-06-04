@@ -29,8 +29,10 @@ func TestSettingsTemplate_RendersJobsTabForAdmin(t *testing.T) {
 				CronSchedule:        "0 9 * * 1",
 				ScheduleLabel:       "Weekly",
 				Timezone:            "America/Los_Angeles",
+				TimezoneLabel:       "Los Angeles time",
 				Enabled:             true,
 				NextRunAt:           "2026-06-08T16:00:00Z",
+				NextRunLabel:        "Jun 8 at 9:00 AM",
 				LastExecutionStatus: "succeeded",
 			},
 		},
@@ -58,7 +60,12 @@ func TestSettingsTemplate_RendersJobsTabForAdmin(t *testing.T) {
 		`data-job-delete="job_123"`,
 		`Check dependencies weekly.`,
 		`Additional repositories: acme/web`,
-		`Weekly · America/Los_Angeles`,
+		`class="job-submeta"`,
+		`<dt>Agent</dt><dd>Maintainer</dd>`,
+		`<dt>Repo</dt><dd>acme/api</dd>`,
+		`<strong>Weekly</strong>`,
+		`<small>Los Angeles time</small>`,
+		`Jun 8 at 9:00 AM`,
 		`<option value="maintainer">Maintainer</option>`,
 		`id="job-primary-repo"`,
 		`<option value="acme/api">acme/api</option>`,
@@ -91,6 +98,8 @@ func TestSettingsTemplate_RendersJobsTabForAdmin(t *testing.T) {
 		`id="job-repo-options"`,
 		`<textarea id="job-additional-repos"`,
 		`One repository per line`,
+		`<div><span>Agent</span><strong>Maintainer</strong></div>`,
+		`<div><span>Repository</span><strong>acme/api</strong></div>`,
 	} {
 		if strings.Contains(body, notWant) {
 			t.Fatalf("jobs tab should not render %q", notWant)

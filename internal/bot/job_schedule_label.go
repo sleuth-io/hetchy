@@ -1,6 +1,9 @@
 package bot
 
-import "strings"
+import (
+	"strings"
+	"time"
+)
 
 func jobScheduleLabel(cronSchedule string) string {
 	normalized := strings.Join(strings.Fields(cronSchedule), " ")
@@ -22,4 +25,32 @@ func jobScheduleLabel(cronSchedule string) string {
 	default:
 		return strings.TrimSpace(cronSchedule)
 	}
+}
+
+func jobTimezoneLabel(timezone string) string {
+	tz := strings.TrimSpace(timezone)
+	if tz == "" || strings.EqualFold(tz, "UTC") {
+		return "UTC"
+	}
+	parts := strings.Split(tz, "/")
+	if len(parts) > 1 {
+		name := strings.ReplaceAll(parts[len(parts)-1], "_", " ")
+		if name != "" {
+			return name + " time"
+		}
+	}
+	return tz
+}
+
+func jobDisplayTime(t time.Time, timezone string) string {
+	if t.IsZero() {
+		return ""
+	}
+	loc := time.UTC
+	if tz := strings.TrimSpace(timezone); tz != "" {
+		if loaded, err := time.LoadLocation(tz); err == nil {
+			loc = loaded
+		}
+	}
+	return t.In(loc).Format("Jan 2 at 3:04 PM")
 }

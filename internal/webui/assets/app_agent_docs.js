@@ -31,6 +31,7 @@
   function renderAgentHeaderSubtitle(id) {
     const el = byID('selection-subtitle');
     if (!el) return;
+    el.classList.remove('has-agent-assets');
     if (!id) {
       el.textContent = 'Recent work, active first.';
       return;
@@ -40,9 +41,9 @@
       return;
     }
     const agent = agentForSlug(id);
-    const parts = [esc(groupDescription(id))];
+    const parts = ['<span class="selection-subtitle-text">' + esc(groupDescription(id)) + '</span>'];
     const teamLabel = agentTeamLabel(agent);
-    if (teamLabel) parts.push(esc(teamLabel));
+    if (teamLabel) parts.push('<span class="selection-subtitle-chip">' + esc(teamLabel) + '</span>');
     const groups = agentSkillGroups(agent);
     if (groups.total) {
       const label = groups.total + ' ' + (groups.total === 1 ? 'skill' : 'skills');
@@ -53,6 +54,7 @@
       const label = jobs.length + ' ' + (jobs.length === 1 ? 'job' : 'jobs');
       parts.push('<button type="button" class="selection-subtitle-link" data-open-agent-jobs="' + esc(id) + '">' + esc(label) + '</button>');
     }
+    el.classList.add('has-agent-assets');
     el.innerHTML = parts.filter(Boolean).join('<span class="selection-subtitle-separator">·</span>');
     el.querySelector('[data-open-agent-skills]')?.addEventListener('click', e => {
       e.preventDefault();
@@ -143,10 +145,10 @@
           + '</div>'
           + agentJobDefinitionHTML(job)
           + '<dl class="agent-job-summary-meta">'
-          + agentJobMetaHTML('Schedule', agentJobScheduleText(job))
+          + agentJobMetaHTML('Schedule', agentJobScheduleText(job), agentJobTimezoneText(job))
           + agentJobMetaHTML('Repository', job.primary_repository || '')
-          + agentJobMetaHTML('Next run', job.enabled ? fullDate(job.next_run_at) || 'Not scheduled' : 'Disabled')
-          + agentJobMetaHTML('Last status', agentJobLastStatusText(job))
+          + agentJobMetaHTML('Next run', job.enabled ? compact(job.next_run_label, fullDate(job.next_run_at)) || 'Not scheduled' : 'Disabled')
+          + agentJobMetaHTML('Last status', agentJobLastStatusText(job), agentJobLastStatusDetail(job))
           + '</dl>'
           + agentJobAdditionalReposHTML(job)
           + '</li>').join('')
@@ -163,25 +165,37 @@
     return definition ? '<p class="agent-job-summary-definition">' + esc(definition) + '</p>' : '';
   }
 
-  function agentJobMetaHTML(label, value) {
+  function agentJobMetaHTML(label, value, detail) {
     value = compact(value, '-');
-    return '<div><dt>' + esc(label) + '</dt><dd>' + esc(value) + '</dd></div>';
+    detail = compact(detail, '');
+    return '<div><dt>' + esc(label) + '</dt><dd><span>' + esc(value) + '</span>'
+      + (detail ? '<small>' + esc(detail) + '</small>' : '')
+      + '</dd></div>';
   }
 
   function agentJobScheduleText(job) {
-    const label = compact(job && job.schedule_label, compact(job && job.cron_schedule, ''));
-    const parts = [label, job && job.timezone].map(value => compact(value, '')).filter(Boolean);
-    return parts.length ? parts.join(' · ') : 'No schedule';
+    return compact(job && job.schedule_label, compact(job && job.cron_schedule, '')) || 'No schedule';
+  }
+
+  function agentJobTimezoneText(job) {
+    return compact(job && job.timezone_label, compact(job && job.timezone, ''));
   }
 
   function agentJobLastStatusText(job) {
     const status = compact(job && job.last_execution_status, '');
-    const lastRun = fullDate(job && job.last_run_at);
     const error = compact(job && job.last_error, '');
-    if (error) return status ? humanizeSlug(status) + ' · ' + error : error;
-    if (status && lastRun) return humanizeSlug(status) + ' · ' + lastRun;
     if (status) return humanizeSlug(status);
+    if (error) return 'Error';
     return 'No runs yet';
+  }
+
+  function agentJobLastStatusDetail(job) {
+    const status = compact(job && job.last_execution_status, '');
+    const lastRun = compact(job && job.last_run_label, fullDate(job && job.last_run_at));
+    const error = compact(job && job.last_error, '');
+    if (error) return error;
+    if (status && lastRun) return lastRun;
+    return '';
   }
 
   function agentJobAdditionalReposHTML(job) {

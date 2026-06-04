@@ -1053,8 +1053,14 @@
                data-job-enabled="{{if .Enabled}}1{{else}}0{{end}}">
         <div class="job-card-head">
           <div class="job-title">
-            <h3>{{.Name}}</h3>
-            <span class="tag {{if .Enabled}}tag-validated{{else}}tag-stale{{end}}">{{if .Enabled}}enabled{{else}}disabled{{end}}</span>
+            <div class="job-title-main">
+              <h3>{{.Name}}</h3>
+              <span class="tag {{if .Enabled}}tag-validated{{else}}tag-stale{{end}}">{{if .Enabled}}enabled{{else}}disabled{{end}}</span>
+            </div>
+            <dl class="job-submeta">
+              <div><dt>Agent</dt><dd>{{.AgentLabel}}</dd></div>
+              <div><dt>Repo</dt><dd>{{.PrimaryRepository}}</dd></div>
+            </dl>
           </div>
           <div class="job-actions">
             {{if $.IsAdmin}}
@@ -1067,17 +1073,15 @@
         </div>
         <p class="job-definition" data-job-definition>{{.Definition}}</p>
         <div class="job-meta-grid">
-          <div><span>Agent</span><strong>{{.AgentLabel}}</strong></div>
-          <div><span>Repository</span><strong>{{.PrimaryRepository}}</strong></div>
-          <div><span>Schedule</span><strong>{{.ScheduleLabel}} · {{.Timezone}}</strong></div>
-          <div><span>Next run</span><strong>{{if .NextRunAt}}{{.NextRunAt}}{{else}}Not scheduled{{end}}</strong></div>
+          <div><span>Schedule</span><strong>{{.ScheduleLabel}}</strong>{{if .TimezoneLabel}}<small>{{.TimezoneLabel}}</small>{{end}}</div>
+          <div><span>Next run</span><strong>{{if .NextRunLabel}}{{.NextRunLabel}}{{else}}Not scheduled{{end}}</strong></div>
         </div>
         {{if .AdditionalRepos}}
         <p class="hint">Additional repositories: {{range $i, $repo := .AdditionalRepos}}{{if gt $i 0}}, {{end}}{{$repo}}{{end}}</p>
         {{end}}
         <div class="job-foot">
           {{if .LastExecutionStatus}}<span class="pill">{{.LastExecutionStatus}}</span>{{end}}
-          {{if .LastRunAt}}<span>last run: {{.LastRunAt}}</span>{{end}}
+          {{if .LastRunLabel}}<span>last run: {{.LastRunLabel}}</span>{{end}}
           {{if .LastError}}<span class="job-error">{{.LastError}}</span>{{end}}
         </div>
         <div data-job-additional hidden>{{.AdditionalReposText}}</div>

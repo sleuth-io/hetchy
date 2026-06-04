@@ -1,5 +1,7 @@
 .selection-subtitle-link {
-  display: inline;
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
   padding: 0;
   border: 0;
   background: none;
@@ -11,7 +13,28 @@
 }
 .selection-subtitle-link:hover,
 .selection-subtitle-link:focus-visible { color: var(--accent); }
-.selection-subtitle-separator { margin: 0 .35rem; color: var(--muted); }
+.selection-subtitle.has-agent-assets {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: .12rem .35rem;
+  max-width: 100%;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+}
+.selection-subtitle-text {
+  min-width: 10rem;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.selection-subtitle-chip,
+.selection-subtitle-separator {
+  flex: 0 0 auto;
+}
+.selection-subtitle-separator { color: var(--muted); }
 
 .agent-assets-overlay { z-index: 220; }
 .agent-document-overlay { z-index: 280; }
@@ -164,7 +187,7 @@
 }
 .agent-job-summary-meta {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
   gap: .45rem .75rem;
   margin: .05rem 0 0;
 }
@@ -182,7 +205,16 @@
   color: var(--ink);
   font-size: .78rem;
   line-height: 1.3;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+}
+.agent-job-summary-meta dd span,
+.agent-job-summary-meta dd small {
+  display: block;
+  min-width: 0;
+}
+.agent-job-summary-meta dd small {
+  margin-top: .1rem;
+  color: var(--muted);
 }
 
 .agent-doc-modal {

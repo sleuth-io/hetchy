@@ -119,9 +119,12 @@ type agentJobSummary struct {
 	CronSchedule        string   `json:"cron_schedule"`
 	ScheduleLabel       string   `json:"schedule_label"`
 	Timezone            string   `json:"timezone"`
+	TimezoneLabel       string   `json:"timezone_label"`
 	Enabled             bool     `json:"enabled"`
 	NextRunAt           string   `json:"next_run_at,omitempty"`
+	NextRunLabel        string   `json:"next_run_label,omitempty"`
 	LastRunAt           string   `json:"last_run_at,omitempty"`
+	LastRunLabel        string   `json:"last_run_label,omitempty"`
 	LastExecutionStatus string   `json:"last_execution_status,omitempty"`
 	LastError           string   `json:"last_error,omitempty"`
 }
@@ -307,9 +310,12 @@ func agentJobSummaryFromJob(job jobs.Job) agentJobSummary {
 		CronSchedule:        job.CronSchedule,
 		ScheduleLabel:       jobScheduleLabel(job.CronSchedule),
 		Timezone:            job.Timezone,
+		TimezoneLabel:       jobTimezoneLabel(job.Timezone),
 		Enabled:             job.Enabled,
 		NextRunAt:           formatSettingsTime(job.NextRunAt),
+		NextRunLabel:        jobDisplayTime(job.NextRunAt, job.Timezone),
 		LastRunAt:           formatSettingsTime(job.LastRunAt),
+		LastRunLabel:        jobDisplayTime(job.LastRunAt, job.Timezone),
 		LastExecutionStatus: job.LastExecutionStatus,
 		LastError:           job.LastError,
 	}
