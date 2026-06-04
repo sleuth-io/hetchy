@@ -19,6 +19,7 @@ type settingsJobView struct {
 	AdditionalRepos     []string
 	AdditionalReposText string
 	CronSchedule        string
+	ScheduleLabel       string
 	Timezone            string
 	Enabled             bool
 	NextRunAt           string
@@ -124,6 +125,7 @@ func settingsJobFromJob(job jobs.Job, agentLabels map[string]string) settingsJob
 		AdditionalRepos:     additional,
 		AdditionalReposText: strings.Join(additional, "\n"),
 		CronSchedule:        job.CronSchedule,
+		ScheduleLabel:       jobScheduleLabel(job.CronSchedule),
 		Timezone:            job.Timezone,
 		Enabled:             job.Enabled,
 		NextRunAt:           formatSettingsTime(job.NextRunAt),

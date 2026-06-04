@@ -23,6 +23,11 @@
     return { direct, inherited, total: direct.length + inherited.length };
   }
 
+  function agentJobs(agent) {
+    if (!agent || !Array.isArray(agent.jobs)) return [];
+    return agent.jobs.filter(job => job && compact(job.name, ''));
+  }
+
   function renderAgentHeaderSubtitle(id) {
     const el = byID('selection-subtitle');
     if (!el) return;
@@ -43,10 +48,19 @@
       const label = groups.total + ' ' + (groups.total === 1 ? 'skill' : 'skills');
       parts.push('<button type="button" class="selection-subtitle-link" data-open-agent-skills="' + esc(id) + '">' + esc(label) + '</button>');
     }
+    const jobs = agentJobs(agent);
+    if (jobs.length) {
+      const label = jobs.length + ' ' + (jobs.length === 1 ? 'job' : 'jobs');
+      parts.push('<button type="button" class="selection-subtitle-link" data-open-agent-jobs="' + esc(id) + '">' + esc(label) + '</button>');
+    }
     el.innerHTML = parts.filter(Boolean).join('<span class="selection-subtitle-separator">·</span>');
     el.querySelector('[data-open-agent-skills]')?.addEventListener('click', e => {
       e.preventDefault();
       openAgentSkillsModal(e.currentTarget.dataset.openAgentSkills);
+    });
+    el.querySelector('[data-open-agent-jobs]')?.addEventListener('click', e => {
+      e.preventDefault();
+      openAgentSkillsModal(e.currentTarget.dataset.openAgentJobs);
     });
   }
 
@@ -66,6 +80,7 @@
       + '</div>'
       + '<div class="agent-assets-body">'
       + agentFilesSectionHTML(agent)
+      + agentJobSectionHTML(agentJobs(agent))
       + agentSkillSectionHTML('Installed skills', groups.direct, 'No directly installed skills.', false)
       + agentSkillSectionHTML('Inherited skills from orgs and teams', groups.inherited, '', true)
       + '</div>'
@@ -115,6 +130,67 @@
       + '</button></li>'
       + '</ul>'
       + '</section>';
+  }
+
+  function agentJobSectionHTML(jobs) {
+    let body = '<p class="agent-assets-hint">No scheduled jobs.</p>';
+    if (jobs.length) {
+      body = '<ul class="agent-job-summary-list">'
+        + jobs.map(job => '<li class="agent-job-summary-item">'
+          + '<div class="agent-job-summary-head">'
+          + '<strong>' + esc(job.name || 'Untitled job') + '</strong>'
+          + '<span class="agent-job-summary-pill' + (job.enabled ? ' is-enabled' : ' is-disabled') + '">' + esc(job.enabled ? 'Enabled' : 'Disabled') + '</span>'
+          + '</div>'
+          + agentJobDefinitionHTML(job)
+          + '<dl class="agent-job-summary-meta">'
+          + agentJobMetaHTML('Schedule', agentJobScheduleText(job))
+          + agentJobMetaHTML('Repository', job.primary_repository || '')
+          + agentJobMetaHTML('Next run', job.enabled ? fullDate(job.next_run_at) || 'Not scheduled' : 'Disabled')
+          + agentJobMetaHTML('Last status', agentJobLastStatusText(job))
+          + '</dl>'
+          + agentJobAdditionalReposHTML(job)
+          + '</li>').join('')
+        + '</ul>';
+    }
+    return '<section class="agent-assets-section">'
+      + '<div class="agent-assets-label">Scheduled jobs</div>'
+      + body
+      + '</section>';
+  }
+
+  function agentJobDefinitionHTML(job) {
+    const definition = compact(job && job.definition, '');
+    return definition ? '<p class="agent-job-summary-definition">' + esc(definition) + '</p>' : '';
+  }
+
+  function agentJobMetaHTML(label, value) {
+    value = compact(value, '-');
+    return '<div><dt>' + esc(label) + '</dt><dd>' + esc(value) + '</dd></div>';
+  }
+
+  function agentJobScheduleText(job) {
+    const label = compact(job && job.schedule_label, compact(job && job.cron_schedule, ''));
+    const parts = [label, job && job.timezone].map(value => compact(value, '')).filter(Boolean);
+    return parts.length ? parts.join(' · ') : 'No schedule';
+  }
+
+  function agentJobLastStatusText(job) {
+    const status = compact(job && job.last_execution_status, '');
+    const lastRun = fullDate(job && job.last_run_at);
+    const error = compact(job && job.last_error, '');
+    if (error) return status ? humanizeSlug(status) + ' · ' + error : error;
+    if (status && lastRun) return humanizeSlug(status) + ' · ' + lastRun;
+    if (status) return humanizeSlug(status);
+    return 'No runs yet';
+  }
+
+  function agentJobAdditionalReposHTML(job) {
+    const repos = Array.isArray(job && job.additional_repositories)
+      ? job.additional_repositories.map(repo => compact(repo, '')).filter(Boolean)
+      : [];
+    return repos.length
+      ? '<p class="agent-job-summary-extra">Additional repositories: ' + esc(repos.join(', ')) + '</p>'
+      : '';
   }
 
   function agentSkillSectionHTML(title, skills, emptyText, collapsible) {

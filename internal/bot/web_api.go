@@ -20,6 +20,7 @@ import (
 	"github.com/hetchyhq/hetchy/internal/blocks"
 	"github.com/hetchyhq/hetchy/internal/convstore"
 	"github.com/hetchyhq/hetchy/internal/db/sqlc"
+	"github.com/hetchyhq/hetchy/internal/jobs"
 	"github.com/hetchyhq/hetchy/internal/sxsync"
 )
 
@@ -92,20 +93,37 @@ type attachmentInfo struct {
 }
 
 type agentSummary struct {
-	Slug         string   `json:"slug"`
-	DisplayName  string   `json:"display_name"`
-	Description  string   `json:"description"`
-	SXBot        string   `json:"sx_bot,omitempty"`
-	PersonaAsset string   `json:"persona_asset,omitempty"`
-	SlackAliases []string `json:"slack_aliases,omitempty"`
-	Skills       []string `json:"skills,omitempty"`
-	SXTeams      []string `json:"sx_teams,omitempty"`
-	SXSkills     []string `json:"sx_skills,omitempty"`
-	VaultBackend string   `json:"vault_backend,omitempty"`
-	SyncStatus   string   `json:"sync_status,omitempty"`
-	SyncError    string   `json:"sync_error,omitempty"`
-	BuiltIn      bool     `json:"built_in"`
-	Default      bool     `json:"default"`
+	Slug         string            `json:"slug"`
+	DisplayName  string            `json:"display_name"`
+	Description  string            `json:"description"`
+	SXBot        string            `json:"sx_bot,omitempty"`
+	PersonaAsset string            `json:"persona_asset,omitempty"`
+	SlackAliases []string          `json:"slack_aliases,omitempty"`
+	Skills       []string          `json:"skills,omitempty"`
+	SXTeams      []string          `json:"sx_teams,omitempty"`
+	SXSkills     []string          `json:"sx_skills,omitempty"`
+	Jobs         []agentJobSummary `json:"jobs,omitempty"`
+	VaultBackend string            `json:"vault_backend,omitempty"`
+	SyncStatus   string            `json:"sync_status,omitempty"`
+	SyncError    string            `json:"sync_error,omitempty"`
+	BuiltIn      bool              `json:"built_in"`
+	Default      bool              `json:"default"`
+}
+
+type agentJobSummary struct {
+	ID                  string   `json:"id"`
+	Name                string   `json:"name"`
+	Definition          string   `json:"definition,omitempty"`
+	PrimaryRepository   string   `json:"primary_repository"`
+	AdditionalRepos     []string `json:"additional_repositories,omitempty"`
+	CronSchedule        string   `json:"cron_schedule"`
+	ScheduleLabel       string   `json:"schedule_label"`
+	Timezone            string   `json:"timezone"`
+	Enabled             bool     `json:"enabled"`
+	NextRunAt           string   `json:"next_run_at,omitempty"`
+	LastRunAt           string   `json:"last_run_at,omitempty"`
+	LastExecutionStatus string   `json:"last_execution_status,omitempty"`
+	LastError           string   `json:"last_error,omitempty"`
 }
 
 func (b *Bot) agentsHandler(w http.ResponseWriter, r *http.Request) {
@@ -213,6 +231,12 @@ func (b *Bot) agentsHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
+	jobsByAgent, err := b.agentJobSummariesByAgent(r.Context(), p.OrgID)
+	if err != nil {
+		b.log.Error("list agent jobs", "error", err, "org", p.OrgID)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
 	remoteBySlug := make(map[string]agents.Profile, len(remoteProfiles))
 	for _, remote := range remoteProfiles {
 		slug := agents.NormalizeSlug(remote.Slug)
@@ -241,6 +265,7 @@ func (b *Bot) agentsHandler(w http.ResponseWriter, r *http.Request) {
 			Skills:       a.Skills,
 			SXTeams:      a.SXTeams,
 			SXSkills:     a.SXSkills,
+			Jobs:         jobsByAgent[a.Slug],
 			VaultBackend: a.VaultBackend,
 			SyncStatus:   a.SyncStatus,
 			SyncError:    a.SyncError,
@@ -249,6 +274,45 @@ func (b *Bot) agentsHandler(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, out)
+}
+
+func (b *Bot) agentJobSummariesByAgent(ctx context.Context, orgID string) (map[string][]agentJobSummary, error) {
+	out := map[string][]agentJobSummary{}
+	if b.jobs == nil || !b.jobs.Enabled() {
+		return out, nil
+	}
+	rows, err := b.jobs.List(ctx, orgID)
+	if err != nil {
+		return nil, err
+	}
+	for _, job := range rows {
+		out[job.AgentSlug] = append(out[job.AgentSlug], agentJobSummaryFromJob(job))
+	}
+	return out, nil
+}
+
+func agentJobSummaryFromJob(job jobs.Job) agentJobSummary {
+	additional := make([]string, 0, len(job.AdditionalRepos))
+	for _, repo := range job.AdditionalRepos {
+		if slug := repo.Slug(); slug != "" {
+			additional = append(additional, slug)
+		}
+	}
+	return agentJobSummary{
+		ID:                  job.ID,
+		Name:                job.Name,
+		Definition:          job.Definition,
+		PrimaryRepository:   job.PrimaryOwner + "/" + job.PrimaryRepo,
+		AdditionalRepos:     additional,
+		CronSchedule:        job.CronSchedule,
+		ScheduleLabel:       jobScheduleLabel(job.CronSchedule),
+		Timezone:            job.Timezone,
+		Enabled:             job.Enabled,
+		NextRunAt:           formatSettingsTime(job.NextRunAt),
+		LastRunAt:           formatSettingsTime(job.LastRunAt),
+		LastExecutionStatus: job.LastExecutionStatus,
+		LastError:           job.LastError,
+	}
 }
 
 func overlayAgentRemoteState(local, remote agents.Profile) agents.Profile {

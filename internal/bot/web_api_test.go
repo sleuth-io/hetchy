@@ -17,6 +17,7 @@ import (
 	"github.com/hetchyhq/hetchy/internal/blocks"
 	"github.com/hetchyhq/hetchy/internal/convstore"
 	"github.com/hetchyhq/hetchy/internal/db/sqlc"
+	"github.com/hetchyhq/hetchy/internal/jobs"
 	"github.com/hetchyhq/hetchy/internal/runstore"
 	"github.com/hetchyhq/hetchy/internal/sxsync"
 )
@@ -495,6 +496,45 @@ func TestAgentsHandlerOverlaysRemoteTeamsAndSkills(t *testing.T) {
 	}
 	if strings.Join(bob.SXSkills, ",") != "database-migrations,golang-patterns" {
 		t.Fatalf("bob sx skills = %+v", bob.SXSkills)
+	}
+}
+
+func TestAgentJobSummaryFromJob(t *testing.T) {
+	next := time.Date(2026, 6, 4, 16, 0, 0, 0, time.UTC)
+	last := time.Date(2026, 6, 3, 16, 0, 0, 0, time.UTC)
+	got := agentJobSummaryFromJob(jobs.Job{
+		ID:              "job_123",
+		Name:            "Dependency sweep",
+		Definition:      "Check dependencies and open a PR only when needed.",
+		PrimaryOwner:    "acme",
+		PrimaryRepo:     "api",
+		AdditionalRepos: []jobs.RepoRef{{Owner: "acme", Name: "web"}, {Owner: "", Name: "missing"}},
+		CronSchedule:    "0 9 * * *",
+		Timezone:        "America/Los_Angeles",
+		Enabled:         true,
+		NextRunAt:       next,
+		LastRunAt:       last,
+
+		LastExecutionStatus: jobs.StatusSucceeded,
+		LastError:           "",
+	})
+	if got.ID != "job_123" || got.Name != "Dependency sweep" {
+		t.Fatalf("basic summary fields = %+v", got)
+	}
+	if got.PrimaryRepository != "acme/api" {
+		t.Fatalf("primary repository = %q", got.PrimaryRepository)
+	}
+	if got.ScheduleLabel != "Daily" {
+		t.Fatalf("schedule label = %q", got.ScheduleLabel)
+	}
+	if strings.Join(got.AdditionalRepos, ",") != "acme/web" {
+		t.Fatalf("additional repos = %+v", got.AdditionalRepos)
+	}
+	if got.NextRunAt != "2026-06-04T16:00:00Z" || got.LastRunAt != "2026-06-03T16:00:00Z" {
+		t.Fatalf("timestamps = next %q last %q", got.NextRunAt, got.LastRunAt)
+	}
+	if got.LastExecutionStatus != jobs.StatusSucceeded {
+		t.Fatalf("last status = %q", got.LastExecutionStatus)
 	}
 }
 

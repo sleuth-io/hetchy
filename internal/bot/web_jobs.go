@@ -24,6 +24,7 @@ type jobAPIResponse struct {
 	PrimaryRepository   string   `json:"primary_repository"`
 	AdditionalRepos     []string `json:"additional_repositories"`
 	CronSchedule        string   `json:"cron_schedule"`
+	ScheduleLabel       string   `json:"schedule_label"`
 	Timezone            string   `json:"timezone"`
 	Enabled             bool     `json:"enabled"`
 	NextRunAt           string   `json:"next_run_at,omitempty"`
@@ -344,6 +345,7 @@ func jobAPIFromJob(job jobs.Job) jobAPIResponse {
 		PrimaryRepository:   job.PrimaryOwner + "/" + job.PrimaryRepo,
 		AdditionalRepos:     additional,
 		CronSchedule:        job.CronSchedule,
+		ScheduleLabel:       jobScheduleLabel(job.CronSchedule),
 		Timezone:            job.Timezone,
 		Enabled:             job.Enabled,
 		NextRunAt:           formatJobTime(job.NextRunAt),

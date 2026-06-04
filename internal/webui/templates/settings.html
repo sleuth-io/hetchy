@@ -784,7 +784,7 @@
       {{range $a.Jobs}}
         <a class="agent-job-chip" href="/settings/org?tab=jobs#job-{{.ID}}">
           <span>{{.Name}}</span>
-          <small>{{.CronSchedule}} · {{.PrimaryRepository}}</small>
+          <small>{{.ScheduleLabel}} · {{.PrimaryRepository}}</small>
         </a>
       {{end}}
     </div>
@@ -1069,7 +1069,7 @@
         <div class="job-meta-grid">
           <div><span>Agent</span><strong>{{.AgentLabel}}</strong></div>
           <div><span>Repository</span><strong>{{.PrimaryRepository}}</strong></div>
-          <div><span>Schedule</span><strong>{{.CronSchedule}} · {{.Timezone}}</strong></div>
+          <div><span>Schedule</span><strong>{{.ScheduleLabel}} · {{.Timezone}}</strong></div>
           <div><span>Next run</span><strong>{{if .NextRunAt}}{{.NextRunAt}}{{else}}Not scheduled{{end}}</strong></div>
         </div>
         {{if .AdditionalRepos}}
