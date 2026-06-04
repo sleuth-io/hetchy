@@ -419,6 +419,21 @@ func isDaytonaStateChangeConflict(err error) bool {
 		(strings.Contains(msg, "state change in progress") || strings.Contains(msg, "state transition"))
 }
 
+func isDaytonaSessionAlreadyExists(err error) bool {
+	var dayErr *sdkerrors.DaytonaError
+	if !errors.As(err, &dayErr) {
+		return false
+	}
+	if dayErr.StatusCode != http.StatusConflict && dayErr.StatusCode != http.StatusBadRequest {
+		return false
+	}
+	msg := strings.ToLower(dayErr.Message)
+	return strings.Contains(msg, "session") &&
+		(strings.Contains(msg, "already exist") ||
+			strings.Contains(msg, "exists") ||
+			strings.Contains(msg, "duplicate"))
+}
+
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

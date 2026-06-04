@@ -470,14 +470,37 @@ func (b *Bot) createBootstrapSession(ctx context.Context, sb *daytona.Sandbox, s
 	if sb == nil || sb.Process == nil {
 		return errors.New("sandbox process not configured")
 	}
-	if err := sb.Process.CreateSession(ctx, sessionID); err != nil {
-		if b.log != nil {
-			b.log.Warn("daytona create session failed",
-				"sandbox", sb.ID, "session", sessionID, "purpose", "bootstrap", "error", err)
+	return b.createSandboxSessionWithRetry(ctx, sb.ID, sb.Process, sessionID, "bootstrap")
+}
+
+type sandboxSessionCreator interface {
+	CreateSession(context.Context, string) error
+}
+
+func (b *Bot) createSandboxSessionWithRetry(ctx context.Context, sandboxID string, proc sandboxSessionCreator, sessionID, purpose string) error {
+	sawTransient := false
+	err := b.retryWithBackoff(ctx, "sandbox create session", func() error {
+		err := proc.CreateSession(ctx, sessionID)
+		if err == nil {
+			return nil
+		}
+		if sawTransient && isDaytonaSessionAlreadyExists(err) {
+			if b.log != nil {
+				b.log.Info("daytona session already exists after retry",
+					"sandbox", sandboxID, "session", sessionID, "purpose", purpose)
+			}
+			return nil
+		}
+		if isTransientError(err) {
+			sawTransient = true
 		}
 		return err
+	})
+	if err != nil && b.log != nil {
+		b.log.Warn("daytona create session failed",
+			"sandbox", sandboxID, "session", sessionID, "purpose", purpose, "error", err)
 	}
-	return nil
+	return err
 }
 
 func (b *Bot) runBootstrapInlineScript(ctx context.Context, sb *daytona.Sandbox, sessionID, label, scriptBody string, env map[string]string, emit blocks.Emitter) error {
@@ -718,11 +741,7 @@ func (b *Bot) runScriptForRequest(ctx context.Context, sb *daytona.Sandbox, sess
 // message, or an empty string when the agent completed successfully but
 // answered without creating a pull request.
 func (b *Bot) runScript(ctx context.Context, sb *daytona.Sandbox, sessionID, label, scriptBody string, env map[string]string, emit blocks.Emitter) (string, error) {
-	if err := sb.Process.CreateSession(ctx, sessionID); err != nil {
-		if b.log != nil {
-			b.log.Warn("daytona create session failed",
-				"sandbox", sb.ID, "session", sessionID, "label", label, "error", err)
-		}
+	if err := b.createSandboxSessionWithRetry(ctx, sb.ID, sb.Process, sessionID, label); err != nil {
 		return "", fmt.Errorf("%w: create session: %w", errAgentSetupBeforeRuntime, err)
 	}
 	b.markRunSession(ctx, sessionID)

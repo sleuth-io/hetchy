@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	sdkerrors "github.com/daytonaio/daytona/libs/sdk-go/pkg/errors"
 )
 
 // fakeProcess implements sandboxProcess for unit tests. It sends chunks
@@ -17,6 +19,7 @@ type fakeProcess struct {
 	hangAfter         bool          // block after sending all chunks until ctx done
 	leaveStreamsOpen  bool          // simulate SDK returning without closing log channels
 	exitCode          float64       // command exit code (0 = success)
+	execErrors        []error       // returned from ExecuteSessionCommand before success
 	suppressInputEcho bool
 	commands          []string
 }
@@ -29,6 +32,13 @@ func (f *fakeProcess) ExecuteSessionCommand(ctx context.Context, _, command stri
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		case <-time.After(f.hangBeforeExec):
+		}
+	}
+	if len(f.execErrors) > 0 {
+		err := f.execErrors[0]
+		f.execErrors = f.execErrors[1:]
+		if err != nil {
+			return nil, err
 		}
 	}
 	return map[string]any{"id": "cmd-1"}, nil
@@ -183,6 +193,44 @@ func TestShLines(t *testing.T) {
 				t.Errorf("shLines output = %q, want %q", out, tc.wantOut)
 			}
 		})
+	}
+}
+
+func TestShLinesRetriesSetupCommandSubmission(t *testing.T) {
+	t.Parallel()
+
+	err502 := sdkerrors.NewDaytonaError("bad gateway", 502, nil)
+	proc := &fakeProcess{
+		chunks:     []string{"ok\n"},
+		execErrors: []error{err502},
+	}
+	b := &Bot{log: discardLogger(), retryBackoff: 0}
+
+	out, err := b.shLines(context.Background(), "test-sandbox", proc, "sess-1", "write-env", "echo hi", 5*time.Second, 0, true, func(string) {})
+	if err != nil {
+		t.Fatalf("shLines returned unexpected error: %v", err)
+	}
+	if out != "ok\n" {
+		t.Fatalf("shLines output = %q, want %q", out, "ok\n")
+	}
+	if got := len(proc.commands); got != 2 {
+		t.Fatalf("ExecuteSessionCommand calls = %d, want 2", got)
+	}
+}
+
+func TestShLinesDoesNotRetryRunScriptSubmission(t *testing.T) {
+	t.Parallel()
+
+	err502 := sdkerrors.NewDaytonaError("bad gateway", 502, nil)
+	proc := &fakeProcess{execErrors: []error{err502}}
+	b := &Bot{log: discardLogger(), retryBackoff: 0}
+
+	_, err := b.shLines(context.Background(), "test-sandbox", proc, "sess-1", "run-script", "echo hi", 5*time.Second, 0, true, func(string) {})
+	if err == nil {
+		t.Fatal("shLines returned nil error, want exec error")
+	}
+	if got := len(proc.commands); got != 1 {
+		t.Fatalf("ExecuteSessionCommand calls = %d, want 1", got)
 	}
 }
 

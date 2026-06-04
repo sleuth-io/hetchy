@@ -423,6 +423,55 @@ func TestRetryWithBackoff(t *testing.T) {
 	}
 }
 
+type fakeSessionCreator struct {
+	errs  []error
+	calls int
+}
+
+func (f *fakeSessionCreator) CreateSession(context.Context, string) error {
+	f.calls++
+	if len(f.errs) == 0 {
+		return nil
+	}
+	err := f.errs[0]
+	f.errs = f.errs[1:]
+	return err
+}
+
+func TestCreateSandboxSessionWithRetry(t *testing.T) {
+	err502 := sdkerrors.NewDaytonaError("bad gateway", 502, nil)
+	err401 := sdkerrors.NewDaytonaError("unauthorized", 401, nil)
+	errExists := sdkerrors.NewDaytonaError("session already exists", 409, nil)
+
+	cases := []struct {
+		name      string
+		errs      []error
+		wantCalls int
+		wantErr   bool
+	}{
+		{name: "succeeds first attempt", errs: []error{nil}, wantCalls: 1},
+		{name: "retries transient error", errs: []error{err502, nil}, wantCalls: 2},
+		{name: "accepts duplicate after transient", errs: []error{err502, errExists}, wantCalls: 2},
+		{name: "does not retry permanent error", errs: []error{err401}, wantCalls: 1, wantErr: true},
+		{name: "does not accept duplicate first", errs: []error{errExists}, wantCalls: 1, wantErr: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			proc := &fakeSessionCreator{errs: tc.errs}
+			b := &Bot{log: discardLogger(), retryBackoff: 0}
+
+			err := b.createSandboxSessionWithRetry(context.Background(), "test-sandbox", proc, "sess-1", "test")
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("createSandboxSessionWithRetry err = %v, wantErr %v", err, tc.wantErr)
+			}
+			if proc.calls != tc.wantCalls {
+				t.Fatalf("CreateSession calls = %d, want %d", proc.calls, tc.wantCalls)
+			}
+		})
+	}
+}
+
 // TestParseOwnerRepo locks in the contract used by the "ask for repo"
 // flow: anything the user might paste — bare `owner/name`, a github.com
 // URL, a clone-style `.git` suffix, trailing punctuation — should
