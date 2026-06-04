@@ -458,7 +458,7 @@
       workSearch.placeholder = 'Search ' + (title || 'this view') + ' chats';
     }
     byID('work-subtitle').textContent = state.statusFilter === 'all'
-      ? (state.workQuery ? 'Matching chats for this group.' : 'Recent work, newest first.')
+      ? (state.workQuery ? 'Matching chats for this group.' : '')
       : statusLabel(state.statusFilter) + ' work for this group.';
 
     const list = byID('run-list');
