@@ -53,13 +53,18 @@ node "${work_dir}/smoke.cjs"
 printf 'Playwright smoke passed: %s\n' "${PLAYWRIGHT_BROWSERS_PATH}"
 
 # playwright-cli smoke: prove the bundled CLI binary launches its
-# browser, navigates somewhere, and exits cleanly. Pin the user-data
-# and output dirs under the work_dir so we don't pollute the daytona
-# user's home or cwd from a build/CI run.
+# browser, navigates somewhere, captures a screenshot via the
+# --filename= path agents use to upload S3 proof, and exits cleanly.
+# Pin the user-data and output dirs under the work_dir so we don't
+# pollute the daytona user's home or cwd from a build/CI run.
 export PLAYWRIGHT_MCP_USER_DATA_DIR="${PLAYWRIGHT_MCP_USER_DATA_DIR:-${work_dir}/cli-user-data}"
 export PLAYWRIGHT_MCP_OUTPUT_DIR="${PLAYWRIGHT_MCP_OUTPUT_DIR:-${work_dir}/cli-output}"
 mkdir -p "$PLAYWRIGHT_MCP_USER_DATA_DIR" "$PLAYWRIGHT_MCP_OUTPUT_DIR"
-playwright-cli --version
+PW_CLI_VERSION="$(playwright-cli --version)"
+echo "playwright-cli version: ${PW_CLI_VERSION}"
 playwright-cli open about:blank
+playwright-cli screenshot --filename="${PLAYWRIGHT_MCP_OUTPUT_DIR}/smoke.png"
+test -s "${PLAYWRIGHT_MCP_OUTPUT_DIR}/smoke.png" \
+  || { echo "playwright-cli screenshot did not produce a non-empty output file" >&2; exit 1; }
 playwright-cli close
-printf 'playwright-cli smoke passed: %s\n' "$(playwright-cli --version)"
+printf 'playwright-cli smoke passed: %s\n' "${PW_CLI_VERSION}"
