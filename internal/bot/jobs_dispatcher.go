@@ -34,8 +34,27 @@ type JobDispatchResult struct {
 	Failed    int
 }
 
+type dueJobClaimer interface {
+	Enabled() bool
+	ClaimDue(ctx context.Context, worker string, limit int32, now time.Time, staleAfter time.Duration) ([]jobs.ClaimedExecution, error)
+}
+
+type manualJobRunner interface {
+	Enabled() bool
+	RunNow(ctx context.Context, orgID, jobID, worker string, now time.Time) (jobs.ClaimedExecution, error)
+}
+
+type claimedJobDispatcher func(context.Context, jobs.ClaimedExecution) (string, error)
+
 func (b *Bot) DispatchDueJobs(ctx context.Context, opts JobDispatchOptions) (JobDispatchResult, error) {
-	if b.jobs == nil || !b.jobs.Enabled() {
+	if b.jobs == nil {
+		return JobDispatchResult{}, jobs.ErrNotConfigured
+	}
+	return dispatchDueJobs(ctx, b.jobs, b.workerID, opts, time.Now(), b.dispatchClaimedJob)
+}
+
+func dispatchDueJobs(ctx context.Context, store dueJobClaimer, workerID string, opts JobDispatchOptions, now time.Time, dispatch claimedJobDispatcher) (JobDispatchResult, error) {
+	if store == nil || !store.Enabled() {
 		return JobDispatchResult{}, jobs.ErrNotConfigured
 	}
 	if opts.Limit <= 0 {
@@ -47,7 +66,7 @@ func (b *Bot) DispatchDueJobs(ctx context.Context, opts JobDispatchOptions) (Job
 	if opts.StaleAfter <= 0 {
 		opts.StaleAfter = defaultJobClaimStaleAfter
 	}
-	claimed, err := b.jobs.ClaimDue(ctx, b.workerID, opts.Limit, time.Now(), opts.StaleAfter)
+	claimed, err := store.ClaimDue(ctx, workerID, opts.Limit, now, opts.StaleAfter)
 	if err != nil {
 		return JobDispatchResult{}, err
 	}
@@ -64,7 +83,7 @@ func (b *Bot) DispatchDueJobs(ctx context.Context, opts JobDispatchOptions) (Job
 		sem <- struct{}{}
 		wg.Go(func() {
 			defer func() { <-sem }()
-			status, err := b.dispatchClaimedJob(ctx, claim)
+			status, err := dispatch(ctx, claim)
 			mu.Lock()
 			defer mu.Unlock()
 			result.Started++
@@ -83,16 +102,23 @@ func (b *Bot) DispatchDueJobs(ctx context.Context, opts JobDispatchOptions) (Job
 }
 
 func (b *Bot) DispatchJobNow(ctx context.Context, orgID, jobID string) (jobs.Execution, error) {
-	if b.jobs == nil || !b.jobs.Enabled() {
+	if b.jobs == nil {
 		return jobs.Execution{}, jobs.ErrNotConfigured
 	}
-	claim, err := b.jobs.RunNow(ctx, orgID, jobID, b.workerID, time.Now())
+	return dispatchJobNow(ctx, b.jobs, b.workerID, orgID, jobID, time.Now(), b.dispatchClaimedJob, b.log)
+}
+
+func dispatchJobNow(ctx context.Context, store manualJobRunner, workerID, orgID, jobID string, now time.Time, dispatch claimedJobDispatcher, log *slog.Logger) (jobs.Execution, error) {
+	if store == nil || !store.Enabled() {
+		return jobs.Execution{}, jobs.ErrNotConfigured
+	}
+	claim, err := store.RunNow(ctx, orgID, jobID, workerID, now)
 	if err != nil {
 		return jobs.Execution{}, err
 	}
 	go func() {
-		if _, err := b.dispatchClaimedJob(context.Background(), claim); err != nil && b.log != nil {
-			b.log.Warn("manual job dispatch failed", "org", orgID, "job_id", jobID, "execution_id", claim.Execution.ID, "error", err)
+		if _, err := dispatch(context.Background(), claim); err != nil && log != nil {
+			log.Warn("manual job dispatch failed", "org", orgID, "job_id", jobID, "execution_id", claim.Execution.ID, "error", err)
 		}
 	}()
 	return claim.Execution, nil
