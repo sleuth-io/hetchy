@@ -747,7 +747,7 @@ func (b *Bot) runScript(ctx context.Context, sb *daytona.Sandbox, sessionID, lab
 
 	env = maps.Clone(env)
 	if err := b.materializeLargeRunEnv(ctx, sb.ID, sb.Process, sessionID, label, env); err != nil {
-		return "", fmt.Errorf("%w: %w", errAgentSetupBeforeRuntime, err)
+		return "", fmt.Errorf("%w: materialize env: %w", errAgentSetupBeforeRuntime, err)
 	}
 
 	// Sort env keys so the resulting command line is deterministic; Go

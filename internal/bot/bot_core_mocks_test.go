@@ -429,10 +429,10 @@ func TestHandleRequestRetryAfterFailurePreservesOriginalHistory(t *testing.T) {
 	if !emit.hasCall("error", "Repo not accessible") {
 		t.Fatalf("expected repo access error, got calls=%v", emit.Calls)
 	}
-	if got := convs.lastUpsert(t).Branch; got != "" {
+	rec := convs.lastUpsert(t)
+	if got := rec.Branch; got != "" {
 		t.Fatalf("retry after failure should clear stale branch before fresh retry, got %q", got)
 	}
-	rec := convs.lastUpsert(t)
 	if got := rec.History; len(got) != 3 || got[0] != "old failed request" || got[1] != "previous retry" || got[2] != "retry with better prompt" {
 		t.Fatalf("retry path should preserve original request and append retry, got %#v", got)
 	}
