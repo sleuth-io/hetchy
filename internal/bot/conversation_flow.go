@@ -62,7 +62,8 @@ func (b *Bot) prepareAgentRun(ctx context.Context, orgID, threadID, requestID, t
 	}
 	if run.ID != "" {
 		if job, ok := jobRunFromContext(ctx); ok && b.jobs != nil {
-			if err := b.jobs.MarkRunning(context.Background(), orgID, job.ExecutionID, run.ID); err != nil {
+			runID := run.ID
+			if err := b.jobs.MarkRunning(context.Background(), orgID, job.ExecutionID, &runID); err != nil {
 				b.log.Warn("mark job execution running",
 					"org", orgID, "job_id", job.JobID, "job_execution_id", job.ExecutionID, "run_id", run.ID, "error", err)
 			}

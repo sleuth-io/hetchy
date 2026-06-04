@@ -130,6 +130,10 @@ func (b *Bot) dispatchClaimedJob(ctx context.Context, claim jobs.ClaimedExecutio
 	repo := job.PrimaryOwner + "/" + job.PrimaryRepo
 	prompt := jobPrompt(job, execution)
 	runCtx := contextWithJobRun(ctx, job, execution)
+	if err := b.jobs.MarkRunning(context.Background(), job.OrgID, execution.ID, nil); err != nil {
+		log.Warn("mark job execution running before dispatch",
+			"org", job.OrgID, "job_id", job.ID, "execution_id", execution.ID, "error", err)
+	}
 	b.HandleRequest(runCtx, oc, prompt, requestID, threadID, "job:"+job.ID, nil, requestedAgent, &repo, jobDispatchModel(oc), noopEmitter{})
 
 	status, message := b.jobExecutionStatus(ctx, job.OrgID, threadID)

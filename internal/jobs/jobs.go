@@ -382,14 +382,14 @@ func (s *Store) RunNow(ctx context.Context, orgID, jobID, worker string, now tim
 	return out, nil
 }
 
-func (s *Store) MarkRunning(ctx context.Context, orgID, executionID, runID string) error {
+func (s *Store) MarkRunning(ctx context.Context, orgID, executionID string, runID *string) error {
 	if !s.Enabled() {
 		return ErrNotConfigured
 	}
 	n, err := s.db.Queries.MarkAgentJobExecutionRunning(ctx, sqlc.MarkAgentJobExecutionRunningParams{
 		OrgID: orgID,
 		ID:    executionID,
-		RunID: &runID,
+		RunID: runID,
 	})
 	if err != nil {
 		return fmt.Errorf("mark execution running: %w", err)

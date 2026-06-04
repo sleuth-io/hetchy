@@ -591,11 +591,11 @@ func (q *Queries) MarkAgentJobExecutionFinished(ctx context.Context, arg MarkAge
 const markAgentJobExecutionRunning = `-- name: MarkAgentJobExecutionRunning :execrows
 UPDATE agent_job_executions
 SET status = 'running',
-    run_id = $3,
+    run_id = COALESCE($3, run_id),
     updated_at = NOW()
 WHERE org_id = $1
   AND id = $2
-  AND status = 'claimed'
+  AND status IN ('claimed', 'running')
 `
 
 type MarkAgentJobExecutionRunningParams struct {
