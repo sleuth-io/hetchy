@@ -210,6 +210,7 @@
     if (provided) return provided;
     if (run.status !== 'done') return statusLabel(run.status);
     if (compact(run.pr_url, '')) {
+      if (run.pr_merged) return 'PR merged';
       return run.run_kind === 'followup' ? 'PR updated' : 'PR created';
     }
     return 'Answered';

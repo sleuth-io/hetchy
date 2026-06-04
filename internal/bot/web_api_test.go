@@ -1223,12 +1223,13 @@ func TestAppDataStatusAndStateLabels(t *testing.T) {
 func TestAppDataResultLabel(t *testing.T) {
 	const prURL = "https://github.com/hetchyhq/hetchy/pull/321"
 	cases := []struct {
-		name    string
-		state   string
-		outcome string
-		runKind string
-		prURL   string
-		want    string
+		name     string
+		state    string
+		outcome  string
+		runKind  string
+		prURL    string
+		prMerged bool
+		want     string
 	}{
 		{name: "running", state: runstore.StateRunning, want: "Running"},
 		{name: "preparing", state: runstore.StatePreparing, want: "Running"},
@@ -1302,11 +1303,45 @@ func TestAppDataResultLabel(t *testing.T) {
 			state: runstore.StateSucceeded,
 			want:  "Answered",
 		},
+		{
+			name:     "merged PR after fresh verified run",
+			state:    runstore.StateSucceeded,
+			outcome:  runstore.OutcomeCompletedWithVerifiedPR,
+			runKind:  "fresh",
+			prURL:    prURL,
+			prMerged: true,
+			want:     "PR merged",
+		},
+		{
+			name:     "merged PR after follow-up verified run",
+			state:    runstore.StateSucceeded,
+			outcome:  runstore.OutcomeCompletedWithVerifiedPR,
+			runKind:  "followup",
+			prURL:    prURL,
+			prMerged: true,
+			want:     "PR merged",
+		},
+		{
+			name:     "merged legacy succeeded run",
+			state:    runstore.StateSucceeded,
+			runKind:  "fresh",
+			prURL:    prURL,
+			prMerged: true,
+			want:     "PR merged",
+		},
+		{
+			name:     "merged flag without pr_url falls back to standard label",
+			state:    runstore.StateSucceeded,
+			outcome:  runstore.OutcomeCompletedNoPR,
+			runKind:  "fresh",
+			prMerged: true,
+			want:     "Answered",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := appDataResultLabel(tc.state, tc.outcome, tc.runKind, tc.prURL); got != tc.want {
-				t.Fatalf("appDataResultLabel(%q,%q,%q,%q) = %q, want %q", tc.state, tc.outcome, tc.runKind, tc.prURL, got, tc.want)
+			if got := appDataResultLabel(tc.state, tc.outcome, tc.runKind, tc.prURL, tc.prMerged); got != tc.want {
+				t.Fatalf("appDataResultLabel(%q,%q,%q,%q,%t) = %q, want %q", tc.state, tc.outcome, tc.runKind, tc.prURL, tc.prMerged, got, tc.want)
 			}
 		})
 	}

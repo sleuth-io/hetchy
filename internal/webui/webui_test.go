@@ -51,7 +51,9 @@ func TestRunCardUsesResultLabel(t *testing.T) {
 		"function runResultLabel(run)",
 		"'PR updated'",
 		"'PR created'",
+		"'PR merged'",
 		"'Answered'",
+		"run.pr_merged",
 	} {
 		if !strings.Contains(app, want) {
 			t.Fatalf("app.js missing %q", want)
