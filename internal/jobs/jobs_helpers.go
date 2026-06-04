@@ -28,6 +28,14 @@ func interval(d time.Duration) pgtype.Interval {
 	return pgtype.Interval{Microseconds: d.Microseconds(), Valid: true}
 }
 
+func runningExecutionStaleAfter(claimedStaleAfter time.Duration) time.Duration {
+	runningStaleAfter := claimedStaleAfter * 4
+	if runningStaleAfter < minRunningExecutionStaleAfter {
+		return minRunningExecutionStaleAfter
+	}
+	return runningStaleAfter
+}
+
 func newID(prefix string) string {
 	var b [12]byte
 	_, _ = rand.Read(b[:])

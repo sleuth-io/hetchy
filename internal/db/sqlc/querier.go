@@ -103,7 +103,6 @@ type Querier interface {
 	InsertRepoSecretValueIfAbsent(ctx context.Context, arg InsertRepoSecretValueIfAbsentParams) error
 	ListActiveAgentRunsForLeaseOwnerPrefix(ctx context.Context, arg ListActiveAgentRunsForLeaseOwnerPrefixParams) ([]AgentRun, error)
 	ListAgentJobExecutionsByJob(ctx context.Context, arg ListAgentJobExecutionsByJobParams) ([]AgentJobExecution, error)
-	ListAgentJobsByAgent(ctx context.Context, arg ListAgentJobsByAgentParams) ([]AgentJob, error)
 	ListAgentJobsByOrg(ctx context.Context, orgID string) ([]AgentJob, error)
 	ListAgentProfileTemplates(ctx context.Context) ([]AgentProfileTemplate, error)
 	ListAgentProfilesByOrg(ctx context.Context, orgID string) ([]ListAgentProfilesByOrgRow, error)
@@ -151,6 +150,7 @@ type Querier interface {
 	MarkAgentJobExecutionFinished(ctx context.Context, arg MarkAgentJobExecutionFinishedParams) (int64, error)
 	MarkAgentJobExecutionRunning(ctx context.Context, arg MarkAgentJobExecutionRunningParams) (int64, error)
 	ReleaseStaleClaimedAgentJobExecutions(ctx context.Context, staleAfter pgtype.Interval) (int64, error)
+	ReleaseStaleRunningAgentJobExecutions(ctx context.Context, staleAfter pgtype.Interval) (int64, error)
 	RenameConversation(ctx context.Context, arg RenameConversationParams) (int64, error)
 	ResetBillingTopupMonthlyUsage(ctx context.Context, arg ResetBillingTopupMonthlyUsageParams) (BillingTopupSetting, error)
 	RevokeOrgAPIKey(ctx context.Context, arg RevokeOrgAPIKeyParams) (int64, error)

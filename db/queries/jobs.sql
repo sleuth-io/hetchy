@@ -58,15 +58,6 @@ FROM agent_jobs
 WHERE org_id = $1
 ORDER BY enabled DESC, next_run_at ASC NULLS LAST, created_at DESC;
 
--- name: ListAgentJobsByAgent :many
-SELECT id, org_id, name, definition, agent_slug,
-       primary_owner, primary_repo, additional_repos,
-       cron_schedule, timezone, enabled, next_run_at,
-       last_run_at, last_run_id, last_error, created_at, updated_at
-FROM agent_jobs
-WHERE org_id = $1 AND agent_slug = $2
-ORDER BY enabled DESC, next_run_at ASC NULLS LAST, created_at DESC;
-
 -- name: DeleteAgentJob :execrows
 DELETE FROM agent_jobs
 WHERE org_id = $1 AND id = $2;
@@ -177,5 +168,15 @@ SET status = 'failed',
     error = 'job dispatch claim timed out',
     updated_at = NOW()
 WHERE status = 'claimed'
+  AND claimed_at IS NOT NULL
+  AND claimed_at < NOW() - sqlc.arg(stale_after)::interval;
+
+-- name: ReleaseStaleRunningAgentJobExecutions :execrows
+UPDATE agent_job_executions
+SET status = 'failed',
+    finished_at = NOW(),
+    error = 'job execution timed out',
+    updated_at = NOW()
+WHERE status = 'running'
   AND claimed_at IS NOT NULL
   AND claimed_at < NOW() - sqlc.arg(stale_after)::interval;

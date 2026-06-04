@@ -351,59 +351,6 @@ func (q *Queries) ListAgentJobExecutionsByJob(ctx context.Context, arg ListAgent
 	return items, nil
 }
 
-const listAgentJobsByAgent = `-- name: ListAgentJobsByAgent :many
-SELECT id, org_id, name, definition, agent_slug,
-       primary_owner, primary_repo, additional_repos,
-       cron_schedule, timezone, enabled, next_run_at,
-       last_run_at, last_run_id, last_error, created_at, updated_at
-FROM agent_jobs
-WHERE org_id = $1 AND agent_slug = $2
-ORDER BY enabled DESC, next_run_at ASC NULLS LAST, created_at DESC
-`
-
-type ListAgentJobsByAgentParams struct {
-	OrgID     string `json:"org_id"`
-	AgentSlug string `json:"agent_slug"`
-}
-
-func (q *Queries) ListAgentJobsByAgent(ctx context.Context, arg ListAgentJobsByAgentParams) ([]AgentJob, error) {
-	rows, err := q.db.Query(ctx, listAgentJobsByAgent, arg.OrgID, arg.AgentSlug)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []AgentJob
-	for rows.Next() {
-		var i AgentJob
-		if err := rows.Scan(
-			&i.ID,
-			&i.OrgID,
-			&i.Name,
-			&i.Definition,
-			&i.AgentSlug,
-			&i.PrimaryOwner,
-			&i.PrimaryRepo,
-			&i.AdditionalRepos,
-			&i.CronSchedule,
-			&i.Timezone,
-			&i.Enabled,
-			&i.NextRunAt,
-			&i.LastRunAt,
-			&i.LastRunID,
-			&i.LastError,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listAgentJobsByOrg = `-- name: ListAgentJobsByOrg :many
 SELECT id, org_id, name, definition, agent_slug,
        primary_owner, primary_repo, additional_repos,
@@ -625,6 +572,25 @@ WHERE status = 'claimed'
 
 func (q *Queries) ReleaseStaleClaimedAgentJobExecutions(ctx context.Context, staleAfter pgtype.Interval) (int64, error) {
 	result, err := q.db.Exec(ctx, releaseStaleClaimedAgentJobExecutions, staleAfter)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const releaseStaleRunningAgentJobExecutions = `-- name: ReleaseStaleRunningAgentJobExecutions :execrows
+UPDATE agent_job_executions
+SET status = 'failed',
+    finished_at = NOW(),
+    error = 'job execution timed out',
+    updated_at = NOW()
+WHERE status = 'running'
+  AND claimed_at IS NOT NULL
+  AND claimed_at < NOW() - $1::interval
+`
+
+func (q *Queries) ReleaseStaleRunningAgentJobExecutions(ctx context.Context, staleAfter pgtype.Interval) (int64, error) {
+	result, err := q.db.Exec(ctx, releaseStaleRunningAgentJobExecutions, staleAfter)
 	if err != nil {
 		return 0, err
 	}

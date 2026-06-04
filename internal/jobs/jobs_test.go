@@ -93,3 +93,12 @@ func TestTerminalExecutionStatus(t *testing.T) {
 		}
 	}
 }
+
+func TestRunningExecutionStaleAfterUsesLongerThreshold(t *testing.T) {
+	if got := runningExecutionStaleAfter(30 * time.Minute); got != 2*time.Hour {
+		t.Fatalf("running stale after default claim threshold = %s, want 2h", got)
+	}
+	if got := runningExecutionStaleAfter(time.Hour); got != 4*time.Hour {
+		t.Fatalf("running stale after custom claim threshold = %s, want 4h", got)
+	}
+}

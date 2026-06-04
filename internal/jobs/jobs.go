@@ -25,6 +25,7 @@ const (
 )
 
 const defaultLocation = "UTC"
+const minRunningExecutionStaleAfter = 2 * time.Hour
 
 var (
 	ErrNotConfigured = errors.New("jobs: store not configured")
@@ -241,25 +242,6 @@ func (s *Store) List(ctx context.Context, orgID string) ([]Job, error) {
 	return out, nil
 }
 
-func (s *Store) ListByAgent(ctx context.Context, orgID, agentSlug string) ([]Job, error) {
-	if !s.Enabled() {
-		return nil, ErrNotConfigured
-	}
-	rows, err := s.db.Queries.ListAgentJobsByAgent(ctx, sqlc.ListAgentJobsByAgentParams{OrgID: orgID, AgentSlug: agentSlug})
-	if err != nil {
-		return nil, fmt.Errorf("list jobs by agent: %w", err)
-	}
-	out := make([]Job, 0, len(rows))
-	for _, row := range rows {
-		job, err := jobFromRow(row)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, job)
-	}
-	return out, nil
-}
-
 func (s *Store) Delete(ctx context.Context, orgID, jobID string) error {
 	if !s.Enabled() {
 		return ErrNotConfigured
@@ -284,6 +266,9 @@ func (s *Store) ClaimDue(ctx context.Context, worker string, limit int32, now ti
 	if staleAfter > 0 {
 		if _, err := s.db.Queries.ReleaseStaleClaimedAgentJobExecutions(ctx, interval(staleAfter)); err != nil {
 			return nil, fmt.Errorf("release stale job executions: %w", err)
+		}
+		if _, err := s.db.Queries.ReleaseStaleRunningAgentJobExecutions(ctx, interval(runningExecutionStaleAfter(staleAfter))); err != nil {
+			return nil, fmt.Errorf("release stale running job executions: %w", err)
 		}
 	}
 	var out []ClaimedExecution
