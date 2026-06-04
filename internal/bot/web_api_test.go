@@ -860,6 +860,12 @@ func TestAppDataHandlerAggregatesRunsAndPRs(t *testing.T) {
 	if run.UpdatedAt != runUpdatedAt.Format(time.RFC3339) {
 		t.Fatalf("run updated_at = %q, want latest run timestamp", run.UpdatedAt)
 	}
+	if run.RunKind != "fresh" {
+		t.Fatalf("run_kind = %q, want fresh", run.RunKind)
+	}
+	if run.ResultLabel != "Running" {
+		t.Fatalf("result_label = %q, want Running", run.ResultLabel)
+	}
 	store := b.runs.(*fakeRunStore)
 	if store.latestCalls != 0 {
 		t.Fatalf("LatestForThread calls = %d, want 0", store.latestCalls)
@@ -1209,6 +1215,98 @@ func TestAppDataStatusAndStateLabels(t *testing.T) {
 			}
 			if got := appDataStateLabel(tc.state, tc.outcome); got != tc.label {
 				t.Fatalf("appDataStateLabel(%q, %q) = %q, want %q", tc.state, tc.outcome, got, tc.label)
+			}
+		})
+	}
+}
+
+func TestAppDataResultLabel(t *testing.T) {
+	const prURL = "https://github.com/hetchyhq/hetchy/pull/321"
+	cases := []struct {
+		name    string
+		state   string
+		outcome string
+		runKind string
+		prURL   string
+		want    string
+	}{
+		{name: "running", state: runstore.StateRunning, want: "Running"},
+		{name: "preparing", state: runstore.StatePreparing, want: "Running"},
+		{name: "recovering", state: runstore.StateRecovering, want: "Running"},
+		{name: "finalizing", state: runstore.StateFinalizing, want: "Running"},
+		{name: "failed-no-pr maps to needs_input", state: runstore.StateFailed, outcome: runstore.OutcomeCompletedNoPR, want: "Needs input"},
+		{name: "failed", state: runstore.StateFailed, want: "Failed"},
+		{name: "cancelled", state: runstore.StateCancelled, want: "Canceled"},
+		{
+			name:    "fresh verified PR",
+			state:   runstore.StateSucceeded,
+			outcome: runstore.OutcomeCompletedWithVerifiedPR,
+			runKind: "fresh",
+			prURL:   prURL,
+			want:    "PR created",
+		},
+		{
+			name:    "new pr follow-up still creates a PR",
+			state:   runstore.StateSucceeded,
+			outcome: runstore.OutcomeCompletedWithVerifiedPR,
+			runKind: "new_pr",
+			prURL:   prURL,
+			want:    "PR created",
+		},
+		{
+			name:    "follow-up updates PR",
+			state:   runstore.StateSucceeded,
+			outcome: runstore.OutcomeCompletedWithVerifiedPR,
+			runKind: "followup",
+			prURL:   prURL,
+			want:    "PR updated",
+		},
+		{
+			name:    "answer-only succeeded",
+			state:   runstore.StateSucceeded,
+			outcome: runstore.OutcomeCompletedNoPR,
+			runKind: "fresh",
+			want:    "Answered",
+		},
+		{
+			name:    "follow-up with no new PR is still an answer",
+			state:   runstore.StateSucceeded,
+			outcome: runstore.OutcomeCompletedNoPR,
+			runKind: "followup",
+			prURL:   prURL,
+			want:    "Answered",
+		},
+		{
+			name:    "degraded succeeded with PR",
+			state:   runstore.StateSucceeded,
+			outcome: runstore.OutcomeDegradedMissingSkills,
+			runKind: "fresh",
+			prURL:   prURL,
+			want:    "PR created",
+		},
+		{
+			name:    "degraded succeeded without PR",
+			state:   runstore.StateSucceeded,
+			outcome: runstore.OutcomeDegradedMissingSkills,
+			runKind: "fresh",
+			want:    "Answered",
+		},
+		{
+			name:  "legacy succeeded with PR",
+			state: runstore.StateSucceeded,
+			prURL: prURL,
+			want:  "PR created",
+		},
+		{
+			name:  "legacy succeeded without PR",
+			state: runstore.StateSucceeded,
+			want:  "Answered",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := appDataResultLabel(tc.state, tc.outcome, tc.runKind, tc.prURL); got != tc.want {
+				t.Fatalf("appDataResultLabel(%q,%q,%q,%q) = %q, want %q", tc.state, tc.outcome, tc.runKind, tc.prURL, got, tc.want)
 			}
 		})
 	}

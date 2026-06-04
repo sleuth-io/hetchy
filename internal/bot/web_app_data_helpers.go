@@ -45,6 +45,49 @@ func appDataStateLabel(state, outcome string) string {
 	}
 }
 
+// appDataResultLabel is the short chat-card pill label for a run. For
+// terminal "done" runs the label reflects the actual end result — a fresh
+// PR, an updated PR on a follow-up, or an answer-only chat — rather than a
+// generic "Done". Other statuses keep their existing short labels.
+func appDataResultLabel(state, outcome, runKind, prURL string) string {
+	switch appDataStatus(state, outcome) {
+	case "running":
+		return "Running"
+	case "needs_input":
+		return "Needs input"
+	case "failed":
+		return "Failed"
+	case "cancelled":
+		return "Canceled"
+	case "done":
+		return doneRunResultLabel(outcome, runKind, prURL)
+	default:
+		return "Done"
+	}
+}
+
+func doneRunResultLabel(outcome, runKind, prURL string) string {
+	switch outcome {
+	case runstore.OutcomeCompletedNoPR:
+		return "Answered"
+	case runstore.OutcomeCompletedWithVerifiedPR:
+		if runKind == "followup" {
+			return "PR updated"
+		}
+		return "PR created"
+	}
+	// Degraded-tooling or legacy succeeded runs leave the outcome generic
+	// or unset, so fall back to the persisted PR URL as the strongest
+	// signal of what the run produced.
+	if strings.TrimSpace(prURL) != "" {
+		if runKind == "followup" {
+			return "PR updated"
+		}
+		return "PR created"
+	}
+	return "Answered"
+}
+
 func appDataActivity(run runstore.Run, events []runstore.Event) string {
 	return appDataActivityFromEvents(run, runActivityEventsFromStore(events))
 }

@@ -40,6 +40,8 @@ type appDataRun struct {
 	State          string             `json:"state"`
 	Outcome        string             `json:"outcome,omitempty"`
 	Status         string             `json:"status"`
+	ResultLabel    string             `json:"result_label,omitempty"`
+	RunKind        string             `json:"run_kind,omitempty"`
 	AgentSlug      string             `json:"agent_slug"`
 	CreatorID      string             `json:"creator_id,omitempty"`
 	Repository     string             `json:"repository,omitempty"`
@@ -150,6 +152,7 @@ func (b *Bot) appDataHandler(w http.ResponseWriter, r *http.Request) {
 func (b *Bot) appDataRunForConversation(ctx context.Context, orgID string, rec convstore.Record, run runstore.Run, hasRun bool) appDataRun {
 	state := "idle"
 	outcome := ""
+	runKind := ""
 	commandStep := ""
 	currentStep := ""
 	activity := ""
@@ -157,6 +160,7 @@ func (b *Bot) appDataRunForConversation(ctx context.Context, orgID string, rec c
 	if hasRun {
 		state = run.State
 		outcome = run.Outcome
+		runKind = run.RunKind
 		commandStep = run.CommandStep
 		milestones = appDataMilestones(rec, run, true)
 		if !isTerminalRunState(run.State) {
@@ -189,6 +193,8 @@ func (b *Bot) appDataRunForConversation(ctx context.Context, orgID string, rec c
 		State:          state,
 		Outcome:        outcome,
 		Status:         appDataStatus(state, outcome),
+		ResultLabel:    appDataResultLabel(state, outcome, runKind, rec.PRURL),
+		RunKind:        runKind,
 		AgentSlug:      rec.AgentSlug,
 		CreatorID:      rec.CreatorID,
 		Repository:     repo,
