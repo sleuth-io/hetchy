@@ -723,7 +723,7 @@ func (b *Bot) runScript(ctx context.Context, sb *daytona.Sandbox, sessionID, lab
 			b.log.Warn("daytona create session failed",
 				"sandbox", sb.ID, "session", sessionID, "label", label, "error", err)
 		}
-		return "", fmt.Errorf("create session: %w", err)
+		return "", fmt.Errorf("%w: create session: %w", errAgentSetupBeforeRuntime, err)
 	}
 	b.markRunSession(ctx, sessionID)
 
@@ -742,12 +742,12 @@ func (b *Bot) runScript(ctx context.Context, sb *daytona.Sandbox, sessionID, lab
 	body := strings.TrimRight(scriptBody, "\n")
 	writeCmd := heredocWriteCmd(scriptPath, body, true)
 	if _, err := b.shLines(ctx, sb.ID, sb.Process, sessionID, "write-script", writeCmd, 15*time.Second, 0, true, func(string) {}); err != nil {
-		return "", err
+		return "", fmt.Errorf("%w: write script: %w", errAgentSetupBeforeRuntime, err)
 	}
 
 	env = maps.Clone(env)
 	if err := b.materializeLargeRunEnv(ctx, sb.ID, sb.Process, sessionID, label, env); err != nil {
-		return "", err
+		return "", fmt.Errorf("%w: %w", errAgentSetupBeforeRuntime, err)
 	}
 
 	// Sort env keys so the resulting command line is deterministic; Go

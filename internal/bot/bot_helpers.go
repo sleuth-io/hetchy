@@ -277,6 +277,7 @@ func (b *Bot) handleFreshAgentRunError(ctx context.Context, sb *daytona.Sandbox,
 		b.cleanupSandboxWithTimeout(sb, "fresh run setup failed")
 		emit.Error("Sandbox setup failed", fmt.Sprintf("Sandbox `%s` failed before the agent started and was archived. Reply here to retry.", sb.ID))
 		rec.SandboxID = ""
+		rec.Branch = ""
 		appendFreshRunBlocks(rec, mode, recorder.Snapshot())
 		if err := b.convs.Upsert(context.Background(), *rec); err != nil {
 			b.log.Error("convstore upsert (agent setup fail)", "error", err)

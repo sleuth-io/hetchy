@@ -395,6 +395,7 @@ func TestHandleRequestRetryAfterFailurePreservesOriginalHistory(t *testing.T) {
 			ThreadID:    "thread-1",
 			GitHubOwner: "hetchyhq",
 			GitHubRepo:  "hetchy",
+			Branch:      "feature/stale-local-only",
 			History:     []string{"old failed request", "previous retry"},
 			ResponseBlocks: [][]blocks.Block{
 				{{Kind: blocks.KindError, Title: "Agent failed", Body: "previous failure"}},
@@ -427,6 +428,9 @@ func TestHandleRequestRetryAfterFailurePreservesOriginalHistory(t *testing.T) {
 
 	if !emit.hasCall("error", "Repo not accessible") {
 		t.Fatalf("expected repo access error, got calls=%v", emit.Calls)
+	}
+	if got := convs.lastUpsert(t).Branch; got != "" {
+		t.Fatalf("retry after failure should clear stale branch before fresh retry, got %q", got)
 	}
 	rec := convs.lastUpsert(t)
 	if got := rec.History; len(got) != 3 || got[0] != "old failed request" || got[1] != "previous retry" || got[2] != "retry with better prompt" {
