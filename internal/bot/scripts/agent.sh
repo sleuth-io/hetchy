@@ -452,12 +452,38 @@ if [[ -n "${HETCHY_CODEX_MODEL:-}" ]]; then
   echo "[hetchy] initializing codex auth"
   run_codex_exec /tmp/sf-prompt.txt
 else
-  echo "[hetchy] running claude"
-  # stream-json + verbose emits one NDJSON event per assistant chunk and
-  # tool call so the bot can render typed Block updates in real time.
-  # The PR URL is parsed out of the final assistant text by the bot.
-  # run_claude_with_watchdog wraps claude to reap orphaned background-task
-  # children that would otherwise pin the process alive after the agent's
-  # turn ends — see scripts/claude-watchdog.sh for the full rationale.
-  run_claude_with_watchdog /tmp/sf-prompt.txt
+  # Two execution paths split on which Claude credential the bot
+  # injected:
+  #
+  #   * API-key auth (ANTHROPIC_API_KEY) → run_claude_with_watchdog
+  #     uses `claude --print --output-format stream-json` for a tidy
+  #     NDJSON stream straight to stdout. The "[hetchy] running claude"
+  #     marker the router relies on is echoed here, just before the
+  #     watchdog call.
+  #
+  #   * Subscription auth (CLAUDE_CODE_OAUTH_TOKEN) → drive the normal
+  #     interactive TUI inside tmux and forward the on-disk transcript
+  #     to stdout. As of June 15, 2026 `claude -p` and Agent SDK usage
+  #     no longer count against the Pro/Max plan's interactive budget
+  #     and instead draw from a small monthly SDK credit pool, so
+  #     keeping subscription runs on `--print` would silently bill the
+  #     wrong meter. The transcript happens to share the same envelope
+  #     shape as stream-json, so the bot's claudeStreamParser does not
+  #     need to change. NOTE: the interactive runner emits the
+  #     "[hetchy] running claude" marker itself once tmux is fully
+  #     set up and the tail is about to start — see
+  #     scripts/claude-tmux-runner.sh for why it can't be echoed here.
+  if [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
+    run_claude_interactive_with_watchdog /tmp/sf-prompt.txt
+  else
+    echo "[hetchy] running claude"
+    # stream-json + verbose emits one NDJSON event per assistant chunk
+    # and tool call so the bot can render typed Block updates in real
+    # time. The PR URL is parsed out of the final assistant text by the
+    # bot. run_claude_with_watchdog wraps claude to reap orphaned
+    # background-task children that would otherwise pin the process
+    # alive after the agent's turn ends — see
+    # scripts/claude-watchdog.sh for the full rationale.
+    run_claude_with_watchdog /tmp/sf-prompt.txt
+  fi
 fi

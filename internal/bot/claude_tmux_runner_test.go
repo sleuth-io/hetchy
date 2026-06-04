@@ -1,0 +1,224 @@
+package bot
+
+import (
+	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/hetchyhq/hetchy/internal/blocks"
+)
+
+// filepathJoin is a tiny local alias so the helpers below don't need
+// to import filepath where they're called from inline test bodies.
+func filepathJoin(dir, name string) string { return filepath.Join(dir, name) }
+
+func appendFile(t *testing.T, path, content string) {
+	t.Helper()
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatalf("open append %s: %v", path, err)
+	}
+	defer f.Close()
+	if _, err := f.WriteString(content); err != nil {
+		t.Fatalf("append %s: %v", path, err)
+	}
+}
+
+// endTurnMatched runs the same bash pipeline the runner uses inside
+// the watchdog loop so we exercise the real filter (with its
+// implicit shell-quoting + grep -v behavior) rather than a
+// Go-translated approximation.
+func endTurnMatched(t *testing.T, transcript string) bool {
+	t.Helper()
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+	cmd := exec.Command("bash", "-c",
+		`grep '"stop_reason":"end_turn"' "$1" | grep -v '"isSidechain":true' | grep -q .`,
+		"bash", transcript)
+	if err := cmd.Run(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return false
+		}
+		t.Fatalf("bash filter: %v", err)
+	}
+	return true
+}
+
+// TestClaudeTmuxRunnerScript_Embedded pins the on-the-wire bytes of the
+// interactive runner. Background: the bot only ships one shell payload
+// per sandbox session, and the embed list in agent_scripts.go is the
+// authoritative source of "what's running inside the sandbox." If
+// claude-tmux-runner.sh ever drops out of the embed list (rebase
+// mishap, refactor, etc.), the OAuth-auth branch of agent.sh / followup.sh
+// would silently fall back to a missing-command bash error AFTER all the
+// repo cloning has happened — wasting an entire sandbox boot before
+// failing visibly. We pin a few distinctive lines so a regression in the
+// embed wiring fails this cheap unit test instead.
+func TestClaudeTmuxRunnerScript_Embedded(t *testing.T) {
+	requiredLines := []string{
+		"run_claude_interactive_with_watchdog()",
+		`tmux new-session -d -s "$tmux_session"`,
+		`"$HOME/.claude/projects/$(printf '%s' "$cwd" | sed 's|/|-|g')"`,
+		`tail -n +1 -F "$transcript"`,
+		`'"stop_reason":"end_turn"'`,
+		`tmux load-buffer -b sf-prompt`,
+		`tmux paste-buffer -t "$tmux_session" -b sf-prompt`,
+		`tmux send-keys -t "$tmux_session" Enter`,
+		`echo "[hetchy] running claude"`,
+		`HETCHY_CLAUDE_WALL_TIMEOUT_S`,
+		`HETCHY_CLAUDE_IDLE_TIMEOUT_S`,
+		`HETCHY_CLAUDE_END_GRACE_S`,
+	}
+	for _, line := range requiredLines {
+		if !strings.Contains(claudeTmuxRunnerScript, line) {
+			t.Errorf("claudeTmuxRunnerScript missing %q", line)
+		}
+	}
+	if !strings.Contains(agentScript, "run_claude_interactive_with_watchdog") {
+		t.Error("agentScript should compose in claude-tmux-runner.sh so the OAuth branch can call run_claude_interactive_with_watchdog")
+	}
+	if !strings.Contains(followupScript, "run_claude_interactive_with_watchdog") {
+		t.Error("followupScript should compose in claude-tmux-runner.sh so the OAuth branch can call run_claude_interactive_with_watchdog")
+	}
+	assertBashSyntax(t, "claude-tmux-runner.sh", claudeTmuxRunnerScript)
+}
+
+// TestAgentScript_DispatchesByClaudeAuth asserts that agent.sh chooses
+// the interactive (tmux) runner when CLAUDE_CODE_OAUTH_TOKEN is set and
+// the print-mode watchdog otherwise. The dispatch matters for billing:
+// Anthropic separates subscription-plan usage limits from `claude -p` /
+// Agent SDK credits as of June 15 2026, so a subscription token MUST
+// drive the interactive TUI to keep drawing from the (much larger) plan
+// budget rather than the small SDK credit pool. A misrouted branch
+// would silently spend the wrong meter.
+func TestAgentScript_DispatchesByClaudeAuth(t *testing.T) {
+	for _, body := range []struct {
+		name   string
+		script string
+	}{
+		{"agent.sh", agentScriptBody},
+		{"followup.sh", followupScriptBody},
+	} {
+		t.Run(body.name, func(t *testing.T) {
+			// Anchor on the actual call sites (which include the
+			// /tmp/sf-prompt.txt argument) so the test isn't confused
+			// by earlier mentions of CLAUDE_CODE_OAUTH_TOKEN inside
+			// the auth-isolation block or by docstrings that reference
+			// either runner name. The dispatch must put the
+			// interactive call first so the OAuth branch hits it.
+			interactiveCall := "run_claude_interactive_with_watchdog /tmp/sf-prompt.txt"
+			printCall := "run_claude_with_watchdog /tmp/sf-prompt.txt"
+			interactiveIdx := strings.Index(body.script, interactiveCall)
+			printIdx := strings.Index(body.script, printCall)
+			if interactiveIdx < 0 {
+				t.Fatalf("%s must call %q somewhere", body.name, interactiveCall)
+			}
+			if printIdx < 0 {
+				t.Fatalf("%s must call %q somewhere", body.name, printCall)
+			}
+			if interactiveIdx >= printIdx {
+				t.Errorf("%s should invoke %q before %q so the OAuth branch picks the tmux runner",
+					body.name, interactiveCall, printCall)
+			}
+			// Sanity: the OAuth gate must wrap the interactive call,
+			// not the print call. Find the gate that opens just
+			// before the interactive call.
+			gate := `if [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then` + "\n    " + interactiveCall
+			if !strings.Contains(body.script, gate) {
+				t.Errorf("%s should call interactive runner immediately inside the CLAUDE_CODE_OAUTH_TOKEN branch", body.name)
+			}
+		})
+	}
+}
+
+// TestClaudeTmuxRunner_EndTurnIgnoresSidechain pins the bash-level
+// filter that distinguishes a top-level end_turn (the real handoff
+// back to the user) from a Task subagent's end_turn (which the
+// transcript marks with `isSidechain:true`). Without this filter, the
+// watchdog would tear down tmux the moment the FIRST subagent
+// finished, mid-conversation, killing the parent's turn before it
+// completed. We exercise the filter directly because the bash
+// command lines that emit `[hetchy] running claude` and decide
+// end-of-turn cannot be reached from Go without a live tmux + claude
+// in the sandbox.
+func TestClaudeTmuxRunner_EndTurnIgnoresSidechain(t *testing.T) {
+	transcript := strings.Join([]string{
+		// Subagent assistant turn ending — must NOT trip end_turn.
+		`{"parentUuid":"a","isSidechain":true,"message":{"id":"m1","role":"assistant","content":[{"type":"text","text":"sub done"}],"stop_reason":"end_turn"},"type":"assistant","uuid":"u1","sessionId":"s"}`,
+		// Top-level assistant tool_use — not end_turn, just noise.
+		`{"parentUuid":"b","isSidechain":false,"message":{"id":"m2","role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{}}],"stop_reason":"tool_use"},"type":"assistant","uuid":"u2","sessionId":"s"}`,
+	}, "\n") + "\n"
+
+	dir := t.TempDir()
+	path := filepathJoin(dir, "transcript.jsonl")
+	mustWriteFile(t, path, transcript)
+
+	if endTurnMatched(t, path) {
+		t.Fatalf("subagent end_turn must NOT satisfy the watchdog filter")
+	}
+
+	// Append the parent agent's real end_turn — this one MUST trip
+	// the filter even though a subagent end_turn was seen first.
+	mainTurn := `{"parentUuid":"c","isSidechain":false,"message":{"id":"m3","role":"assistant","content":[{"type":"text","text":"PR https://github.com/owner/repo/pull/9"}],"stop_reason":"end_turn"},"type":"assistant","uuid":"u3","sessionId":"s"}` + "\n"
+	appendFile(t, path, mainTurn)
+
+	if !endTurnMatched(t, path) {
+		t.Fatalf("top-level end_turn should satisfy the watchdog filter once present")
+	}
+}
+
+// TestClaudeStream_InteractiveTranscriptFormat exercises the parser
+// against the on-disk transcript shape the Claude Code TUI writes (the
+// one the new tmux runner forwards verbatim to stdout). The transcript
+// adds fields the print-mode stream-json output doesn't: parentUuid,
+// timestamp, requestId, sessionId, and a top-level type:thinking content
+// block inside assistant messages. None of that should disturb the
+// existing parser — but if a future field rename or stricter unmarshal
+// quietly breaks compatibility, the OAuth path would drop every
+// assistant message and emit no blocks at all.
+func TestClaudeStream_InteractiveTranscriptFormat(t *testing.T) {
+	emit := newCaptureEmitter()
+	p := newClaudeStreamParser(emit)
+
+	// Initial user message in the interactive transcript carries content
+	// as a plain string (not the [{type:tool_result,...}] array shape).
+	// The parser should silently ignore it — falling through here is
+	// expected because the prompt itself isn't a transcript event we
+	// want to render.
+	p.Line(`{"parentUuid":"p1","isSidechain":false,"promptId":"prompt-1","type":"user","message":{"role":"user","content":"You said hello"},"uuid":"u1","timestamp":"2026-06-04T00:00:00Z","sessionId":"sess-1"}`)
+
+	// Assistant message with a thinking block followed by visible text.
+	// Thinking should be ignored (we never want to surface chain-of-
+	// thought in the UI); the text should open a claude_text block.
+	p.Line(`{"parentUuid":"p2","isSidechain":false,"message":{"model":"claude-opus-4-7","id":"msg_1","type":"message","role":"assistant","content":[{"type":"thinking","thinking":"hmm"},{"type":"text","text":"Opened https://github.com/owner/repo/pull/123"}],"stop_reason":"end_turn","stop_sequence":null},"requestId":"req_1","type":"assistant","uuid":"u2","timestamp":"2026-06-04T00:00:01Z","sessionId":"sess-1"}`)
+
+	// Tool use event followed by its tool_result on the next "user" turn.
+	p.Line(`{"parentUuid":"p3","isSidechain":false,"message":{"model":"claude-opus-4-7","id":"msg_2","type":"message","role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"ls"}}],"stop_reason":"tool_use","stop_sequence":null},"requestId":"req_2","type":"assistant","uuid":"u3","timestamp":"2026-06-04T00:00:02Z","sessionId":"sess-1"}`)
+	p.Line(`{"parentUuid":"p4","isSidechain":false,"promptId":"prompt-2","type":"user","message":{"role":"user","content":[{"tool_use_id":"toolu_1","type":"tool_result","content":"a\nb","is_error":false}]},"uuid":"u4","timestamp":"2026-06-04T00:00:03Z","toolUseResult":{"stdout":"a\nb"},"sessionId":"sess-1"}`)
+
+	prURL := p.Finish()
+	if prURL != "https://github.com/owner/repo/pull/123" {
+		t.Errorf("PR URL should be extracted from assistant text fallback, got %q", prURL)
+	}
+	// Two visible blocks: the assistant text and the tool_use.
+	if len(emit.Blocks) != 2 {
+		t.Fatalf("want 2 blocks (text + tool_use), got %d", len(emit.Blocks))
+	}
+	if emit.Blocks[0].Kind != blocks.KindClaudeText {
+		t.Errorf("block 0 should be claude_text, got %s", emit.Blocks[0].Kind)
+	}
+	if !strings.Contains(emit.Blocks[0].Body.String(), "Opened https://github.com/owner/repo/pull/123") {
+		t.Errorf("text block should contain assistant body, got %q", emit.Blocks[0].Body.String())
+	}
+	if emit.Blocks[1].Kind != blocks.KindToolUse {
+		t.Errorf("block 1 should be tool_use, got %s", emit.Blocks[1].Kind)
+	}
+	if !strings.Contains(emit.Blocks[1].Body.String(), "a\nb") {
+		t.Errorf("tool_use body should contain tool_result content, got %q", emit.Blocks[1].Body.String())
+	}
+}

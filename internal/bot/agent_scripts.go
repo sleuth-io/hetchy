@@ -14,6 +14,9 @@ var setupCloneScriptBody string
 //go:embed scripts/claude-watchdog.sh
 var claudeWatchdogScript string
 
+//go:embed scripts/claude-tmux-runner.sh
+var claudeTmuxRunnerScript string
+
 //go:embed scripts/codex-runner.sh
 var codexRunnerScript string
 
@@ -39,8 +42,8 @@ var sandboxRepoCacheHelpersScript = sandboxCommonScript + "\n" + sandboxRepoCach
 
 var sandboxRuntimeHelpersScript = sandboxRepoCacheHelpersScript + "\n" + sandboxSpecScript
 
-var agentScript = claudeWatchdogScript + "\n" + codexRunnerScript + "\n" + sandboxRuntimeHelpersScript + "\n" + agentScriptBody
+var agentScript = claudeWatchdogScript + "\n" + claudeTmuxRunnerScript + "\n" + codexRunnerScript + "\n" + sandboxRuntimeHelpersScript + "\n" + agentScriptBody
 
-var followupScript = claudeWatchdogScript + "\n" + codexRunnerScript + "\n" + sandboxRuntimeHelpersScript + "\n" + followupScriptBody
+var followupScript = claudeWatchdogScript + "\n" + claudeTmuxRunnerScript + "\n" + codexRunnerScript + "\n" + sandboxRuntimeHelpersScript + "\n" + followupScriptBody
 
 var setupCloneScript = sandboxRepoCacheHelpersScript + "\n" + setupCloneScriptBody
