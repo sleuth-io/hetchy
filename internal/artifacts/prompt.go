@@ -19,7 +19,7 @@ proof files, they are scratch validation artifacts, not repository
 changes. Save them outside tracked source when possible:
 
   - Prefer /tmp/hetchy-validate/.
-  - For Playwright MCP screenshots, use .playwright-mcp/<name>.png if
+  - For playwright-cli screenshots, use .playwright-cli/<name>.png if
     the tool must write under the repo checkout.
 
 Do NOT stage, commit, push, or link to GitHub blob/raw URLs for

@@ -548,9 +548,14 @@ ensure_playwright_runtime() {
   fi
 }
 
-ensure_playwright_mcp_dir() {
-  local output_dir="${PLAYWRIGHT_MCP_OUTPUT_DIR:-${SF_WORKDIR}/.playwright-mcp}"
-  local user_data_dir="${PLAYWRIGHT_MCP_USER_DATA_DIR:-/tmp/hetchy-playwright-mcp/user-data}"
+# ensure_playwright_cli_dir pre-creates the directories the
+# playwright-cli binary writes into (snapshots, screenshots, user data)
+# so the agent's first invocation doesn't have to mkdir them itself.
+# The env var names stay PLAYWRIGHT_MCP_* because playwright-cli shares
+# its config surface with the (now-replaced) Playwright MCP server.
+ensure_playwright_cli_dir() {
+  local output_dir="${PLAYWRIGHT_MCP_OUTPUT_DIR:-${SF_WORKDIR}/.playwright-cli}"
+  local user_data_dir="${PLAYWRIGHT_MCP_USER_DATA_DIR:-/tmp/hetchy-playwright-cli/user-data}"
   local d
 
   ensure_playwright_runtime
@@ -567,7 +572,7 @@ ensure_playwright_mcp_dir() {
     if mkdir -p "$d" 2>/dev/null; then
       chmod u+rwx "$d" 2>/dev/null || true
     else
-      echo "[hetchy] WARNING: could not prepare ${d}; Playwright MCP screenshots may fail"
+      echo "[hetchy] WARNING: could not prepare ${d}; playwright-cli output may fail"
     fi
   done
 }

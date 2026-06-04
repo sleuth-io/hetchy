@@ -45,7 +45,7 @@ func TestProofInstructionsWithSlots(t *testing.T) {
 		"scratch validation artifacts",
 		"not repository",
 		"Prefer /tmp/hetchy-validate/",
-		".playwright-mcp/<name>.png",
+		".playwright-cli/<name>.png",
 		"Do NOT stage, commit, push",
 		"GitHub blob/raw URLs",
 		"Keep app runtime scratch out of the repo",

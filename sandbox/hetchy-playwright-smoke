@@ -1,9 +1,8 @@
 #!/bin/bash
-# Smoke-test the sandbox-provided Playwright package and Chromium binary.
-#
-# This is a diagnostic/build check, not the interface agents should use
-# for validation. Agents can use ordinary Playwright APIs from scripts in
-# /tmp/hetchy-validate; this script proves that path is ready.
+# Smoke-test the sandbox-provided Playwright package, Chromium binary,
+# and the playwright-cli wrapper. Agents drive the browser through
+# playwright-cli for validation; this script proves both that path and
+# the underlying Playwright runtime are ready.
 
 set -euo pipefail
 
@@ -52,3 +51,15 @@ NODE
 
 node "${work_dir}/smoke.cjs"
 printf 'Playwright smoke passed: %s\n' "${PLAYWRIGHT_BROWSERS_PATH}"
+
+# playwright-cli smoke: prove the bundled CLI binary launches its
+# browser, navigates somewhere, and exits cleanly. Pin the user-data
+# and output dirs under the work_dir so we don't pollute the daytona
+# user's home or cwd from a build/CI run.
+export PLAYWRIGHT_MCP_USER_DATA_DIR="${PLAYWRIGHT_MCP_USER_DATA_DIR:-${work_dir}/cli-user-data}"
+export PLAYWRIGHT_MCP_OUTPUT_DIR="${PLAYWRIGHT_MCP_OUTPUT_DIR:-${work_dir}/cli-output}"
+mkdir -p "$PLAYWRIGHT_MCP_USER_DATA_DIR" "$PLAYWRIGHT_MCP_OUTPUT_DIR"
+playwright-cli --version
+playwright-cli open about:blank
+playwright-cli close
+printf 'playwright-cli smoke passed: %s\n' "$(playwright-cli --version)"
