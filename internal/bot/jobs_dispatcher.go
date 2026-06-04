@@ -58,11 +58,8 @@ func (b *Bot) DispatchDueJobs(ctx context.Context, opts JobDispatchOptions) (Job
 	var wg sync.WaitGroup
 	var firstErr error
 	for _, claim := range claimed {
-		claim := claim
 		sem <- struct{}{}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			defer func() { <-sem }()
 			status, err := b.dispatchClaimedJob(ctx, claim)
 			mu.Lock()
@@ -76,7 +73,7 @@ func (b *Bot) DispatchDueJobs(ctx context.Context, opts JobDispatchOptions) (Job
 			if err != nil && firstErr == nil {
 				firstErr = err
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	return result, firstErr
