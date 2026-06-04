@@ -424,7 +424,7 @@ func isDaytonaSessionAlreadyExists(err error) bool {
 	if !errors.As(err, &dayErr) {
 		return false
 	}
-	if dayErr.StatusCode != http.StatusConflict && dayErr.StatusCode != http.StatusBadRequest {
+	if dayErr.StatusCode != http.StatusConflict {
 		return false
 	}
 	msg := strings.ToLower(dayErr.Message)

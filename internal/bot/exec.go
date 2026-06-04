@@ -24,6 +24,10 @@ type sandboxProcess interface {
 	GetSessionCommandLogsStream(ctx context.Context, sessionID, commandID string, stdout, stderr chan<- string) error
 }
 
+type sandboxSessionCreator interface {
+	CreateSession(context.Context, string) error
+}
+
 var preAgentRecoverableSandboxSteps = map[string]struct{}{
 	"setup-clone-write":         {},
 	"setup-clone-run":           {},

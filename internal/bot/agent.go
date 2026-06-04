@@ -473,10 +473,6 @@ func (b *Bot) createBootstrapSession(ctx context.Context, sb *daytona.Sandbox, s
 	return b.createSandboxSessionWithRetry(ctx, sb.ID, sb.Process, sessionID, "bootstrap")
 }
 
-type sandboxSessionCreator interface {
-	CreateSession(context.Context, string) error
-}
-
 func (b *Bot) createSandboxSessionWithRetry(ctx context.Context, sandboxID string, proc sandboxSessionCreator, sessionID, purpose string) error {
 	sawTransient := false
 	err := b.retryWithBackoff(ctx, "sandbox create session", func() error {

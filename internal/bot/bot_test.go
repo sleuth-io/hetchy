@@ -442,6 +442,7 @@ func TestCreateSandboxSessionWithRetry(t *testing.T) {
 	err502 := sdkerrors.NewDaytonaError("bad gateway", 502, nil)
 	err401 := sdkerrors.NewDaytonaError("unauthorized", 401, nil)
 	errExists := sdkerrors.NewDaytonaError("session already exists", 409, nil)
+	errExists400 := sdkerrors.NewDaytonaError("session already exists", 400, nil)
 
 	cases := []struct {
 		name      string
@@ -452,6 +453,7 @@ func TestCreateSandboxSessionWithRetry(t *testing.T) {
 		{name: "succeeds first attempt", errs: []error{nil}, wantCalls: 1},
 		{name: "retries transient error", errs: []error{err502, nil}, wantCalls: 2},
 		{name: "accepts duplicate after transient", errs: []error{err502, errExists}, wantCalls: 2},
+		{name: "rejects bad request duplicate after transient", errs: []error{err502, errExists400}, wantCalls: 2, wantErr: true},
 		{name: "does not retry permanent error", errs: []error{err401}, wantCalls: 1, wantErr: true},
 		{name: "does not accept duplicate first", errs: []error{errExists}, wantCalls: 1, wantErr: true},
 	}
