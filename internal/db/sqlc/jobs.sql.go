@@ -515,6 +515,48 @@ func (q *Queries) ListClaimableDueAgentJobs(ctx context.Context, arg ListClaimab
 	return items, nil
 }
 
+const listLatestAgentJobExecutionsByOrg = `-- name: ListLatestAgentJobExecutionsByOrg :many
+SELECT DISTINCT ON (job_id)
+       id, job_id, org_id, run_id, scheduled_for, status,
+       claimed_by, claimed_at, finished_at, error, created_at, updated_at
+FROM agent_job_executions
+WHERE org_id = $1
+ORDER BY job_id, created_at DESC, id DESC
+`
+
+func (q *Queries) ListLatestAgentJobExecutionsByOrg(ctx context.Context, orgID string) ([]AgentJobExecution, error) {
+	rows, err := q.db.Query(ctx, listLatestAgentJobExecutionsByOrg, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AgentJobExecution
+	for rows.Next() {
+		var i AgentJobExecution
+		if err := rows.Scan(
+			&i.ID,
+			&i.JobID,
+			&i.OrgID,
+			&i.RunID,
+			&i.ScheduledFor,
+			&i.Status,
+			&i.ClaimedBy,
+			&i.ClaimedAt,
+			&i.FinishedAt,
+			&i.Error,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markAgentJobExecutionFinished = `-- name: MarkAgentJobExecutionFinished :execrows
 UPDATE agent_job_executions
 SET status = $3,

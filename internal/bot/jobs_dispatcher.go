@@ -2,6 +2,8 @@ package bot
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -13,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/hetchyhq/hetchy/internal/jobs"
+	"github.com/hetchyhq/hetchy/internal/orgcfg"
 	"github.com/hetchyhq/hetchy/internal/runstore"
 )
 
@@ -127,7 +130,7 @@ func (b *Bot) dispatchClaimedJob(ctx context.Context, claim jobs.ClaimedExecutio
 	repo := job.PrimaryOwner + "/" + job.PrimaryRepo
 	prompt := jobPrompt(job, execution)
 	runCtx := contextWithJobRun(ctx, job, execution)
-	b.HandleRequest(runCtx, oc, prompt, requestID, threadID, "job:"+job.ID, nil, requestedAgent, &repo, ClaudeModelOpus, noopEmitter{})
+	b.HandleRequest(runCtx, oc, prompt, requestID, threadID, "job:"+job.ID, nil, requestedAgent, &repo, jobDispatchModel(oc), noopEmitter{})
 
 	status, message := b.jobExecutionStatus(ctx, job.OrgID, threadID)
 	if err := b.jobs.FinishExecution(context.Background(), job.OrgID, execution.ID, status, message); err != nil {
@@ -161,7 +164,16 @@ func (b *Bot) jobExecutionStatus(ctx context.Context, orgID, threadID string) (s
 }
 
 func jobRequestID() string {
-	return strings.ToLower(strconv.FormatInt(time.Now().UnixNano(), 36))
+	var random [8]byte
+	_, _ = rand.Read(random[:])
+	return strings.ToLower(strconv.FormatInt(time.Now().UnixNano(), 36) + "_" + hex.EncodeToString(random[:]))
+}
+
+func jobDispatchModel(oc orgcfg.Config) ClaudeModel {
+	if hasOpenAICredentials(oc) && !hasAnthropicCredentials(oc) {
+		return ModelGPTBalanced
+	}
+	return ClaudeModelSonnet
 }
 
 func jobPrompt(job jobs.Job, execution jobs.Execution) string {

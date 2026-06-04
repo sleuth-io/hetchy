@@ -1,5 +1,5 @@
   var agentSkillPreviewCount = 10;
-  var agentSkillsModalClose = null;
+  var agentAssetsModalClose = null;
   var agentDocumentModalClose = null;
 
   function agentSkillGroups(agent) {
@@ -58,26 +58,26 @@
     el.innerHTML = parts.filter(Boolean).join('<span class="selection-subtitle-separator">·</span>');
     el.querySelector('[data-open-agent-skills]')?.addEventListener('click', e => {
       e.preventDefault();
-      openAgentSkillsModal(e.currentTarget.dataset.openAgentSkills);
+      openAgentAssetsModal(e.currentTarget.dataset.openAgentSkills);
     });
     el.querySelector('[data-open-agent-jobs]')?.addEventListener('click', e => {
       e.preventDefault();
-      openAgentSkillsModal(e.currentTarget.dataset.openAgentJobs);
+      openAgentAssetsModal(e.currentTarget.dataset.openAgentJobs);
     });
   }
 
-  function openAgentSkillsModal(slug) {
+  function openAgentAssetsModal(slug) {
     const agent = agentForSlug(slug);
     if (!agent) return;
-    if (agentSkillsModalClose) agentSkillsModalClose();
+    if (agentAssetsModalClose) agentAssetsModalClose();
     const groups = agentSkillGroups(agent);
     const overlay = document.createElement('div');
-    overlay.id = 'agent-skills-modal-overlay';
+    overlay.id = 'agent-assets-modal-overlay';
     overlay.className = 'skills-modal-overlay agent-assets-overlay';
     overlay.innerHTML =
-      '<div class="skills-modal agent-assets-modal" role="dialog" aria-modal="true" aria-labelledby="agent-skills-modal-title" tabindex="-1">'
+      '<div class="skills-modal agent-assets-modal" role="dialog" aria-modal="true" aria-labelledby="agent-assets-modal-title" tabindex="-1">'
       + '<div class="skills-modal-head">'
-      + '<h2 class="skills-modal-title" id="agent-skills-modal-title">' + esc(agent.display_name || agent.slug || 'Agent files') + '</h2>'
+      + '<h2 class="skills-modal-title" id="agent-assets-modal-title">' + esc(agent.display_name || agent.slug || 'Agent files') + '</h2>'
       + '<button type="button" class="skills-modal-close" aria-label="Close">&times;</button>'
       + '</div>'
       + '<div class="agent-assets-body">'
@@ -93,10 +93,10 @@
       '.skills-modal',
       () => overlay.remove(),
       () => {
-        if (agentSkillsModalClose === close) agentSkillsModalClose = null;
+        if (agentAssetsModalClose === close) agentAssetsModalClose = null;
       },
     );
-    agentSkillsModalClose = close;
+    agentAssetsModalClose = close;
     overlay.querySelector('.skills-modal-close')?.addEventListener('click', close);
     overlay.addEventListener('click', e => {
       if (e.target === overlay) close();

@@ -33,6 +33,7 @@ var (
 	ErrNotConfigured = errors.New("jobs: store not configured")
 	ErrNotFound      = errors.New("jobs: not found")
 	ErrOverlap       = errors.New("jobs: job already has an active execution")
+	ErrInvalidInput  = errors.New("jobs: invalid input")
 )
 
 var cronParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
@@ -153,7 +154,7 @@ func (s *Store) Create(ctx context.Context, orgID string, input JobInput, now ti
 	if err != nil {
 		return Job{}, fmt.Errorf("create job: %w", err)
 	}
-	return jobFromRow(row), nil
+	return jobFromRow(row)
 }
 
 func (s *Store) Update(ctx context.Context, orgID, jobID string, input JobInput, now time.Time) (Job, error) {
@@ -195,7 +196,7 @@ func (s *Store) Update(ctx context.Context, orgID, jobID string, input JobInput,
 		}
 		return Job{}, fmt.Errorf("update job: %w", err)
 	}
-	return jobFromRow(row), nil
+	return jobFromRow(row)
 }
 
 func (s *Store) Get(ctx context.Context, orgID, jobID string) (Job, error) {
@@ -209,7 +210,7 @@ func (s *Store) Get(ctx context.Context, orgID, jobID string) (Job, error) {
 		}
 		return Job{}, err
 	}
-	return jobFromRow(row), nil
+	return jobFromRow(row)
 }
 
 func (s *Store) List(ctx context.Context, orgID string) ([]Job, error) {
@@ -220,14 +221,23 @@ func (s *Store) List(ctx context.Context, orgID string) ([]Job, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list jobs: %w", err)
 	}
+	latestRows, err := s.db.Queries.ListLatestAgentJobExecutionsByOrg(ctx, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("list latest job executions: %w", err)
+	}
+	latestByJobID := make(map[string]sqlc.AgentJobExecution, len(latestRows))
+	for _, latest := range latestRows {
+		latestByJobID[latest.JobID] = latest
+	}
 	out := make([]Job, 0, len(rows))
 	for _, row := range rows {
-		job := jobFromRow(row)
-		if latest, err := s.db.Queries.GetLatestAgentJobExecution(ctx, sqlc.GetLatestAgentJobExecutionParams{OrgID: orgID, JobID: job.ID}); err == nil {
+		job, err := jobFromRow(row)
+		if err != nil {
+			return nil, err
+		}
+		if latest, ok := latestByJobID[job.ID]; ok {
 			job.LastExecutionID = latest.ID
 			job.LastExecutionStatus = latest.Status
-		} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return nil, fmt.Errorf("latest execution for job %s: %w", job.ID, err)
 		}
 		out = append(out, job)
 	}
@@ -244,7 +254,11 @@ func (s *Store) ListByAgent(ctx context.Context, orgID, agentSlug string) ([]Job
 	}
 	out := make([]Job, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, jobFromRow(row))
+		job, err := jobFromRow(row)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, job)
 	}
 	return out, nil
 }
@@ -286,7 +300,10 @@ func (s *Store) ClaimDue(ctx context.Context, worker string, limit int32, now ti
 		}
 		out = make([]ClaimedExecution, 0, len(rows))
 		for _, row := range rows {
-			job := jobFromRow(row)
+			job, err := jobFromRow(row)
+			if err != nil {
+				return err
+			}
 			scheduledFor := job.NextRunAt
 			if scheduledFor.IsZero() {
 				scheduledFor = now
@@ -352,7 +369,11 @@ func (s *Store) RunNow(ctx context.Context, orgID, jobID, worker string, now tim
 		if err != nil {
 			return fmt.Errorf("create manual execution: %w", err)
 		}
-		out = ClaimedExecution{Job: jobFromRow(row), Execution: executionFromRow(execRow)}
+		job, err := jobFromRow(row)
+		if err != nil {
+			return err
+		}
+		out = ClaimedExecution{Job: job, Execution: executionFromRow(execRow)}
 		return nil
 	})
 	if err != nil {
@@ -470,20 +491,23 @@ func (s *Store) validateInput(ctx context.Context, orgID string, input JobInput)
 		out.Timezone = defaultLocation
 	}
 	if out.Name == "" {
-		return JobInput{}, errors.New("job name is required")
+		return JobInput{}, invalidInput(errors.New("job name is required"))
 	}
 	if out.Definition == "" {
-		return JobInput{}, errors.New("job definition is required")
+		return JobInput{}, invalidInput(errors.New("job definition is required"))
 	}
 	if out.PrimaryOwner == "" || out.PrimaryRepo == "" {
-		return JobInput{}, errors.New("primary repository is required")
+		return JobInput{}, invalidInput(errors.New("primary repository is required"))
 	}
 	if _, _, err := ParseSchedule(out.CronSchedule, out.Timezone); err != nil {
-		return JobInput{}, err
+		return JobInput{}, invalidInput(err)
 	}
 	if out.AgentSlug != "" && s.agents != nil {
 		if _, err := s.agents.GetBySlug(ctx, orgID, out.AgentSlug); err != nil {
-			return JobInput{}, fmt.Errorf("agent %q is not enabled for this org", out.AgentSlug)
+			if errors.Is(err, agents.ErrNotFound) {
+				return JobInput{}, invalidInput(fmt.Errorf("agent %q is not enabled for this org", out.AgentSlug))
+			}
+			return JobInput{}, fmt.Errorf("load agent %q: %w", out.AgentSlug, err)
 		}
 	}
 	if err := s.validateRepos(ctx, orgID, out); err != nil {
@@ -500,7 +524,7 @@ func (s *Store) validateRepos(ctx context.Context, orgID string, input JobInput)
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return fmt.Errorf("primary repository %s/%s is not accessible to this organization", input.PrimaryOwner, input.PrimaryRepo)
+			return invalidInput(fmt.Errorf("primary repository %s/%s is not accessible to this organization", input.PrimaryOwner, input.PrimaryRepo))
 		}
 		return fmt.Errorf("validate primary repository: %w", err)
 	}
@@ -512,13 +536,13 @@ func (s *Store) validateRepos(ctx context.Context, orgID string, input JobInput)
 		})
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
-				return fmt.Errorf("additional repository %s/%s is not accessible to this organization", repo.Owner, repo.Name)
+				return invalidInput(fmt.Errorf("additional repository %s/%s is not accessible to this organization", repo.Owner, repo.Name))
 			}
 			return fmt.Errorf("validate additional repository %s/%s: %w", repo.Owner, repo.Name, err)
 		}
 		if row.InstallationID != primary.InstallationID {
-			return fmt.Errorf("additional repository %s/%s is under a different GitHub App installation; V1 jobs only support repositories from the same installation as %s/%s",
-				repo.Owner, repo.Name, input.PrimaryOwner, input.PrimaryRepo)
+			return invalidInput(fmt.Errorf("additional repository %s/%s is under a different GitHub App installation; V1 jobs only support repositories from the same installation as %s/%s",
+				repo.Owner, repo.Name, input.PrimaryOwner, input.PrimaryRepo))
 		}
 	}
 	return nil
@@ -551,10 +575,12 @@ func terminalExecutionStatus(status string) bool {
 	}
 }
 
-func jobFromRow(row sqlc.AgentJob) Job {
+func jobFromRow(row sqlc.AgentJob) (Job, error) {
 	additional := []RepoRef{}
 	if len(row.AdditionalRepos) > 0 {
-		_ = json.Unmarshal(row.AdditionalRepos, &additional)
+		if err := json.Unmarshal(row.AdditionalRepos, &additional); err != nil {
+			return Job{}, fmt.Errorf("decode additional repos for job %s: %w", row.ID, err)
+		}
 	}
 	job := Job{
 		ID:              row.ID,
@@ -577,7 +603,7 @@ func jobFromRow(row sqlc.AgentJob) Job {
 	if row.LastRunID != nil {
 		job.LastRunID = *row.LastRunID
 	}
-	return job
+	return job, nil
 }
 
 func executionFromRow(row sqlc.AgentJobExecution) Execution {
@@ -622,4 +648,15 @@ func newID(prefix string) string {
 	var b [12]byte
 	_, _ = rand.Read(b[:])
 	return prefix + "_" + hex.EncodeToString(b[:])
+}
+
+func invalidInput(err error) error {
+	if err == nil {
+		return ErrInvalidInput
+	}
+	return fmt.Errorf("%w: %w", ErrInvalidInput, err)
+}
+
+func InvalidInputMessage(err error) string {
+	return strings.TrimPrefix(err.Error(), ErrInvalidInput.Error()+": ")
 }

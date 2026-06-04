@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/hetchyhq/hetchy/internal/jobs"
+	"github.com/hetchyhq/hetchy/internal/orgcfg"
 )
 
 func TestJobPromptIncludesScheduleContext(t *testing.T) {
@@ -36,5 +37,28 @@ func TestJobPromptIncludesScheduleContext(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("prompt missing %q\n%s", want, got)
 		}
+	}
+}
+
+func TestJobRequestIDIncludesRandomSuffix(t *testing.T) {
+	first := jobRequestID()
+	second := jobRequestID()
+	if first == second {
+		t.Fatalf("jobRequestID repeated %q", first)
+	}
+	if !strings.Contains(first, "_") || !strings.Contains(second, "_") {
+		t.Fatalf("jobRequestID should include timestamp and random suffix: %q %q", first, second)
+	}
+}
+
+func TestJobDispatchModelUsesAvailableCredentialFamily(t *testing.T) {
+	if got := jobDispatchModel(orgcfg.Config{OpenAIAPIKey: "sk-openai"}); got != ModelGPTBalanced {
+		t.Fatalf("OpenAI-only job model = %q, want %q", got, ModelGPTBalanced)
+	}
+	if got := jobDispatchModel(orgcfg.Config{AnthropicAPIKey: "sk-ant"}); got != ClaudeModelSonnet {
+		t.Fatalf("Anthropic job model = %q, want %q", got, ClaudeModelSonnet)
+	}
+	if got := jobDispatchModel(orgcfg.Config{AnthropicAPIKey: "sk-ant", OpenAIAPIKey: "sk-openai"}); got != ClaudeModelSonnet {
+		t.Fatalf("mixed credential job model = %q, want %q", got, ClaudeModelSonnet)
 	}
 }

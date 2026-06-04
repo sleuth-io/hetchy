@@ -135,6 +135,14 @@ WHERE org_id = $1 AND job_id = $2
 ORDER BY created_at DESC
 LIMIT 1;
 
+-- name: ListLatestAgentJobExecutionsByOrg :many
+SELECT DISTINCT ON (job_id)
+       id, job_id, org_id, run_id, scheduled_for, status,
+       claimed_by, claimed_at, finished_at, error, created_at, updated_at
+FROM agent_job_executions
+WHERE org_id = $1
+ORDER BY job_id, created_at DESC, id DESC;
+
 -- name: MarkAgentJobExecutionRunning :execrows
 UPDATE agent_job_executions
 SET status = 'running',

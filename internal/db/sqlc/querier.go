@@ -124,6 +124,7 @@ type Querier interface {
 	ListGithubReposByOrg(ctx context.Context, orgID string) ([]GithubRepo, error)
 	ListGithubTeamMembers(ctx context.Context, arg ListGithubTeamMembersParams) ([]GithubTeamMember, error)
 	ListGithubTeamsByInstallation(ctx context.Context, installationID int64) ([]GithubTeam, error)
+	ListLatestAgentJobExecutionsByOrg(ctx context.Context, orgID string) ([]AgentJobExecution, error)
 	ListLatestAgentRunsForThreads(ctx context.Context, arg ListLatestAgentRunsForThreadsParams) ([]AgentRun, error)
 	ListOrgAPIKeys(ctx context.Context, orgID string) ([]OrgApiKey, error)
 	// Lists Socket-Mode-installed orgs only. The slackManager iterates

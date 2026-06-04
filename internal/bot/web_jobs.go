@@ -135,7 +135,7 @@ func (b *Bot) getJobHandler(w http.ResponseWriter, r *http.Request, jobID string
 	p, _ := auth.FromContext(r.Context())
 	job, err := b.jobs.Get(r.Context(), p.OrgID, jobID)
 	if err != nil {
-		writeJobsStoreError(w, err)
+		b.writeJobsStoreError(w, err)
 		return
 	}
 	writeJSON(w, jobAPIFromJob(job))
@@ -161,7 +161,7 @@ func (b *Bot) createJobHandler(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.FromContext(r.Context())
 	job, err := b.jobs.Create(r.Context(), p.OrgID, input, time.Now())
 	if err != nil {
-		writeJobsStoreError(w, err)
+		b.writeJobsStoreError(w, err)
 		return
 	}
 	writeJSON(w, jobAPIFromJob(job))
@@ -178,7 +178,7 @@ func (b *Bot) updateJobHandler(w http.ResponseWriter, r *http.Request, jobID str
 	p, _ := auth.FromContext(r.Context())
 	current, err := b.jobs.Get(r.Context(), p.OrgID, jobID)
 	if err != nil {
-		writeJobsStoreError(w, err)
+		b.writeJobsStoreError(w, err)
 		return
 	}
 	var body jobAPIRequest
@@ -192,7 +192,7 @@ func (b *Bot) updateJobHandler(w http.ResponseWriter, r *http.Request, jobID str
 	}
 	job, err := b.jobs.Update(r.Context(), p.OrgID, jobID, input, time.Now())
 	if err != nil {
-		writeJobsStoreError(w, err)
+		b.writeJobsStoreError(w, err)
 		return
 	}
 	writeJSON(w, jobAPIFromJob(job))
@@ -208,7 +208,7 @@ func (b *Bot) deleteJobHandler(w http.ResponseWriter, r *http.Request, jobID str
 	}
 	p, _ := auth.FromContext(r.Context())
 	if err := b.jobs.Delete(r.Context(), p.OrgID, jobID); err != nil {
-		writeJobsStoreError(w, err)
+		b.writeJobsStoreError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -230,7 +230,7 @@ func (b *Bot) runJobNowHandler(w http.ResponseWriter, r *http.Request, jobID str
 	p, _ := auth.FromContext(r.Context())
 	exec, err := b.DispatchJobNow(r.Context(), p.OrgID, jobID)
 	if err != nil {
-		writeJobsStoreError(w, err)
+		b.writeJobsStoreError(w, err)
 		return
 	}
 	writeJSON(w, jobExecutionAPIFromExecution(exec))
@@ -383,14 +383,19 @@ func formatJobTime(t time.Time) string {
 	return t.UTC().Format(time.RFC3339)
 }
 
-func writeJobsStoreError(w http.ResponseWriter, err error) {
+func (b *Bot) writeJobsStoreError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, jobs.ErrNotFound):
 		writeJobAPIError(w, http.StatusNotFound, "job not found")
 	case errors.Is(err, jobs.ErrOverlap):
 		writeJobAPIError(w, http.StatusConflict, "job already has an active execution")
+	case errors.Is(err, jobs.ErrInvalidInput):
+		writeJobAPIError(w, http.StatusBadRequest, jobs.InvalidInputMessage(err))
 	default:
-		writeJobAPIError(w, http.StatusBadRequest, err.Error())
+		if b != nil && b.log != nil {
+			b.log.Error("job store error", "error", err)
+		}
+		writeJobAPIError(w, http.StatusInternalServerError, "internal error")
 	}
 }
 

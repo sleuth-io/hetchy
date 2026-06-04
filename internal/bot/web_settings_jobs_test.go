@@ -83,6 +83,7 @@ func TestSettingsTemplate_RendersJobsTabForAdmin(t *testing.T) {
 		`<option value="advanced">Advanced</option>`,
 		`data-job-cron-row hidden`,
 		`name="cron_schedule" data-job-field="cron_schedule" required value="0 * * * *"`,
+		`src="/assets/settings_jobs.js`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("jobs tab missing %q", want)

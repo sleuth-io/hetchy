@@ -1,9 +1,12 @@
 package jobs
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hetchyhq/hetchy/internal/db/sqlc"
 )
 
 func TestParseScheduleRequiresStandardFiveFieldCron(t *testing.T) {
@@ -58,6 +61,23 @@ func TestCleanReposTrimsAndDedupes(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("repo[%d] = %#v, want %#v", i, got[i], want[i])
 		}
+	}
+}
+
+func TestValidateInputMarksUserErrorsInvalid(t *testing.T) {
+	_, err := (&Store{}).validateInput(t.Context(), "org_1", JobInput{})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("validateInput error = %v, want ErrInvalidInput", err)
+	}
+	if got := InvalidInputMessage(err); got != "job name is required" {
+		t.Fatalf("invalid input message = %q", got)
+	}
+}
+
+func TestJobFromRowRejectsCorruptAdditionalRepos(t *testing.T) {
+	_, err := jobFromRow(sqlc.AgentJob{ID: "job_1", AdditionalRepos: []byte("{")})
+	if err == nil || !strings.Contains(err.Error(), "decode additional repos for job job_1") {
+		t.Fatalf("jobFromRow error = %v, want corrupt additional repos error", err)
 	}
 }
 
