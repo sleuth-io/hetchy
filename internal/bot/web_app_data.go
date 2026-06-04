@@ -193,7 +193,7 @@ func (b *Bot) appDataRunForConversation(ctx context.Context, orgID string, rec c
 		State:          state,
 		Outcome:        outcome,
 		Status:         appDataStatus(state, outcome),
-		ResultLabel:    appDataResultLabel(state, outcome, runKind, rec.PRURL),
+		ResultLabel:    appDataResultLabel(state, outcome, runKind, rec.PRURL, rec.PRMerged),
 		RunKind:        runKind,
 		AgentSlug:      rec.AgentSlug,
 		CreatorID:      rec.CreatorID,
