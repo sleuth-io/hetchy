@@ -39,6 +39,37 @@ func TestAppUsesSharedRepoStorageKey(t *testing.T) {
 	}
 }
 
+func TestRunCardUsesResultLabel(t *testing.T) {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/assets/app.js", nil)
+	AssetHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("app.js status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	app := rec.Body.String()
+	for _, want := range []string{
+		"function runResultLabel(run)",
+		"'PR updated'",
+		"'PR created'",
+		"'Answered'",
+	} {
+		if !strings.Contains(app, want) {
+			t.Fatalf("app.js missing %q", want)
+		}
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/assets/app_runs.js", nil)
+	AssetHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("app_runs.js status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	runsBody := rec.Body.String()
+	if !strings.Contains(runsBody, "runResultLabel(run)") {
+		t.Fatalf("app_runs.js still rendering raw statusLabel for run pill: %q", runsBody)
+	}
+}
+
 func TestRenderAppTemplate(t *testing.T) {
 	rec := httptest.NewRecorder()
 	Render(slog.New(slog.NewTextHandler(io.Discard, nil)), rec, App, map[string]any{

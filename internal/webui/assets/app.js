@@ -204,6 +204,16 @@
     default: return humanizeSlug(status || 'done');
     }
   }
+  function runResultLabel(run) {
+    if (!run) return statusLabel('done');
+    const provided = compact(run.result_label, '');
+    if (provided) return provided;
+    if (run.status !== 'done') return statusLabel(run.status);
+    if (compact(run.pr_url, '')) {
+      return run.run_kind === 'followup' ? 'PR updated' : 'PR created';
+    }
+    return 'Answered';
+  }
   function relativeTime(value) {
     const d = new Date(value);
     if (isNaN(d.getTime())) return '';
