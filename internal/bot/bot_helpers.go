@@ -277,6 +277,7 @@ func (b *Bot) handleFreshAgentRunError(ctx context.Context, sb *daytona.Sandbox,
 		b.cleanupSandboxWithTimeout(sb, "fresh run setup failed")
 		emit.Error("Sandbox setup failed", fmt.Sprintf("Sandbox `%s` failed before the agent started and was archived. Reply here to retry.", sb.ID))
 		rec.SandboxID = ""
+		rec.Branch = ""
 		appendFreshRunBlocks(rec, mode, recorder.Snapshot())
 		if err := b.convs.Upsert(context.Background(), *rec); err != nil {
 			b.log.Error("convstore upsert (agent setup fail)", "error", err)
@@ -416,6 +417,21 @@ func isDaytonaStateChangeConflict(err error) bool {
 	msg := strings.ToLower(dayErr.Message)
 	return dayErr.StatusCode == http.StatusConflict &&
 		(strings.Contains(msg, "state change in progress") || strings.Contains(msg, "state transition"))
+}
+
+func isDaytonaSessionAlreadyExists(err error) bool {
+	var dayErr *sdkerrors.DaytonaError
+	if !errors.As(err, &dayErr) {
+		return false
+	}
+	if dayErr.StatusCode != http.StatusConflict {
+		return false
+	}
+	msg := strings.ToLower(dayErr.Message)
+	return strings.Contains(msg, "session") &&
+		(strings.Contains(msg, "already exist") ||
+			strings.Contains(msg, "exists") ||
+			strings.Contains(msg, "duplicate"))
 }
 
 func shellQuote(s string) string {

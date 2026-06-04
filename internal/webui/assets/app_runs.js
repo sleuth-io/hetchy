@@ -458,7 +458,7 @@
       workSearch.placeholder = 'Search ' + (title || 'this view') + ' chats';
     }
     byID('work-subtitle').textContent = state.statusFilter === 'all'
-      ? (state.workQuery ? 'Matching chats for this group.' : 'Recent work, newest first.')
+      ? (state.workQuery ? 'Matching chats for this group.' : '')
       : statusLabel(state.statusFilter) + ' work for this group.';
 
     const list = byID('run-list');
@@ -528,7 +528,7 @@
       + '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>'
       + '</button>'
       + stopButton
-      + '<span class="pill ' + esc(run.status) + '">' + esc(statusLabel(run.status)) + '</span>'
+      + '<span class="pill ' + esc(run.status) + '">' + esc(runResultLabel(run)) + '</span>'
       + '</div>'
       + '</div>'
       + activeDetails

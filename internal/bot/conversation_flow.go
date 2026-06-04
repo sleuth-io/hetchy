@@ -480,6 +480,7 @@ func (b *Bot) handleRetryAfterFailure(ctx context.Context, oc orgcfg.Config, rec
 		}
 		rec.SandboxID = ""
 	}
+	rec.Branch = ""
 	attachmentTurn := len(rec.History)
 	retryText := strings.TrimSpace(text)
 	userRequest := retryAfterFailureRequest(rec, retryText)

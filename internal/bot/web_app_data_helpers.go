@@ -45,6 +45,54 @@ func appDataStateLabel(state, outcome string) string {
 	}
 }
 
+// appDataResultLabel is the short chat-card pill label for a run. For
+// terminal "done" runs the label reflects the actual end result — a fresh
+// PR, an updated PR on a follow-up, an answer-only chat, or a merged PR
+// — rather than a generic "Done". Once GitHub reports the PR as merged
+// the label sticks at "PR merged" regardless of which run originally
+// opened or updated it. Other statuses keep their existing short labels.
+func appDataResultLabel(state, outcome, runKind, prURL string, prMerged bool) string {
+	switch appDataStatus(state, outcome) {
+	case "running":
+		return "Running"
+	case "needs_input":
+		return "Needs input"
+	case "failed":
+		return "Failed"
+	case "cancelled":
+		return "Canceled"
+	case "done":
+		return doneRunResultLabel(outcome, runKind, prURL, prMerged)
+	default:
+		return "Done"
+	}
+}
+
+func doneRunResultLabel(outcome, runKind, prURL string, prMerged bool) string {
+	if prMerged && strings.TrimSpace(prURL) != "" {
+		return "PR merged"
+	}
+	switch outcome {
+	case runstore.OutcomeCompletedNoPR:
+		return "Answered"
+	case runstore.OutcomeCompletedWithVerifiedPR:
+		if runKind == "followup" {
+			return "PR updated"
+		}
+		return "PR created"
+	}
+	// Degraded-tooling or legacy succeeded runs leave the outcome generic
+	// or unset, so fall back to the persisted PR URL as the strongest
+	// signal of what the run produced.
+	if strings.TrimSpace(prURL) != "" {
+		if runKind == "followup" {
+			return "PR updated"
+		}
+		return "PR created"
+	}
+	return "Answered"
+}
+
 func appDataActivity(run runstore.Run, events []runstore.Event) string {
 	return appDataActivityFromEvents(run, runActivityEventsFromStore(events))
 }
