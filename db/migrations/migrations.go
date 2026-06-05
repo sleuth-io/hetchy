@@ -7,6 +7,8 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/golang-migrate/migrate/v4"
 	// Postgres driver is registered as a side effect.
@@ -75,6 +77,37 @@ func Version(databaseURL string) (version uint, dirty bool, err error) {
 		return 0, false, fmt.Errorf("migrate version: %w", err)
 	}
 	return v, dirty, nil
+}
+
+// ExpectedVersion returns the highest embedded up-migration version. It is the
+// schema version this binary expects after all bundled migrations have run.
+func ExpectedVersion() (uint, error) {
+	names, err := sqlFS.ReadDir(".")
+	if err != nil {
+		return 0, fmt.Errorf("read migrations: %w", err)
+	}
+	var latest uint64
+	for _, entry := range names {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".up.sql") {
+			continue
+		}
+		versionText, _, ok := strings.Cut(name, "_")
+		if !ok {
+			return 0, fmt.Errorf("migration %q has no version separator", name)
+		}
+		version, err := strconv.ParseUint(versionText, 10, 64)
+		if err != nil {
+			return 0, fmt.Errorf("parse migration version %q: %w", name, err)
+		}
+		if version > latest {
+			latest = version
+		}
+	}
+	if latest == 0 {
+		return 0, errors.New("no embedded up migrations found")
+	}
+	return uint(latest), nil
 }
 
 func newMigrator(databaseURL string) (*migrate.Migrate, func(), error) {
