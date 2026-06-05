@@ -82,7 +82,7 @@
       + '</div>'
       + '<div class="agent-assets-body">'
       + agentFilesSectionHTML(agent)
-      + agentJobSectionHTML(agentJobs(agent))
+      + agentJobSectionHTML(agent, agentJobs(agent))
       + agentSkillSectionHTML('Installed skills', groups.direct, 'No directly installed skills.', false)
       + agentSkillSectionHTML('Inherited skills from orgs and teams', groups.inherited, '', true)
       + '</div>'
@@ -134,7 +134,7 @@
       + '</section>';
   }
 
-  function agentJobSectionHTML(jobs) {
+  function agentJobSectionHTML(agent, jobs) {
     let body = '<p class="agent-assets-hint">No scheduled jobs.</p>';
     if (jobs.length) {
       body = '<ul class="agent-job-summary-list">'
@@ -143,14 +143,14 @@
           + '<strong>' + esc(job.name || 'Untitled job') + '</strong>'
           + '<span class="agent-job-summary-pill' + (job.enabled ? ' is-enabled' : ' is-disabled') + '">' + esc(job.enabled ? 'Enabled' : 'Disabled') + '</span>'
           + '</div>'
+          + agentJobSubmetaHTML(agent, job)
           + agentJobDefinitionHTML(job)
           + '<dl class="agent-job-summary-meta">'
           + agentJobMetaHTML('Schedule', agentJobScheduleText(job), agentJobTimezoneText(job))
-          + agentJobMetaHTML('Repository', job.primary_repository || '')
           + agentJobMetaHTML('Next run', job.enabled ? compact(job.next_run_label, fullDate(job.next_run_at)) || 'Not scheduled' : 'Disabled')
-          + agentJobMetaHTML('Last status', agentJobLastStatusText(job), agentJobLastStatusDetail(job))
           + '</dl>'
           + agentJobAdditionalReposHTML(job)
+          + agentJobLastStatusHTML(job)
           + '</li>').join('')
         + '</ul>';
     }
@@ -158,6 +158,15 @@
       + '<div class="agent-assets-label">Scheduled jobs</div>'
       + body
       + '</section>';
+  }
+
+  function agentJobSubmetaHTML(agent, job) {
+    const label = compact(agent && agent.display_name, compact(agent && agent.slug, 'Agent'));
+    const repo = compact(job && job.primary_repository, '');
+    return '<dl class="agent-job-summary-submeta">'
+      + '<div><dt>Agent</dt><dd>' + esc(label) + '</dd></div>'
+      + (repo ? '<div><dt>Repo</dt><dd>' + esc(repo) + '</dd></div>' : '')
+      + '</dl>';
   }
 
   function agentJobDefinitionHTML(job) {
@@ -196,6 +205,15 @@
     if (error) return error;
     if (status && lastRun) return lastRun;
     return '';
+  }
+
+  function agentJobLastStatusHTML(job) {
+    const detail = agentJobLastStatusDetail(job);
+    return '<div class="agent-job-summary-status">'
+      + '<span>Last status</span>'
+      + '<strong>' + esc(agentJobLastStatusText(job)) + '</strong>'
+      + (detail ? '<small>' + esc(detail) + '</small>' : '')
+      + '</div>';
   }
 
   function agentJobAdditionalReposHTML(job) {

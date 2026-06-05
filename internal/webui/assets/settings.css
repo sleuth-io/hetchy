@@ -414,8 +414,12 @@
                         font-size: .7rem; text-transform: uppercase; letter-spacing: .03em; }
   .job-meta-grid strong { display: block; color: #222; font-size: .84rem;
                           line-height: 1.35; overflow-wrap: break-word; }
+  .job-schedule-value { display: flex; align-items: baseline; flex-wrap: wrap;
+                        gap: .15rem .4rem; min-width: 0; }
+  .job-schedule-value strong { display: inline; }
   .job-meta-grid small { display: block; margin-top: .15rem; color: #777;
                          font-size: .78rem; line-height: 1.3; overflow-wrap: break-word; }
+  .job-schedule-value small { display: inline; margin-top: 0; font-size: .72rem; }
   .job-foot { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap;
               margin-top: .75rem; color: #777; font-size: .78rem; }
   .job-foot .pill { display: inline-block; padding: .14rem .5rem; border-radius: 1rem;
