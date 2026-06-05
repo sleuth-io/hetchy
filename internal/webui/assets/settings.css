@@ -408,14 +408,14 @@
                     line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
   .job-meta-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(11.5rem, 1fr));
                    gap: .6rem; margin: .75rem 0; }
-  .job-meta-grid div { min-width: 0; border: 1px solid #f0f0f0;
-                       border-radius: .4rem; padding: .55rem .65rem; background: #fafafa; }
+  .job-meta-grid > div { min-width: 0; border: 1px solid #f0f0f0;
+                         border-radius: .4rem; padding: .55rem .65rem; background: #fafafa; }
   .job-meta-grid span { display: block; margin-bottom: .2rem; color: #888;
                         font-size: .7rem; text-transform: uppercase; letter-spacing: .03em; }
   .job-meta-grid strong { display: block; color: #222; font-size: .84rem;
                           line-height: 1.35; overflow-wrap: break-word; }
   .job-schedule-value { display: flex; align-items: baseline; flex-wrap: wrap;
-                        gap: .15rem .4rem; min-width: 0; }
+                        gap: .15rem .4rem; min-width: 0; margin: 0; }
   .job-schedule-value strong { display: inline; }
   .job-meta-grid small { display: block; margin-top: .15rem; color: #777;
                          font-size: .78rem; line-height: 1.3; overflow-wrap: break-word; }
@@ -1018,7 +1018,7 @@
   html.is-dark .job-submeta dt { color: #8a8a90; }
   html.is-dark .job-submeta dd { color: #c8c8cc; }
   html.is-dark .job-definition { color: #c4c4c8; }
-  html.is-dark .job-meta-grid div { background: #1f1f23; border-color: #2e2e33; }
+  html.is-dark .job-meta-grid > div { background: #1f1f23; border-color: #2e2e33; }
   html.is-dark .job-meta-grid span { color: #8a8a90; }
   html.is-dark .job-meta-grid strong { color: #e7e7e9; }
   html.is-dark .job-meta-grid small { color: #a8a8ad; }

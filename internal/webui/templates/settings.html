@@ -1073,7 +1073,7 @@
         </div>
         <p class="job-definition" data-job-definition>{{.Definition}}</p>
         <div class="job-meta-grid">
-          <div><span>Schedule</span><div class="job-schedule-value"><strong>{{.ScheduleLabel}}</strong>{{if .TimezoneLabel}}<small>{{.TimezoneLabel}}</small>{{end}}</div></div>
+          <div><span>Schedule</span><p class="job-schedule-value"><strong>{{.ScheduleLabel}}</strong>{{if .TimezoneLabel}}<small>{{.TimezoneLabel}}</small>{{end}}</p></div>
           <div><span>Next run</span><strong>{{if .NextRunLabel}}{{.NextRunLabel}}{{else}}Not scheduled{{end}}</strong></div>
         </div>
         {{if .AdditionalRepos}}
