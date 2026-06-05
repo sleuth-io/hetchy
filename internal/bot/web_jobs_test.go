@@ -71,7 +71,17 @@ func TestJobsResourceHandlerRoutesAndValidatesPath(t *testing.T) {
 		t.Fatalf("run GET Allow = %q, want POST", rec.Header().Get("Allow"))
 	}
 
+	rec = httptest.NewRecorder()
+	b.jobsResourceHandler(rec, httptest.NewRequest(http.MethodPut, jobsAPIPrefix+"/job_123", nil))
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("PUT status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
+	}
+	if rec.Header().Get("Allow") != "GET, PATCH, DELETE" {
+		t.Fatalf("PUT Allow = %q, want GET, PATCH, DELETE", rec.Header().Get("Allow"))
+	}
+
 	for _, path := range []string{
+		jobsAPIPrefix + "/",
 		jobsAPIPrefix + "/job.123",
 		jobsAPIPrefix + "/job_123/extra",
 		"/api/v1/other/job_123",
@@ -81,6 +91,14 @@ func TestJobsResourceHandlerRoutesAndValidatesPath(t *testing.T) {
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("%s status = %d, want %d", path, rec.Code, http.StatusNotFound)
 		}
+	}
+
+	rec = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, jobsAPIPrefix+"/job_123", nil)
+	req.URL.Path = jobsAPIPrefix + "/%zz"
+	b.jobsResourceHandler(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("bad escape status = %d, want %d", rec.Code, http.StatusNotFound)
 	}
 }
 

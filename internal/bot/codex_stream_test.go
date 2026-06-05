@@ -131,3 +131,66 @@ func TestCodexStreamParser_SurfacesErrors(t *testing.T) {
 		t.Fatalf("error message not surfaced: %+v", emit.Blocks[0])
 	}
 }
+
+func TestCodexGenericToolHelpers(t *testing.T) {
+	mcp := map[string]any{
+		"server":    "github",
+		"tool":      "create_issue",
+		"arguments": map[string]any{"title": "Bug", "labels": []any{"test"}},
+	}
+	if got := codexGenericToolTitle(mcp, "mcp_tool_call"); got != "Using github.create_issue" {
+		t.Fatalf("mcp title = %q", got)
+	}
+	if got := codexGenericToolBody(mcp, "mcp_tool_call"); !strings.Contains(got, "```json") || !strings.Contains(got, `"title": "Bug"`) {
+		t.Fatalf("mcp body = %q", got)
+	}
+
+	if got := codexGenericToolTitle(map[string]any{"tool": "list_repos"}, "mcp_tool_call"); got != "Using list_repos" {
+		t.Fatalf("mcp tool-only title = %q", got)
+	}
+	if got := codexGenericToolTitle(map[string]any{"tool": "ask_user"}, "collab_tool_call"); got != "Using ask user" {
+		t.Fatalf("collab title = %q", got)
+	}
+	if got := codexGenericToolBody(map[string]any{"prompt": "Pick one"}, "collab_tool_call"); got != "Pick one" {
+		t.Fatalf("collab body = %q", got)
+	}
+
+	search := map[string]any{"query": "github actions coverage failure"}
+	if got := codexGenericToolTitle(search, "web_search"); got != "Searching github actions coverage failure" {
+		t.Fatalf("search title = %q", got)
+	}
+	if got := codexGenericToolBody(search, "web_search"); got != "github actions coverage failure" {
+		t.Fatalf("search body = %q", got)
+	}
+	if got := codexGenericToolTitle(map[string]any{}, "custom_tool_call"); got != "Using custom tool call" {
+		t.Fatalf("fallback title = %q", got)
+	}
+}
+
+func TestCodexNestedContentAndJSONHelpers(t *testing.T) {
+	item := map[string]any{"error": map[string]any{"message": "rate limited"}}
+	if got := codexNestedErrorMessage(item); got != "rate limited" {
+		t.Fatalf("nested error = %q", got)
+	}
+	if got := codexNestedErrorMessage(map[string]any{"error": map[string]any{"detail": "missing"}}); got != "" {
+		t.Fatalf("missing nested error = %q, want empty", got)
+	}
+
+	if got := codexJSONBody(nil); got != "" {
+		t.Fatalf("nil JSON body = %q, want empty", got)
+	}
+	if got := codexJSONBody(func() {}); got != "" {
+		t.Fatalf("unmarshalable JSON body = %q, want empty", got)
+	}
+	if got := codexJSONBody(map[string]any{"nested": map[string]any{"ok": true}}); !strings.Contains(got, `"ok": true`) {
+		t.Fatalf("JSON body = %q", got)
+	}
+
+	raw := map[string]any{"message": map[string]any{"content": []any{"first", "", map[string]any{"text": "second"}}}}
+	if got := codexContent(raw, "content"); got != "first\nsecond" {
+		t.Fatalf("codexContent = %q", got)
+	}
+	if got := codexContentFromMap(map[string]any{"delta": map[string]any{"output": "done"}}, "delta"); got != "done" {
+		t.Fatalf("codexContentFromMap = %q", got)
+	}
+}

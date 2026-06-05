@@ -257,4 +257,55 @@ func TestJobAPIRequestToInputDefaultsAndPreservesEnabled(t *testing.T) {
 	}
 }
 
+func TestJobAPIRequestToInputPreservesPartialEditFields(t *testing.T) {
+	got, err := (jobAPIRequest{Name: ptrString("Renamed")}).toInput(jobs.Job{
+		ID:           "job_123",
+		Name:         "Old name",
+		Definition:   "Keep definition",
+		AgentSlug:    "agent-a",
+		PrimaryOwner: "acme",
+		PrimaryRepo:  "api",
+		AdditionalRepos: []jobs.RepoRef{
+			{Owner: "acme", Name: "web"},
+		},
+		CronSchedule: "0 9 * * *",
+		Timezone:     "UTC",
+		Enabled:      true,
+	})
+	if err != nil {
+		t.Fatalf("toInput: %v", err)
+	}
+	if got.Name != "Renamed" || got.Definition != "Keep definition" || got.AgentSlug != "agent-a" {
+		t.Fatalf("text fields = %#v", got)
+	}
+	if got.PrimaryOwner != "acme" || got.PrimaryRepo != "api" {
+		t.Fatalf("primary repo = %s/%s, want acme/api", got.PrimaryOwner, got.PrimaryRepo)
+	}
+	if len(got.AdditionalRepos) != 1 || got.AdditionalRepos[0].Slug() != "acme/web" {
+		t.Fatalf("AdditionalRepos = %#v, want acme/web", got.AdditionalRepos)
+	}
+	if got.CronSchedule != "0 9 * * *" || got.Timezone != "UTC" || !got.Enabled {
+		t.Fatalf("schedule/enabled fields = %#v", got)
+	}
+}
+
+func TestSettingsJobsByAgentReturnsEmptyWhenJobsDisabled(t *testing.T) {
+	got, err := (&Bot{}).settingsJobsByAgent(t.Context(), "org_123")
+	if err != nil {
+		t.Fatalf("settingsJobsByAgent: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("disabled jobs map = %#v, want empty", got)
+	}
+
+	b := &Bot{jobs: jobs.NewStore(nil, nil)}
+	got, err = b.settingsJobsByAgent(t.Context(), "org_123")
+	if err != nil {
+		t.Fatalf("settingsJobsByAgent disabled concrete store: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("disabled concrete jobs map = %#v, want empty", got)
+	}
+}
+
 func ptrString(s string) *string { return &s }

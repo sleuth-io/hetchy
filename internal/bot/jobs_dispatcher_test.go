@@ -8,8 +8,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/hetchyhq/hetchy/internal/jobs"
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
+	"github.com/hetchyhq/hetchy/internal/runstore"
 )
 
 type fakeJobDispatchStore struct {
@@ -105,6 +108,41 @@ func TestJobDispatchModelUsesAvailableCredentialFamily(t *testing.T) {
 	}
 	if got := jobDispatchModel(orgcfg.Config{AnthropicAPIKey: "sk-ant", OpenAIAPIKey: "sk-openai"}); got != ClaudeModelSonnet {
 		t.Fatalf("mixed credential job model = %q, want %q", got, ClaudeModelSonnet)
+	}
+}
+
+func TestBotJobDispatchRequiresConfiguredStore(t *testing.T) {
+	b := &Bot{}
+	if _, err := b.DispatchDueJobs(context.Background(), JobDispatchOptions{Limit: 1}); !errors.Is(err, jobs.ErrNotConfigured) {
+		t.Fatalf("DispatchDueJobs error = %v, want %v", err, jobs.ErrNotConfigured)
+	}
+	if _, err := b.DispatchJobNow(context.Background(), "org_1", "job_1"); !errors.Is(err, jobs.ErrNotConfigured) {
+		t.Fatalf("DispatchJobNow error = %v, want %v", err, jobs.ErrNotConfigured)
+	}
+}
+
+func TestDispatchDueJobsReturnsNotConfiguredAndClaimError(t *testing.T) {
+	if _, err := dispatchDueJobs(context.Background(), nil, "worker_1", JobDispatchOptions{Limit: 1}, time.Now(), nil); !errors.Is(err, jobs.ErrNotConfigured) {
+		t.Fatalf("nil store error = %v, want %v", err, jobs.ErrNotConfigured)
+	}
+	disabled := &fakeJobDispatchStore{}
+	if _, err := dispatchDueJobs(context.Background(), disabled, "worker_1", JobDispatchOptions{Limit: 1}, time.Now(), nil); !errors.Is(err, jobs.ErrNotConfigured) {
+		t.Fatalf("disabled store error = %v, want %v", err, jobs.ErrNotConfigured)
+	}
+
+	store := &fakeJobDispatchStore{enabled: true}
+	result, err := dispatchDueJobs(context.Background(), store, "worker_1", JobDispatchOptions{}, time.Now(), nil)
+	if err != nil {
+		t.Fatalf("zero limit dispatchDueJobs: %v", err)
+	}
+	if result != (JobDispatchResult{}) || store.claimCalled.Load() != 0 {
+		t.Fatalf("zero limit result = %#v claim calls = %d", result, store.claimCalled.Load())
+	}
+
+	errBoom := errors.New("claim failed")
+	store = &fakeJobDispatchStore{enabled: true, claimErr: errBoom}
+	if _, err := dispatchDueJobs(context.Background(), store, "worker_1", JobDispatchOptions{Limit: 1}, time.Now(), nil); !errors.Is(err, errBoom) {
+		t.Fatalf("claim error = %v, want %v", err, errBoom)
 	}
 }
 
@@ -207,6 +245,22 @@ func TestDispatchDueJobsLimitsConcurrencyAndReturnsFirstError(t *testing.T) {
 	}
 }
 
+func TestDispatchJobNowReturnsNotConfiguredAndRunNowError(t *testing.T) {
+	if _, err := dispatchJobNow(context.Background(), nil, "worker_1", "org_1", "job_1", time.Now(), nil, nil); !errors.Is(err, jobs.ErrNotConfigured) {
+		t.Fatalf("nil store error = %v, want %v", err, jobs.ErrNotConfigured)
+	}
+	disabled := &fakeJobDispatchStore{}
+	if _, err := dispatchJobNow(context.Background(), disabled, "worker_1", "org_1", "job_1", time.Now(), nil, nil); !errors.Is(err, jobs.ErrNotConfigured) {
+		t.Fatalf("disabled store error = %v, want %v", err, jobs.ErrNotConfigured)
+	}
+
+	errBoom := errors.New("run now failed")
+	store := &fakeJobDispatchStore{enabled: true, runNowErr: errBoom}
+	if _, err := dispatchJobNow(context.Background(), store, "worker_1", "org_1", "job_1", time.Now(), nil, nil); !errors.Is(err, errBoom) {
+		t.Fatalf("RunNow error = %v, want %v", err, errBoom)
+	}
+}
+
 func TestDispatchJobNowReturnsBeforeBackgroundDispatchFinishes(t *testing.T) {
 	now := time.Date(2026, 6, 4, 13, 0, 0, 0, time.UTC)
 	store := &fakeJobDispatchStore{
@@ -249,5 +303,68 @@ func TestDispatchJobNowReturnsBeforeBackgroundDispatchFinishes(t *testing.T) {
 	case <-finished:
 	case <-time.After(time.Second):
 		t.Fatal("background dispatch did not finish after release")
+	}
+}
+
+func TestJobExecutionStatusMapsDurableRunState(t *testing.T) {
+	if status, message := (&Bot{}).jobExecutionStatus(context.Background(), "org_1", "thread_1"); status != jobs.StatusSucceeded || message != "" {
+		t.Fatalf("nil run store status = %q message = %q", status, message)
+	}
+	if status, message := (&Bot{runs: &fakeRunStore{}}).jobExecutionStatus(context.Background(), "org_1", "thread_1"); status != jobs.StatusSucceeded || message != "" {
+		t.Fatalf("disabled run store status = %q message = %q", status, message)
+	}
+
+	tests := []struct {
+		name        string
+		run         runstore.Run
+		err         error
+		wantStatus  string
+		wantMessage string
+	}{
+		{
+			name:        "missing run",
+			err:         pgx.ErrNoRows,
+			wantStatus:  jobs.StatusFailed,
+			wantMessage: "durable run was not created",
+		},
+		{
+			name:        "load error",
+			err:         context.Canceled,
+			wantStatus:  jobs.StatusFailed,
+			wantMessage: "load durable run: context canceled",
+		},
+		{
+			name:       "succeeded",
+			run:        runstore.Run{State: runstore.StateSucceeded},
+			wantStatus: jobs.StatusSucceeded,
+		},
+		{
+			name:        "cancelled",
+			run:         runstore.Run{State: runstore.StateCancelled, LastError: "user stopped it"},
+			wantStatus:  jobs.StatusCancelled,
+			wantMessage: "user stopped it",
+		},
+		{
+			name:        "failed with last error",
+			run:         runstore.Run{State: runstore.StateFailed, LastError: "agent failed"},
+			wantStatus:  jobs.StatusFailed,
+			wantMessage: "agent failed",
+		},
+		{
+			name:        "unexpected state",
+			run:         runstore.Run{State: runstore.StateRunning},
+			wantStatus:  jobs.StatusFailed,
+			wantMessage: "job run ended in state running",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			b := &Bot{runs: &fakeRunStore{enabled: true, latestRun: tc.run, latestErr: tc.err}}
+			gotStatus, gotMessage := b.jobExecutionStatus(context.Background(), "org_1", "thread_1")
+			if gotStatus != tc.wantStatus || gotMessage != tc.wantMessage {
+				t.Fatalf("status = %q message = %q, want %q %q", gotStatus, gotMessage, tc.wantStatus, tc.wantMessage)
+			}
+		})
 	}
 }

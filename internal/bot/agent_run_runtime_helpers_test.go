@@ -51,6 +51,19 @@ func TestAgentRunRuntimeContextHelpers(t *testing.T) {
 	}
 }
 
+func TestNoopEmitterMethodsAreSafe(t *testing.T) {
+	em := noopEmitter{}
+	if id := em.Start(blocks.KindClaudeText, "title", map[string]any{"key": "value"}); id != "" {
+		t.Fatalf("Start returned %q, want empty", id)
+	}
+	em.Append("block_1", "delta")
+	em.Done("block_1", "done")
+	em.Fail("block_1", "failed")
+	em.Notify("notice", "body")
+	em.Result("result", "body")
+	em.Error("error", "body")
+}
+
 func TestStableAgentRunIDAndWorkerID(t *testing.T) {
 	first := stableAgentRunID("org_1", "thread_1", "request_1")
 	second := stableAgentRunID("org_1", "thread_1", "request_1")
