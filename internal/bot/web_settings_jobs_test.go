@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hetchyhq/hetchy/internal/jobs"
 	"github.com/hetchyhq/hetchy/internal/webui"
@@ -153,6 +154,62 @@ func TestSettingsTemplate_RendersJobsTabReadOnlyForMembers(t *testing.T) {
 		if strings.Contains(body, notWant) {
 			t.Fatalf("member jobs tab should not render %q", notWant)
 		}
+	}
+}
+
+func TestSettingsJobFromJobFormatsView(t *testing.T) {
+	got := settingsJobFromJob(jobs.Job{
+		ID:                  "job_123",
+		Name:                "Dependency sweep",
+		Definition:          "Check dependencies.",
+		AgentSlug:           "maintainer",
+		PrimaryOwner:        "acme",
+		PrimaryRepo:         "api",
+		AdditionalRepos:     []jobs.RepoRef{{Owner: "acme", Name: "web"}, {Owner: "", Name: "ignored"}},
+		CronSchedule:        "0 9 * * 1",
+		Timezone:            "America/Los_Angeles",
+		Enabled:             true,
+		NextRunAt:           time.Date(2026, 6, 8, 16, 0, 0, 0, time.UTC),
+		LastRunAt:           time.Date(2026, 6, 1, 15, 0, 0, 0, time.UTC),
+		LastRunID:           "run_123",
+		LastError:           "failed once",
+		LastExecutionStatus: jobs.StatusFailed,
+	}, map[string]string{"maintainer": "Maintainer"})
+
+	if got.ID != "job_123" || got.Name != "Dependency sweep" || got.Definition != "Check dependencies." {
+		t.Fatalf("basic fields = %#v", got)
+	}
+	if got.AgentSlug != "maintainer" || got.AgentLabel != "Maintainer" {
+		t.Fatalf("agent fields = %#v", got)
+	}
+	if got.PrimaryRepository != "acme/api" {
+		t.Fatalf("PrimaryRepository = %q, want acme/api", got.PrimaryRepository)
+	}
+	if len(got.AdditionalRepos) != 1 || got.AdditionalRepos[0] != "acme/web" {
+		t.Fatalf("AdditionalRepos = %#v, want acme/web", got.AdditionalRepos)
+	}
+	if got.AdditionalReposText != "acme/web" {
+		t.Fatalf("AdditionalReposText = %q, want acme/web", got.AdditionalReposText)
+	}
+	if got.ScheduleLabel != "Weekly" || got.TimezoneLabel != "Los Angeles time" {
+		t.Fatalf("labels = schedule %q timezone %q", got.ScheduleLabel, got.TimezoneLabel)
+	}
+	if !got.Enabled {
+		t.Fatal("Enabled = false, want true")
+	}
+	if got.NextRunAt != "2026-06-08T16:00:00Z" || got.NextRunLabel != "Jun 8 at 9:00 AM" {
+		t.Fatalf("next run = %q / %q", got.NextRunAt, got.NextRunLabel)
+	}
+	if got.LastRunAt != "2026-06-01T15:00:00Z" || got.LastRunLabel != "Jun 1 at 8:00 AM" {
+		t.Fatalf("last run = %q / %q", got.LastRunAt, got.LastRunLabel)
+	}
+	if got.LastRunID != "run_123" || got.LastError != "failed once" || got.LastExecutionStatus != jobs.StatusFailed {
+		t.Fatalf("last result = %#v", got)
+	}
+
+	defaultAgent := settingsJobFromJob(jobs.Job{}, nil)
+	if defaultAgent.AgentLabel != "Default" {
+		t.Fatalf("default AgentLabel = %q, want Default", defaultAgent.AgentLabel)
 	}
 }
 
