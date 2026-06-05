@@ -38,6 +38,13 @@
         </svg>
         Agents
       </a>
+      <a href="/settings/org?tab=jobs"{{if eq .Tab "jobs"}} class="active"{{end}}>
+        <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="8" cy="8" r="5.5"/>
+          <path d="M8 4.5V8l2.5 1.5"/>
+        </svg>
+        Jobs
+      </a>
       {{if .IsAdmin}}
       <a href="/settings/org?tab=api-keys"{{if eq .Tab "api-keys"}} class="active"{{end}}>
         <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -88,6 +95,8 @@
       {{template "integrations" .}}
     {{else if eq .Tab "agents"}}
       {{template "agents" .}}
+    {{else if eq .Tab "jobs"}}
+      {{template "jobs" .}}
     {{else if eq .Tab "api-keys"}}
       {{template "api_keys" .}}
     {{else if eq .Tab "repositories"}}
@@ -152,6 +161,7 @@
       <button type="button" class="dlg-delete" id="org-delete-confirm">Delete organization</button>
     </div>
   </dialog>
+  {{template "settings_confirm_dialog" .}}
   {{end}}
 {{end}}
 
@@ -767,6 +777,20 @@
 
   {{end}}
 
+  {{if $a.Jobs}}
+  <div class="agent-jobs">
+    <div class="agent-skills-label">Scheduled jobs</div>
+    <div class="agent-job-list">
+      {{range $a.Jobs}}
+        <a class="agent-job-chip" href="/settings/org?tab=jobs#job-{{.ID}}">
+          <span>{{.Name}}</span>
+          <small>{{.ScheduleLabel}} · {{.PrimaryRepository}}</small>
+        </a>
+      {{end}}
+    </div>
+  </div>
+  {{end}}
+
   <div class="agent-card-footer">
     <div class="agent-meta">
     {{if $a.SyncError}}<span>sync error: <code>{{$a.SyncError}}</code></span>{{end}}
@@ -953,7 +977,7 @@
 {{define "modal_agent_create"}}
 {{if .IsAdmin}}
 <dialog class="api-modal agent-modal" id="modal-agent-create">
-  <form method="POST" action="/settings/org/agents" id="agent-create-form">
+  <form method="POST" action="/settings/org/agents" id="agent-create-form" autocomplete="off" data-form-type="other">
     <div class="body">
       <h2>Create agent</h2>
       <label for="agent-template">Template</label>
@@ -964,7 +988,7 @@
         {{end}}
       </select>
       <label for="agent-create-name">Name</label>
-      <input id="agent-create-name" type="text" name="display_name" placeholder="Reviewer" required maxlength="80" autofocus>
+      <input id="agent-create-name" type="text" name="display_name" placeholder="Reviewer" required maxlength="80" autofocus autocomplete="off" autocapitalize="words" spellcheck="false" data-1p-ignore="true" data-lpignore="true" data-form-type="other">
       <label for="agent-create-description">Description</label>
       <input id="agent-create-description" type="text" name="description" placeholder="Reviews pull requests and test coverage" maxlength="240">
       <label for="agent-create-prompt">Prompt</label>
@@ -1000,6 +1024,138 @@
   </form>
 </dialog>
 {{end}}
+{{end}}
+
+{{define "jobs"}}
+  <h1>Jobs</h1>
+  <p/>
+  <p class="desc">Schedule recurring Hetchy runs for monitoring, maintenance, and review tasks.</p>
+
+  {{if .SavedMessage}}<div class="saved-banner">{{.SavedMessage}}</div>{{end}}
+  {{if not .IsAdmin}}<p class="hint">Only administrators can change jobs.</p>{{end}}
+
+  {{if .IsAdmin}}
+  <div class="agent-toolbar">
+    <button class="primary" type="button" data-job-new="1">Create job</button>
+  </div>
+  {{end}}
+
+  {{if .Jobs}}
+    <div class="job-list" data-jobs-root>
+      {{range .Jobs}}
+      <article class="job-card{{if not .Enabled}} disabled{{end}}" id="job-{{.ID}}"
+               data-job-id="{{.ID}}"
+               data-job-name="{{.Name}}"
+               data-job-agent="{{.AgentSlug}}"
+               data-job-primary="{{.PrimaryRepository}}"
+               data-job-cron="{{.CronSchedule}}"
+               data-job-timezone="{{.Timezone}}"
+               data-job-enabled="{{if .Enabled}}1{{else}}0{{end}}">
+        <div class="job-card-head">
+          <div class="job-title">
+            <div class="job-title-main">
+              <h3>{{.Name}}</h3>
+              <span class="tag {{if .Enabled}}tag-validated{{else}}tag-stale{{end}}">{{if .Enabled}}enabled{{else}}disabled{{end}}</span>
+            </div>
+            <dl class="job-submeta">
+              <div><dt>Agent</dt><dd>{{.AgentLabel}}</dd></div>
+              <div><dt>Repo</dt><dd>{{.PrimaryRepository}}</dd></div>
+            </dl>
+          </div>
+          <div class="job-actions">
+            {{if $.IsAdmin}}
+            <button class="secondary" type="button" data-job-edit="{{.ID}}">Edit</button>
+            <button class="secondary" type="button" data-job-run="{{.ID}}">Run now</button>
+            <button class="secondary" type="button" data-job-toggle="{{.ID}}" data-job-toggle-enabled="{{if .Enabled}}0{{else}}1{{end}}">{{if .Enabled}}Disable{{else}}Enable{{end}}</button>
+            <button class="danger-btn" type="button" data-job-delete="{{.ID}}">Delete</button>
+            {{end}}
+          </div>
+        </div>
+        <p class="job-definition" data-job-definition>{{.Definition}}</p>
+        <div class="job-meta-grid">
+          <div><span>Schedule</span><p class="job-schedule-value"><strong>{{.ScheduleLabel}}</strong>{{if .TimezoneLabel}}<small>{{.TimezoneLabel}}</small>{{end}}</p></div>
+          <div><span>Next run</span><strong>{{if .NextRunLabel}}{{.NextRunLabel}}{{else}}Not scheduled{{end}}</strong></div>
+        </div>
+        {{if .AdditionalRepos}}
+        <p class="hint">Additional repositories: {{range $i, $repo := .AdditionalRepos}}{{if gt $i 0}}, {{end}}{{$repo}}{{end}}</p>
+        {{end}}
+        <div class="job-foot">
+          {{if .LastExecutionStatus}}<span class="pill">{{.LastExecutionStatus}}</span>{{end}}
+          {{if .LastRunLabel}}<span>last run: {{.LastRunLabel}}</span>{{end}}
+          {{if .LastError}}<span class="job-error">{{.LastError}}</span>{{end}}
+        </div>
+        <div data-job-additional hidden>{{.AdditionalReposText}}</div>
+      </article>
+      {{end}}
+    </div>
+  {{else}}
+    <p class="empty">No scheduled jobs.</p>
+  {{end}}
+
+  {{if .IsAdmin}}
+  <dialog class="api-modal agent-modal job-modal" id="modal-job-edit">
+    <form id="job-edit-form" autocomplete="off" data-form-type="other">
+      <div class="body">
+        <h2 data-job-modal-title>Create job</h2>
+        <input type="hidden" name="id" data-job-field="id">
+        <label for="job-name">Name</label>
+        <input id="job-name" type="text" name="name" data-job-field="name" required maxlength="120" placeholder="Weekly dependency check" autocomplete="off" autocapitalize="sentences" spellcheck="false" data-1p-ignore="true" data-lpignore="true" data-form-type="other">
+        <label for="job-definition">Definition</label>
+        <textarea id="job-definition" name="definition" data-job-field="definition" rows="7" required placeholder="Check for dependency updates and open a PR only when changes are needed."></textarea>
+        <label for="job-agent">Agent</label>
+        <select id="job-agent" name="agent_slug" data-job-field="agent_slug">
+          {{range .JobAgentOptions}}
+          <option value="{{.Slug}}">{{.DisplayName}}</option>
+          {{end}}
+        </select>
+        <label for="job-primary-repo">Primary repository</label>
+        <select id="job-primary-repo" name="primary_repository" data-job-field="primary_repository" required autocomplete="off" data-1p-ignore="true" data-lpignore="true" data-form-type="other">
+          <option value="">Choose repository</option>
+          {{range .JobRepoOptions}}<option value="{{.Slug}}">{{.Slug}}</option>{{end}}
+        </select>
+        <label for="job-additional-repo-picker">Additional repositories</label>
+        <div class="job-repo-multiselect" data-job-additional-picker>
+          <select id="job-additional-repo-picker" autocomplete="off" data-job-additional-select data-1p-ignore="true" data-lpignore="true" data-form-type="other">
+            <option value="">Add repository</option>
+            {{range .JobRepoOptions}}<option value="{{.Slug}}">{{.Slug}}</option>{{end}}
+          </select>
+          <div class="job-repo-chip-list" data-job-additional-chips></div>
+          <input type="hidden" name="additional_repositories" data-job-field="additional_repositories">
+        </div>
+        <p class="hint">Additional repositories must come from the same GitHub App installation as the primary repository.</p>
+        <div class="job-form-grid">
+          <div>
+            <label for="job-schedule-preset">Schedule</label>
+            <select id="job-schedule-preset" data-job-schedule-preset>
+              <option value="0 * * * *">Every hour</option>
+              <option value="0 */4 * * *">Every 4 hours</option>
+              <option value="0 */6 * * *">Every 6 hours</option>
+              <option value="0 */8 * * *">Every 8 hours</option>
+              <option value="0 */12 * * *">Every 12 hours</option>
+              <option value="0 9 * * *">Daily</option>
+              <option value="0 9 * * 1">Weekly</option>
+              <option value="advanced">Advanced</option>
+            </select>
+          </div>
+          <div>
+            <label for="job-timezone">Timezone</label>
+            <input id="job-timezone" type="text" name="timezone" data-job-field="timezone" value="UTC" required placeholder="UTC">
+          </div>
+        </div>
+        <div class="job-schedule-advanced" data-job-cron-row hidden>
+          <label for="job-cron">Cron schedule</label>
+          <input id="job-cron" type="text" name="cron_schedule" data-job-field="cron_schedule" required value="0 * * * *" placeholder="0 * * * *">
+        </div>
+        <p class="job-form-error" data-job-error hidden></p>
+      </div>
+      <div class="actions">
+        <button type="button" class="cancel" data-close-modal>Cancel</button>
+        <button class="save" type="submit">Save</button>
+      </div>
+    </form>
+  </dialog>
+  {{template "settings_confirm_dialog" .}}
+  {{end}}
 {{end}}
 
 {{define "api_keys"}}
@@ -1547,6 +1703,7 @@
 {{end}}
 
 <script src="{{assetPath "settings.js"}}"></script>
+<script src="{{assetPath "settings_jobs.js"}}"></script>
 <script src="{{assetPath "agent_details_modal.js"}}"></script>
 </body>
 </html>

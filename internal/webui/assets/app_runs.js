@@ -328,6 +328,7 @@
       needs_input: counts.needs_input,
       failed: counts.failed,
       cancelled: counts.cancelled,
+      scheduled_job: counts.scheduled_jobs,
       ready_pr: counts.ready_prs,
     };
     if (state.statusFilter !== 'all' && !filterCounts[state.statusFilter]) {
@@ -338,6 +339,7 @@
     byID('summary-needs-input').textContent = String(counts.needs_input);
     byID('summary-failed').textContent = String(counts.failed);
     byID('summary-cancelled').textContent = String(counts.cancelled);
+    byID('summary-scheduled-jobs').textContent = String(counts.scheduled_jobs);
     byID('summary-ready-prs').textContent = String(counts.ready_prs);
     document.querySelectorAll('[data-status-filter]').forEach(btn => {
       const filter = btn.dataset.statusFilter || 'all';
@@ -365,9 +367,14 @@
       if (run.status === 'needs_input') counts.needs_input++;
       if (run.status === 'failed') counts.failed++;
       if (run.status === 'cancelled') counts.cancelled++;
+      if (runIsScheduledJob(run)) counts.scheduled_jobs++;
       if (readyIDs.has(run.conversation_id)) counts.ready_prs++;
       return counts;
-    }, { running: 0, needs_input: 0, failed: 0, cancelled: 0, ready_prs: 0 });
+    }, { running: 0, needs_input: 0, failed: 0, cancelled: 0, scheduled_jobs: 0, ready_prs: 0 });
+  }
+
+  function runIsScheduledJob(run) {
+    return compact(run && run.trigger_source, '') === 'job' || !!compact(run && run.job_id, '');
   }
 
   function updateNavSearchPlaceholder() {
@@ -414,6 +421,8 @@
     if (state.statusFilter === 'ready_pr') {
       const readyIDs = readyConversationIDs();
       runs = runs.filter(run => readyIDs.has(run.conversation_id));
+    } else if (state.statusFilter === 'scheduled_job') {
+      runs = runs.filter(runIsScheduledJob);
     } else if (state.statusFilter !== 'all') {
       runs = runs.filter(run => run.status === state.statusFilter);
     }
@@ -459,7 +468,9 @@
     }
     byID('work-subtitle').textContent = state.statusFilter === 'all'
       ? (state.workQuery ? 'Matching chats for this group.' : '')
-      : statusLabel(state.statusFilter) + ' work for this group.';
+      : state.statusFilter === 'scheduled_job'
+        ? 'Scheduled job runs for this group.'
+        : statusLabel(state.statusFilter) + ' work for this group.';
 
     const list = byID('run-list');
     const runs = selectedRuns();

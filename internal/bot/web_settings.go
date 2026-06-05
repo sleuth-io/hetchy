@@ -338,6 +338,11 @@ func (b *Bot) populateSettingsTabData(ctx context.Context, orgID, tab string, da
 			return err
 		}
 
+	case "jobs":
+		if err := b.populateJobsSettingsTabData(ctx, orgID, data); err != nil {
+			return err
+		}
+
 	case "api-keys":
 		var keys []apikeys.Key
 		if b.apiKeys != nil {
@@ -487,6 +492,9 @@ var savedMessages = map[string]string{
 	"agent_team_added":           "Team added.",
 	"agent_team_removed":         "Team removed.",
 	"agent_deleted":              "Agent deleted.",
+	"job_saved":                  "Job saved.",
+	"job_started":                "Job started.",
+	"job_deleted":                "Job deleted.",
 	"sx_git_vault_saved":         "SX Git Vault saved.",
 	"sx_git_vault_deleted":       "SX Git Vault disconnected.",
 	"repo_flavor_saved":          "Repo flavor saved.",

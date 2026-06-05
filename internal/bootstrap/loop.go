@@ -333,13 +333,16 @@ mkdir -p "${HETCHY_BOOTSTRAP_OUT_DIR}"
 # tools (Read/Edit/Bash) operate on the cloned repo by default.
 cd "${HETCHY_BOOTSTRAP_REPO_DIR}"
 
-# Same pre-create as agent.sh / followup.sh — the Playwright MCP server
-# needs a writable output dir and a writable browser profile dir before
-# the first screenshot. Some snapshots keep browser binaries under
-# root-owned /opt/ms-playwright, so pin the MCP profile under /tmp
-# instead of letting it try to create /opt/ms-playwright/mcp-chrome-*.
-export PLAYWRIGHT_MCP_OUTPUT_DIR="${PLAYWRIGHT_MCP_OUTPUT_DIR:-${HETCHY_BOOTSTRAP_REPO_DIR}/.playwright-mcp}"
-export PLAYWRIGHT_MCP_USER_DATA_DIR="${PLAYWRIGHT_MCP_USER_DATA_DIR:-/tmp/hetchy-playwright-mcp/user-data}"
+# Same pre-create as agent.sh / followup.sh — playwright-cli writes
+# snapshots and screenshots into its output dir and persists a browser
+# profile under its user-data dir. Neither is created on demand, and
+# Playwright's chromium binaries live under root-owned
+# /opt/ms-playwright, so pin the user-data dir under /tmp instead of
+# letting the CLI try to create /opt/ms-playwright/cli-chrome-*. The
+# env var names stay PLAYWRIGHT_MCP_* because playwright-cli reuses
+# the MCP server's configuration surface.
+export PLAYWRIGHT_MCP_OUTPUT_DIR="${PLAYWRIGHT_MCP_OUTPUT_DIR:-${HETCHY_BOOTSTRAP_REPO_DIR}/.playwright-cli}"
+export PLAYWRIGHT_MCP_USER_DATA_DIR="${PLAYWRIGHT_MCP_USER_DATA_DIR:-/tmp/hetchy-playwright-cli/user-data}"
 export PLAYWRIGHT_MCP_HEADLESS="${PLAYWRIGHT_MCP_HEADLESS:-1}"
 export PLAYWRIGHT_MCP_NO_SANDBOX="${PLAYWRIGHT_MCP_NO_SANDBOX:-1}"
 mkdir -p "$PLAYWRIGHT_MCP_OUTPUT_DIR" "$PLAYWRIGHT_MCP_USER_DATA_DIR"

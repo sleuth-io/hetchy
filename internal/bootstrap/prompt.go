@@ -146,7 +146,7 @@ Manifest schema:
       "required_mocks": ["Stripe webhook calls are mocked"],
       "slow_or_flaky_tests": ["npm run e2e:full"],
       "evidence_required": ["screenshot", "curl"],
-      "notes": "Use Playwright for UI changes; use curl for API endpoints."
+      "notes": "Use Playwright CLI for UI changes; use curl for API endpoints."
     }
   }
 
@@ -172,7 +172,7 @@ Process:
      external dependencies; for bootstrap purposes, prefer those paths.
 
      CRITICAL — landing-page reachability: a SECOND agent will later use
-     Playwright against the running app to screenshot UI changes. That
+     Playwright CLI against the running app to screenshot UI changes. That
      agent has no credentials and will get stuck on any login wall,
      onboarding form, or "create your first workspace" first-run
      screen. Find EVERY env var or config flag that lets the app skip
@@ -228,16 +228,24 @@ Process:
        services (e.g. fake Stripe sk_test_… keys). The app will appear
        to start and then fail later in confusing ways.
 
-  9. For every UI service, navigate to its root URL with Playwright and
-     take a screenshot. The sandbox already provides Playwright and
-     Chromium. Use ordinary Playwright APIs from scripts under
-     /tmp/hetchy-validate; browser binaries live at
-     $PLAYWRIGHT_BROWSERS_PATH, normally /opt/ms-playwright. Do not run
-     'playwright install' just to capture proof. If a repo-local
-     Playwright package reports a missing browser, use the sandbox
-     Playwright package from /tmp/hetchy-validate rather than waiting on
-     browser installation. The screenshot must show real content — not
-     an error page or blank screen.
+  9. For every UI service, navigate to its root URL with Playwright CLI
+     and take a screenshot. The sandbox ships the 'playwright-cli'
+     binary and the companion skill at
+     $HOME/.claude/skills/playwright-cli — read its SKILL.md for the
+     full command list. Typical flow:
+
+       playwright-cli open <root url>
+       playwright-cli snapshot
+       playwright-cli screenshot --filename=/tmp/hetchy-validate/landing.png
+       playwright-cli close
+
+     Browser binaries live at $PLAYWRIGHT_BROWSERS_PATH, normally
+     /opt/ms-playwright. Do not run 'playwright install' just to capture proof.
+     If you need finer control than playwright-cli exposes, drop an
+     ordinary Playwright script under /tmp/hetchy-validate so it
+     resolves the sandbox-provided package and browsers rather than
+     waiting on browser installation. The screenshot must show real
+     content — not an error page or blank screen.
 
   10. Populate validation_capability with the repeatable test contract
      future runs should follow after editing code: canonical tests,

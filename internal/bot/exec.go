@@ -24,6 +24,10 @@ type sandboxProcess interface {
 	GetSessionCommandLogsStream(ctx context.Context, sessionID, commandID string, stdout, stderr chan<- string) error
 }
 
+type sandboxSessionCreator interface {
+	CreateSession(context.Context, string) error
+}
+
 var preAgentRecoverableSandboxSteps = map[string]struct{}{
 	"setup-clone-write":         {},
 	"setup-clone-run":           {},
@@ -38,6 +42,15 @@ var preAgentRecoverableSandboxSteps = map[string]struct{}{
 func preAgentRecoverableSandboxStep(step string) bool {
 	_, ok := preAgentRecoverableSandboxSteps[step]
 	return ok
+}
+
+func retryableSandboxCommandSubmissionStep(step string) bool {
+	switch step {
+	case "setup-clone-write", "bootstrap-write", "write-script", "write-env":
+		return true
+	default:
+		return strings.HasPrefix(step, "bootstrap-write-")
+	}
 }
 
 // shLines runs cmd inside an existing sandbox session, splits its
@@ -80,7 +93,18 @@ func (b *Bot) shLines(ctx context.Context, sandboxID string, proc sandboxProcess
 	var idledOut atomic.Bool
 
 	execStarted := time.Now()
-	res, err := proc.ExecuteSessionCommand(stepCtx, sessionID, cmd, true, suppressInputEcho)
+	var res map[string]any
+	execCommand := func() error {
+		var err error
+		res, err = proc.ExecuteSessionCommand(stepCtx, sessionID, cmd, true, suppressInputEcho)
+		return err
+	}
+	var err error
+	if retryableSandboxCommandSubmissionStep(step) {
+		err = b.retryWithBackoff(stepCtx, "sandbox "+step+" command submission", execCommand)
+	} else {
+		err = execCommand()
+	}
 	if err != nil {
 		b.log.Error("sandbox step exec error", "sandbox", sandboxID, "step", step, "error", err)
 		if errors.Is(err, context.DeadlineExceeded) {

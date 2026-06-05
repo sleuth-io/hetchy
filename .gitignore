@@ -59,7 +59,6 @@ state.json.old
 /.claude/*
 /GEMINI.md
 /.cursor/*
-/.playwright-mcp/*
 /.agents/*
 /.gemini/*
 /.playwright-cli/*

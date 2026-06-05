@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	apiclient "github.com/daytonaio/daytona/libs/api-client-go"
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
 	sdkerrors "github.com/daytonaio/daytona/libs/sdk-go/pkg/errors"
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/types"
@@ -277,6 +278,7 @@ func (b *Bot) handleFreshAgentRunError(ctx context.Context, sb *daytona.Sandbox,
 		b.cleanupSandboxWithTimeout(sb, "fresh run setup failed")
 		emit.Error("Sandbox setup failed", fmt.Sprintf("Sandbox `%s` failed before the agent started and was archived. Reply here to retry.", sb.ID))
 		rec.SandboxID = ""
+		rec.Branch = ""
 		appendFreshRunBlocks(rec, mode, recorder.Snapshot())
 		if err := b.convs.Upsert(context.Background(), *rec); err != nil {
 			b.log.Error("convstore upsert (agent setup fail)", "error", err)
@@ -416,6 +418,37 @@ func isDaytonaStateChangeConflict(err error) bool {
 	msg := strings.ToLower(dayErr.Message)
 	return dayErr.StatusCode == http.StatusConflict &&
 		(strings.Contains(msg, "state change in progress") || strings.Contains(msg, "state transition"))
+}
+
+func isFollowUpSandboxReplacementError(sb *daytona.Sandbox, err error) bool {
+	if isDaytonaStateChangeConflict(err) {
+		return true
+	}
+	if sb != nil && (sb.State == apiclient.SANDBOXSTATE_ERROR || sb.State == apiclient.SANDBOXSTATE_BUILD_FAILED) {
+		return true
+	}
+	var dayErr *sdkerrors.DaytonaError
+	if errors.As(err, &dayErr) {
+		msg := strings.ToLower(dayErr.Message)
+		return strings.Contains(msg, "sandbox is in an errored state") ||
+			strings.Contains(msg, "sandbox failed to start")
+	}
+	return false
+}
+
+func isDaytonaSessionAlreadyExists(err error) bool {
+	var dayErr *sdkerrors.DaytonaError
+	if !errors.As(err, &dayErr) {
+		return false
+	}
+	if dayErr.StatusCode != http.StatusConflict {
+		return false
+	}
+	msg := strings.ToLower(dayErr.Message)
+	return strings.Contains(msg, "session") &&
+		(strings.Contains(msg, "already exist") ||
+			strings.Contains(msg, "exists") ||
+			strings.Contains(msg, "duplicate"))
 }
 
 func shellQuote(s string) string {

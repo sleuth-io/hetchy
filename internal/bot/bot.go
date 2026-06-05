@@ -30,6 +30,7 @@ import (
 	"github.com/hetchyhq/hetchy/internal/db"
 	"github.com/hetchyhq/hetchy/internal/db/sqlc"
 	"github.com/hetchyhq/hetchy/internal/githubapp"
+	"github.com/hetchyhq/hetchy/internal/jobs"
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
 	"github.com/hetchyhq/hetchy/internal/runstore"
 	"github.com/hetchyhq/hetchy/internal/secrets"
@@ -94,6 +95,7 @@ type Bot struct {
 	orgs               orgStore
 	convs              conversationStore
 	runs               runStore
+	jobs               *jobs.Store
 	billing            *billing.Service
 	agents             *agents.Store
 	apiKeys            *apikeys.Store
@@ -296,6 +298,7 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 		orgs:             orgStore,
 		convs:            convstore.New(store),
 		runs:             runstore.New(store),
+		jobs:             jobs.NewStore(store, agentStore),
 		billing:          billing.NewService(billing.NewStore(store), newStripeAutoTopupper(cfg)),
 		agents:           agentStore,
 		apiKeys:          apikeys.New(store),

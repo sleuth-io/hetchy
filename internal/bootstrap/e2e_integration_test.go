@@ -200,7 +200,7 @@ curl -fsS http://localhost:8080/`
 		Diff:      "diff --git a/internal/bot/agent.go ... +new line",
 		PRBody:    "## Summary\nAdd a feature.",
 	})
-	for _, want := range []string{"http://localhost:8080", "Playwright MCP", "AUTH_BYPASS"} {
+	for _, want := range []string{"http://localhost:8080", "Playwright CLI", "AUTH_BYPASS"} {
 		if !strings.Contains(vprompt, want) {
 			t.Errorf("validation prompt for hetchy missing %q", want)
 		}

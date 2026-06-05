@@ -153,6 +153,7 @@ func TestHandleFreshAgentRunErrorArchivesPreRuntimeSetupFailure(t *testing.T) {
 		OrgID:     "org_test",
 		ThreadID:  "thread-1",
 		History:   []string{"ship it"},
+		Branch:    "feature/sf-1",
 		SandboxID: "sandbox-1",
 	}
 	recorder := recorderWithNotifyBlock("Sandbox setup")
@@ -171,6 +172,9 @@ func TestHandleFreshAgentRunErrorArchivesPreRuntimeSetupFailure(t *testing.T) {
 	got := convs.lastUpsert(t)
 	if got.SandboxID != "" {
 		t.Fatalf("sandbox id = %q, want cleared", got.SandboxID)
+	}
+	if got.Branch != "" {
+		t.Fatalf("branch = %q, want cleared", got.Branch)
 	}
 	if last := lastRunState(t, store); last.state != runstore.StateFailed || !strings.Contains(last.lastErr, errAgentSetupBeforeRuntime.Error()) {
 		t.Fatalf("run state = %+v, want failed/pre-runtime setup", last)

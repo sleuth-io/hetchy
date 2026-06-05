@@ -27,6 +27,11 @@ const (
 )
 
 const (
+	TriggerUser = "user"
+	TriggerJob  = "job"
+)
+
+const (
 	OutcomeCompletedWithVerifiedPR = "completed_with_verified_pr"
 	OutcomeCompletedNoPR           = "completed_no_pr"
 	OutcomeFailedSetup             = "failed_setup"
@@ -46,6 +51,9 @@ type Run struct {
 	ThreadID        string
 	RunKind         string
 	RequestID       string
+	TriggerSource   string
+	JobID           string
+	JobExecutionID  string
 	SandboxID       string
 	Branch          string
 	UserRequest     string
@@ -92,14 +100,17 @@ func (s *Store) Create(ctx context.Context, r Run, leaseOwner string, leaseDurat
 		return Run{}, false, nil
 	}
 	row, err := s.db.Queries.CreateAgentRun(ctx, sqlc.CreateAgentRunParams{
-		ID:            r.ID,
-		OrgID:         r.OrgID,
-		ThreadID:      r.ThreadID,
-		RunKind:       r.RunKind,
-		RequestID:     r.RequestID,
-		UserRequest:   r.UserRequest,
-		LeaseOwner:    leaseOwner,
-		LeaseDuration: interval(leaseDuration),
+		ID:             r.ID,
+		OrgID:          r.OrgID,
+		ThreadID:       r.ThreadID,
+		RunKind:        r.RunKind,
+		RequestID:      r.RequestID,
+		TriggerSource:  triggerSourceOrDefault(r.TriggerSource),
+		JobID:          optionalString(r.JobID),
+		JobExecutionID: optionalString(r.JobExecutionID),
+		UserRequest:    r.UserRequest,
+		LeaseOwner:     leaseOwner,
+		LeaseDuration:  interval(leaseDuration),
 	})
 	if err == nil {
 		return fromRunRow(sqlc.AgentRun(row)), true, nil
@@ -516,13 +527,28 @@ func interval(d time.Duration) pgtype.Interval {
 	return pgtype.Interval{Microseconds: d.Microseconds(), Valid: true}
 }
 
+func triggerSourceOrDefault(source string) string {
+	if source == "" {
+		return TriggerUser
+	}
+	return source
+}
+
+func optionalString(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
 func fromRunRow(row sqlc.AgentRun) Run {
-	return Run{
+	run := Run{
 		ID:              row.ID,
 		OrgID:           row.OrgID,
 		ThreadID:        row.ThreadID,
 		RunKind:         row.RunKind,
 		RequestID:       row.RequestID,
+		TriggerSource:   row.TriggerSource,
 		SandboxID:       row.SandboxID,
 		Branch:          row.Branch,
 		UserRequest:     row.UserRequest,
@@ -542,4 +568,14 @@ func fromRunRow(row sqlc.AgentRun) Run {
 		CreatedAt:       row.CreatedAt.Time,
 		UpdatedAt:       row.UpdatedAt.Time,
 	}
+	if row.JobID != nil {
+		run.JobID = *row.JobID
+	}
+	if row.JobExecutionID != nil {
+		run.JobExecutionID = *row.JobExecutionID
+	}
+	if run.TriggerSource == "" {
+		run.TriggerSource = TriggerUser
+	}
+	return run
 }

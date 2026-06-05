@@ -1,5 +1,5 @@
   var agentSkillPreviewCount = 10;
-  var agentSkillsModalClose = null;
+  var agentAssetsModalClose = null;
   var agentDocumentModalClose = null;
 
   function agentSkillGroups(agent) {
@@ -23,9 +23,15 @@
     return { direct, inherited, total: direct.length + inherited.length };
   }
 
+  function agentJobs(agent) {
+    if (!agent || !Array.isArray(agent.jobs)) return [];
+    return agent.jobs.filter(job => job && compact(job.name, ''));
+  }
+
   function renderAgentHeaderSubtitle(id) {
     const el = byID('selection-subtitle');
     if (!el) return;
+    el.classList.remove('has-agent-assets');
     if (!id) {
       el.textContent = 'Recent work, active first.';
       return;
@@ -35,37 +41,48 @@
       return;
     }
     const agent = agentForSlug(id);
-    const parts = [esc(groupDescription(id))];
+    const parts = ['<span class="selection-subtitle-text">' + esc(groupDescription(id)) + '</span>'];
     const teamLabel = agentTeamLabel(agent);
-    if (teamLabel) parts.push(esc(teamLabel));
+    if (teamLabel) parts.push('<span class="selection-subtitle-chip">' + esc(teamLabel) + '</span>');
     const groups = agentSkillGroups(agent);
     if (groups.total) {
       const label = groups.total + ' ' + (groups.total === 1 ? 'skill' : 'skills');
       parts.push('<button type="button" class="selection-subtitle-link" data-open-agent-skills="' + esc(id) + '">' + esc(label) + '</button>');
     }
+    const jobs = agentJobs(agent);
+    if (jobs.length) {
+      const label = jobs.length + ' ' + (jobs.length === 1 ? 'job' : 'jobs');
+      parts.push('<button type="button" class="selection-subtitle-link" data-open-agent-jobs="' + esc(id) + '">' + esc(label) + '</button>');
+    }
+    el.classList.add('has-agent-assets');
     el.innerHTML = parts.filter(Boolean).join('<span class="selection-subtitle-separator">·</span>');
     el.querySelector('[data-open-agent-skills]')?.addEventListener('click', e => {
       e.preventDefault();
-      openAgentSkillsModal(e.currentTarget.dataset.openAgentSkills);
+      openAgentAssetsModal(e.currentTarget.dataset.openAgentSkills);
+    });
+    el.querySelector('[data-open-agent-jobs]')?.addEventListener('click', e => {
+      e.preventDefault();
+      openAgentAssetsModal(e.currentTarget.dataset.openAgentJobs);
     });
   }
 
-  function openAgentSkillsModal(slug) {
+  function openAgentAssetsModal(slug) {
     const agent = agentForSlug(slug);
     if (!agent) return;
-    if (agentSkillsModalClose) agentSkillsModalClose();
+    if (agentAssetsModalClose) agentAssetsModalClose();
     const groups = agentSkillGroups(agent);
     const overlay = document.createElement('div');
-    overlay.id = 'agent-skills-modal-overlay';
+    overlay.id = 'agent-assets-modal-overlay';
     overlay.className = 'skills-modal-overlay agent-assets-overlay';
     overlay.innerHTML =
-      '<div class="skills-modal agent-assets-modal" role="dialog" aria-modal="true" aria-labelledby="agent-skills-modal-title" tabindex="-1">'
+      '<div class="skills-modal agent-assets-modal" role="dialog" aria-modal="true" aria-labelledby="agent-assets-modal-title" tabindex="-1">'
       + '<div class="skills-modal-head">'
-      + '<h2 class="skills-modal-title" id="agent-skills-modal-title">' + esc(agent.display_name || agent.slug || 'Agent files') + '</h2>'
+      + '<h2 class="skills-modal-title" id="agent-assets-modal-title">' + esc(agent.display_name || agent.slug || 'Agent files') + '</h2>'
       + '<button type="button" class="skills-modal-close" aria-label="Close">&times;</button>'
       + '</div>'
       + '<div class="agent-assets-body">'
       + agentFilesSectionHTML(agent)
+      + agentJobSectionHTML(agent, agentJobs(agent))
       + agentSkillSectionHTML('Installed skills', groups.direct, 'No directly installed skills.', false)
       + agentSkillSectionHTML('Inherited skills from orgs and teams', groups.inherited, '', true)
       + '</div>'
@@ -76,10 +93,10 @@
       '.skills-modal',
       () => overlay.remove(),
       () => {
-        if (agentSkillsModalClose === close) agentSkillsModalClose = null;
+        if (agentAssetsModalClose === close) agentAssetsModalClose = null;
       },
     );
-    agentSkillsModalClose = close;
+    agentAssetsModalClose = close;
     overlay.querySelector('.skills-modal-close')?.addEventListener('click', close);
     overlay.addEventListener('click', e => {
       if (e.target === overlay) close();
@@ -115,6 +132,97 @@
       + '</button></li>'
       + '</ul>'
       + '</section>';
+  }
+
+  function agentJobSectionHTML(agent, jobs) {
+    let body = '<p class="agent-assets-hint">No scheduled jobs.</p>';
+    if (jobs.length) {
+      body = '<ul class="agent-job-summary-list">'
+        + jobs.map(job => '<li class="agent-job-summary-item">'
+          + '<div class="agent-job-summary-head">'
+          + '<strong>' + esc(job.name || 'Untitled job') + '</strong>'
+          + '<span class="agent-job-summary-pill' + (job.enabled ? ' is-enabled' : ' is-disabled') + '">' + esc(job.enabled ? 'Enabled' : 'Disabled') + '</span>'
+          + '</div>'
+          + agentJobSubmetaHTML(agent, job)
+          + agentJobDefinitionHTML(job)
+          + '<dl class="agent-job-summary-meta">'
+          + agentJobMetaHTML('Schedule', agentJobScheduleText(job), agentJobTimezoneText(job))
+          + agentJobMetaHTML('Next run', job.enabled ? compact(job.next_run_label, fullDate(job.next_run_at)) || 'Not scheduled' : 'Disabled')
+          + '</dl>'
+          + agentJobAdditionalReposHTML(job)
+          + agentJobLastStatusHTML(job)
+          + '</li>').join('')
+        + '</ul>';
+    }
+    return '<section class="agent-assets-section">'
+      + '<div class="agent-assets-label">Scheduled jobs</div>'
+      + body
+      + '</section>';
+  }
+
+  function agentJobSubmetaHTML(agent, job) {
+    const label = compact(agent && agent.display_name, compact(agent && agent.slug, 'Agent'));
+    const repo = compact(job && job.primary_repository, '');
+    return '<dl class="agent-job-summary-submeta">'
+      + '<div><dt>Agent</dt><dd>' + esc(label) + '</dd></div>'
+      + (repo ? '<div><dt>Repo</dt><dd>' + esc(repo) + '</dd></div>' : '')
+      + '</dl>';
+  }
+
+  function agentJobDefinitionHTML(job) {
+    const definition = compact(job && job.definition, '');
+    return definition ? '<p class="agent-job-summary-definition">' + esc(definition) + '</p>' : '';
+  }
+
+  function agentJobMetaHTML(label, value, detail) {
+    value = compact(value, '-');
+    detail = compact(detail, '');
+    return '<div><dt>' + esc(label) + '</dt><dd><span>' + esc(value) + '</span>'
+      + (detail ? '<small>' + esc(detail) + '</small>' : '')
+      + '</dd></div>';
+  }
+
+  function agentJobScheduleText(job) {
+    return compact(job && job.schedule_label, compact(job && job.cron_schedule, '')) || 'No schedule';
+  }
+
+  function agentJobTimezoneText(job) {
+    return compact(job && job.timezone_label, compact(job && job.timezone, ''));
+  }
+
+  function agentJobLastStatusText(job) {
+    const status = compact(job && job.last_execution_status, '');
+    const error = compact(job && job.last_error, '');
+    if (status) return humanizeSlug(status);
+    if (error) return 'Error';
+    return 'No runs yet';
+  }
+
+  function agentJobLastStatusDetail(job) {
+    const status = compact(job && job.last_execution_status, '');
+    const lastRun = compact(job && job.last_run_label, fullDate(job && job.last_run_at));
+    const error = compact(job && job.last_error, '');
+    if (error) return error;
+    if (status && lastRun) return lastRun;
+    return '';
+  }
+
+  function agentJobLastStatusHTML(job) {
+    const detail = agentJobLastStatusDetail(job);
+    return '<div class="agent-job-summary-status">'
+      + '<span>Last status</span>'
+      + '<strong>' + esc(agentJobLastStatusText(job)) + '</strong>'
+      + (detail ? '<small>' + esc(detail) + '</small>' : '')
+      + '</div>';
+  }
+
+  function agentJobAdditionalReposHTML(job) {
+    const repos = Array.isArray(job && job.additional_repositories)
+      ? job.additional_repositories.map(repo => compact(repo, '')).filter(Boolean)
+      : [];
+    return repos.length
+      ? '<p class="agent-job-summary-extra">Additional repositories: ' + esc(repos.join(', ')) + '</p>'
+      : '';
   }
 
   function agentSkillSectionHTML(title, skills, emptyText, collapsible) {

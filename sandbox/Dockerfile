@@ -162,6 +162,16 @@ RUN for pkg in poetry uv ruff black mypy pytest conan; do \
 # Node global tooling + AI CLIs + Playwright + browsers. Symlink active node
 # bin into /usr/local/bin so the daytona user (login shell with reset PATH)
 # can find every tool.
+#
+# We ship @playwright/cli (the `playwright-cli` binary) as the primary way
+# agents drive a browser inside the sandbox. It is far more token-efficient
+# than the Playwright MCP server it replaces because each invocation
+# returns a compact textual snapshot with element refs instead of forcing
+# a full accessibility tree through the model context on every step.
+# The bundled `playwright` package is kept so the chromium binary install
+# under PLAYWRIGHT_BROWSERS_PATH continues to work and so the existing
+# /tmp/hetchy-validate node_modules fallback for ad-hoc Playwright scripts
+# still resolves.
 # ---------------------------------------------------------------------------
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
     HETCHY_PLAYWRIGHT_VALIDATE_DIR=/tmp/hetchy-validate \
@@ -174,6 +184,7 @@ RUN npm install -g \
         @openai/codex \
         @google/gemini-cli \
         playwright \
+        @playwright/cli \
  && test -d "$NODE_PATH" \
  && npx --yes playwright install chromium \
  && CHROMIUM_BIN="$(find "$PLAYWRIGHT_BROWSERS_PATH" \( -path '*/chrome-linux/chrome' -o -path '*/chrome-linux64/chrome' \) -type f | sort | tail -1)" \
@@ -186,8 +197,20 @@ RUN npm install -g \
  && NODE_BIN=$(dirname "$(readlink -f "$(command -v node)")") \
  && for f in "$NODE_BIN"/*; do ln -sf "$f" "/usr/local/bin/$(basename "$f")"; done
 
-# Note: the Playwright MCP server we ship in the agent expects a
-# Chrome-channel executable at /opt/google/chrome/chrome. Installing
+# Ship the bundled playwright-cli Skill to the daytona user's global
+# Claude skills directory so every agent run inherits it without needing
+# `playwright-cli install --skills` at runtime. The skill source lives
+# inside the @playwright/cli npm package; we copy from there directly
+# instead of invoking the installer so the build is hermetic.
+RUN PW_CLI_SKILL_SRC="${NODE_PATH}/@playwright/cli/skills/playwright-cli" \
+ && test -f "${PW_CLI_SKILL_SRC}/SKILL.md" \
+ && install -d -o daytona -g daytona /home/daytona/.claude/skills \
+ && cp -r "${PW_CLI_SKILL_SRC}" /home/daytona/.claude/skills/playwright-cli \
+ && chown -R daytona:daytona /home/daytona/.claude
+
+# Note: playwright-cli still uses Playwright Chromium under the hood, and
+# its `--browser=chrome` mode (the default when a chrome channel is
+# found at startup) probes /opt/google/chrome/chrome. Installing
 # Google's chrome .deb through Playwright runs apt inside the npm layer
 # and is brittle on constrained builders, so we install Playwright
 # Chromium under /opt/ms-playwright and expose the expected Chrome path

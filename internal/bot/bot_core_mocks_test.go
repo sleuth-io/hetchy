@@ -3,12 +3,15 @@ package bot
 import (
 	"context"
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
 
+	apiclient "github.com/daytonaio/daytona/libs/api-client-go"
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
 	sdkerrors "github.com/daytonaio/daytona/libs/sdk-go/pkg/errors"
+	"github.com/daytonaio/daytona/libs/sdk-go/pkg/types"
 
 	"github.com/hetchyhq/hetchy/internal/agents"
 	"github.com/hetchyhq/hetchy/internal/blocks"
@@ -395,6 +398,7 @@ func TestHandleRequestRetryAfterFailurePreservesOriginalHistory(t *testing.T) {
 			ThreadID:    "thread-1",
 			GitHubOwner: "hetchyhq",
 			GitHubRepo:  "hetchy",
+			Branch:      "feature/stale-local-only",
 			History:     []string{"old failed request", "previous retry"},
 			ResponseBlocks: [][]blocks.Block{
 				{{Kind: blocks.KindError, Title: "Agent failed", Body: "previous failure"}},
@@ -429,6 +433,9 @@ func TestHandleRequestRetryAfterFailurePreservesOriginalHistory(t *testing.T) {
 		t.Fatalf("expected repo access error, got calls=%v", emit.Calls)
 	}
 	rec := convs.lastUpsert(t)
+	if got := rec.Branch; got != "" {
+		t.Fatalf("retry after failure should clear stale branch before fresh retry, got %q", got)
+	}
 	if got := rec.History; len(got) != 3 || got[0] != "old failed request" || got[1] != "previous retry" || got[2] != "retry with better prompt" {
 		t.Fatalf("retry path should preserve original request and append retry, got %#v", got)
 	}
@@ -665,6 +672,98 @@ func TestHandleRequestFollowUpResumeConflictCreatesReplacementSandbox(t *testing
 
 	if createCalls != 1 {
 		t.Fatalf("replacement sandbox create calls = %d, want 1", createCalls)
+	}
+	if !emit.hasCall("notify", "Sandbox replaced") {
+		t.Fatalf("expected replacement notice, got calls=%v", emit.Calls)
+	}
+	if !emit.hasCall("result", "Done!") {
+		t.Fatalf("expected follow-up success result, got calls=%v", emit.Calls)
+	}
+	rec := convs.lastUpsert(t)
+	if rec.SandboxID != "sandbox-new" || rec.Branch != "feature/sf-old" {
+		t.Fatalf("final record should use replacement sandbox and preserve branch: %+v", rec)
+	}
+}
+
+func TestHandleRequestFollowUpErroredResumeCreatesReplacementSandboxWithCache(t *testing.T) {
+	convs := &fakeConversationStore{
+		rec: convstore.Record{
+			OrgID:       "org_test",
+			ThreadID:    "thread-1",
+			SandboxID:   "sandbox-old",
+			Branch:      "feature/sf-old",
+			PRURL:       "https://github.com/hetchyhq/hetchy/pull/1",
+			GitHubOwner: "hetchyhq",
+			GitHubRepo:  "hetchy",
+			History:     []string{"first request"},
+		},
+	}
+	b := testCoreBot(convs)
+	b.cfg = Config{Env: "prod", DaytonaCacheVolumePrefix: "cache"}
+	b.cacheVols = &fakeCacheVolumeService{
+		get:  []fakeCacheVolumeResult{{vol: &types.Volume{ID: "vol-1", Name: "cache", State: "ready"}}},
+		wait: []fakeCacheVolumeResult{{vol: &types.Volume{ID: "vol-1", Name: "cache", State: "ready"}}},
+	}
+	b.resolveRepoFn = func(context.Context, string, string, string) (repoCtx, error) {
+		return repoCtx{
+			Slug:        "hetchyhq/hetchy",
+			BaseBranch:  "main",
+			GitHubToken: "token",
+			InstallID:   10,
+			RepoID:      20,
+		}, nil
+	}
+	b.getSandboxFn = func(_ context.Context, id string) (*daytona.Sandbox, error) {
+		if id != "sandbox-old" {
+			t.Fatalf("getSandbox id = %q, want sandbox-old", id)
+		}
+		return &daytona.Sandbox{ID: id}, nil
+	}
+	b.resumeSandboxFn = func(_ context.Context, sb *daytona.Sandbox, _ blocks.Emitter) error {
+		reason := "failed to mount S3 volume daytona-volume-52f5105b-ee10-4e23-baa2-ac344d3838a3: exit status 1"
+		sb.State = apiclient.SANDBOXSTATE_ERROR
+		sb.ErrorReason = &reason
+		return sdkerrors.NewDaytonaError("Validation error: Sandbox is in an errored state", http.StatusBadRequest, nil)
+	}
+	createCalls := 0
+	b.createFn = func(_ context.Context, raw any) (*daytona.Sandbox, error) {
+		createCalls++
+		params, ok := raw.(types.SnapshotParams)
+		if !ok {
+			t.Fatalf("create params type = %T, want SnapshotParams", raw)
+		}
+		if len(params.Volumes) != 1 {
+			t.Fatalf("replacement volumes = %+v, want cache mount", params.Volumes)
+		}
+		if params.Volumes[0].VolumeID != "vol-1" || params.Volumes[0].MountPath != daytonaCacheMountPath {
+			t.Fatalf("replacement cache mount = %+v", params.Volumes[0])
+		}
+		if params.EnvVars["HETCHY_CACHE_STATUS"] != "mounted" {
+			t.Fatalf("HETCHY_CACHE_STATUS = %q, want mounted", params.EnvVars["HETCHY_CACHE_STATUS"])
+		}
+		return &daytona.Sandbox{ID: "sandbox-new"}, nil
+	}
+	b.runFollowUpFn = func(_ context.Context, sb *daytona.Sandbox, _ repoCtx, _ orgcfg.Config, rec convstore.Record, _ agents.Profile, text, _ string, _ chatTaskOptions, _ ClaudeModel, _ followUpMode, emit blocks.Emitter) (string, error) {
+		if sb.ID != "sandbox-new" || rec.SandboxID != "sandbox-new" || rec.Branch != "feature/sf-old" || text != "follow up" {
+			t.Fatalf("unexpected replacement follow-up args: sandbox=%s rec=%+v text=%q", sb.ID, rec, text)
+		}
+		emit.Notify("Follow-up started", "replacement reached")
+		return "https://github.com/hetchyhq/hetchy/pull/1", nil
+	}
+	b.deleteSandboxSessionFn = func(*daytona.Sandbox, string) {}
+	b.stopAndArchiveFn = func(context.Context, *daytona.Sandbox) {}
+	emit := newCaptureEmitter()
+
+	b.HandleRequest(context.Background(),
+		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant"},
+		"follow up", "req-2", "thread-1", "user-1",
+		chatTaskOptionPatch{}, nil, nil, ClaudeModelOpus, emit)
+
+	if createCalls != 1 {
+		t.Fatalf("replacement sandbox create calls = %d, want 1", createCalls)
+	}
+	if calls := b.cacheVols.(*fakeCacheVolumeService).calls; len(calls) != 2 || calls[0] != "get" || calls[1] != "wait" {
+		t.Fatalf("cache volume calls = %v, want get/wait", calls)
 	}
 	if !emit.hasCall("notify", "Sandbox replaced") {
 		t.Fatalf("expected replacement notice, got calls=%v", emit.Calls)

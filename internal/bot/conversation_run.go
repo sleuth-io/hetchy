@@ -34,6 +34,9 @@ func (b *Bot) runFreshAgentWithTranscriptMode(ctx context.Context, oc orgcfg.Con
 
 func (b *Bot) runFreshAgentWithTranscriptModeAndKind(ctx context.Context, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, userRequest, requestID string, opts chatTaskOptions, model ClaudeModel, recorder *blocks.Recorder, emit blocks.Emitter, runKind string, mode appendMode, attachmentTurn int) {
 	model = normalizeClaudeModel(model)
+	if jobRunAllowsNoPR(ctx) && runKind == "fresh" {
+		runKind = "job"
+	}
 	rec.Model = string(model)
 	b.markRunKind(ctx, runKind)
 	repo, err := b.resolveRepoForRun(ctx, oc.OrgID, rec.GitHubOwner, rec.GitHubRepo)
@@ -96,6 +99,7 @@ func (b *Bot) runFreshAgentWithTranscriptModeAndKind(ctx context.Context, oc org
 		cacheVolumeID = mount.VolumeID
 	}
 	addDaytonaCacheEnv(envVars, b.cfg, oc, repo, repo.CacheMounted)
+	addJobRunEnv(ctx, envVars)
 	labels := daytonaSandboxLabels(b.cfg, oc, cacheVolumeID)
 	addBillingFlavorLabels(labels, flavor)
 	autoArchiveMinutes := b.daytonaAutoArchiveMinutes()
@@ -167,7 +171,7 @@ func (b *Bot) runFreshAgentWithTranscriptModeAndKind(ctx context.Context, oc org
 	}
 
 	if prURL == "" {
-		if !freshRequestAllowsNoPR(userRequest) {
+		if !freshRequestAllowsNoPR(userRequest) && !jobRunAllowsNoPR(ctx) {
 			err := errFreshChangeNoPR
 			emit.Error("Pull request missing", "The agent finished without reporting a pull request URL for a change-like request. Reply here to retry from the preserved branch.")
 			rec.SandboxID = sb.ID
@@ -201,7 +205,11 @@ func (b *Bot) runFreshAgentWithTranscriptModeAndKind(ctx context.Context, oc org
 			b.markRunState(ctx, runstore.StateFailed, err)
 			return
 		}
-		b.markCompletedRunOutcome(ctx, recorder.Snapshot(), runstore.OutcomeCompletedNoPR, map[string]any{"reason": "classified_answer_or_inspect"})
+		reason := "classified_answer_or_inspect"
+		if jobRunAllowsNoPR(ctx) {
+			reason = "job_no_action_needed"
+		}
+		b.markCompletedRunOutcome(ctx, recorder.Snapshot(), runstore.OutcomeCompletedNoPR, map[string]any{"reason": reason})
 		b.markRunState(ctx, runstore.StateSucceeded, nil)
 		b.deleteSandboxSession(sb, b.currentAgentRunSessionID(ctx, "agent-"+requestID))
 		b.stopAndArchiveSandbox(ctx, sb)
@@ -430,7 +438,7 @@ func (b *Bot) prepareFollowUpSandbox(ctx context.Context, oc orgcfg.Config, rec 
 		b.markRunOutcome(ctx, outcome, map[string]any{"phase": "sandbox_resume", "sandbox_id": sb.ID, "pr_url": rec.PRURL})
 		b.markRunState(ctx, runstore.StateCancelled, err)
 		return nil, rec, repo, false
-	} else if replacement, updatedRepo, replaced, replaceErr := b.tryReplaceConflictedFollowUpSandbox(ctx, oc, sb, repo, flavor, rec, requestID, err, emit); replaceErr != nil {
+	} else if replacement, updatedRepo, replaced, replaceErr := b.tryReplaceFailedFollowUpSandbox(ctx, oc, sb, repo, flavor, rec, requestID, err, emit); replaceErr != nil {
 		b.handleFollowUpReplacementSandboxError(ctx, sb, rec, text, requestID, recorder, err, replaceErr, emit)
 		return nil, rec, repo, false
 	} else if replaced {
@@ -442,23 +450,23 @@ func (b *Bot) prepareFollowUpSandbox(ctx context.Context, oc orgcfg.Config, rec 
 	}
 }
 
-func (b *Bot) tryReplaceConflictedFollowUpSandbox(ctx context.Context, oc orgcfg.Config, sb *daytona.Sandbox, repo repoCtx, flavor billing.Flavor, rec convstore.Record, requestID string, resumeErr error, emit blocks.Emitter) (*daytona.Sandbox, repoCtx, bool, error) {
-	if !isDaytonaStateChangeConflict(resumeErr) {
+func (b *Bot) tryReplaceFailedFollowUpSandbox(ctx context.Context, oc orgcfg.Config, sb *daytona.Sandbox, repo repoCtx, flavor billing.Flavor, rec convstore.Record, requestID string, resumeErr error, emit blocks.Emitter) (*daytona.Sandbox, repoCtx, bool, error) {
+	if !isFollowUpSandboxReplacementError(sb, resumeErr) {
 		return nil, repo, false, nil
 	}
 	replacement, updatedRepo, err := b.createFollowUpReplacementSandbox(ctx, oc, repo, flavor)
 	if err != nil {
-		b.log.Error("sandbox replacement after resume conflict failed", "sandbox", sb.ID, "request_id", requestID, "error", err)
+		b.log.Error("sandbox replacement after failed resume failed", "sandbox", sb.ID, "request_id", requestID, "error", err)
 		return nil, repo, true, err
 	}
-	b.log.Warn("sandbox resume conflicted; continuing in replacement sandbox",
+	b.log.Warn("sandbox resume failed; continuing in replacement sandbox",
 		"old_sandbox", sb.ID,
 		"new_sandbox", replacement.ID,
 		"request_id", requestID,
 		"branch", rec.Branch,
 		"error", resumeErr,
 	)
-	emit.Notify("Sandbox replaced", fmt.Sprintf("Daytona is still changing state for `%s`, so Hetchy created `%s` and will continue from `%s`.", sb.ID, replacement.ID, rec.Branch))
+	emit.Notify("Sandbox replaced", fmt.Sprintf("Daytona could not restart `%s`, so Hetchy created `%s` and will continue from `%s`.", sb.ID, replacement.ID, rec.Branch))
 	b.markRunSandbox(ctx, replacement.ID)
 	setLiveRunSandboxID(ctx, replacement.ID, false)
 	rec.SandboxID = replacement.ID
@@ -487,13 +495,13 @@ func (b *Bot) handleFollowUpSandboxResumeError(ctx context.Context, sb *daytona.
 }
 
 func (b *Bot) handleFollowUpReplacementSandboxError(ctx context.Context, sb *daytona.Sandbox, rec convstore.Record, text, requestID string, recorder *blocks.Recorder, resumeErr, replaceErr error, emit blocks.Emitter) {
-	b.log.Error("sandbox replacement failed after resume conflict",
+	b.log.Error("sandbox replacement failed after failed resume",
 		"sandbox", sb.ID,
 		"request_id", requestID,
 		"resume_error", resumeErr,
 		"replacement_error", replaceErr)
 	emit.Error("Sandbox replacement failed",
-		fmt.Sprintf("Daytona is still changing state for `%s`, and Hetchy could not create a replacement sandbox. Try again in a minute, or open a fresh chat if it persists.", sb.ID))
+		fmt.Sprintf("Daytona could not restart `%s`, and Hetchy could not create a replacement sandbox. Try again in a minute, or open a fresh chat if it persists.", sb.ID))
 	appendBlocksAsNewTurn(&rec, text, recorder.Snapshot())
 	if err := b.convs.Upsert(ctx, rec); err != nil {
 		b.log.Error("convstore upsert (follow-up sandbox replacement)", "error", err)

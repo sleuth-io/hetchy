@@ -145,10 +145,10 @@ else
   echo "[hetchy] remote branch ${SF_BRANCH} does not exist yet; continuing with local branch"
 fi
 
-# Same pre-create as agent.sh — the Playwright MCP server requires
-# this directory to exist before the first screenshot, and follow-ups
+# Same pre-create as agent.sh — playwright-cli needs its output and
+# user-data dirs to exist before the first command, and follow-ups
 # typically include another round of UI validation.
-ensure_playwright_mcp_dir
+ensure_playwright_cli_dir
 
 # And the spec-improvements drop-zone so post-success reflection can
 # patch the saved spec without an extra mkdir round-trip.

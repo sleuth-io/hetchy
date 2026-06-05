@@ -158,13 +158,12 @@ echo "[hetchy] initializing claude config"
 mkdir -p "$HOME/.claude"
 printf '{"hasCompletedOnboarding":true}\n' > "$HOME/.claude.json"
 
-# The Playwright MCP server enforces an "allowed roots" check on every
-# file write (screenshots, traces). Its allow-list is the working dir
-# plus $WORKDIR/.playwright-mcp, which it does NOT auto-create — the
-# first browser_take_screenshot fails with a confusing "File access
-# denied" before the agent recovers by mkdir-ing the path itself. Pre-
-# creating it removes that detour.
-ensure_playwright_mcp_dir
+# playwright-cli writes snapshots, screenshots, and traces under its
+# output dir (defaults to $WORKDIR/.playwright-cli) and uses a separate
+# user-data dir for the persistent browser profile. Neither is created
+# on demand; the first command would otherwise fail with an opaque path
+# error. Pre-creating both removes that detour.
+ensure_playwright_cli_dir
 
 # Post-success reflection drop-zone: claude writes /tmp/hetchy-spec/
 # improved/{setup,start,health}.sh here when it identifies bootstrap-

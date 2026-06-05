@@ -15,7 +15,7 @@
   var noAgentID = '__no_agent__';
   var unknownUserID = '__unknown_user__';
   var routeEmptyGroupSegment = '-';
-  var validStatusFilters = new Set(['all', 'running', 'needs_input', 'failed', 'cancelled', 'ready_pr']);
+  var validStatusFilters = new Set(['all', 'running', 'needs_input', 'failed', 'cancelled', 'scheduled_job', 'ready_pr']);
 
   var modelOptions = [
     { value: 'opus', label: 'Opus', description: 'Most capable', provider: 'anthropic' },
@@ -200,6 +200,7 @@
     case 'needs_input': return 'Needs input';
     case 'failed': return 'Failed';
     case 'cancelled': return 'Canceled';
+    case 'scheduled_job': return 'Scheduled jobs';
     case 'done': return 'Done';
     default: return humanizeSlug(status || 'done');
     }

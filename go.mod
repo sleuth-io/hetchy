@@ -8,6 +8,7 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.41.7
 	github.com/aws/aws-sdk-go-v2/config v1.32.17
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.97.3
+	github.com/daytonaio/daytona/libs/api-client-go v0.182.0
 	github.com/daytonaio/daytona/libs/sdk-go v0.182.0
 	github.com/daytonaio/daytona/libs/toolbox-api-client-go v0.182.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
@@ -15,6 +16,7 @@ require (
 	github.com/google/go-github/v66 v66.0.0
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/joho/godotenv v1.5.1
+	github.com/robfig/cron/v3 v3.0.1
 	github.com/slack-go/slack v0.23.0
 	github.com/sleuth-io/sx v1.3.5
 	github.com/stripe/stripe-go/v85 v85.1.0
@@ -93,7 +95,6 @@ require (
 	github.com/daixiang0/gci v0.13.7 // indirect
 	github.com/dave/dst v0.27.3 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
-	github.com/daytonaio/daytona/libs/api-client-go v0.182.0 // indirect
 	github.com/denis-tingaikin/go-header v0.5.0 // indirect
 	github.com/dlclark/regexp2 v1.11.5 // indirect
 	github.com/ettle/strcase v0.2.0 // indirect

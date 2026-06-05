@@ -39,7 +39,11 @@ func (m *Manager) SyncAgents(ctx context.Context, orgID string, actor Actor) ([]
 			return err
 		}
 		remoteProfiles = profilesFromRemoteAgents(handle.Backend, bots, agentAssets)
+		remoteSlugs := make(map[string]struct{}, len(remoteProfiles))
 		for _, profile := range remoteProfiles {
+			if slug := agents.NormalizeSlug(profile.Slug); slug != "" {
+				remoteSlugs[slug] = struct{}{}
+			}
 			importProfile, err := m.shouldImportRemoteAgent(ctx, orgID, profile)
 			if err != nil {
 				return err
@@ -58,6 +62,9 @@ func (m *Manager) SyncAgents(ctx context.Context, orgID string, actor Actor) ([]
 			if err != nil {
 				return err
 			}
+		}
+		if err := m.pruneMissingRemoteAgents(ctx, orgID, handle.Backend, remoteSlugs); err != nil {
+			return err
 		}
 		return nil
 	})
@@ -121,6 +128,44 @@ func shouldImportRemoteAgentRow(existingEnabled bool, profile agents.Profile) bo
 	default:
 		return false
 	}
+}
+
+func (m *Manager) pruneMissingRemoteAgents(ctx context.Context, orgID, activeBackend string, remoteSlugs map[string]struct{}) error {
+	if m == nil || m.agents == nil {
+		return nil
+	}
+	profiles, err := m.agents.List(ctx, orgID)
+	if err != nil {
+		return fmt.Errorf("list local agents for prune: %w", err)
+	}
+	for _, profile := range profiles {
+		if !shouldPruneMissingRemoteAgent(activeBackend, remoteSlugs, profile) {
+			continue
+		}
+		if err := m.agents.Delete(ctx, orgID, profile.Slug); err != nil && !errors.Is(err, agents.ErrNotFound) {
+			return fmt.Errorf("prune missing remote agent %q: %w", profile.Slug, err)
+		}
+	}
+	return nil
+}
+
+func shouldPruneMissingRemoteAgent(activeBackend string, remoteSlugs map[string]struct{}, profile agents.Profile) bool {
+	if !profile.Enabled || profile.BuiltIn {
+		return false
+	}
+	slug := agents.NormalizeSlug(profile.Slug)
+	if slug == "" {
+		return false
+	}
+	if _, ok := remoteSlugs[slug]; ok {
+		return false
+	}
+	activeBackend = strings.TrimSpace(activeBackend)
+	if activeBackend == "" {
+		return false
+	}
+	backend := strings.TrimSpace(profile.VaultBackend)
+	return backend == "" || backend == activeBackend
 }
 
 func (m *Manager) SaveAgent(ctx context.Context, orgID string, actor Actor, p agents.Profile, templateSlug string) (agents.Profile, error) {
@@ -209,11 +254,19 @@ func deleteAgentFromVault(ctx context.Context, client *sxlib.Client, p agents.Pr
 	}
 	botName := firstNonEmpty(p.SXBot, p.Slug)
 	if botName != "" {
-		if err := client.DeleteBot(ctx, botName); err != nil {
+		if err := client.DeleteBot(ctx, botName); err != nil && !looksLikeMissingSXBot(err) {
 			return fmt.Errorf("delete sx bot %q: %w", botName, err)
 		}
 	}
 	return nil
+}
+
+func looksLikeMissingSXBot(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(strings.TrimSpace(err.Error()))
+	return strings.Contains(msg, "bot") && strings.Contains(msg, "not found")
 }
 
 func agentAssetNameForDelete(ctx context.Context, client *sxlib.Client, p agents.Profile) (string, error) {

@@ -26,12 +26,15 @@ func TestBuildValidationPromptCoversThreeFlows(t *testing.T) {
 	// because the agent picks one based on the diff. Drift on any of
 	// these silently changes which evidence type the agent produces.
 	mustContain := []string{
-		"Playwright MCP",
+		"Playwright CLI",
+		"playwright-cli",
+		"playwright-cli open",
+		"playwright-cli screenshot --filename",
 		"Static UI change",
 		"does not prove rendered UI appearance",
 		"PLAYWRIGHT_MCP_USER_DATA_DIR",
 		"PLAYWRIGHT_MCP_OUTPUT_DIR",
-		"Playwright is already installed",
+		"playwright-cli skill is installed",
 		"/tmp/hetchy-validate",
 		"PLAYWRIGHT_BROWSERS_PATH",
 		"'playwright install' just to capture proof",
@@ -40,7 +43,7 @@ func TestBuildValidationPromptCoversThreeFlows(t *testing.T) {
 		"validation-tooling friction",
 		"whole screen as MP4",
 		"H.264",
-		"hetchy-record-screen 20 /tmp/hetchy-validate/recording-001.mp4 -- node",
+		"hetchy-record-screen 20 /tmp/hetchy-validate/recording-001.mp4 -- bash",
 		"headless: false",
 		"Playwright recordVideo +",
 		"Backend architecture change",
@@ -72,7 +75,7 @@ func TestBuildValidationPromptCoversThreeFlows(t *testing.T) {
 		"/tmp/hetchy-spec/improved/",
 		"/tmp/hetchy-spec/improved/stop.sh",
 		"/tmp/hetchy-spec/improved/lessons.md",
-		"Do NOT write none.txt if Playwright MCP",
+		"Do NOT write none.txt if Playwright CLI",
 		"none.txt",
 		// Health-check sentinel + start.log triage path. If these
 		// strings drift the validation prompt would silently stop

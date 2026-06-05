@@ -282,6 +282,15 @@ In GitHub, configure these repository secrets for the sandbox workflow:
 In Railway production, enable GitHub "Wait for CI" so the workflow completes
 before Railway deploys the matching app revision.
 
+For scheduled jobs on Railway, configure the separate `Hetchy Cron` service
+with the custom config file path `/railway.jobs.json`, auto-deploy enabled,
+and GitHub "Wait for CI" enabled. The `Hetchy App` service owns the production
+pre-deploy migration step, so `hetchy --dispatch-due-jobs` checks the database
+schema version against the binary's embedded migrations before claiming jobs.
+If the cron service deploys before app migrations finish, that scheduled tick
+exits successfully without running jobs; the next cron tick will retry due
+jobs against the updated schema.
+
 ### 5. Start the Database
 
 Hetchy requires a PostgreSQL database. For local development:
