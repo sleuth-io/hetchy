@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	apiclient "github.com/daytonaio/daytona/libs/api-client-go"
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
 	sdkerrors "github.com/daytonaio/daytona/libs/sdk-go/pkg/errors"
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/types"
@@ -417,6 +418,22 @@ func isDaytonaStateChangeConflict(err error) bool {
 	msg := strings.ToLower(dayErr.Message)
 	return dayErr.StatusCode == http.StatusConflict &&
 		(strings.Contains(msg, "state change in progress") || strings.Contains(msg, "state transition"))
+}
+
+func isFollowUpSandboxReplacementError(sb *daytona.Sandbox, err error) bool {
+	if isDaytonaStateChangeConflict(err) {
+		return true
+	}
+	if sb != nil && (sb.State == apiclient.SANDBOXSTATE_ERROR || sb.State == apiclient.SANDBOXSTATE_BUILD_FAILED) {
+		return true
+	}
+	var dayErr *sdkerrors.DaytonaError
+	if errors.As(err, &dayErr) {
+		msg := strings.ToLower(dayErr.Message)
+		return strings.Contains(msg, "sandbox is in an errored state") ||
+			strings.Contains(msg, "sandbox failed to start")
+	}
+	return false
 }
 
 func isDaytonaSessionAlreadyExists(err error) bool {

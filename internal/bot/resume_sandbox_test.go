@@ -3,9 +3,11 @@ package bot
 import (
 	"context"
 	"errors"
+	"net/http"
 	"testing"
 	"time"
 
+	apiclient "github.com/daytonaio/daytona/libs/api-client-go"
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
 	sdkerrors "github.com/daytonaio/daytona/libs/sdk-go/pkg/errors"
 
@@ -57,6 +59,44 @@ func TestIsTransientError_DaytonaStateChangeConflictIsNotTransient(t *testing.T)
 	err := sdkerrors.NewDaytonaError("Conflict: Sandbox state change in progress", 409, nil)
 	if isTransientError(err) {
 		t.Error("state-change conflict should be handled explicitly by resume recovery")
+	}
+}
+
+func TestIsFollowUpSandboxReplacementError(t *testing.T) {
+	tests := []struct {
+		name string
+		sb   *daytona.Sandbox
+		err  error
+		want bool
+	}{
+		{
+			name: "state change conflict",
+			err:  sdkerrors.NewDaytonaError("Conflict: Sandbox state change in progress", http.StatusConflict, nil),
+			want: true,
+		},
+		{
+			name: "errored state response",
+			err:  sdkerrors.NewDaytonaError("Validation error: Sandbox is in an errored state", http.StatusBadRequest, nil),
+			want: true,
+		},
+		{
+			name: "refreshed sandbox error state",
+			sb:   &daytona.Sandbox{State: apiclient.SANDBOXSTATE_ERROR},
+			err:  errors.New("Sandbox failed to start"),
+			want: true,
+		},
+		{
+			name: "auth failure",
+			err:  sdkerrors.NewDaytonaError("unauthorized", http.StatusUnauthorized, nil),
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isFollowUpSandboxReplacementError(tt.sb, tt.err); got != tt.want {
+				t.Fatalf("isFollowUpSandboxReplacementError() = %t, want %t", got, tt.want)
+			}
+		})
 	}
 }
 
