@@ -124,38 +124,55 @@ oracle. If start.sh times out or keeps a foreground process attached,
 record "Validation: incomplete - start.sh does not return" and capture
 the relevant start.log excerpt rather than waiting for long timeouts.
 
-Playwright is already installed in the sandbox. For browser proof, write
-ordinary Playwright scripts under /tmp/hetchy-validate so they resolve
-the sandbox-provided package and browser binaries at
-$PLAYWRIGHT_BROWSERS_PATH (normally /opt/ms-playwright). Do not run
-'playwright install' just to capture proof; if a repo-local Playwright
-package reports a missing browser, use the sandbox Playwright package
-from /tmp/hetchy-validate or mark the validation tooling failure
-explicitly.
+The sandbox ships Playwright CLI (the 'playwright-cli' binary) as the
+primary browser-automation tool, and the playwright-cli skill is installed
+at $HOME/.claude/skills/playwright-cli — consult its SKILL.md for the
+full command list. Each playwright-cli command prints a compact snapshot
+with element refs, so token usage stays small. Typical flow:
+
+  playwright-cli open http://127.0.0.1:8080/
+  playwright-cli snapshot
+  playwright-cli screenshot --filename=/tmp/hetchy-validate/proof.png
+  playwright-cli close
+
+Browser binaries live at $PLAYWRIGHT_BROWSERS_PATH (normally
+/opt/ms-playwright). Do not run 'playwright install' just to capture proof.
+The host sets PLAYWRIGHT_MCP_USER_DATA_DIR and PLAYWRIGHT_MCP_OUTPUT_DIR
+(playwright-cli reads the same env surface as the older MCP server) to
+writable sandbox paths. If you need to write a custom Playwright automation
+script instead, drop it under /tmp/hetchy-validate so it resolves the
+sandbox-provided Playwright package and browsers; mark the validation
+tooling failure explicitly if that path is blocked too.
 
 Choose proof based on the change:
 
-  - Static UI change: use Playwright MCP to navigate to the affected
-    feature and upload screenshot(s). PNG only. Curl/grep of HTML can
-    support debugging, but it does not prove rendered UI appearance; if
-    screenshot capture is blocked, say so explicitly and mark
+  - Static UI change: use Playwright CLI to navigate to the affected
+    feature and upload screenshot(s). PNG only. Drive it with
+    'playwright-cli open <url>' followed by 'playwright-cli screenshot
+    --filename=/tmp/hetchy-validate/proof.png' (use 'playwright-cli goto'
+    to navigate further once the browser session is open).
+    Curl/grep of HTML can support debugging, but it does not prove rendered UI appearance;
+    if screenshot capture is blocked, say so explicitly and mark
     validation incomplete unless you can attach another reviewer-visible
-    visual proof. The host sets PLAYWRIGHT_MCP_USER_DATA_DIR and
-    PLAYWRIGHT_MCP_OUTPUT_DIR to writable sandbox paths; if Playwright
-    still fails with profile/output/permission errors, record that as
+    visual proof. If playwright-cli fails with profile/output/permission
+    errors against the writable PLAYWRIGHT_MCP_USER_DATA_DIR /
+    PLAYWRIGHT_MCP_OUTPUT_DIR paths, record that as
     validation-tooling friction in summary.md and the bootstrap
     reflection below.
   - UI/UX flow or interaction change: record the whole screen as MP4
     with H.264 encoding, then upload and link the recording. Use
-    hetchy-record-screen when available. Recommended pattern: write a
-    headed Playwright automation script under /tmp/hetchy-validate with
-    chromium.launch({ headless: false }) and run it as:
-    hetchy-record-screen 20 /tmp/hetchy-validate/recording-001.mp4 -- node /tmp/hetchy-validate/flow.mjs
-    If hetchy-record-screen is unavailable or cannot capture the
-    relevant surface, say so explicitly in summary.md and the PR
-    Validation section; a fallback such as Playwright recordVideo +
-    ffmpeg is acceptable only when you explain why the whole-screen
-    helper path could not be used.
+    hetchy-record-screen when available. Recommended pattern: drive
+    the flow with playwright-cli commands inside a shell script and
+    wrap it with the recorder, e.g.
+    hetchy-record-screen 20 /tmp/hetchy-validate/recording-001.mp4 -- bash /tmp/hetchy-validate/flow.sh
+    If you need finer control than playwright-cli exposes, write a
+    headed Playwright automation script under /tmp/hetchy-validate
+    with chromium.launch({ headless: false }) and run it through
+    hetchy-record-screen instead. If hetchy-record-screen is
+    unavailable or cannot capture the relevant surface, say so
+    explicitly in summary.md and the PR Validation section; a fallback
+    such as Playwright recordVideo + ffmpeg is acceptable only when
+    you explain why the whole-screen helper path could not be used.
   - Backend architecture change: upload a high-level diagram showing
     the new shape or data/control flow. PNG or SVG only.
   - Backend algorithmic or behavior change: include a concise testing
@@ -211,7 +228,7 @@ NOT the user's feature work. Examples:
   - Creating a directory that the spec assumed already existed
   - Setting an env var to bypass auth, onboarding, or first-run flows
   - Rebuilding and restarting the running app to pick up your changes
-  - Validation tooling friction, especially Playwright MCP/browser
+  - Validation tooling friction, especially playwright-cli/browser
     failures caused by unwritable profile or output dirs, missing
     browser binaries, missing xvfb, or screenshot/recording tools
   - Anything else that took more than one step to recover from before
@@ -222,7 +239,7 @@ affected scripts to /tmp/hetchy-spec/improved/. Only include the files
 you'd actually change — leave the rest absent. If the fix is an
 environment/tooling lesson rather than a repo runtime script change,
 write /tmp/hetchy-spec/improved/lessons.md with the new lesson appended
-to the prior lessons. Do NOT write none.txt if Playwright MCP,
+to the prior lessons. Do NOT write none.txt if Playwright CLI,
 screenshot, recording, browser, or other validation tooling failed and
 you had to recover manually. Allowed paths:
 
