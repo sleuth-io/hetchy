@@ -283,11 +283,13 @@ button.meta-attachment-link:hover { text-decoration: underline; }
   }
   .summary-strip {
     width: 100%;
+    display: flex;
     flex-wrap: nowrap;
     gap: 12px;
     margin: 0;
     padding: 9px 12px 0;
     overflow-x: auto;
+    overflow-y: hidden;
     scrollbar-width: none;
   }
   .summary-strip::-webkit-scrollbar { display: none; }

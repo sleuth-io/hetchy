@@ -859,15 +859,18 @@ func TestAppDataHandlerAggregatesRunsAndPRs(t *testing.T) {
 	b.runs = &fakeRunStore{
 		enabled: true,
 		latestRun: runstore.Run{
-			ID:          "run-1",
-			OrgID:       "org_test",
-			ThreadID:    "thread-1",
-			RunKind:     "fresh",
-			State:       runstore.StateRunning,
-			Outcome:     runstore.OutcomeCompletedWithVerifiedPR,
-			CommandStep: "run-script",
-			Branch:      "feature/agent-ui",
-			UpdatedAt:   runUpdatedAt,
+			ID:             "run-1",
+			OrgID:          "org_test",
+			ThreadID:       "thread-1",
+			RunKind:        "fresh",
+			TriggerSource:  runstore.TriggerJob,
+			JobID:          "job-1",
+			JobExecutionID: "exec-1",
+			State:          runstore.StateRunning,
+			Outcome:        runstore.OutcomeCompletedWithVerifiedPR,
+			CommandStep:    "run-script",
+			Branch:         "feature/agent-ui",
+			UpdatedAt:      runUpdatedAt,
 		},
 		events: []runstore.Event{
 			{Seq: 1, Event: "block_start", Data: runEventForTest(t, "block_start", sseEvent{ID: "p1", Kind: blocks.KindSetup, Title: "Sandbox setup"}).Data},
@@ -908,6 +911,9 @@ func TestAppDataHandlerAggregatesRunsAndPRs(t *testing.T) {
 	}
 	if run.RunKind != "fresh" {
 		t.Fatalf("run_kind = %q, want fresh", run.RunKind)
+	}
+	if run.TriggerSource != runstore.TriggerJob || run.JobID != "job-1" || run.JobExecutionID != "exec-1" {
+		t.Fatalf("job run metadata = %+v", run)
 	}
 	if run.ResultLabel != "Running" {
 		t.Fatalf("result_label = %q, want Running", run.ResultLabel)
