@@ -1,0 +1,7 @@
+{
+  "deploy": {
+    "startCommand": "./hetchy --dispatch-due-jobs --job-dispatch-limit=5",
+    "cronSchedule": "*/5 * * * *",
+    "restartPolicyType": "NEVER"
+  }
+}

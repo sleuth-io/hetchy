@@ -40,6 +40,7 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, o
 		"GITHUB_TOKEN":   repo.GitHubToken,
 	}
 	addAgentEnv(env, b.cfg, agent)
+	addJobRunEnv(ctx, env)
 	b.addOrgSXVaultEnv(ctx, oc.OrgID, agent, env)
 	addDaytonaCacheEnv(env, b.cfg, oc, repo, repo.CacheMounted)
 
@@ -659,6 +660,7 @@ func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx
 		"GITHUB_TOKEN": repo.GitHubToken,
 	}
 	addAgentEnv(env, b.cfg, agent)
+	addJobRunEnv(ctx, env)
 
 	artifactPrefix := fmt.Sprintf("%s/%d/%s/followup-%s", oc.OrgID, repo.RepoID, rec.ThreadID, requestID)
 	// Follow-ups can still need fresh proof links. Issue a new

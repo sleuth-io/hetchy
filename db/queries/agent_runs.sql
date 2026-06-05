@@ -1,22 +1,24 @@
 -- name: CreateAgentRun :one
 INSERT INTO agent_runs (
-    id, org_id, thread_id, run_kind, request_id, user_request,
+    id, org_id, thread_id, run_kind, request_id,
+    trigger_source, job_id, job_execution_id, user_request,
     state, lease_owner, lease_expires_at, heartbeat_at
 ) VALUES (
-    $1, $2, $3, $4, $5, $6,
-    'preparing', $7, NOW() + sqlc.arg(lease_duration)::interval, NOW()
+    sqlc.arg(id), sqlc.arg(org_id), sqlc.arg(thread_id), sqlc.arg(run_kind), sqlc.arg(request_id),
+    sqlc.arg(trigger_source), sqlc.narg(job_id), sqlc.narg(job_execution_id), sqlc.arg(user_request),
+    'preparing', sqlc.arg(lease_owner), NOW() + sqlc.arg(lease_duration)::interval, NOW()
 )
 ON CONFLICT DO NOTHING
 RETURNING id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
           user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
           lease_owner, lease_expires_at, heartbeat_at, last_error,
-          created_at, updated_at, command_step, outcome, outcome_detail, quality_score;
+          created_at, updated_at, command_step, outcome, outcome_detail, quality_score, trigger_source, job_id, job_execution_id;
 
 -- name: GetAgentRun :one
 SELECT id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
        user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
        lease_owner, lease_expires_at, heartbeat_at, last_error,
-       created_at, updated_at, command_step, outcome, outcome_detail, quality_score
+       created_at, updated_at, command_step, outcome, outcome_detail, quality_score, trigger_source, job_id, job_execution_id
 FROM agent_runs
 WHERE id = $1;
 
@@ -24,7 +26,7 @@ WHERE id = $1;
 SELECT id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
        user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
        lease_owner, lease_expires_at, heartbeat_at, last_error,
-       created_at, updated_at, command_step, outcome, outcome_detail, quality_score
+       created_at, updated_at, command_step, outcome, outcome_detail, quality_score, trigger_source, job_id, job_execution_id
 FROM agent_runs
 WHERE org_id = $1 AND request_id = $2
   AND state IN ('preparing', 'running', 'recovering', 'finalizing');
@@ -33,7 +35,7 @@ WHERE org_id = $1 AND request_id = $2
 SELECT id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
        user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
        lease_owner, lease_expires_at, heartbeat_at, last_error,
-       created_at, updated_at, command_step, outcome, outcome_detail, quality_score
+       created_at, updated_at, command_step, outcome, outcome_detail, quality_score, trigger_source, job_id, job_execution_id
 FROM agent_runs
 WHERE org_id = $1 AND thread_id = $2
   AND state IN ('preparing', 'running', 'recovering', 'finalizing')
@@ -44,7 +46,7 @@ LIMIT 1;
 SELECT id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
        user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
        lease_owner, lease_expires_at, heartbeat_at, last_error,
-       created_at, updated_at, command_step, outcome, outcome_detail, quality_score
+       created_at, updated_at, command_step, outcome, outcome_detail, quality_score, trigger_source, job_id, job_execution_id
 FROM agent_runs
 WHERE org_id = $1 AND thread_id = $2
 ORDER BY created_at DESC
@@ -55,7 +57,7 @@ SELECT DISTINCT ON (thread_id)
        id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
        user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
        lease_owner, lease_expires_at, heartbeat_at, last_error,
-       created_at, updated_at, command_step, outcome, outcome_detail, quality_score
+       created_at, updated_at, command_step, outcome, outcome_detail, quality_score, trigger_source, job_id, job_execution_id
 FROM agent_runs
 WHERE org_id = sqlc.arg(org_id)
   AND thread_id = ANY(sqlc.arg(thread_ids)::text[])
@@ -151,7 +153,7 @@ WHERE id = $1
 SELECT id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
        user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
        lease_owner, lease_expires_at, heartbeat_at, last_error,
-       created_at, updated_at, command_step, outcome, outcome_detail, quality_score
+       created_at, updated_at, command_step, outcome, outcome_detail, quality_score, trigger_source, job_id, job_execution_id
 FROM agent_runs
 WHERE state IN ('preparing', 'running', 'recovering', 'finalizing')
   AND (lease_expires_at IS NULL OR lease_expires_at < NOW())
@@ -162,7 +164,7 @@ LIMIT $1;
 SELECT id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
        user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
        lease_owner, lease_expires_at, heartbeat_at, last_error,
-       created_at, updated_at, command_step, outcome, outcome_detail, quality_score
+       created_at, updated_at, command_step, outcome, outcome_detail, quality_score, trigger_source, job_id, job_execution_id
 FROM agent_runs
 WHERE state IN ('preparing', 'running', 'recovering', 'finalizing')
   AND (heartbeat_at IS NULL OR heartbeat_at < NOW() - sqlc.arg(stale_after)::interval)
@@ -173,7 +175,7 @@ LIMIT sqlc.arg(limit_count);
 SELECT id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
        user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
        lease_owner, lease_expires_at, heartbeat_at, last_error,
-       created_at, updated_at, command_step, outcome, outcome_detail, quality_score
+       created_at, updated_at, command_step, outcome, outcome_detail, quality_score, trigger_source, job_id, job_execution_id
 FROM agent_runs
 WHERE state IN ('preparing', 'running', 'recovering', 'finalizing')
   AND LEFT(lease_owner, LENGTH(sqlc.arg(lease_owner_prefix)::text)) = sqlc.arg(lease_owner_prefix)::text
@@ -193,7 +195,7 @@ WHERE id = sqlc.arg(id)
 RETURNING id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
           user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
           lease_owner, lease_expires_at, heartbeat_at, last_error,
-          created_at, updated_at, command_step, outcome, outcome_detail, quality_score;
+          created_at, updated_at, command_step, outcome, outcome_detail, quality_score, trigger_source, job_id, job_execution_id;
 
 -- name: ClaimAgentRunLeaseFromOwner :one
 UPDATE agent_runs
@@ -208,7 +210,7 @@ WHERE id = sqlc.arg(id)
 RETURNING id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
           user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
           lease_owner, lease_expires_at, heartbeat_at, last_error,
-          created_at, updated_at, command_step, outcome, outcome_detail, quality_score;
+          created_at, updated_at, command_step, outcome, outcome_detail, quality_score, trigger_source, job_id, job_execution_id;
 
 -- name: ClaimStaleAgentRunLease :one
 UPDATE agent_runs
@@ -224,7 +226,7 @@ WHERE id = sqlc.arg(id)
 RETURNING id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
           user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
           lease_owner, lease_expires_at, heartbeat_at, last_error,
-          created_at, updated_at, command_step, outcome, outcome_detail, quality_score;
+          created_at, updated_at, command_step, outcome, outcome_detail, quality_score, trigger_source, job_id, job_execution_id;
 
 -- name: ClaimAgentRunForCancel :one
 UPDATE agent_runs
@@ -237,7 +239,7 @@ WHERE id = $1
 RETURNING id, org_id, thread_id, run_kind, request_id, sandbox_id, branch,
           user_request, session_id, command_id, command_start_seq, state, log_cursor, next_event_seq,
           lease_owner, lease_expires_at, heartbeat_at, last_error,
-          created_at, updated_at, command_step, outcome, outcome_detail, quality_score;
+          created_at, updated_at, command_step, outcome, outcome_detail, quality_score, trigger_source, job_id, job_execution_id;
 
 -- Appends intentionally serialize per run on the agent_runs row lock so
 -- next_event_seq stays monotonic and replay order is deterministic.

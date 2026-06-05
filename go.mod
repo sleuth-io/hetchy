@@ -15,6 +15,7 @@ require (
 	github.com/google/go-github/v66 v66.0.0
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/joho/godotenv v1.5.1
+	github.com/robfig/cron/v3 v3.0.1
 	github.com/slack-go/slack v0.23.0
 	github.com/sleuth-io/sx v1.3.5
 	github.com/stripe/stripe-go/v85 v85.1.0
