@@ -121,6 +121,8 @@
   background: var(--accent);
   color: #fff;
   border-bottom-right-radius: .25rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .chat-message.bot {
   align-self: flex-start;

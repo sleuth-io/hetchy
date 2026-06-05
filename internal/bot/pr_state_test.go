@@ -27,6 +27,19 @@ func TestConversationPRStateFromGitHub(t *testing.T) {
 	}
 }
 
+func TestPRStateStorageHelpers(t *testing.T) {
+	if got := pgTimestamptz(time.Time{}); got.Valid {
+		t.Fatalf("zero pgTimestamptz = %+v, want invalid", got)
+	}
+	when := time.Date(2026, 6, 5, 12, 30, 0, 0, time.UTC)
+	if got := pgTimestamptz(when); !got.Valid || !got.Time.Equal(when) {
+		t.Fatalf("pgTimestamptz = %+v, want valid %s", got, when)
+	}
+	if got := canonicalGitHubPRURL("hetchyhq", "hetchy", 262); got != "https://github.com/hetchyhq/hetchy/pull/262" {
+		t.Fatalf("canonicalGitHubPRURL = %q", got)
+	}
+}
+
 func TestAppDataPRIsActionable(t *testing.T) {
 	if !appDataPRIsActionable(appDataRun{PRURL: "https://github.com/acme/repo/pull/1"}) {
 		t.Fatal("unknown PR state should stay actionable until backfilled")

@@ -101,6 +101,14 @@ func TestSummarizeSandboxLine_MalformedJSONFallsBackToTruncate(t *testing.T) {
 	}
 }
 
+func TestLazySandboxLineLogValueSummarizesRawLine(t *testing.T) {
+	line := `{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"hello"}]}}`
+	got := lazySandboxLine{raw: line}.LogValue().String()
+	if !strings.Contains(got, "type=assistant") || !strings.Contains(got, "text(5ch)") {
+		t.Fatalf("LogValue summary = %q", got)
+	}
+}
+
 func TestSummarizeSandboxLine_MultipleContentBlocksJoined(t *testing.T) {
 	line := `{"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","thinking":"abc"},{"type":"text","text":"hi"},{"type":"tool_use","name":"Bash","input":{}}]}}`
 	got := summarizeSandboxLine(line)

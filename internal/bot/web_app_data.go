@@ -42,6 +42,9 @@ type appDataRun struct {
 	Status         string             `json:"status"`
 	ResultLabel    string             `json:"result_label,omitempty"`
 	RunKind        string             `json:"run_kind,omitempty"`
+	TriggerSource  string             `json:"trigger_source,omitempty"`
+	JobID          string             `json:"job_id,omitempty"`
+	JobExecutionID string             `json:"job_execution_id,omitempty"`
 	AgentSlug      string             `json:"agent_slug"`
 	CreatorID      string             `json:"creator_id,omitempty"`
 	Repository     string             `json:"repository,omitempty"`
@@ -195,6 +198,9 @@ func (b *Bot) appDataRunForConversation(ctx context.Context, orgID string, rec c
 		Status:         appDataStatus(state, outcome),
 		ResultLabel:    appDataResultLabel(state, outcome, runKind, rec.PRURL, rec.PRMerged),
 		RunKind:        runKind,
+		TriggerSource:  run.TriggerSource,
+		JobID:          run.JobID,
+		JobExecutionID: run.JobExecutionID,
 		AgentSlug:      rec.AgentSlug,
 		CreatorID:      rec.CreatorID,
 		Repository:     repo,

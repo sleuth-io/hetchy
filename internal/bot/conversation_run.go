@@ -34,6 +34,9 @@ func (b *Bot) runFreshAgentWithTranscriptMode(ctx context.Context, oc orgcfg.Con
 
 func (b *Bot) runFreshAgentWithTranscriptModeAndKind(ctx context.Context, oc orgcfg.Config, rec convstore.Record, agent agents.Profile, userRequest, requestID string, opts chatTaskOptions, model ClaudeModel, recorder *blocks.Recorder, emit blocks.Emitter, runKind string, mode appendMode, attachmentTurn int) {
 	model = normalizeClaudeModel(model)
+	if jobRunAllowsNoPR(ctx) && runKind == "fresh" {
+		runKind = "job"
+	}
 	rec.Model = string(model)
 	b.markRunKind(ctx, runKind)
 	repo, err := b.resolveRepoForRun(ctx, oc.OrgID, rec.GitHubOwner, rec.GitHubRepo)
@@ -96,6 +99,7 @@ func (b *Bot) runFreshAgentWithTranscriptModeAndKind(ctx context.Context, oc org
 		cacheVolumeID = mount.VolumeID
 	}
 	addDaytonaCacheEnv(envVars, b.cfg, oc, repo, repo.CacheMounted)
+	addJobRunEnv(ctx, envVars)
 	labels := daytonaSandboxLabels(b.cfg, oc, cacheVolumeID)
 	addBillingFlavorLabels(labels, flavor)
 	autoArchiveMinutes := b.daytonaAutoArchiveMinutes()
@@ -167,7 +171,7 @@ func (b *Bot) runFreshAgentWithTranscriptModeAndKind(ctx context.Context, oc org
 	}
 
 	if prURL == "" {
-		if !freshRequestAllowsNoPR(userRequest) {
+		if !freshRequestAllowsNoPR(userRequest) && !jobRunAllowsNoPR(ctx) {
 			err := errFreshChangeNoPR
 			emit.Error("Pull request missing", "The agent finished without reporting a pull request URL for a change-like request. Reply here to retry from the preserved branch.")
 			rec.SandboxID = sb.ID
@@ -201,7 +205,11 @@ func (b *Bot) runFreshAgentWithTranscriptModeAndKind(ctx context.Context, oc org
 			b.markRunState(ctx, runstore.StateFailed, err)
 			return
 		}
-		b.markCompletedRunOutcome(ctx, recorder.Snapshot(), runstore.OutcomeCompletedNoPR, map[string]any{"reason": "classified_answer_or_inspect"})
+		reason := "classified_answer_or_inspect"
+		if jobRunAllowsNoPR(ctx) {
+			reason = "job_no_action_needed"
+		}
+		b.markCompletedRunOutcome(ctx, recorder.Snapshot(), runstore.OutcomeCompletedNoPR, map[string]any{"reason": reason})
 		b.markRunState(ctx, runstore.StateSucceeded, nil)
 		b.deleteSandboxSession(sb, b.currentAgentRunSessionID(ctx, "agent-"+requestID))
 		b.stopAndArchiveSandbox(ctx, sb)

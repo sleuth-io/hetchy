@@ -61,6 +61,13 @@ func (b *Bot) prepareAgentRun(ctx context.Context, orgID, threadID, requestID, t
 		return ctx, run, false
 	}
 	if run.ID != "" {
+		if job, ok := jobRunFromContext(ctx); ok && b.jobs != nil {
+			runID := run.ID
+			if err := b.jobs.MarkRunning(context.Background(), orgID, job.ExecutionID, &runID); err != nil {
+				b.log.Warn("mark job execution running",
+					"org", orgID, "job_id", job.JobID, "job_execution_id", job.ExecutionID, "run_id", run.ID, "error", err)
+			}
+		}
 		ctx = contextWithAgentRun(ctx, run)
 	}
 	return ctx, run, true
@@ -474,6 +481,7 @@ func (b *Bot) handleRetryAfterFailure(ctx context.Context, oc orgcfg.Config, rec
 		}
 		rec.SandboxID = ""
 	}
+	rec.Branch = ""
 	attachmentTurn := len(rec.History)
 	retryText := strings.TrimSpace(text)
 	userRequest := retryAfterFailureRequest(rec, retryText)

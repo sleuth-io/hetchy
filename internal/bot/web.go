@@ -89,6 +89,8 @@ func (b *Bot) runWeb(ctx context.Context) error {
 	mux.Handle("/api/v1/agents", b.apiAuthMiddleware(http.HandlerFunc(b.agentsHandler)))
 	mux.Handle("/api/v1/repositories", b.apiAuthMiddleware(http.HandlerFunc(b.repositoriesHandler)))
 	mux.Handle("/api/v1/members", b.apiAuthMiddleware(http.HandlerFunc(b.membersHandler)))
+	mux.Handle("/api/v1/jobs", b.apiAuthMiddleware(http.HandlerFunc(b.jobsCollectionHandler)))
+	mux.Handle("/api/v1/jobs/", b.apiAuthMiddleware(http.HandlerFunc(b.jobsResourceHandler)))
 
 	addr := ":" + b.cfg.WebPort
 	srv := &http.Server{

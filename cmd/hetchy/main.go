@@ -45,6 +45,9 @@ func main() {
 	backfillPRStates := flag.Bool("backfill-pr-states", false, "Refresh stored GitHub pull request state for conversations with PR URLs and exit")
 	backfillPRStatesLimit := flag.Int("backfill-pr-states-limit", 1000, "Maximum conversations to scan when backfilling PR state")
 	backfillPRStatesForce := flag.Bool("backfill-pr-states-force", false, "Refresh PR state even for conversations checked before")
+	dispatchDueJobs := flag.Bool("dispatch-due-jobs", false, "Claim due scheduled jobs, run them, and exit")
+	jobDispatchLimit := flag.Int("job-dispatch-limit", 5, "Maximum due jobs to claim in one dispatcher invocation")
+	jobDispatchConcurrency := flag.Int("job-dispatch-concurrency", 1, "Maximum scheduled jobs to run concurrently")
 	flag.Parse()
 
 	_ = godotenv.Load()
@@ -54,11 +57,11 @@ func main() {
 	// the message's actual level. JSON on stdout lets Railway parse the "level"
 	// field and display each record at the correct severity.
 	//
-	// Exception: one-shot migrate subcommands write machine-readable text to stdout
+	// Exception: one-shot subcommands write machine-readable text to stdout
 	// (e.g. "schema version: N"), so their logs go to stderr to keep stdout clean
 	// for callers like `make db-up` that parse that output.
 	logDest := os.Stdout
-	oneShot := *migrateFlag || *migrateDown >= 0 || *migrateStatus || *backfillPRStates
+	oneShot := *migrateFlag || *migrateDown >= 0 || *migrateStatus || *backfillPRStates || *dispatchDueJobs
 	if oneShot {
 		logDest = os.Stderr
 	}
@@ -78,6 +81,10 @@ func main() {
 	}
 	if *backfillPRStates {
 		runBackfillPRStates(log, *backfillPRStatesLimit, *backfillPRStatesForce)
+		return
+	}
+	if *dispatchDueJobs {
+		runDispatchDueJobs(log, *jobDispatchLimit, *jobDispatchConcurrency)
 		return
 	}
 
@@ -104,6 +111,34 @@ func main() {
 		log.Error("bot stopped with error", "error", err)
 		os.Exit(1)
 	}
+}
+
+func runDispatchDueJobs(log *slog.Logger, limit, concurrency int) {
+	cfg, err := bot.LoadConfig()
+	if err != nil {
+		log.Error("config load failed", "error", err)
+		os.Exit(1)
+	}
+	b, err := bot.New(cfg, log)
+	if err != nil {
+		log.Error("bot init failed", "error", err)
+		os.Exit(1)
+	}
+	defer b.Close()
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	result, err := b.DispatchDueJobs(ctx, bot.JobDispatchOptions{
+		Limit:       int32(limit),
+		Concurrency: concurrency,
+	})
+	if err != nil {
+		log.Error("job dispatch failed", "error", err)
+		os.Exit(1)
+	}
+	fmt.Printf("job dispatch: claimed=%d started=%d succeeded=%d failed=%d\n",
+		result.Claimed, result.Started, result.Succeeded, result.Failed)
 }
 
 func runBackfillPRStates(log *slog.Logger, limit int, force bool) {
