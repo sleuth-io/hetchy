@@ -68,11 +68,13 @@ run_claude_interactive_with_watchdog() {
   fi
 
   tmux_session="hetchy-claude-$$"
+  local tmux_cmd
+  tmux_cmd="$(printf '%q ' claude "${claude_args[@]}")"
   # Detached session, generous virtual terminal size so the TUI lays
   # out without wrapping artifacts that could confuse paste handling.
   echo "[hetchy] starting tmux session ${tmux_session} for interactive claude"
   if ! tmux new-session -d -s "$tmux_session" -x 220 -y 50 \
-    "claude ${claude_args[*]}" 2>>"$diag_log"; then
+    "$tmux_cmd" 2>>"$diag_log"; then
     rm -f "$snapshot_file"
     echo "[hetchy] failed to launch tmux session for claude (see ${diag_log})"
     return 1
@@ -253,6 +255,9 @@ run_claude_interactive_with_watchdog() {
   # AFTER tail/tmux are torn down it is safe to write to stdout again.
   # The router treats these post-stream lines as sandbox cleanup
   # events, which is exactly what they are.
+  if [[ "$exit_reason" != "end_turn" ]]; then
+    echo "[hetchy] claude run ended with ${exit_reason}; output may be incomplete"
+  fi
   echo "[hetchy] claude turn ended (${exit_reason})"
   return 0
 }

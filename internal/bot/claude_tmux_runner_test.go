@@ -5,15 +5,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/hetchyhq/hetchy/internal/blocks"
 )
-
-// filepathJoin is a tiny local alias so the helpers below don't need
-// to import filepath where they're called from inline test bodies.
-func filepathJoin(dir, name string) string { return filepath.Join(dir, name) }
 
 func appendFile(t *testing.T, path, content string) {
 	t.Helper()
@@ -126,10 +123,10 @@ func TestAgentScript_DispatchesByClaudeAuth(t *testing.T) {
 					body.name, interactiveCall, printCall)
 			}
 			// Sanity: the OAuth gate must wrap the interactive call,
-			// not the print call. Find the gate that opens just
-			// before the interactive call.
-			gate := `if [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then` + "\n    " + interactiveCall
-			if !strings.Contains(body.script, gate) {
+			// not the print call. Keep this tolerant of harmless shell
+			// indentation changes.
+			gateRe := regexp.MustCompile(`(?m)if\s+\[\[\s+-n\s+"?\$\{CLAUDE_CODE_OAUTH_TOKEN[^}]*\}"?\s*\]\]\s*;\s*then\s*\n\s*run_claude_interactive_with_watchdog\s+/tmp/sf-prompt\.txt`)
+			if !gateRe.MatchString(body.script) {
 				t.Errorf("%s should call interactive runner immediately inside the CLAUDE_CODE_OAUTH_TOKEN branch", body.name)
 			}
 		})
@@ -155,7 +152,7 @@ func TestClaudeTmuxRunner_EndTurnIgnoresSidechain(t *testing.T) {
 	}, "\n") + "\n"
 
 	dir := t.TempDir()
-	path := filepathJoin(dir, "transcript.jsonl")
+	path := filepath.Join(dir, "transcript.jsonl")
 	mustWriteFile(t, path, transcript)
 
 	if endTurnMatched(t, path) {
