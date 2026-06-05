@@ -114,6 +114,21 @@ func main() {
 }
 
 func runDispatchDueJobs(log *slog.Logger, limit, concurrency int) {
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		log.Error("DATABASE_URL is required for job dispatch")
+		os.Exit(1)
+	}
+	ready, err := jobDispatchSchemaReady(context.Background(), log, databaseURL)
+	if err != nil {
+		log.Error("job dispatch schema check failed", "error", err)
+		os.Exit(1)
+	}
+	if !ready {
+		fmt.Println("job dispatch: skipped schema_not_ready")
+		return
+	}
+
 	cfg, err := bot.LoadConfig()
 	if err != nil {
 		log.Error("config load failed", "error", err)
@@ -139,6 +154,35 @@ func runDispatchDueJobs(log *slog.Logger, limit, concurrency int) {
 	}
 	fmt.Printf("job dispatch: claimed=%d started=%d succeeded=%d failed=%d\n",
 		result.Claimed, result.Started, result.Succeeded, result.Failed)
+}
+
+func jobDispatchSchemaReady(ctx context.Context, log *slog.Logger, databaseURL string) (bool, error) {
+	if err := waitForDB(ctx, log, databaseURL); err != nil {
+		return false, err
+	}
+	expected, err := migrations.ExpectedVersion()
+	if err != nil {
+		return false, err
+	}
+	current, dirty, err := migrations.Version(databaseURL)
+	if err != nil {
+		return false, err
+	}
+	if dirty {
+		return false, fmt.Errorf("database schema is dirty at version %d", current)
+	}
+	if !jobDispatchSchemaMatches(current, expected, dirty) {
+		log.Warn("database schema does not match dispatcher binary, skipping job dispatch",
+			"database_version", current,
+			"binary_schema_version", expected,
+		)
+		return false, nil
+	}
+	return true, nil
+}
+
+func jobDispatchSchemaMatches(current, expected uint, dirty bool) bool {
+	return !dirty && current == expected
 }
 
 func runBackfillPRStates(log *slog.Logger, limit int, force bool) {
