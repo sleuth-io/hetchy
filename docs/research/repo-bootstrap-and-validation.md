@@ -688,4 +688,4 @@ These came naturally out of doing the exercise; they're examples of what the `su
 - **Add `AGENTS.md`** describing the minimum env vars (just the required-when-AUTH_BYPASS list) and pointing at `internal/bot/config.go:LoadConfig` as the source of truth.
 - **Expose required env vars via a `--print-required-env` flag.** A binary self-describing its required env keeps documentation honest as the code changes.
 
-The prototype detector and the candidate scripts produced during this exercise live at `cmd/hetchy-detect/` and `/tmp/hetchy-bootstrap-attempt/` (gitignored — these are scratch artifacts for the dogfood, not committed code). The screenshot of the running landing page (validation evidence) is at `.playwright-mcp/hetchy-landing.png`.
+The prototype detector and the candidate scripts produced during this exercise live at `cmd/hetchy-detect/` and `/tmp/hetchy-bootstrap-attempt/` (gitignored — these are scratch artifacts for the dogfood, not committed code). The screenshot of the running landing page (validation evidence) is at `.playwright-cli/hetchy-landing.png`.

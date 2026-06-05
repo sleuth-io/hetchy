@@ -59,6 +59,8 @@ printf 'Playwright smoke passed: %s\n' "${PLAYWRIGHT_BROWSERS_PATH}"
 # pollute the daytona user's home or cwd from a build/CI run.
 export PLAYWRIGHT_MCP_USER_DATA_DIR="${PLAYWRIGHT_MCP_USER_DATA_DIR:-${work_dir}/cli-user-data}"
 export PLAYWRIGHT_MCP_OUTPUT_DIR="${PLAYWRIGHT_MCP_OUTPUT_DIR:-${work_dir}/cli-output}"
+export PLAYWRIGHT_MCP_HEADLESS="${PLAYWRIGHT_MCP_HEADLESS:-1}"
+export PLAYWRIGHT_MCP_NO_SANDBOX="${PLAYWRIGHT_MCP_NO_SANDBOX:-1}"
 mkdir -p "$PLAYWRIGHT_MCP_USER_DATA_DIR" "$PLAYWRIGHT_MCP_OUTPUT_DIR"
 PW_CLI_VERSION="$(playwright-cli --version)"
 echo "playwright-cli version: ${PW_CLI_VERSION}"
