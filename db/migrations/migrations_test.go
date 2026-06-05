@@ -24,7 +24,7 @@ func TestExpectedVersionMatchesLatestUpMigration(t *testing.T) {
 		if !ok {
 			t.Fatalf("migration %q has no version separator", name)
 		}
-		version, err := strconv.ParseUint(versionText, 10, 0)
+		version, err := strconv.ParseUint(versionText, 10, 64)
 		if err != nil {
 			t.Fatalf("parse migration version %q: %v", name, err)
 		}

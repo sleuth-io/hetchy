@@ -96,7 +96,7 @@ func ExpectedVersion() (uint, error) {
 		if !ok {
 			return 0, fmt.Errorf("migration %q has no version separator", name)
 		}
-		version, err := strconv.ParseUint(versionText, 10, 0)
+		version, err := strconv.ParseUint(versionText, 10, 64)
 		if err != nil {
 			return 0, fmt.Errorf("parse migration version %q: %w", name, err)
 		}
