@@ -131,3 +131,132 @@ func TestCodexStreamParser_SurfacesErrors(t *testing.T) {
 		t.Fatalf("error message not surfaced: %+v", emit.Blocks[0])
 	}
 }
+
+func TestCodexGenericToolTitle(t *testing.T) {
+	cases := []struct {
+		name     string
+		itemType string
+		item     map[string]any
+		want     string
+	}{
+		{
+			name:     "mcp with server and tool",
+			itemType: "mcp_tool_call",
+			item:     map[string]any{"server": "github", "tool": "list_prs"},
+			want:     "Using github.list_prs",
+		},
+		{
+			name:     "mcp with tool only",
+			itemType: "mcp_tool_call",
+			item:     map[string]any{"tool": "search"},
+			want:     "Using search",
+		},
+		{
+			name:     "mcp with no tool",
+			itemType: "mcp_tool_call",
+			item:     map[string]any{},
+			want:     "Using mcp tool call",
+		},
+		{
+			name:     "collab tool",
+			itemType: "collab_tool_call",
+			item:     map[string]any{"tool": "run_tests"},
+			want:     "Using run tests",
+		},
+		{
+			name:     "web search with query",
+			itemType: "web_search",
+			item:     map[string]any{"query": "golang coverage"},
+			want:     "Searching golang coverage",
+		},
+		{
+			name:     "unknown type uses default",
+			itemType: "custom_tool",
+			item:     map[string]any{},
+			want:     "Using custom tool",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := codexGenericToolTitle(tc.item, tc.itemType); got != tc.want {
+				t.Errorf("codexGenericToolTitle(%v, %q) = %q, want %q", tc.item, tc.itemType, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCodexGenericToolBody(t *testing.T) {
+	cases := []struct {
+		name     string
+		itemType string
+		item     map[string]any
+		want     string
+		wantSub  string
+	}{
+		{
+			name:     "mcp with arguments",
+			itemType: "mcp_tool_call",
+			item:     map[string]any{"arguments": map[string]any{"key": "val"}},
+			wantSub:  "key",
+		},
+		{
+			name:     "web search query",
+			itemType: "web_search",
+			item:     map[string]any{"query": "hello"},
+			want:     "hello",
+		},
+		{
+			name:     "collab with prompt",
+			itemType: "collab_tool_call",
+			item:     map[string]any{"prompt": "review this"},
+			want:     "review this",
+		},
+		{
+			name:     "unknown returns empty",
+			itemType: "unknown",
+			item:     map[string]any{},
+			want:     "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := codexGenericToolBody(tc.item, tc.itemType)
+			if tc.wantSub != "" {
+				if !strings.Contains(got, tc.wantSub) {
+					t.Errorf("codexGenericToolBody = %q, want contains %q", got, tc.wantSub)
+				}
+			} else if got != tc.want {
+				t.Errorf("codexGenericToolBody = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCodexNestedErrorMessage(t *testing.T) {
+	cases := []struct {
+		name string
+		item map[string]any
+		want string
+	}{
+		{name: "no error", item: map[string]any{}, want: ""},
+		{name: "error with message", item: map[string]any{"error": map[string]any{"message": "rate limited"}}, want: "rate limited"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := codexNestedErrorMessage(tc.item); got != tc.want {
+				t.Errorf("codexNestedErrorMessage = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCodexJSONBody(t *testing.T) {
+	if got := codexJSONBody(nil); got != "" {
+		t.Errorf("codexJSONBody(nil) = %q, want empty", got)
+	}
+	m := map[string]any{"key": "value"}
+	got := codexJSONBody(m)
+	if !strings.Contains(got, "```json") || !strings.Contains(got, "key") {
+		t.Errorf("codexJSONBody = %q, want JSON block with key", got)
+	}
+}

@@ -256,3 +256,140 @@ func TestEmitPreRunErrorMirrorsToLiveWhenTransportIsNoop(t *testing.T) {
 		t.Fatalf("start event = %+v", start)
 	}
 }
+
+func TestCurrentAgentRunIDReturnsRunID(t *testing.T) {
+	ctx := contextWithAgentRun(context.Background(), runstore.Run{ID: "run_abc"})
+	if got := currentAgentRunID(ctx); got != "run_abc" {
+		t.Fatalf("currentAgentRunID = %q, want run_abc", got)
+	}
+	if got := currentAgentRunID(context.Background()); got != "" {
+		t.Fatalf("currentAgentRunID without run = %q, want empty", got)
+	}
+}
+
+func TestContextWithBootstrapSkipped(t *testing.T) {
+	ctx := contextWithBootstrapSkipped(context.Background())
+	if !bootstrapSkippedFromContext(ctx) {
+		t.Fatal("bootstrapSkippedFromContext = false, want true after contextWithBootstrapSkipped")
+	}
+	if bootstrapSkippedFromContext(context.Background()) {
+		t.Fatal("bootstrapSkippedFromContext = true on fresh context, want false")
+	}
+}
+
+func TestContextWithAgentRunEmitterNilReturnsUnchangedContext(t *testing.T) {
+	ctx := contextWithAgentRunEmitter(context.Background(), nil)
+	if agentRunEmitterFromContext(ctx) != nil {
+		t.Fatal("nil emitter should not be stored in context")
+	}
+}
+
+func TestAgentRunDurabilityErrWithNoEmitterReturnsNil(t *testing.T) {
+	if err := agentRunDurabilityErr(context.Background()); err != nil {
+		t.Fatalf("agentRunDurabilityErr without emitter = %v, want nil", err)
+	}
+}
+
+func TestCloneOutcomeDetail(t *testing.T) {
+	in := map[string]any{"key": "value", "count": 42}
+	out := cloneOutcomeDetail(in)
+	if out["key"] != "value" || out["count"] != 42 {
+		t.Fatalf("cloneOutcomeDetail = %v, want copy of input", out)
+	}
+	out["key"] = "changed"
+	if in["key"] != "value" {
+		t.Fatal("cloneOutcomeDetail must not alias the original map")
+	}
+}
+
+func TestToolingDegradedFieldsTypeCases(t *testing.T) {
+	cases := []struct {
+		name        string
+		raw         any
+		wantLabel   string
+		wantMessage string
+	}{
+		{
+			name:        "map[string]string",
+			raw:         map[string]string{"label": " sx-install ", "message": " skills missing "},
+			wantLabel:   "sx-install",
+			wantMessage: "skills missing",
+		},
+		{
+			name:        "map[string]any",
+			raw:         map[string]any{"label": "sx-org", "message": "refresh failed"},
+			wantLabel:   "sx-org",
+			wantMessage: "refresh failed",
+		},
+		{
+			name:        "unsupported type returns empty",
+			raw:         42,
+			wantLabel:   "",
+			wantMessage: "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			label, message := toolingDegradedFields(tc.raw)
+			if label != tc.wantLabel || message != tc.wantMessage {
+				t.Fatalf("toolingDegradedFields = (%q, %q), want (%q, %q)", label, message, tc.wantLabel, tc.wantMessage)
+			}
+		})
+	}
+}
+
+func TestSXToolingDegradationFiltersNonSXLabels(t *testing.T) {
+	transcript := []blocks.Block{
+		{Meta: map[string]any{ToolingDegradedMetaKey: map[string]string{"label": "sx-install", "message": "failed"}}},
+		{Meta: map[string]any{ToolingDegradedMetaKey: map[string]string{"label": "other-tool", "message": "ignore me"}}},
+		{Meta: nil},
+		{Meta: map[string]any{ToolingDegradedMetaKey: map[string]string{"label": "", "message": "no label"}}},
+	}
+	degraded, ok := sxToolingDegradation(transcript)
+	if !ok {
+		t.Fatal("sxToolingDegradation = false, want true for sx-install")
+	}
+	if len(degraded) != 1 || degraded[0]["label"] != "sx-install" {
+		t.Fatalf("degraded = %v, want only sx-install entry", degraded)
+	}
+}
+
+func TestMarkCompletedRunOutcomeWithDegradedTooling(t *testing.T) {
+	store := &fakeRunStore{enabled: true}
+	b := &Bot{runs: store, workerID: "worker-1"}
+	ctx := contextWithAgentRun(context.Background(), runstore.Run{ID: "run_1"})
+
+	transcript := []blocks.Block{
+		{Meta: map[string]any{ToolingDegradedMetaKey: map[string]string{"label": "sx-install", "message": "vault unreachable"}}},
+	}
+	b.markCompletedRunOutcome(ctx, transcript, runstore.OutcomeCompletedWithVerifiedPR, map[string]any{})
+
+	if len(store.updateOutcomes) != 1 {
+		t.Fatalf("outcome updates = %d, want 1", len(store.updateOutcomes))
+	}
+	upd := store.updateOutcomes[0]
+	if upd.outcome != runstore.OutcomeDegradedMissingSkills {
+		t.Fatalf("outcome = %q, want %q", upd.outcome, runstore.OutcomeDegradedMissingSkills)
+	}
+	if upd.detail["completion_outcome"] != runstore.OutcomeCompletedWithVerifiedPR {
+		t.Fatalf("completion_outcome = %v, want %q", upd.detail["completion_outcome"], runstore.OutcomeCompletedWithVerifiedPR)
+	}
+}
+
+func TestSetErrIsIdempotent(t *testing.T) {
+	em := newAgentRunEmitter(nil, "run_1", "worker", nil)
+	em.setErr(nil)
+	if em.Err() != nil {
+		t.Fatal("setErr(nil) should not set error")
+	}
+	first := errors.New("first error")
+	em.setErr(first)
+	if !errors.Is(em.Err(), first) {
+		t.Fatalf("setErr = %v, want first error", em.Err())
+	}
+	second := errors.New("second error")
+	em.setErr(second)
+	if !errors.Is(em.Err(), first) || errors.Is(em.Err(), second) {
+		t.Fatalf("setErr is not idempotent: err changed to %v", em.Err())
+	}
+}

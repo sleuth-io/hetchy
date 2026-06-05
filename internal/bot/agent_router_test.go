@@ -326,3 +326,53 @@ func TestAgentLineRouter_AbortPreservesSuppressedSetupTail(t *testing.T) {
 		t.Errorf("setup failure should include raw error tail, got %q", body)
 	}
 }
+
+func TestAgentLineRouterReachedAgentFalseInitiallyTrueAfterSwitch(t *testing.T) {
+	emit := newCaptureEmitter()
+	r := newAgentLineRouter(emit)
+	if r.ReachedAgent() {
+		t.Fatal("ReachedAgent should be false before setup switch marker")
+	}
+	r.Line("[hetchy] setting up git auth")
+	if r.ReachedAgent() {
+		t.Fatal("ReachedAgent should be false during setup phase")
+	}
+	r.Line(setupSwitchMarker)
+	if !r.ReachedAgent() {
+		t.Fatal("ReachedAgent should be true after setup switch marker")
+	}
+}
+
+func TestSuppressSetupLineEdgeCases(t *testing.T) {
+	t.Run("empty line is a no-op", func(t *testing.T) {
+		emit := newCaptureEmitter()
+		r := newAgentLineRouter(emit)
+		r.suppressSetupLine("")
+		if len(emit.Blocks) != 0 {
+			t.Fatal("empty suppress line should not open a setup block")
+		}
+	})
+
+	t.Run("opens setup block on first suppressed line", func(t *testing.T) {
+		emit := newCaptureEmitter()
+		r := newAgentLineRouter(emit)
+		r.suppressSetupLine("noise from dependency installer")
+		if len(emit.Blocks) != 1 || emit.Blocks[0].Kind != blocks.KindSetup {
+			t.Fatalf("expected one setup block opened, got blocks=%v", emit.Blocks)
+		}
+		if r.suppressedSetupLines != 1 {
+			t.Fatalf("suppressedSetupLines = %d, want 1", r.suppressedSetupLines)
+		}
+	})
+
+	t.Run("tail is capped at maxSuppressedSetupTailLines", func(t *testing.T) {
+		emit := newCaptureEmitter()
+		r := newAgentLineRouter(emit)
+		for i := range maxSuppressedSetupTailLines + 5 {
+			r.suppressSetupLine(strings.Repeat("x", i+1))
+		}
+		if len(r.suppressedSetupTail) > maxSuppressedSetupTailLines {
+			t.Fatalf("tail len = %d, want at most %d", len(r.suppressedSetupTail), maxSuppressedSetupTailLines)
+		}
+	})
+}

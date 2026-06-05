@@ -1,8 +1,10 @@
 package bot
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hetchyhq/hetchy/internal/blocks"
 )
@@ -231,6 +233,85 @@ func TestToolTitle(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := toolTitle(tc.name, tc.input); got != tc.want {
 				t.Errorf("toolTitle(%q, %v) = %q, want %q", tc.name, tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestTruncateMid(t *testing.T) {
+	if got := truncateMid("short", 100); got != "short" {
+		t.Errorf("truncateMid short string: got %q, want %q", got, "short")
+	}
+	long := strings.Repeat("a", 200)
+	got := truncateMid(long, 100)
+	want := strings.Repeat("a", 35) + "\n…(truncated)…\n" + strings.Repeat("a", 35)
+	if got != want {
+		t.Errorf("truncateMid long string: got %q, want %q", got, want)
+	}
+}
+
+func TestNumericDuration(t *testing.T) {
+	cases := []struct {
+		name string
+		v    any
+		unit time.Duration
+		want string
+	}{
+		{name: "float64", v: float64(5), unit: time.Second, want: "5s"},
+		{name: "float32", v: float32(3), unit: time.Second, want: "3s"},
+		{name: "int", v: int(2), unit: time.Second, want: "2s"},
+		{name: "int64", v: int64(10), unit: time.Second, want: "10s"},
+		{name: "json.Number", v: json.Number("4"), unit: time.Second, want: "4s"},
+		{name: "json.Number invalid", v: json.Number("bad"), unit: time.Second, want: ""},
+		{name: "zero or negative", v: float64(0), unit: time.Second, want: ""},
+		{name: "unsupported type", v: "string", unit: time.Second, want: ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := numericDuration(tc.v, tc.unit); got != tc.want {
+				t.Errorf("numericDuration(%v, %v) = %q, want %q", tc.v, tc.unit, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCompactDurationString(t *testing.T) {
+	cases := []struct {
+		d    time.Duration
+		want string
+	}{
+		{d: 2 * time.Hour, want: "2h"},
+		{d: 90 * time.Minute, want: "1h30m"},
+		{d: 30 * time.Minute, want: "30m"},
+		{d: 45 * time.Second, want: "45s"},
+	}
+	for _, tc := range cases {
+		if got := compactDurationString(tc.d); got != tc.want {
+			t.Errorf("compactDurationString(%v) = %q, want %q", tc.d, got, tc.want)
+		}
+	}
+}
+
+func TestToolResultBody(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  json.RawMessage
+		want string
+	}{
+		{name: "empty", raw: json.RawMessage{}, want: ""},
+		{name: "plain string", raw: json.RawMessage(`"hello world"`), want: "hello world"},
+		{
+			name: "content block array",
+			raw:  json.RawMessage(`[{"type":"text","text":"block one"},{"type":"text","text":"block two"}]`),
+			want: "block one\nblock two",
+		},
+		{name: "raw fallback", raw: json.RawMessage(`42`), want: "42"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := toolResultBody(tc.raw)
+			if got != tc.want {
+				t.Errorf("toolResultBody = %q, want %q", got, tc.want)
 			}
 		})
 	}

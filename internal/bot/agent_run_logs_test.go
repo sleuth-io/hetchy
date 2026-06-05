@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/hetchyhq/hetchy/internal/blocks"
@@ -295,6 +296,24 @@ func TestAgentRunEmitterBeginBatchDetectsUnflushedBatch(t *testing.T) {
 	}
 	if err := em.FlushBatch(1); !errors.Is(err, errAgentRunDurability) {
 		t.Fatalf("flush err = %v, want errAgentRunDurability", err)
+	}
+}
+
+func TestFramedAgentCommandContainsSentinels(t *testing.T) {
+	cmd := framedAgentCommand("run_test", "/tmp/agent.sh")
+	begin := hetchyRunBeginSentinel("run_test")
+	endPrefix := hetchyRunEndPrefix("run_test")
+	if !strings.Contains(cmd, begin) {
+		t.Errorf("framedAgentCommand missing begin sentinel %q: %s", begin, cmd)
+	}
+	if !strings.Contains(cmd, endPrefix) {
+		t.Errorf("framedAgentCommand missing end prefix %q: %s", endPrefix, cmd)
+	}
+	if !strings.Contains(cmd, "/tmp/agent.sh") {
+		t.Errorf("framedAgentCommand missing script path: %s", cmd)
+	}
+	if !strings.HasPrefix(cmd, "bash -c ") {
+		t.Errorf("framedAgentCommand should start with bash -c: %s", cmd)
 	}
 }
 
