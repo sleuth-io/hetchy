@@ -24,8 +24,9 @@
   white-space: normal;
 }
 .selection-subtitle-text {
-  min-width: 10rem;
-  max-width: 100%;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: min(28rem, 100%);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
