@@ -7,6 +7,8 @@ import (
 )
 
 func TestExpectedVersionMatchesLatestUpMigration(t *testing.T) {
+	const minimumExpectedVersion = 20260603150000
+
 	entries, err := sqlFS.ReadDir(".")
 	if err != nil {
 		t.Fatalf("read embedded migrations: %v", err)
@@ -40,5 +42,8 @@ func TestExpectedVersionMatchesLatestUpMigration(t *testing.T) {
 	}
 	if got != uint(want) {
 		t.Fatalf("ExpectedVersion = %d, want %d", got, want)
+	}
+	if got < minimumExpectedVersion {
+		t.Fatalf("ExpectedVersion = %d, suspiciously low (want >= %d)", got, minimumExpectedVersion)
 	}
 }

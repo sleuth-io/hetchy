@@ -171,7 +171,7 @@ func jobDispatchSchemaReady(ctx context.Context, log *slog.Logger, databaseURL s
 	if dirty {
 		return false, fmt.Errorf("database schema is dirty at version %d", current)
 	}
-	if !jobDispatchSchemaMatches(current, expected, dirty) {
+	if !jobDispatchSchemaMatches(current, expected) {
 		log.Warn("database schema does not match dispatcher binary, skipping job dispatch",
 			"database_version", current,
 			"binary_schema_version", expected,
@@ -181,8 +181,8 @@ func jobDispatchSchemaReady(ctx context.Context, log *slog.Logger, databaseURL s
 	return true, nil
 }
 
-func jobDispatchSchemaMatches(current, expected uint, dirty bool) bool {
-	return !dirty && current == expected
+func jobDispatchSchemaMatches(current, expected uint) bool {
+	return current == expected
 }
 
 func runBackfillPRStates(log *slog.Logger, limit int, force bool) {

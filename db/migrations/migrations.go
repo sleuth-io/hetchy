@@ -7,7 +7,6 @@ import (
 	"embed"
 	"errors"
 	"fmt"
-	"path"
 	"strconv"
 	"strings"
 
@@ -93,7 +92,7 @@ func ExpectedVersion() (uint, error) {
 		if entry.IsDir() || !strings.HasSuffix(name, ".up.sql") {
 			continue
 		}
-		versionText, _, ok := strings.Cut(path.Base(name), "_")
+		versionText, _, ok := strings.Cut(name, "_")
 		if !ok {
 			return 0, fmt.Errorf("migration %q has no version separator", name)
 		}
