@@ -210,6 +210,8 @@ button.meta-attachment-link:hover { text-decoration: underline; }
     bottom: 0;
     z-index: 90;
     width: min(86vw, 340px);
+    padding-top: var(--safe-top);
+    padding-bottom: var(--safe-bottom);
     border-left: 1px solid var(--line);
     box-shadow: -8px 0 24px rgba(0,0,0,.18);
     transform: translateX(100%);
@@ -242,6 +244,8 @@ button.meta-attachment-link:hover { text-decoration: underline; }
     bottom: 0;
     z-index: 90;
     width: min(86vw, 320px);
+    padding-top: var(--safe-top);
+    padding-bottom: var(--safe-bottom);
     border-right: 1px solid var(--line);
     box-shadow: 8px 0 24px rgba(0,0,0,.18);
     transform: translateX(-100%);
@@ -261,6 +265,7 @@ button.meta-attachment-link:hover { text-decoration: underline; }
     min-height: 64px;
     gap: 10px;
     padding: 12px;
+    padding-top: calc(12px + var(--safe-top));
   }
   .topbar-title {
     flex: 1;
@@ -300,6 +305,7 @@ button.meta-attachment-link:hover { text-decoration: underline; }
   .work-panel {
     width: 100%;
     padding: 14px 12px 24px;
+    padding-bottom: calc(24px + var(--safe-bottom));
   }
   .panel-head {
     display: grid;
@@ -342,13 +348,13 @@ button.meta-attachment-link:hover { text-decoration: underline; }
   .task-dialog {
     position: fixed;
     inset: auto;
-    top: calc(var(--app-vvt, 0px) + 9px);
+    top: calc(var(--app-vvt, 0px) + 9px + var(--safe-top));
     left: 9px;
     right: 9px;
     width: auto;
     margin: 0;
-    height: calc(var(--app-vvh, 100dvh) - 18px);
-    max-height: calc(var(--app-vvh, 100dvh) - 18px);
+    height: calc(var(--app-vvh, 100dvh) - 18px - var(--safe-top) - var(--safe-bottom));
+    max-height: calc(var(--app-vvh, 100dvh) - 18px - var(--safe-top) - var(--safe-bottom));
     overflow: hidden;
   }
   .task-shell {
@@ -357,6 +363,8 @@ button.meta-attachment-link:hover { text-decoration: underline; }
     grid-template-rows: auto minmax(0, 1fr);
   }
   .task-shell > .composer {
+    /* The dialog height already reserves --safe-bottom at this breakpoint, so
+       the composer keeps a plain margin (no double inset). */
     margin: 12px;
     height: auto;
     min-height: 0;
@@ -402,7 +410,7 @@ button.meta-attachment-link:hover { text-decoration: underline; }
     position: fixed;
     left: 16px;
     right: 16px;
-    bottom: 18px;
+    bottom: calc(18px + var(--safe-bottom));
     width: auto;
     max-width: none;
     max-height: min(24rem, calc(100dvh - 5rem));
@@ -422,13 +430,13 @@ button.meta-attachment-link:hover { text-decoration: underline; }
   .chat-dialog {
     position: fixed;
     inset: auto;
-    top: calc(var(--app-vvt, 0px) + 16px);
+    top: calc(var(--app-vvt, 0px) + 16px + var(--safe-top));
     left: 8px;
     right: 8px;
     width: auto;
     margin: 0;
-    height: calc(var(--app-vvh, 100dvh) - 32px);
-    max-height: calc(var(--app-vvh, 100dvh) - 32px);
+    height: calc(var(--app-vvh, 100dvh) - 32px - var(--safe-top) - var(--safe-bottom));
+    max-height: calc(var(--app-vvh, 100dvh) - 32px - var(--safe-top) - var(--safe-bottom));
   }
   .chat-body {
     grid-template-columns: minmax(0, 1fr);
