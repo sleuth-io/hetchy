@@ -417,10 +417,21 @@ if [[ -n "${HETCHY_CODEX_MODEL:-}" ]]; then
   echo "[hetchy] initializing codex auth"
   run_codex_exec /tmp/sf-prompt.txt
 else
-  echo "[hetchy] running claude"
-  # See agent.sh for the rationale behind stream-json.
-  # Wrapped via run_claude_with_watchdog (see scripts/claude-watchdog.sh)
-  # to reap orphaned background-task children that would otherwise pin
-  # the process alive after the agent's turn ends.
-  run_claude_with_watchdog /tmp/sf-prompt.txt
+  # API-key auth keeps `claude --print` / stream-json. Subscription
+  # auth (CLAUDE_CODE_OAUTH_TOKEN) drives the interactive TUI inside
+  # tmux instead — see agent.sh and scripts/claude-tmux-runner.sh for
+  # the rationale (post June-15-2026 Anthropic separates `-p` usage
+  # from the plan's interactive budget, so subscription tokens MUST
+  # NOT go through `--print`). The interactive runner emits the
+  # "[hetchy] running claude" router marker itself.
+  if [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
+    run_claude_interactive_with_watchdog /tmp/sf-prompt.txt
+  else
+    echo "[hetchy] running claude"
+    # See agent.sh for the rationale behind stream-json. Wrapped via
+    # run_claude_with_watchdog (see scripts/claude-watchdog.sh) to
+    # reap orphaned background-task children that would otherwise
+    # pin the process alive after the agent's turn ends.
+    run_claude_with_watchdog /tmp/sf-prompt.txt
+  fi
 fi
