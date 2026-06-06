@@ -376,6 +376,16 @@
   padding: 16px 14px;
   overflow: auto;
 }
+.pr-spooky-art {
+  font-family: monospace;
+  font-size: .68rem;
+  line-height: 1.35;
+  color: #c0392b;
+  text-align: center;
+  margin: 0 0 14px;
+  white-space: pre;
+  user-select: none;
+}
 .pr-head {
   display: flex;
   align-items: center;
