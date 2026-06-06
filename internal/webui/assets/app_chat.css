@@ -210,8 +210,8 @@ button.meta-attachment-link:hover { text-decoration: underline; }
     bottom: 0;
     z-index: 90;
     width: min(86vw, 340px);
-    padding-top: calc(16px + var(--safe-top));
-    padding-bottom: calc(16px + var(--safe-bottom));
+    padding-top: var(--safe-top);
+    padding-bottom: var(--safe-bottom);
     border-left: 1px solid var(--line);
     box-shadow: -8px 0 24px rgba(0,0,0,.18);
     transform: translateX(100%);
