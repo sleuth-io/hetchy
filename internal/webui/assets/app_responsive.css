@@ -9,6 +9,7 @@
   .topbar {
     gap: 7px;
     padding: 10px 9px;
+    padding-top: calc(10px + var(--safe-top));
   }
   .topbar-actions {
     gap: 3px;
@@ -32,6 +33,7 @@
   }
   .work-panel {
     padding: 12px 10px 20px;
+    padding-bottom: calc(20px + var(--safe-bottom));
   }
   .run-card {
     padding: 10px;
@@ -57,21 +59,25 @@
   }
   .dialog-head {
     padding: 10px 11px 10px 13px;
+    padding-top: calc(10px + var(--safe-top));
   }
   .task-shell > .composer {
+    /* .task-dialog is full-bleed at this breakpoint (height: 100dvh), so the
+       composer itself must clear the home indicator. */
     margin: 8px;
+    margin-bottom: calc(8px + var(--safe-bottom));
     padding: .6rem;
   }
   .chat-dialog {
     position: fixed;
     inset: auto;
     margin: 0;
-    top: calc(var(--app-vvt, 0px) + 10px);
+    top: calc(var(--app-vvt, 0px) + 10px + var(--safe-top));
     left: 5px;
     right: 5px;
     width: auto;
-    height: calc(var(--app-vvh, 100dvh) - 20px);
-    max-height: calc(var(--app-vvh, 100dvh) - 20px);
+    height: calc(var(--app-vvh, 100dvh) - 20px - var(--safe-top) - var(--safe-bottom));
+    max-height: calc(var(--app-vvh, 100dvh) - 20px - var(--safe-top) - var(--safe-bottom));
   }
   .chat-log {
     padding: 9px;
@@ -85,6 +91,7 @@
     display: none;
   }
   .followup-composer {
+    /* .chat-dialog height already reserves --safe-bottom, so no double inset. */
     margin: 8px;
   }
 }
