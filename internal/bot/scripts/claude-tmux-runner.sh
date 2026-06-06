@@ -45,7 +45,7 @@
 run_claude_interactive_with_watchdog() {
   local prompt_file="$1"
   local cwd transcript_dir transcript=""
-  local snapshot_file tmux_session tail_pid trimmed_prompt
+  local snapshot_file tmux_session tail_pid trimmed_prompt startup_pane
   local diag_log="${HETCHY_CLAUDE_TMUX_LOG:-/tmp/sf-claude-tmux.log}"
   local -a claude_args=(--dangerously-skip-permissions)
 
@@ -66,6 +66,38 @@ run_claude_interactive_with_watchdog() {
   if [[ -n "${HETCHY_CLAUDE_MODEL:-}" ]]; then
     claude_args+=(--model "$HETCHY_CLAUDE_MODEL")
   fi
+
+  # Claude Code's first interactive launch may ask for explicit
+  # confirmation before honoring --dangerously-skip-permissions. Seed
+  # the managed setting when possible so the TUI opens straight to the
+  # input prompt, while preserving any sx-installed hooks/settings.
+  local claude_settings_file="$HOME/.claude/settings.json"
+  local claude_settings_tmp=""
+  mkdir -p "$HOME/.claude"
+  claude_settings_tmp="$(mktemp "${TMPDIR:-/tmp}/sf-claude-settings.XXXXXX")"
+  if command -v jq >/dev/null 2>&1; then
+    if [[ -s "$claude_settings_file" ]]; then
+      if jq '.skipDangerousModePermissionPrompt = true' "$claude_settings_file" > "$claude_settings_tmp" 2>>"$diag_log"; then
+        mv "$claude_settings_tmp" "$claude_settings_file"
+        claude_settings_tmp=""
+      else
+        echo "$(date -Is) failed to merge skipDangerousModePermissionPrompt into ${claude_settings_file}" >>"$diag_log"
+      fi
+    else
+      if jq -n '{skipDangerousModePermissionPrompt:true}' > "$claude_settings_tmp" 2>>"$diag_log"; then
+        mv "$claude_settings_tmp" "$claude_settings_file"
+        claude_settings_tmp=""
+      else
+        echo "$(date -Is) failed to create ${claude_settings_file}" >>"$diag_log"
+      fi
+    fi
+  elif [[ ! -s "$claude_settings_file" ]]; then
+    if printf '{"skipDangerousModePermissionPrompt":true}\n' > "$claude_settings_tmp" 2>>"$diag_log"; then
+      mv "$claude_settings_tmp" "$claude_settings_file"
+      claude_settings_tmp=""
+    fi
+  fi
+  rm -f "$claude_settings_tmp"
 
   tmux_session="hetchy-claude-$$"
   local tmux_cmd
@@ -93,6 +125,41 @@ run_claude_interactive_with_watchdog() {
   # this the first paste keystrokes can land before claude has mounted
   # its input box and get dropped.
   sleep "${HETCHY_CLAUDE_TUI_SETTLE_S:-2}"
+  startup_pane="$(mktemp "${TMPDIR:-/tmp}/sf-claude-pane.XXXXXX")"
+  if tmux capture-pane -p -t "$tmux_session" -S -120 > "$startup_pane" 2>>"$diag_log"; then
+    {
+      echo "$(date -Is) startup pane before prompt"
+      cat "$startup_pane"
+    } >>"$diag_log" 2>&1 || true
+
+    if grep -Eq 'Quick safety check|project you created|trust this folder' "$startup_pane"; then
+      echo "$(date -Is) accepting workspace trust prompt" >>"$diag_log"
+      tmux send-keys -t "$tmux_session" Enter >>"$diag_log" 2>&1 || true
+      sleep "${HETCHY_CLAUDE_TUI_SETTLE_S:-2}"
+      if tmux capture-pane -p -t "$tmux_session" -S -120 > "$startup_pane" 2>>"$diag_log"; then
+        {
+          echo "$(date -Is) startup pane after workspace trust"
+          cat "$startup_pane"
+        } >>"$diag_log" 2>&1 || true
+      fi
+    fi
+
+    if grep -Eq 'Bypass Permissions mode|By proceeding, you accept|Yes, I accept' "$startup_pane"; then
+      echo "$(date -Is) accepting bypass permissions prompt" >>"$diag_log"
+      tmux send-keys -t "$tmux_session" Down >>"$diag_log" 2>&1 || true
+      sleep "${HETCHY_CLAUDE_PROMPT_KEY_DELAY_S:-1}"
+      tmux send-keys -t "$tmux_session" Enter >>"$diag_log" 2>&1 || true
+      sleep "${HETCHY_CLAUDE_TUI_SETTLE_S:-2}"
+      if tmux capture-pane -p -t "$tmux_session" -S -120 > "$startup_pane" 2>>"$diag_log"; then
+        {
+          echo "$(date -Is) startup pane after bypass prompt"
+          cat "$startup_pane"
+        } >>"$diag_log" 2>&1 || true
+      fi
+    fi
+  fi
+  rm -f "$startup_pane"
+
   if ! {
     echo "$(date -Is) pasting prompt"
     tmux load-buffer -b sf-prompt "$trimmed_prompt"
@@ -132,6 +199,10 @@ run_claude_interactive_with_watchdog() {
   rm -f "$snapshot_file"
 
   if [[ -z "$transcript" ]]; then
+    {
+      echo "$(date -Is) no transcript within ${max_startup}s; final tmux pane"
+      tmux capture-pane -p -t "$tmux_session" -S -160 2>&1 || true
+    } >>"$diag_log" 2>&1 || true
     tmux kill-session -t "$tmux_session" 2>/dev/null || true
     echo "[hetchy] claude did not produce a transcript within ${max_startup}s"
     return 1

@@ -66,6 +66,10 @@ func TestClaudeTmuxRunnerScript_Embedded(t *testing.T) {
 		`tmux load-buffer -b sf-prompt`,
 		`tmux paste-buffer -t "$tmux_session" -b sf-prompt`,
 		`tmux send-keys -t "$tmux_session" Enter`,
+		`skipDangerousModePermissionPrompt`,
+		`accepting workspace trust prompt`,
+		`accepting bypass permissions prompt`,
+		`tmux send-keys -t "$tmux_session" Down`,
 		`echo "[hetchy] running claude"`,
 		`HETCHY_CLAUDE_WALL_TIMEOUT_S`,
 		`HETCHY_CLAUDE_IDLE_TIMEOUT_S`,
@@ -109,6 +113,44 @@ func TestClaudeTmuxRunner_SubmitsPromptBeforeWaitingForTranscript(t *testing.T) 
 	}
 	if markerIdx >= tailIdx {
 		t.Fatalf("runtime marker must be emitted immediately before tailing transcript; marker idx=%d tail idx=%d", markerIdx, tailIdx)
+	}
+}
+
+func TestClaudeTmuxRunner_ClearsStartupPromptsBeforeSubmittingPrompt(t *testing.T) {
+	settingsIdx := strings.Index(claudeTmuxRunnerScript, `skipDangerousModePermissionPrompt`)
+	trustIdx := strings.Index(claudeTmuxRunnerScript, `accepting workspace trust prompt`)
+	bypassIdx := strings.Index(claudeTmuxRunnerScript, `accepting bypass permissions prompt`)
+	bypassDownIdx := strings.Index(claudeTmuxRunnerScript, `tmux send-keys -t "$tmux_session" Down`)
+	keyDelayIdx := strings.Index(claudeTmuxRunnerScript, `HETCHY_CLAUDE_PROMPT_KEY_DELAY_S`)
+	pasteIdx := strings.Index(claudeTmuxRunnerScript, `tmux paste-buffer -t "$tmux_session" -b sf-prompt`)
+
+	for name, idx := range map[string]int{
+		"settings preseed":       settingsIdx,
+		"workspace trust prompt": trustIdx,
+		"bypass prompt":          bypassIdx,
+		"bypass down key":        bypassDownIdx,
+		"bypass key delay":       keyDelayIdx,
+		"paste prompt":           pasteIdx,
+	} {
+		if idx < 0 {
+			t.Fatalf("claude tmux runner missing %s anchor", name)
+		}
+	}
+	if settingsIdx >= pasteIdx {
+		t.Fatalf("dangerous-mode setting must be seeded before prompt paste; settings idx=%d paste idx=%d", settingsIdx, pasteIdx)
+	}
+	if trustIdx >= pasteIdx {
+		t.Fatalf("workspace trust prompt must be handled before prompt paste; trust idx=%d paste idx=%d", trustIdx, pasteIdx)
+	}
+	if bypassIdx >= pasteIdx {
+		t.Fatalf("bypass prompt must be handled before prompt paste; bypass idx=%d paste idx=%d", bypassIdx, pasteIdx)
+	}
+	if bypassDownIdx <= bypassIdx || bypassDownIdx >= pasteIdx {
+		t.Fatalf("bypass prompt should select the second option before prompt paste; bypass idx=%d down idx=%d paste idx=%d",
+			bypassIdx, bypassDownIdx, pasteIdx)
+	}
+	if strings.Contains(claudeTmuxRunnerScript, `Quick safety check|project you created|trust this folder|Enter to confirm`) {
+		t.Fatalf("workspace trust detection must not match generic Enter-to-confirm text because the bypass prompt uses it too")
 	}
 }
 
