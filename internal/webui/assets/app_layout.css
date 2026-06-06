@@ -377,13 +377,12 @@
   overflow: auto;
 }
 .pr-spooky-art {
-  font-family: monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: .68rem;
   line-height: 1.35;
-  color: #c0392b;
+  color: var(--danger);
   text-align: center;
   margin: 0 0 14px;
-  white-space: pre;
   user-select: none;
 }
 .pr-head {
