@@ -58,8 +58,8 @@ run_claude_interactive_with_watchdog() {
   transcript_dir="$HOME/.claude/projects/$(printf '%s' "$cwd" | sed 's|/|-|g')"
   mkdir -p "$transcript_dir"
 
-  # Snapshot existing transcripts so we can spot the new one the TUI
-  # will create on startup without depending on file mtimes.
+  # Snapshot existing transcripts so we can spot the transcript the TUI
+  # creates once a prompt starts a turn without depending on file mtimes.
   snapshot_file="$(mktemp "${TMPDIR:-/tmp}/sf-claude-tx-snap.XXXXXX")"
   find "$transcript_dir" -maxdepth 1 -type f -name '*.jsonl' > "$snapshot_file" 2>/dev/null || true
 
@@ -79,6 +79,34 @@ run_claude_interactive_with_watchdog() {
     echo "[hetchy] failed to launch tmux session for claude (see ${diag_log})"
     return 1
   fi
+
+  # claude's TUI treats a bare Enter on a non-empty input as submit
+  # and Shift+Enter as a newline. tmux paste-buffer uses bracketed
+  # paste, which Ink-based TUIs (including claude) treat as a single
+  # inserted block so embedded \n characters do not auto-submit. Still,
+  # strip any trailing newline so the very last paste keystroke is not
+  # an Enter, then send Enter explicitly once.
+  trimmed_prompt="$(mktemp "${TMPDIR:-/tmp}/sf-claude-prompt.XXXXXX")"
+  awk 'BEGIN{buf=""} { if (NR>1) buf=buf"\n"; buf=buf $0 } END{ sub(/[\n\r \t]+$/, "", buf); printf "%s", buf }' "$prompt_file" > "$trimmed_prompt"
+
+  # Give the TUI a moment to fully attach before we paste. Without
+  # this the first paste keystrokes can land before claude has mounted
+  # its input box and get dropped.
+  sleep "${HETCHY_CLAUDE_TUI_SETTLE_S:-2}"
+  if ! {
+    echo "$(date -Is) pasting prompt"
+    tmux load-buffer -b sf-prompt "$trimmed_prompt"
+    tmux paste-buffer -t "$tmux_session" -b sf-prompt
+    tmux delete-buffer -b sf-prompt || true
+    sleep "${HETCHY_CLAUDE_SUBMIT_DELAY_S:-1}"
+    tmux send-keys -t "$tmux_session" Enter
+  } >>"$diag_log" 2>&1; then
+    rm -f "$snapshot_file" "$trimmed_prompt"
+    tmux kill-session -t "$tmux_session" 2>/dev/null || true
+    echo "[hetchy] failed to submit prompt to claude tmux session (see ${diag_log})"
+    return 1
+  fi
+  rm -f "$trimmed_prompt"
 
   local waited=0
   local max_startup=${HETCHY_CLAUDE_STARTUP_TIMEOUT_S:-60}
@@ -110,20 +138,6 @@ run_claude_interactive_with_watchdog() {
   fi
   echo "[hetchy] watching claude transcript ${transcript}"
 
-  # claude's TUI treats a bare Enter on a non-empty input as submit
-  # and Shift+Enter as a newline. tmux paste-buffer uses bracketed
-  # paste, which Ink-based TUIs (including claude) treat as a single
-  # inserted block so embedded \n characters do not auto-submit. Still,
-  # strip any trailing newline so the very last paste keystroke is not
-  # an Enter, then send Enter explicitly once.
-  trimmed_prompt="$(mktemp "${TMPDIR:-/tmp}/sf-claude-prompt.XXXXXX")"
-  awk 'BEGIN{buf=""} { if (NR>1) buf=buf"\n"; buf=buf $0 } END{ sub(/[\n\r \t]+$/, "", buf); printf "%s", buf }' "$prompt_file" > "$trimmed_prompt"
-
-  # Give the TUI a moment to fully attach before we paste. Without
-  # this the first paste keystrokes can land before claude has mounted
-  # its input box and get dropped.
-  sleep "${HETCHY_CLAUDE_TUI_SETTLE_S:-2}"
-
   # CROSSING THE MARKER — anything we write to stdout/stderr after
   # this point must be a JSONL transcript event. Operational logs go
   # to $diag_log only. See the header comment for why.
@@ -133,18 +147,6 @@ run_claude_interactive_with_watchdog() {
   # following the file even if claude rotates or recreates it.
   tail -n +1 -F "$transcript" 2>>"$diag_log" &
   tail_pid=$!
-
-  {
-    echo "$(date -Is) pasting prompt"
-    tmux load-buffer -b sf-prompt "$trimmed_prompt"
-    tmux paste-buffer -t "$tmux_session" -b sf-prompt
-    tmux delete-buffer -b sf-prompt
-  } >>"$diag_log" 2>&1
-  rm -f "$trimmed_prompt"
-  # Slight pause so the TUI finishes processing the paste before
-  # interpreting the submit keystroke.
-  sleep "${HETCHY_CLAUDE_SUBMIT_DELAY_S:-1}"
-  tmux send-keys -t "$tmux_session" Enter >>"$diag_log" 2>&1
 
   # Watchdog: poll the transcript for an `end_turn` stop_reason on the
   # most recent assistant message. The TUI emits each event as soon as

@@ -85,6 +85,33 @@ func TestClaudeTmuxRunnerScript_Embedded(t *testing.T) {
 	assertBashSyntax(t, "claude-tmux-runner.sh", claudeTmuxRunnerScript)
 }
 
+func TestClaudeTmuxRunner_SubmitsPromptBeforeWaitingForTranscript(t *testing.T) {
+	pasteIdx := strings.Index(claudeTmuxRunnerScript, `tmux paste-buffer -t "$tmux_session" -b sf-prompt`)
+	waitIdx := strings.Index(claudeTmuxRunnerScript, `while (( waited < max_startup )); do`)
+	markerIdx := strings.Index(claudeTmuxRunnerScript, `echo "[hetchy] running claude"`)
+	tailIdx := strings.Index(claudeTmuxRunnerScript, `tail -n +1 -F "$transcript"`)
+
+	for name, idx := range map[string]int{
+		"paste prompt":        pasteIdx,
+		"wait for transcript": waitIdx,
+		"runtime marker":      markerIdx,
+		"tail transcript":     tailIdx,
+	} {
+		if idx < 0 {
+			t.Fatalf("claude tmux runner missing %s anchor", name)
+		}
+	}
+	if pasteIdx >= waitIdx {
+		t.Fatalf("tmux runner must submit the prompt before waiting for the transcript; paste idx=%d wait idx=%d", pasteIdx, waitIdx)
+	}
+	if markerIdx <= waitIdx {
+		t.Fatalf("runtime marker must stay after transcript discovery; marker idx=%d wait idx=%d", markerIdx, waitIdx)
+	}
+	if markerIdx >= tailIdx {
+		t.Fatalf("runtime marker must be emitted immediately before tailing transcript; marker idx=%d tail idx=%d", markerIdx, tailIdx)
+	}
+}
+
 // TestAgentScript_DispatchesByClaudeAuth asserts that agent.sh chooses
 // the interactive (tmux) runner when CLAUDE_CODE_OAUTH_TOKEN is set and
 // the print-mode watchdog otherwise. The dispatch matters for billing:
