@@ -283,6 +283,7 @@ button.meta-attachment-link:hover { text-decoration: underline; }
   }
   .summary-strip {
     width: 100%;
+    flex: 0 0 auto;
     display: flex;
     flex-wrap: nowrap;
     gap: 12px;
@@ -339,9 +340,15 @@ button.meta-attachment-link:hover { text-decoration: underline; }
     white-space: normal;
   }
   .task-dialog {
-    width: calc(100vw - 18px);
-    height: calc(100dvh - 18px);
-    max-height: calc(100dvh - 18px);
+    position: fixed;
+    inset: auto;
+    top: calc(var(--app-vvt, 0px) + 9px);
+    left: 9px;
+    right: 9px;
+    width: auto;
+    margin: 0;
+    height: calc(var(--app-vvh, 100dvh) - 18px);
+    max-height: calc(var(--app-vvh, 100dvh) - 18px);
     overflow: hidden;
   }
   .task-shell {
@@ -413,9 +420,15 @@ button.meta-attachment-link:hover { text-decoration: underline; }
     display: none;
   }
   .chat-dialog {
-    width: calc(100vw - 16px);
-    height: calc(100dvh - 32px);
-    max-height: calc(100dvh - 32px);
+    position: fixed;
+    inset: auto;
+    top: calc(var(--app-vvt, 0px) + 16px);
+    left: 8px;
+    right: 8px;
+    width: auto;
+    margin: 0;
+    height: calc(var(--app-vvh, 100dvh) - 32px);
+    max-height: calc(var(--app-vvh, 100dvh) - 32px);
   }
   .chat-body {
     grid-template-columns: minmax(0, 1fr);

@@ -43,10 +43,16 @@
     width: fit-content;
   }
   .task-dialog {
-    width: 100vw;
-    max-width: 100vw;
-    height: 100dvh;
-    max-height: 100dvh;
+    position: fixed;
+    inset: auto;
+    margin: 0;
+    top: var(--app-vvt, 0px);
+    left: 0;
+    right: 0;
+    width: auto;
+    max-width: none;
+    height: var(--app-vvh, 100dvh);
+    max-height: var(--app-vvh, 100dvh);
     border-radius: 0;
   }
   .dialog-head {
@@ -57,9 +63,15 @@
     padding: .6rem;
   }
   .chat-dialog {
-    width: calc(100vw - 10px);
-    height: calc(100dvh - 20px);
-    max-height: calc(100dvh - 20px);
+    position: fixed;
+    inset: auto;
+    margin: 0;
+    top: calc(var(--app-vvt, 0px) + 10px);
+    left: 5px;
+    right: 5px;
+    width: auto;
+    height: calc(var(--app-vvh, 100dvh) - 20px);
+    max-height: calc(var(--app-vvh, 100dvh) - 20px);
   }
   .chat-log {
     padding: 9px;

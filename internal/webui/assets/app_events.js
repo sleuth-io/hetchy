@@ -202,6 +202,7 @@
     });
     byID('agent-overlay-scrim').addEventListener('click', closeResponsivePanels);
     window.addEventListener('resize', syncResponsivePanels);
+    bindVisualViewport();
     document.addEventListener('keydown', e => {
       if (e.key === 'Escape') {
         closeResponsivePanels();
@@ -405,6 +406,34 @@
       schedulePoll(document.hidden ? hiddenPollMs : 250);
       scheduleDetailPoll(document.hidden ? hiddenPollMs : 250);
     });
+  }
+
+  // Keep mobile dialogs sized to the visible viewport. On iOS the on-screen
+  // keyboard shrinks window.visualViewport but leaves 100dvh unchanged, so a
+  // centered full-height dialog would push its composer controls (repo, model,
+  // send, etc.) underneath the keyboard. Mirroring the visual viewport into CSS
+  // custom properties lets the dialog stylesheet anchor to the top and shrink.
+  var visualViewportFrame = 0;
+  function writeVisualViewportVars() {
+    visualViewportFrame = 0;
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const root = document.documentElement;
+    root.style.setProperty('--app-vvh', vv.height + 'px');
+    root.style.setProperty('--app-vvt', vv.offsetTop + 'px');
+  }
+  function syncVisualViewport() {
+    // Coalesce the resize/scroll bursts iOS fires while the keyboard animates so
+    // we touch the custom properties at most once per frame.
+    if (visualViewportFrame) return;
+    visualViewportFrame = requestAnimationFrame(writeVisualViewportVars);
+  }
+  function bindVisualViewport() {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    vv.addEventListener('resize', syncVisualViewport);
+    vv.addEventListener('scroll', syncVisualViewport);
+    writeVisualViewportVars();
   }
 
   async function init() {
