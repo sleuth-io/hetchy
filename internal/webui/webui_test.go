@@ -39,6 +39,52 @@ func TestAppUsesSharedRepoStorageKey(t *testing.T) {
 	}
 }
 
+func TestAppAutoMergeComposerAndSidebarWiring(t *testing.T) {
+	var parts []string
+	for _, name := range []string{
+		"app.js",
+		"app_controls.js",
+		"app_detail.js",
+		"app_events.js",
+	} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/assets/"+name, nil)
+		AssetHandler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s status = %d body=%q", name, rec.Code, rec.Body.String())
+		}
+		parts = append(parts, rec.Body.String())
+	}
+	body := strings.Join(parts, "\n")
+	for _, want := range []string{
+		"var autoMergeStorageKey = 'hetchy.autoMerge.' + currentUserID",
+		"localStorage.getItem(autoMergeStorageKey)",
+		"localStorage.setItem(autoMergeStorageKey, enabled ? '1' : '0')",
+		"auto_merge: byID('task-auto-merge').checked",
+		"detail.auto_merge",
+		"openDetailAutoMergeModal",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("auto merge asset wiring missing %q", want)
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	Render(slog.New(slog.NewTextHandler(io.Discard, nil)), rec, App, map[string]any{
+		"Email":           "u@example.com",
+		"DisplayName":     "Test User",
+		"GravatarURL":     "https://example.com/avatar.png",
+		"UserID":          "user_test",
+		"DefaultRepoSlug": "hetchyhq/hetchy",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `id="task-auto-merge" type="checkbox"`) {
+		t.Fatalf("rendered app template missing Auto Merge checkbox")
+	}
+}
+
 func TestRunCardUsesResultLabel(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/assets/app.js", nil)

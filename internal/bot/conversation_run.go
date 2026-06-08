@@ -216,6 +216,7 @@ func (b *Bot) runFreshAgentWithTranscriptModeAndKind(ctx context.Context, oc org
 		return
 	}
 
+	autoMergeDetail := b.handleAutoMergeAfterVerifiedPR(ctx, rec, prURL, opts, recorder, runEmit)
 	emit.Result("Done!", prURL+"\n\nReply here to make further changes to this PR.")
 	if err := agentRunDurabilityErr(ctx); err != nil {
 		b.markRunState(ctx, runstore.StateRecovering, err)
@@ -233,7 +234,8 @@ func (b *Bot) runFreshAgentWithTranscriptModeAndKind(ctx context.Context, oc org
 		return
 	}
 	b.refreshConversationPRStateBestEffort(ctx, rec.OrgID, rec.ThreadID, prURL)
-	b.markCompletedRunOutcome(ctx, recorder.Snapshot(), runstore.OutcomeCompletedWithVerifiedPR, map[string]any{"pr_url": prURL, "branch": branch})
+	detail := mergeAutoMergeOutcomeDetail(map[string]any{"pr_url": prURL, "branch": branch}, autoMergeDetail)
+	b.markCompletedRunOutcome(ctx, recorder.Snapshot(), runstore.OutcomeCompletedWithVerifiedPR, detail)
 	b.markRunState(ctx, runstore.StateSucceeded, nil)
 	b.deleteSandboxSession(sb, b.currentAgentRunSessionID(ctx, "agent-"+requestID))
 	b.stopAndArchiveSandbox(ctx, sb)
@@ -358,8 +360,12 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 		return
 	}
 
-	// Result first so the recorded snapshot includes the closing block,
-	// then upsert with the new user turn + this turn's blocks.
+	autoMergeDetail := map[string]any{}
+	if prURL != "" {
+		autoMergeDetail = b.handleAutoMergeAfterVerifiedPR(ctx, rec, prURL, opts, recorder, runEmit)
+	}
+	// Result after any server-side assessment so the recorded snapshot
+	// includes the assessment group before the closing block.
 	resultBody := prURL
 	if resultBody == "" {
 		resultBody = noPullRequestResultBody(strings.TrimSpace(rec.PRURL) != "")
@@ -382,7 +388,8 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 	}
 	if prURL != "" {
 		b.refreshConversationPRStateBestEffort(ctx, rec.OrgID, rec.ThreadID, prURL)
-		b.markCompletedRunOutcome(ctx, recorder.Snapshot(), runstore.OutcomeCompletedWithVerifiedPR, map[string]any{"pr_url": prURL, "branch": rec.Branch})
+		detail := mergeAutoMergeOutcomeDetail(map[string]any{"pr_url": prURL, "branch": rec.Branch}, autoMergeDetail)
+		b.markCompletedRunOutcome(ctx, recorder.Snapshot(), runstore.OutcomeCompletedWithVerifiedPR, detail)
 	} else {
 		b.markCompletedRunOutcome(ctx, recorder.Snapshot(), runstore.OutcomeCompletedNoPR, map[string]any{"reason": "followup_no_new_pr", "existing_pr_url": rec.PRURL})
 	}

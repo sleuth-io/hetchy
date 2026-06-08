@@ -480,6 +480,7 @@ const (
 	chatTaskValidateKey              = "validate"
 	chatTaskReviewCodeBeforePushKey  = "review_code_before_push"
 	chatTaskActionPRChecksForDoneKey = "action_pr_checks_for_done"
+	chatTaskAutoMergeKey             = "auto_merge"
 )
 
 // chatTaskOptions are the resolved per-turn conditional tasks surfaced
@@ -488,6 +489,7 @@ type chatTaskOptions struct {
 	ValidateChanges       bool
 	ReviewCodeBeforePush  bool
 	ActionPRChecksForDone bool
+	AutoMerge             bool
 }
 
 // chatTaskOptionPatch carries only the option values present on an
@@ -501,6 +503,7 @@ func defaultChatTaskOptions() chatTaskOptions {
 		ValidateChanges:       true,
 		ReviewCodeBeforePush:  true,
 		ActionPRChecksForDone: true,
+		AutoMerge:             false,
 	}
 }
 
@@ -510,6 +513,7 @@ func resolveChatTaskOptions(saved map[string]bool, patch chatTaskOptionPatch) (c
 		ValidateChanges:       chatTaskOptionEnabled(merged, chatTaskValidateKey),
 		ReviewCodeBeforePush:  chatTaskOptionEnabled(merged, chatTaskReviewCodeBeforePushKey),
 		ActionPRChecksForDone: chatTaskOptionEnabled(merged, chatTaskActionPRChecksForDoneKey),
+		AutoMerge:             chatTaskOptionDisabledByDefault(merged, chatTaskAutoMergeKey),
 	}, merged
 }
 
@@ -528,4 +532,21 @@ func chatTaskOptionEnabled(values map[string]bool, key string) bool {
 		return v
 	}
 	return true
+}
+
+func chatTaskOptionDisabledByDefault(values map[string]bool, key string) bool {
+	if v, ok := values[key]; ok {
+		return v
+	}
+	return false
+}
+
+func chatTaskOptionsForAPI(saved map[string]bool) map[string]bool {
+	opts, _ := resolveChatTaskOptions(saved, nil)
+	return map[string]bool{
+		chatTaskValidateKey:              opts.ValidateChanges,
+		chatTaskReviewCodeBeforePushKey:  opts.ReviewCodeBeforePush,
+		chatTaskActionPRChecksForDoneKey: opts.ActionPRChecksForDone,
+		chatTaskAutoMergeKey:             opts.AutoMerge,
+	}
 }

@@ -41,6 +41,7 @@ const BLK_ICON = {
   notify:      '●', // ●
   claude_text: '✎', // ✎
   tool_use:    '⚙', // ⚙
+  auto_merge_assessment: '✓', // ✓
   result:      '✓', // ✓
   error:       '✗', // ✗
   phase:       '✎', // ✎ — phase boxes group prose + tools, share the prose icon
@@ -401,4 +402,3 @@ function showEmptyState() {
   d.innerHTML = ascii;
   log.appendChild(d);
 }
-

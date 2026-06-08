@@ -364,6 +364,8 @@ func currentStepFromKindAndText(kind blocks.Kind, parts ...string) string {
 			return step
 		}
 		return "Coding"
+	case blocks.KindAutoMergeAssessment:
+		return "Auto Merge"
 	case blocks.KindResult:
 		if currentStepTextIndicatesPR(lower) {
 			return "PR"

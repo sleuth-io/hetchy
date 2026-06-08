@@ -146,6 +146,14 @@ func (b *Bot) dispatchGithubEvent(ctx context.Context, event string, body []byte
 		b.handleInstallationReposEvent(ctx, body)
 	case "pull_request":
 		b.handlePullRequestEvent(ctx, body)
+	case "pull_request_review":
+		b.handlePullRequestReviewEvent(ctx, body)
+	case "check_run":
+		b.handleCheckRunEvent(ctx, body)
+	case "check_suite":
+		b.handleCheckSuiteEvent(ctx, body)
+	case "status":
+		b.handleStatusEvent(ctx, body)
 	case "team", "team_add", "membership", "member", "organization":
 		b.handleOrgScopedEvent(ctx, event, body)
 	default:
@@ -212,6 +220,181 @@ func (b *Bot) handlePullRequestEvent(ctx context.Context, body []byte) {
 		"org", installation.OrgID, "repo", owner+"/"+repo, "pr", p.PullRequest.GetNumber(),
 		"state", p.PullRequest.GetState(), "merged", p.PullRequest.GetMerged(),
 		"action", p.Action, "rows", rows)
+	b.recheckAutoMergeForPR(ctx, installation.OrgID, owner, repo, p.PullRequest.GetNumber(), prURL)
+}
+
+func (b *Bot) handlePullRequestReviewEvent(ctx context.Context, body []byte) {
+	var p struct {
+		Action       string `json:"action"`
+		Installation struct {
+			ID int64 `json:"id"`
+		} `json:"installation"`
+		Repository struct {
+			Name     string `json:"name"`
+			FullName string `json:"full_name"`
+			Owner    struct {
+				Login string `json:"login"`
+			} `json:"owner"`
+		} `json:"repository"`
+		PullRequest *github.PullRequest `json:"pull_request"`
+	}
+	if err := json.Unmarshal(body, &p); err != nil {
+		if b.githubWebhookErrLog.allow("pull_request_review") {
+			b.log.Error("github webhook: parse pull_request_review event", "error", err)
+		}
+		return
+	}
+	owner, repo := webhookRepoSlug(p.Repository.Owner.Login, p.Repository.Name, p.Repository.FullName)
+	if b.store == nil || p.Installation.ID == 0 || owner == "" || repo == "" || p.PullRequest == nil || p.PullRequest.GetNumber() <= 0 {
+		return
+	}
+	installation, err := b.store.Queries.GetGithubInstallation(ctx, p.Installation.ID)
+	if err != nil {
+		b.log.Warn("github webhook: pull_request_review installation not recorded", "installation", p.Installation.ID, "action", p.Action, "error", err)
+		return
+	}
+	prURL := p.PullRequest.GetHTMLURL()
+	if prURL == "" {
+		prURL = canonicalGitHubPRURL(owner, repo, p.PullRequest.GetNumber())
+	}
+	b.recheckAutoMergeForPR(ctx, installation.OrgID, owner, repo, p.PullRequest.GetNumber(), prURL)
+}
+
+func (b *Bot) handleCheckRunEvent(ctx context.Context, body []byte) {
+	var p struct {
+		Action       string `json:"action"`
+		Installation struct {
+			ID int64 `json:"id"`
+		} `json:"installation"`
+		Repository struct {
+			Name     string `json:"name"`
+			FullName string `json:"full_name"`
+			Owner    struct {
+				Login string `json:"login"`
+			} `json:"owner"`
+		} `json:"repository"`
+		CheckRun *github.CheckRun `json:"check_run"`
+	}
+	if err := json.Unmarshal(body, &p); err != nil {
+		if b.githubWebhookErrLog.allow("check_run") {
+			b.log.Error("github webhook: parse check_run event", "error", err)
+		}
+		return
+	}
+	owner, repo := webhookRepoSlug(p.Repository.Owner.Login, p.Repository.Name, p.Repository.FullName)
+	if b.store == nil || p.Installation.ID == 0 || owner == "" || repo == "" || p.CheckRun == nil {
+		return
+	}
+	installation, err := b.store.Queries.GetGithubInstallation(ctx, p.Installation.ID)
+	if err != nil {
+		b.log.Warn("github webhook: check_run installation not recorded", "installation", p.Installation.ID, "action", p.Action, "error", err)
+		return
+	}
+	if len(p.CheckRun.PullRequests) > 0 {
+		for _, pr := range p.CheckRun.PullRequests {
+			if pr == nil || pr.GetNumber() <= 0 {
+				continue
+			}
+			prURL := pr.GetHTMLURL()
+			if prURL == "" {
+				prURL = canonicalGitHubPRURL(owner, repo, pr.GetNumber())
+			}
+			b.recheckAutoMergeForPR(ctx, installation.OrgID, owner, repo, pr.GetNumber(), prURL)
+		}
+		return
+	}
+	b.recheckAutoMergeForCommit(ctx, installation.OrgID, owner, repo, p.CheckRun.GetHeadSHA())
+}
+
+func (b *Bot) handleCheckSuiteEvent(ctx context.Context, body []byte) {
+	var p struct {
+		Action       string `json:"action"`
+		Installation struct {
+			ID int64 `json:"id"`
+		} `json:"installation"`
+		Repository struct {
+			Name     string `json:"name"`
+			FullName string `json:"full_name"`
+			Owner    struct {
+				Login string `json:"login"`
+			} `json:"owner"`
+		} `json:"repository"`
+		CheckSuite *github.CheckSuite `json:"check_suite"`
+	}
+	if err := json.Unmarshal(body, &p); err != nil {
+		if b.githubWebhookErrLog.allow("check_suite") {
+			b.log.Error("github webhook: parse check_suite event", "error", err)
+		}
+		return
+	}
+	owner, repo := webhookRepoSlug(p.Repository.Owner.Login, p.Repository.Name, p.Repository.FullName)
+	if b.store == nil || p.Installation.ID == 0 || owner == "" || repo == "" || p.CheckSuite == nil {
+		return
+	}
+	installation, err := b.store.Queries.GetGithubInstallation(ctx, p.Installation.ID)
+	if err != nil {
+		b.log.Warn("github webhook: check_suite installation not recorded", "installation", p.Installation.ID, "action", p.Action, "error", err)
+		return
+	}
+	if len(p.CheckSuite.PullRequests) > 0 {
+		for _, pr := range p.CheckSuite.PullRequests {
+			if pr == nil || pr.GetNumber() <= 0 {
+				continue
+			}
+			prURL := pr.GetHTMLURL()
+			if prURL == "" {
+				prURL = canonicalGitHubPRURL(owner, repo, pr.GetNumber())
+			}
+			b.recheckAutoMergeForPR(ctx, installation.OrgID, owner, repo, pr.GetNumber(), prURL)
+		}
+		return
+	}
+	b.recheckAutoMergeForCommit(ctx, installation.OrgID, owner, repo, p.CheckSuite.GetHeadSHA())
+}
+
+func (b *Bot) handleStatusEvent(ctx context.Context, body []byte) {
+	var p struct {
+		SHA          string `json:"sha"`
+		Installation struct {
+			ID int64 `json:"id"`
+		} `json:"installation"`
+		Repository struct {
+			Name     string `json:"name"`
+			FullName string `json:"full_name"`
+			Owner    struct {
+				Login string `json:"login"`
+			} `json:"owner"`
+		} `json:"repository"`
+	}
+	if err := json.Unmarshal(body, &p); err != nil {
+		if b.githubWebhookErrLog.allow("status") {
+			b.log.Error("github webhook: parse status event", "error", err)
+		}
+		return
+	}
+	owner, repo := webhookRepoSlug(p.Repository.Owner.Login, p.Repository.Name, p.Repository.FullName)
+	if b.store == nil || p.Installation.ID == 0 || owner == "" || repo == "" || strings.TrimSpace(p.SHA) == "" {
+		return
+	}
+	installation, err := b.store.Queries.GetGithubInstallation(ctx, p.Installation.ID)
+	if err != nil {
+		b.log.Warn("github webhook: status installation not recorded", "installation", p.Installation.ID, "error", err)
+		return
+	}
+	b.recheckAutoMergeForCommit(ctx, installation.OrgID, owner, repo, p.SHA)
+}
+
+func webhookRepoSlug(owner, repo, fullName string) (string, string) {
+	owner = strings.TrimSpace(owner)
+	repo = strings.TrimSpace(repo)
+	if owner == "" || repo == "" {
+		parts := strings.SplitN(strings.TrimSpace(fullName), "/", 2)
+		if len(parts) == 2 {
+			owner = firstNonEmpty(owner, parts[0])
+			repo = firstNonEmpty(repo, parts[1])
+		}
+	}
+	return owner, repo
 }
 
 // handleInstallationEvent reacts to install lifecycle changes:

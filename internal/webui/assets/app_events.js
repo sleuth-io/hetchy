@@ -260,7 +260,9 @@
       inputForAttachments('task').click();
     });
     byID('task-tools-popover').addEventListener('change', e => {
-      if (e.target.matches('input[type="checkbox"]')) updateTaskToolsButton();
+      if (!e.target.matches('input[type="checkbox"]')) return;
+      if (e.target.id === 'task-auto-merge') persistAutoMergeEnabled(e.target.checked);
+      updateTaskToolsButton();
     });
     byID('task-repo-search').addEventListener('input', e => {
       state.repoSearch = e.target.value;

@@ -19,7 +19,7 @@ WITH next_event AS (
            updated_at = NOW()
      WHERE id = $1
        AND lease_owner = $4
-       AND state IN ('preparing', 'running', 'recovering', 'finalizing')
+       AND state IN ('preparing', 'running', 'recovering', 'finalizing', 'succeeded', 'failed', 'cancelled')
      RETURNING next_event_seq - 1 AS seq
 )
 INSERT INTO agent_run_events (run_id, seq, event, data)

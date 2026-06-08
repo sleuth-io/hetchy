@@ -57,6 +57,7 @@ type conversationDetail struct {
 	AgentName   string             `json:"agent_name,omitempty"`
 	Model       string             `json:"model,omitempty"`
 	TaskOptions map[string]bool    `json:"task_options,omitempty"`
+	AutoMerge   *autoMergeDetail   `json:"auto_merge,omitempty"`
 	Attachments []attachmentInfo   `json:"attachments,omitempty"`
 	CreatedAt   string             `json:"created_at,omitempty"`
 	Turns       []conversationTurn `json:"turns,omitempty"`
@@ -68,6 +69,25 @@ type conversationDetail struct {
 	// keeps the right-hand details panel showing the current state.
 	SXSkills  []string `json:"sx_skills,omitempty"`
 	UpdatedAt string   `json:"updated_at"`
+}
+
+type autoMergeDetail struct {
+	Requested       bool                 `json:"requested"`
+	State           string               `json:"state"`
+	StateLabel      string               `json:"state_label"`
+	Recommendation  string               `json:"recommendation,omitempty"`
+	Risk            string               `json:"risk,omitempty"`
+	Confidence      string               `json:"confidence,omitempty"`
+	Summary         string               `json:"summary,omitempty"`
+	TopReason       string               `json:"top_reason,omitempty"`
+	Label           string               `json:"label,omitempty"`
+	JudgedHeadSHA   string               `json:"judged_head_sha,omitempty"`
+	JudgedHeadShort string               `json:"judged_head_short,omitempty"`
+	MergedAt        string               `json:"merged_at,omitempty"`
+	Assessment      *autoMergeAssessment `json:"assessment,omitempty"`
+	ServerGate      autoMergeGateResult  `json:"server_gate,omitzero"`
+	GitHubGate      autoMergeGateResult  `json:"github_gate,omitzero"`
+	LabelsApplied   []string             `json:"labels_applied,omitempty"`
 }
 
 type conversationTurn struct {
@@ -342,7 +362,8 @@ func (b *Bot) conversationDetailResponse(ctx context.Context, orgID string, rec 
 		AgentSlug:   agentSlug,
 		AgentName:   agentName,
 		Model:       conversationModelForAPI(rec.Model),
-		TaskOptions: rec.TaskOptions,
+		TaskOptions: chatTaskOptionsForAPI(rec.TaskOptions),
+		AutoMerge:   b.autoMergeDetailForConversation(ctx, orgID, rec),
 		Attachments: attachments,
 		CreatedAt:   createdAt,
 		SXSkills:    extractSXSkills(rec.ResponseBlocks),

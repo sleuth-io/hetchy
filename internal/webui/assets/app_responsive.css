@@ -335,6 +335,12 @@ html.is-dark .skills-modal-close:hover,
 html.is-dark .image-modal-close:hover { color: var(--ink); }
 html.is-dark .skills-modal-item { color: var(--ink); }
 html.is-dark .skills-modal-item + .skills-modal-item { border-top-color: var(--line); }
+html.is-dark .auto-merge-modal-body,
+html.is-dark .auto-merge-detail-section h3 { color: var(--ink); }
+html.is-dark .auto-merge-detail-row { border-bottom-color: var(--line); }
+html.is-dark .auto-merge-detail-row span,
+html.is-dark .auto-merge-detail-section p,
+html.is-dark .auto-merge-detail-section ul { color: var(--muted); }
 html.is-dark .chat-block,
 html.is-dark .blk {
   background: var(--surface);

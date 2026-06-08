@@ -291,6 +291,103 @@ func (q *Queries) ListConversationPRStateBackfillCandidates(ctx context.Context,
 	return items, nil
 }
 
+const listConversationsByPRURL = `-- name: ListConversationsByPRURL :many
+SELECT org_id, thread_id, sandbox_id, branch, pr_url, pr_state, pr_merged, pr_merged_at, pr_closed_at,
+       pr_state_checked_at, history, created_at, updated_at, response_blocks,
+       github_owner, github_repo, custom_title, creator_id, agent_slug, model, task_options, awaiting_repo
+FROM conversations
+WHERE org_id = $1
+  AND lower(github_owner) = lower($2)
+  AND lower(github_repo) = lower($3)
+  AND (
+      pr_url = $4
+      OR pr_url = 'https://github.com/' || $2::text || '/' || $3::text || '/pull/' || $5::int::text
+  )
+ORDER BY updated_at DESC, thread_id DESC
+`
+
+type ListConversationsByPRURLParams struct {
+	OrgID       string `json:"org_id"`
+	GithubOwner string `json:"github_owner"`
+	GithubRepo  string `json:"github_repo"`
+	PrUrl       string `json:"pr_url"`
+	PrNumber    int32  `json:"pr_number"`
+}
+
+type ListConversationsByPRURLRow struct {
+	OrgID            string             `json:"org_id"`
+	ThreadID         string             `json:"thread_id"`
+	SandboxID        string             `json:"sandbox_id"`
+	Branch           string             `json:"branch"`
+	PrUrl            string             `json:"pr_url"`
+	PrState          string             `json:"pr_state"`
+	PrMerged         bool               `json:"pr_merged"`
+	PrMergedAt       pgtype.Timestamptz `json:"pr_merged_at"`
+	PrClosedAt       pgtype.Timestamptz `json:"pr_closed_at"`
+	PrStateCheckedAt pgtype.Timestamptz `json:"pr_state_checked_at"`
+	History          []string           `json:"history"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	ResponseBlocks   [][]byte           `json:"response_blocks"`
+	GithubOwner      string             `json:"github_owner"`
+	GithubRepo       string             `json:"github_repo"`
+	CustomTitle      string             `json:"custom_title"`
+	CreatorID        string             `json:"creator_id"`
+	AgentSlug        string             `json:"agent_slug"`
+	Model            string             `json:"model"`
+	TaskOptions      []byte             `json:"task_options"`
+	AwaitingRepo     bool               `json:"awaiting_repo"`
+}
+
+func (q *Queries) ListConversationsByPRURL(ctx context.Context, arg ListConversationsByPRURLParams) ([]ListConversationsByPRURLRow, error) {
+	rows, err := q.db.Query(ctx, listConversationsByPRURL,
+		arg.OrgID,
+		arg.GithubOwner,
+		arg.GithubRepo,
+		arg.PrUrl,
+		arg.PrNumber,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListConversationsByPRURLRow
+	for rows.Next() {
+		var i ListConversationsByPRURLRow
+		if err := rows.Scan(
+			&i.OrgID,
+			&i.ThreadID,
+			&i.SandboxID,
+			&i.Branch,
+			&i.PrUrl,
+			&i.PrState,
+			&i.PrMerged,
+			&i.PrMergedAt,
+			&i.PrClosedAt,
+			&i.PrStateCheckedAt,
+			&i.History,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ResponseBlocks,
+			&i.GithubOwner,
+			&i.GithubRepo,
+			&i.CustomTitle,
+			&i.CreatorID,
+			&i.AgentSlug,
+			&i.Model,
+			&i.TaskOptions,
+			&i.AwaitingRepo,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const renameConversation = `-- name: RenameConversation :execrows
 UPDATE conversations SET custom_title = $3
 WHERE org_id = $1 AND thread_id = $2

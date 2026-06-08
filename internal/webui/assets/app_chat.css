@@ -134,6 +134,45 @@ button.meta-attachment-link:hover { text-decoration: underline; }
   font-size: .85rem;
 }
 .skills-modal-item + .skills-modal-item { border-top: 1px solid #f5f5f5; }
+.auto-merge-modal { max-width: 34rem; }
+.auto-merge-modal-body {
+  padding: .8rem 1rem 1rem;
+  overflow-y: auto;
+  color: #1a1a1a;
+  font-size: .84rem;
+}
+.auto-merge-detail-row {
+  display: grid;
+  grid-template-columns: minmax(7rem, .45fr) 1fr;
+  gap: .75rem;
+  padding: .35rem 0;
+  border-bottom: 1px solid #f5f5f5;
+}
+.auto-merge-detail-row span { color: #777; }
+.auto-merge-detail-row strong {
+  min-width: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.auto-merge-detail-section {
+  padding-top: .85rem;
+}
+.auto-merge-detail-section h3 {
+  margin: 0 0 .35rem;
+  color: #1a1a1a;
+  font-size: .82rem;
+}
+.auto-merge-detail-section p {
+  margin: 0;
+  color: #444;
+  line-height: 1.45;
+}
+.auto-merge-detail-section ul {
+  margin: 0;
+  padding-left: 1.1rem;
+  color: #444;
+  line-height: 1.45;
+}
 .image-modal-overlay { background: rgba(0,0,0,.7); }
 .image-modal {
   max-width: 95vw;
