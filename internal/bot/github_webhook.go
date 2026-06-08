@@ -244,6 +244,9 @@ func (b *Bot) handlePullRequestReviewEvent(ctx context.Context, body []byte) {
 		}
 		return
 	}
+	if p.Action != "submitted" {
+		return
+	}
 	owner, repo := webhookRepoSlug(p.Repository.Owner.Login, p.Repository.Name, p.Repository.FullName)
 	if b.store == nil || p.Installation.ID == 0 || owner == "" || repo == "" || p.PullRequest == nil || p.PullRequest.GetNumber() <= 0 {
 		return
@@ -279,6 +282,9 @@ func (b *Bot) handleCheckRunEvent(ctx context.Context, body []byte) {
 		if b.githubWebhookErrLog.allow("check_run") {
 			b.log.Error("github webhook: parse check_run event", "error", err)
 		}
+		return
+	}
+	if p.Action != "completed" {
 		return
 	}
 	owner, repo := webhookRepoSlug(p.Repository.Owner.Login, p.Repository.Name, p.Repository.FullName)
@@ -325,6 +331,9 @@ func (b *Bot) handleCheckSuiteEvent(ctx context.Context, body []byte) {
 		if b.githubWebhookErrLog.allow("check_suite") {
 			b.log.Error("github webhook: parse check_suite event", "error", err)
 		}
+		return
+	}
+	if p.Action != "completed" {
 		return
 	}
 	owner, repo := webhookRepoSlug(p.Repository.Owner.Login, p.Repository.Name, p.Repository.FullName)
