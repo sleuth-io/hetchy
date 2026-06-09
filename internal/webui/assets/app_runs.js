@@ -588,7 +588,7 @@
     byID('pr-count').textContent = String(prs.length);
     const list = byID('pr-list');
     if (!prs.length) {
-      list.innerHTML = '<div class="empty">No pull requests yet.</div>';
+      list.innerHTML = '<div class="empty">No pull requests</div>';
       return;
     }
     list.innerHTML = prs.map(pr => {
