@@ -9,6 +9,11 @@ import (
 	"github.com/google/go-github/v66/github"
 )
 
+const (
+	autoMergeSafeLabelDescription        = "Current PR head is low-risk; auto merge waits for GitHub requirements."
+	autoMergeHumanReviewLabelDescription = "Current PR head was not eligible for Hetchy auto merge."
+)
+
 func applyAutoMergeLabel(ctx context.Context, client *github.Client, owner, repo string, number int, desired string, out autoMergeOutcomeDetail) autoMergeOutcomeDetail {
 	labels, err := ensureAutoMergeLabelState(ctx, client, owner, repo, number, desired)
 	if err != nil {
@@ -41,10 +46,10 @@ func ensureAutoMergeLabelState(ctx context.Context, client *github.Client, owner
 	if err != nil {
 		return nil, err
 	}
-	if err := ensureAutoMergeLabel(ctx, client, owner, repo, autoMergeSafeLabel, "2da44e", "Hetchy judged this PR head low-risk and eligible for automatic merge once GitHub requirements are satisfied."); err != nil {
+	if err := ensureAutoMergeLabel(ctx, client, owner, repo, autoMergeSafeLabel, "2da44e", autoMergeSafeLabelDescription); err != nil {
 		return nil, err
 	}
-	if err := ensureAutoMergeLabel(ctx, client, owner, repo, autoMergeHumanReviewLabel, "d73a4a", "Hetchy did not judge this PR head eligible for automatic merge."); err != nil {
+	if err := ensureAutoMergeLabel(ctx, client, owner, repo, autoMergeHumanReviewLabel, "d73a4a", autoMergeHumanReviewLabelDescription); err != nil {
 		return nil, err
 	}
 	if _, err := client.Issues.RemoveLabelForIssue(ctx, owner, repo, number, opposite); err != nil && githubHTTPStatus(nil, err) != http.StatusNotFound {

@@ -27,8 +27,17 @@ func TestAutoMergeLabelPairIsMutuallyExclusive(t *testing.T) {
 	}
 }
 
+func TestAutoMergeLabelDescriptionsFitGitHubLimit(t *testing.T) {
+	for _, desc := range []string{autoMergeSafeLabelDescription, autoMergeHumanReviewLabelDescription} {
+		if len(desc) > 100 {
+			t.Fatalf("label description length = %d, want <= 100: %q", len(desc), desc)
+		}
+	}
+}
+
 func TestEnsureAutoMergeLabelStateCreatesAndSwapsLabels(t *testing.T) {
 	var created []string
+	createdDescriptions := map[string]string{}
 	var removed []string
 	var added []string
 	client, closeServer := autoMergeGitHubTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -46,6 +55,7 @@ func TestEnsureAutoMergeLabelStateCreatesAndSwapsLabels(t *testing.T) {
 				t.Fatalf("decode create label: %v", err)
 			}
 			created = append(created, body.GetName())
+			createdDescriptions[body.GetName()] = body.GetDescription()
 			writeTestJSON(t, w, body)
 		case r.Method == http.MethodDelete && strings.HasPrefix(path, "/repos/o/r/issues/7/labels/"):
 			removed = append(removed, strings.TrimPrefix(path, "/repos/o/r/issues/7/labels/"))
@@ -74,6 +84,9 @@ func TestEnsureAutoMergeLabelStateCreatesAndSwapsLabels(t *testing.T) {
 	for _, want := range []string{autoMergeSafeLabel, autoMergeHumanReviewLabel} {
 		if !containsString(created, want) {
 			t.Fatalf("created labels = %v, missing %q", created, want)
+		}
+		if len(createdDescriptions[want]) > 100 {
+			t.Fatalf("description for %q is %d chars, want <= 100", want, len(createdDescriptions[want]))
 		}
 	}
 	if strings.Join(removed, ",") != autoMergeHumanReviewLabel || strings.Join(added, ",") != autoMergeSafeLabel {
