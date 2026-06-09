@@ -28,6 +28,7 @@ func TestParseMultipartChatPostBodyReadsAttachments(t *testing.T) {
 		"validate":                  "false",
 		"review_code_before_push":   "true",
 		"action_pr_checks_for_done": "false",
+		"auto_merge":                "true",
 		"agent_slug":                "bob",
 		"repository":                "hetchyhq/hetchy",
 	}
@@ -72,6 +73,9 @@ func TestParseMultipartChatPostBodyReadsAttachments(t *testing.T) {
 	if body.ActionPRChecksForDone == nil || *body.ActionPRChecksForDone {
 		t.Fatalf("checks = %v, want false", body.ActionPRChecksForDone)
 	}
+	if body.AutoMerge == nil || !*body.AutoMerge {
+		t.Fatalf("auto_merge = %v, want true", body.AutoMerge)
+	}
 	if len(body.Attachments) != 1 {
 		t.Fatalf("attachments len = %d, want 1", len(body.Attachments))
 	}
@@ -92,6 +96,7 @@ func TestParseJSONChatPostBody(t *testing.T) {
 		"validate":true,
 		"review_code_before_push":false,
 		"action_pr_checks_for_done":true,
+		"auto_merge":true,
 		"agent_slug":"alice",
 		"repository":"hetchyhq/hetchy"
 	}`)
@@ -120,6 +125,9 @@ func TestParseJSONChatPostBody(t *testing.T) {
 	}
 	if body.ActionPRChecksForDone == nil || !*body.ActionPRChecksForDone {
 		t.Fatalf("checks = %v, want true", body.ActionPRChecksForDone)
+	}
+	if body.AutoMerge == nil || !*body.AutoMerge {
+		t.Fatalf("auto_merge = %v, want true", body.AutoMerge)
 	}
 	if len(body.Attachments) != 0 {
 		t.Fatalf("attachments len = %d, want 0", len(body.Attachments))
@@ -161,7 +169,8 @@ func TestParseConversationAPIJSONBody(t *testing.T) {
 		"task_options":{
 			"validate":false,
 			"review_code_before_push":true,
-			"action_pr_checks_for_done":false
+			"action_pr_checks_for_done":false,
+			"auto_merge":true
 		},
 		"attachments":[{
 			"filename":"notes.txt",
@@ -191,6 +200,9 @@ func TestParseConversationAPIJSONBody(t *testing.T) {
 	}
 	if body.ActionPRChecksForDone == nil || *body.ActionPRChecksForDone {
 		t.Fatalf("checks = %v, want false", body.ActionPRChecksForDone)
+	}
+	if body.AutoMerge == nil || !*body.AutoMerge {
+		t.Fatalf("auto_merge = %v, want true", body.AutoMerge)
 	}
 	if len(body.Attachments) != 1 {
 		t.Fatalf("attachments len = %d, want 1", len(body.Attachments))

@@ -42,6 +42,7 @@ type chatPostBody struct {
 	Validate              *bool `json:"validate,omitempty"`
 	ReviewCodeBeforePush  *bool `json:"review_code_before_push,omitempty"`
 	ActionPRChecksForDone *bool `json:"action_pr_checks_for_done,omitempty"`
+	AutoMerge             *bool `json:"auto_merge,omitempty"`
 	Attachments           []convstore.Attachment
 }
 
@@ -59,6 +60,7 @@ type chatPostJSONBody struct {
 	Validate              *bool                    `json:"validate,omitempty"`
 	ReviewCodeBeforePush  *bool                    `json:"review_code_before_push,omitempty"`
 	ActionPRChecksForDone *bool                    `json:"action_pr_checks_for_done,omitempty"`
+	AutoMerge             *bool                    `json:"auto_merge,omitempty"`
 	Attachments           []chatPostJSONAttachment `json:"attachments,omitempty"`
 }
 
@@ -106,6 +108,9 @@ func (b *Bot) startConversationTurn(parentCtx context.Context, w http.ResponseWr
 	}
 	if body.ActionPRChecksForDone != nil {
 		optionPatch[chatTaskActionPRChecksForDoneKey] = *body.ActionPRChecksForDone
+	}
+	if body.AutoMerge != nil {
+		optionPatch[chatTaskAutoMergeKey] = *body.AutoMerge
 	}
 	model, ok := parseClaudeModel(body.Model)
 	if !ok {
@@ -224,6 +229,7 @@ func parseChatPostJSON(data []byte) (chatPostBody, error) {
 		Validate:              raw.Validate,
 		ReviewCodeBeforePush:  raw.ReviewCodeBeforePush,
 		ActionPRChecksForDone: raw.ActionPRChecksForDone,
+		AutoMerge:             raw.AutoMerge,
 	}
 	if body.Validate == nil {
 		body.Validate = optionalBoolFromMap(raw.TaskOptions, chatTaskValidateKey)
@@ -233,6 +239,9 @@ func parseChatPostJSON(data []byte) (chatPostBody, error) {
 	}
 	if body.ActionPRChecksForDone == nil {
 		body.ActionPRChecksForDone = optionalBoolFromMap(raw.TaskOptions, chatTaskActionPRChecksForDoneKey)
+	}
+	if body.AutoMerge == nil {
+		body.AutoMerge = optionalBoolFromMap(raw.TaskOptions, chatTaskAutoMergeKey)
 	}
 	attachments, err := decodeJSONAttachments(raw.Attachments)
 	if err != nil {
@@ -268,6 +277,7 @@ func parseMultipartChatPostBody(w http.ResponseWriter, r *http.Request) (chatPos
 		Validate:              optionalFormBool(values, "validate"),
 		ReviewCodeBeforePush:  optionalFormBool(values, "review_code_before_push"),
 		ActionPRChecksForDone: optionalFormBool(values, "action_pr_checks_for_done"),
+		AutoMerge:             optionalFormBool(values, "auto_merge"),
 	}
 	if payload := firstFormValue(values, "payload"); payload != "" {
 		payloadBody, err := parseChatPostJSON([]byte(payload))

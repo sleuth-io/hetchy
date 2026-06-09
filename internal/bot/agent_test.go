@@ -164,6 +164,22 @@ func TestConditionalTasksPromptRespectsOptions(t *testing.T) {
 	if prompt != "" {
 		t.Fatalf("disabled conditional tasks should produce no prompt, got:\n%s", prompt)
 	}
+
+	prompt = conditionalTasksPrompt(chatTaskOptions{AutoMerge: true})
+	for _, w := range []string{
+		"Auto Merge assessment",
+		"HETCHY_AUTO_MERGE_ASSESSMENT",
+		"Do not merge the PR yourself",
+		"do not enable GitHub native auto-merge",
+		"`recommendation`",
+		"`head_sha`",
+		"MUST be JSON arrays",
+		"never use counts like `0`",
+	} {
+		if !strings.Contains(prompt, w) {
+			t.Errorf("auto merge prompt missing %q\n%s", w, prompt)
+		}
+	}
 }
 
 func TestAgentScript_EmbeddedAndWellFormed(t *testing.T) {

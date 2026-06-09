@@ -281,11 +281,22 @@ func TestResolveChatTaskOptionsMergesPatchAndDefaultsMissingOn(t *testing.T) {
 	if !opts.ActionPRChecksForDone {
 		t.Fatal("missing action_pr_checks_for_done should default on")
 	}
+	if opts.AutoMerge {
+		t.Fatal("missing auto_merge should default off")
+	}
 	if got, ok := saved["future_option"]; !ok || got {
 		t.Fatalf("future option should be preserved as false, got %v present=%v", got, ok)
 	}
 	if got, ok := saved[chatTaskReviewCodeBeforePushKey]; !ok || got {
 		t.Fatalf("patch value should be saved as false, got %v present=%v", got, ok)
+	}
+
+	api := chatTaskOptionsForAPI(saved)
+	if !api[chatTaskActionPRChecksForDoneKey] {
+		t.Fatal("API task options should expose default action_pr_checks_for_done=true")
+	}
+	if api[chatTaskAutoMergeKey] {
+		t.Fatal("API task options should expose default auto_merge=false")
 	}
 }
 

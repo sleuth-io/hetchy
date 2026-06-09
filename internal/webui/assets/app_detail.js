@@ -142,6 +142,7 @@
     const creator = detail.creator_id ? userName(detail.creator_id) : '';
     const attachments = Array.isArray(detail.attachments) ? detail.attachments : [];
     const skills = Array.isArray(detail.sx_skills) ? detail.sx_skills : [];
+    const autoMerge = detail.auto_merge || null;
 
     const repoHref = repoGitHubHref(repoSlug);
     const repoCell = repoHref
@@ -164,6 +165,7 @@
       { label: 'Repo', html: repoCell, empty: !repoSlug },
       { label: 'Branch', html: branchCell, empty: !branch },
       { label: 'PR', html: prCell, empty: !prHref },
+      { label: 'Auto Merge', html: buildDetailAutoMergeCell(autoMerge), empty: !autoMerge },
       { label: 'Attachments', html: buildDetailAttachmentsCell(attachments), empty: attachments.length === 0 },
       { label: 'Skills', html: buildDetailSkillsCell(skills), empty: skills.length === 0 },
       { label: 'Sandbox', html: sandbox ? '<span class="meta-mono">' + esc(sandbox) + '</span>' : '<span>-</span>', empty: !sandbox },
@@ -184,7 +186,137 @@
       + rowHTML
       + '</div>';
 
+    setupDetailAutoMergeTrigger(autoMerge);
     setupDetailSkillsTrigger(skills);
+  }
+
+  function buildDetailAutoMergeCell(autoMerge) {
+    if (!autoMerge) return '<span>-</span>';
+    const state = autoMerge.state_label || autoMerge.state || 'Auto Merge off';
+    const parts = ['<span class="meta-chip auto-merge-state">' + esc(state) + '</span>'];
+    if (autoMerge.recommendation) parts.push('<span>' + esc(autoMerge.recommendation) + '</span>');
+    if (autoMerge.risk) parts.push('<span>' + esc(autoMerge.risk) + ' risk</span>');
+    if (autoMerge.confidence) parts.push('<span>' + esc(autoMerge.confidence) + ' confidence</span>');
+    if (autoMerge.judged_head_short) parts.push('<span class="meta-mono">' + esc(autoMerge.judged_head_short) + '</span>');
+    const hasDetails = !!(autoMerge.assessment || autoMergeGateHasDetail(autoMerge.server_gate) || autoMergeGateHasDetail(autoMerge.github_gate) || autoMerge.top_reason || autoMerge.label);
+    const detailButton = hasDetails
+      ? '<button type="button" id="detail-auto-merge-show" class="meta-show-all" aria-haspopup="dialog">View details</button>'
+      : '';
+    return '<span class="meta-chip-row auto-merge-summary">' + parts.join('') + '</span>' + detailButton;
+  }
+
+  function setupDetailAutoMergeTrigger(autoMerge) {
+    const btn = byID('detail-auto-merge-show');
+    if (!btn || !autoMerge) return;
+    btn.addEventListener('click', () => openDetailAutoMergeModal(autoMerge));
+  }
+
+  function autoMergeGateHasDetail(gate) {
+    return !!(gate && (gate.state || gate.reason || (Array.isArray(gate.details) && gate.details.length)));
+  }
+
+  function openDetailAutoMergeModal(autoMerge) {
+    byID('detail-auto-merge-modal-overlay')?.remove();
+    const overlay = document.createElement('div');
+    overlay.id = 'detail-auto-merge-modal-overlay';
+    overlay.className = 'skills-modal-overlay';
+    const titleID = 'detail-auto-merge-modal-title';
+    overlay.innerHTML =
+      '<div class="skills-modal auto-merge-modal" role="dialog" aria-modal="true" aria-labelledby="' + titleID + '" tabindex="-1">'
+      + '<div class="skills-modal-head">'
+      + '<h2 class="skills-modal-title" id="' + titleID + '">Auto Merge</h2>'
+      + '<button type="button" class="skills-modal-close" aria-label="Close">&times;</button>'
+      + '</div>'
+      + '<div class="auto-merge-modal-body">'
+      + autoMergeDetailHTML(autoMerge)
+      + '</div>'
+      + '</div>';
+
+    const dialog = overlay.querySelector('.skills-modal');
+    const previousFocus = document.activeElement;
+    const close = () => {
+      overlay.remove();
+      if (previousFocus && typeof previousFocus.focus === 'function') previousFocus.focus();
+    };
+    overlay.querySelector('.skills-modal-close').addEventListener('click', close);
+    overlay.addEventListener('click', e => {
+      if (e.target === overlay) close();
+    });
+    overlay.addEventListener('keydown', e => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        close();
+      }
+    });
+    const mount = byID('chat-detail-dialog')?.open ? byID('chat-detail-dialog') : document.body;
+    mount.appendChild(overlay);
+    dialog.focus();
+  }
+
+  function autoMergeDetailHTML(autoMerge) {
+    const assessment = autoMerge.assessment || {};
+    const rows = [
+      ['State', autoMerge.state_label || autoMerge.state],
+      ['Recommendation', autoMerge.recommendation || assessment.recommendation],
+      ['Risk', autoMerge.risk || assessment.risk],
+      ['Confidence', autoMerge.confidence || assessment.confidence],
+      ['Judged head', autoMerge.judged_head_sha],
+      ['Label', autoMerge.label],
+      ['Merged at', autoMerge.merged_at ? fullDate(autoMerge.merged_at) : ''],
+      ['Reason', autoMerge.top_reason],
+    ].filter(row => compact(row[1], '') !== '');
+    const rowHTML = rows.map(row =>
+      '<div class="auto-merge-detail-row">'
+      + '<span>' + esc(row[0]) + '</span>'
+      + '<strong' + (row[0] === 'Judged head' ? ' class="meta-mono"' : '') + '>' + esc(row[1]) + '</strong>'
+      + '</div>'
+    ).join('');
+    return rowHTML
+      + autoMergeTextSection('Summary', autoMerge.summary || assessment.summary)
+      + autoMergeListSection('Risk factors', assessment.risk_factors)
+      + autoMergeListSection('Tests seen passing', assessment.tests_seen_passing)
+      + autoMergeListSection('Review iterations', assessment.review_iterations)
+      + autoMergeIssuesSection(assessment.remaining_issues)
+      + autoMergeListSection('Dangerous categories', assessment.dangerous_change_categories)
+      + autoMergeGateSection('Server gate', autoMerge.server_gate)
+      + autoMergeGateSection('GitHub gate', autoMerge.github_gate)
+      + autoMergeListSection('Labels applied', autoMerge.labels_applied);
+  }
+
+  function autoMergeTextSection(title, text) {
+    text = compact(text, '');
+    if (!text) return '';
+    return '<section class="auto-merge-detail-section"><h3>' + esc(title) + '</h3><p>' + esc(text) + '</p></section>';
+  }
+
+  function autoMergeListSection(title, items) {
+    if (!Array.isArray(items) || !items.length) return '';
+    return '<section class="auto-merge-detail-section"><h3>' + esc(title) + '</h3><ul>'
+      + items.map(item => '<li>' + esc(item) + '</li>').join('')
+      + '</ul></section>';
+  }
+
+  function autoMergeIssuesSection(items) {
+    if (!Array.isArray(items) || !items.length) return '';
+    return '<section class="auto-merge-detail-section"><h3>Remaining issues</h3><ul>'
+      + items.map(item => {
+        const severity = item && item.severity ? '[' + item.severity + '] ' : '';
+        const body = item && (item.summary || item.description) ? (item.summary || item.description) : '';
+        return '<li>' + esc(severity + body) + '</li>';
+      }).join('')
+      + '</ul></section>';
+  }
+
+  function autoMergeGateSection(title, gate) {
+    if (!gate || (!gate.reason && !Array.isArray(gate.details) && !gate.state)) return '';
+    const status = gate.passed ? 'Passed' : 'Blocked';
+    const details = Array.isArray(gate.details) && gate.details.length
+      ? '<ul>' + gate.details.map(item => '<li>' + esc(item) + '</li>').join('') + '</ul>'
+      : '';
+    return '<section class="auto-merge-detail-section"><h3>' + esc(title) + '</h3>'
+      + '<p>' + esc(status + (gate.state ? ' - ' + gate.state : '') + (gate.reason ? ': ' + gate.reason : '')) + '</p>'
+      + details
+      + '</section>';
   }
 
   function buildDetailAttachmentsCell(attachments) {

@@ -395,6 +395,9 @@
     state.selectedTaskModel = readStoredModel();
     state.taskAttachments = [];
     renderAttachmentList('task');
+    const autoMergeBox = byID('task-auto-merge');
+    if (autoMergeBox) autoMergeBox.checked = readStoredAutoMerge();
+    updateTaskToolsButton();
     if (state.mode === 'agent' && state.selectedID !== noAgentID) {
       state.selectedTaskAgent = state.selectedID;
     }
@@ -446,6 +449,7 @@
       validate: byID('task-validate').checked,
       review_code_before_push: byID('task-review').checked,
       action_pr_checks_for_done: byID('task-pr-checks').checked,
+      auto_merge: byID('task-auto-merge').checked,
     };
     if (repo) payload.repository = repo;
     if (agent) payload.agent_slug = agent;

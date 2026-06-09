@@ -216,7 +216,7 @@ func (b *Bot) appDataRunForConversation(ctx context.Context, orgID string, rec c
 		UpdatedAt:      appDataRunTimestamp(rec, run, hasRun),
 		CreatedAt:      formatOptionalTime(rec.CreatedAt),
 		Milestones:     milestones,
-		TaskOptions:    rec.TaskOptions,
+		TaskOptions:    chatTaskOptionsForAPI(rec.TaskOptions),
 	}
 }
 

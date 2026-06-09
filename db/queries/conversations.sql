@@ -194,6 +194,20 @@ WHERE org_id = sqlc.arg(org_id)
       OR pr_url = 'https://github.com/' || sqlc.arg(github_owner)::text || '/' || sqlc.arg(github_repo)::text || '/pull/' || sqlc.arg(pr_number)::int::text
   );
 
+-- name: ListConversationsByPRURL :many
+SELECT org_id, thread_id, sandbox_id, branch, pr_url, pr_state, pr_merged, pr_merged_at, pr_closed_at,
+       pr_state_checked_at, history, created_at, updated_at, response_blocks,
+       github_owner, github_repo, custom_title, creator_id, agent_slug, model, task_options, awaiting_repo
+FROM conversations
+WHERE org_id = sqlc.arg(org_id)
+  AND lower(github_owner) = lower(sqlc.arg(github_owner))
+  AND lower(github_repo) = lower(sqlc.arg(github_repo))
+  AND (
+      pr_url = sqlc.arg(pr_url)
+      OR pr_url = 'https://github.com/' || sqlc.arg(github_owner)::text || '/' || sqlc.arg(github_repo)::text || '/pull/' || sqlc.arg(pr_number)::int::text
+  )
+ORDER BY updated_at DESC, thread_id DESC;
+
 -- name: ListConversationPRStateBackfillCandidates :many
 SELECT org_id, thread_id, github_owner, github_repo, pr_url
 FROM conversations

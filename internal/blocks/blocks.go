@@ -33,6 +33,10 @@ const (
 	// carries the tool input and (when available) the tool result.
 	KindToolUse Kind = "tool_use"
 
+	// KindAutoMergeAssessment is a server-recorded summary of Hetchy's
+	// merge-safety assessment for a verified pull request.
+	KindAutoMergeAssessment Kind = "auto_merge_assessment"
+
 	// KindResult is the terminal success block — body holds the PR URL
 	// and any closing prose. Always the last block of a successful
 	// turn.

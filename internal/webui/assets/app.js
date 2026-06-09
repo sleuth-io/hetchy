@@ -1,6 +1,7 @@
   var currentUserID = document.body.dataset.currentUserId || '';
   var defaultRepoSlug = (document.body.dataset.defaultRepoSlug || '').trim();
   var repoStorageKey = 'hetchy.repo.' + currentUserID;
+  var autoMergeStorageKey = 'hetchy.autoMerge.' + currentUserID;
   var openAIEnabled = document.body.dataset.openaiEnabled === '1';
   var appDataLimit = Math.max(1, parseInt(document.body.dataset.appDataLimit || '80', 10) || 80);
   var pollMs = 4000;
@@ -99,6 +100,18 @@
     } catch (e) {
       return null;
     }
+  }
+  function readStoredAutoMerge() {
+    try {
+      return localStorage.getItem(autoMergeStorageKey) === '1';
+    } catch (e) {
+      return false;
+    }
+  }
+  function persistAutoMergeEnabled(enabled) {
+    try {
+      localStorage.setItem(autoMergeStorageKey, enabled ? '1' : '0');
+    } catch (e) {}
   }
   function initialTaskRepoSlug() {
     const stored = readStoredRepoSlug();

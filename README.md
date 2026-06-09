@@ -186,7 +186,8 @@ For local dev, create one App on the `hetchyhq` GitHub org:
    nothing will reach it unless you tunnel; that's fine.)
 4. **Webhook secret**: generate with `openssl rand -hex 32` and save.
 5. **Repository permissions**: Contents (R/W), Pull requests (R/W),
-   Workflows (R/W), Issues (R/W), Metadata (R, default).
+   Workflows (R/W), Issues (R/W), Checks (R), Commit statuses (R),
+   Metadata (R, default).
 6. **Organization permissions**: Members (R).
 7. **Subscribe to events**: Installation target, Installation
    repositories, Member, Membership, Organization, Team, Team add,
