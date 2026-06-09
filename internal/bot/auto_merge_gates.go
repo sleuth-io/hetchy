@@ -146,18 +146,29 @@ func autoMergeCheckWaitReason(s autoMergeGitHubSnapshot) (string, bool) {
 }
 
 func autoMergeCheckBlockReason(s autoMergeGitHubSnapshot) (string, bool) {
+	required := requiredStatusNames(s.Protection)
 	if s.CombinedStatus != nil {
-		state := strings.ToLower(s.CombinedStatus.GetState())
-		if state == "failure" || state == "error" {
-			return "combined status is " + state, true
+		for _, st := range s.CombinedStatus.Statuses {
+			name := strings.TrimSpace(st.GetContext())
+			if _, ok := required[name]; !ok {
+				continue
+			}
+			state := strings.ToLower(strings.TrimSpace(st.GetState()))
+			if state == "failure" || state == "error" {
+				return "required status check " + name + " is " + state, true
+			}
 		}
 	}
 	for _, run := range s.CheckRuns {
+		name := strings.TrimSpace(run.GetName())
+		if _, ok := required[name]; !ok {
+			continue
+		}
 		if !strings.EqualFold(run.GetStatus(), "completed") {
 			continue
 		}
 		if !checkConclusionPasses(run.GetConclusion()) {
-			return "check run " + firstNonEmpty(run.GetName(), "unnamed") + " concluded " + run.GetConclusion(), true
+			return "required check run " + firstNonEmpty(name, "unnamed") + " concluded " + run.GetConclusion(), true
 		}
 	}
 	return "", false

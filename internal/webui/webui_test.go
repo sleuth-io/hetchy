@@ -63,6 +63,9 @@ func TestAppAutoMergeComposerAndSidebarWiring(t *testing.T) {
 		"auto_merge: byID('task-auto-merge').checked",
 		"detail.auto_merge",
 		"openDetailAutoMergeModal",
+		"detail-auto-merge-modal-overlay",
+		"const mount = byID('chat-detail-dialog')?.open ? byID('chat-detail-dialog') : document.body",
+		"mount.appendChild(overlay)",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("auto merge asset wiring missing %q", want)

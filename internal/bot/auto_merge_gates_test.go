@@ -191,8 +191,10 @@ func TestAutoMergeFileRiskReasonsDetectsDangerousPaths(t *testing.T) {
 }
 
 func TestEvaluateAutoMergeGitHubGateBlocksFailedChecksBeforeWaiting(t *testing.T) {
+	requiredContexts := []string{"ci"}
 	got := evaluateAutoMergeGitHubGate(autoMergeGitHubSnapshot{
-		PR: openCleanPR("abc123"),
+		PR:         openCleanPR("abc123"),
+		Protection: &github.Protection{RequiredStatusChecks: &github.RequiredStatusChecks{Contexts: &requiredContexts}},
 		CheckRuns: []*github.CheckRun{{
 			Name:       stringPtr("ci"),
 			Status:     stringPtr("completed"),
@@ -204,6 +206,20 @@ func TestEvaluateAutoMergeGitHubGateBlocksFailedChecksBeforeWaiting(t *testing.T
 	}
 	if !strings.Contains(got.Reason, "concluded failure") {
 		t.Fatalf("gate reason = %q, want failed check", got.Reason)
+	}
+}
+
+func TestEvaluateAutoMergeGitHubGateIgnoresOptionalFailedCheck(t *testing.T) {
+	got := evaluateAutoMergeGitHubGate(autoMergeGitHubSnapshot{
+		PR: openCleanPR("abc123"),
+		CheckRuns: []*github.CheckRun{{
+			Name:       stringPtr("optional-benchmark"),
+			Status:     stringPtr("completed"),
+			Conclusion: stringPtr("failure"),
+		}},
+	}, "abc123")
+	if got.State != autoMergeStateSafeToMerge || !got.Passed {
+		t.Fatalf("gate = %+v, want safe when only optional check failed", got)
 	}
 }
 
@@ -289,14 +305,17 @@ func TestEvaluateAutoMergeGitHubGateStates(t *testing.T) {
 			want:      "mergeability is still being calculated",
 		},
 		{
-			name: "combined status failure",
+			name: "required combined status failure",
 			snapshot: autoMergeGitHubSnapshot{
-				PR:             openCleanPR("abc123"),
-				CombinedStatus: &github.CombinedStatus{State: stringPtr("failure")},
+				PR:         openCleanPR("abc123"),
+				Protection: &github.Protection{RequiredStatusChecks: &github.RequiredStatusChecks{Contexts: &requiredContexts}},
+				CombinedStatus: &github.CombinedStatus{
+					Statuses: []*github.RepoStatus{{Context: stringPtr("ci"), State: stringPtr("failure")}},
+				},
 			},
 			head:      "abc123",
 			wantState: autoMergeStateHumanReview,
-			want:      "combined status is failure",
+			want:      "required status check ci is failure",
 		},
 		{
 			name: "required combined status pending",

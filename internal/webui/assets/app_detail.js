@@ -248,7 +248,8 @@
         close();
       }
     });
-    document.body.appendChild(overlay);
+    const mount = byID('chat-detail-dialog')?.open ? byID('chat-detail-dialog') : document.body;
+    mount.appendChild(overlay);
     dialog.focus();
   }
 

@@ -24,6 +24,25 @@ func TestParseAutoMergeAssessmentFromBlocks(t *testing.T) {
 	}
 }
 
+func TestParseAutoMergeAssessmentAcceptsReviewIterationCount(t *testing.T) {
+	body := strings.Replace(safeAutoMergeJSON("abc123"), `"review_iterations":["self review: no findings above low"]`, `"review_iterations":0`, 1)
+	got, err := parseAutoMergeAssessmentText(autoMergeAssessmentMarker + "\n" + body)
+	if err != nil {
+		t.Fatalf("parse assessment: %v", err)
+	}
+	if len(got.ReviewIterations) != 0 {
+		t.Fatalf("review_iterations = %v, want empty list for zero count", got.ReviewIterations)
+	}
+}
+
+func TestParseAutoMergeAssessmentRejectsNonStringTestEvidence(t *testing.T) {
+	body := strings.Replace(safeAutoMergeJSON("abc123"), `"tests_seen_passing":["go test ./internal/bot: pass"]`, `"tests_seen_passing":0`, 1)
+	_, err := parseAutoMergeAssessmentText(autoMergeAssessmentMarker + "\n" + body)
+	if err == nil || !strings.Contains(err.Error(), "tests_seen_passing") {
+		t.Fatalf("parse err = %v, want tests_seen_passing shape error", err)
+	}
+}
+
 func TestParseAutoMergeAssessmentRejectsMalformedOrMissing(t *testing.T) {
 	tests := []struct {
 		name string
