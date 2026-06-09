@@ -85,11 +85,7 @@ func (b *Bot) jobAgentOptions(ctx context.Context, orgID string) (map[string]str
 	if err != nil {
 		return nil, nil, fmt.Errorf("load agents: %w", err)
 	}
-	// Custom agents live in the org's SX vault; the local agent_profiles row can
-	// lag behind a rename made through the vault, so the vault copy is the source
-	// of truth for the visible name. The agents settings screen already applies
-	// this merge (see populateAgentSettingsTabData); mirror it here so the jobs
-	// dropdown and job cards do not display a stale pre-rename name.
+	// Vault names override stale local names, matching the agents settings screen.
 	remoteNames := b.remoteAgentDisplayNames(ctx, orgID, activeBackend)
 	labels := map[string]string{"": "Default"}
 	options := []settingsJobAgentOption{{Slug: "", DisplayName: "Default"}}
