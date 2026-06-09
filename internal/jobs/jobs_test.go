@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hetchyhq/hetchy/internal/db"
 	"github.com/hetchyhq/hetchy/internal/db/sqlc"
 )
 
@@ -125,9 +126,13 @@ func TestStoreEnabledStates(t *testing.T) {
 	if nilStore.Enabled() {
 		t.Fatal("nil Store.Enabled() should be false")
 	}
-	emptyStore := &Store{}
-	if emptyStore.Enabled() {
+	// nil db field.
+	if (&Store{}).Enabled() {
 		t.Fatal("Store with nil db should not be enabled")
+	}
+	// non-nil db but nil Queries (partially constructed).
+	if (&Store{db: &db.Store{}}).Enabled() {
+		t.Fatal("Store with nil db.Queries should not be enabled")
 	}
 }
 
@@ -162,18 +167,6 @@ func TestStoreNotConfiguredReturnsError(t *testing.T) {
 	}
 	if err := s.FinishExecution(ctx, "org1", "exec1", StatusSucceeded, ""); !errors.Is(err, ErrNotConfigured) {
 		t.Errorf("FinishExecution: want ErrNotConfigured, got %v", err)
-	}
-}
-
-func TestClaimDueZeroLimitReturnsEmpty(t *testing.T) {
-	ctx := t.Context()
-	// Use a Store that reports as enabled via a non-nil db.Store pointer with a
-	// non-nil Queries. The limit=0 early-return fires before any DB query.
-	s := &Store{}
-	if _, err := s.ClaimDue(ctx, "w", 0, time.Now(), time.Minute); !errors.Is(err, ErrNotConfigured) {
-		// Without a real DB, Enabled() is false, so we only get ErrNotConfigured.
-		// The limit<=0 path is still useful to document intent here.
-		t.Logf("ClaimDue zero limit with disabled store: %v (expected)", err)
 	}
 }
 
@@ -242,6 +235,9 @@ func TestValidateInputRequiresValidCron(t *testing.T) {
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("want ErrInvalidInput, got %v", err)
 	}
+	if msg := InvalidInputMessage(err); !strings.Contains(msg, "standard 5-field") {
+		t.Fatalf("invalid cron message = %q, want 'standard 5-field'", msg)
+	}
 }
 
 func TestTimeParam(t *testing.T) {
@@ -292,10 +288,14 @@ func TestNewIDFormat(t *testing.T) {
 	if !strings.HasPrefix(id2, "jobexec_") {
 		t.Errorf("newID(\"jobexec\") = %q, want prefix \"jobexec_\"", id2)
 	}
-	// IDs should be unique.
-	a, b := newID("job"), newID("job")
-	if a == b {
-		t.Error("two newID calls should not return the same value")
+	// IDs must be unique across many calls.
+	seen := make(map[string]struct{}, 100)
+	for i := range 100 {
+		id := newID("job")
+		if _, dup := seen[id]; dup {
+			t.Errorf("newID collision on call %d: %q", i, id)
+		}
+		seen[id] = struct{}{}
 	}
 }
 
@@ -323,7 +323,7 @@ func TestJobFromRowWithLastRunID(t *testing.T) {
 }
 
 func TestJobFromRowNoLastRunID(t *testing.T) {
-	row := sqlc.AgentJob{ID: "job_2", AdditionalRepos: []byte(`[]`)}
+	row := sqlc.AgentJob{ID: "job_2", AdditionalRepos: []byte(`[]`), LastRunID: nil}
 	job, err := jobFromRow(row)
 	if err != nil {
 		t.Fatalf("jobFromRow: %v", err)
@@ -346,6 +346,15 @@ func TestExecutionFromRow(t *testing.T) {
 	exec := executionFromRow(row)
 	if exec.ID != "exec_1" {
 		t.Errorf("ID = %q", exec.ID)
+	}
+	if exec.JobID != "job_1" {
+		t.Errorf("JobID = %q", exec.JobID)
+	}
+	if exec.OrgID != "org_1" {
+		t.Errorf("OrgID = %q", exec.OrgID)
+	}
+	if exec.ClaimedBy != "worker-1" {
+		t.Errorf("ClaimedBy = %q", exec.ClaimedBy)
 	}
 	if exec.RunID != runID {
 		t.Errorf("RunID = %q, want %q", exec.RunID, runID)
