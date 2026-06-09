@@ -164,10 +164,24 @@ func TestRenderAppTemplate(t *testing.T) {
 		`id="run-action-menu"`,
 		`id="run-rename-dialog"`,
 		`id="run-delete-dialog"`,
+		`id="detail-meta-more-btn"`,
+		`id="detail-download-btn"`,
+		`id="detail-rename-btn"`,
+		`id="detail-delete-btn"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("rendered app template missing %q", want)
 		}
+	}
+	// The chat-actions "..." menu must live in the dialog header row so it
+	// reads as an action on the whole chat, not just the metadata panel.
+	headStart := strings.Index(body, `class="chat-head-actions"`)
+	if headStart < 0 {
+		t.Fatalf("rendered app template missing chat-head-actions container")
+	}
+	headEnd := strings.Index(body[headStart:], "</header>")
+	if headEnd < 0 || !strings.Contains(body[headStart:headStart+headEnd], `id="detail-meta-more-btn"`) {
+		t.Fatalf("chat actions menu is not rendered inside the chat header row")
 	}
 }
 
@@ -258,6 +272,57 @@ func TestChatImageModalAssetWiring(t *testing.T) {
 				".image-modal-overlay",
 				".image-modal-img",
 				"button.meta-attachment-link",
+			},
+		},
+	}
+	for _, c := range checks {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, c.path, nil)
+		AssetHandler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Errorf("%s status = %d", c.path, rec.Code)
+			continue
+		}
+		body := rec.Body.String()
+		for _, want := range c.wants {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s missing %q", c.path, want)
+			}
+		}
+	}
+}
+
+// TestChatHeaderActionsMenuWiring checks that the chat-header "..." menu
+// is wired up once at init and that its Rename/Delete actions reuse the
+// same dialogs and handlers as the run-card menu, reading the active
+// conversation from state rather than rendering its own copy.
+func TestChatHeaderActionsMenuWiring(t *testing.T) {
+	type assetCheck struct {
+		path  string
+		wants []string
+	}
+	checks := []assetCheck{
+		{
+			path: "/assets/app_detail.js",
+			wants: []string{
+				"function setupDetailMetaMenu()",
+				"byID('detail-download-btn')",
+				"byID('detail-rename-btn')",
+				"byID('detail-delete-btn')",
+				"openRunRenameDialog(detail.id, detail.title",
+				"openRunDeleteDialog(detail.id)",
+			},
+		},
+		{
+			path: "/assets/app_events.js",
+			wants: []string{
+				"setupDetailMetaMenu();",
+			},
+		},
+		{
+			path: "/assets/app_chat.css",
+			wants: []string{
+				".meta-dropdown-item.danger",
 			},
 		},
 	}

@@ -351,6 +351,14 @@
         <p id="chat-detail-sub">Loading...</p>
       </div>
       <div class="chat-head-actions">
+        <div class="meta-more-wrap">
+          <button id="detail-meta-more-btn" class="icon-button" type="button" aria-label="Chat actions" aria-haspopup="menu" aria-expanded="false">...</button>
+          <div id="detail-meta-dropdown" role="menu" aria-label="Chat actions" hidden>
+            <button id="detail-download-btn" type="button" role="menuitem" class="meta-dropdown-item">Download</button>
+            <button id="detail-rename-btn" type="button" role="menuitem" class="meta-dropdown-item">Rename</button>
+            <button id="detail-delete-btn" type="button" role="menuitem" class="meta-dropdown-item danger">Delete</button>
+          </div>
+        </div>
         <button id="chat-meta-toggle" class="icon-button chat-meta-toggle" type="button" aria-label="Show chat details" aria-controls="chat-meta" aria-expanded="false">
           <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
             <path d="M7 7h10"/>
