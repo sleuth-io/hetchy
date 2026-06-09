@@ -112,24 +112,29 @@ func autoMergeCheckWaitReason(s autoMergeGitHubSnapshot) (string, bool) {
 		requiredSeen[name] = false
 	}
 	if s.CombinedStatus != nil {
-		state := strings.ToLower(s.CombinedStatus.GetState())
-		if state == "pending" {
-			return "required status checks are pending", true
-		}
 		for _, st := range s.CombinedStatus.Statuses {
 			name := strings.TrimSpace(st.GetContext())
-			if _, ok := requiredSeen[name]; ok && strings.EqualFold(st.GetState(), "success") {
+			if _, ok := requiredSeen[name]; !ok {
+				continue
+			}
+			state := strings.ToLower(strings.TrimSpace(st.GetState()))
+			if state == "success" {
 				requiredSeen[name] = true
+			} else if state != "" {
+				return "required status check " + name + " is " + state, true
 			}
 		}
 	}
 	for _, run := range s.CheckRuns {
 		name := strings.TrimSpace(run.GetName())
-		if _, ok := requiredSeen[name]; ok && checkConclusionPasses(run.GetConclusion()) {
-			requiredSeen[name] = true
+		_, required := requiredSeen[name]
+		if !required {
+			continue
 		}
-		if !strings.EqualFold(run.GetStatus(), "completed") {
-			return "check run " + firstNonEmpty(run.GetName(), "unnamed") + " is still " + run.GetStatus(), true
+		if checkConclusionPasses(run.GetConclusion()) {
+			requiredSeen[name] = true
+		} else if !strings.EqualFold(run.GetStatus(), "completed") {
+			return "required check run " + firstNonEmpty(run.GetName(), "unnamed") + " is still " + run.GetStatus(), true
 		}
 	}
 	for name, seen := range requiredSeen {
