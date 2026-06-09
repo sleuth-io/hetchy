@@ -85,6 +85,8 @@ func (b *Bot) jobAgentOptions(ctx context.Context, orgID string) (map[string]str
 	if err != nil {
 		return nil, nil, fmt.Errorf("load agents: %w", err)
 	}
+	// Vault names override stale local names, matching the agents settings screen.
+	remoteNames := b.remoteAgentDisplayNames(ctx, orgID, activeBackend)
 	labels := map[string]string{"": "Default"}
 	options := []settingsJobAgentOption{{Slug: "", DisplayName: "Default"}}
 	for _, profile := range profiles {
@@ -95,6 +97,11 @@ func (b *Bot) jobAgentOptions(ctx context.Context, orgID string) (map[string]str
 			continue
 		}
 		label := profile.DisplayName
+		if !profile.BuiltIn {
+			if remoteName, ok := remoteNames[profile.Slug]; ok {
+				label = remoteName
+			}
+		}
 		if label == "" {
 			label = profile.Slug
 		}
