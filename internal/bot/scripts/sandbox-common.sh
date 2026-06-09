@@ -86,6 +86,7 @@ hetchy_cache_mark_save_baseline() {
   local local_cache_dir="$1"
   hetchy_cache_sync_stamp="${local_cache_dir%/}.sync-stamp"
   if ! touch "$hetchy_cache_sync_stamp" 2>/dev/null; then
+    echo "[hetchy] WARNING: could not create cache sync stamp; unchanged-skip disabled"
     hetchy_cache_sync_stamp=""
     return 0
   fi
