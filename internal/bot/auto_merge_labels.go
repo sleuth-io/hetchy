@@ -12,12 +12,8 @@ import (
 func applyAutoMergeLabel(ctx context.Context, client *github.Client, owner, repo string, number int, desired string, out autoMergeOutcomeDetail) autoMergeOutcomeDetail {
 	labels, err := ensureAutoMergeLabelState(ctx, client, owner, repo, number, desired)
 	if err != nil {
-		if out.BlockedReason == "" {
-			out.BlockedReason = "apply auto merge label: " + err.Error()
-		}
-		if !strings.Contains(out.ServerGate.Reason, "label") && !strings.Contains(out.GitHubGate.Reason, "label") {
-			out.LabelsApplied = labels
-		}
+		out.BlockedReason = "apply auto merge label: " + err.Error()
+		out.LabelsApplied = labels
 		return out
 	}
 	out.LabelsApplied = labels

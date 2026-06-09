@@ -354,9 +354,15 @@ func fetchAutoMergeGitHubSnapshot(ctx context.Context, client *github.Client, ow
 		return autoMergeGitHubSnapshot{}, err
 	}
 	headSHA := pr.GetHead().GetSHA()
-	combined, _, err := client.Repositories.GetCombinedStatus(ctx, owner, repo, headSHA, &github.ListOptions{PerPage: 100})
+	combined, resp, err := client.Repositories.GetCombinedStatus(ctx, owner, repo, headSHA, &github.ListOptions{PerPage: 100})
 	if err != nil {
-		return autoMergeGitHubSnapshot{}, fmt.Errorf("fetch combined status: %w", err)
+		status := githubHTTPStatus(resp, err)
+		if status != http.StatusForbidden && status != http.StatusNotFound {
+			return autoMergeGitHubSnapshot{}, fmt.Errorf("fetch combined status: %w", err)
+		}
+		// Legacy commit statuses require a separate GitHub App permission.
+		// Check runs plus GitHub's merge endpoint still enforce protected PRs.
+		combined = nil
 	}
 	checks, _, err := client.Checks.ListCheckRunsForRef(ctx, owner, repo, headSHA, &github.ListCheckRunsOptions{ListOptions: github.ListOptions{PerPage: 100}})
 	if err != nil {

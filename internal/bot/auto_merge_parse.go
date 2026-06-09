@@ -183,17 +183,11 @@ func decodeAutoMergeStringListValue(name string, raw json.RawMessage, allowScala
 	if err := dec.Decode(&v); err != nil {
 		return "", false, fmt.Errorf("%s scalar value is invalid: %w", name, err)
 	}
-	switch value := v.(type) {
+	switch v.(type) {
 	case json.Number:
-		if value.String() == "0" {
-			return "", false, nil
-		}
-		return value.String(), true, nil
+		return "", false, nil
 	case bool:
-		if !value {
-			return "", false, nil
-		}
-		return "true", true, nil
+		return "", false, nil
 	default:
 		return "", false, fmt.Errorf("%s must contain strings", name)
 	}

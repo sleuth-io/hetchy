@@ -57,7 +57,7 @@ func TestAutoMergeOutcomeRenderingAndDetails(t *testing.T) {
 		t.Fatalf("round trip = %+v ok=%v", roundTrip, ok)
 	}
 	detail := autoMergeDetailFromOutcome(out)
-	if detail.StateLabel != "Waiting for checks" || detail.JudgedHeadShort != "abc1234" || detail.TopReason != "ci pending" {
+	if detail.StateLabel != "Waiting for checks" || detail.JudgedHeadShort != "abc1234" || detail.TopReason != "ci pending" || detail.Label != autoMergeSafeLabel {
 		t.Fatalf("detail = %+v", detail)
 	}
 
@@ -66,6 +66,21 @@ func TestAutoMergeOutcomeRenderingAndDetails(t *testing.T) {
 	snapshot := recorder.Snapshot()
 	if len(snapshot) != 1 || snapshot[0].Kind != blocks.KindAutoMergeAssessment || snapshot[0].Summary != "Waiting for checks" {
 		t.Fatalf("emitted blocks = %+v", snapshot)
+	}
+}
+
+func TestAutoMergeDetailDoesNotShowFailedLabelAsApplied(t *testing.T) {
+	detail := autoMergeDetailFromOutcome(autoMergeOutcomeDetail{
+		AutoMergeRequested: true,
+		AutoMergeState:     autoMergeStateHumanReview,
+		AutoMergeLabel:     autoMergeHumanReviewLabel,
+		BlockedReason:      "apply auto merge label: Resource not accessible by integration",
+	})
+	if detail.Label != "" {
+		t.Fatalf("detail label = %q, want empty when label was not applied", detail.Label)
+	}
+	if detail.TopReason != "apply auto merge label: Resource not accessible by integration" {
+		t.Fatalf("detail top reason = %q, want label failure", detail.TopReason)
 	}
 }
 

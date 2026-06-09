@@ -24,14 +24,18 @@ func TestParseAutoMergeAssessmentFromBlocks(t *testing.T) {
 	}
 }
 
-func TestParseAutoMergeAssessmentAcceptsReviewIterationCount(t *testing.T) {
-	body := strings.Replace(safeAutoMergeJSON("abc123"), `"review_iterations":["self review: no findings above low"]`, `"review_iterations":0`, 1)
-	got, err := parseAutoMergeAssessmentText(autoMergeAssessmentMarker + "\n" + body)
-	if err != nil {
-		t.Fatalf("parse assessment: %v", err)
-	}
-	if len(got.ReviewIterations) != 0 {
-		t.Fatalf("review_iterations = %v, want empty list for zero count", got.ReviewIterations)
+func TestParseAutoMergeAssessmentIgnoresReviewIterationCounts(t *testing.T) {
+	for _, count := range []string{"0", "1"} {
+		t.Run(count, func(t *testing.T) {
+			body := strings.Replace(safeAutoMergeJSON("abc123"), `"review_iterations":["self review: no findings above low"]`, `"review_iterations":`+count, 1)
+			got, err := parseAutoMergeAssessmentText(autoMergeAssessmentMarker + "\n" + body)
+			if err != nil {
+				t.Fatalf("parse assessment: %v", err)
+			}
+			if len(got.ReviewIterations) != 0 {
+				t.Fatalf("review_iterations = %v, want empty list for numeric count", got.ReviewIterations)
+			}
+		})
 	}
 }
 

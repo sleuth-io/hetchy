@@ -154,7 +154,7 @@ func autoMergeDetailFromOutcome(out autoMergeOutcomeDetail) *autoMergeDetail {
 		Requested:     out.AutoMergeRequested,
 		State:         state,
 		StateLabel:    autoMergeStateLabel(state),
-		Label:         out.AutoMergeLabel,
+		Label:         displayAutoMergeLabel(out),
 		TopReason:     firstNonEmpty(out.BlockedReason, out.GitHubGate.Reason, out.ServerGate.Reason),
 		JudgedHeadSHA: out.JudgedHeadSHA,
 		MergedAt:      out.MergedAt,
@@ -177,6 +177,16 @@ func autoMergeDetailFromOutcome(out autoMergeOutcomeDetail) *autoMergeDetail {
 		}
 	}
 	return detail
+}
+
+func displayAutoMergeLabel(out autoMergeOutcomeDetail) string {
+	if len(out.LabelsApplied) > 0 {
+		return strings.Join(out.LabelsApplied, ", ")
+	}
+	if autoMergeLabelFailed(out) {
+		return ""
+	}
+	return out.AutoMergeLabel
 }
 
 func sameSHA(a, b string) bool {

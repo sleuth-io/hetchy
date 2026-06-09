@@ -75,6 +75,47 @@ func TestFetchAutoMergeGitHubSnapshot(t *testing.T) {
 	}
 }
 
+func TestFetchAutoMergeGitHubSnapshotIgnoresCombinedStatusForbidden(t *testing.T) {
+	client, closeServer := autoMergeGitHubTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/repos/o/r/pulls/7":
+			writeTestJSON(t, w, map[string]any{
+				"number":          7,
+				"state":           "open",
+				"draft":           false,
+				"merged":          false,
+				"mergeable":       true,
+				"mergeable_state": "clean",
+				"html_url":        "https://github.com/o/r/pull/7",
+				"head":            map[string]any{"sha": "abc123"},
+				"base":            map[string]any{"ref": "main"},
+			})
+		case "/repos/o/r/pulls/7/files":
+			writeTestJSON(t, w, []map[string]any{{"filename": "internal/bot/app.go", "status": "modified", "changes": 1}})
+		case "/repos/o/r/pulls/7/reviews":
+			writeTestJSON(t, w, []map[string]any{})
+		case "/repos/o/r/commits/abc123/status":
+			http.Error(w, "Resource not accessible by integration", http.StatusForbidden)
+		case "/repos/o/r/commits/abc123/check-runs":
+			writeTestJSON(t, w, map[string]any{"total_count": 1, "check_runs": []map[string]any{{"name": "Test", "status": "completed", "conclusion": "success"}}})
+		case "/repos/o/r/branches/main/protection":
+			writeTestJSON(t, w, map[string]any{})
+		default:
+			t.Fatalf("unexpected GitHub path: %s", r.URL.String())
+		}
+	}))
+	defer closeServer()
+
+	got, err := fetchAutoMergeGitHubSnapshot(t.Context(), client, "o", "r", 7)
+	if err != nil {
+		t.Fatalf("fetch snapshot: %v", err)
+	}
+	if got.CombinedStatus != nil || len(got.CheckRuns) != 1 {
+		t.Fatalf("snapshot status/checks = %+v/%d, want nil combined status and one check", got.CombinedStatus, len(got.CheckRuns))
+	}
+}
+
 func TestEvaluateAutoMergeWithClientMergesEligiblePR(t *testing.T) {
 	var mergeSHA string
 	var added []string
@@ -102,7 +143,7 @@ func TestEvaluateAutoMergeWithClientMergesEligiblePR(t *testing.T) {
 		case r.Method == http.MethodGet && path == "/repos/o/r/pulls/7/reviews":
 			writeTestJSON(t, w, []map[string]any{})
 		case r.Method == http.MethodGet && path == "/repos/o/r/commits/abc123/status":
-			writeTestJSON(t, w, map[string]any{"state": "success", "statuses": []map[string]any{}})
+			http.Error(w, "Resource not accessible by integration", http.StatusForbidden)
 		case r.Method == http.MethodGet && path == "/repos/o/r/commits/abc123/check-runs":
 			writeTestJSON(t, w, map[string]any{"total_count": 1, "check_runs": []map[string]any{{"name": "ci", "status": "completed", "conclusion": "success"}}})
 		case r.Method == http.MethodGet && path == "/repos/o/r/branches/main/protection":

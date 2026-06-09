@@ -115,6 +115,11 @@ func TestApplyAutoMergeLabelRecordsSuccessAndFailure(t *testing.T) {
 	if !autoMergeLabelFailed(got) {
 		t.Fatalf("label failure outcome = %+v, want failed prefix", got)
 	}
+
+	got = applyAutoMergeLabel(t.Context(), failClient, "o", "r", 7, autoMergeSafeLabel, autoMergeOutcomeDetail{BlockedReason: "previous gate reason"})
+	if !autoMergeLabelFailed(got) || !strings.Contains(got.BlockedReason, "apply auto merge label") {
+		t.Fatalf("label failure outcome = %+v, want label failure surfaced", got)
+	}
 }
 
 func TestAutoMergePullRequestOptionsUseExpectedHeadSHA(t *testing.T) {
