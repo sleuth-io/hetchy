@@ -91,7 +91,29 @@ func ensureAutoMergeLabel(ctx context.Context, client *github.Client, owner, rep
 	return err
 }
 
-func autoMergePullRequestOptions(headSHA string) *github.PullRequestOptions {
-	// Leave MergeMethod empty so GitHub applies the repository's configured default.
-	return &github.PullRequestOptions{SHA: headSHA}
+func autoMergePullRequestOptions(headSHA, mergeMethod string) *github.PullRequestOptions {
+	return &github.PullRequestOptions{SHA: headSHA, MergeMethod: mergeMethod}
+}
+
+// resolveAutoMergeMethod picks a merge method the repository allows. When
+// merge_method is omitted GitHub defaults to a merge commit rather than the
+// repository's configured preference, which 405s on repos that disallow it.
+func resolveAutoMergeMethod(ctx context.Context, client *github.Client, owner, repo string) (string, error) {
+	repository, _, err := client.Repositories.Get(ctx, owner, repo)
+	if err != nil {
+		return "", fmt.Errorf("fetch repository merge settings: %w", err)
+	}
+	if repository == nil || (repository.AllowSquashMerge == nil && repository.AllowMergeCommit == nil && repository.AllowRebaseMerge == nil) {
+		// Merge settings are not visible to this token; let GitHub decide.
+		return "", nil
+	}
+	switch {
+	case repository.GetAllowSquashMerge():
+		return "squash", nil
+	case repository.GetAllowMergeCommit():
+		return "merge", nil
+	case repository.GetAllowRebaseMerge():
+		return "rebase", nil
+	}
+	return "", fmt.Errorf("repository %s/%s does not allow squash, merge, or rebase merges", owner, repo)
 }

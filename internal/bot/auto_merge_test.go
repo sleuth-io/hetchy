@@ -116,16 +116,20 @@ func TestFetchAutoMergeGitHubSnapshotIgnoresCombinedStatusForbidden(t *testing.T
 	}
 }
 
-func TestEvaluateAutoMergeWithClientMergesEligiblePR(t *testing.T) {
-	var mergeSHA string
-	var added []string
-	client, closeServer := autoMergeGitHubTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func mergesEligiblePRHandler(t *testing.T, mergeSHA, mergeMethod *string, added *[]string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		path, err := url.PathUnescape(r.URL.Path)
 		if err != nil {
 			t.Fatalf("decode path: %v", err)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && path == "/repos/o/r":
+			writeTestJSON(t, w, map[string]any{
+				"allow_merge_commit": false,
+				"allow_squash_merge": true,
+				"allow_rebase_merge": true,
+			})
 		case r.Method == http.MethodGet && path == "/repos/o/r/pulls/7":
 			writeTestJSON(t, w, map[string]any{
 				"number":          7,
@@ -158,21 +162,30 @@ func TestEvaluateAutoMergeWithClientMergesEligiblePR(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&labels); err != nil {
 				t.Fatalf("decode add labels: %v", err)
 			}
-			added = append(added, labels...)
+			*added = append(*added, labels...)
 			writeTestJSON(t, w, []map[string]string{{"name": labels[0]}})
 		case r.Method == http.MethodPut && path == "/repos/o/r/pulls/7/merge":
 			var body struct {
-				SHA string `json:"sha"`
+				SHA         string `json:"sha"`
+				MergeMethod string `json:"merge_method"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Fatalf("decode merge body: %v", err)
 			}
-			mergeSHA = body.SHA
+			*mergeSHA = body.SHA
+			*mergeMethod = body.MergeMethod
 			writeTestJSON(t, w, map[string]any{"sha": "merge123", "merged": true, "message": "merged"})
 		default:
 			t.Fatalf("unexpected evaluate request: %s %s", r.Method, path)
 		}
-	}))
+	}
+}
+
+func TestEvaluateAutoMergeWithClientMergesEligiblePR(t *testing.T) {
+	var mergeSHA string
+	var mergeMethod string
+	var added []string
+	client, closeServer := autoMergeGitHubTestClient(t, mergesEligiblePRHandler(t, &mergeSHA, &mergeMethod, &added))
 	defer closeServer()
 
 	assessment := safeAutoMergeAssessment("abc123")
@@ -189,6 +202,9 @@ func TestEvaluateAutoMergeWithClientMergesEligiblePR(t *testing.T) {
 	}
 	if mergeSHA != "abc123" {
 		t.Fatalf("merge SHA = %q, want expected head", mergeSHA)
+	}
+	if mergeMethod != "squash" {
+		t.Fatalf("merge method = %q, want squash when merge commits are disallowed", mergeMethod)
 	}
 	if strings.Join(added, ",") != autoMergeSafeLabel {
 		t.Fatalf("added labels = %v, want safe label", added)
@@ -264,6 +280,8 @@ func TestEvaluateAutoMergeWithClientRelabelsMergeFailure(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && path == "/repos/o/r":
+			writeTestJSON(t, w, map[string]any{"allow_merge_commit": true})
 		case r.Method == http.MethodGet && path == "/repos/o/r/pulls/7":
 			writeTestJSON(t, w, map[string]any{
 				"number":          7,

@@ -198,8 +198,17 @@ func (b *Bot) evaluateAutoMergeWithClient(ctx context.Context, orgID, threadID, 
 			out.GitHubGate = autoMergeGateResult{Passed: false, State: autoMergeStateHumanReview, Reason: out.BlockedReason}
 			return out
 		}
-		opts := autoMergePullRequestOptions(assessment.HeadSHA)
-		_, _, err := client.PullRequests.Merge(ctx, parsed.Owner, parsed.Repo, parsed.Number, "", opts)
+		mergeMethod, err := resolveAutoMergeMethod(ctx, client, parsed.Owner, parsed.Repo)
+		if err != nil {
+			out.AutoMergeState = autoMergeStateHumanReview
+			out.AutoMergeLabel = autoMergeHumanReviewLabel
+			out.BlockedReason = fmt.Sprintf("github merge failed: %v", err)
+			out.GitHubGate = autoMergeGateResult{Passed: false, State: autoMergeStateHumanReview, Reason: out.BlockedReason}
+			out = applyAutoMergeLabel(ctx, client, parsed.Owner, parsed.Repo, parsed.Number, autoMergeHumanReviewLabel, out)
+			return out
+		}
+		opts := autoMergePullRequestOptions(assessment.HeadSHA, mergeMethod)
+		_, _, err = client.PullRequests.Merge(ctx, parsed.Owner, parsed.Repo, parsed.Number, "", opts)
 		if err != nil {
 			out.AutoMergeState = autoMergeStateHumanReview
 			out.AutoMergeLabel = autoMergeHumanReviewLabel

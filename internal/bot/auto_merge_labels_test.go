@@ -190,8 +190,62 @@ func TestEnsureAutoMergeLabelReturnsValidationErrorWhenStillMissing(t *testing.T
 }
 
 func TestAutoMergePullRequestOptionsUseExpectedHeadSHA(t *testing.T) {
-	opts := autoMergePullRequestOptions("abc123")
-	if opts == nil || opts.SHA != "abc123" {
-		t.Fatalf("merge options = %+v, want SHA abc123", opts)
+	opts := autoMergePullRequestOptions("abc123", "squash")
+	if opts == nil || opts.SHA != "abc123" || opts.MergeMethod != "squash" {
+		t.Fatalf("merge options = %+v, want SHA abc123 with squash method", opts)
+	}
+}
+
+func TestResolveAutoMergeMethodPicksAllowedMethod(t *testing.T) {
+	cases := []struct {
+		name     string
+		repo     map[string]any
+		want     string
+		wantErr  bool
+		errMatch string
+	}{
+		{name: "prefers squash", repo: map[string]any{"allow_merge_commit": true, "allow_squash_merge": true, "allow_rebase_merge": true}, want: "squash"},
+		{name: "falls back to merge", repo: map[string]any{"allow_merge_commit": true, "allow_squash_merge": false, "allow_rebase_merge": true}, want: "merge"},
+		{name: "falls back to rebase", repo: map[string]any{"allow_merge_commit": false, "allow_squash_merge": false, "allow_rebase_merge": true}, want: "rebase"},
+		{name: "settings not visible", repo: map[string]any{}, want: ""},
+		{name: "nothing allowed", repo: map[string]any{"allow_merge_commit": false, "allow_squash_merge": false, "allow_rebase_merge": false}, wantErr: true, errMatch: "does not allow"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client, closeServer := autoMergeGitHubTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet || r.URL.Path != "/repos/o/r" {
+					t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				writeTestJSON(t, w, tc.repo)
+			}))
+			defer closeServer()
+
+			got, err := resolveAutoMergeMethod(t.Context(), client, "o", "r")
+			if tc.wantErr {
+				if err == nil || !strings.Contains(err.Error(), tc.errMatch) {
+					t.Fatalf("err = %v, want %q", err, tc.errMatch)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("resolve merge method: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("merge method = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestResolveAutoMergeMethodReturnsFetchError(t *testing.T) {
+	client, closeServer := autoMergeGitHubTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer closeServer()
+
+	_, err := resolveAutoMergeMethod(t.Context(), client, "o", "r")
+	if err == nil || !strings.Contains(err.Error(), "fetch repository merge settings") {
+		t.Fatalf("err = %v, want fetch repository merge settings error", err)
 	}
 }
