@@ -753,6 +753,64 @@ configure_hetchy_cache
 	}
 }
 
+func TestConfigureHetchyCache_PrunesReadOnlyGoModFiles(t *testing.T) {
+	// Mirror the Go module cache layout: read-only directories whose
+	// stale contents the prune must still be able to delete.
+	seed := t.TempDir()
+	modDir := filepath.Join(seed, "go-mod", "example.com", "dep@v1.0.0")
+	mustMkdir(t, modDir)
+	stale := filepath.Join(modDir, "go.mod")
+	mustWriteFile(t, stale, "module dep\n")
+	fresh := filepath.Join(seed, "go-mod", "fresh.txt")
+	mustWriteFile(t, fresh, "fresh\n")
+	old := time.Now().Add(-20 * 24 * time.Hour)
+	if err := os.Chtimes(stale, old, old); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+	if err := os.Chmod(modDir, 0o555); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(modDir, 0o755) })
+
+	cacheMount := t.TempDir()
+	archive := filepath.Join(cacheMount, "cache.tar.gz")
+	tarDir(t, seed, archive)
+	localCache := filepath.Join(t.TempDir(), "local-cache")
+
+	script := "set -euo pipefail\n" + sandboxRepoCacheHelpersScript + `
+hetchy_cache_zstd_available() { return 1; }
+configure_hetchy_cache
+`
+	out, err := runBashScript(t, script, map[string]string{
+		"HETCHY_CACHE_STATUS":     "mounted",
+		"HETCHY_CACHE_DIR":        cacheMount,
+		"HETCHY_LOCAL_CACHE_DIR":  localCache,
+		"HETCHY_CACHE_PRUNE_DAYS": "10",
+	})
+	if err != nil {
+		t.Fatalf("configure cache: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "pruned 1 dependency cache files") {
+		t.Fatalf("expected prune count line:\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Join(localCache, "go-mod", "example.com", "dep@v1.0.0", "go.mod")); !os.IsNotExist(err) {
+		t.Fatalf("stale read-only module file should be pruned: %v", err)
+	}
+	// The deletion must persist: the exit save runs because the file
+	// count changed, and the rewritten archive must not contain the
+	// stale file.
+	if !strings.Contains(out, "dependency cache archive saved in") {
+		t.Fatalf("expected save after prune deleted files:\n%s", out)
+	}
+	extracted := extractTarGz(t, archive)
+	if _, err := os.Stat(filepath.Join(extracted, "go-mod", "example.com", "dep@v1.0.0", "go.mod")); !os.IsNotExist(err) {
+		t.Fatalf("stale file should not be re-saved to the archive: %v", err)
+	}
+	if got := mustReadFile(t, filepath.Join(extracted, "go-mod", "fresh.txt")); got != "fresh\n" {
+		t.Fatalf("fresh.txt = %q", got)
+	}
+}
+
 func TestConfigureHetchyCache_RestoresZstArchive(t *testing.T) {
 	seed := t.TempDir()
 	mustWriteFile(t, filepath.Join(seed, "gomod.txt"), "cached\n")
@@ -836,8 +894,14 @@ hetchy_cache_pick_restore_archive "$ZST" "$GZ" "$LEGACY"
 	if err != nil {
 		t.Fatalf("pick without zstd: %v\n%s", err, out)
 	}
-	if strings.Contains(out, zstArchive) || !strings.Contains(out, gzArchive) {
-		t.Fatalf("without zstd the gz archive should win even when zst is newer:\n%s", out)
+	// The skip log line mentions the zst path, so assert on the picked
+	// path (the final output line) rather than substring absence.
+	lines := strings.Fields(strings.TrimSpace(out))
+	if picked := lines[len(lines)-1]; picked != gzArchive {
+		t.Fatalf("without zstd the gz archive should win even when zst is newer, picked %q:\n%s", picked, out)
+	}
+	if !strings.Contains(out, "skipping "+zstArchive+" (zstd not available)") {
+		t.Fatalf("expected unreadable-archive skip log line:\n%s", out)
 	}
 }
 

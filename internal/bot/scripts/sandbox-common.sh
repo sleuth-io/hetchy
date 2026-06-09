@@ -59,6 +59,10 @@ hetchy_cache_pick_restore_archive() {
   for candidate in "$@"; do
     [[ -f "$candidate" ]] || continue
     if [[ "$candidate" == *.zst ]] && ! hetchy_cache_zstd_available; then
+      # stderr: stdout is this function's return value. Without this
+      # line a cold start caused by an unreadable archive format is
+      # indistinguishable from an empty volume in the logs.
+      echo "[hetchy] dependency cache: skipping ${candidate} (zstd not available)" >&2
       continue
     fi
     if [[ -z "$newest" || "$candidate" -nt "$newest" ]]; then
@@ -97,6 +101,9 @@ hetchy_cache_unchanged_since_baseline() {
   local local_cache_dir="$1"
   local archive="$2"
   [[ -n "${hetchy_cache_sync_stamp:-}" && -f "${hetchy_cache_sync_stamp:-}" ]] || return 1
+  # Report "changed" when the save target is missing — whether it was
+  # never written (format migration) or disappeared after restore — so
+  # the exit sync always rebuilds it.
   [[ -f "$archive" ]] || return 1
   local changed
   changed="$(find "$local_cache_dir" -type f -newer "$hetchy_cache_sync_stamp" -print -quit 2>/dev/null || true)"
@@ -489,7 +496,7 @@ sync_hetchy_cache_on_exit() {
 configure_hetchy_cache() {
   local volume_cache_dir="${HETCHY_CACHE_DIR:-}"
   local local_cache_dir="${HETCHY_LOCAL_CACHE_DIR:-/tmp/hetchy-cache}"
-  local prune_days="${HETCHY_CACHE_PRUNE_DAYS:-30}"
+  local prune_days="${HETCHY_CACHE_PRUNE_DAYS:-10}"
 
   if [[ "${HETCHY_CACHE_STATUS:-}" == "disabled" ]]; then
     echo "[hetchy] dependency cache disabled"
@@ -537,9 +544,22 @@ configure_hetchy_cache() {
     fi
   fi
 
+  # Baseline before pruning so a prune that deletes files registers as
+  # a change and the exit save persists it; otherwise pruned files
+  # resurrect from the stale archive on every restore.
+  hetchy_cache_mark_save_baseline "$local_cache_dir"
+
   if [[ "$prune_days" =~ ^[0-9]+$ && "$prune_days" -gt 0 ]]; then
     echo "[hetchy] pruning dependency cache files older than ${prune_days} days"
-    find "$local_cache_dir" -xdev -mindepth 1 -type f -mtime "+${prune_days}" -delete >/dev/null 2>&1 || true
+    # Go extracts the module cache with read-only directories and
+    # unlink needs a writable parent, so without this chmod the prune
+    # silently deletes nothing under go-mod.
+    find "$local_cache_dir" -xdev -type d ! -perm -u+w -exec chmod u+w {} + 2>/dev/null || true
+    local pruned
+    pruned="$(find "$local_cache_dir" -xdev -mindepth 1 -type f -mtime "+${prune_days}" -delete -print 2>/dev/null | wc -l | tr -d '[:space:]')"
+    if [[ "$pruned" =~ ^[0-9]+$ && "$pruned" -gt 0 ]]; then
+      echo "[hetchy] pruned ${pruned} dependency cache files"
+    fi
     find "$local_cache_dir" -xdev -mindepth 1 -depth -type d -empty -delete >/dev/null 2>&1 || true
   fi
 
@@ -569,8 +589,6 @@ configure_hetchy_cache() {
   export BUNDLE_PATH="${local_cache_dir}/bundle"
   export CARGO_HOME="${local_cache_dir}/cargo"
   export PATH="${CARGO_HOME}/bin:${PATH}"
-
-  hetchy_cache_mark_save_baseline "$local_cache_dir"
 
   hetchy_cache_local_dir="$local_cache_dir"
   hetchy_cache_archive="$archive"
