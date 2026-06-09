@@ -1,13 +1,16 @@
 package bot
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/hetchyhq/hetchy/internal/agents"
 	"github.com/hetchyhq/hetchy/internal/jobs"
+	"github.com/hetchyhq/hetchy/internal/sxsync"
 	"github.com/hetchyhq/hetchy/internal/webui"
 )
 
@@ -305,6 +308,50 @@ func TestSettingsJobsByAgentReturnsEmptyWhenJobsDisabled(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Fatalf("disabled concrete jobs map = %#v, want empty", got)
+	}
+}
+
+func TestRemoteAgentDisplayNamesMergesVaultRename(t *testing.T) {
+	b := &Bot{sx: &fakeSXManager{remoteAgents: []agents.Profile{
+		{Slug: "hetchy", DisplayName: "Skills.new Bot"},
+		{Slug: "code-reviewer", DisplayName: "Code reviewer"},
+		{Slug: "  ", DisplayName: "ignored blank slug"},
+		{Slug: "blank-name", DisplayName: "   "},
+	}}}
+
+	got := b.remoteAgentDisplayNames(t.Context(), "org_123", sxsync.BackendSkillsNew)
+
+	want := map[string]string{
+		"hetchy":        "Skills.new Bot",
+		"code-reviewer": "Code reviewer",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("remoteAgentDisplayNames = %#v, want %#v", got, want)
+	}
+	for slug, name := range want {
+		if got[slug] != name {
+			t.Fatalf("remoteAgentDisplayNames[%q] = %q, want %q", slug, got[slug], name)
+		}
+	}
+}
+
+func TestRemoteAgentDisplayNamesEmptyWhenUnavailable(t *testing.T) {
+	cases := []struct {
+		name    string
+		bot     *Bot
+		backend string
+	}{
+		{name: "sx disabled", bot: &Bot{sx: &fakeSXManager{remoteAgents: []agents.Profile{{Slug: "hetchy", DisplayName: "Skills.new Bot"}}}}, backend: ""},
+		{name: "nil sx manager", bot: &Bot{}, backend: sxsync.BackendSkillsNew},
+		{name: "sync error falls back", bot: &Bot{sx: &fakeSXManager{syncAgentsErr: errors.New("vault unavailable")}}, backend: sxsync.BackendSkillsNew},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := tc.bot.remoteAgentDisplayNames(t.Context(), "org_123", tc.backend)
+			if len(got) != 0 {
+				t.Fatalf("remoteAgentDisplayNames = %#v, want empty", got)
+			}
+		})
 	}
 }
 

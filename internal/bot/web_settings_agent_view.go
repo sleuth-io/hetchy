@@ -203,6 +203,31 @@ func (b *Bot) populateAgentSettingsTabData(ctx context.Context, orgID string, da
 	return nil
 }
 
+// remoteAgentDisplayNames returns the current SX-vault display name keyed by
+// agent slug for custom (non-built-in) agents. Built-in agents are not
+// vault-backed and are intentionally excluded. Callers fall back to the local
+// agent_profiles name when a slug is absent, so an empty map (SX disabled or a
+// failed sync) preserves the prior behaviour rather than blanking labels.
+func (b *Bot) remoteAgentDisplayNames(ctx context.Context, orgID, activeBackend string) map[string]string {
+	names := map[string]string{}
+	if activeBackend == "" || b.sx == nil {
+		return names
+	}
+	remote, err := b.sx.SyncAgents(ctx, orgID, sxsync.Actor{Name: "Hetchy"})
+	if err != nil {
+		b.warnAgentSettingsLoad("sync sx agents failed", orgID, err)
+		return names
+	}
+	for _, r := range remote {
+		slug := agents.NormalizeSlug(r.Slug)
+		name := strings.TrimSpace(r.DisplayName)
+		if slug != "" && name != "" {
+			names[slug] = name
+		}
+	}
+	return names
+}
+
 func (b *Bot) populateSXAgentRemoteData(ctx context.Context, orgID string, data map[string]any) []agents.Profile {
 	actor := sxsync.Actor{Name: "Hetchy"}
 	remoteProfiles := []agents.Profile{}
