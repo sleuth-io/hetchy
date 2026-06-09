@@ -235,7 +235,8 @@ func TestAgentScript_EmbeddedAndWellFormed(t *testing.T) {
 		`export GOCACHE="${local_cache_dir}/go-build"`,
 		`export npm_config_store_dir="${local_cache_dir}/pnpm"`,
 		`export PATH="${CARGO_HOME}/bin:${PATH}"`,
-		`find "$local_cache_dir" -xdev -mindepth 1 -type f -mtime "+${prune_days}" -delete`,
+		`find "$hetchy_cache_local_dir" -xdev -mindepth 1 -type f -mtime "+${prune_days}" -delete -print`,
+		`hetchy_cache_finish_restore`,
 		`[[ -z "$volume_cache_dir" || ! -d "$volume_cache_dir" ]]`,
 	}
 	for _, line := range requiredLines {
@@ -298,7 +299,8 @@ func TestFollowupScript_EmbeddedAndWellFormed(t *testing.T) {
 		`export GOCACHE="${local_cache_dir}/go-build"`,
 		`export npm_config_store_dir="${local_cache_dir}/pnpm"`,
 		`export PATH="${CARGO_HOME}/bin:${PATH}"`,
-		`find "$local_cache_dir" -xdev -mindepth 1 -type f -mtime "+${prune_days}" -delete`,
+		`find "$hetchy_cache_local_dir" -xdev -mindepth 1 -type f -mtime "+${prune_days}" -delete -print`,
+		`hetchy_cache_finish_restore`,
 		`[[ -z "$volume_cache_dir" || ! -d "$volume_cache_dir" ]]`,
 	}
 	for _, line := range requiredLines {
@@ -1372,4 +1374,85 @@ func stubPRLookup(t *testing.T, fullName, headBranch, baseBranch, htmlURL string
 		return pr, nil
 	}
 	return func() { lookupGitHubPullRequest = old }
+}
+
+func TestPostPRHousekeepingHolder(t *testing.T) {
+	ctx, h := contextWithPostPRHousekeeping(context.Background())
+	if got := postPRHousekeepingFromContext(ctx); got != h {
+		t.Fatal("holder not retrievable from context")
+	}
+
+	var order []string
+	deferOrRunPostPRHousekeeping(ctx, func(context.Context) { order = append(order, "a") })
+	deferOrRunPostPRHousekeeping(ctx, func(context.Context) { order = append(order, "b") })
+	if len(order) != 0 {
+		t.Fatalf("deferred fns ran before run(): %v", order)
+	}
+	h.run(context.Background())
+	if strings.Join(order, ",") != "a,b" {
+		t.Fatalf("run order = %v", order)
+	}
+	h.run(context.Background())
+	if len(order) != 2 {
+		t.Fatalf("run should be idempotent, got %v", order)
+	}
+
+	ran := false
+	deferOrRunPostPRHousekeeping(context.Background(), func(context.Context) { ran = true })
+	if !ran {
+		t.Fatal("without a holder the fn should run inline")
+	}
+
+	var nilHolder *postPRHousekeeping
+	nilHolder.run(context.Background())
+}
+
+func TestRunAgentDefersSpecReflectionToHousekeeping(t *testing.T) {
+	restore := stubPRLookup(t, "acme/repo", "feature/sf-req-1", "main", "https://github.com/acme/repo/pull/7")
+	defer restore()
+
+	boot := &fakeBootstrapStore{spec: &bootstrap.Spec{
+		InstallationID:      11,
+		RepoID:              22,
+		Kind:                "go",
+		SetupScript:         "true",
+		StartScript:         "true",
+		HealthCheck:         "true",
+		ValidationStatus:    bootstrap.StatusValidated,
+		BootstrapGeneration: bootstrap.CurrentBootstrapGeneration,
+		SuccessCount:        3,
+	}}
+	b := &Bot{
+		log:           discardLogger(),
+		cfg:           Config{LogoutReturnTo: "https://app.example.test/"},
+		app:           freshGithubAppForTest(t, "wh-secret"),
+		artifactSlots: newArtifactSlotBroker(nil),
+		bootstrap:     boot,
+		runScriptFn: func(_ context.Context, _ *daytona.Sandbox, _, _, _ string, _ map[string]string, _ blocks.Emitter) (string, error) {
+			return "https://github.com/acme/repo/pull/7", nil
+		},
+	}
+	repo := repoCtx{Slug: "acme/repo", BaseBranch: "main", GitHubToken: "ghs_token", InstallID: 11, RepoID: 22}
+	oc := orgcfg.Config{OrgID: "org_1", AnthropicAPIKey: "sk-ant"}
+
+	ctx, housekeeping := contextWithPostPRHousekeeping(context.Background())
+	prURL, err := b.runAgent(ctx, &daytona.Sandbox{ID: "sandbox-1"}, repo, oc, agents.Profile{}, "ship feature", "req-1", "feature/sf-req-1", chatTaskOptions{ValidateChanges: true}, ClaudeModelSonnet, newCaptureEmitter())
+	if err != nil {
+		t.Fatalf("runAgent: %v", err)
+	}
+	if prURL != "https://github.com/acme/repo/pull/7" {
+		t.Fatalf("prURL = %q", prURL)
+	}
+	// The reflection (and its MarkApplied) must not run inline when the
+	// caller provided a housekeeping holder — that is the entire point:
+	// the Result block goes out first.
+	if len(boot.markAppliedCalls) != 0 {
+		t.Fatalf("MarkApplied ran inline; want deferred (calls=%+v)", boot.markAppliedCalls)
+	}
+	housekeeping.mu.Lock()
+	deferred := len(housekeeping.fns)
+	housekeeping.mu.Unlock()
+	if deferred != 1 {
+		t.Fatalf("deferred housekeeping fns = %d, want 1", deferred)
+	}
 }

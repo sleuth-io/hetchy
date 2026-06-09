@@ -320,6 +320,9 @@ func (b *Bot) continueRecoveredRun(ctx context.Context, sb *daytona.Sandbox, run
 	}
 	setLiveRunSandboxID(runCtx, sb.ID, run.RunKind != "followup")
 
+	// Defer spec reflection until after the Result block — see the
+	// fresh-run path in conversation_run.go for the rationale.
+	runCtx, housekeeping := contextWithPostPRHousekeeping(runCtx)
 	var prURL string
 	if run.RunKind == "followup" {
 		mode := b.decideFollowUpMode(runCtx, inputs.oc, inputs.rec, run.UserRequest).Mode
@@ -343,6 +346,13 @@ func (b *Bot) continueRecoveredRun(ctx context.Context, sb *daytona.Sandbox, run
 		b.deferRecoveryForRetry(run, "emit continue result", err)
 		return
 	}
+	// Before the EventsAfter reload so any reflection notify events are
+	// included in the projected conversation, and before the sandbox is
+	// archived below. Run with the parent ctx (no holder) so a
+	// housekeeping fn that defers more work can't register onto the
+	// already-drained holder and silently drop it — matches the
+	// conversation_run.go call sites.
+	housekeeping.run(ctx)
 	events, err = b.runs.EventsAfter(ctx, run.ID, 0)
 	if err != nil {
 		b.deferRecoveryForRetry(run, "reload events: continue", err)

@@ -346,6 +346,10 @@ emit_installed_skills
 # migration.
 export REPO="$SF_WORKDIR"
 
+# Join the background dependency cache restore before anything reads
+# the cache contents — mirrors the barrier in agent.sh.
+hetchy_cache_finish_restore
+
 # Re-apply the saved bootstrap spec, if attached. The follow-up lands
 # in an unarchived sandbox where the original `start.sh &` background
 # process is gone, so the validation prompt's "the app is running"

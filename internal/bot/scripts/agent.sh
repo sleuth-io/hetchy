@@ -371,6 +371,11 @@ emit_installed_skills
 # breaking on first follow-up.
 export REPO="$SF_WORKDIR"
 
+# Join the background dependency cache restore before anything reads
+# the cache contents: the saved-spec setup below and the agent itself
+# build against GOCACHE/npm/etc.
+hetchy_cache_finish_restore
+
 # Apply the saved bootstrap spec, if one was attached. We deploy the
 # saved artifacts to /tmp/hetchy-spec/, run setup.sh (idempotent), run
 # stop.sh if present, launch start.sh, and poll health.sh until it
