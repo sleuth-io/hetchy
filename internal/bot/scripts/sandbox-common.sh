@@ -21,6 +21,89 @@ hetchy_cache_has_entries() {
   [[ -n "$first" ]]
 }
 
+# Dependency cache archives prefer zstd: on the quota-limited sandbox
+# CPUs, single-threaded gzip dominated cache saves (~70s of a 74s save
+# on a warm multi-GB cache) while zstd -T0 compresses the same cache in
+# ~9s to a smaller archive. zstd only ships in newer sandbox images, so
+# every path falls back to gzip-format archives when it is missing.
+hetchy_cache_zstd_available() {
+  command -v zstd >/dev/null 2>&1
+}
+
+# hetchy_cache_gzip_program picks the gzip-format compressor for the
+# fallback path. pigz writes standard gzip output but uses every
+# available core.
+hetchy_cache_gzip_program() {
+  if command -v pigz >/dev/null 2>&1; then
+    echo "pigz"
+  else
+    echo "gzip"
+  fi
+}
+
+hetchy_cache_gunzip_program() {
+  if command -v pigz >/dev/null 2>&1; then
+    echo "pigz -d"
+  else
+    echo "gzip -d"
+  fi
+}
+
+# hetchy_cache_pick_restore_archive prints the newest archive this
+# sandbox can decompress. Newest-first matters in a mixed fleet: an
+# old-image sandbox (no zstd) keeps saving cache.tar.gz while new-image
+# sandboxes save cache.tar.zst, and restoring the stale flavor would
+# silently lose the other fleet's cache updates.
+hetchy_cache_pick_restore_archive() {
+  local newest="" candidate
+  for candidate in "$@"; do
+    [[ -f "$candidate" ]] || continue
+    if [[ "$candidate" == *.zst ]] && ! hetchy_cache_zstd_available; then
+      continue
+    fi
+    if [[ -z "$newest" || "$candidate" -nt "$newest" ]]; then
+      newest="$candidate"
+    fi
+  done
+  [[ -n "$newest" ]] || return 1
+  printf '%s\n' "$newest"
+}
+
+hetchy_cache_file_count() {
+  find "$1" -type f 2>/dev/null | wc -l | tr -d '[:space:]'
+}
+
+# hetchy_cache_mark_save_baseline records the post-restore state of the
+# local cache so sync_hetchy_cache_on_exit can skip the archive+upload
+# entirely when the run never touched the dependency cache. The stamp
+# lives next to, not inside, the local cache dir so it can never leak
+# into the archive.
+hetchy_cache_mark_save_baseline() {
+  local local_cache_dir="$1"
+  hetchy_cache_sync_stamp="${local_cache_dir%/}.sync-stamp"
+  if ! touch "$hetchy_cache_sync_stamp" 2>/dev/null; then
+    hetchy_cache_sync_stamp=""
+    return 0
+  fi
+  hetchy_cache_baseline_file_count="$(hetchy_cache_file_count "$local_cache_dir")"
+}
+
+# hetchy_cache_unchanged_since_baseline succeeds when the local cache
+# still matches the archive on the volume: no file is newer than the
+# baseline stamp (catches adds and modifications; tar restore preserves
+# archived mtimes so restored files stay older than the stamp) and the
+# file count is unchanged (catches deletions, e.g. pruning).
+hetchy_cache_unchanged_since_baseline() {
+  local local_cache_dir="$1"
+  local archive="$2"
+  [[ -n "${hetchy_cache_sync_stamp:-}" && -f "${hetchy_cache_sync_stamp:-}" ]] || return 1
+  [[ -f "$archive" ]] || return 1
+  local changed
+  changed="$(find "$local_cache_dir" -type f -newer "$hetchy_cache_sync_stamp" -print -quit 2>/dev/null || true)"
+  [[ -z "$changed" ]] || return 1
+  [[ "$(hetchy_cache_file_count "$local_cache_dir")" == "${hetchy_cache_baseline_file_count:-}" ]]
+}
+
 hetchy_now_seconds() {
   date +%s 2>/dev/null || echo 0
 }
@@ -106,8 +189,11 @@ restore_hetchy_cache_archive() {
   [[ -f "$archive" ]] || return 2
   mkdir -p "$local_cache_dir" || return 1
   case "$archive" in
+    *.tar.zst)
+      tar -C "$local_cache_dir" --use-compress-program "zstd -d -T0" -xf "$archive" >/dev/null 2>&1
+      ;;
     *.tar.gz|*.tgz)
-      tar -C "$local_cache_dir" -xzf "$archive" >/dev/null 2>&1
+      tar -C "$local_cache_dir" --use-compress-program "$(hetchy_cache_gunzip_program)" -xf "$archive" >/dev/null 2>&1
       ;;
     *)
       tar -C "$local_cache_dir" -xf "$archive" >/dev/null 2>&1
@@ -341,6 +427,12 @@ save_hetchy_cache_archive() {
   hetchy_cache_has_entries "$local_cache_dir" || return 0
   mkdir -p "$volume_cache_dir" || return 1
 
+  local compress_program
+  case "$archive" in
+    *.tar.zst) compress_program="zstd -T0" ;;
+    *) compress_program="$(hetchy_cache_gzip_program)" ;;
+  esac
+
   local archive_tmp
   archive_tmp="$(mktemp "${TMPDIR:-/tmp}/hetchy-cache-archive.XXXXXX")" || return 1
 
@@ -351,7 +443,8 @@ save_hetchy_cache_archive() {
     --exclude=./.hetchy-probe \
     --exclude=./cargo/credentials \
     --exclude=./cargo/credentials.toml \
-    -czf "$archive_tmp" . >/dev/null 2>&1; then
+    --use-compress-program "$compress_program" \
+    -cf "$archive_tmp" . >/dev/null 2>&1; then
     rm -f "$archive_tmp" 2>/dev/null || true
     return 1
   fi
@@ -360,9 +453,13 @@ save_hetchy_cache_archive() {
     return 1
   fi
   rm -f "$archive_tmp" 2>/dev/null || true
-  if [[ "$archive" == *.gz ]]; then
-    rm -f "${archive%.gz}" 2>/dev/null || true
-  fi
+  # Drop the other archive flavors so the next restore can't pick a
+  # stale one over what was just saved.
+  local base="${archive%.tar*}" sibling
+  for sibling in "${base}.tar.zst" "${base}.tar.gz" "${base}.tar"; do
+    [[ "$sibling" == "$archive" ]] && continue
+    rm -f "$sibling" 2>/dev/null || true
+  done
 }
 
 sync_hetchy_cache_on_exit() {
@@ -371,6 +468,10 @@ sync_hetchy_cache_on_exit() {
     hetchy_cache_synced=1
     if [[ "${HETCHY_SKIP_CACHE_SAVE:-}" == "1" ]]; then
       echo "[hetchy] dependency cache archive save skipped for non-mutating follow-up"
+      return "$exit_code"
+    fi
+    if hetchy_cache_unchanged_since_baseline "$hetchy_cache_local_dir" "$hetchy_cache_archive"; then
+      echo "[hetchy] dependency cache archive save skipped (cache unchanged since restore)"
       return "$exit_code"
     fi
     local started
@@ -405,8 +506,12 @@ configure_hetchy_cache() {
     return 0
   fi
 
-  local archive="${volume_cache_dir}/cache.tar.gz"
-  local legacy_archive="${volume_cache_dir}/cache.tar"
+  local archive
+  if hetchy_cache_zstd_available; then
+    archive="${volume_cache_dir}/cache.tar.zst"
+  else
+    archive="${volume_cache_dir}/cache.tar.gz"
+  fi
   echo "[hetchy] dependency cache using local staging at ${local_cache_dir}"
   if ! mkdir -p "$local_cache_dir"; then
     echo "[hetchy] WARNING: dependency cache local staging setup failed; continuing without cache exports"
@@ -414,11 +519,10 @@ configure_hetchy_cache() {
   fi
   if ! hetchy_cache_has_entries "$local_cache_dir"; then
     local restore_archive=""
-    if [[ -f "$archive" ]]; then
-      restore_archive="$archive"
-    elif [[ -f "$legacy_archive" ]]; then
-      restore_archive="$legacy_archive"
-    fi
+    restore_archive="$(hetchy_cache_pick_restore_archive \
+      "${volume_cache_dir}/cache.tar.zst" \
+      "${volume_cache_dir}/cache.tar.gz" \
+      "${volume_cache_dir}/cache.tar" || true)"
     if [[ -n "$restore_archive" ]]; then
       local restore_started
       restore_started="$(hetchy_now_seconds)"
@@ -465,6 +569,8 @@ configure_hetchy_cache() {
   export BUNDLE_PATH="${local_cache_dir}/bundle"
   export CARGO_HOME="${local_cache_dir}/cargo"
   export PATH="${CARGO_HOME}/bin:${PATH}"
+
+  hetchy_cache_mark_save_baseline "$local_cache_dir"
 
   hetchy_cache_local_dir="$local_cache_dir"
   hetchy_cache_archive="$archive"
