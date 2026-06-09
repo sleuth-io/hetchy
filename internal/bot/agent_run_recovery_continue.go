@@ -348,8 +348,11 @@ func (b *Bot) continueRecoveredRun(ctx context.Context, sb *daytona.Sandbox, run
 	}
 	// Before the EventsAfter reload so any reflection notify events are
 	// included in the projected conversation, and before the sandbox is
-	// archived below.
-	housekeeping.run(runCtx)
+	// archived below. Run with the parent ctx (no holder) so a
+	// housekeeping fn that defers more work can't register onto the
+	// already-drained holder and silently drop it — matches the
+	// conversation_run.go call sites.
+	housekeeping.run(ctx)
 	events, err = b.runs.EventsAfter(ctx, run.ID, 0)
 	if err != nil {
 		b.deferRecoveryForRetry(run, "reload events: continue", err)

@@ -470,15 +470,31 @@ save_hetchy_cache_archive() {
   done
 }
 
+# hetchy_cache_abort_restore kills and reaps a still-running background
+# restore. For paths that abandon the cache (directory setup failure,
+# skip-save exits) waiting out the restore would be wasted time and
+# leaving it unjoined would orphan the job.
+hetchy_cache_abort_restore() {
+  if [[ -n "${hetchy_cache_restore_pid:-}" ]]; then
+    kill "$hetchy_cache_restore_pid" 2>/dev/null || true
+    wait "$hetchy_cache_restore_pid" 2>/dev/null || true
+    hetchy_cache_restore_pid=""
+  fi
+  hetchy_cache_restore_finished=1
+}
+
 sync_hetchy_cache_on_exit() {
   local exit_code=$?
   if [[ "${hetchy_cache_sync_registered:-0}" == "1" && "${hetchy_cache_synced:-0}" != "1" ]]; then
     hetchy_cache_synced=1
-    hetchy_cache_finish_restore
     if [[ "${HETCHY_SKIP_CACHE_SAVE:-}" == "1" ]]; then
+      # No save coming, so don't wait out (or run baseline/prune for)
+      # a restore the run never consumed — just reap it.
+      hetchy_cache_abort_restore
       echo "[hetchy] dependency cache archive save skipped for non-mutating follow-up"
       return "$exit_code"
     fi
+    hetchy_cache_finish_restore
     if hetchy_cache_unchanged_since_baseline "$hetchy_cache_local_dir" "$hetchy_cache_archive"; then
       echo "[hetchy] dependency cache archive save skipped (cache unchanged since restore)"
       return "$exit_code"
@@ -557,6 +573,9 @@ configure_hetchy_cache() {
     "${local_cache_dir}/bundle" \
     "${local_cache_dir}/cargo"; then
     echo "[hetchy] WARNING: dependency cache directory setup failed; continuing without cache exports"
+    # The exit trap is not registered yet on this path, so reap the
+    # background restore here or it runs orphaned.
+    hetchy_cache_abort_restore
     return 0
   fi
 

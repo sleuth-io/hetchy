@@ -594,6 +594,49 @@ configure_hetchy_cache
 	}
 }
 
+func TestConfigureHetchyCache_SkipSaveAbortsPendingRestore(t *testing.T) {
+	seed := t.TempDir()
+	mustWriteFile(t, filepath.Join(seed, "gomod.txt"), "cached\n")
+	cacheMount := t.TempDir()
+	archive := filepath.Join(cacheMount, "cache.tar.gz")
+	tarDir(t, seed, archive)
+	before, err := os.Stat(archive)
+	if err != nil {
+		t.Fatalf("stat archive: %v", err)
+	}
+	localCache := filepath.Join(t.TempDir(), "local-cache")
+
+	// Exit immediately after configure: the background restore is
+	// still pending when the trap fires on a skip-save run, and must
+	// be reaped without baseline/prune work or an archive write.
+	script := "set -euo pipefail\n" + sandboxRepoCacheHelpersScript + `
+hetchy_cache_zstd_available() { return 1; }
+configure_hetchy_cache
+`
+	out, err := runBashScript(t, script, map[string]string{
+		"HETCHY_CACHE_STATUS":    "mounted",
+		"HETCHY_CACHE_DIR":       cacheMount,
+		"HETCHY_LOCAL_CACHE_DIR": localCache,
+		"HETCHY_SKIP_CACHE_SAVE": "1",
+	})
+	if err != nil {
+		t.Fatalf("configure cache: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "dependency cache archive save skipped for non-mutating follow-up") {
+		t.Fatalf("expected skip line:\n%s", out)
+	}
+	if strings.Contains(out, "pruning dependency cache files") {
+		t.Fatalf("skip-save exit should not prune:\n%s", out)
+	}
+	after, err := os.Stat(archive)
+	if err != nil {
+		t.Fatalf("stat archive after run: %v", err)
+	}
+	if !after.ModTime().Equal(before.ModTime()) {
+		t.Fatalf("archive should not be rewritten on skip-save exit")
+	}
+}
+
 func TestSaveHetchyCacheArchive_UsesPigzWhenAvailable(t *testing.T) {
 	localCache := filepath.Join(t.TempDir(), "local-cache")
 	mustMkdir(t, localCache)
