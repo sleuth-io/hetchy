@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // initFakeOriginRepo seeds a local bare git repo at originPath that
@@ -590,6 +591,317 @@ configure_hetchy_cache
 	}
 	if _, err := os.Stat(filepath.Join(cacheMount, "cache.tar.gz")); !os.IsNotExist(err) {
 		t.Fatalf("cache archive should not be written when save is skipped: %v", err)
+	}
+}
+
+func TestSaveHetchyCacheArchive_UsesPigzWhenAvailable(t *testing.T) {
+	localCache := filepath.Join(t.TempDir(), "local-cache")
+	mustMkdir(t, localCache)
+	mustWriteFile(t, filepath.Join(localCache, "gomod.txt"), "cached\n")
+	archive := filepath.Join(t.TempDir(), "cache.tar.gz")
+
+	fakeBin := t.TempDir()
+	marker := filepath.Join(t.TempDir(), "pigz-called")
+	shim := "#!/bin/sh\ntouch " + shellSingleQuote(marker) + "\nexec gzip \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(fakeBin, "pigz"), []byte(shim), 0o755); err != nil {
+		t.Fatalf("write pigz shim: %v", err)
+	}
+
+	script := "set -euo pipefail\n" + sandboxRepoCacheHelpersScript + `
+export PATH="${FAKE_BIN}:${PATH}"
+save_hetchy_cache_archive "$LOCAL_CACHE" "$ARCHIVE"
+`
+	out, err := runBashScript(t, script, map[string]string{
+		"FAKE_BIN":    fakeBin,
+		"LOCAL_CACHE": localCache,
+		"ARCHIVE":     archive,
+	})
+	if err != nil {
+		t.Fatalf("save dependency cache with pigz shim: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("pigz shim was not invoked: %v\noutput:\n%s", err, out)
+	}
+	extracted := extractTarGz(t, archive)
+	if got := mustReadFile(t, filepath.Join(extracted, "gomod.txt")); got != "cached\n" {
+		t.Fatalf("gomod.txt = %q", got)
+	}
+}
+
+func TestConfigureHetchyCache_SkipsSaveWhenUnchanged(t *testing.T) {
+	seed := t.TempDir()
+	mustWriteFile(t, filepath.Join(seed, "gomod.txt"), "cached\n")
+	cacheMount := t.TempDir()
+	archive := filepath.Join(cacheMount, "cache.tar.gz")
+	tarDir(t, seed, archive)
+	before, err := os.Stat(archive)
+	if err != nil {
+		t.Fatalf("stat archive: %v", err)
+	}
+	localCache := filepath.Join(t.TempDir(), "local-cache")
+
+	// Pin the gzip fallback so the save target stays cache.tar.gz even
+	// on machines that have zstd installed.
+	script := "set -euo pipefail\n" + sandboxRepoCacheHelpersScript + `
+hetchy_cache_zstd_available() { return 1; }
+configure_hetchy_cache
+`
+	out, err := runBashScript(t, script, map[string]string{
+		"HETCHY_CACHE_STATUS":    "mounted",
+		"HETCHY_CACHE_DIR":       cacheMount,
+		"HETCHY_LOCAL_CACHE_DIR": localCache,
+	})
+	if err != nil {
+		t.Fatalf("configure cache: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "dependency cache archive save skipped (cache unchanged since restore)") {
+		t.Fatalf("expected unchanged-cache skip line:\n%s", out)
+	}
+	after, err := os.Stat(archive)
+	if err != nil {
+		t.Fatalf("stat archive after run: %v", err)
+	}
+	if !after.ModTime().Equal(before.ModTime()) {
+		t.Fatalf("archive should not be rewritten when cache is unchanged")
+	}
+}
+
+func TestConfigureHetchyCache_SavesWhenCacheChanged(t *testing.T) {
+	seed := t.TempDir()
+	mustWriteFile(t, filepath.Join(seed, "gomod.txt"), "cached\n")
+	cacheMount := t.TempDir()
+	archive := filepath.Join(cacheMount, "cache.tar.gz")
+	tarDir(t, seed, archive)
+	localCache := filepath.Join(t.TempDir(), "local-cache")
+
+	script := "set -euo pipefail\n" + sandboxRepoCacheHelpersScript + `
+hetchy_cache_zstd_available() { return 1; }
+configure_hetchy_cache
+printf 'new\n' > "${HETCHY_CACHE_DIR}/newdep.txt"
+`
+	out, err := runBashScript(t, script, map[string]string{
+		"HETCHY_CACHE_STATUS":    "mounted",
+		"HETCHY_CACHE_DIR":       cacheMount,
+		"HETCHY_LOCAL_CACHE_DIR": localCache,
+	})
+	if err != nil {
+		t.Fatalf("configure cache: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "dependency cache archive saved in") {
+		t.Fatalf("expected cache save line:\n%s", out)
+	}
+	extracted := extractTarGz(t, archive)
+	if got := mustReadFile(t, filepath.Join(extracted, "newdep.txt")); got != "new\n" {
+		t.Fatalf("newdep.txt = %q", got)
+	}
+	if got := mustReadFile(t, filepath.Join(extracted, "gomod.txt")); got != "cached\n" {
+		t.Fatalf("gomod.txt = %q", got)
+	}
+}
+
+// writeFakeZstd installs a gzip-backed zstd shim into a fresh PATH dir.
+// Both save and restore go through the same shim, so the .tar.zst
+// archives it produces stay self-consistent without requiring a real
+// zstd binary on the test machine.
+func writeFakeZstd(t *testing.T) string {
+	t.Helper()
+	fakeBin := t.TempDir()
+	shim := `#!/bin/sh
+mode=c
+for a in "$@"; do
+  [ "$a" = "-d" ] && mode=d
+done
+if [ "$mode" = d ]; then exec gzip -d; else exec gzip; fi
+`
+	if err := os.WriteFile(filepath.Join(fakeBin, "zstd"), []byte(shim), 0o755); err != nil {
+		t.Fatalf("write zstd shim: %v", err)
+	}
+	return fakeBin
+}
+
+func TestConfigureHetchyCache_MigratesGzArchiveToZstd(t *testing.T) {
+	seed := t.TempDir()
+	mustWriteFile(t, filepath.Join(seed, "gomod.txt"), "cached\n")
+	cacheMount := t.TempDir()
+	gzArchive := filepath.Join(cacheMount, "cache.tar.gz")
+	tarDir(t, seed, gzArchive)
+	localCache := filepath.Join(t.TempDir(), "local-cache")
+
+	script := "set -euo pipefail\n" + sandboxRepoCacheHelpersScript + `
+export PATH="${FAKE_BIN}:${PATH}"
+configure_hetchy_cache
+`
+	out, err := runBashScript(t, script, map[string]string{
+		"FAKE_BIN":               writeFakeZstd(t),
+		"HETCHY_CACHE_STATUS":    "mounted",
+		"HETCHY_CACHE_DIR":       cacheMount,
+		"HETCHY_LOCAL_CACHE_DIR": localCache,
+	})
+	if err != nil {
+		t.Fatalf("configure cache with zstd shim: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "dependency cache archive restored in") {
+		t.Fatalf("expected restore from legacy gz archive:\n%s", out)
+	}
+	zstArchive := filepath.Join(cacheMount, "cache.tar.zst")
+	extracted := extractTarGz(t, zstArchive)
+	if got := mustReadFile(t, filepath.Join(extracted, "gomod.txt")); got != "cached\n" {
+		t.Fatalf("gomod.txt = %q", got)
+	}
+	if _, err := os.Stat(gzArchive); !os.IsNotExist(err) {
+		t.Fatalf("gz archive should be removed after zstd save: %v", err)
+	}
+}
+
+func TestConfigureHetchyCache_PrunesReadOnlyGoModFiles(t *testing.T) {
+	// Mirror the Go module cache layout: read-only directories whose
+	// stale contents the prune must still be able to delete.
+	seed := t.TempDir()
+	modDir := filepath.Join(seed, "go-mod", "example.com", "dep@v1.0.0")
+	mustMkdir(t, modDir)
+	stale := filepath.Join(modDir, "go.mod")
+	mustWriteFile(t, stale, "module dep\n")
+	fresh := filepath.Join(seed, "go-mod", "fresh.txt")
+	mustWriteFile(t, fresh, "fresh\n")
+	old := time.Now().Add(-20 * 24 * time.Hour)
+	if err := os.Chtimes(stale, old, old); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+	if err := os.Chmod(modDir, 0o555); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(modDir, 0o755) })
+
+	cacheMount := t.TempDir()
+	archive := filepath.Join(cacheMount, "cache.tar.gz")
+	tarDir(t, seed, archive)
+	localCache := filepath.Join(t.TempDir(), "local-cache")
+
+	script := "set -euo pipefail\n" + sandboxRepoCacheHelpersScript + `
+hetchy_cache_zstd_available() { return 1; }
+configure_hetchy_cache
+`
+	out, err := runBashScript(t, script, map[string]string{
+		"HETCHY_CACHE_STATUS":     "mounted",
+		"HETCHY_CACHE_DIR":        cacheMount,
+		"HETCHY_LOCAL_CACHE_DIR":  localCache,
+		"HETCHY_CACHE_PRUNE_DAYS": "10",
+	})
+	if err != nil {
+		t.Fatalf("configure cache: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "pruned 1 dependency cache files") {
+		t.Fatalf("expected prune count line:\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Join(localCache, "go-mod", "example.com", "dep@v1.0.0", "go.mod")); !os.IsNotExist(err) {
+		t.Fatalf("stale read-only module file should be pruned: %v", err)
+	}
+	// The deletion must persist: the exit save runs because the file
+	// count changed, and the rewritten archive must not contain the
+	// stale file.
+	if !strings.Contains(out, "dependency cache archive saved in") {
+		t.Fatalf("expected save after prune deleted files:\n%s", out)
+	}
+	extracted := extractTarGz(t, archive)
+	if _, err := os.Stat(filepath.Join(extracted, "go-mod", "example.com", "dep@v1.0.0", "go.mod")); !os.IsNotExist(err) {
+		t.Fatalf("stale file should not be re-saved to the archive: %v", err)
+	}
+	if got := mustReadFile(t, filepath.Join(extracted, "go-mod", "fresh.txt")); got != "fresh\n" {
+		t.Fatalf("fresh.txt = %q", got)
+	}
+}
+
+func TestConfigureHetchyCache_RestoresZstArchive(t *testing.T) {
+	seed := t.TempDir()
+	mustWriteFile(t, filepath.Join(seed, "gomod.txt"), "cached\n")
+	fakeBin := writeFakeZstd(t)
+	cacheMount := t.TempDir()
+	zstArchive := filepath.Join(cacheMount, "cache.tar.zst")
+	// The shim is gzip-backed, so a plain gzip tar with a .zst name is
+	// exactly what save_hetchy_cache_archive would have produced with it.
+	tarDir(t, seed, zstArchive)
+	localCache := filepath.Join(t.TempDir(), "local-cache")
+
+	script := "set -euo pipefail\n" + sandboxRepoCacheHelpersScript + `
+export PATH="${FAKE_BIN}:${PATH}"
+configure_hetchy_cache
+cat "${HETCHY_CACHE_DIR}/gomod.txt"
+`
+	out, err := runBashScript(t, script, map[string]string{
+		"FAKE_BIN":               fakeBin,
+		"HETCHY_CACHE_STATUS":    "mounted",
+		"HETCHY_CACHE_DIR":       cacheMount,
+		"HETCHY_LOCAL_CACHE_DIR": localCache,
+	})
+	if err != nil {
+		t.Fatalf("configure cache from zst archive: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "dependency cache archive restored in") {
+		t.Fatalf("expected restore line:\n%s", out)
+	}
+	if !strings.Contains(out, "cached") {
+		t.Fatalf("restored cache content missing:\n%s", out)
+	}
+	if !strings.Contains(out, "save skipped (cache unchanged since restore)") {
+		t.Fatalf("expected unchanged skip after pure restore:\n%s", out)
+	}
+}
+
+func TestHetchyCachePickRestoreArchive_PrefersNewestReadable(t *testing.T) {
+	cacheMount := t.TempDir()
+	zstArchive := filepath.Join(cacheMount, "cache.tar.zst")
+	gzArchive := filepath.Join(cacheMount, "cache.tar.gz")
+	mustWriteFile(t, zstArchive, "old zst\n")
+	mustWriteFile(t, gzArchive, "new gz\n")
+	older := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(zstArchive, older, older); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+
+	pickScript := func(zstdAvailable string) string {
+		return "set -euo pipefail\n" + sandboxRepoCacheHelpersScript + `
+hetchy_cache_zstd_available() { ` + zstdAvailable + `; }
+hetchy_cache_pick_restore_archive "$ZST" "$GZ" "$LEGACY"
+`
+	}
+	env := map[string]string{
+		"ZST":    zstArchive,
+		"GZ":     gzArchive,
+		"LEGACY": filepath.Join(cacheMount, "cache.tar"),
+	}
+
+	out, err := runBashScript(t, pickScript("return 0"), env)
+	if err != nil {
+		t.Fatalf("pick with zstd available: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, gzArchive) {
+		t.Fatalf("should pick newer gz archive over older zst:\n%s", out)
+	}
+
+	newer := time.Now().Add(time.Hour)
+	if err := os.Chtimes(zstArchive, newer, newer); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+	out, err = runBashScript(t, pickScript("return 0"), env)
+	if err != nil {
+		t.Fatalf("pick with newer zst: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, zstArchive) {
+		t.Fatalf("should pick newer zst archive:\n%s", out)
+	}
+
+	out, err = runBashScript(t, pickScript("return 1"), env)
+	if err != nil {
+		t.Fatalf("pick without zstd: %v\n%s", err, out)
+	}
+	// The skip log line mentions the zst path, so assert on the picked
+	// path (the final output line) rather than substring absence.
+	lines := strings.Fields(strings.TrimSpace(out))
+	if picked := lines[len(lines)-1]; picked != gzArchive {
+		t.Fatalf("without zstd the gz archive should win even when zst is newer, picked %q:\n%s", picked, out)
+	}
+	if !strings.Contains(out, "skipping "+zstArchive+" (zstd not available)") {
+		t.Fatalf("expected unreadable-archive skip log line:\n%s", out)
 	}
 }
 

@@ -93,7 +93,7 @@ func TestLoadConfig_AppliesDefaults(t *testing.T) {
 	if cfg.DaytonaCacheVolumePrefix != "hetchy-cache" {
 		t.Errorf("DaytonaCacheVolumePrefix default = %q", cfg.DaytonaCacheVolumePrefix)
 	}
-	if cfg.DaytonaCachePruneDays != 30 {
+	if cfg.DaytonaCachePruneDays != 10 {
 		t.Errorf("DaytonaCachePruneDays default = %d", cfg.DaytonaCachePruneDays)
 	}
 	if cfg.DaytonaAutoArchiveMinutes != 60 {

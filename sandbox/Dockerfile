@@ -20,7 +20,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # ---------------------------------------------------------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl gnupg lsb-release \
-        git wget jq tmux vim nano ripgrep unzip xz-utils file \
+        git wget jq tmux vim nano ripgrep unzip xz-utils file pigz zstd \
         build-essential gcc g++ clang make cmake ninja-build pkg-config \
         openjdk-21-jdk maven gradle \
         ruby ruby-dev rbenv ruby-build \
