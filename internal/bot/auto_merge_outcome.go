@@ -14,6 +14,25 @@ import (
 	"github.com/hetchyhq/hetchy/internal/runstore"
 )
 
+type autoMergeDetail struct {
+	Requested       bool                 `json:"requested"`
+	State           string               `json:"state"`
+	StateLabel      string               `json:"state_label"`
+	Recommendation  string               `json:"recommendation,omitempty"`
+	Risk            string               `json:"risk,omitempty"`
+	Confidence      string               `json:"confidence,omitempty"`
+	Summary         string               `json:"summary,omitempty"`
+	TopReason       string               `json:"top_reason,omitempty"`
+	Label           string               `json:"label,omitempty"`
+	JudgedHeadSHA   string               `json:"judged_head_sha,omitempty"`
+	JudgedHeadShort string               `json:"judged_head_short,omitempty"`
+	MergedAt        string               `json:"merged_at,omitempty"`
+	Assessment      *autoMergeAssessment `json:"assessment,omitempty"`
+	ServerGate      autoMergeGateResult  `json:"server_gate,omitzero"`
+	GitHubGate      autoMergeGateResult  `json:"github_gate,omitzero"`
+	LabelsApplied   []string             `json:"labels_applied,omitempty"`
+}
+
 func (out autoMergeOutcomeDetail) asMap() map[string]any {
 	raw, err := json.Marshal(out)
 	if err != nil {

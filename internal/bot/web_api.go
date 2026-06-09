@@ -61,33 +61,11 @@ type conversationDetail struct {
 	Attachments []attachmentInfo   `json:"attachments,omitempty"`
 	CreatedAt   string             `json:"created_at,omitempty"`
 	Turns       []conversationTurn `json:"turns,omitempty"`
-	// SXSkills is the de-duplicated list of skill names sx installed
-	// for the most recent turn that ran sx. Derived server-side from
-	// the persisted response_blocks (rather than stored in its own
-	// column) so existing conversations from before the capture
-	// shipped don't need a backfill; reading it from the latest turn
-	// keeps the right-hand details panel showing the current state.
+	// SXSkills is the de-duplicated list sx installed for the latest
+	// turn. It is derived from persisted response_blocks, so old
+	// conversations do not need a backfill.
 	SXSkills  []string `json:"sx_skills,omitempty"`
 	UpdatedAt string   `json:"updated_at"`
-}
-
-type autoMergeDetail struct {
-	Requested       bool                 `json:"requested"`
-	State           string               `json:"state"`
-	StateLabel      string               `json:"state_label"`
-	Recommendation  string               `json:"recommendation,omitempty"`
-	Risk            string               `json:"risk,omitempty"`
-	Confidence      string               `json:"confidence,omitempty"`
-	Summary         string               `json:"summary,omitempty"`
-	TopReason       string               `json:"top_reason,omitempty"`
-	Label           string               `json:"label,omitempty"`
-	JudgedHeadSHA   string               `json:"judged_head_sha,omitempty"`
-	JudgedHeadShort string               `json:"judged_head_short,omitempty"`
-	MergedAt        string               `json:"merged_at,omitempty"`
-	Assessment      *autoMergeAssessment `json:"assessment,omitempty"`
-	ServerGate      autoMergeGateResult  `json:"server_gate,omitzero"`
-	GitHubGate      autoMergeGateResult  `json:"github_gate,omitzero"`
-	LabelsApplied   []string             `json:"labels_applied,omitempty"`
 }
 
 type conversationTurn struct {
