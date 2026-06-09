@@ -135,6 +135,60 @@ func TestApplyAutoMergeLabelRecordsSuccessAndFailure(t *testing.T) {
 	}
 }
 
+func TestEnsureAutoMergeLabelHandlesConcurrentCreate(t *testing.T) {
+	var gets int
+	client, closeServer := autoMergeGitHubTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path, err := url.PathUnescape(r.URL.Path)
+		if err != nil {
+			t.Fatalf("decode path: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.HasPrefix(path, "/repos/o/r/labels/"):
+			gets++
+			if gets == 1 {
+				http.Error(w, "missing", http.StatusNotFound)
+				return
+			}
+			writeTestJSON(t, w, map[string]string{"name": autoMergeSafeLabel})
+		case r.Method == http.MethodPost && path == "/repos/o/r/labels":
+			http.Error(w, "already exists", http.StatusUnprocessableEntity)
+		default:
+			t.Fatalf("unexpected concurrent label request: %s %s", r.Method, path)
+		}
+	}))
+	defer closeServer()
+
+	err := ensureAutoMergeLabel(t.Context(), client, "o", "r", autoMergeSafeLabel, "2da44e", autoMergeSafeLabelDescription)
+	if err != nil || gets != 2 {
+		t.Fatalf("ensure label err=%v gets=%d, want success after refetch", err, gets)
+	}
+}
+
+func TestEnsureAutoMergeLabelReturnsValidationErrorWhenStillMissing(t *testing.T) {
+	client, closeServer := autoMergeGitHubTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path, err := url.PathUnescape(r.URL.Path)
+		if err != nil {
+			t.Fatalf("decode path: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.HasPrefix(path, "/repos/o/r/labels/"):
+			http.Error(w, "missing", http.StatusNotFound)
+		case r.Method == http.MethodPost && path == "/repos/o/r/labels":
+			http.Error(w, "validation failed", http.StatusUnprocessableEntity)
+		default:
+			t.Fatalf("unexpected validation label request: %s %s", r.Method, path)
+		}
+	}))
+	defer closeServer()
+
+	err := ensureAutoMergeLabel(t.Context(), client, "o", "r", autoMergeSafeLabel, "2da44e", autoMergeSafeLabelDescription)
+	if err == nil {
+		t.Fatal("ensure label succeeded, want validation error")
+	}
+}
+
 func TestAutoMergePullRequestOptionsUseExpectedHeadSHA(t *testing.T) {
 	opts := autoMergePullRequestOptions("abc123")
 	if opts == nil || opts.SHA != "abc123" {

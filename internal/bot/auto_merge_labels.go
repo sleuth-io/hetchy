@@ -78,11 +78,16 @@ func ensureAutoMergeLabel(ctx context.Context, client *github.Client, owner, rep
 	} else if githubHTTPStatus(resp, err) != http.StatusNotFound {
 		return err
 	}
-	_, _, err := client.Issues.CreateLabel(ctx, owner, repo, &github.Label{
+	_, resp, err := client.Issues.CreateLabel(ctx, owner, repo, &github.Label{
 		Name:        stringPtr(name),
 		Color:       stringPtr(color),
 		Description: stringPtr(description),
 	})
+	if err != nil && githubHTTPStatus(resp, err) == http.StatusUnprocessableEntity {
+		if _, _, getErr := client.Issues.GetLabel(ctx, owner, repo, name); getErr == nil {
+			return nil
+		}
+	}
 	return err
 }
 
