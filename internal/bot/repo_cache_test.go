@@ -641,10 +641,13 @@ func TestConfigureHetchyCache_SkipsSaveWhenUnchanged(t *testing.T) {
 	localCache := filepath.Join(t.TempDir(), "local-cache")
 
 	// Pin the gzip fallback so the save target stays cache.tar.gz even
-	// on machines that have zstd installed.
+	// on machines that have zstd installed. The explicit finish call
+	// mirrors agent.sh, which joins the background restore before the
+	// agent starts.
 	script := "set -euo pipefail\n" + sandboxRepoCacheHelpersScript + `
 hetchy_cache_zstd_available() { return 1; }
 configure_hetchy_cache
+hetchy_cache_finish_restore
 `
 	out, err := runBashScript(t, script, map[string]string{
 		"HETCHY_CACHE_STATUS":    "mounted",
@@ -677,6 +680,7 @@ func TestConfigureHetchyCache_SavesWhenCacheChanged(t *testing.T) {
 	script := "set -euo pipefail\n" + sandboxRepoCacheHelpersScript + `
 hetchy_cache_zstd_available() { return 1; }
 configure_hetchy_cache
+hetchy_cache_finish_restore
 printf 'new\n' > "${HETCHY_CACHE_DIR}/newdep.txt"
 `
 	out, err := runBashScript(t, script, map[string]string{
@@ -825,6 +829,7 @@ func TestConfigureHetchyCache_RestoresZstArchive(t *testing.T) {
 	script := "set -euo pipefail\n" + sandboxRepoCacheHelpersScript + `
 export PATH="${FAKE_BIN}:${PATH}"
 configure_hetchy_cache
+hetchy_cache_finish_restore
 cat "${HETCHY_CACHE_DIR}/gomod.txt"
 `
 	out, err := runBashScript(t, script, map[string]string{

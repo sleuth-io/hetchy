@@ -164,7 +164,11 @@ func (b *Bot) runFreshAgentWithTranscriptModeAndKind(ctx context.Context, oc org
 	}()
 
 	runEmit := newPRURLPersistingEmitter(b.log, b.convs, rec, emit)
-	prURL, runErr := b.runAgentForRequest(ctx, sb, repo, oc, agent, agentRequest, requestID, branch, opts, model, runEmit)
+	// Spec reflection registers here instead of running inside the
+	// agent call, so the Result block below reaches the user before
+	// the ~10-30s of post-PR housekeeping rather than after it.
+	runCtx, housekeeping := contextWithPostPRHousekeeping(ctx)
+	prURL, runErr := b.runAgentForRequest(runCtx, sb, repo, oc, agent, agentRequest, requestID, branch, opts, model, runEmit)
 	if runErr != nil {
 		b.handleFreshAgentRunError(ctx, sb, &rec, recorder, requestID, branch, runErr, runEmit, mode)
 		return
@@ -222,6 +226,11 @@ func (b *Bot) runFreshAgentWithTranscriptModeAndKind(ctx context.Context, oc org
 		b.markRunState(ctx, runstore.StateRecovering, err)
 		return
 	}
+	// After the result so the user isn't waiting on it; before the
+	// snapshot append below so its notify blocks land in the persisted
+	// conversation, and before stopAndArchiveSandbox because it reads
+	// from the sandbox.
+	housekeeping.run(ctx)
 
 	rec.SandboxID = sb.ID
 	rec.Branch = branch
@@ -354,7 +363,10 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 	}()
 
 	runEmit := newPRURLPersistingEmitter(b.log, b.convs, rec, emit)
-	prURL, err := b.runFollowUpForRequest(ctx, sb, repo, oc, rec, agent, agentText, requestID, opts, model, mode, runEmit)
+	// Defer spec reflection until after the Result block — see the
+	// fresh-run path for the rationale.
+	runCtx, housekeeping := contextWithPostPRHousekeeping(ctx)
+	prURL, err := b.runFollowUpForRequest(runCtx, sb, repo, oc, rec, agent, agentText, requestID, opts, model, mode, runEmit)
 	if err != nil {
 		b.handleFollowUpRunError(ctx, sb, &rec, text, recorder, requestID, err, runEmit)
 		return
@@ -375,6 +387,9 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 		b.markRunState(ctx, runstore.StateRecovering, err)
 		return
 	}
+	// After the result, before the snapshot append and sandbox archive
+	// — see the fresh-run path for the rationale.
+	housekeeping.run(ctx)
 
 	if prURL != "" {
 		rec.PRURL = prURL

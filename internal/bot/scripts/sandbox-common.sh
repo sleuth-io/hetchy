@@ -474,6 +474,7 @@ sync_hetchy_cache_on_exit() {
   local exit_code=$?
   if [[ "${hetchy_cache_sync_registered:-0}" == "1" && "${hetchy_cache_synced:-0}" != "1" ]]; then
     hetchy_cache_synced=1
+    hetchy_cache_finish_restore
     if [[ "${HETCHY_SKIP_CACHE_SAVE:-}" == "1" ]]; then
       echo "[hetchy] dependency cache archive save skipped for non-mutating follow-up"
       return "$exit_code"
@@ -532,37 +533,18 @@ configure_hetchy_cache() {
       "${volume_cache_dir}/cache.tar.gz" \
       "${volume_cache_dir}/cache.tar" || true)"
     if [[ -n "$restore_archive" ]]; then
-      local restore_started
-      restore_started="$(hetchy_now_seconds)"
-      echo "[hetchy] restoring dependency cache archive from volume ($(hetchy_file_size_bytes "$restore_archive")B)"
-      if restore_hetchy_cache_archive "$restore_archive" "$local_cache_dir"; then
-        echo "[hetchy] dependency cache archive restored in $(hetchy_elapsed_seconds "$restore_started")"
-      else
-        echo "[hetchy] WARNING: dependency cache archive restore failed after $(hetchy_elapsed_seconds "$restore_started"); continuing with empty local cache"
-      fi
+      hetchy_cache_restore_started="$(hetchy_now_seconds)"
+      echo "[hetchy] restoring dependency cache archive from volume ($(hetchy_file_size_bytes "$restore_archive")B) in background"
+      # Background so the ~15-20s volume read overlaps with the rest
+      # of sandbox setup (sx installs, config writes). Nothing reads
+      # the cache contents until hetchy_cache_finish_restore joins it.
+      restore_hetchy_cache_archive "$restore_archive" "$local_cache_dir" &
+      hetchy_cache_restore_pid=$!
     else
       echo "[hetchy] dependency cache volume has no warm archive yet"
     fi
   fi
-
-  # Baseline before pruning so a prune that deletes files registers as
-  # a change and the exit save persists it; otherwise pruned files
-  # resurrect from the stale archive on every restore.
-  hetchy_cache_mark_save_baseline "$local_cache_dir"
-
-  if [[ "$prune_days" =~ ^[0-9]+$ && "$prune_days" -gt 0 ]]; then
-    echo "[hetchy] pruning dependency cache files older than ${prune_days} days"
-    # Go extracts the module cache with read-only directories and
-    # unlink needs a writable parent, so without this chmod the prune
-    # silently deletes nothing under go-mod.
-    find "$local_cache_dir" -xdev -type d ! -perm -u+w -exec chmod u+w {} + 2>/dev/null || true
-    local pruned
-    pruned="$(find "$local_cache_dir" -xdev -mindepth 1 -type f -mtime "+${prune_days}" -delete -print 2>/dev/null | wc -l | tr -d '[:space:]')"
-    if [[ "$pruned" =~ ^[0-9]+$ && "$pruned" -gt 0 ]]; then
-      echo "[hetchy] pruned ${pruned} dependency cache files"
-    fi
-    find "$local_cache_dir" -xdev -mindepth 1 -depth -type d -empty -delete >/dev/null 2>&1 || true
-  fi
+  hetchy_cache_prune_days_resolved="$prune_days"
 
   if ! mkdir -p \
     "${local_cache_dir}/go-build" \
@@ -595,6 +577,49 @@ configure_hetchy_cache() {
   hetchy_cache_archive="$archive"
   hetchy_cache_sync_registered=1
   trap sync_hetchy_cache_on_exit EXIT
+}
+
+# hetchy_cache_finish_restore joins the background restore started by
+# configure_hetchy_cache, then runs the steps that need the restored
+# tree: the save baseline and the prune. Call it before the first
+# consumer of the cache contents (the saved-spec setup / agent launch).
+# Idempotent, and safe when the cache was never configured. The exit
+# sync also calls it so an early script death can't save a
+# half-restored tree over a good archive.
+hetchy_cache_finish_restore() {
+  if [[ "${hetchy_cache_restore_finished:-0}" == "1" ]]; then
+    return 0
+  fi
+  hetchy_cache_restore_finished=1
+  [[ -n "${hetchy_cache_local_dir:-}" ]] || return 0
+  if [[ -n "${hetchy_cache_restore_pid:-}" ]]; then
+    if wait "$hetchy_cache_restore_pid"; then
+      echo "[hetchy] dependency cache archive restored in $(hetchy_elapsed_seconds "${hetchy_cache_restore_started:-0}")"
+    else
+      echo "[hetchy] WARNING: dependency cache archive restore failed after $(hetchy_elapsed_seconds "${hetchy_cache_restore_started:-0}"); continuing with empty local cache"
+    fi
+    hetchy_cache_restore_pid=""
+  fi
+
+  # Baseline before pruning so a prune that deletes files registers as
+  # a change and the exit save persists it; otherwise pruned files
+  # resurrect from the stale archive on every restore.
+  hetchy_cache_mark_save_baseline "$hetchy_cache_local_dir"
+
+  local prune_days="${hetchy_cache_prune_days_resolved:-}"
+  if [[ "$prune_days" =~ ^[0-9]+$ && "$prune_days" -gt 0 ]]; then
+    echo "[hetchy] pruning dependency cache files older than ${prune_days} days"
+    # Go extracts the module cache with read-only directories and
+    # unlink needs a writable parent, so without this chmod the prune
+    # silently deletes nothing under go-mod.
+    find "$hetchy_cache_local_dir" -xdev -type d ! -perm -u+w -exec chmod u+w {} + 2>/dev/null || true
+    local pruned
+    pruned="$(find "$hetchy_cache_local_dir" -xdev -mindepth 1 -type f -mtime "+${prune_days}" -delete -print 2>/dev/null | wc -l | tr -d '[:space:]')"
+    if [[ "$pruned" =~ ^[0-9]+$ && "$pruned" -gt 0 ]]; then
+      echo "[hetchy] pruned ${pruned} dependency cache files"
+    fi
+    find "$hetchy_cache_local_dir" -xdev -mindepth 1 -depth -type d -empty -delete >/dev/null 2>&1 || true
+  fi
 }
 
 # Keep this fallback behavior in sync with run_with_timeout in
