@@ -320,6 +320,8 @@ html.is-dark #detail-meta-dropdown {
 }
 html.is-dark .meta-dropdown-item { color: #c4c4c8; }
 html.is-dark .meta-dropdown-item:hover { background: var(--control); }
+html.is-dark .meta-dropdown-item.danger { color: var(--danger); }
+html.is-dark .meta-dropdown-item.danger:hover { background: #3a1c1c; }
 html.is-dark .skills-modal,
 html.is-dark .image-modal {
   background: var(--sidebar);

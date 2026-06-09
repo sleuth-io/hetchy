@@ -180,19 +180,10 @@
 
     host.innerHTML =
       '<div class="meta-section">'
-      + '<div class="meta-header">'
       + '<div class="meta-title">Details</div>'
-      + '<div class="meta-more-wrap">'
-      + '<button id="detail-meta-more-btn" type="button" aria-label="More options" aria-haspopup="menu" aria-expanded="false">...</button>'
-      + '<div id="detail-meta-dropdown" role="menu" aria-label="More options" hidden>'
-      + '<button id="detail-download-btn" type="button" role="menuitem" class="meta-dropdown-item">Download</button>'
-      + '</div>'
-      + '</div>'
-      + '</div>'
       + rowHTML
       + '</div>';
 
-    setupDetailMetaMenu();
     setupDetailSkillsTrigger(skills);
   }
 
@@ -299,10 +290,13 @@
     overlay.querySelector('.skills-modal-close').focus();
   }
 
+  // setupDetailMetaMenu wires the chat-header "..." menu once at init. The
+  // menu lives in the static dialog header (not the re-rendered metadata
+  // panel), so its actions read the active conversation from state and
+  // reuse the same rename/delete dialogs as the run cards.
   function setupDetailMetaMenu() {
     const moreBtn = byID('detail-meta-more-btn');
     const dropdown = byID('detail-meta-dropdown');
-    const downloadBtn = byID('detail-download-btn');
     if (!moreBtn || !dropdown) return;
     moreBtn.addEventListener('click', e => {
       e.stopPropagation();
@@ -318,7 +312,17 @@
         moreBtn.focus();
       }
     });
-    if (downloadBtn) downloadBtn.addEventListener('click', downloadActiveConversation);
+    byID('detail-download-btn')?.addEventListener('click', downloadActiveConversation);
+    byID('detail-rename-btn')?.addEventListener('click', () => {
+      const detail = state.activeDetail;
+      closeDetailMetaDropdown();
+      if (detail && detail.id) openRunRenameDialog(detail.id, detail.title || '');
+    });
+    byID('detail-delete-btn')?.addEventListener('click', () => {
+      const detail = state.activeDetail;
+      closeDetailMetaDropdown();
+      if (detail && detail.id) openRunDeleteDialog(detail.id);
+    });
   }
 
   function closeDetailMetaDropdown() {

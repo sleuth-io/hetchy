@@ -335,15 +335,6 @@
   text-transform: uppercase;
   margin-bottom: .55rem;
 }
-.meta-header {
-  display: flex;
-  align-items: center;
-  margin-bottom: .55rem;
-}
-.meta-header .meta-title {
-  flex: 1;
-  margin-bottom: 0;
-}
 .meta-row {
   display: flex;
   align-items: baseline;

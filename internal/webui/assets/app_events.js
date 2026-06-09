@@ -190,6 +190,7 @@
     });
     byID('run-delete-cancel').addEventListener('click', () => closeDialog('run-delete-dialog'));
     byID('run-delete-confirm').addEventListener('click', confirmRunDelete);
+    setupDetailMetaMenu();
     byID('run-stop-cancel').addEventListener('click', () => closeDialog('run-stop-dialog'));
     byID('run-stop-confirm').addEventListener('click', confirmRunStop);
     byID('agent-nav-toggle').addEventListener('click', e => {
