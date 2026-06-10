@@ -256,14 +256,15 @@ func TestGetTemplateNilStore(t *testing.T) {
 }
 
 func TestListNilStore(t *testing.T) {
-	// List with nil db returns fallback profiles
+	// List with nil db returns the same set as FallbackProfiles.
 	s := NewStore(nil)
 	profiles, err := s.List(t.Context(), "org123")
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
-	if len(profiles) == 0 {
-		t.Fatal("List with nil db should return fallback profiles")
+	want := FallbackProfiles()
+	if len(profiles) != len(want) {
+		t.Fatalf("List returned %d profiles, want %d (FallbackProfiles)", len(profiles), len(want))
 	}
 }
 
@@ -276,8 +277,9 @@ func TestListFallbackOnEmptyOrgID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List(empty orgID): %v", err)
 	}
-	if len(profiles) == 0 {
-		t.Fatal("List(empty orgID) should return fallback profiles")
+	want := FallbackProfiles()
+	if len(profiles) != len(want) {
+		t.Fatalf("List(empty orgID) returned %d profiles, want %d (FallbackProfiles)", len(profiles), len(want))
 	}
 }
 
@@ -301,9 +303,9 @@ func TestNilReceiverFallback(t *testing.T) {
 		t.Fatalf("nil receiver GetTemplate(bob): err=%v slug=%q", err, got.Slug)
 	}
 
-	_, err = s.GetBySlug(t.Context(), "org", "bob")
-	if err != nil {
-		t.Fatalf("nil receiver GetBySlug(bob): %v", err)
+	bySlug, err := s.GetBySlug(t.Context(), "org", "bob")
+	if err != nil || bySlug.Slug != "bob" {
+		t.Fatalf("nil receiver GetBySlug(bob): err=%v slug=%q", err, bySlug.Slug)
 	}
 }
 
