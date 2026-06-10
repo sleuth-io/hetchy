@@ -134,6 +134,54 @@ func TestLinearWebhookAcksValidEvent(t *testing.T) {
 	}
 }
 
+func TestLinearWebhookDedupRejectsReplay(t *testing.T) {
+	var d linearWebhookDedup
+	now := time.Now()
+	ttl := 10 * time.Minute
+
+	if !d.firstDelivery("wh-1", now, ttl) {
+		t.Fatal("first delivery rejected")
+	}
+	if d.firstDelivery("wh-1", now.Add(time.Minute), ttl) {
+		t.Fatal("replay within ttl accepted")
+	}
+	if !d.firstDelivery("wh-2", now, ttl) {
+		t.Fatal("distinct id rejected")
+	}
+	// Past the ttl the id is forgotten (Linear wouldn't redeliver a
+	// fresh-timestamped event that late anyway).
+	if !d.firstDelivery("wh-1", now.Add(ttl+time.Minute), ttl) {
+		t.Fatal("expired id still rejected")
+	}
+	// Empty ids can't be deduplicated and always pass.
+	for range 2 {
+		if !d.firstDelivery("", now, ttl) {
+			t.Fatal("empty id was deduplicated")
+		}
+	}
+}
+
+func TestLinearWebhookDuplicateDeliveryAcks200(t *testing.T) {
+	b := newLinearWebhookTestBot("whsec")
+	body := fmt.Sprintf(`{
+		"type":"AgentSessionEvent","action":"created","organizationId":"ws-1",
+		"webhookId":"wh-dup-1","webhookTimestamp":%d,
+		"agentSession":{"id":"sess-1"},
+		"promptContext":"Fix it"
+	}`, time.Now().UnixMilli())
+
+	first := httptest.NewRecorder()
+	b.linearWebhookHandler(first, signedLinearRequest(body, "whsec"))
+	if first.Code != http.StatusOK {
+		t.Fatalf("first delivery status = %d", first.Code)
+	}
+	second := httptest.NewRecorder()
+	b.linearWebhookHandler(second, signedLinearRequest(body, "whsec"))
+	if second.Code != http.StatusOK {
+		t.Fatalf("duplicate delivery status = %d, want 200 (acked, not dispatched)", second.Code)
+	}
+}
+
 func TestLinearWebhookSaturatedDispatcherReturns503(t *testing.T) {
 	b := newLinearWebhookTestBot("whsec")
 	// Occupy the only dispatch slot so enqueue times out.

@@ -189,7 +189,11 @@ func (b *Bot) linearDisconnectHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusForbidden)
 		return
 	}
-	p, _ := auth.FromContext(r.Context())
+	p, ok := auth.FromContext(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	if !isAdmin(p) {
 		http.Error(w, "admin role required", http.StatusForbidden)
 		return

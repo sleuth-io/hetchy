@@ -293,7 +293,18 @@ func (c *Client) MoveIssueToStarted(ctx context.Context, issueID string) error {
 		"id":    issueID,
 		"input": map[string]any{"stateId": target.ID},
 	}
-	return c.do(ctx, mutation, vars, nil)
+	var update struct {
+		IssueUpdate struct {
+			Success bool `json:"success"`
+		} `json:"issueUpdate"`
+	}
+	if err := c.do(ctx, mutation, vars, &update); err != nil {
+		return err
+	}
+	if !update.IssueUpdate.Success {
+		return errors.New("linear: issueUpdate not successful")
+	}
+	return nil
 }
 
 // VerifyWebhookSignature checks the `linear-signature` header value (a

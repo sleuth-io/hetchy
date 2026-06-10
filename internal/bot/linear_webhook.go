@@ -6,12 +6,47 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hetchyhq/hetchy/internal/db/sqlc"
 	"github.com/hetchyhq/hetchy/internal/linear"
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
 )
+
+// linearWebhookDedup rejects redelivered/replayed webhook IDs inside
+// the freshness window. The timestamp check alone leaves a 5-minute
+// replay window; remembering every webhookId seen within that window
+// closes it for this process. (Across replicas the durable-run unique
+// constraint on (org_id, request_id) is the backstop — see
+// handleLinearAgentSessionEvent.) Zero value is ready to use.
+type linearWebhookDedup struct {
+	mu   sync.Mutex
+	seen map[string]time.Time
+}
+
+// firstDelivery records id and reports whether it was unseen within
+// ttl. Empty ids can't be deduplicated and pass through.
+func (d *linearWebhookDedup) firstDelivery(id string, now time.Time, ttl time.Duration) bool {
+	if id == "" {
+		return true
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.seen == nil {
+		d.seen = map[string]time.Time{}
+	}
+	for k, t := range d.seen {
+		if now.Sub(t) > ttl {
+			delete(d.seen, k)
+		}
+	}
+	if _, dup := d.seen[id]; dup {
+		return false
+	}
+	d.seen[id] = now
+	return true
+}
 
 // linearSessionStore is the persistence seam for the AgentSession →
 // conversation-thread mapping. Production uses the sqlc-backed
@@ -99,6 +134,16 @@ func (b *Bot) linearWebhookHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing agent session id", http.StatusBadRequest)
 		return
 	}
+	// Replay defense beyond the timestamp window: each delivery's
+	// webhookId is remembered for twice the freshness tolerance, so a
+	// captured payload can't be re-posted within its valid window.
+	// Duplicates ack 200 — Linear must not retry them.
+	if !b.linearWebhookSeen.firstDelivery(ev.WebhookID, time.Now(), 2*linear.WebhookTimestampTolerance) {
+		b.log.Info("linear webhook: duplicate delivery ignored",
+			"webhook_id", ev.WebhookID, "action", ev.Action, "session", ev.AgentSession.ID)
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 
 	enqueueCtx, cancel := context.WithTimeout(r.Context(), webhookEnqueueTimeout)
 	defer cancel()
@@ -133,6 +178,13 @@ func (b *Bot) linearWebhookHandler(w http.ResponseWriter, r *http.Request) {
 // the 10-second acknowledgement activity, conversation routing, and
 // the agent run itself. Runs detached — errors are reported back into
 // the Linear session where possible, otherwise logged.
+//
+// Idempotency: requestID is deterministic per event ("linear-" +
+// session id for created, "linear-" + activity id for prompted), and
+// prepareAgentRun's durable-run insert enforces a unique
+// (org_id, request_id) — a redelivered event that slips past the
+// webhookId dedup (e.g. on another replica) is dropped there as a
+// duplicate in-flight run rather than spawning a second sandbox.
 func (b *Bot) handleLinearAgentSessionEvent(ev linear.AgentSessionEvent) {
 	lookupCtx, cancel := context.WithTimeout(context.Background(), slackLookupTimeout)
 	oc, err := b.orgs.GetByLinearWorkspaceID(lookupCtx, ev.OrganizationID)

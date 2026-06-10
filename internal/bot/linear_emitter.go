@@ -27,6 +27,12 @@ import (
 // Ephemeral updates are throttled with a trailing flush, mirroring
 // slackEmitter, so a burst of fast tool calls doesn't burn through
 // Linear's API quota and a quiet stretch still shows the latest state.
+//
+// HTTP calls to Linear never run while e.mu is held: state mutations
+// enqueue posts under the lock, and drain() sends them FIFO after the
+// lock is released. A slow Linear round-trip therefore can't stall the
+// agent goroutine's own Start/Done bookkeeping behind the trailing-
+// flush timer (or vice versa).
 type linearEmitter struct {
 	log       *slog.Logger
 	cli       linearAPI
@@ -54,10 +60,24 @@ type linearEmitter struct {
 	started    time.Time
 	lastUpdate time.Time
 
+	// queue holds pending Linear API calls in emission order; draining
+	// reports whether a goroutine is currently sending. Together they
+	// guarantee FIFO delivery without holding mu across HTTP calls.
+	queue    []linearPost
+	draining bool
+
 	// terminated mirrors slackEmitter: true once a Result/Error block
 	// has been posted, so trailing flushes stop rewriting state.
 	terminated       bool
 	lastTerminalKind blocks.Kind
+}
+
+// linearPost is one queued Linear API call: an agent activity, or —
+// when urls is non-empty — an external-URL attachment.
+type linearPost struct {
+	content   linear.ActivityContent
+	ephemeral bool
+	urls      []linear.ExternalURL
 }
 
 // linearUpdateMinInterval spaces out ephemeral progress activities.
@@ -66,9 +86,7 @@ type linearEmitter struct {
 // comfortably inside the hourly allowance.
 const linearUpdateMinInterval = 3 * time.Second
 
-// linearAPICallTimeout bounds each activity post. The emitter runs on
-// the agent's request goroutine; a hung Linear round-trip must not
-// stall the run.
+// linearAPICallTimeout bounds each activity post.
 const linearAPICallTimeout = 15 * time.Second
 
 func newLinearEmitter(log *slog.Logger, cli linearAPI, sessionID, conversationURL, request string) *linearEmitter {
@@ -85,25 +103,25 @@ func newLinearEmitter(log *slog.Logger, cli linearAPI, sessionID, conversationUR
 
 func (e *linearEmitter) Start(kind blocks.Kind, title string, meta map[string]any) string {
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	id := "l" + strconv.FormatUint(e.idGen.Add(1), 10)
 	e.open[id] = openBlock{kind: kind, title: title}
 	e.activity.Record("block_start", sseEvent{ID: id, Kind: kind, Title: title, Meta: meta})
 	// Notify/Result/Error arrive as Start + Append + Done; wait for the
 	// close so the posted activity includes the appended body.
-	if kind == blocks.KindNotify || kind == blocks.KindResult || kind == blocks.KindError {
-		return id
+	if kind != blocks.KindNotify && kind != blocks.KindResult && kind != blocks.KindError {
+		e.current = title
+		e.refreshLive()
 	}
-	e.current = title
-	e.refreshLive()
+	e.mu.Unlock()
+	e.drain()
 	return id
 }
 
 func (e *linearEmitter) Append(id, delta string) {
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	b, ok := e.open[id]
 	if !ok {
+		e.mu.Unlock()
 		return
 	}
 	b.body += delta
@@ -112,11 +130,18 @@ func (e *linearEmitter) Append(id, delta string) {
 	if b.kind != blocks.KindNotify && b.kind != blocks.KindResult && b.kind != blocks.KindError {
 		e.refreshLive()
 	}
+	e.mu.Unlock()
+	e.drain()
 }
 
 func (e *linearEmitter) Done(id, summary string) {
 	e.mu.Lock()
-	defer e.mu.Unlock()
+	e.doneLocked(id, summary)
+	e.mu.Unlock()
+	e.drain()
+}
+
+func (e *linearEmitter) doneLocked(id, summary string) {
 	b, ok := e.open[id]
 	delete(e.open, id)
 	if !ok {
@@ -146,7 +171,12 @@ func (e *linearEmitter) Done(id, summary string) {
 
 func (e *linearEmitter) Fail(id, summary string) {
 	e.mu.Lock()
-	defer e.mu.Unlock()
+	e.failLocked(id, summary)
+	e.mu.Unlock()
+	e.drain()
+}
+
+func (e *linearEmitter) failLocked(id, summary string) {
 	b, ok := e.open[id]
 	delete(e.open, id)
 	if !ok {
@@ -187,30 +217,34 @@ func (e *linearEmitter) Fail(id, summary string) {
 
 func (e *linearEmitter) Heartbeat(title, body, elapsed string) {
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	e.activity.Record("heartbeat", sseEvent{Title: title, Delta: body, Elapsed: elapsed})
 	e.refreshLive()
+	e.mu.Unlock()
+	e.drain()
 }
 
 func (e *linearEmitter) Notify(title, body string) {
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	e.postNotifyLocked(title, body)
+	e.mu.Unlock()
+	e.drain()
 }
 
 func (e *linearEmitter) Result(title, body string) {
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	e.postResultLocked(title, body)
+	e.mu.Unlock()
+	e.drain()
 }
 
 func (e *linearEmitter) Error(title, body string) {
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	e.postErrorLocked(title, body)
+	e.mu.Unlock()
+	e.drain()
 }
 
-// postNotifyLocked posts bot status messages. Questions become
+// postNotifyLocked enqueues bot status messages. Questions become
 // elicitation activities so Linear flips the session to awaitingInput
 // and the user knows a reply is expected; everything else is a durable
 // thought. Caller must hold e.mu.
@@ -220,10 +254,10 @@ func (e *linearEmitter) postNotifyLocked(title, body string) {
 		return
 	}
 	if isLinearElicitation(title) {
-		e.post(linear.ActivityContent{Type: "elicitation", Body: text}, false)
+		e.enqueueLocked(linear.ActivityContent{Type: "elicitation", Body: text}, false)
 		return
 	}
-	e.post(linear.ActivityContent{Type: "thought", Body: text}, false)
+	e.enqueueLocked(linear.ActivityContent{Type: "thought", Body: text}, false)
 }
 
 func (e *linearEmitter) postResultLocked(title, body string) {
@@ -236,9 +270,9 @@ func (e *linearEmitter) postResultLocked(title, body string) {
 	if e.conversationURL != "" {
 		text += "\n\n[View the full run](" + e.conversationURL + ")"
 	}
-	e.post(linear.ActivityContent{Type: "response", Body: text}, false)
+	e.enqueueLocked(linear.ActivityContent{Type: "response", Body: text}, false)
 	if pr := prURLRe.FindString(body); pr != "" {
-		e.addExternalURLs([]linear.ExternalURL{{Label: "Pull request", URL: pr}})
+		e.queue = append(e.queue, linearPost{urls: []linear.ExternalURL{{Label: "Pull request", URL: pr}}})
 	}
 }
 
@@ -249,13 +283,13 @@ func (e *linearEmitter) postErrorLocked(title, body string) {
 	if e.conversationURL != "" {
 		text += "\n\n[View the full run](" + e.conversationURL + ")"
 	}
-	e.post(linear.ActivityContent{Type: "error", Body: text}, false)
+	e.enqueueLocked(linear.ActivityContent{Type: "error", Body: text}, false)
 }
 
-// refreshLive posts the throttled ephemeral progress thought. Caller
-// must hold e.mu. Mirrors slackEmitter.refreshLive: when throttled it
-// arms a one-shot trailing flush so the last state change in a burst
-// still reaches the user during a long quiet tool call.
+// refreshLive enqueues the throttled ephemeral progress thought.
+// Caller must hold e.mu. Mirrors slackEmitter.refreshLive: when
+// throttled it arms a one-shot trailing flush so the last state change
+// in a burst still reaches the user during a long quiet tool call.
 func (e *linearEmitter) refreshLive() {
 	if e.terminated {
 		return
@@ -281,15 +315,15 @@ func (e *linearEmitter) refreshLive() {
 
 func (e *linearEmitter) trailingFlush() {
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	e.flushTimer = nil
-	if e.terminated {
-		return
+	if !e.terminated {
+		e.flushNow(time.Now())
 	}
-	e.flushNow(time.Now())
+	e.mu.Unlock()
+	e.drain()
 }
 
-// flushNow posts the current live state as an ephemeral thought.
+// flushNow enqueues the current live state as an ephemeral thought.
 // Caller must hold e.mu.
 func (e *linearEmitter) flushNow(now time.Time) {
 	if e.started.IsZero() {
@@ -299,7 +333,7 @@ func (e *linearEmitter) flushNow(now time.Time) {
 	if text == "" {
 		return
 	}
-	e.post(linear.ActivityContent{Type: "thought", Body: text}, true)
+	e.enqueueLocked(linear.ActivityContent{Type: "thought", Body: text}, true)
 	e.lastUpdate = now
 }
 
@@ -339,22 +373,47 @@ func (e *linearEmitter) renderCountersAndElapsed() string {
 	return strings.Join(bits, " · ")
 }
 
-// post fires one agent activity. Errors are logged, never surfaced —
-// a failed progress post is not worth tanking the run over.
-func (e *linearEmitter) post(content linear.ActivityContent, ephemeral bool) {
-	ctx, cancel := context.WithTimeout(context.Background(), linearAPICallTimeout)
-	defer cancel()
-	if err := e.cli.CreateActivity(ctx, e.sessionID, content, ephemeral); err != nil {
-		e.log.Warn("linear activity post failed",
-			"session", e.sessionID, "type", content.Type, "ephemeral", ephemeral, "error", err)
-	}
+// enqueueLocked appends one activity to the outbound queue. Caller
+// must hold e.mu; the actual HTTP call happens in drain().
+func (e *linearEmitter) enqueueLocked(content linear.ActivityContent, ephemeral bool) {
+	e.queue = append(e.queue, linearPost{content: content, ephemeral: ephemeral})
 }
 
-func (e *linearEmitter) addExternalURLs(urls []linear.ExternalURL) {
+// drain sends queued posts in FIFO order without holding e.mu across
+// the HTTP calls. Only one goroutine drains at a time: a second caller
+// finding draining=true returns immediately and trusts the active
+// drainer to pick up the items it enqueued. Errors are logged, never
+// surfaced — a failed progress post is not worth tanking the run over.
+func (e *linearEmitter) drain() {
+	e.mu.Lock()
+	if e.draining {
+		e.mu.Unlock()
+		return
+	}
+	e.draining = true
+	for len(e.queue) > 0 {
+		item := e.queue[0]
+		e.queue = e.queue[1:]
+		e.mu.Unlock()
+		e.send(item)
+		e.mu.Lock()
+	}
+	e.draining = false
+	e.mu.Unlock()
+}
+
+func (e *linearEmitter) send(item linearPost) {
 	ctx, cancel := context.WithTimeout(context.Background(), linearAPICallTimeout)
 	defer cancel()
-	if err := e.cli.AddExternalURLs(ctx, e.sessionID, urls); err != nil {
-		e.log.Warn("linear external url attach failed", "session", e.sessionID, "error", err)
+	if len(item.urls) > 0 {
+		if err := e.cli.AddExternalURLs(ctx, e.sessionID, item.urls); err != nil {
+			e.log.Warn("linear external url attach failed", "session", e.sessionID, "error", err)
+		}
+		return
+	}
+	if err := e.cli.CreateActivity(ctx, e.sessionID, item.content, item.ephemeral); err != nil {
+		e.log.Warn("linear activity post failed",
+			"session", e.sessionID, "type", item.content.Type, "ephemeral", item.ephemeral, "error", err)
 	}
 }
 

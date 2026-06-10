@@ -139,6 +139,9 @@ type Bot struct {
 	linearWebhookSem chan struct{}
 	// linearWebhookErrLog rate-limits Linear webhook parse-error logs.
 	linearWebhookErrLog webhookErrLogger
+	// linearWebhookSeen drops replayed webhook deliveries that would
+	// otherwise pass the timestamp freshness check.
+	linearWebhookSeen linearWebhookDedup
 	// newLinearClientFn builds the Linear API handle for an org's
 	// access token; overridable in tests.
 	newLinearClientFn func(token string) linearAPI

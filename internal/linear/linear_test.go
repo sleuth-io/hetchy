@@ -157,6 +157,15 @@ func TestMoveIssueToStartedPicksLowestPosition(t *testing.T) {
 	}
 }
 
+func TestMoveIssueToStartedNotSuccessful(t *testing.T) {
+	cli, _ := newStubClient(t,
+		`{"data":{"issue":{"id":"iss-1","state":{"id":"s0","type":"unstarted"},"team":{"states":{"nodes":[{"id":"s1","position":1}]}}}}}`,
+		`{"data":{"issueUpdate":{"success":false}}}`)
+	if err := cli.MoveIssueToStarted(context.Background(), "iss-1"); err == nil {
+		t.Fatal("want error when issueUpdate success=false")
+	}
+}
+
 func TestMoveIssueToStartedSkipsAlreadyStarted(t *testing.T) {
 	cli, stub := newStubClient(t,
 		`{"data":{"issue":{"id":"iss-1","state":{"id":"s9","type":"started"},"team":{"states":{"nodes":[{"id":"s1","position":1}]}}}}}`)
