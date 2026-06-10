@@ -40,6 +40,7 @@ type Querier interface {
 	DeleteGithubReposByInstallationExcept(ctx context.Context, arg DeleteGithubReposByInstallationExceptParams) error
 	DeleteGithubTeamMembersForTeam(ctx context.Context, arg DeleteGithubTeamMembersForTeamParams) error
 	DeleteGithubTeamsByInstallationExcept(ctx context.Context, arg DeleteGithubTeamsByInstallationExceptParams) error
+	DeleteLinearAgentSessionsByOrg(ctx context.Context, orgID string) error
 	DeleteOrgAPIKeysByOrg(ctx context.Context, orgID string) error
 	DeleteOrgConfig(ctx context.Context, orgID string) error
 	DeleteOrgSXVault(ctx context.Context, orgID string) error
@@ -81,8 +82,12 @@ type Querier interface {
 	GetGithubRepoForOrg(ctx context.Context, arg GetGithubRepoForOrgParams) (GithubRepo, error)
 	GetLatestAgentJobExecution(ctx context.Context, arg GetLatestAgentJobExecutionParams) (AgentJobExecution, error)
 	GetLatestAgentRunForThread(ctx context.Context, arg GetLatestAgentRunForThreadParams) (AgentRun, error)
+	GetLinearAgentSession(ctx context.Context, agentSessionID string) (LinearAgentSession, error)
 	GetOrgAPIKeyByHash(ctx context.Context, keyHash []byte) (OrgApiKey, error)
 	GetOrgConfig(ctx context.Context, orgID string) (OrgConfig, error)
+	// Routes inbound Linear webhooks (organizationId at the payload root)
+	// to the owning org, mirroring GetOrgConfigBySlackTeamID.
+	GetOrgConfigByLinearWorkspaceID(ctx context.Context, linearWorkspaceID *string) (OrgConfig, error)
 	GetOrgConfigBySlackTeamID(ctx context.Context, slackTeamID *string) (OrgConfig, error)
 	GetOrgSXVault(ctx context.Context, orgID string) (OrgSxVault, error)
 	GetRepoBillingSetting(ctx context.Context, arg GetRepoBillingSettingParams) (RepoBillingSetting, error)
@@ -93,6 +98,10 @@ type Querier interface {
 	IncrementBillingTopupMonthlyUsage(ctx context.Context, arg IncrementBillingTopupMonthlyUsageParams) (BillingTopupSetting, error)
 	InsertBillingCreditReservation(ctx context.Context, arg InsertBillingCreditReservationParams) (BillingCreditReservation, error)
 	InsertBillingStripeEvent(ctx context.Context, arg InsertBillingStripeEventParams) (bool, error)
+	// A webhook redelivery may re-insert the same session; keep the first
+	// row's thread mapping so a duplicate `created` event can't re-point
+	// an in-flight conversation at a different thread.
+	InsertLinearAgentSession(ctx context.Context, arg InsertLinearAgentSessionParams) (LinearAgentSession, error)
 	// Used by DeclareRequiredSecret to register a placeholder row for a
 	// secret the bootstrap manifest asked for. ON CONFLICT DO NOTHING is
 	// the key distinction from UpsertRepoSecretValue: re-declaring a
@@ -126,6 +135,9 @@ type Querier interface {
 	ListGithubTeamsByInstallation(ctx context.Context, installationID int64) ([]GithubTeam, error)
 	ListLatestAgentJobExecutionsByOrg(ctx context.Context, orgID string) ([]AgentJobExecution, error)
 	ListLatestAgentRunsForThreads(ctx context.Context, arg ListLatestAgentRunsForThreadsParams) ([]AgentRun, error)
+	// Newest-first so the resume check prefers the most recent prior
+	// conversation on the issue.
+	ListLinearAgentSessionsByIssue(ctx context.Context, arg ListLinearAgentSessionsByIssueParams) ([]LinearAgentSession, error)
 	ListOrgAPIKeys(ctx context.Context, orgID string) ([]OrgApiKey, error)
 	// Lists Socket-Mode-installed orgs only. The slackManager iterates
 	// this on startup to open one socket per org.

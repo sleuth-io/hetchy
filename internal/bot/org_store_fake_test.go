@@ -16,6 +16,9 @@ type fakeOrgStore struct {
 	getBySlackConfig orgcfg.Config
 	getBySlackErr    error
 
+	getByLinearConfig orgcfg.Config
+	getByLinearErr    error
+
 	listConfigs []orgcfg.Config
 	listErr     error
 
@@ -36,6 +39,12 @@ func (f *fakeOrgStore) GetBySlackTeamID(context.Context, string) (orgcfg.Config,
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.getBySlackConfig, f.getBySlackErr
+}
+
+func (f *fakeOrgStore) GetByLinearWorkspaceID(context.Context, string) (orgcfg.Config, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.getByLinearConfig, f.getByLinearErr
 }
 
 func (f *fakeOrgStore) ListWithSlack(context.Context) ([]orgcfg.Config, error) {

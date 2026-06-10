@@ -41,6 +41,15 @@ func (b *Bot) runWeb(ctx context.Context) error {
 	// it's verified by HMAC inside the handler. The setup callback is
 	// also unauthenticated (state token does the binding). The install
 	// kick-off is auth-gated so we know which org the install belongs to.
+	// Linear transport. The webhook endpoint is unauthenticated — it's
+	// verified by HMAC over LINEAR_WEBHOOK_SECRET inside the handler.
+	// The OAuth callback is bound to a user/org by its encrypted state
+	// token; the install kick-off is auth-gated.
+	mux.HandleFunc("/integrations/linear/webhook", b.linearWebhookHandler)
+	mux.HandleFunc("/integrations/linear/oauth/callback", b.linearOAuthCallbackHandler)
+	mux.Handle("/integrations/linear/install", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.linearInstallHandler))))
+	mux.Handle("/integrations/linear/disconnect", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.linearDisconnectHandler))))
+
 	mux.HandleFunc("/integrations/github/webhook", b.githubWebhookHandler)
 	mux.HandleFunc("/integrations/github/setup", b.githubSetupHandler)
 	mux.Handle("/integrations/github/install", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.githubInstallHandler))))

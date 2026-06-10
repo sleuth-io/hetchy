@@ -12,7 +12,10 @@ SELECT
     default_github_repo,
     claude_code_oauth_token_encrypted,
     openai_api_key_encrypted,
-    openai_codex_oauth_token_encrypted
+    openai_codex_oauth_token_encrypted,
+    linear_access_token_encrypted,
+    linear_workspace_id,
+    linear_app_user_id
 FROM org_configs
 WHERE org_id = $1;
 
@@ -30,9 +33,35 @@ SELECT
     default_github_repo,
     claude_code_oauth_token_encrypted,
     openai_api_key_encrypted,
-    openai_codex_oauth_token_encrypted
+    openai_codex_oauth_token_encrypted,
+    linear_access_token_encrypted,
+    linear_workspace_id,
+    linear_app_user_id
 FROM org_configs
 WHERE slack_team_id = $1;
+
+-- name: GetOrgConfigByLinearWorkspaceID :one
+-- Routes inbound Linear webhooks (organizationId at the payload root)
+-- to the owning org, mirroring GetOrgConfigBySlackTeamID.
+SELECT
+    org_id,
+    slack_bot_token_encrypted,
+    slack_socket_token_encrypted,
+    sx_key_encrypted,
+    created_at,
+    updated_at,
+    anthropic_api_key_encrypted,
+    slack_team_id,
+    default_github_owner,
+    default_github_repo,
+    claude_code_oauth_token_encrypted,
+    openai_api_key_encrypted,
+    openai_codex_oauth_token_encrypted,
+    linear_access_token_encrypted,
+    linear_workspace_id,
+    linear_app_user_id
+FROM org_configs
+WHERE linear_workspace_id = $1;
 
 -- name: ListOrgConfigsWithSlack :many
 -- Lists Socket-Mode-installed orgs only. The slackManager iterates
@@ -57,7 +86,10 @@ SELECT
     default_github_repo,
     claude_code_oauth_token_encrypted,
     openai_api_key_encrypted,
-    openai_codex_oauth_token_encrypted
+    openai_codex_oauth_token_encrypted,
+    linear_access_token_encrypted,
+    linear_workspace_id,
+    linear_app_user_id
 FROM org_configs
 WHERE slack_bot_token_encrypted IS NOT NULL
   AND slack_socket_token_encrypted IS NOT NULL;
@@ -74,9 +106,12 @@ INSERT INTO org_configs (
     default_github_repo,
     claude_code_oauth_token_encrypted,
     openai_api_key_encrypted,
-    openai_codex_oauth_token_encrypted
+    openai_codex_oauth_token_encrypted,
+    linear_access_token_encrypted,
+    linear_workspace_id,
+    linear_app_user_id
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
 )
 ON CONFLICT (org_id) DO UPDATE SET
     slack_bot_token_encrypted          = EXCLUDED.slack_bot_token_encrypted,
@@ -89,6 +124,9 @@ ON CONFLICT (org_id) DO UPDATE SET
     claude_code_oauth_token_encrypted  = EXCLUDED.claude_code_oauth_token_encrypted,
     openai_api_key_encrypted           = EXCLUDED.openai_api_key_encrypted,
     openai_codex_oauth_token_encrypted = EXCLUDED.openai_codex_oauth_token_encrypted,
+    linear_access_token_encrypted      = EXCLUDED.linear_access_token_encrypted,
+    linear_workspace_id                = EXCLUDED.linear_workspace_id,
+    linear_app_user_id                 = EXCLUDED.linear_app_user_id,
     updated_at                         = NOW()
 RETURNING
     org_id,
@@ -103,7 +141,10 @@ RETURNING
     default_github_repo,
     claude_code_oauth_token_encrypted,
     openai_api_key_encrypted,
-    openai_codex_oauth_token_encrypted;
+    openai_codex_oauth_token_encrypted,
+    linear_access_token_encrypted,
+    linear_workspace_id,
+    linear_app_user_id;
 
 -- name: DeleteOrgConfig :exec
 DELETE FROM org_configs WHERE org_id = $1;

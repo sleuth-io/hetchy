@@ -31,6 +31,7 @@ import (
 	"github.com/hetchyhq/hetchy/internal/db/sqlc"
 	"github.com/hetchyhq/hetchy/internal/githubapp"
 	"github.com/hetchyhq/hetchy/internal/jobs"
+	"github.com/hetchyhq/hetchy/internal/linear"
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
 	"github.com/hetchyhq/hetchy/internal/runstore"
 	"github.com/hetchyhq/hetchy/internal/secrets"
@@ -133,6 +134,21 @@ type Bot struct {
 	// webhook parse-error paths so a leaked webhook secret can't be
 	// used to flood logs at our expense.
 	githubWebhookErrLog webhookErrLogger
+	// linearWebhookSem caps concurrent dispatch goroutines from the
+	// Linear webhook endpoint — same rationale as githubWebhookSem.
+	linearWebhookSem chan struct{}
+	// linearWebhookErrLog rate-limits Linear webhook parse-error logs.
+	linearWebhookErrLog webhookErrLogger
+	// newLinearClientFn builds the Linear API handle for an org's
+	// access token; overridable in tests.
+	newLinearClientFn func(token string) linearAPI
+	// linearSessions maps Linear agent sessions to conversation
+	// threads; sqlc-backed in production, faked in tests.
+	linearSessions linearSessionStore
+	// linearTokenEndpointOverride / linearRevokeEndpointOverride point
+	// the OAuth handshake at a test server; empty in production.
+	linearTokenEndpointOverride  string
+	linearRevokeEndpointOverride string
 	// cipher is reused for the OAuth state token (Slack install flow,
 	// GitHub App setup callback). AES-GCM gives confidentiality +
 	// tamper detection in a single step, so we don't need a separate
@@ -310,8 +326,13 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 		cipher:           cipher,
 		retryBackoff:     initialBackoff,
 		githubWebhookSem: make(chan struct{}, webhookDispatchConcurrency),
+		linearWebhookSem: make(chan struct{}, webhookDispatchConcurrency),
 		workerID:         newWorkerID(),
 	}
+	b.newLinearClientFn = func(token string) linearAPI {
+		return linear.NewClient(token)
+	}
+	b.linearSessions = sqlcLinearSessionStore{q: store.Queries}
 	b.createFn = func(ctx context.Context, params any) (*daytona.Sandbox, error) {
 		return dc.Create(ctx, params)
 	}

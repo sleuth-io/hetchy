@@ -97,7 +97,10 @@ SELECT
     default_github_repo,
     claude_code_oauth_token_encrypted,
     openai_api_key_encrypted,
-    openai_codex_oauth_token_encrypted
+    openai_codex_oauth_token_encrypted,
+    linear_access_token_encrypted,
+    linear_workspace_id,
+    linear_app_user_id
 FROM org_configs
 WHERE org_id = $1
 `
@@ -119,6 +122,57 @@ func (q *Queries) GetOrgConfig(ctx context.Context, orgID string) (OrgConfig, er
 		&i.ClaudeCodeOauthTokenEncrypted,
 		&i.OpenaiApiKeyEncrypted,
 		&i.OpenaiCodexOauthTokenEncrypted,
+		&i.LinearAccessTokenEncrypted,
+		&i.LinearWorkspaceID,
+		&i.LinearAppUserID,
+	)
+	return i, err
+}
+
+const getOrgConfigByLinearWorkspaceID = `-- name: GetOrgConfigByLinearWorkspaceID :one
+SELECT
+    org_id,
+    slack_bot_token_encrypted,
+    slack_socket_token_encrypted,
+    sx_key_encrypted,
+    created_at,
+    updated_at,
+    anthropic_api_key_encrypted,
+    slack_team_id,
+    default_github_owner,
+    default_github_repo,
+    claude_code_oauth_token_encrypted,
+    openai_api_key_encrypted,
+    openai_codex_oauth_token_encrypted,
+    linear_access_token_encrypted,
+    linear_workspace_id,
+    linear_app_user_id
+FROM org_configs
+WHERE linear_workspace_id = $1
+`
+
+// Routes inbound Linear webhooks (organizationId at the payload root)
+// to the owning org, mirroring GetOrgConfigBySlackTeamID.
+func (q *Queries) GetOrgConfigByLinearWorkspaceID(ctx context.Context, linearWorkspaceID *string) (OrgConfig, error) {
+	row := q.db.QueryRow(ctx, getOrgConfigByLinearWorkspaceID, linearWorkspaceID)
+	var i OrgConfig
+	err := row.Scan(
+		&i.OrgID,
+		&i.SlackBotTokenEncrypted,
+		&i.SlackSocketTokenEncrypted,
+		&i.SxKeyEncrypted,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.AnthropicApiKeyEncrypted,
+		&i.SlackTeamID,
+		&i.DefaultGithubOwner,
+		&i.DefaultGithubRepo,
+		&i.ClaudeCodeOauthTokenEncrypted,
+		&i.OpenaiApiKeyEncrypted,
+		&i.OpenaiCodexOauthTokenEncrypted,
+		&i.LinearAccessTokenEncrypted,
+		&i.LinearWorkspaceID,
+		&i.LinearAppUserID,
 	)
 	return i, err
 }
@@ -137,7 +191,10 @@ SELECT
     default_github_repo,
     claude_code_oauth_token_encrypted,
     openai_api_key_encrypted,
-    openai_codex_oauth_token_encrypted
+    openai_codex_oauth_token_encrypted,
+    linear_access_token_encrypted,
+    linear_workspace_id,
+    linear_app_user_id
 FROM org_configs
 WHERE slack_team_id = $1
 `
@@ -159,6 +216,9 @@ func (q *Queries) GetOrgConfigBySlackTeamID(ctx context.Context, slackTeamID *st
 		&i.ClaudeCodeOauthTokenEncrypted,
 		&i.OpenaiApiKeyEncrypted,
 		&i.OpenaiCodexOauthTokenEncrypted,
+		&i.LinearAccessTokenEncrypted,
+		&i.LinearWorkspaceID,
+		&i.LinearAppUserID,
 	)
 	return i, err
 }
@@ -177,7 +237,10 @@ SELECT
     default_github_repo,
     claude_code_oauth_token_encrypted,
     openai_api_key_encrypted,
-    openai_codex_oauth_token_encrypted
+    openai_codex_oauth_token_encrypted,
+    linear_access_token_encrypted,
+    linear_workspace_id,
+    linear_app_user_id
 FROM org_configs
 WHERE slack_bot_token_encrypted IS NOT NULL
   AND slack_socket_token_encrypted IS NOT NULL
@@ -215,6 +278,9 @@ func (q *Queries) ListOrgConfigsWithSlack(ctx context.Context) ([]OrgConfig, err
 			&i.ClaudeCodeOauthTokenEncrypted,
 			&i.OpenaiApiKeyEncrypted,
 			&i.OpenaiCodexOauthTokenEncrypted,
+			&i.LinearAccessTokenEncrypted,
+			&i.LinearWorkspaceID,
+			&i.LinearAppUserID,
 		); err != nil {
 			return nil, err
 		}
@@ -238,9 +304,12 @@ INSERT INTO org_configs (
     default_github_repo,
     claude_code_oauth_token_encrypted,
     openai_api_key_encrypted,
-    openai_codex_oauth_token_encrypted
+    openai_codex_oauth_token_encrypted,
+    linear_access_token_encrypted,
+    linear_workspace_id,
+    linear_app_user_id
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
 )
 ON CONFLICT (org_id) DO UPDATE SET
     slack_bot_token_encrypted          = EXCLUDED.slack_bot_token_encrypted,
@@ -253,6 +322,9 @@ ON CONFLICT (org_id) DO UPDATE SET
     claude_code_oauth_token_encrypted  = EXCLUDED.claude_code_oauth_token_encrypted,
     openai_api_key_encrypted           = EXCLUDED.openai_api_key_encrypted,
     openai_codex_oauth_token_encrypted = EXCLUDED.openai_codex_oauth_token_encrypted,
+    linear_access_token_encrypted      = EXCLUDED.linear_access_token_encrypted,
+    linear_workspace_id                = EXCLUDED.linear_workspace_id,
+    linear_app_user_id                 = EXCLUDED.linear_app_user_id,
     updated_at                         = NOW()
 RETURNING
     org_id,
@@ -267,7 +339,10 @@ RETURNING
     default_github_repo,
     claude_code_oauth_token_encrypted,
     openai_api_key_encrypted,
-    openai_codex_oauth_token_encrypted
+    openai_codex_oauth_token_encrypted,
+    linear_access_token_encrypted,
+    linear_workspace_id,
+    linear_app_user_id
 `
 
 type UpsertOrgConfigParams struct {
@@ -282,6 +357,9 @@ type UpsertOrgConfigParams struct {
 	ClaudeCodeOauthTokenEncrypted  []byte  `json:"claude_code_oauth_token_encrypted"`
 	OpenaiApiKeyEncrypted          []byte  `json:"openai_api_key_encrypted"`
 	OpenaiCodexOauthTokenEncrypted []byte  `json:"openai_codex_oauth_token_encrypted"`
+	LinearAccessTokenEncrypted     []byte  `json:"linear_access_token_encrypted"`
+	LinearWorkspaceID              *string `json:"linear_workspace_id"`
+	LinearAppUserID                string  `json:"linear_app_user_id"`
 }
 
 func (q *Queries) UpsertOrgConfig(ctx context.Context, arg UpsertOrgConfigParams) (OrgConfig, error) {
@@ -297,6 +375,9 @@ func (q *Queries) UpsertOrgConfig(ctx context.Context, arg UpsertOrgConfigParams
 		arg.ClaudeCodeOauthTokenEncrypted,
 		arg.OpenaiApiKeyEncrypted,
 		arg.OpenaiCodexOauthTokenEncrypted,
+		arg.LinearAccessTokenEncrypted,
+		arg.LinearWorkspaceID,
+		arg.LinearAppUserID,
 	)
 	var i OrgConfig
 	err := row.Scan(
@@ -313,6 +394,9 @@ func (q *Queries) UpsertOrgConfig(ctx context.Context, arg UpsertOrgConfigParams
 		&i.ClaudeCodeOauthTokenEncrypted,
 		&i.OpenaiApiKeyEncrypted,
 		&i.OpenaiCodexOauthTokenEncrypted,
+		&i.LinearAccessTokenEncrypted,
+		&i.LinearWorkspaceID,
+		&i.LinearAppUserID,
 	)
 	return i, err
 }

@@ -265,6 +265,16 @@ type GithubTeamMember struct {
 	GithubLogin    string `json:"github_login"`
 }
 
+type LinearAgentSession struct {
+	AgentSessionID  string             `json:"agent_session_id"`
+	OrgID           string             `json:"org_id"`
+	ThreadID        string             `json:"thread_id"`
+	IssueID         string             `json:"issue_id"`
+	IssueIdentifier string             `json:"issue_identifier"`
+	IssueUrl        string             `json:"issue_url"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+}
+
 type OrgApiKey struct {
 	ID         string             `json:"id"`
 	OrgID      string             `json:"org_id"`
@@ -291,6 +301,9 @@ type OrgConfig struct {
 	ClaudeCodeOauthTokenEncrypted  []byte             `json:"claude_code_oauth_token_encrypted"`
 	OpenaiApiKeyEncrypted          []byte             `json:"openai_api_key_encrypted"`
 	OpenaiCodexOauthTokenEncrypted []byte             `json:"openai_codex_oauth_token_encrypted"`
+	LinearAccessTokenEncrypted     []byte             `json:"linear_access_token_encrypted"`
+	LinearWorkspaceID              *string            `json:"linear_workspace_id"`
+	LinearAppUserID                string             `json:"linear_app_user_id"`
 }
 
 type OrgSxVault struct {
