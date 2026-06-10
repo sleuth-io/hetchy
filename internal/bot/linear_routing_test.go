@@ -359,6 +359,41 @@ func TestHandleLinearAgentSessionEventEmptyPromptAsksForText(t *testing.T) {
 	}
 }
 
+func TestHandleLinearAgentSessionEventInFlightRejectsBeforeAck(t *testing.T) {
+	cli := &fakeLinearAPI{}
+	orgs := &fakeOrgStore{getByLinearConfig: orgcfg.Config{
+		OrgID: "org-1", LinearAccessToken: "lin-token",
+	}}
+	live := newLiveRegistry()
+	// Occupy the thread's live-run slot before the event arrives.
+	prior, registered := live.RegisterIfAbsent(context.Background(), "org-1", "linear-sess-1")
+	if !registered {
+		t.Fatal("could not pre-register live run")
+	}
+	defer live.Done("org-1", "linear-sess-1", prior)
+
+	b := &Bot{
+		log:               discardLogger(),
+		cfg:               Config{Env: "dev", WebPort: "8080"},
+		orgs:              orgs,
+		convs:             &fakeConversationStore{getErr: convstore.ErrNotFound},
+		linearSessions:    newFakeLinearSessionStore(),
+		live:              live,
+		newLinearClientFn: func(string) linearAPI { return cli },
+	}
+	b.handleLinearAgentSessionEvent(createdEvent("sess-1", "iss-1"))
+
+	// Exactly one activity: the rejection. No optimistic "On it" ack
+	// that the rejection would immediately contradict.
+	acts := cli.snapshotActivities()
+	if len(acts) != 1 {
+		t.Fatalf("activities = %+v, want exactly one rejection", acts)
+	}
+	if acts[0].content.Type != "elicitation" || !strings.Contains(acts[0].content.Body, "already in flight") {
+		t.Fatalf("activity = %+v, want already-in-flight elicitation", acts[0])
+	}
+}
+
 func TestLinearDirectiveStripsMention(t *testing.T) {
 	ev := createdEvent("sess-1", "iss-1")
 	ev.AgentSession.Comment = &struct {

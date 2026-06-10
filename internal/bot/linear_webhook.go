@@ -278,6 +278,32 @@ func (b *Bot) handleLinearAgentSessionEvent(ev linear.AgentSessionEvent) {
 	}
 	conversationURL := b.cfg.PublicBaseURL() + "/?session=" + threadID
 
+	// Claim the live-run slot before acknowledging, so a turn that's
+	// already in flight gets a single clear message instead of an
+	// optimistic "On it" immediately contradicted by a rejection.
+	// Registering is synchronous and local — it costs nothing against
+	// Linear's 10-second responsiveness budget. Running the request on
+	// a detached goroutine (below) frees the webhook dispatch slot —
+	// runs take minutes and there are only webhookDispatchConcurrency
+	// slots — and makes both Linear's stop signal and Hetchy's own
+	// stop button cancel via the same liveRun path the web chat uses,
+	// so a stopped run terminates with a "Stopped" response instead of
+	// an error.
+	run, registered := b.live.RegisterIfAbsent(context.Background(), oc.OrgID, threadID)
+	if !registered {
+		b.ackLinearSession(cli, sessionID, "A run is already in flight for this conversation. Wait for it to finish (or send a stop request), then try again.")
+		return
+	}
+	// Release the slot if anything below panics before the run
+	// goroutine (which owns Done from then on) has been launched —
+	// otherwise the thread would reject every future turn.
+	runStarted := false
+	defer func() {
+		if !runStarted {
+			b.live.Done(oc.OrgID, threadID, run)
+		}
+	}()
+
 	// Acknowledge within Linear's 10-second responsiveness window
 	// before any sandbox work begins, and attach the run deep link.
 	// The context only covers these two calls; HandleRequest below
@@ -336,18 +362,8 @@ func (b *Bot) handleLinearAgentSessionEvent(ev linear.AgentSessionEvent) {
 		requestedAgentPtr = &slug
 	}
 
-	// Register the run in the live registry and run it on a detached
-	// goroutine. This (a) frees the webhook dispatch slot — runs take
-	// minutes and there are only webhookDispatchConcurrency slots — and
-	// (b) makes both Linear's stop signal and Hetchy's own stop button
-	// cancel via the same liveRun path the web chat uses, so a stopped
-	// run terminates with a "Stopped" response instead of an error.
-	run, registered := b.live.RegisterIfAbsent(context.Background(), oc.OrgID, threadID)
-	if !registered {
-		b.ackLinearSession(cli, sessionID, "A run is already in flight for this conversation. Wait for it to finish (or send a stop request), then try again.")
-		return
-	}
 	emit := newLinearEmitter(b.log, cli, sessionID, conversationURL, text)
+	runStarted = true
 	go func() {
 		defer func() {
 			b.live.Done(oc.OrgID, threadID, run)
@@ -372,8 +388,10 @@ func (b *Bot) handleLinearStopRequest(oc orgcfg.Config, cli linearAPI, sessionID
 	defer cancel()
 
 	threadID := "linear-" + sessionID
-	if row, err := b.linearSessions.Get(ctx, sessionID); err == nil {
-		threadID = row.ThreadID
+	if b.linearSessions != nil {
+		if row, err := b.linearSessions.Get(ctx, sessionID); err == nil {
+			threadID = row.ThreadID
+		}
 	}
 
 	liveCancelled := false
@@ -520,8 +538,14 @@ func linearPromptText(ev linear.AgentSessionEvent, directive string) string {
 	}
 	var parts []string
 	if issue := ev.AgentSession.Issue; issue != nil {
-		header := strings.TrimSpace(strings.TrimSpace("Linear issue "+issue.Identifier) + ": " + strings.TrimSpace(issue.Title))
-		if header != "Linear issue:" && strings.TrimSpace(issue.Identifier+issue.Title) != "" {
+		header := "Linear issue"
+		if id := strings.TrimSpace(issue.Identifier); id != "" {
+			header += " " + id
+		}
+		if title := strings.TrimSpace(issue.Title); title != "" {
+			header += ": " + title
+		}
+		if header != "Linear issue" {
 			parts = append(parts, header)
 		}
 		if desc := strings.TrimSpace(issue.Description); desc != "" {
