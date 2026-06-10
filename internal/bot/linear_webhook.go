@@ -370,8 +370,11 @@ func (b *Bot) handleLinearAgentSessionEvent(ev linear.AgentSessionEvent) {
 	runStarted = true
 	go func() {
 		defer func() {
+			// Capture the panic before cleanup so a hypothetical panic
+			// inside Done() can't mask HandleRequest's original one.
+			rec := recover()
 			b.live.Done(oc.OrgID, threadID, run)
-			if rec := recover(); rec != nil {
+			if rec != nil {
 				b.log.Error("linear run panic recovered", "session", sessionID, "thread", threadID, "panic", rec)
 			}
 		}()
@@ -398,10 +401,17 @@ func (b *Bot) handleLinearStopRequest(oc orgcfg.Config, cli linearAPI, sessionID
 		}
 	}
 
-	liveCancelled := false
+	// foundLive (rather than Cancel's return value) decides whether to
+	// post our own confirmation below: if a live run existed, its
+	// goroutine emits the terminal activity either way — "Stopped" when
+	// the cancel landed, or its own Result when the run completed in
+	// the instant between Get and Cancel. Keying on Cancel() would
+	// double-post in that race window.
+	foundLive := false
 	if b.live != nil {
 		if run := b.live.Get(oc.OrgID, threadID); run != nil {
-			liveCancelled = run.Cancel()
+			foundLive = true
+			run.Cancel()
 		}
 	}
 	if b.runs != nil && b.runs.Enabled() {
@@ -413,10 +423,10 @@ func (b *Bot) handleLinearStopRequest(oc orgcfg.Config, cli linearAPI, sessionID
 		}
 	}
 	b.log.Info("linear stop request handled",
-		"org", oc.OrgID, "session", sessionID, "thread", threadID, "live_cancelled", liveCancelled)
-	if liveCancelled {
-		// The cancelled run's own emitter posts the terminal "Stopped"
-		// response; a second confirmation here would double up.
+		"org", oc.OrgID, "session", sessionID, "thread", threadID, "found_live", foundLive)
+	if foundLive {
+		// The live run's own emitter posts the terminal activity; a
+		// second confirmation here would double up.
 		return
 	}
 	ackCtx, ackCancel := context.WithTimeout(context.Background(), linearAckDeadline)
