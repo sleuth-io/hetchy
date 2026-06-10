@@ -215,6 +215,38 @@ func TestLinearEmitterNonTerminalFailureStaysQuiet(t *testing.T) {
 	}
 }
 
+func TestLinearEmitterSuppressesNotifyAfterTerminal(t *testing.T) {
+	cli := &fakeLinearAPI{}
+	e := newTestLinearEmitter(cli)
+
+	e.Result("Done!", "Opened https://github.com/acme/site/pull/42")
+	before := len(cli.snapshotActivities())
+
+	// Post-PR housekeeping notices arrive after the terminal block.
+	// Posting them as thoughts would flip the Linear session from
+	// complete back to "working" forever.
+	e.Notify("Bootstrap spec — no changes", "Agent reviewed the validation run.")
+	id := e.Start(blocks.KindNotify, "Auto merge", nil)
+	e.Done(id, "")
+
+	if got := len(cli.snapshotActivities()); got != before {
+		t.Fatalf("activities grew from %d to %d after terminal", before, got)
+	}
+}
+
+func TestLinearEmitterFirstTerminalWins(t *testing.T) {
+	cli := &fakeLinearAPI{}
+	e := newTestLinearEmitter(cli)
+
+	e.Result("Done!", "all good")
+	e.Error("Agent failed", "late failure noise")
+
+	acts := cli.snapshotActivities()
+	if len(acts) != 1 || acts[0].content.Type != "response" {
+		t.Fatalf("activities = %+v, want only the response terminal", acts)
+	}
+}
+
 func TestLinearEmitterNoEphemeralAfterTermination(t *testing.T) {
 	cli := &fakeLinearAPI{}
 	e := newTestLinearEmitter(cli)

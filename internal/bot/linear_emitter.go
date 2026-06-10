@@ -248,7 +248,16 @@ func (e *linearEmitter) Error(title, body string) {
 // elicitation activities so Linear flips the session to awaitingInput
 // and the user knows a reply is expected; everything else is a durable
 // thought. Caller must hold e.mu.
+//
+// Nothing is posted after a terminal Result/Error: Linear derives the
+// session state from the activity stream, so a thought arriving after
+// the response (post-PR housekeeping like "Bootstrap spec — no
+// changes") would flip the session from complete back to "working"
+// forever. The web transcript still records those blocks.
 func (e *linearEmitter) postNotifyLocked(title, body string) {
+	if e.terminated {
+		return
+	}
 	text := joinTitleBody(title, body)
 	if text == "" {
 		return
@@ -261,6 +270,9 @@ func (e *linearEmitter) postNotifyLocked(title, body string) {
 }
 
 func (e *linearEmitter) postResultLocked(title, body string) {
+	if e.terminated {
+		return
+	}
 	e.terminated = true
 	e.lastTerminalKind = blocks.KindResult
 	text := joinTitleBody(title, body)
@@ -277,6 +289,11 @@ func (e *linearEmitter) postResultLocked(title, body string) {
 }
 
 func (e *linearEmitter) postErrorLocked(title, body string) {
+	if e.terminated {
+		// First terminal wins: a stray late error must not flip a
+		// completed Linear session into the errored state.
+		return
+	}
 	e.terminated = true
 	e.lastTerminalKind = blocks.KindError
 	text := joinTitleBody(title, body)
