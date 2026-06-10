@@ -28,11 +28,14 @@ DELETE FROM linear_agent_sessions WHERE created_at < $1;
 
 -- name: ListLinearAgentSessionsByIssue :many
 -- Newest-first so the resume check prefers the most recent prior
--- conversation on the issue.
+-- conversation on the issue. LIMIT bounds the caller's per-row
+-- conversation lookups on heavily-discussed issues — an open PR, if
+-- any, is virtually always within the newest handful of sessions.
 SELECT agent_session_id, org_id, thread_id, issue_id, issue_identifier, issue_url, created_at
 FROM linear_agent_sessions
 WHERE org_id = $1 AND issue_id = $2
-ORDER BY created_at DESC;
+ORDER BY created_at DESC
+LIMIT 20;
 
 -- name: DeleteLinearAgentSessionsByOrg :exec
 DELETE FROM linear_agent_sessions WHERE org_id = $1;

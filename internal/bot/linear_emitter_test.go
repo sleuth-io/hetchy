@@ -230,6 +230,44 @@ func TestLinearEmitterNoEphemeralAfterTermination(t *testing.T) {
 	}
 }
 
+// panicOnceLinearAPI panics on the first CreateActivity call and
+// delegates to the embedded fake afterwards.
+type panicOnceLinearAPI struct {
+	fakeLinearAPI
+	panicked bool
+}
+
+func (p *panicOnceLinearAPI) CreateActivity(ctx context.Context, sessionID string, content linear.ActivityContent, ephemeral bool) error {
+	if !p.panicked {
+		p.panicked = true
+		panic("linear client exploded")
+	}
+	return p.fakeLinearAPI.CreateActivity(ctx, sessionID, content, ephemeral)
+}
+
+func TestLinearEmitterDrainRecoversFromSendPanic(t *testing.T) {
+	cli := &panicOnceLinearAPI{}
+	e := newLinearEmitter(discardLogger(), cli, "sess-1", "", "req")
+	e.minInterval = -1
+
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("expected the send panic to propagate")
+			}
+		}()
+		e.Notify("Starting", "first post panics")
+	}()
+
+	// The draining flag must have been reset — a later activity still
+	// goes out instead of being silently dropped forever.
+	e.Notify("Starting", "second post succeeds")
+	acts := cli.snapshotActivities()
+	if len(acts) != 1 || !strings.Contains(acts[0].content.Body, "second post succeeds") {
+		t.Fatalf("activities after panic = %+v, want the second post", acts)
+	}
+}
+
 func TestIsLinearElicitation(t *testing.T) {
 	cases := map[string]bool{
 		"Which repository?": true,

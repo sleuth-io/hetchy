@@ -384,6 +384,12 @@ func (e *linearEmitter) enqueueLocked(content linear.ActivityContent, ephemeral 
 // finding draining=true returns immediately and trusts the active
 // drainer to pick up the items it enqueued. Errors are logged, never
 // surfaced — a failed progress post is not worth tanking the run over.
+//
+// A panic out of send() (which would otherwise leave draining=true
+// forever and silently drop every later activity) resets the flag
+// before propagating; the normal path clears it in the same critical
+// section as the final empty-queue check so no concurrently-enqueued
+// item can be stranded.
 func (e *linearEmitter) drain() {
 	e.mu.Lock()
 	if e.draining {
@@ -391,15 +397,27 @@ func (e *linearEmitter) drain() {
 		return
 	}
 	e.draining = true
-	for len(e.queue) > 0 {
+	e.mu.Unlock()
+	defer func() {
+		if r := recover(); r != nil {
+			e.mu.Lock()
+			e.draining = false
+			e.mu.Unlock()
+			panic(r)
+		}
+	}()
+	for {
+		e.mu.Lock()
+		if len(e.queue) == 0 {
+			e.draining = false
+			e.mu.Unlock()
+			return
+		}
 		item := e.queue[0]
 		e.queue = e.queue[1:]
 		e.mu.Unlock()
 		e.send(item)
-		e.mu.Lock()
 	}
-	e.draining = false
-	e.mu.Unlock()
 }
 
 func (e *linearEmitter) send(item linearPost) {

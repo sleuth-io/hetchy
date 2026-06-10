@@ -110,6 +110,7 @@ SELECT agent_session_id, org_id, thread_id, issue_id, issue_identifier, issue_ur
 FROM linear_agent_sessions
 WHERE org_id = $1 AND issue_id = $2
 ORDER BY created_at DESC
+LIMIT 20
 `
 
 type ListLinearAgentSessionsByIssueParams struct {
@@ -118,7 +119,9 @@ type ListLinearAgentSessionsByIssueParams struct {
 }
 
 // Newest-first so the resume check prefers the most recent prior
-// conversation on the issue.
+// conversation on the issue. LIMIT bounds the caller's per-row
+// conversation lookups on heavily-discussed issues — an open PR, if
+// any, is virtually always within the newest handful of sessions.
 func (q *Queries) ListLinearAgentSessionsByIssue(ctx context.Context, arg ListLinearAgentSessionsByIssueParams) ([]LinearAgentSession, error) {
 	rows, err := q.db.Query(ctx, listLinearAgentSessionsByIssue, arg.OrgID, arg.IssueID)
 	if err != nil {

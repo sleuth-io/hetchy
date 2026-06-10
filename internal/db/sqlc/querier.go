@@ -140,7 +140,9 @@ type Querier interface {
 	ListLatestAgentJobExecutionsByOrg(ctx context.Context, orgID string) ([]AgentJobExecution, error)
 	ListLatestAgentRunsForThreads(ctx context.Context, arg ListLatestAgentRunsForThreadsParams) ([]AgentRun, error)
 	// Newest-first so the resume check prefers the most recent prior
-	// conversation on the issue.
+	// conversation on the issue. LIMIT bounds the caller's per-row
+	// conversation lookups on heavily-discussed issues — an open PR, if
+	// any, is virtually always within the newest handful of sessions.
 	ListLinearAgentSessionsByIssue(ctx context.Context, arg ListLinearAgentSessionsByIssueParams) ([]LinearAgentSession, error)
 	ListOrgAPIKeys(ctx context.Context, orgID string) ([]OrgApiKey, error)
 	// Lists Socket-Mode-installed orgs only. The slackManager iterates
