@@ -25,7 +25,13 @@ var mentionPrefix = regexp.MustCompile(`^<@[A-Z0-9]+>\s*`)
 var leadingSlackMention = regexp.MustCompile(`^<@([A-Z0-9]+)>\s*`)
 var leadingAgentToken = regexp.MustCompile(`^@?([A-Za-z][A-Za-z0-9_-]*)(?::|,)?(?:\s+|$)`)
 var useAgentToPhrase = regexp.MustCompile(`(?i)^use\s+(?:the\s+)?(.+?)\s+to\s+(.+)$`)
-var slackRepoMention = regexp.MustCompile(`(?i)(?:https?://github\.com/|github\.com/)?([A-Za-z0-9][A-Za-z0-9_.-]{0,99})/([A-Za-z0-9][A-Za-z0-9_.-]{0,99})(?:\.git)?(?:[/\s.,;:!?)\]>|]|$)`)
+
+// githubRepoMention matches owner/name repo references, with or
+// without a github.com prefix. Shared by the Slack transport (which
+// accepts bare owner/name tokens) and the Linear transport (which
+// additionally requires the github.com prefix — see
+// extractLinearRepoMention). Changes here affect both integrations.
+var githubRepoMention = regexp.MustCompile(`(?i)(?:https?://github\.com/|github\.com/)?([A-Za-z0-9][A-Za-z0-9_.-]{0,99})/([A-Za-z0-9][A-Za-z0-9_.-]{0,99})(?:\.git)?(?:[/\s.,;:!?)\]>|]|$)`)
 
 const slackPendingRepoFallbackWindow = 30 * time.Minute
 
@@ -345,10 +351,10 @@ func (b *Bot) handleSlackEvent(ctx context.Context, oc orgcfg.Config, ev incomin
 		replyTo = ev.threadTS
 		if rec, err := b.convs.Get(ctx, oc.OrgID, threadID); err == nil {
 			isFollowUp = true
-			isRepoAnswer = slackConversationAwaitingRepo(rec) && slackTextIsRepo(text)
+			isRepoAnswer = conversationAwaitingRepo(rec) && textIsRepo(text)
 		}
 	}
-	if !isFollowUp && slackTextIsRepo(text) {
+	if !isFollowUp && textIsRepo(text) {
 		if rec, ok := b.findSlackPendingRepoConversation(ctx, oc.OrgID, creatorID, time.Now()); ok {
 			threadID = rec.ThreadID
 			replyTo = rec.ThreadID
@@ -507,7 +513,7 @@ func extractSlackRepoMention(text string) (string, bool) {
 	if owner, name, ok := parseOwnerRepo(text); ok {
 		return owner + "/" + name, true
 	}
-	for _, match := range slackRepoMention.FindAllStringSubmatch(text, -1) {
+	for _, match := range githubRepoMention.FindAllStringSubmatch(text, -1) {
 		if len(match) != 3 {
 			continue
 		}
@@ -543,7 +549,7 @@ func (b *Bot) findSlackPendingRepoConversationForCreator(ctx context.Context, or
 		return convstore.Record{}, false
 	}
 	for _, rec := range recs {
-		if !slackConversationAwaitingRepo(rec) || !slackPendingRepoConversationIsRecent(rec, now) {
+		if !conversationAwaitingRepo(rec) || !slackPendingRepoConversationIsRecent(rec, now) {
 			continue
 		}
 		return rec, true
@@ -560,7 +566,7 @@ func (b *Bot) findUniqueSlackPendingRepoConversation(ctx context.Context, orgID 
 	var match convstore.Record
 	count := 0
 	for _, rec := range recs {
-		if !slackConversationAwaitingRepo(rec) || !slackPendingRepoConversationIsRecent(rec, now) {
+		if !conversationAwaitingRepo(rec) || !slackPendingRepoConversationIsRecent(rec, now) {
 			continue
 		}
 		match = rec
@@ -576,11 +582,14 @@ func slackPendingRepoConversationIsRecent(rec convstore.Record, now time.Time) b
 	return !rec.CreatedAt.IsZero() && !rec.CreatedAt.Before(now.Add(-slackPendingRepoFallbackWindow))
 }
 
-func slackConversationAwaitingRepo(rec convstore.Record) bool {
+// conversationAwaitingRepo and textIsRepo are shared by the Slack and
+// Linear transports to recognize "Which repository?" answer turns —
+// changes here affect both integrations.
+func conversationAwaitingRepo(rec convstore.Record) bool {
 	return rec.AwaitingRepo && len(rec.History) > 0
 }
 
-func slackTextIsRepo(text string) bool {
+func textIsRepo(text string) bool {
 	_, _, ok := parseOwnerRepo(text)
 	return ok
 }

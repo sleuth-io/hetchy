@@ -55,9 +55,16 @@ type Config struct {
 	SlackBotToken         string
 	SlackSocketToken      string
 	SlackTeamID           string
-	SXKey                 string
-	DefaultGitHubOwner    string
-	DefaultGitHubRepo     string
+	// LinearAccessToken is the OAuth (actor=app) access token for the
+	// org's Linear workspace. LinearWorkspaceID is Linear's organization
+	// ID — the webhook router's lookup key, mirroring SlackTeamID.
+	// LinearAppUserID is the app's own viewer id in that workspace.
+	LinearAccessToken  string
+	LinearWorkspaceID  string
+	LinearAppUserID    string
+	SXKey              string
+	DefaultGitHubOwner string
+	DefaultGitHubRepo  string
 }
 
 // Store wires a *db.Store to a *secrets.Cipher and exposes plaintext
@@ -97,6 +104,24 @@ func (s *Store) GetBySlackTeamID(ctx context.Context, teamID string) (Config, er
 			return Config{}, ErrNotFound
 		}
 		return Config{}, fmt.Errorf("get org config by slack team id: %w", err)
+	}
+	return s.decrypt(row)
+}
+
+// GetByLinearWorkspaceID looks up an org by its Linear workspace
+// (organization) ID. Used by the Linear webhook transport to route an
+// inbound agent session event (which carries organizationId at the
+// payload root) to the right org's access token.
+func (s *Store) GetByLinearWorkspaceID(ctx context.Context, workspaceID string) (Config, error) {
+	if workspaceID == "" {
+		return Config{}, ErrNotFound
+	}
+	row, err := s.db.Queries.GetOrgConfigByLinearWorkspaceID(ctx, &workspaceID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Config{}, ErrNotFound
+		}
+		return Config{}, fmt.Errorf("get org config by linear workspace id: %w", err)
 	}
 	return s.decrypt(row)
 }
@@ -155,10 +180,19 @@ func (s *Store) Upsert(ctx context.Context, c Config) (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("encrypt openai codex oauth token: %w", err)
 	}
+	lt, err := s.cipher.Encrypt(c.LinearAccessToken)
+	if err != nil {
+		return Config{}, fmt.Errorf("encrypt linear access token: %w", err)
+	}
 	var teamID *string
 	if c.SlackTeamID != "" {
 		t := c.SlackTeamID
 		teamID = &t
+	}
+	var linearWorkspaceID *string
+	if c.LinearWorkspaceID != "" {
+		w := c.LinearWorkspaceID
+		linearWorkspaceID = &w
 	}
 	row, err := s.db.Queries.UpsertOrgConfig(ctx, sqlc.UpsertOrgConfigParams{
 		OrgID:                          c.OrgID,
@@ -172,6 +206,9 @@ func (s *Store) Upsert(ctx context.Context, c Config) (Config, error) {
 		SlackTeamID:                    teamID,
 		DefaultGithubOwner:             c.DefaultGitHubOwner,
 		DefaultGithubRepo:              c.DefaultGitHubRepo,
+		LinearAccessTokenEncrypted:     lt,
+		LinearWorkspaceID:              linearWorkspaceID,
+		LinearAppUserID:                c.LinearAppUserID,
 	})
 	if err != nil {
 		return Config{}, fmt.Errorf("upsert org config: %w", err)
@@ -198,6 +235,9 @@ func (s *Store) Delete(ctx context.Context, orgID string) error {
 		return errors.New("orgcfg: empty orgID")
 	}
 	return s.db.WithTx(ctx, func(q *sqlc.Queries) error {
+		if err := q.DeleteLinearAgentSessionsByOrg(ctx, orgID); err != nil {
+			return fmt.Errorf("delete linear agent sessions: %w", err)
+		}
 		if err := q.DeleteRepoSecretValuesByOrg(ctx, orgID); err != nil {
 			return fmt.Errorf("delete repo secret values: %w", err)
 		}
@@ -255,15 +295,26 @@ func (s *Store) decrypt(row sqlc.OrgConfig) (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("decrypt openai codex oauth token: %w", err)
 	}
+	lt, err := s.cipher.Decrypt(row.LinearAccessTokenEncrypted)
+	if err != nil {
+		return Config{}, fmt.Errorf("decrypt linear access token: %w", err)
+	}
 	teamID := ""
 	if row.SlackTeamID != nil {
 		teamID = *row.SlackTeamID
+	}
+	linearWorkspaceID := ""
+	if row.LinearWorkspaceID != nil {
+		linearWorkspaceID = *row.LinearWorkspaceID
 	}
 	return Config{
 		OrgID:                 row.OrgID,
 		SlackBotToken:         sb,
 		SlackSocketToken:      ss,
 		SlackTeamID:           teamID,
+		LinearAccessToken:     lt,
+		LinearWorkspaceID:     linearWorkspaceID,
+		LinearAppUserID:       row.LinearAppUserID,
 		SXKey:                 sx,
 		AnthropicAPIKey:       ak,
 		ClaudeCodeOAuthToken:  cc,

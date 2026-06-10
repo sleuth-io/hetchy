@@ -11,6 +11,7 @@ import (
 	"github.com/hetchyhq/hetchy/internal/blocks"
 	"github.com/hetchyhq/hetchy/internal/bootstrap"
 	"github.com/hetchyhq/hetchy/internal/convstore"
+	"github.com/hetchyhq/hetchy/internal/linear"
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
 	"github.com/hetchyhq/hetchy/internal/runstore"
 	"github.com/hetchyhq/hetchy/internal/sxsync"
@@ -87,9 +88,19 @@ type sxManager interface {
 type orgStore interface {
 	Get(context.Context, string) (orgcfg.Config, error)
 	GetBySlackTeamID(context.Context, string) (orgcfg.Config, error)
+	GetByLinearWorkspaceID(context.Context, string) (orgcfg.Config, error)
 	ListWithSlack(context.Context) ([]orgcfg.Config, error)
 	Upsert(context.Context, orgcfg.Config) (orgcfg.Config, error)
 	Delete(context.Context, string) error
+}
+
+// linearAPI is the slice of the Linear client the bot consumes —
+// narrow so tests can install a hand-written fake.
+type linearAPI interface {
+	Identity(ctx context.Context) (linear.Identity, error)
+	CreateActivity(ctx context.Context, sessionID string, content linear.ActivityContent, ephemeral bool) error
+	AddExternalURLs(ctx context.Context, sessionID string, urls []linear.ExternalURL) error
+	MoveIssueToStarted(ctx context.Context, issueID string) error
 }
 
 type runStore interface {

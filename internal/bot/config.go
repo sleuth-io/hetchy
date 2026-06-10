@@ -84,6 +84,18 @@ type Config struct {
 	// https://app.hetchy.ai/slack/oauth/callback for prod.
 	SlackOAuthRedirectURI string
 
+	// LinearClientID and LinearClientSecret identify the Hetchy Linear
+	// OAuth app (one per environment) used by the agent install flow.
+	// LinearWebhookSecret is that app's webhook signing secret, used to
+	// verify inbound agent-session events via HMAC-SHA256.
+	// LinearOAuthRedirectURI must match a redirect URL registered on
+	// the Linear app. All empty disables the integration: the install
+	// button is hidden and inbound webhooks are refused.
+	LinearClientID         string
+	LinearClientSecret     string
+	LinearWebhookSecret    string
+	LinearOAuthRedirectURI string
+
 	// GitHubAppID / GitHubAppSlug / GitHubAppPrivateKey / GitHubAppWebhookSecret
 	// configure the GitHub App used for per-org integrations. One App per
 	// environment (dev / staging / prod). Without these, the integration
@@ -282,6 +294,10 @@ func LoadConfig() (Config, error) {
 		SlackClientID:               strings.TrimSpace(os.Getenv("SLACK_CLIENT_ID")),
 		SlackClientSecret:           strings.TrimSpace(os.Getenv("SLACK_CLIENT_SECRET")),
 		SlackOAuthRedirectURI:       strings.TrimSpace(os.Getenv("SLACK_OAUTH_REDIRECT_URI")),
+		LinearClientID:              strings.TrimSpace(os.Getenv("LINEAR_CLIENT_ID")),
+		LinearClientSecret:          strings.TrimSpace(os.Getenv("LINEAR_CLIENT_SECRET")),
+		LinearWebhookSecret:         strings.TrimSpace(os.Getenv("LINEAR_WEBHOOK_SECRET")),
+		LinearOAuthRedirectURI:      strings.TrimSpace(os.Getenv("LINEAR_OAUTH_REDIRECT_URI")),
 		GitHubAppID:                 ghAppID,
 		GitHubAppSlug:               strings.TrimSpace(os.Getenv("GITHUB_APP_SLUG")),
 		GitHubAppClientID:           strings.TrimSpace(os.Getenv("GITHUB_APP_CLIENT_ID")),
