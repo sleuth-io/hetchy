@@ -163,12 +163,15 @@ func TestProfileMatches(t *testing.T) {
 }
 
 func TestEncryptDecryptBotKey(t *testing.T) {
-	// nil cipher: encrypt returns empty, decrypt returns empty
 	s := NewStore(nil)
+
+	// empty input always returns empty regardless of cipher
 	enc, err := s.encryptBotKey("")
 	if err != nil || len(enc) != 0 {
-		t.Fatalf("encryptBotKey(empty, nil cipher) = %v, %v; want [], nil", enc, err)
+		t.Fatalf("encryptBotKey(empty) = %v, %v; want [], nil", enc, err)
 	}
+
+	// decrypt with nil cipher returns empty for any input
 	if got := s.decryptBotKey(nil); got != "" {
 		t.Errorf("decryptBotKey(nil, nil cipher) = %q, want empty", got)
 	}
@@ -176,7 +179,7 @@ func TestEncryptDecryptBotKey(t *testing.T) {
 		t.Errorf("decryptBotKey(empty, nil cipher) = %q, want empty", got)
 	}
 
-	// encrypt a non-empty key with no cipher should error
+	// encrypting a non-empty value with no cipher returns an error
 	_, err = s.encryptBotKey("sk-test-key")
 	if err == nil {
 		t.Error("encryptBotKey(non-empty, nil cipher) expected error, got nil")
@@ -276,9 +279,11 @@ func TestListNilStore(t *testing.T) {
 	}
 }
 
-func TestNilListCallsWithEmptyOrgID(t *testing.T) {
+func TestListFallbackOnEmptyOrgID(t *testing.T) {
+	// Both nil-db and empty-orgID cause List to return FallbackProfiles.
+	// This exercises the observable behaviour; the orgID=="" guard is in the
+	// same condition as s.db==nil so we confirm the result is identical.
 	s := NewStore(nil)
-	// empty orgID should also return fallback profiles
 	profiles, err := s.List(t.Context(), "")
 	if err != nil {
 		t.Fatalf("List(empty orgID): %v", err)

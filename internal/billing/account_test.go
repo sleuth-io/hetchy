@@ -1,6 +1,9 @@
 package billing
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestAccountIncludedRemaining(t *testing.T) {
 	cases := []struct {
@@ -102,20 +105,33 @@ func TestPaidPlanCodesAreConsistent(t *testing.T) {
 }
 
 func TestAutoTopupIdempotencyKey(t *testing.T) {
-	k1 := autoTopupIdempotencyKey("org1", "starter", "2026-01", 1, 2500)
-	k2 := autoTopupIdempotencyKey("org1", "starter", "2026-01", 1, 2500)
-	if k1 != k2 {
+	base := autoTopupIdempotencyKey("org1", "starter", "2026-01", 1, 2500)
+
+	// same inputs produce the same key (deterministic)
+	if got := autoTopupIdempotencyKey("org1", "starter", "2026-01", 1, 2500); got != base {
 		t.Error("same inputs must produce same idempotency key")
 	}
-	k3 := autoTopupIdempotencyKey("org1", "starter", "2026-01", 2, 2500)
-	if k1 == k3 {
-		t.Error("different unit number must produce different idempotency key")
-	}
-	if !hasPrefix(k1, "hetchy-auto-topup-") {
-		t.Errorf("idempotency key %q should start with 'hetchy-auto-topup-'", k1)
-	}
-}
 
-func hasPrefix(s, prefix string) bool {
-	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
+	if !strings.HasPrefix(base, "hetchy-auto-topup-") {
+		t.Errorf("idempotency key %q should start with 'hetchy-auto-topup-'", base)
+	}
+
+	// each field independently distinguishes the key
+	cases := []struct {
+		name string
+		key  string
+	}{
+		{"different orgID", autoTopupIdempotencyKey("org2", "starter", "2026-01", 1, 2500)},
+		{"different planCode", autoTopupIdempotencyKey("org1", "team", "2026-01", 1, 2500)},
+		{"different billingMonth", autoTopupIdempotencyKey("org1", "starter", "2026-02", 1, 2500)},
+		{"different unit number", autoTopupIdempotencyKey("org1", "starter", "2026-01", 2, 2500)},
+		{"different topupUnitCents", autoTopupIdempotencyKey("org1", "starter", "2026-01", 1, 2200)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.key == base {
+				t.Errorf("%s: expected different key, got same as base %q", tc.name, base)
+			}
+		})
+	}
 }
