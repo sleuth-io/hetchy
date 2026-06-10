@@ -457,6 +457,12 @@ func (b *Bot) handleLinearStopRequest(oc orgcfg.Config, cli linearAPI, sessionID
 //
 // fresh reports whether a brand-new conversation thread was minted.
 func (b *Bot) resolveLinearThread(orgID string, ev linear.AgentSessionEvent) (threadID, requestID string, fresh, ok bool) {
+	if b.linearSessions == nil {
+		// Always set in production; fail visibly rather than panic if a
+		// minimal test harness routes an event without a session store.
+		b.log.Error("linear webhook: session store not configured", "session", ev.AgentSession.ID)
+		return "", "", false, false
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), slackLookupTimeout)
 	defer cancel()
 
