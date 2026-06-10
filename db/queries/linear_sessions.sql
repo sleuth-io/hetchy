@@ -13,8 +13,18 @@ INSERT INTO linear_agent_sessions (
     $1, $2, $3, $4, $5, $6
 )
 ON CONFLICT (agent_session_id) DO UPDATE SET
+    -- Deliberate no-op self-assignment: ON CONFLICT DO NOTHING would
+    -- return zero rows in PostgreSQL, but callers need RETURNING to
+    -- hand back the existing row's thread mapping on redelivery. Do
+    -- not "simplify" this away — keep-first semantics depend on it.
     agent_session_id = EXCLUDED.agent_session_id
 RETURNING agent_session_id, org_id, thread_id, issue_id, issue_identifier, issue_url, created_at;
+
+-- name: DeleteLinearAgentSessionsBefore :execrows
+-- TTL cleanup, run periodically by the bot. Sessions go stale on
+-- Linear's side within an hour; dropping mappings older than the
+-- retention window only disables open-PR resume for ancient issues.
+DELETE FROM linear_agent_sessions WHERE created_at < $1;
 
 -- name: ListLinearAgentSessionsByIssue :many
 -- Newest-first so the resume check prefers the most recent prior

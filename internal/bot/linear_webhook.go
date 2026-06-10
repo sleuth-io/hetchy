@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
+
 	"github.com/hetchyhq/hetchy/internal/db/sqlc"
 	"github.com/hetchyhq/hetchy/internal/linear"
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
@@ -55,6 +57,7 @@ type linearSessionStore interface {
 	Get(ctx context.Context, sessionID string) (sqlc.LinearAgentSession, error)
 	Insert(ctx context.Context, arg sqlc.InsertLinearAgentSessionParams) (sqlc.LinearAgentSession, error)
 	ListByIssue(ctx context.Context, orgID, issueID string) ([]sqlc.LinearAgentSession, error)
+	DeleteBefore(ctx context.Context, cutoff time.Time) (int64, error)
 }
 
 type sqlcLinearSessionStore struct{ q *sqlc.Queries }
@@ -69,6 +72,52 @@ func (s sqlcLinearSessionStore) Insert(ctx context.Context, arg sqlc.InsertLinea
 
 func (s sqlcLinearSessionStore) ListByIssue(ctx context.Context, orgID, issueID string) ([]sqlc.LinearAgentSession, error) {
 	return s.q.ListLinearAgentSessionsByIssue(ctx, sqlc.ListLinearAgentSessionsByIssueParams{OrgID: orgID, IssueID: issueID})
+}
+
+func (s sqlcLinearSessionStore) DeleteBefore(ctx context.Context, cutoff time.Time) (int64, error) {
+	return s.q.DeleteLinearAgentSessionsBefore(ctx, pgtype.Timestamptz{Time: cutoff, Valid: true})
+}
+
+// linearSessionRetention is how long session→thread mappings are kept.
+// A mapping is only consulted for `prompted` follow-ups (sessions go
+// stale on Linear's side within the hour) and for open-PR resume on
+// re-mention; 90 days comfortably covers both while keeping the table
+// from growing without bound.
+const linearSessionRetention = 90 * 24 * time.Hour
+
+// linearSessionCleanupInterval is how often the retention sweep runs.
+const linearSessionCleanupInterval = 24 * time.Hour
+
+// runLinearSessionCleanupLoop deletes expired session mappings once at
+// startup and then daily until ctx is cancelled. The DELETE is
+// idempotent, so multiple replicas running the sweep is harmless.
+func (b *Bot) runLinearSessionCleanupLoop(ctx context.Context) {
+	if b.linearSessions == nil {
+		return
+	}
+	ticker := time.NewTicker(linearSessionCleanupInterval)
+	defer ticker.Stop()
+	for {
+		b.cleanupLinearSessions(ctx)
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func (b *Bot) cleanupLinearSessions(ctx context.Context) {
+	sweepCtx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	deleted, err := b.linearSessions.DeleteBefore(sweepCtx, time.Now().Add(-linearSessionRetention))
+	if err != nil {
+		b.log.Warn("linear session cleanup failed", "error", err)
+		return
+	}
+	if deleted > 0 {
+		b.log.Info("linear session cleanup", "deleted", deleted)
+	}
 }
 
 // maxLinearBodyBytes caps the request body for the Linear webhook.
@@ -325,7 +374,12 @@ func (b *Bot) resolveLinearThread(orgID string, ev linear.AgentSessionEvent) (th
 			}
 		}
 	}
-	row, err := b.linearSessions.Insert(ctx, sqlc.InsertLinearAgentSessionParams{
+	// Fresh context for the insert: the prior-session loop above can
+	// consume most of the shared lookup budget on a busy issue, and an
+	// expired context here would silently drop the whole event.
+	insertCtx, cancelInsert := context.WithTimeout(context.Background(), slackLookupTimeout)
+	defer cancelInsert()
+	row, err := b.linearSessions.Insert(insertCtx, sqlc.InsertLinearAgentSessionParams{
 		AgentSessionID:  sessionID,
 		OrgID:           orgID,
 		ThreadID:        threadID,
@@ -352,7 +406,7 @@ func (b *Bot) resolveLinearThread(orgID string, ev linear.AgentSessionEvent) (th
 // session prompt context routinely contains file paths and issue
 // identifiers that would match the loose pattern.
 func extractLinearRepoMention(text string) (string, bool) {
-	for _, match := range slackRepoMention.FindAllStringSubmatch(text, -1) {
+	for _, match := range githubRepoMention.FindAllStringSubmatch(text, -1) {
 		if len(match) != 3 {
 			continue
 		}

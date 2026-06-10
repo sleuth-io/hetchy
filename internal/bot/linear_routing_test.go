@@ -18,6 +18,7 @@ type fakeLinearSessionStore struct {
 	mu        sync.Mutex
 	rows      map[string]sqlc.LinearAgentSession
 	insertErr error
+	deleteErr error
 }
 
 func newFakeLinearSessionStore() *fakeLinearSessionStore {
@@ -66,6 +67,22 @@ func (f *fakeLinearSessionStore) ListByIssue(_ context.Context, orgID, issueID s
 		}
 	}
 	return out, nil
+}
+
+func (f *fakeLinearSessionStore) DeleteBefore(_ context.Context, cutoff time.Time) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.deleteErr != nil {
+		return 0, f.deleteErr
+	}
+	var deleted int64
+	for id, row := range f.rows {
+		if row.CreatedAt.Valid && row.CreatedAt.Time.Before(cutoff) {
+			delete(f.rows, id)
+			deleted++
+		}
+	}
+	return deleted, nil
 }
 
 func createdEvent(sessionID, issueID string) linear.AgentSessionEvent {
@@ -233,6 +250,36 @@ func TestHandleLinearAgentSessionEventAcksAndRuns(t *testing.T) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
+}
+
+func TestCleanupLinearSessionsDeletesExpired(t *testing.T) {
+	sessions := newFakeLinearSessionStore()
+	old := sqlc.LinearAgentSession{AgentSessionID: "sess-old", OrgID: "org-1", ThreadID: "t-old"}
+	old.CreatedAt.Time = time.Now().Add(-linearSessionRetention - time.Hour)
+	old.CreatedAt.Valid = true
+	recent := sqlc.LinearAgentSession{AgentSessionID: "sess-new", OrgID: "org-1", ThreadID: "t-new"}
+	recent.CreatedAt.Time = time.Now()
+	recent.CreatedAt.Valid = true
+	sessions.rows["sess-old"] = old
+	sessions.rows["sess-new"] = recent
+
+	b := &Bot{log: discardLogger(), linearSessions: sessions}
+	b.cleanupLinearSessions(context.Background())
+
+	if _, err := sessions.Get(context.Background(), "sess-old"); err == nil {
+		t.Fatal("expired session survived cleanup")
+	}
+	if _, err := sessions.Get(context.Background(), "sess-new"); err != nil {
+		t.Fatal("recent session was deleted")
+	}
+}
+
+func TestCleanupLinearSessionsToleratesError(t *testing.T) {
+	sessions := newFakeLinearSessionStore()
+	sessions.deleteErr = errors.New("db down")
+	b := &Bot{log: discardLogger(), linearSessions: sessions}
+	// Must not panic; failure is logged and the next sweep retries.
+	b.cleanupLinearSessions(context.Background())
 }
 
 func TestExtractLinearRepoMention(t *testing.T) {

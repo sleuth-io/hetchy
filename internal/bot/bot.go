@@ -489,6 +489,7 @@ func (b *Bot) Run(ctx context.Context) error {
 
 	errCh := make(chan error, 2)
 	go b.runRecoveryLoop(ctx)
+	go b.runLinearSessionCleanupLoop(ctx)
 	go func() { errCh <- b.runWeb(ctx) }()
 	go func() { errCh <- b.slack.Run(ctx) }()
 

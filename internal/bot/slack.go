@@ -25,7 +25,13 @@ var mentionPrefix = regexp.MustCompile(`^<@[A-Z0-9]+>\s*`)
 var leadingSlackMention = regexp.MustCompile(`^<@([A-Z0-9]+)>\s*`)
 var leadingAgentToken = regexp.MustCompile(`^@?([A-Za-z][A-Za-z0-9_-]*)(?::|,)?(?:\s+|$)`)
 var useAgentToPhrase = regexp.MustCompile(`(?i)^use\s+(?:the\s+)?(.+?)\s+to\s+(.+)$`)
-var slackRepoMention = regexp.MustCompile(`(?i)(?:https?://github\.com/|github\.com/)?([A-Za-z0-9][A-Za-z0-9_.-]{0,99})/([A-Za-z0-9][A-Za-z0-9_.-]{0,99})(?:\.git)?(?:[/\s.,;:!?)\]>|]|$)`)
+
+// githubRepoMention matches owner/name repo references, with or
+// without a github.com prefix. Shared by the Slack transport (which
+// accepts bare owner/name tokens) and the Linear transport (which
+// additionally requires the github.com prefix — see
+// extractLinearRepoMention). Changes here affect both integrations.
+var githubRepoMention = regexp.MustCompile(`(?i)(?:https?://github\.com/|github\.com/)?([A-Za-z0-9][A-Za-z0-9_.-]{0,99})/([A-Za-z0-9][A-Za-z0-9_.-]{0,99})(?:\.git)?(?:[/\s.,;:!?)\]>|]|$)`)
 
 const slackPendingRepoFallbackWindow = 30 * time.Minute
 
@@ -507,7 +513,7 @@ func extractSlackRepoMention(text string) (string, bool) {
 	if owner, name, ok := parseOwnerRepo(text); ok {
 		return owner + "/" + name, true
 	}
-	for _, match := range slackRepoMention.FindAllStringSubmatch(text, -1) {
+	for _, match := range githubRepoMention.FindAllStringSubmatch(text, -1) {
 		if len(match) != 3 {
 			continue
 		}

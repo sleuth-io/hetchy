@@ -40,6 +40,10 @@ type Querier interface {
 	DeleteGithubReposByInstallationExcept(ctx context.Context, arg DeleteGithubReposByInstallationExceptParams) error
 	DeleteGithubTeamMembersForTeam(ctx context.Context, arg DeleteGithubTeamMembersForTeamParams) error
 	DeleteGithubTeamsByInstallationExcept(ctx context.Context, arg DeleteGithubTeamsByInstallationExceptParams) error
+	// TTL cleanup, run periodically by the bot. Sessions go stale on
+	// Linear's side within an hour; dropping mappings older than the
+	// retention window only disables open-PR resume for ancient issues.
+	DeleteLinearAgentSessionsBefore(ctx context.Context, createdAt pgtype.Timestamptz) (int64, error)
 	DeleteLinearAgentSessionsByOrg(ctx context.Context, orgID string) error
 	DeleteOrgAPIKeysByOrg(ctx context.Context, orgID string) error
 	DeleteOrgConfig(ctx context.Context, orgID string) error
