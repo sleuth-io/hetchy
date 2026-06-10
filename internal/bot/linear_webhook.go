@@ -334,14 +334,18 @@ func (b *Bot) handleLinearAgentSessionEvent(ev linear.AgentSessionEvent) {
 	}
 
 	// Repo plumbing: an explicit github.com URL in a brand-new
-	// session's text picks the repo; a bare owner/name reply into an
-	// awaiting-repo conversation answers "Which repository?". Unlike
-	// Slack we do NOT honor bare owner/name tokens in session text —
-	// issue descriptions are full of file paths that would
-	// false-positive as repo slugs.
+	// session's text picks the repo outright; failing that, a bare
+	// owner/name token is honored only when it matches a repo in the
+	// org's GitHub installation cache — issue descriptions are full of
+	// file paths that would otherwise false-positive as repo slugs.
+	// A bare owner/name reply into an awaiting-repo conversation
+	// answers "Which repository?".
 	requestedRepo, hasRequestedRepo := "", false
 	if ev.Action == linear.AgentSessionActionCreated && fresh {
 		requestedRepo, hasRequestedRepo = extractLinearRepoMention(text)
+		if !hasRequestedRepo {
+			requestedRepo, hasRequestedRepo = b.extractLinearKnownRepoMention(context.Background(), oc.OrgID, text)
+		}
 	}
 	repoCheckCtx, cancelRepoCheck := context.WithTimeout(context.Background(), slackLookupTimeout)
 	defer cancelRepoCheck()
@@ -612,6 +616,48 @@ func extractLinearRepoMention(text string) (string, bool) {
 		name := strings.TrimSuffix(strings.TrimRight(match[2], ".,;:!?)"), ".git")
 		if validGitHubName(owner) && validGitHubName(name) {
 			return owner + "/" + name, true
+		}
+	}
+	return "", false
+}
+
+// maxLinearRepoCandidates bounds how many bare owner/name tokens
+// extractLinearKnownRepoMention will verify against the repo cache —
+// each candidate costs a DB lookup and a large issue description can
+// contain dozens of path-like tokens.
+const maxLinearRepoCandidates = 10
+
+// extractLinearKnownRepoMention returns the first bare owner/name
+// token in text that matches a repo in the org's GitHub installation
+// cache. Validating against known repos is what makes the loose
+// pattern safe here: "fix this in sleuth-io/pulse" resolves, while
+// file paths like internal/bot never match a cached repo.
+func (b *Bot) extractLinearKnownRepoMention(ctx context.Context, orgID, text string) (string, bool) {
+	if b.lookupRepoFn == nil && b.store == nil {
+		return "", false
+	}
+	lookupCtx, cancel := context.WithTimeout(ctx, slackLookupTimeout)
+	defer cancel()
+	seen := map[string]bool{}
+	for _, match := range githubRepoMention.FindAllStringSubmatch(text, -1) {
+		if len(match) != 3 {
+			continue
+		}
+		owner := strings.TrimRight(match[1], ".,;:!?)")
+		name := strings.TrimSuffix(strings.TrimRight(match[2], ".,;:!?)"), ".git")
+		if !validGitHubName(owner) || !validGitHubName(name) {
+			continue
+		}
+		slug := owner + "/" + name
+		if seen[slug] {
+			continue
+		}
+		seen[slug] = true
+		if len(seen) > maxLinearRepoCandidates {
+			return "", false
+		}
+		if _, err := b.lookupRepoForOrg(lookupCtx, orgID, owner, name); err == nil {
+			return slug, true
 		}
 	}
 	return "", false

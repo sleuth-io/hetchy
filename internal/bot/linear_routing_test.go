@@ -3,6 +3,7 @@ package bot
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -447,6 +448,58 @@ func TestLinearPromptTextFallsBackToPromptContext(t *testing.T) {
 	}
 	if got := linearPromptText(ev, ""); got != "raw context" {
 		t.Fatalf("prompt = %q, want promptContext fallback", got)
+	}
+}
+
+func TestExtractLinearKnownRepoMention(t *testing.T) {
+	known := map[string]bool{"sleuth-io/pulse": true}
+	b := &Bot{
+		log: discardLogger(),
+		lookupRepoFn: func(_ context.Context, _, owner, name string) (sqlc.GithubRepo, error) {
+			if known[owner+"/"+name] {
+				return sqlc.GithubRepo{Owner: owner, Name: name}, nil
+			}
+			return sqlc.GithubRepo{}, errors.New("not found")
+		},
+	}
+	cases := []struct {
+		text string
+		want string
+		ok   bool
+	}{
+		{"please fix this in sleuth-io/pulse with the bot", "sleuth-io/pulse", true},
+		// Path-like tokens that aren't cached repos never match.
+		{"update internal/bot and tests/e2e to handle ENG-42/login", "", false},
+		// The known repo is found even after unknown candidates.
+		{"compare internal/bot with sleuth-io/pulse", "sleuth-io/pulse", true},
+		{"no repo here", "", false},
+	}
+	for _, tc := range cases {
+		got, ok := b.extractLinearKnownRepoMention(context.Background(), "org-1", tc.text)
+		if got != tc.want || ok != tc.ok {
+			t.Errorf("extractLinearKnownRepoMention(%q) = (%q, %v), want (%q, %v)", tc.text, got, ok, tc.want, tc.ok)
+		}
+	}
+}
+
+func TestExtractLinearKnownRepoMentionCandidateCap(t *testing.T) {
+	lookups := 0
+	b := &Bot{
+		log: discardLogger(),
+		lookupRepoFn: func(context.Context, string, string, string) (sqlc.GithubRepo, error) {
+			lookups++
+			return sqlc.GithubRepo{}, errors.New("not found")
+		},
+	}
+	var sb strings.Builder
+	for i := range 30 {
+		fmt.Fprintf(&sb, "see path%d/file%d ", i, i)
+	}
+	if _, ok := b.extractLinearKnownRepoMention(context.Background(), "org-1", sb.String()); ok {
+		t.Fatal("unexpected match")
+	}
+	if lookups > maxLinearRepoCandidates {
+		t.Fatalf("lookups = %d, want ≤ %d", lookups, maxLinearRepoCandidates)
 	}
 }
 
