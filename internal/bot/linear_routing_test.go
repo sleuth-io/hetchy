@@ -3,10 +3,13 @@ package bot
 import (
 	"context"
 	"errors"
+	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/hetchyhq/hetchy/internal/agents"
 	"github.com/hetchyhq/hetchy/internal/convstore"
 	"github.com/hetchyhq/hetchy/internal/db/sqlc"
 	"github.com/hetchyhq/hetchy/internal/linear"
@@ -214,21 +217,19 @@ func TestHandleLinearAgentSessionEventAcksAndRuns(t *testing.T) {
 		orgs:              orgs,
 		convs:             &fakeConversationStore{getErr: convstore.ErrNotFound},
 		linearSessions:    sessions,
+		live:              newLiveRegistry(),
 		newLinearClientFn: func(string) linearAPI { return cli },
 	}
 
 	b.handleLinearAgentSessionEvent(createdEvent("sess-1", "iss-1"))
 
+	// The run itself executes on a detached goroutine; wait for its
+	// terminal activity (missing credentials → error) to arrive.
+	waitForLinearActivity(t, cli, func(a recordedActivity) bool { return a.content.Type == "error" })
+
 	acts := cli.snapshotActivities()
-	if len(acts) < 2 {
-		t.Fatalf("activities = %+v, want ack + terminal", acts)
-	}
 	if acts[0].content.Type != "thought" || acts[0].ephemeral {
 		t.Fatalf("first activity = %+v, want durable ack thought", acts[0])
-	}
-	last := acts[len(acts)-1]
-	if last.content.Type != "error" {
-		t.Fatalf("last activity = %+v, want error (missing credentials)", last)
 	}
 	if len(cli.urls) == 0 || cli.urls[0][0].Label != "Hetchy run" {
 		t.Fatalf("external urls = %+v, want Hetchy run link", cli.urls)
@@ -236,7 +237,7 @@ func TestHandleLinearAgentSessionEventAcksAndRuns(t *testing.T) {
 	if _, err := sessions.Get(context.Background(), "sess-1"); err != nil {
 		t.Fatalf("session mapping not stored: %v", err)
 	}
-	// MoveIssueToStarted runs on a detached goroutine; poll briefly.
+	// MoveIssueToStarted also runs on a detached goroutine.
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		cli.mu.Lock()
@@ -247,6 +248,22 @@ func TestHandleLinearAgentSessionEventAcksAndRuns(t *testing.T) {
 		}
 		if time.Now().After(deadline) {
 			t.Fatal("issue was never moved to started")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// waitForLinearActivity polls until an activity matching want has been
+// recorded, failing the test after a deadline.
+func waitForLinearActivity(t *testing.T, cli *fakeLinearAPI, want func(recordedActivity) bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if slices.ContainsFunc(cli.snapshotActivities(), want) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected activity never arrived; have %+v", cli.snapshotActivities())
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
@@ -328,6 +345,7 @@ func TestHandleLinearAgentSessionEventEmptyPromptAsksForText(t *testing.T) {
 		orgs:              orgs,
 		convs:             &fakeConversationStore{getErr: convstore.ErrNotFound},
 		linearSessions:    newFakeLinearSessionStore(),
+		live:              newLiveRegistry(),
 		newLinearClientFn: func(string) linearAPI { return cli },
 	}
 	ev := createdEvent("sess-1", "iss-1")
@@ -338,5 +356,148 @@ func TestHandleLinearAgentSessionEventEmptyPromptAsksForText(t *testing.T) {
 	acts := cli.snapshotActivities()
 	if len(acts) != 1 || acts[0].content.Type != "elicitation" {
 		t.Fatalf("activities = %+v, want a single elicitation", acts)
+	}
+}
+
+func TestLinearDirectiveStripsMention(t *testing.T) {
+	ev := createdEvent("sess-1", "iss-1")
+	ev.AgentSession.Comment = &struct {
+		ID   string `json:"id"`
+		Body string `json:"body"`
+	}{ID: "c1", Body: "@hetchy please fix this in the repo."}
+	if got := linearDirective(ev); got != "please fix this in the repo." {
+		t.Fatalf("directive = %q", got)
+	}
+}
+
+func TestLinearPromptTextCreated(t *testing.T) {
+	ev := createdEvent("sess-1", "iss-1")
+	ev.PromptContext = `<issue identifier="ENG-1">raw xml blob</issue>`
+	ev.AgentSession.Issue.Description = "The scrollbar should be hidden."
+	ev.AgentSession.Comment = &struct {
+		ID   string `json:"id"`
+		Body string `json:"body"`
+	}{ID: "c1", Body: "@hetchy please fix this with the frontend bot."}
+
+	got := linearPromptText(ev, linearDirective(ev))
+	for _, want := range []string{
+		"Linear issue ENG-1: Fix login",
+		"The scrollbar should be hidden.",
+		"Issue link: https://linear.app/acme/issue/ENG-1",
+		"Request from the Linear thread:\nplease fix this with the frontend bot.",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("prompt missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "<issue") {
+		t.Fatalf("prompt leaked raw promptContext markup:\n%s", got)
+	}
+}
+
+func TestLinearPromptTextPromptedUsesDirectiveOnly(t *testing.T) {
+	ev := createdEvent("sess-1", "iss-1")
+	ev.Action = linear.AgentSessionActionPrompted
+	ev.AgentActivity = &linear.AgentActivity{ID: "act-1", Content: linear.ActivityContent{Type: "prompt", Body: "also fix signup"}}
+	got := linearPromptText(ev, linearDirective(ev))
+	if got != "also fix signup" {
+		t.Fatalf("prompt = %q, want the follow-up text only", got)
+	}
+}
+
+func TestLinearPromptTextFallsBackToPromptContext(t *testing.T) {
+	ev := linear.AgentSessionEvent{
+		WebhookEnvelope: linear.WebhookEnvelope{Action: linear.AgentSessionActionCreated},
+		PromptContext:   "raw context",
+	}
+	if got := linearPromptText(ev, ""); got != "raw context" {
+		t.Fatalf("prompt = %q, want promptContext fallback", got)
+	}
+}
+
+func TestExtractLinearAgent(t *testing.T) {
+	b := &Bot{log: discardLogger(), agents: agents.NewStore(nil)}
+	cases := []struct {
+		text string
+		want string
+	}{
+		{"please fix this in https://github.com/a/b with the Frontend Bot.", "alice"},
+		{"please fix this using Alice. Thanks a lot", "alice"},
+		{"please fix this with the new login flow", ""},
+		{"", ""},
+	}
+	for _, tc := range cases {
+		if got := b.extractLinearAgent(context.Background(), "org", tc.text); got != tc.want {
+			t.Errorf("extractLinearAgent(%q) = %q, want %q", tc.text, got, tc.want)
+		}
+	}
+}
+
+func TestHandleLinearStopRequestNoLiveRunPostsConfirmation(t *testing.T) {
+	cli := &fakeLinearAPI{}
+	sessions := newFakeLinearSessionStore()
+	_, _ = sessions.Insert(context.Background(), sqlc.InsertLinearAgentSessionParams{
+		AgentSessionID: "sess-1", OrgID: "org-1", ThreadID: "linear-sess-1",
+	})
+	b := &Bot{log: discardLogger(), linearSessions: sessions, live: newLiveRegistry()}
+
+	b.handleLinearStopRequest(orgcfg.Config{OrgID: "org-1"}, cli, "sess-1")
+
+	acts := cli.snapshotActivities()
+	if len(acts) != 1 || acts[0].content.Type != "response" {
+		t.Fatalf("activities = %+v, want one response confirmation", acts)
+	}
+	if !strings.Contains(acts[0].content.Body, "Stopped") {
+		t.Fatalf("body = %q", acts[0].content.Body)
+	}
+}
+
+func TestHandleLinearStopRequestCancelsLiveRun(t *testing.T) {
+	cli := &fakeLinearAPI{}
+	sessions := newFakeLinearSessionStore()
+	_, _ = sessions.Insert(context.Background(), sqlc.InsertLinearAgentSessionParams{
+		AgentSessionID: "sess-1", OrgID: "org-1", ThreadID: "linear-sess-1",
+	})
+	b := &Bot{log: discardLogger(), linearSessions: sessions, live: newLiveRegistry()}
+	run, registered := b.live.RegisterIfAbsent(context.Background(), "org-1", "linear-sess-1")
+	if !registered {
+		t.Fatal("could not register live run")
+	}
+	defer b.live.Done("org-1", "linear-sess-1", run)
+
+	b.handleLinearStopRequest(orgcfg.Config{OrgID: "org-1"}, cli, "sess-1")
+
+	if run.Context().Err() == nil {
+		t.Fatal("live run context was not cancelled")
+	}
+	// The cancelled run's own emitter posts the terminal response; the
+	// stop handler must not double-confirm.
+	if got := len(cli.snapshotActivities()); got != 0 {
+		t.Fatalf("activities = %d, want 0 direct posts when a live run was cancelled", got)
+	}
+}
+
+func TestHandleLinearAgentSessionEventStopSignal(t *testing.T) {
+	cli := &fakeLinearAPI{}
+	orgs := &fakeOrgStore{getByLinearConfig: orgcfg.Config{
+		OrgID: "org-1", LinearAccessToken: "lin-token",
+	}}
+	b := &Bot{
+		log:               discardLogger(),
+		cfg:               Config{Env: "dev", WebPort: "8080"},
+		orgs:              orgs,
+		linearSessions:    newFakeLinearSessionStore(),
+		live:              newLiveRegistry(),
+		newLinearClientFn: func(string) linearAPI { return cli },
+	}
+	ev := createdEvent("sess-1", "iss-1")
+	ev.Action = linear.AgentSessionActionPrompted
+	ev.AgentActivity = &linear.AgentActivity{ID: "act-1", Signal: linear.SignalStop}
+
+	b.handleLinearAgentSessionEvent(ev)
+
+	acts := cli.snapshotActivities()
+	if len(acts) != 1 || acts[0].content.Type != "response" {
+		t.Fatalf("activities = %+v, want one stop confirmation response", acts)
 	}
 }

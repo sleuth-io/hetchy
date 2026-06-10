@@ -5,12 +5,14 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/hetchyhq/hetchy/internal/agents"
 	"github.com/hetchyhq/hetchy/internal/db/sqlc"
 	"github.com/hetchyhq/hetchy/internal/linear"
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
@@ -251,9 +253,20 @@ func (b *Bot) handleLinearAgentSessionEvent(ev linear.AgentSessionEvent) {
 		return
 	}
 	cli := b.newLinearClientFn(oc.LinearAccessToken)
-
 	sessionID := ev.AgentSession.ID
-	text := ev.PromptText()
+
+	// A stop request halts the in-flight run; it never starts one.
+	if ev.IsStopSignal() {
+		b.handleLinearStopRequest(oc, cli, sessionID)
+		return
+	}
+
+	// Build the agent prompt from the structured event fields (issue
+	// title/description + the user's comment) rather than Linear's
+	// promptContext, which is an XML-ish blob meant for LLM context
+	// packing and reads terribly as a chat transcript.
+	directive := linearDirective(ev)
+	text := linearPromptText(ev, directive)
 	if strings.TrimSpace(text) == "" {
 		b.ackLinearSession(cli, sessionID, "I couldn't find any task text on this session. Add a comment describing what you'd like changed and mention me again.")
 		return
@@ -298,8 +311,8 @@ func (b *Bot) handleLinearAgentSessionEvent(ev linear.AgentSessionEvent) {
 	// session's text picks the repo; a bare owner/name reply into an
 	// awaiting-repo conversation answers "Which repository?". Unlike
 	// Slack we do NOT honor bare owner/name tokens in session text —
-	// Linear's promptContext is a large formatted blob where file
-	// paths would false-positive as repo slugs.
+	// issue descriptions are full of file paths that would
+	// false-positive as repo slugs.
 	requestedRepo, hasRequestedRepo := "", false
 	if ev.Action == linear.AgentSessionActionCreated && fresh {
 		requestedRepo, hasRequestedRepo = extractLinearRepoMention(text)
@@ -316,8 +329,79 @@ func (b *Bot) handleLinearAgentSessionEvent(ev linear.AgentSessionEvent) {
 		requestedRepoPtr = &requestedRepo
 	}
 
+	// Route "with the <name> bot/agent" phrases in the user's comment
+	// to the matching Hetchy agent, mirroring Slack's mention routing.
+	var requestedAgentPtr *string
+	if slug := b.extractLinearAgent(repoCheckCtx, oc.OrgID, directive); slug != "" {
+		requestedAgentPtr = &slug
+	}
+
+	// Register the run in the live registry and run it on a detached
+	// goroutine. This (a) frees the webhook dispatch slot — runs take
+	// minutes and there are only webhookDispatchConcurrency slots — and
+	// (b) makes both Linear's stop signal and Hetchy's own stop button
+	// cancel via the same liveRun path the web chat uses, so a stopped
+	// run terminates with a "Stopped" response instead of an error.
+	run, registered := b.live.RegisterIfAbsent(context.Background(), oc.OrgID, threadID)
+	if !registered {
+		b.ackLinearSession(cli, sessionID, "A run is already in flight for this conversation. Wait for it to finish (or send a stop request), then try again.")
+		return
+	}
 	emit := newLinearEmitter(b.log, cli, sessionID, conversationURL, text)
-	b.HandleRequest(context.Background(), oc, text, requestID, threadID, "", chatTaskOptionPatch{}, nil, requestedRepoPtr, ClaudeModelOpus, emit)
+	go func() {
+		defer func() {
+			b.live.Done(oc.OrgID, threadID, run)
+			if rec := recover(); rec != nil {
+				b.log.Error("linear run panic recovered", "session", sessionID, "thread", threadID, "panic", rec)
+			}
+		}()
+		runCtx := contextWithLiveRun(run.Context(), run)
+		b.HandleRequest(runCtx, oc, text, requestID, threadID, "", chatTaskOptionPatch{}, requestedAgentPtr, requestedRepoPtr, ClaudeModelOpus, emit)
+	}()
+}
+
+// handleLinearStopRequest services a user's "send stop request" from
+// Linear: cancel the live run (same path as the web stop button, which
+// makes the run terminate with a "Stopped" response activity), cancel
+// the durable run record, and — when there was nothing live in this
+// process to observe the cancellation — post the stop confirmation
+// directly, per Linear's guidance that agents answer a stop signal
+// with a final response activity.
+func (b *Bot) handleLinearStopRequest(oc orgcfg.Config, cli linearAPI, sessionID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), slackLookupTimeout)
+	defer cancel()
+
+	threadID := "linear-" + sessionID
+	if row, err := b.linearSessions.Get(ctx, sessionID); err == nil {
+		threadID = row.ThreadID
+	}
+
+	liveCancelled := false
+	if b.live != nil {
+		if run := b.live.Get(oc.OrgID, threadID); run != nil {
+			liveCancelled = run.Cancel()
+		}
+	}
+	if b.runs != nil && b.runs.Enabled() {
+		if active, err := b.runs.ActiveForThread(ctx, oc.OrgID, threadID); err == nil {
+			if err := b.cancelDurableRun(ctx, active, "linear-stop"); err != nil {
+				b.log.Warn("linear stop: durable cancel failed",
+					"org", oc.OrgID, "thread", threadID, "run_id", active.ID, "error", err)
+			}
+		}
+	}
+	b.log.Info("linear stop request handled",
+		"org", oc.OrgID, "session", sessionID, "thread", threadID, "live_cancelled", liveCancelled)
+	if liveCancelled {
+		// The cancelled run's own emitter posts the terminal "Stopped"
+		// response; a second confirmation here would double up.
+		return
+	}
+	ackCtx, ackCancel := context.WithTimeout(context.Background(), linearAckDeadline)
+	defer ackCancel()
+	if err := cli.CreateActivity(ackCtx, sessionID, linear.ActivityContent{Type: "response", Body: "Stopped as requested."}, false); err != nil {
+		b.log.Warn("linear stop: confirmation failed", "session", sessionID, "error", err)
+	}
 }
 
 // resolveLinearThread maps an agent session event to a Hetchy
@@ -402,6 +486,89 @@ func (b *Bot) resolveLinearThread(orgID string, ev linear.AgentSessionEvent) (th
 		fresh = false
 	}
 	return threadID, requestID, fresh, true
+}
+
+// linearLeadingMention strips the bot mention off the front of a
+// Linear comment ("@hetchy please fix…" → "please fix…").
+var linearLeadingMention = regexp.MustCompile(`^@[\w][\w.-]*[:,]?\s*`)
+
+// linearAgentPhrase captures the words following "with/using (the) …"
+// in a directive so they can be tried against the org's agent roster:
+// "fix this … with the Skills.new Bot" routes to that agent.
+var linearAgentPhrase = regexp.MustCompile(`(?i)\b(?:with|using)\s+(?:the\s+)?([A-Za-z0-9][A-Za-z0-9._' -]{0,60})`)
+
+// linearDirective returns the user's instruction with the bot mention
+// stripped: the prompted activity body for follow-ups, else the
+// comment the agent was mentioned in.
+func linearDirective(ev linear.AgentSessionEvent) string {
+	return strings.TrimSpace(linearLeadingMention.ReplaceAllString(ev.Directive(), ""))
+}
+
+// linearPromptText composes the agent prompt for a session event from
+// structured fields. Created sessions get the issue header +
+// description + the user's directive; prompted follow-ups get just the
+// new message (the conversation already has the issue context).
+// Linear's promptContext is the fallback only when nothing structured
+// is available — it's an XML-ish context-packing blob that reads
+// terribly as the visible "user request" in the chat transcript.
+func linearPromptText(ev linear.AgentSessionEvent, directive string) string {
+	if ev.Action == linear.AgentSessionActionPrompted {
+		if directive != "" {
+			return directive
+		}
+		return strings.TrimSpace(ev.PromptText())
+	}
+	var parts []string
+	if issue := ev.AgentSession.Issue; issue != nil {
+		header := strings.TrimSpace(strings.TrimSpace("Linear issue "+issue.Identifier) + ": " + strings.TrimSpace(issue.Title))
+		if header != "Linear issue:" && strings.TrimSpace(issue.Identifier+issue.Title) != "" {
+			parts = append(parts, header)
+		}
+		if desc := strings.TrimSpace(issue.Description); desc != "" {
+			parts = append(parts, desc)
+		}
+		if url := strings.TrimSpace(issue.URL); url != "" {
+			parts = append(parts, "Issue link: "+url)
+		}
+	}
+	if directive != "" {
+		parts = append(parts, "Request from the Linear thread:\n"+directive)
+	}
+	if len(parts) == 0 {
+		return strings.TrimSpace(ev.PromptText())
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+// extractLinearAgent resolves an agent referenced by name in the
+// user's directive ("… with the Skills.new Bot"). Candidates are tried
+// longest-first so trailing prose after the agent name doesn't defeat
+// the match, and " bot"/" agent" suffixes are stripped the same way
+// Slack's phrase routing does. Returns "" when nothing resolves — the
+// phrase was ordinary prose, not an agent request.
+func (b *Bot) extractLinearAgent(ctx context.Context, orgID, directive string) string {
+	if strings.TrimSpace(directive) == "" {
+		return ""
+	}
+	store := b.agents
+	if store == nil {
+		store = agents.NewStore(nil)
+	}
+	for _, m := range linearAgentPhrase.FindAllStringSubmatch(directive, -1) {
+		words := strings.Fields(m[1])
+		if len(words) > 6 {
+			words = words[:6]
+		}
+		for i := len(words); i >= 1; i-- {
+			candidate := strings.TrimRight(strings.Join(words[:i], " "), ".,;:!?'")
+			for _, name := range slackAgentPhraseCandidates(candidate) {
+				if agent, err := store.Resolve(ctx, orgID, name); err == nil {
+					return agent.Slug
+				}
+			}
+		}
+	}
+	return ""
 }
 
 // extractLinearRepoMention returns the first repo referenced by an

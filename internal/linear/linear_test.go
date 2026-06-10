@@ -292,6 +292,49 @@ func TestPromptTextFallbacks(t *testing.T) {
 	}
 }
 
+func TestIsStopSignal(t *testing.T) {
+	if (AgentSessionEvent{}).IsStopSignal() {
+		t.Fatal("no activity should not be a stop signal")
+	}
+	topLevel := AgentSessionEvent{AgentActivity: &AgentActivity{Signal: SignalStop}}
+	if !topLevel.IsStopSignal() {
+		t.Fatal("top-level signal not detected")
+	}
+	inContent := AgentSessionEvent{AgentActivity: &AgentActivity{Content: ActivityContent{Signal: SignalStop}}}
+	if !inContent.IsStopSignal() {
+		t.Fatal("content-level signal not detected")
+	}
+	prompt := AgentSessionEvent{AgentActivity: &AgentActivity{Content: ActivityContent{Type: "prompt", Body: "more work"}}}
+	if prompt.IsStopSignal() {
+		t.Fatal("ordinary prompt treated as stop")
+	}
+}
+
+func TestDirective(t *testing.T) {
+	activity := AgentSessionEvent{
+		AgentActivity: &AgentActivity{Content: ActivityContent{Body: "follow-up"}},
+		AgentSession: AgentSession{Comment: &struct {
+			ID   string `json:"id"`
+			Body string `json:"body"`
+		}{Body: "original comment"}},
+	}
+	if got := activity.Directive(); got != "follow-up" {
+		t.Fatalf("Directive = %q, want activity body to win", got)
+	}
+	commentOnly := AgentSessionEvent{
+		AgentSession: AgentSession{Comment: &struct {
+			ID   string `json:"id"`
+			Body string `json:"body"`
+		}{Body: "original comment"}},
+	}
+	if got := commentOnly.Directive(); got != "original comment" {
+		t.Fatalf("Directive = %q", got)
+	}
+	if got := (AgentSessionEvent{}).Directive(); got != "" {
+		t.Fatalf("Directive = %q, want empty", got)
+	}
+}
+
 func TestTimestampFresh(t *testing.T) {
 	now := time.Now()
 	stale := WebhookEnvelope{WebhookTimestamp: now.Add(-10 * time.Minute).UnixMilli()}
