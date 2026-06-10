@@ -2,6 +2,7 @@ package agents
 
 import (
 	"encoding/hex"
+	"slices"
 	"strings"
 	"testing"
 
@@ -43,13 +44,8 @@ func TestCleanAliases(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got := cleanAliases(tc.in)
-			if len(got) != len(tc.want) {
-				t.Fatalf("cleanAliases(%v) = %v (len %d), want %v (len %d)", tc.in, got, len(got), tc.want, len(tc.want))
-			}
-			for i, w := range tc.want {
-				if got[i] != w {
-					t.Errorf("cleanAliases(%v)[%d] = %q, want %q", tc.in, i, got[i], w)
-				}
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("cleanAliases(%v) = %v, want %v", tc.in, got, tc.want)
 			}
 		})
 	}
@@ -90,13 +86,8 @@ func TestCleanSkills(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got := cleanSkills(tc.in)
-			if len(got) != len(tc.want) {
-				t.Fatalf("cleanSkills(%v) = %v (len %d), want %v (len %d)", tc.in, got, len(got), tc.want, len(tc.want))
-			}
-			for i, w := range tc.want {
-				if got[i] != w {
-					t.Errorf("cleanSkills(%v)[%d] = %q, want %q", tc.in, i, got[i], w)
-				}
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("cleanSkills(%v) = %v, want %v", tc.in, got, tc.want)
 			}
 		})
 	}
@@ -228,17 +219,14 @@ func TestListTemplatesNilStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTemplates: %v", err)
 	}
-	if len(profiles) == 0 {
-		t.Fatal("ListTemplates with nil db should return fallback profiles")
+	// must match the canonical fallback set exactly
+	want := FallbackProfiles()
+	if len(profiles) != len(want) {
+		t.Fatalf("ListTemplates returned %d profiles, want %d (FallbackProfiles)", len(profiles), len(want))
 	}
-	// verify slugs are present
-	slugs := map[string]bool{}
-	for _, p := range profiles {
-		slugs[p.Slug] = true
-	}
-	for _, expected := range []string{"bob", "alice", "archy"} {
-		if !slugs[expected] {
-			t.Errorf("ListTemplates missing expected slug %q", expected)
+	for i, w := range want {
+		if profiles[i].Slug != w.Slug {
+			t.Errorf("ListTemplates[%d].Slug = %q, want %q", i, profiles[i].Slug, w.Slug)
 		}
 	}
 }
@@ -290,6 +278,32 @@ func TestListFallbackOnEmptyOrgID(t *testing.T) {
 	}
 	if len(profiles) == 0 {
 		t.Fatal("List(empty orgID) should return fallback profiles")
+	}
+}
+
+func TestNilReceiverFallback(t *testing.T) {
+	// Methods guard against nil *Store (s == nil) in the same condition as
+	// nil db. Verify the observable fallback behaviour is identical.
+	var s *Store
+
+	profiles, err := s.List(t.Context(), "org")
+	if err != nil || len(profiles) == 0 {
+		t.Fatalf("nil receiver List: err=%v profiles=%v", err, profiles)
+	}
+
+	templates, err := s.ListTemplates(t.Context())
+	if err != nil || len(templates) == 0 {
+		t.Fatalf("nil receiver ListTemplates: err=%v templates=%v", err, templates)
+	}
+
+	got, err := s.GetTemplate(t.Context(), "bob")
+	if err != nil || got.Slug != "bob" {
+		t.Fatalf("nil receiver GetTemplate(bob): err=%v slug=%q", err, got.Slug)
+	}
+
+	_, err = s.GetBySlug(t.Context(), "org", "bob")
+	if err != nil {
+		t.Fatalf("nil receiver GetBySlug(bob): %v", err)
 	}
 }
 

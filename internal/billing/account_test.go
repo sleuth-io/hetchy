@@ -80,8 +80,12 @@ func TestDefaultPaidPlan(t *testing.T) {
 	if plan.Code != PlanStudio {
 		t.Errorf("DefaultPaidPlan().Code = %q, want %q", plan.Code, PlanStudio)
 	}
-	if plan.Label != "Studio" {
-		t.Errorf("DefaultPaidPlan().Label = %q, want Studio", plan.Label)
+	canonical, ok := PaidPlanByCode(PlanStudio)
+	if !ok {
+		t.Fatal("PlanStudio not found in PaidPlans")
+	}
+	if plan.Label != canonical.Label {
+		t.Errorf("DefaultPaidPlan().Label = %q, want %q", plan.Label, canonical.Label)
 	}
 }
 
