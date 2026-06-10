@@ -287,15 +287,16 @@ func TestNilReceiverFallback(t *testing.T) {
 	// Methods guard against nil *Store (s == nil) in the same condition as
 	// nil db. Verify the observable fallback behaviour is identical.
 	var s *Store
+	want := FallbackProfiles()
 
 	profiles, err := s.List(t.Context(), "org")
-	if err != nil || len(profiles) == 0 {
-		t.Fatalf("nil receiver List: err=%v profiles=%v", err, profiles)
+	if err != nil || len(profiles) != len(want) {
+		t.Fatalf("nil receiver List: err=%v got %d profiles, want %d", err, len(profiles), len(want))
 	}
 
 	templates, err := s.ListTemplates(t.Context())
-	if err != nil || len(templates) == 0 {
-		t.Fatalf("nil receiver ListTemplates: err=%v templates=%v", err, templates)
+	if err != nil || len(templates) != len(want) {
+		t.Fatalf("nil receiver ListTemplates: err=%v got %d templates, want %d", err, len(templates), len(want))
 	}
 
 	got, err := s.GetTemplate(t.Context(), "bob")
