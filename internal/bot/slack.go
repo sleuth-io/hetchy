@@ -351,10 +351,10 @@ func (b *Bot) handleSlackEvent(ctx context.Context, oc orgcfg.Config, ev incomin
 		replyTo = ev.threadTS
 		if rec, err := b.convs.Get(ctx, oc.OrgID, threadID); err == nil {
 			isFollowUp = true
-			isRepoAnswer = slackConversationAwaitingRepo(rec) && slackTextIsRepo(text)
+			isRepoAnswer = conversationAwaitingRepo(rec) && textIsRepo(text)
 		}
 	}
-	if !isFollowUp && slackTextIsRepo(text) {
+	if !isFollowUp && textIsRepo(text) {
 		if rec, ok := b.findSlackPendingRepoConversation(ctx, oc.OrgID, creatorID, time.Now()); ok {
 			threadID = rec.ThreadID
 			replyTo = rec.ThreadID
@@ -549,7 +549,7 @@ func (b *Bot) findSlackPendingRepoConversationForCreator(ctx context.Context, or
 		return convstore.Record{}, false
 	}
 	for _, rec := range recs {
-		if !slackConversationAwaitingRepo(rec) || !slackPendingRepoConversationIsRecent(rec, now) {
+		if !conversationAwaitingRepo(rec) || !slackPendingRepoConversationIsRecent(rec, now) {
 			continue
 		}
 		return rec, true
@@ -566,7 +566,7 @@ func (b *Bot) findUniqueSlackPendingRepoConversation(ctx context.Context, orgID 
 	var match convstore.Record
 	count := 0
 	for _, rec := range recs {
-		if !slackConversationAwaitingRepo(rec) || !slackPendingRepoConversationIsRecent(rec, now) {
+		if !conversationAwaitingRepo(rec) || !slackPendingRepoConversationIsRecent(rec, now) {
 			continue
 		}
 		match = rec
@@ -582,11 +582,14 @@ func slackPendingRepoConversationIsRecent(rec convstore.Record, now time.Time) b
 	return !rec.CreatedAt.IsZero() && !rec.CreatedAt.Before(now.Add(-slackPendingRepoFallbackWindow))
 }
 
-func slackConversationAwaitingRepo(rec convstore.Record) bool {
+// conversationAwaitingRepo and textIsRepo are shared by the Slack and
+// Linear transports to recognize "Which repository?" answer turns —
+// changes here affect both integrations.
+func conversationAwaitingRepo(rec convstore.Record) bool {
 	return rec.AwaitingRepo && len(rec.History) > 0
 }
 
-func slackTextIsRepo(text string) bool {
+func textIsRepo(text string) bool {
 	_, _, ok := parseOwnerRepo(text)
 	return ok
 }

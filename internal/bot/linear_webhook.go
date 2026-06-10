@@ -267,7 +267,10 @@ func (b *Bot) handleLinearAgentSessionEvent(ev linear.AgentSessionEvent) {
 
 	// Acknowledge within Linear's 10-second responsiveness window
 	// before any sandbox work begins, and attach the run deep link.
+	// The context only covers these two calls; HandleRequest below
+	// manages its own deadlines.
 	ackCtx, cancelAck := context.WithTimeout(context.Background(), linearAckDeadline)
+	defer cancelAck()
 	ackBody := "On it — spinning up a run. Progress will stream here."
 	if !fresh {
 		ackBody = "On it — continuing the existing run for this issue's open pull request."
@@ -278,7 +281,6 @@ func (b *Bot) handleLinearAgentSessionEvent(ev linear.AgentSessionEvent) {
 	if err := cli.AddExternalURLs(ackCtx, sessionID, []linear.ExternalURL{{Label: "Hetchy run", URL: conversationURL}}); err != nil {
 		b.log.Warn("linear webhook: attach run url failed", "session", sessionID, "error", err)
 	}
-	cancelAck()
 
 	// Best-practice: a delegated issue should move into a started
 	// workflow state once the agent picks it up. Best-effort.
@@ -302,8 +304,10 @@ func (b *Bot) handleLinearAgentSessionEvent(ev linear.AgentSessionEvent) {
 	if ev.Action == linear.AgentSessionActionCreated && fresh {
 		requestedRepo, hasRequestedRepo = extractLinearRepoMention(text)
 	}
-	if rec, err := b.convs.Get(context.Background(), oc.OrgID, threadID); err == nil {
-		if slackConversationAwaitingRepo(rec) && slackTextIsRepo(text) {
+	repoCheckCtx, cancelRepoCheck := context.WithTimeout(context.Background(), slackLookupTimeout)
+	defer cancelRepoCheck()
+	if rec, err := b.convs.Get(repoCheckCtx, oc.OrgID, threadID); err == nil {
+		if conversationAwaitingRepo(rec) && textIsRepo(text) {
 			requestedRepo, hasRequestedRepo = text, true
 		}
 	}
