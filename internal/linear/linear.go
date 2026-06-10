@@ -173,6 +173,9 @@ type ActivityContent struct {
 	Action    string `json:"action,omitempty"`
 	Parameter string `json:"parameter,omitempty"`
 	Result    string `json:"result,omitempty"`
+	// Signal is only present on inbound prompt activities (e.g. a
+	// user's stop request); never set when creating activities.
+	Signal string `json:"signal,omitempty"`
 }
 
 // CreateActivity posts one agent activity onto a session. Ephemeral

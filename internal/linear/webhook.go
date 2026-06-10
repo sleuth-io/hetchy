@@ -83,10 +83,44 @@ type SessionIssue struct {
 }
 
 // AgentActivity is the activity attached to a `prompted` event — the
-// user's new message in the session thread.
+// user's new message in the session thread. Signal carries optional
+// metadata modifying how the activity should be interpreted; "stop"
+// means the user asked the agent to halt immediately. It is documented
+// at the activity's top level, but content is checked too in case the
+// payload shape shifts.
 type AgentActivity struct {
 	ID      string          `json:"id"`
 	Content ActivityContent `json:"content"`
+	Signal  string          `json:"signal"`
+}
+
+// SignalStop is the human-to-agent signal requesting an immediate halt.
+const SignalStop = "stop"
+
+// IsStopSignal reports whether this event is a user's stop request.
+func (ev AgentSessionEvent) IsStopSignal() bool {
+	if ev.AgentActivity == nil {
+		return false
+	}
+	return ev.AgentActivity.Signal == SignalStop || ev.AgentActivity.Content.Signal == SignalStop
+}
+
+// Directive returns the user-authored instruction that triggered the
+// event: the prompted activity's body for follow-ups, else the comment
+// the agent was mentioned in. Empty for bare delegations (issue
+// assigned to the agent with no comment).
+func (ev AgentSessionEvent) Directive() string {
+	if ev.AgentActivity != nil {
+		if s := strings.TrimSpace(ev.AgentActivity.Content.Body); s != "" {
+			return s
+		}
+	}
+	if ev.AgentSession.Comment != nil {
+		if s := strings.TrimSpace(ev.AgentSession.Comment.Body); s != "" {
+			return s
+		}
+	}
+	return ""
 }
 
 // ParseAgentSessionEvent decodes body as an AgentSessionEvent.

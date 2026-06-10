@@ -251,9 +251,20 @@ func (b *Bot) handleLinearAgentSessionEvent(ev linear.AgentSessionEvent) {
 		return
 	}
 	cli := b.newLinearClientFn(oc.LinearAccessToken)
-
 	sessionID := ev.AgentSession.ID
-	text := ev.PromptText()
+
+	// A stop request halts the in-flight run; it never starts one.
+	if ev.IsStopSignal() {
+		b.handleLinearStopRequest(oc, cli, sessionID)
+		return
+	}
+
+	// Build the agent prompt from the structured event fields (issue
+	// title/description + the user's comment) rather than Linear's
+	// promptContext, which is an XML-ish blob meant for LLM context
+	// packing and reads terribly as a chat transcript.
+	directive := linearDirective(ev)
+	text := linearPromptText(ev, directive)
 	if strings.TrimSpace(text) == "" {
 		b.ackLinearSession(cli, sessionID, "I couldn't find any task text on this session. Add a comment describing what you'd like changed and mention me again.")
 		return
@@ -264,6 +275,38 @@ func (b *Bot) handleLinearAgentSessionEvent(ev linear.AgentSessionEvent) {
 		return
 	}
 	conversationURL := b.cfg.PublicBaseURL() + "/?session=" + threadID
+
+	// Claim the live-run slot before acknowledging, so a turn that's
+	// already in flight gets a single clear message instead of an
+	// optimistic "On it" immediately contradicted by a rejection.
+	// Registering is synchronous and local — it costs nothing against
+	// Linear's 10-second responsiveness budget. Running the request on
+	// a detached goroutine (below) frees the webhook dispatch slot —
+	// runs take minutes and there are only webhookDispatchConcurrency
+	// slots — and makes both Linear's stop signal and Hetchy's own
+	// stop button cancel via the same liveRun path the web chat uses,
+	// so a stopped run terminates with a "Stopped" response instead of
+	// an error.
+	if b.live == nil {
+		// Always set in production; fail visibly rather than panic if a
+		// minimal test harness routes an event without one.
+		b.log.Error("linear webhook: live registry not configured", "session", sessionID)
+		return
+	}
+	run, registered := b.live.RegisterIfAbsent(context.Background(), oc.OrgID, threadID)
+	if !registered {
+		b.ackLinearSession(cli, sessionID, "A run is already in flight for this conversation. Wait for it to finish (or send a stop request), then try again.")
+		return
+	}
+	// Release the slot if anything below panics before the run
+	// goroutine (which owns Done from then on) has been launched —
+	// otherwise the thread would reject every future turn.
+	runStarted := false
+	defer func() {
+		if !runStarted {
+			b.live.Done(oc.OrgID, threadID, run)
+		}
+	}()
 
 	// Acknowledge within Linear's 10-second responsiveness window
 	// before any sandbox work begins, and attach the run deep link.
@@ -295,14 +338,18 @@ func (b *Bot) handleLinearAgentSessionEvent(ev linear.AgentSessionEvent) {
 	}
 
 	// Repo plumbing: an explicit github.com URL in a brand-new
-	// session's text picks the repo; a bare owner/name reply into an
-	// awaiting-repo conversation answers "Which repository?". Unlike
-	// Slack we do NOT honor bare owner/name tokens in session text —
-	// Linear's promptContext is a large formatted blob where file
-	// paths would false-positive as repo slugs.
+	// session's text picks the repo outright; failing that, a bare
+	// owner/name token is honored only when it matches a repo in the
+	// org's GitHub installation cache — issue descriptions are full of
+	// file paths that would otherwise false-positive as repo slugs.
+	// A bare owner/name reply into an awaiting-repo conversation
+	// answers "Which repository?".
 	requestedRepo, hasRequestedRepo := "", false
 	if ev.Action == linear.AgentSessionActionCreated && fresh {
 		requestedRepo, hasRequestedRepo = extractLinearRepoMention(text)
+		if !hasRequestedRepo {
+			requestedRepo, hasRequestedRepo = b.extractLinearKnownRepoMention(context.Background(), oc.OrgID, text)
+		}
 	}
 	repoCheckCtx, cancelRepoCheck := context.WithTimeout(context.Background(), slackLookupTimeout)
 	defer cancelRepoCheck()
@@ -316,8 +363,84 @@ func (b *Bot) handleLinearAgentSessionEvent(ev linear.AgentSessionEvent) {
 		requestedRepoPtr = &requestedRepo
 	}
 
+	// Route "with the <name> bot/agent" phrases in the user's comment
+	// to the matching Hetchy agent, mirroring Slack's mention routing.
+	var requestedAgentPtr *string
+	if slug := b.extractLinearAgent(repoCheckCtx, oc.OrgID, directive); slug != "" {
+		requestedAgentPtr = &slug
+	}
+
 	emit := newLinearEmitter(b.log, cli, sessionID, conversationURL, text)
-	b.HandleRequest(context.Background(), oc, text, requestID, threadID, "", chatTaskOptionPatch{}, nil, requestedRepoPtr, ClaudeModelOpus, emit)
+	runStarted = true
+	go func() {
+		defer func() {
+			// Capture the panic before cleanup so a hypothetical panic
+			// inside Done() can't mask HandleRequest's original one.
+			rec := recover()
+			b.live.Done(oc.OrgID, threadID, run)
+			if rec != nil {
+				b.log.Error("linear run panic recovered", "session", sessionID, "thread", threadID, "panic", rec)
+			}
+		}()
+		runCtx := contextWithLiveRun(run.Context(), run)
+		b.HandleRequest(runCtx, oc, text, requestID, threadID, "", chatTaskOptionPatch{}, requestedAgentPtr, requestedRepoPtr, ClaudeModelOpus, emit)
+	}()
+}
+
+// handleLinearStopRequest services a user's "send stop request" from
+// Linear: cancel the live run (same path as the web stop button, which
+// makes the run terminate with a "Stopped" response activity), cancel
+// the durable run record, and — when there was nothing live in this
+// process to observe the cancellation — post the stop confirmation
+// directly, per Linear's guidance that agents answer a stop signal
+// with a final response activity.
+func (b *Bot) handleLinearStopRequest(oc orgcfg.Config, cli linearAPI, sessionID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), slackLookupTimeout)
+	defer cancel()
+
+	threadID := "linear-" + sessionID
+	if b.linearSessions != nil {
+		if row, err := b.linearSessions.Get(ctx, sessionID); err == nil {
+			threadID = row.ThreadID
+		}
+	}
+
+	// foundLive (rather than Cancel's return value) decides whether to
+	// post our own confirmation below. The invariant: a session must
+	// end with exactly one terminal activity. If a live run existed,
+	// its goroutine emits that terminal either way — "Stopped" when
+	// the cancel landed, or its own Result/Error when the run finished
+	// in the instant between Get and Cancel (the session is complete
+	// in that case; no stop confirmation is owed). Keying on Cancel()
+	// would double-post in exactly that window. Only when no live run
+	// existed at all does the confirmation below provide the terminal.
+	foundLive := false
+	if b.live != nil {
+		if run := b.live.Get(oc.OrgID, threadID); run != nil {
+			foundLive = true
+			run.Cancel()
+		}
+	}
+	if b.runs != nil && b.runs.Enabled() {
+		if active, err := b.runs.ActiveForThread(ctx, oc.OrgID, threadID); err == nil {
+			if err := b.cancelDurableRun(ctx, active, "linear-stop"); err != nil {
+				b.log.Warn("linear stop: durable cancel failed",
+					"org", oc.OrgID, "thread", threadID, "run_id", active.ID, "error", err)
+			}
+		}
+	}
+	b.log.Info("linear stop request handled",
+		"org", oc.OrgID, "session", sessionID, "thread", threadID, "found_live", foundLive)
+	if foundLive {
+		// The live run's own emitter posts the terminal activity; a
+		// second confirmation here would double up.
+		return
+	}
+	ackCtx, ackCancel := context.WithTimeout(context.Background(), linearAckDeadline)
+	defer ackCancel()
+	if err := cli.CreateActivity(ackCtx, sessionID, linear.ActivityContent{Type: "response", Body: "Stopped as requested."}, false); err != nil {
+		b.log.Warn("linear stop: confirmation failed", "session", sessionID, "error", err)
+	}
 }
 
 // resolveLinearThread maps an agent session event to a Hetchy
@@ -332,6 +455,12 @@ func (b *Bot) handleLinearAgentSessionEvent(ev linear.AgentSessionEvent) {
 //
 // fresh reports whether a brand-new conversation thread was minted.
 func (b *Bot) resolveLinearThread(orgID string, ev linear.AgentSessionEvent) (threadID, requestID string, fresh, ok bool) {
+	if b.linearSessions == nil {
+		// Always set in production; fail visibly rather than panic if a
+		// minimal test harness routes an event without a session store.
+		b.log.Error("linear webhook: session store not configured", "session", ev.AgentSession.ID)
+		return "", "", false, false
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), slackLookupTimeout)
 	defer cancel()
 
@@ -421,6 +550,48 @@ func extractLinearRepoMention(text string) (string, bool) {
 		name := strings.TrimSuffix(strings.TrimRight(match[2], ".,;:!?)"), ".git")
 		if validGitHubName(owner) && validGitHubName(name) {
 			return owner + "/" + name, true
+		}
+	}
+	return "", false
+}
+
+// maxLinearRepoCandidates bounds how many bare owner/name tokens
+// extractLinearKnownRepoMention will verify against the repo cache —
+// each candidate costs a DB lookup and a large issue description can
+// contain dozens of path-like tokens.
+const maxLinearRepoCandidates = 10
+
+// extractLinearKnownRepoMention returns the first bare owner/name
+// token in text that matches a repo in the org's GitHub installation
+// cache. Validating against known repos is what makes the loose
+// pattern safe here: "fix this in sleuth-io/pulse" resolves, while
+// file paths like internal/bot never match a cached repo.
+func (b *Bot) extractLinearKnownRepoMention(ctx context.Context, orgID, text string) (string, bool) {
+	if b.lookupRepoFn == nil && b.store == nil {
+		return "", false
+	}
+	lookupCtx, cancel := context.WithTimeout(ctx, slackLookupTimeout)
+	defer cancel()
+	seen := map[string]bool{}
+	for _, match := range githubRepoMention.FindAllStringSubmatch(text, -1) {
+		if len(match) != 3 {
+			continue
+		}
+		owner := strings.TrimRight(match[1], ".,;:!?)")
+		name := strings.TrimSuffix(strings.TrimRight(match[2], ".,;:!?)"), ".git")
+		if !validGitHubName(owner) || !validGitHubName(name) {
+			continue
+		}
+		slug := owner + "/" + name
+		if seen[slug] {
+			continue
+		}
+		seen[slug] = true
+		if len(seen) > maxLinearRepoCandidates {
+			return "", false
+		}
+		if _, err := b.lookupRepoForOrg(lookupCtx, orgID, owner, name); err == nil {
+			return slug, true
 		}
 	}
 	return "", false
