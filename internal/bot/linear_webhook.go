@@ -289,6 +289,12 @@ func (b *Bot) handleLinearAgentSessionEvent(ev linear.AgentSessionEvent) {
 	// stop button cancel via the same liveRun path the web chat uses,
 	// so a stopped run terminates with a "Stopped" response instead of
 	// an error.
+	if b.live == nil {
+		// Always set in production; fail visibly rather than panic if a
+		// minimal test harness routes an event without one.
+		b.log.Error("linear webhook: live registry not configured", "session", sessionID)
+		return
+	}
 	run, registered := b.live.RegisterIfAbsent(context.Background(), oc.OrgID, threadID)
 	if !registered {
 		b.ackLinearSession(cli, sessionID, "A run is already in flight for this conversation. Wait for it to finish (or send a stop request), then try again.")
@@ -402,11 +408,14 @@ func (b *Bot) handleLinearStopRequest(oc orgcfg.Config, cli linearAPI, sessionID
 	}
 
 	// foundLive (rather than Cancel's return value) decides whether to
-	// post our own confirmation below: if a live run existed, its
-	// goroutine emits the terminal activity either way — "Stopped" when
-	// the cancel landed, or its own Result when the run completed in
-	// the instant between Get and Cancel. Keying on Cancel() would
-	// double-post in that race window.
+	// post our own confirmation below. The invariant: a session must
+	// end with exactly one terminal activity. If a live run existed,
+	// its goroutine emits that terminal either way — "Stopped" when
+	// the cancel landed, or its own Result/Error when the run finished
+	// in the instant between Get and Cancel (the session is complete
+	// in that case; no stop confirmation is owed). Keying on Cancel()
+	// would double-post in exactly that window. Only when no live run
+	// existed at all does the confirmation below provide the terminal.
 	foundLive := false
 	if b.live != nil {
 		if run := b.live.Get(oc.OrgID, threadID); run != nil {
