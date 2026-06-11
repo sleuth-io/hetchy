@@ -226,13 +226,9 @@
         {{if $enabled}}
           <span class="btn-enabled">✓ Enabled</span>
         {{else if .IsAdmin}}
-          {{if .GitHubAppEnabled}}
-            <a class="btn-enable" href="/integrations/github/install">Enable</a>
-          {{else}}
-            {{/* No GitHub App in this env: Enable expands the card and
-                 focuses the token paste field, like Slack's dev path. */}}
-            <button class="btn-enable" type="button" data-toggle-card="github" data-focus-field="github_pat">Enable</button>
-          {{end}}
+          {{/* Enable expands the card so the admin picks a connection
+               method (App install vs token paste) from the tabs below. */}}
+          <button class="btn-enable" type="button" data-toggle-card{{if not .GitHubAppEnabled}} data-focus-field="github_pat"{{end}}>Enable</button>
         {{end}}
         <button class="caret" type="button" aria-label="Toggle details">
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><polyline points="4,6 8,10 12,6"/></svg>
@@ -279,7 +275,6 @@
               </div>
             </div>
           {{end}}
-          {{if and .IsAdmin .GitHubAppEnabled}}<a class="add-link" href="/integrations/github/install">+ Install on another account</a>{{end}}
         </div>
 
         <div class="body-section">
@@ -304,24 +299,37 @@
           <p class="hint">{{if .DefaultRepoSlug}}{{.DefaultRepoSlug}}{{else}}(none — ask me each time){{end}}</p>
           {{end}}
         </div>
-      {{else if .GitHubAppEnabled}}
-        <div class="body-section">
-          <p class="hint">Click <strong>Enable</strong> above to install the Hetchy GitHub App. You'll be redirected to GitHub to choose which repos to grant access to, then sent back here. Prefer not to install an app? Paste a personal access token below instead.</p>
-        </div>
       {{end}}
 
       {{if .IsAdmin}}
       <div class="body-section">
-        <legend>Personal access token</legend>
+        <legend>Connect{{if $enabled}} another account{{end}}</legend>
+        {{$hasPAT := ne .GitHubPATPreview ""}}
+        {{/* Connection method is an either/or choice, presented as tabs
+             like the Anthropic credential card. Default to the method
+             already in use: PAT if a token is stored, otherwise the App
+             (when this env has one configured). */}}
+        {{$method := "app"}}
+        {{if or (not .GitHubAppEnabled) $hasPAT}}{{$method = "pat"}}{{end}}
         <form id="github-pat-form" method="POST" action="/integrations/github/pat">
-          <label for="github_pat">Token</label>
-          <input id="github_pat" type="password" name="github_pat" placeholder="github_pat_… or ghp_…" autocomplete="off">
-          <p class="hint">Create a <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">fine-grained token</a> with access to the repos Hetchy should work in, and Read/Write permission on <strong>Contents</strong> and <strong>Pull requests</strong> (plus read on <strong>Metadata</strong>). Hetchy verifies the token and lists the repos it can push to.</p>
+          {{if .GitHubAppEnabled}}
+          <div class="cred-tabs" role="tablist">
+            <button type="button" class="cred-tab{{if eq $method "app"}} active{{end}}" data-cred-tab="app" role="tab" aria-selected="{{if eq $method "app"}}true{{else}}false{{end}}">GitHub App</button>
+            <button type="button" class="cred-tab{{if eq $method "pat"}} active{{end}}" data-cred-tab="pat" role="tab" aria-selected="{{if eq $method "pat"}}true{{else}}false{{end}}">Personal access token</button>
+          </div>
+          <div class="cred-panel{{if eq $method "app"}} active{{end}}" data-cred-panel="app">
+            <p class="cred-help">Install the Hetchy GitHub App on your org or personal account. GitHub lets you choose which repos to grant, and access stays in sync automatically.</p>
+            <a class="btn-enable" href="/integrations/github/install">Install GitHub App</a>
+          </div>
+          {{end}}
+          <div class="cred-panel{{if eq $method "pat"}} active{{end}}" data-cred-panel="pat">
+            <p class="cred-help">Create a <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">fine-grained token</a> with access to the repos Hetchy should work in, and Read/Write permission on <strong>Contents</strong> and <strong>Pull requests</strong> (plus read on <strong>Metadata</strong>). Hetchy verifies the token and lists the repos it can push to.</p>
+            <label for="github_pat">Token</label>
+            <input id="github_pat" type="password" name="github_pat" placeholder="github_pat_… or ghp_…" autocomplete="off">
+            {{if $hasPAT}}<p class="hint">Saved token: <code>{{.GitHubPATPreview}}</code></p>{{end}}
+            <button class="primary" type="submit">{{if $hasPAT}}Update token{{else}}Connect{{end}}</button>
+          </div>
         </form>
-        <div class="integration-actions">
-          <button class="primary" type="submit" form="github-pat-form">{{if .GitHubPATPreview}}Update token{{else}}Connect{{end}}</button>
-          {{if .GitHubPATPreview}}<span class="hint">Saved token: <code>{{.GitHubPATPreview}}</code></span>{{end}}
-        </div>
       </div>
       {{end}}
 
