@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	workos "github.com/workos/workos-go/v7"
@@ -130,6 +131,28 @@ type Service struct {
 	// r.Host, which is controlled by the client and could be forged via Host
 	// header injection on a misconfigured reverse proxy.
 	publicHost string
+	// multiOrgCache memoizes UserHasMultipleOrgs results so the SPA catch-all
+	// (indexHandler) doesn't make a WorkOS membership round-trip on every
+	// page render. Entries expire after multiOrgCacheTTL so membership
+	// changes are still picked up promptly. now defaults to time.Now and is
+	// overridable in tests to exercise expiry deterministically.
+	multiOrgMu    sync.RWMutex
+	multiOrgCache map[string]multiOrgEntry
+	now           func() time.Time
+}
+
+// multiOrgCacheTTL bounds how long a cached membership-count result is
+// trusted before UserHasMultipleOrgs re-checks WorkOS. Being added to or
+// removed from an organization is rare and not latency-sensitive, so a few
+// minutes of staleness is an acceptable trade for collapsing the per-render
+// WorkOS round-trip that gates the "Switch organization" menu link.
+const multiOrgCacheTTL = 5 * time.Minute
+
+// multiOrgEntry is a single cached membership-count answer plus the instant
+// it stops being trusted.
+type multiOrgEntry struct {
+	value   bool
+	expires time.Time
 }
 
 // New constructs a Service. The returned value is safe for concurrent use.
@@ -200,6 +223,26 @@ a.btn:hover{background:#0b5ed7}</style></head>
 // SignupHandler redirects to AuthKit's sign-up screen.
 func (s *Service) SignupHandler(w http.ResponseWriter, r *http.Request) {
 	s.redirectToAuthKit(w, r, workos.UserManagementAuthenticationScreenHintSignUp)
+}
+
+// SwitchOrgHandler lets an already-signed-in user move to a different
+// organization without first logging out. It re-enters the hosted AuthKit
+// flow with prompt=login, which re-presents the sign-in screen and — for
+// users who belong to more than one organization — the organization
+// picker. Selecting an org there returns through /callback, which seals a
+// fresh session bound to the chosen org_id.
+//
+// We deliberately reuse the full AuthKit round-trip rather than calling
+// SwitchOrg directly: the app does not keep a local list of the user's
+// org memberships (WorkOS owns those), and the hosted picker is the same
+// surface users already see at first login, so the experience is
+// consistent. A single-org user who lands here is simply signed straight
+// back into their only org.
+//
+// See also: SwitchOrg for the server-side re-issue path used when the
+// target orgID is already known (e.g. org provisioning during onboarding).
+func (s *Service) SwitchOrgHandler(w http.ResponseWriter, r *http.Request) {
+	s.redirectToAuthKitWithInvitation(w, r, workos.UserManagementAuthenticationScreenHintSignIn, "", true)
 }
 
 func (s *Service) redirectToAuthKit(w http.ResponseWriter, r *http.Request, hint workos.UserManagementAuthenticationScreenHint) {

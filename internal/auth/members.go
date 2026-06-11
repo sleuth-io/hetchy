@@ -112,6 +112,83 @@ func (s *Service) GetProfile(ctx context.Context, userID string) (Profile, error
 	return p, nil
 }
 
+// UserHasMultipleOrgs reports whether the user belongs to more than one
+// active organization. The "Switch organization" menu item is gated on
+// this so single-org users aren't offered a link that would just sign
+// them straight back into their only org. We stop iterating as soon as a
+// second membership is seen — the exact count is irrelevant.
+//
+// The answer is memoized per user for multiOrgCacheTTL so the SPA
+// catch-all handler, which calls this on every page render, doesn't make a
+// WorkOS round-trip each time. Membership changes are picked up once the
+// cached entry expires.
+func (s *Service) UserHasMultipleOrgs(ctx context.Context, userID string) (bool, error) {
+	if s.cfg.Bypass {
+		return false, nil
+	}
+	if v, ok := s.multiOrgCacheGet(userID); ok {
+		return v, nil
+	}
+	uid := userID
+	active := workos.OrganizationMembershipCreatedDataStatusActive
+	// Only two memberships are ever needed to answer "more than one?", so cap
+	// the server-side page size at 2 to keep the response payload small.
+	limit := 2
+	it := s.client.UserManagement().ListOrganizationMemberships(ctx, &workos.UserManagementListOrganizationMembershipsParams{
+		UserID:           &uid,
+		Statuses:         []workos.UserManagementOrganizationMembershipStatuses{active},
+		PaginationParams: workos.PaginationParams{Limit: &limit},
+	})
+	count := 0
+	multi := false
+	for it.Next() {
+		count++
+		if count > 1 {
+			multi = true
+			break
+		}
+	}
+	if err := it.Err(); err != nil {
+		return false, fmt.Errorf("list user memberships: %w", err)
+	}
+	s.multiOrgCacheSet(userID, multi)
+	return multi, nil
+}
+
+// nowFn returns the Service's clock, defaulting to time.Now when unset so
+// production callers don't have to wire one up. Tests override Service.now
+// to drive cache expiry deterministically.
+func (s *Service) nowFn() time.Time {
+	if s.now != nil {
+		return s.now()
+	}
+	return time.Now()
+}
+
+// multiOrgCacheGet returns the cached membership-count answer for userID if
+// one is present and unexpired. It takes a read lock so concurrent page
+// renders — the common case once a user's entry is warm — don't serialize
+// on the cache.
+func (s *Service) multiOrgCacheGet(userID string) (bool, bool) {
+	s.multiOrgMu.RLock()
+	defer s.multiOrgMu.RUnlock()
+	e, ok := s.multiOrgCache[userID]
+	if !ok || !s.nowFn().Before(e.expires) {
+		return false, false
+	}
+	return e.value, true
+}
+
+// multiOrgCacheSet stores value for userID with a fresh TTL.
+func (s *Service) multiOrgCacheSet(userID string, value bool) {
+	s.multiOrgMu.Lock()
+	defer s.multiOrgMu.Unlock()
+	if s.multiOrgCache == nil {
+		s.multiOrgCache = make(map[string]multiOrgEntry)
+	}
+	s.multiOrgCache[userID] = multiOrgEntry{value: value, expires: s.nowFn().Add(multiOrgCacheTTL)}
+}
+
 // UpdateProfile rewrites the first and last name on a user. Email/
 // password/MFA are *not* mutable here — those flows go through AuthKit's
 // hosted pages so we don't have to reimplement password policy / MFA UX.

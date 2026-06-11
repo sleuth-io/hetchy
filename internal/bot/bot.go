@@ -192,6 +192,7 @@ type Bot struct {
 	sessionCommandStatusFn    sessionCommandStatusFunc
 	downloadSandboxFileFn     func(context.Context, *daytona.Sandbox, string) ([]byte, error)
 	usersOnlyInOrgFn          func(context.Context, string) ([]string, error)
+	userHasMultipleOrgsFn     func(context.Context, string) (bool, error)
 	deleteWorkOSOrgFn         func(context.Context, string) error
 	workOSOrgHasFeatureFlagFn func(context.Context, string, string) (bool, error)
 	// branchNameFn lets tests bypass the LLM round-trip in

@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	workos "github.com/workos/workos-go/v7"
 )
@@ -236,6 +237,64 @@ func TestBypassCallbackSkipsStateCheck(t *testing.T) {
 
 	if rec.Code != http.StatusFound {
 		t.Fatalf("expected redirect in bypass mode, got %d", rec.Code)
+	}
+}
+
+// TestSwitchOrgHandlerRedirectsToAuthKitWithPromptLogin verifies that the
+// "switch organization" link re-enters the hosted AuthKit flow with
+// prompt=login (which re-presents the sign-in screen and, for multi-org
+// users, the org picker) and arms a fresh OAuth state cookie so the
+// returning /callback passes the state gate.
+func TestSwitchOrgHandlerRedirectsToAuthKitWithPromptLogin(t *testing.T) {
+	s := newTestService(t, "test-cookie-password-keep-it-long")
+	s.cfg.RedirectURI = "https://app.example.com/callback"
+	s.client = workos.NewClient("sk_test", workos.WithClientID("client_test"), workos.WithBaseURL("https://api.workos.test"))
+
+	req := httptest.NewRequest(http.MethodGet, "/switch-org", nil)
+	rec := httptest.NewRecorder()
+	s.SwitchOrgHandler(rec, req)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("expected 302 redirect into AuthKit, got %d", rec.Code)
+	}
+	loc := rec.Header().Get("Location")
+	if !strings.HasPrefix(loc, "https://api.workos.test/user_management/authorize?") {
+		t.Fatalf("unexpected AuthKit redirect target: %s", loc)
+	}
+	u, err := url.Parse(loc)
+	if err != nil {
+		t.Fatalf("parse redirect location %q: %v", loc, err)
+	}
+	if got := u.Query().Get("prompt"); got != "login" {
+		t.Fatalf("prompt = %q, want login", got)
+	}
+	var stateCookie *http.Cookie
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == oauthStateCookieName {
+			stateCookie = c
+			break
+		}
+	}
+	if stateCookie == nil {
+		t.Fatal("expected oauth state cookie to be set")
+	}
+}
+
+// TestSwitchOrgHandlerBypassRedirectsHome confirms that in bypass mode
+// (no real WorkOS auth) the handler just bounces the browser back to the
+// app root instead of attempting an AuthKit round-trip.
+func TestSwitchOrgHandlerBypassRedirectsHome(t *testing.T) {
+	s := &Service{cfg: Config{Bypass: true}, statePath: "/"}
+
+	req := httptest.NewRequest(http.MethodGet, "/switch-org", nil)
+	rec := httptest.NewRecorder()
+	s.SwitchOrgHandler(rec, req)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("expected 302 in bypass mode, got %d", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/" {
+		t.Fatalf("expected redirect to /, got %q", loc)
 	}
 }
 
@@ -478,5 +537,138 @@ func TestRedirectPath(t *testing.T) {
 		if got != want {
 			t.Errorf("redirectPath(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestUserHasMultipleOrgs(t *testing.T) {
+	membership := func(id, userID, orgID string) map[string]any {
+		return map[string]any{
+			"object":            "organization_membership",
+			"id":                id,
+			"user_id":           userID,
+			"organization_id":   orgID,
+			"status":            "active",
+			"directory_managed": false,
+			"created_at":        "2026-01-15T12:00:00.000Z",
+			"updated_at":        "2026-01-15T12:00:00.000Z",
+			"role":              map[string]any{"slug": "member"},
+		}
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/user_management/organization_memberships" {
+			t.Fatalf("unexpected WorkOS request: %s %s", r.Method, r.URL.String())
+		}
+		// Only active memberships should be requested.
+		if got := r.URL.Query().Get("statuses"); got != "active" {
+			t.Fatalf("statuses filter = %q, want active", got)
+		}
+		// Only two memberships are needed to answer "more than one?".
+		if got := r.URL.Query().Get("limit"); got != "2" {
+			t.Fatalf("limit = %q, want 2", got)
+		}
+		var rows []map[string]any
+		switch r.URL.Query().Get("user_id") {
+		case "user_multi":
+			rows = []map[string]any{
+				membership("om_a", "user_multi", "org_a"),
+				membership("om_b", "user_multi", "org_b"),
+			}
+		case "user_solo":
+			rows = []map[string]any{membership("om_only", "user_solo", "org_a")}
+		case "user_none":
+			rows = nil
+		default:
+			t.Fatalf("unexpected user_id query: %s", r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data":          rows,
+			"list_metadata": map[string]any{"before": nil, "after": nil},
+		})
+	}))
+	defer server.Close()
+
+	s := &Service{client: workos.NewClient("sk_test", workos.WithBaseURL(server.URL))}
+	cases := map[string]bool{
+		"user_multi": true,
+		"user_solo":  false,
+		"user_none":  false,
+	}
+	for user, want := range cases {
+		got, err := s.UserHasMultipleOrgs(context.Background(), user)
+		if err != nil {
+			t.Fatalf("UserHasMultipleOrgs(%q): %v", user, err)
+		}
+		if got != want {
+			t.Fatalf("UserHasMultipleOrgs(%q) = %v, want %v", user, got, want)
+		}
+	}
+}
+
+func TestUserHasMultipleOrgsBypassIsSingleOrg(t *testing.T) {
+	s := &Service{cfg: Config{Bypass: true, BypassUser: "user_bypass"}}
+	got, err := s.UserHasMultipleOrgs(context.Background(), "user_bypass")
+	if err != nil {
+		t.Fatalf("UserHasMultipleOrgs: %v", err)
+	}
+	if got {
+		t.Fatal("bypass mode should report single-org so the switch link stays hidden")
+	}
+}
+
+// TestUserHasMultipleOrgsCaches verifies the per-user memoization: repeat
+// calls within the TTL are served from cache (no WorkOS request), and a
+// call after the entry expires re-fetches.
+func TestUserHasMultipleOrgsCaches(t *testing.T) {
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{{
+				"object": "organization_membership", "id": "om_only",
+				"user_id": "user_solo", "organization_id": "org_a", "status": "active",
+				"directory_managed": false,
+				"created_at":        "2026-01-15T12:00:00.000Z",
+				"updated_at":        "2026-01-15T12:00:00.000Z",
+				"role":              map[string]any{"slug": "member"},
+			}},
+			"list_metadata": map[string]any{"before": nil, "after": nil},
+		})
+	}))
+	defer server.Close()
+
+	clock := time.Unix(1_700_000_000, 0)
+	s := &Service{
+		client: workos.NewClient("sk_test", workos.WithBaseURL(server.URL)),
+		now:    func() time.Time { return clock },
+	}
+
+	got, err := s.UserHasMultipleOrgs(context.Background(), "user_solo")
+	if err != nil {
+		t.Fatalf("first call: %v", err)
+	}
+	if got {
+		t.Fatalf("first call = true, want false (single org)")
+	}
+	cached, err := s.UserHasMultipleOrgs(context.Background(), "user_solo")
+	if err != nil {
+		t.Fatalf("cached call: %v", err)
+	}
+	if cached != got {
+		t.Fatalf("cached call = %v, want %v", cached, got)
+	}
+	if calls != 1 {
+		t.Fatalf("expected 1 WorkOS request while cached, got %d", calls)
+	}
+
+	// Advance exactly to the expiry instant: now == expires is treated as
+	// expired, so this must re-fetch rather than serve the stale entry.
+	clock = clock.Add(multiOrgCacheTTL)
+	if _, err := s.UserHasMultipleOrgs(context.Background(), "user_solo"); err != nil {
+		t.Fatalf("boundary call: %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("expected re-fetch at the expiry boundary, got %d requests", calls)
 	}
 }

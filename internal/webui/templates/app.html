@@ -53,6 +53,10 @@
         <a class="item" href="/settings/profile" role="menuitem">User settings</a>
         <a class="item" href="/settings/org" role="menuitem">Organization settings</a>
         <div class="divider"></div>
+        {{if .MultiOrg}}
+        <a class="item" href="/switch-org" role="menuitem">Switch organization</a>
+        <div class="divider"></div>
+        {{end}}
         <a class="item" href="/logout" role="menuitem">Log out</a>
       </div>
     </div>
