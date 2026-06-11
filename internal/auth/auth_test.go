@@ -245,6 +245,12 @@ func TestBypassCallbackSkipsStateCheck(t *testing.T) {
 // prompt=login (which re-presents the sign-in screen and, for multi-org
 // users, the org picker) and arms a fresh OAuth state cookie so the
 // returning /callback passes the state gate.
+//
+// It also guards the bug fix: the handler must clear the local session
+// cookie before the AuthKit hop. Without that teardown the browser's live
+// AuthKit SSO session makes WorkOS silently re-issue a code for the *same*
+// org and bounce the user straight back — the "switch organization does
+// nothing" report — instead of re-presenting the picker.
 func TestSwitchOrgHandlerRedirectsToAuthKitWithPromptLogin(t *testing.T) {
 	s := newTestService(t, "test-cookie-password-keep-it-long")
 	s.cfg.RedirectURI = "https://app.example.com/callback"
@@ -268,15 +274,54 @@ func TestSwitchOrgHandlerRedirectsToAuthKitWithPromptLogin(t *testing.T) {
 	if got := u.Query().Get("prompt"); got != "login" {
 		t.Fatalf("prompt = %q, want login", got)
 	}
-	var stateCookie *http.Cookie
+	var stateCookie, sessionCleared *http.Cookie
 	for _, c := range rec.Result().Cookies() {
-		if c.Name == oauthStateCookieName {
+		switch c.Name {
+		case oauthStateCookieName:
 			stateCookie = c
-			break
+		case SessionCookieName:
+			if c.MaxAge < 0 {
+				sessionCleared = c
+			}
 		}
 	}
 	if stateCookie == nil {
 		t.Fatal("expected oauth state cookie to be set")
+	}
+	if sessionCleared == nil {
+		t.Fatal("expected session cookie to be cleared so AuthKit re-presents the org picker")
+	}
+}
+
+// TestSwitchOrgHandlerMalformedCookieFallsThrough ensures a garbage session
+// cookie does not block the switch-org flow: AuthenticateSession returns
+// Authenticated == false on an invalid sealed value, the WorkOS RevokeSession
+// call is skipped, and the handler still clears the cookie and redirects into
+// AuthKit with prompt=login.
+func TestSwitchOrgHandlerMalformedCookieFallsThrough(t *testing.T) {
+	s := newTestService(t, "test-cookie-password-keep-it-long")
+	s.cfg.RedirectURI = "https://app.example.com/callback"
+	s.client = workos.NewClient("sk_test", workos.WithClientID("client_test"), workos.WithBaseURL("https://api.workos.test"))
+
+	req := httptest.NewRequest(http.MethodGet, "/switch-org", nil)
+	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: "not-a-real-sealed-session"})
+	rec := httptest.NewRecorder()
+	s.SwitchOrgHandler(rec, req)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("expected 302 redirect into AuthKit, got %d", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); !strings.HasPrefix(loc, "https://api.workos.test/user_management/authorize?") {
+		t.Fatalf("unexpected AuthKit redirect target: %s", loc)
+	}
+	var cleared bool
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == SessionCookieName && c.MaxAge < 0 {
+			cleared = true
+		}
+	}
+	if !cleared {
+		t.Fatal("session cookie should be cleared on switch-org even with a malformed cookie")
 	}
 }
 
