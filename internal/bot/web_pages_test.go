@@ -657,3 +657,166 @@ func TestSwitchOrgHandler_POSTRejectsCrossOrigin(t *testing.T) {
 		t.Fatalf("status = %d, want 403 for cross-origin POST", rec.Code)
 	}
 }
+
+// TestSwitchOrgHandler_RejectsBadMethod covers the method guard.
+func TestSwitchOrgHandler_RejectsBadMethod(t *testing.T) {
+	b := newBypassOrgBot(t, "admin")
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodDelete, "/switch-org", nil)
+	b.auth.Middleware(http.HandlerFunc(b.switchOrgHandler)).ServeHTTP(rec, req)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want 405", rec.Code)
+	}
+}
+
+// TestSwitchOrgHandler_GETListErrorReturns500 covers the error path when the
+// org list can't be loaded for the picker render.
+func TestSwitchOrgHandler_GETListErrorReturns500(t *testing.T) {
+	b := newBypassOrgBot(t, "admin")
+	b.listUserOrgsFn = func(context.Context, string, string) ([]auth.UserOrg, error) {
+		return nil, errors.New("workos down")
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/switch-org", nil)
+	b.auth.Middleware(http.HandlerFunc(b.switchOrgHandler)).ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", rec.Code)
+	}
+	// The raw WorkOS error must not leak to the browser.
+	if strings.Contains(rec.Body.String(), "workos down") {
+		t.Fatalf("response leaked internal error detail: %s", rec.Body.String())
+	}
+}
+
+// TestSwitchOrgHandler_POSTEmptyOrgRerendersPicker covers the missing-org_id
+// branch: it re-renders the picker with an inline error rather than switching.
+func TestSwitchOrgHandler_POSTEmptyOrgRerendersPicker(t *testing.T) {
+	b := newBypassOrgBot(t, "admin")
+	b.listUserOrgsFn = func(context.Context, string, string) ([]auth.UserOrg, error) {
+		return []auth.UserOrg{
+			{OrgID: "org_test", Name: "Acme", Current: true},
+			{OrgID: "org_other", Name: "Beta"},
+		}, nil
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/switch-org", strings.NewReader(""))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", "http://example.com")
+	req.Host = "example.com"
+	b.auth.Middleware(http.HandlerFunc(b.switchOrgHandler)).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (re-rendered picker)", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "Please choose an organization.") {
+		t.Fatalf("expected inline error prompt, body=%s", rec.Body.String())
+	}
+}
+
+// TestSwitchOrgHandler_POSTSameOrgRedirectsHome covers the no-op self-switch.
+func TestSwitchOrgHandler_POSTSameOrgRedirectsHome(t *testing.T) {
+	b := newBypassOrgBot(t, "admin")
+	called := false
+	b.switchOrgFn = func(http.ResponseWriter, *http.Request, string) error {
+		called = true
+		return nil
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/switch-org", strings.NewReader("org_id=org_test"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", "http://example.com")
+	req.Host = "example.com"
+	b.auth.Middleware(http.HandlerFunc(b.switchOrgHandler)).ServeHTTP(rec, req)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302", rec.Code)
+	}
+	if got := rec.Header().Get("Location"); got != "/" {
+		t.Fatalf("Location = %q, want /", got)
+	}
+	if called {
+		t.Fatal("SwitchOrg must not be called when already in the requested org")
+	}
+}
+
+// TestSwitchOrgHandler_POSTSwitchErrorRerendersPicker covers the SwitchOrg
+// failure path: the picker is re-rendered with a generic error.
+func TestSwitchOrgHandler_POSTSwitchErrorRerendersPicker(t *testing.T) {
+	b := newBypassOrgBot(t, "admin")
+	b.listUserOrgsFn = func(context.Context, string, string) ([]auth.UserOrg, error) {
+		return []auth.UserOrg{
+			{OrgID: "org_test", Name: "Acme", Current: true},
+			{OrgID: "org_other", Name: "Beta"},
+		}, nil
+	}
+	b.switchOrgFn = func(http.ResponseWriter, *http.Request, string) error {
+		return errors.New("refresh token rejected")
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/switch-org", strings.NewReader("org_id=org_other"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", "http://example.com")
+	req.Host = "example.com"
+	b.auth.Middleware(http.HandlerFunc(b.switchOrgHandler)).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (re-rendered picker)", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Could not switch organization. Please try again.") {
+		t.Fatalf("expected generic switch error, body=%s", body)
+	}
+	if strings.Contains(body, "refresh token rejected") {
+		t.Fatalf("response leaked internal error detail: %s", body)
+	}
+}
+
+// TestSwitchOrgHandler_POSTListErrorReturns500 covers the membership-lookup
+// failure on the POST validation path.
+func TestSwitchOrgHandler_POSTListErrorReturns500(t *testing.T) {
+	b := newBypassOrgBot(t, "admin")
+	b.listUserOrgsFn = func(context.Context, string, string) ([]auth.UserOrg, error) {
+		return nil, errors.New("workos down")
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/switch-org", strings.NewReader("org_id=org_other"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", "http://example.com")
+	req.Host = "example.com"
+	b.auth.Middleware(http.HandlerFunc(b.switchOrgHandler)).ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", rec.Code)
+	}
+}
+
+// TestSwitchOrgHandler_GETUsesAuthServiceWhenSeamNil exercises the
+// production path of listUserOrgs (no test seam): a bypass single-org user
+// is sent home.
+func TestSwitchOrgHandler_GETUsesAuthServiceWhenSeamNil(t *testing.T) {
+	b := newBypassOrgBot(t, "admin") // listUserOrgsFn left nil
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/switch-org", nil)
+	b.auth.Middleware(http.HandlerFunc(b.switchOrgHandler)).ServeHTTP(rec, req)
+	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/" {
+		t.Fatalf("status=%d loc=%q, want 302 -> /", rec.Code, rec.Header().Get("Location"))
+	}
+}
+
+// TestSwitchOrgHandler_POSTUsesAuthSwitchWhenSeamNil exercises the
+// production path of switchOrg (no test seam): bypass SwitchOrg is a no-op
+// that returns nil, so the handler redirects home.
+func TestSwitchOrgHandler_POSTUsesAuthSwitchWhenSeamNil(t *testing.T) {
+	b := newBypassOrgBot(t, "admin") // switchOrgFn left nil
+	b.listUserOrgsFn = func(context.Context, string, string) ([]auth.UserOrg, error) {
+		return []auth.UserOrg{
+			{OrgID: "org_test", Name: "Acme", Current: true},
+			{OrgID: "org_other", Name: "Beta"},
+		}, nil
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/switch-org", strings.NewReader("org_id=org_other"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", "http://example.com")
+	req.Host = "example.com"
+	b.auth.Middleware(http.HandlerFunc(b.switchOrgHandler)).ServeHTTP(rec, req)
+	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/" {
+		t.Fatalf("status=%d loc=%q, want 302 -> /", rec.Code, rec.Header().Get("Location"))
+	}
+}
