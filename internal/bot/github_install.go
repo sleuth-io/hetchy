@@ -285,7 +285,7 @@ func (b *Bot) githubSyncHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "no GitHub token stored for this organization", http.StatusBadRequest)
 			return
 		}
-		if _, err := b.github.SyncPAT(syncCtx, b.store, p.OrgID, oc.GitHubPAT); err != nil {
+		if _, err := b.syncGithubPAT(syncCtx, p.OrgID, oc.GitHubPAT); err != nil {
 			b.log.Error("github pat sync failed", "id", installationID, "error", err)
 			http.Error(w, "sync failed: "+err.Error(), http.StatusInternalServerError)
 			return

@@ -444,3 +444,49 @@ func TestLookupPATForInstallation(t *testing.T) {
 		t.Errorf("org config error must propagate")
 	}
 }
+
+func TestGithubPATConnectHandler_Success(t *testing.T) {
+	b := patBotForTest(t)
+	orgs := &fakeOrgStore{getConfig: orgcfg.Config{OrgID: "org_test"}}
+	fdb := &patFakeDB{}
+	b.orgs = orgs
+	b.store = &db.Store{Queries: sqlc.New(fdb)}
+	b.syncPATFn = func(_ context.Context, orgID, pat string) (githubapp.SyncResult, error) {
+		if orgID != "org_test" || pat != "ghp_new" {
+			t.Errorf("syncPAT called with %q, %q", orgID, pat)
+		}
+		return githubapp.SyncResult{InstallationID: githubapp.PATInstallationID(orgID), Repos: 2}, nil
+	}
+
+	rec := postPATConnect(b, "github_pat=ghp_new")
+	if rec.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); !strings.Contains(loc, "saved=github_pat_connected") {
+		t.Errorf("Location = %q", loc)
+	}
+	if len(orgs.upserts) != 1 || orgs.upserts[0].GitHubPAT != "ghp_new" {
+		t.Errorf("expected one upsert saving the PAT, got %+v", orgs.upserts)
+	}
+	if len(fdb.execs) != 0 {
+		t.Errorf("no compensation expected on success, got %v", fdb.execs)
+	}
+}
+
+func TestGithubPATConnectHandler_UpsertFailureDropsOrphan(t *testing.T) {
+	b := patBotForTest(t)
+	fdb := &patFakeDB{}
+	b.orgs = &fakeOrgStore{upsertErr: errors.New("boom")}
+	b.store = &db.Store{Queries: sqlc.New(fdb)}
+	b.syncPATFn = func(_ context.Context, orgID, _ string) (githubapp.SyncResult, error) {
+		return githubapp.SyncResult{InstallationID: githubapp.PATInstallationID(orgID)}, nil
+	}
+
+	rec := postPATConnect(b, "github_pat=ghp_new")
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", rec.Code)
+	}
+	if len(fdb.execs) != 1 || !strings.Contains(fdb.execs[0], "DELETE FROM github_app_installations") {
+		t.Errorf("expected compensating installation delete, got %v", fdb.execs)
+	}
+}

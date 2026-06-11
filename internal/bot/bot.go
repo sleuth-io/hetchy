@@ -214,6 +214,9 @@ type Bot struct {
 	deleteWorkOSUsersFn func(context.Context, []string) error
 	lookupRepoFn        func(context.Context, string, string, string) (sqlc.GithubRepo, error)
 	githubTokenMinTTLFn func(context.Context, int64, []int64, time.Duration) (string, time.Time, error)
+	// syncPATFn is the test seam around githubapp.Source.SyncPAT, whose
+	// real implementation needs a live db pool for its transaction.
+	syncPATFn func(context.Context, string, string) (githubapp.SyncResult, error)
 	// cleanupSandboxByIDFn is called by chatCancelHandler for opportunistic
 	// cleanup of a fresh-run sandbox; overridable in tests.
 	cleanupSandboxByIDFn func(string, string)

@@ -37,6 +37,16 @@ func (b *Bot) githubTokenSource() githubapp.TokenSource {
 	return nil
 }
 
+// syncGithubPAT validates the token and refreshes the org's synthetic
+// installation + repo cache; overridable in tests (the real path needs
+// a live db pool for SyncPAT's transaction).
+func (b *Bot) syncGithubPAT(ctx context.Context, orgID, pat string) (githubapp.SyncResult, error) {
+	if b.syncPATFn != nil {
+		return b.syncPATFn(ctx, orgID, pat)
+	}
+	return b.github.SyncPAT(ctx, b.store, orgID, pat)
+}
+
 // lookupPATForInstallation resolves a synthetic installation id back to
 // the owning org's stored PAT. Wired into githubapp.Source at startup.
 func (b *Bot) lookupPATForInstallation(ctx context.Context, installationID int64) (string, error) {
@@ -85,7 +95,7 @@ func (b *Bot) githubPATConnectHandler(w http.ResponseWriter, r *http.Request) {
 
 	syncCtx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()
-	res, err := b.github.SyncPAT(syncCtx, b.store, p.OrgID, pat)
+	res, err := b.syncGithubPAT(syncCtx, p.OrgID, pat)
 	if err != nil {
 		switch {
 		case errors.Is(err, githubapp.ErrPATUnauthorized):
@@ -129,6 +139,10 @@ func (b *Bot) githubPATConnectHandler(w http.ResponseWriter, r *http.Request) {
 // org_configs the synthetic installation can never mint a credential,
 // so leaving it behind would render a connection that silently fails.
 // Best-effort with its own context — the request may already be dead.
+//
+// Orphaned rows are also self-healing: a successful reconnect upserts
+// the same synthetic installation id and re-caches repos, so even a
+// failed compensation resolves without operator intervention.
 func (b *Bot) dropOrphanedPATInstallation(orgID string, installationID int64) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
