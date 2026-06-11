@@ -296,6 +296,19 @@ func (b *Bot) finalizeRecoveredRun(ctx context.Context, sb *daytona.Sandbox, run
 		b.deferRecoveryForRetry(run, "load events: finalize success", err)
 		return
 	}
+	// Auto merge runs before the terminal Result block so the assessment
+	// group lands ahead of the closing block, matching the normal
+	// success path. It appends durable events (assessment block,
+	// auto_merge_* records), so reload before the terminal check.
+	autoMergeDetail := map[string]any{}
+	if prURL != "" {
+		autoMergeDetail = b.handleRecoveredAutoMerge(ctx, run, prURL, events, live)
+		events, err = b.runs.EventsAfter(ctx, run.ID, 0)
+		if err != nil {
+			b.deferRecoveryForRetry(run, "reload events: recovered auto merge", err)
+			return
+		}
+	}
 	if !recoveredRunHasTerminalBlock(events, blocks.KindResult) {
 		em := b.recoveredTerminalEmitter(run, live, events)
 		em.Result("Done!", body)
@@ -313,6 +326,7 @@ func (b *Bot) finalizeRecoveredRun(ctx context.Context, sb *daytona.Sandbox, run
 		b.deferRecoveryForRetry(run, "project conversation: success", err)
 		return
 	}
+	b.recordRecoveredRunOutcome(context.Background(), run, prURL, blocksFromRunEvents(events), autoMergeDetail)
 	b.runs.UpdateState(context.Background(), run.ID, runstore.StateSucceeded, "", b.workerID)
 	b.finishBillingRun(context.Background(), run.ID, runstore.StateSucceeded)
 	b.log.Info("agent run recovery succeeded",
