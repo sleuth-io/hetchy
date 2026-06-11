@@ -154,6 +154,7 @@
 .pill.needs_input { background: #fff2d7; color: var(--warn); }
 .pill.failed { background: #ffe7e3; color: var(--danger); }
 .pill.done { background: #e7f5eb; color: var(--success); }
+.pill.done.pr-created { background: #dff0ff; color: #075a99; }
 
 .active-run-details {
   display: grid;
