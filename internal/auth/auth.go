@@ -215,6 +215,9 @@ func (s *Service) SignupHandler(w http.ResponseWriter, r *http.Request) {
 // surface users already see at first login, so the experience is
 // consistent. A single-org user who lands here is simply signed straight
 // back into their only org.
+//
+// See also: SwitchOrg for the server-side re-issue path used when the
+// target orgID is already known (e.g. org provisioning during onboarding).
 func (s *Service) SwitchOrgHandler(w http.ResponseWriter, r *http.Request) {
 	s.redirectToAuthKitWithInvitation(w, r, workos.UserManagementAuthenticationScreenHintSignIn, "", true)
 }

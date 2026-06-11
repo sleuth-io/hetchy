@@ -43,6 +43,16 @@ func (b *Bot) indexHandler(w http.ResponseWriter, r *http.Request) {
 	} else {
 		b.log.Warn("profile fetch for chat header failed", "error", err, "user", p.UserID)
 	}
+	// multiOrg gates the "Switch organization" menu item so single-org
+	// users aren't offered a link that would just sign them straight back
+	// into their only org. Errors are swallowed (treated as single-org) so
+	// a transient WorkOS hiccup hides the link rather than breaking chat.
+	multiOrg := false
+	if has, err := b.auth.UserHasMultipleOrgs(r.Context(), p.UserID); err == nil {
+		multiOrg = has
+	} else {
+		b.log.Warn("membership count for chat header failed", "error", err, "user", p.UserID)
+	}
 	// openaiEnabled gates the GPT model block in the composer dropdown
 	// — we look it up once on chat-page render so the picker JS doesn't
 	// have to round-trip back to the server before painting. Errors are
@@ -69,6 +79,7 @@ func (b *Bot) indexHandler(w http.ResponseWriter, r *http.Request) {
 		"DisplayName":     displayName,
 		"GravatarURL":     webui.GravatarURL(p.Email),
 		"UserID":          p.UserID,
+		"MultiOrg":        multiOrg,
 		"OpenAIEnabled":   openaiEnabled,
 		"DefaultRepoSlug": defaultRepoSlug,
 		"AppDataLimit":    appDataLimitDefault,

@@ -112,6 +112,34 @@ func (s *Service) GetProfile(ctx context.Context, userID string) (Profile, error
 	return p, nil
 }
 
+// UserHasMultipleOrgs reports whether the user belongs to more than one
+// active organization. The "Switch organization" menu item is gated on
+// this so single-org users aren't offered a link that would just sign
+// them straight back into their only org. We stop iterating as soon as a
+// second membership is seen — the exact count is irrelevant.
+func (s *Service) UserHasMultipleOrgs(ctx context.Context, userID string) (bool, error) {
+	if s.cfg.Bypass {
+		return false, nil
+	}
+	uid := userID
+	active := workos.OrganizationMembershipCreatedDataStatusActive
+	it := s.client.UserManagement().ListOrganizationMemberships(ctx, &workos.UserManagementListOrganizationMembershipsParams{
+		UserID:   &uid,
+		Statuses: []workos.UserManagementOrganizationMembershipStatuses{active},
+	})
+	count := 0
+	for it.Next() {
+		count++
+		if count > 1 {
+			return true, nil
+		}
+	}
+	if err := it.Err(); err != nil {
+		return false, fmt.Errorf("list user memberships: %w", err)
+	}
+	return false, nil
+}
+
 // UpdateProfile rewrites the first and last name on a user. Email/
 // password/MFA are *not* mutable here — those flows go through AuthKit's
 // hosted pages so we don't have to reimplement password policy / MFA UX.

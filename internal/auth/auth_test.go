@@ -538,3 +538,75 @@ func TestRedirectPath(t *testing.T) {
 		}
 	}
 }
+
+func TestUserHasMultipleOrgs(t *testing.T) {
+	membership := func(id, userID, orgID string) map[string]any {
+		return map[string]any{
+			"object":            "organization_membership",
+			"id":                id,
+			"user_id":           userID,
+			"organization_id":   orgID,
+			"status":            "active",
+			"directory_managed": false,
+			"created_at":        "2026-01-15T12:00:00.000Z",
+			"updated_at":        "2026-01-15T12:00:00.000Z",
+			"role":              map[string]any{"slug": "member"},
+		}
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/user_management/organization_memberships" {
+			t.Fatalf("unexpected WorkOS request: %s %s", r.Method, r.URL.String())
+		}
+		// Only active memberships should be requested.
+		if got := r.URL.Query().Get("statuses"); got != "active" {
+			t.Fatalf("statuses filter = %q, want active", got)
+		}
+		var rows []map[string]any
+		switch r.URL.Query().Get("user_id") {
+		case "user_multi":
+			rows = []map[string]any{
+				membership("om_a", "user_multi", "org_a"),
+				membership("om_b", "user_multi", "org_b"),
+			}
+		case "user_solo":
+			rows = []map[string]any{membership("om_only", "user_solo", "org_a")}
+		case "user_none":
+			rows = nil
+		default:
+			t.Fatalf("unexpected user_id query: %s", r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data":          rows,
+			"list_metadata": map[string]any{"before": nil, "after": nil},
+		})
+	}))
+	defer server.Close()
+
+	s := &Service{client: workos.NewClient("sk_test", workos.WithBaseURL(server.URL))}
+	cases := map[string]bool{
+		"user_multi": true,
+		"user_solo":  false,
+		"user_none":  false,
+	}
+	for user, want := range cases {
+		got, err := s.UserHasMultipleOrgs(context.Background(), user)
+		if err != nil {
+			t.Fatalf("UserHasMultipleOrgs(%q): %v", user, err)
+		}
+		if got != want {
+			t.Fatalf("UserHasMultipleOrgs(%q) = %v, want %v", user, got, want)
+		}
+	}
+}
+
+func TestUserHasMultipleOrgsBypassIsSingleOrg(t *testing.T) {
+	s := &Service{cfg: Config{Bypass: true, BypassUser: "user_bypass"}}
+	got, err := s.UserHasMultipleOrgs(context.Background(), "user_bypass")
+	if err != nil {
+		t.Fatalf("UserHasMultipleOrgs: %v", err)
+	}
+	if got {
+		t.Fatal("bypass mode should report single-org so the switch link stays hidden")
+	}
+}
