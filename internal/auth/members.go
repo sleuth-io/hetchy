@@ -189,6 +189,66 @@ func (s *Service) multiOrgCacheSet(userID string, value bool) {
 	s.multiOrgCache[userID] = multiOrgEntry{value: value, expires: s.nowFn().Add(multiOrgCacheTTL)}
 }
 
+// UserOrg is one organization the signed-in user belongs to, joined with
+// its WorkOS display name. Current marks the org bound to the active
+// session so the in-app picker can show which one is selected.
+type UserOrg struct {
+	OrgID    string
+	Name     string
+	RoleSlug string
+	Current  bool
+}
+
+// ListUserOrgs returns the user's active organization memberships, each
+// joined with the organization's WorkOS display name and sorted by name.
+// currentOrgID flags the membership bound to the live session.
+//
+// This backs the in-app organization picker (the "Switch organization"
+// menu item). Rather than bouncing the user out through a hosted AuthKit
+// re-login to change orgs — which logs them out and drops them on the
+// sign-in screen — we list the orgs they belong to here and switch the
+// session in place via SwitchOrg, so they stay signed in.
+//
+// The per-org name lookup falls back to the org ID when the WorkOS
+// Organizations().Get call fails, so a transient hiccup yields a still-
+// selectable row rather than a blank label or a failed page.
+func (s *Service) ListUserOrgs(ctx context.Context, userID, currentOrgID string) ([]UserOrg, error) {
+	if s.cfg.Bypass {
+		name := s.cfg.BypassOrg
+		return []UserOrg{{
+			OrgID:    s.cfg.BypassOrg,
+			Name:     name,
+			RoleSlug: s.cfg.BypassRole,
+			Current:  s.cfg.BypassOrg == currentOrgID,
+		}}, nil
+	}
+	uid := userID
+	active := workos.OrganizationMembershipCreatedDataStatusActive
+	it := s.client.UserManagement().ListOrganizationMemberships(ctx, &workos.UserManagementListOrganizationMembershipsParams{
+		UserID:   &uid,
+		Statuses: []workos.UserManagementOrganizationMembershipStatuses{active},
+	})
+	var out []UserOrg
+	for it.Next() {
+		m := it.Current()
+		o := UserOrg{OrgID: m.OrganizationID, Current: m.OrganizationID == currentOrgID}
+		if m.Role != nil {
+			o.RoleSlug = m.Role.Slug
+		}
+		if org, err := s.client.Organizations().Get(ctx, m.OrganizationID); err == nil {
+			o.Name = org.Name
+		} else {
+			o.Name = m.OrganizationID
+		}
+		out = append(out, o)
+	}
+	if err := it.Err(); err != nil {
+		return nil, fmt.Errorf("list user orgs: %w", err)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
 // UpdateProfile rewrites the first and last name on a user. Email/
 // password/MFA are *not* mutable here — those flows go through AuthKit's
 // hosted pages so we don't have to reimplement password policy / MFA UX.

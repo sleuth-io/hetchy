@@ -225,45 +225,6 @@ func (s *Service) SignupHandler(w http.ResponseWriter, r *http.Request) {
 	s.redirectToAuthKit(w, r, workos.UserManagementAuthenticationScreenHintSignUp)
 }
 
-// SwitchOrgHandler lets an already-signed-in user move to a different
-// organization without manually logging out first. It ends the current
-// WorkOS session and then re-enters the hosted AuthKit flow with
-// prompt=login, which re-presents the sign-in screen and — for users who
-// belong to more than one organization — the organization picker.
-// Selecting an org there returns through /callback, which seals a fresh
-// session bound to the chosen org_id.
-//
-// Revoking the session first is what actually makes the picker appear, and
-// it's the fix for the "switch organization does nothing" report. Hitting
-// /authorize while the browser still holds a live AuthKit SSO session makes
-// WorkOS silently re-issue a code for the *same* organization via SSO and
-// bounce the user straight back into the app — the org picker is only shown
-// during a genuine fresh authentication. This is the same SSO-reuse trap
-// documented on LogoutHandler ("logout signs me back in"). Tearing the
-// session down server-side (and clearing our cookie) forces the next
-// /authorize hop to be a real sign-in, so the picker is re-presented. It
-// also collapses the old manual two-step (log out, then log back in) into a
-// single click.
-//
-// We deliberately reuse the full AuthKit round-trip rather than calling
-// SwitchOrg directly: the app does not keep a local list of the user's
-// org memberships (WorkOS owns those), and the hosted picker is the same
-// surface users already see at first login, so the experience is
-// consistent. A single-org user who lands here is simply signed straight
-// back into their only org.
-//
-// See also: SwitchOrg for the server-side re-issue path used when the
-// target orgID is already known (e.g. org provisioning during onboarding).
-func (s *Service) SwitchOrgHandler(w http.ResponseWriter, r *http.Request) {
-	if s.cfg.Bypass {
-		// In bypass mode there's no real auth — just send the browser home.
-		http.Redirect(w, r, "/", http.StatusFound)
-		return
-	}
-	s.revokeCurrentSession(w, r)
-	s.redirectToAuthKitWithInvitation(w, r, workos.UserManagementAuthenticationScreenHintSignIn, "", true)
-}
-
 func (s *Service) redirectToAuthKit(w http.ResponseWriter, r *http.Request, hint workos.UserManagementAuthenticationScreenHint) {
 	s.redirectToAuthKitWithInvitation(w, r, hint, "", false)
 }
@@ -408,8 +369,8 @@ func (s *Service) finishAuthCodeCallback(w http.ResponseWriter, r *http.Request,
 
 // revokeCurrentSession clears the local session cookie and, when not in
 // bypass mode, revokes the session at WorkOS via a server-to-server API
-// call. It is shared by LogoutHandler and SwitchOrgHandler so the careful
-// teardown logic — and its rationale — lives in exactly one place.
+// call. It backs LogoutHandler; the careful teardown logic — and its
+// rationale — lives here in one place.
 //
 // AuthenticateSession is a pure-local operation in the WorkOS SDK (AES-GCM
 // unseal + JWT payload parse, no network round-trip), so we can use it here
