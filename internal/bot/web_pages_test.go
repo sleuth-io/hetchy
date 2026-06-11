@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"errors"
 	"html"
 	"net/http"
 	"net/http/httptest"
@@ -154,6 +155,43 @@ func TestIndexHandler_RendersAppSPAPaths(t *testing.T) {
 				t.Fatalf("app template missing split app runtime, body=%s", rec.Body.String())
 			}
 		})
+	}
+}
+
+func TestIndexHandler_ShowsSwitchOrgForMultiOrgUser(t *testing.T) {
+	b := newBypassOrgBot(t, "admin")
+	// Inject a multi-org result so indexHandler renders the gated link.
+	b.userHasMultipleOrgsFn = func(context.Context, string) (bool, error) { return true, nil }
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	b.auth.Middleware(http.HandlerFunc(b.indexHandler)).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), `href="/switch-org"`) {
+		t.Fatalf("expected Switch organization link for multi-org user, body=%s", rec.Body.String())
+	}
+}
+
+func TestIndexHandler_HidesSwitchOrgOnMembershipError(t *testing.T) {
+	b := newBypassOrgBot(t, "admin")
+	// A WorkOS lookup failure must be swallowed (treated as single-org) so a
+	// transient hiccup hides the link rather than breaking chat.
+	b.userHasMultipleOrgsFn = func(context.Context, string) (bool, error) {
+		return false, errors.New("workos down")
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	b.auth.Middleware(http.HandlerFunc(b.indexHandler)).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), `href="/switch-org"`) {
+		t.Fatalf("Switch organization link should be hidden when membership lookup errors")
 	}
 }
 

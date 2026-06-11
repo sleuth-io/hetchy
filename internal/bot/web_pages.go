@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -45,14 +46,8 @@ func (b *Bot) indexHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	// multiOrg gates the "Switch organization" menu item so single-org
 	// users aren't offered a link that would just sign them straight back
-	// into their only org. Errors are swallowed (treated as single-org) so
-	// a transient WorkOS hiccup hides the link rather than breaking chat.
-	multiOrg := false
-	if has, err := b.auth.UserHasMultipleOrgs(r.Context(), p.UserID); err == nil {
-		multiOrg = has
-	} else {
-		b.log.Warn("membership count for chat header failed", "error", err, "user", p.UserID)
-	}
+	// into their only org.
+	multiOrg := b.userHasMultipleOrgs(r.Context(), p.UserID)
 	// openaiEnabled gates the GPT model block in the composer dropdown
 	// — we look it up once on chat-page render so the picker JS doesn't
 	// have to round-trip back to the server before painting. Errors are
@@ -84,6 +79,24 @@ func (b *Bot) indexHandler(w http.ResponseWriter, r *http.Request) {
 		"DefaultRepoSlug": defaultRepoSlug,
 		"AppDataLimit":    appDataLimitDefault,
 	})
+}
+
+// userHasMultipleOrgs reports whether the user belongs to more than one
+// organization, used to gate the "Switch organization" menu item. Errors
+// are swallowed (treated as single-org) so a transient WorkOS hiccup hides
+// the link rather than breaking chat. userHasMultipleOrgsFn is a test seam;
+// production leaves it nil and the auth service answers.
+func (b *Bot) userHasMultipleOrgs(ctx context.Context, userID string) bool {
+	fn := b.auth.UserHasMultipleOrgs
+	if b.userHasMultipleOrgsFn != nil {
+		fn = b.userHasMultipleOrgsFn
+	}
+	has, err := fn(ctx, userID)
+	if err != nil {
+		b.log.Warn("membership count for chat header failed", "error", err, "user", userID)
+		return false
+	}
+	return has
 }
 
 func isAppSPAPath(path string) bool {
