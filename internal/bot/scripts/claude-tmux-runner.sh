@@ -50,9 +50,7 @@ run_claude_interactive_with_watchdog() {
   # ScheduleWakeup is disallowed because this runner tears the tmux
   # session down seconds after the first top-level end_turn (see the
   # watchdog below) — a scheduled wakeup never fires, so a model that
-  # ends its turn "waiting" for one is silently truncated mid-task
-  # (observed in prod: the agent scheduled a 90s wakeup to watch PR
-  # checks, the run finalized without the auto-merge assessment).
+  # ends its turn "waiting" for one is silently truncated mid-task.
   local -a claude_args=(--dangerously-skip-permissions --disallowedTools ScheduleWakeup)
 
   : > "$diag_log" 2>/dev/null || true

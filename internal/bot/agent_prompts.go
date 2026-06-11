@@ -107,10 +107,9 @@ func conditionalTasksPrompt(opts chatTaskOptions) string {
 	if opts.ActionPRChecksForDone || opts.AutoMerge {
 		// The tmux runner ends the session seconds after end_turn:
 		// scheduled wakeups and background-task completion
-		// notifications never arrive. Without this rule the model
-		// sometimes ends its turn "waiting" for CI (wakeup or
-		// background watch), which truncates the run before checks
-		// finish and before the auto-merge assessment is emitted.
+		// notifications never arrive, so any turn-ending wait
+		// truncates the run before checks finish and before the
+		// auto-merge assessment is emitted.
 		tasks = append(tasks, `- Session lifetime: this environment never resumes your turn. Scheduled wakeups and background-task completion notifications will NOT arrive after your turn ends — the session is torn down seconds after you stop. Never end your turn to wait for anything. Wait in the foreground instead: blocking commands (`+"`gh pr checks --watch`"+`, `+"`gh run watch`"+`) or a foreground sleep-and-poll loop in Bash. Do not rely on background tasks completing after your turn, and finish every task enabled in this list before ending your turn.`)
 	}
 	if opts.AutoMerge {
