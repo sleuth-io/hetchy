@@ -135,9 +135,7 @@ func (b *Bot) switchOrg(w http.ResponseWriter, r *http.Request, orgID string) er
 	return b.auth.SwitchOrg(w, r, orgID)
 }
 
-// renderSwitchOrg lists the user's orgs and shows the picker. A user with
-// one (or zero) orgs has nothing to switch to, so we send them back to the
-// app rather than rendering a single-row picker.
+// renderSwitchOrg fetches the user's orgs and shows the picker.
 func (b *Bot) renderSwitchOrg(w http.ResponseWriter, r *http.Request, p auth.Principal, errMsg string) {
 	orgs, err := b.listUserOrgs(r.Context(), p.UserID, p.OrgID)
 	if err != nil {
@@ -145,6 +143,17 @@ func (b *Bot) renderSwitchOrg(w http.ResponseWriter, r *http.Request, p auth.Pri
 		http.Error(w, "Could not load your organizations. Please try again.", http.StatusInternalServerError)
 		return
 	}
+	b.renderSwitchOrgWithOrgs(w, r, p, orgs, errMsg)
+}
+
+// renderSwitchOrgWithOrgs shows the picker for an already-fetched org slice,
+// skipping a redundant listUserOrgs round-trip. The POST error path uses this
+// to reuse the slice it already fetched for the IDOR check — re-fetching there
+// also risks silently redirecting (if a concurrent membership change drops the
+// count to <= 1) instead of surfacing the switch failure. A user with one (or
+// zero) orgs has nothing to switch to, so we send them back to the app rather
+// than rendering a single-row picker.
+func (b *Bot) renderSwitchOrgWithOrgs(w http.ResponseWriter, r *http.Request, p auth.Principal, orgs []auth.UserOrg, errMsg string) {
 	if len(orgs) <= 1 {
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
@@ -191,7 +200,10 @@ func (b *Bot) doSwitchOrg(w http.ResponseWriter, r *http.Request, p auth.Princip
 	}
 	if err := b.switchOrg(w, r, orgID); err != nil {
 		b.log.Error("switch org failed", "error", err, "user", p.UserID, "org", orgID)
-		b.renderSwitchOrg(w, r, p, "Could not switch organization. Please try again.")
+		// Reuse the slice from the IDOR check rather than re-fetching: it
+		// avoids a second WorkOS round-trip and guarantees the "Could not
+		// switch organization" error actually renders.
+		b.renderSwitchOrgWithOrgs(w, r, p, orgs, "Could not switch organization. Please try again.")
 		return
 	}
 	b.log.Info("switched organization", "user", p.UserID, "from", p.OrgID, "to", orgID)
