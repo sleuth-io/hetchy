@@ -1443,6 +1443,27 @@ func TestAppDataResultLabel(t *testing.T) {
 			prState: "closed",
 			want:    "Answered",
 		},
+		{
+			// A no-PR follow-up on a conversation whose PR was later
+			// closed still reflects the PR's terminal state, mirroring how
+			// the merged check claims a no-PR run with a merged prURL.
+			name:    "answer-only follow-up with closed PR shows PR closed",
+			state:   runstore.StateSucceeded,
+			outcome: runstore.OutcomeCompletedNoPR,
+			runKind: "followup",
+			prURL:   prURL,
+			prState: "closed",
+			want:    "PR closed",
+		},
+		{
+			name:    "closed state mixed case is normalised",
+			state:   runstore.StateSucceeded,
+			outcome: runstore.OutcomeCompletedWithVerifiedPR,
+			runKind: "fresh",
+			prURL:   prURL,
+			prState: "Closed",
+			want:    "PR closed",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
