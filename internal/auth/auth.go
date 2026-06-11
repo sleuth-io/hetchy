@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	workos "github.com/workos/workos-go/v7"
@@ -130,6 +131,28 @@ type Service struct {
 	// r.Host, which is controlled by the client and could be forged via Host
 	// header injection on a misconfigured reverse proxy.
 	publicHost string
+	// multiOrgCache memoizes UserHasMultipleOrgs results so the SPA catch-all
+	// (indexHandler) doesn't make a WorkOS membership round-trip on every
+	// page render. Entries expire after multiOrgCacheTTL so membership
+	// changes are still picked up promptly. now defaults to time.Now and is
+	// overridable in tests to exercise expiry deterministically.
+	multiOrgMu    sync.Mutex
+	multiOrgCache map[string]multiOrgEntry
+	now           func() time.Time
+}
+
+// multiOrgCacheTTL bounds how long a cached membership-count result is
+// trusted before UserHasMultipleOrgs re-checks WorkOS. Being added to or
+// removed from an organization is rare and not latency-sensitive, so a few
+// minutes of staleness is an acceptable trade for collapsing the per-render
+// WorkOS round-trip that gates the "Switch organization" menu link.
+const multiOrgCacheTTL = 5 * time.Minute
+
+// multiOrgEntry is a single cached membership-count answer plus the instant
+// it stops being trusted.
+type multiOrgEntry struct {
+	value   bool
+	expires time.Time
 }
 
 // New constructs a Service. The returned value is safe for concurrent use.

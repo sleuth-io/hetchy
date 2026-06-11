@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	workos "github.com/workos/workos-go/v7"
 )
@@ -561,6 +562,10 @@ func TestUserHasMultipleOrgs(t *testing.T) {
 		if got := r.URL.Query().Get("statuses"); got != "active" {
 			t.Fatalf("statuses filter = %q, want active", got)
 		}
+		// Only two memberships are needed to answer "more than one?".
+		if got := r.URL.Query().Get("limit"); got != "2" {
+			t.Fatalf("limit = %q, want 2", got)
+		}
 		var rows []map[string]any
 		switch r.URL.Query().Get("user_id") {
 		case "user_multi":
@@ -608,5 +613,62 @@ func TestUserHasMultipleOrgsBypassIsSingleOrg(t *testing.T) {
 	}
 	if got {
 		t.Fatal("bypass mode should report single-org so the switch link stays hidden")
+	}
+}
+
+// TestUserHasMultipleOrgsCaches verifies the per-user memoization: repeat
+// calls within the TTL are served from cache (no WorkOS request), and a
+// call after the entry expires re-fetches.
+func TestUserHasMultipleOrgsCaches(t *testing.T) {
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{{
+				"object": "organization_membership", "id": "om_only",
+				"user_id": "user_solo", "organization_id": "org_a", "status": "active",
+				"directory_managed": false,
+				"created_at":        "2026-01-15T12:00:00.000Z",
+				"updated_at":        "2026-01-15T12:00:00.000Z",
+				"role":              map[string]any{"slug": "member"},
+			}},
+			"list_metadata": map[string]any{"before": nil, "after": nil},
+		})
+	}))
+	defer server.Close()
+
+	clock := time.Unix(1_700_000_000, 0)
+	s := &Service{
+		client: workos.NewClient("sk_test", workos.WithBaseURL(server.URL)),
+		now:    func() time.Time { return clock },
+	}
+
+	got, err := s.UserHasMultipleOrgs(context.Background(), "user_solo")
+	if err != nil {
+		t.Fatalf("first call: %v", err)
+	}
+	if got {
+		t.Fatalf("first call = true, want false (single org)")
+	}
+	cached, err := s.UserHasMultipleOrgs(context.Background(), "user_solo")
+	if err != nil {
+		t.Fatalf("cached call: %v", err)
+	}
+	if cached != got {
+		t.Fatalf("cached call = %v, want %v", cached, got)
+	}
+	if calls != 1 {
+		t.Fatalf("expected 1 WorkOS request while cached, got %d", calls)
+	}
+
+	// Advance exactly to the expiry instant: now == expires is treated as
+	// expired, so this must re-fetch rather than serve the stale entry.
+	clock = clock.Add(multiOrgCacheTTL)
+	if _, err := s.UserHasMultipleOrgs(context.Background(), "user_solo"); err != nil {
+		t.Fatalf("boundary call: %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("expected re-fetch at the expiry boundary, got %d requests", calls)
 	}
 }
