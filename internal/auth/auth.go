@@ -226,11 +226,24 @@ func (s *Service) SignupHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // SwitchOrgHandler lets an already-signed-in user move to a different
-// organization without first logging out. It re-enters the hosted AuthKit
-// flow with prompt=login, which re-presents the sign-in screen and — for
-// users who belong to more than one organization — the organization
-// picker. Selecting an org there returns through /callback, which seals a
-// fresh session bound to the chosen org_id.
+// organization without manually logging out first. It ends the current
+// WorkOS session and then re-enters the hosted AuthKit flow with
+// prompt=login, which re-presents the sign-in screen and — for users who
+// belong to more than one organization — the organization picker.
+// Selecting an org there returns through /callback, which seals a fresh
+// session bound to the chosen org_id.
+//
+// Revoking the session first is what actually makes the picker appear, and
+// it's the fix for the "switch organization does nothing" report. Hitting
+// /authorize while the browser still holds a live AuthKit SSO session makes
+// WorkOS silently re-issue a code for the *same* organization via SSO and
+// bounce the user straight back into the app — the org picker is only shown
+// during a genuine fresh authentication. This is the same SSO-reuse trap
+// documented on LogoutHandler ("logout signs me back in"). Tearing the
+// session down server-side (and clearing our cookie) forces the next
+// /authorize hop to be a real sign-in, so the picker is re-presented. It
+// also collapses the old manual two-step (log out, then log back in) into a
+// single click.
 //
 // We deliberately reuse the full AuthKit round-trip rather than calling
 // SwitchOrg directly: the app does not keep a local list of the user's
@@ -242,6 +255,12 @@ func (s *Service) SignupHandler(w http.ResponseWriter, r *http.Request) {
 // See also: SwitchOrg for the server-side re-issue path used when the
 // target orgID is already known (e.g. org provisioning during onboarding).
 func (s *Service) SwitchOrgHandler(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.Bypass {
+		// In bypass mode there's no real auth — just send the browser home.
+		http.Redirect(w, r, "/", http.StatusFound)
+		return
+	}
+	s.revokeCurrentSession(w, r)
 	s.redirectToAuthKitWithInvitation(w, r, workos.UserManagementAuthenticationScreenHintSignIn, "", true)
 }
 
@@ -387,6 +406,38 @@ func (s *Service) finishAuthCodeCallback(w http.ResponseWriter, r *http.Request,
 	http.Redirect(w, r, dest, http.StatusFound)
 }
 
+// revokeCurrentSession clears the local session cookie and, when not in
+// bypass mode, revokes the session at WorkOS via a server-to-server API
+// call. It is shared by LogoutHandler and SwitchOrgHandler so the careful
+// teardown logic — and its rationale — lives in exactly one place.
+//
+// AuthenticateSession is a pure-local operation in the WorkOS SDK (AES-GCM
+// unseal + JWT payload parse, no network round-trip), so we can use it here
+// without adding latency. It returns Authenticated == false only when the
+// cookie is missing, fails to unseal, or contains no parseable access-token
+// JWT — in those cases we have no SessionID to revoke and simply skip the
+// server-side call. The SDK does not check JWT expiration here, so a
+// long-lived tab whose access token has expired still gets its session
+// revoked server-side. We cannot bypass the JWT parse by using
+// workos.Unseal[workos.SessionData] directly: SessionData exposes only
+// AccessToken/RefreshToken/User, and the SessionID lives in the JWT's
+// "sid" claim.
+func (s *Service) revokeCurrentSession(w http.ResponseWriter, r *http.Request) {
+	s.clearSessionCookie(w)
+	if s.cfg.Bypass {
+		return
+	}
+	if cookie, err := r.Cookie(SessionCookieName); err == nil && cookie.Value != "" {
+		if res, err := workos.AuthenticateSession(cookie.Value, s.cfg.CookiePassword); err == nil && res.Authenticated && res.SessionID != "" {
+			if err := s.client.UserManagement().RevokeSession(r.Context(), &workos.UserManagementRevokeSessionParams{
+				SessionID: res.SessionID,
+			}); err != nil {
+				slog.Warn("workos revoke session failed", "error", err, "session_id", res.SessionID)
+			}
+		}
+	}
+}
+
 // LogoutHandler clears the session cookie, revokes the session at WorkOS
 // via a server-to-server API call, and redirects the browser to the
 // canonical app root (scheme://publicHost).
@@ -401,32 +452,11 @@ func (s *Service) finishAuthCodeCallback(w http.ResponseWriter, r *http.Request,
 // entirely: the session is dead at WorkOS, the cookie is gone locally,
 // and we hand the browser straight to the public landing page.
 func (s *Service) LogoutHandler(w http.ResponseWriter, r *http.Request) {
-	s.clearSessionCookie(w)
+	s.revokeCurrentSession(w, r)
 	if s.cfg.Bypass {
 		// bypass: no real session to revoke; ?signed_out=1 lets indexHandler show the landing page.
 		http.Redirect(w, r, "/?"+SignedOutParam+"=1", http.StatusFound)
 		return
-	}
-	// AuthenticateSession is a pure-local operation in the WorkOS SDK
-	// (AES-GCM unseal + JWT payload parse, no network round-trip), so we can
-	// use it here without adding latency to logout. It returns
-	// Authenticated == false only when the cookie is missing, fails to
-	// unseal, or contains no parseable access-token JWT — in those cases we
-	// have no SessionID to revoke and fall through to the publicHost
-	// redirect. The SDK does not check JWT expiration here, so a long-lived
-	// tab whose access token has expired still gets its session revoked
-	// server-side. We cannot bypass the JWT parse by using
-	// workos.Unseal[workos.SessionData] directly: SessionData exposes only
-	// AccessToken/RefreshToken/User, and the SessionID lives in the JWT's
-	// "sid" claim.
-	if cookie, err := r.Cookie(SessionCookieName); err == nil && cookie.Value != "" {
-		if res, err := workos.AuthenticateSession(cookie.Value, s.cfg.CookiePassword); err == nil && res.Authenticated && res.SessionID != "" {
-			if err := s.client.UserManagement().RevokeSession(r.Context(), &workos.UserManagementRevokeSessionParams{
-				SessionID: res.SessionID,
-			}); err != nil {
-				slog.Warn("workos revoke session failed", "error", err, "session_id", res.SessionID)
-			}
-		}
 	}
 	// Redirect to the canonical root of the app. Prefer the host parsed from
 	// cfg.RedirectURI (set at construction time from the WORKOS_REDIRECT_URI
