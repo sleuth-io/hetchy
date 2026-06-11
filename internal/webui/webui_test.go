@@ -345,3 +345,37 @@ func TestChatHeaderActionsMenuWiring(t *testing.T) {
 		}
 	}
 }
+
+// TestNewTaskFocusesAgentGroupWiring checks that dispatching a new chat
+// switches the sidebar to the agent group the task was created for, so the
+// freshly created task is visible instead of staying pinned to whatever
+// group was selected before the form opened. submitNewTask captures the
+// dispatched agent slug up front and hands it to focusTaskAgentGroup, which
+// flips into agent mode for that agent.
+func TestNewTaskFocusesAgentGroupWiring(t *testing.T) {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/assets/app_controls.js", nil)
+	AssetHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/assets/app_controls.js status = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	wants := []string{
+		// Capture the dispatched agent before taskPayload mutates state.
+		"const targetAgent = compact(state.selectedTaskAgent, '');",
+		// submitNewTask must hand that agent to the focus helper.
+		"focusTaskAgentGroup(targetAgent);",
+		// The helper flips into agent mode for the dispatched agent.
+		"function focusTaskAgentGroup(agentSlug)",
+		"const targetID = compact(agentSlug, '') || noAgentID;",
+		"state.mode = 'agent';",
+		"state.selectedID = targetID;",
+		"setModeButtonState();",
+		"syncRouteURL();",
+	}
+	for _, want := range wants {
+		if !strings.Contains(body, want) {
+			t.Errorf("/assets/app_controls.js missing %q", want)
+		}
+	}
+}

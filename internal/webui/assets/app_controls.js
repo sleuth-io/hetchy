@@ -415,6 +415,7 @@
       showToast('new-task-empty', 'Enter a task before dispatching.', 'warn');
       return;
     }
+    const targetAgent = compact(state.selectedTaskAgent, '');
     const conversationID = newConversationID();
     let payload;
     try {
@@ -430,7 +431,28 @@
     closeDialog('new-task-dialog');
     showToast('task-started', 'Task dispatched.', 'success', 2200);
     state.selectedRunLimit = initialVisibleRuns;
+    focusTaskAgentGroup(targetAgent);
     backgroundTurn('/api/v1/conversations', payload);
+  }
+
+  // Switch the sidebar to the agent group the new chat was dispatched to,
+  // so the freshly created task lands in view. Without this the list stays
+  // pinned to whatever group was selected before opening the form. The
+  // empty agent slug maps to the "No agent" group; buildAgentGroups always
+  // includes every agent plus that group, so ensureSelection won't bounce
+  // the selection away while we wait for the run to show up in poll data.
+  function focusTaskAgentGroup(agentSlug) {
+    const targetID = compact(agentSlug, '') || noAgentID;
+    if (state.mode === 'agent' && state.selectedID === targetID) return;
+    state.mode = 'agent';
+    state.selectedID = targetID;
+    state.statusFilter = 'all';
+    state.selectedRunLimit = initialVisibleRuns;
+    setModeButtonState();
+    resetScopedWorkSearch();
+    renderAll();
+    scheduleWorkSearch();
+    syncRouteURL();
   }
 
   async function taskPayload(text, conversationID) {
