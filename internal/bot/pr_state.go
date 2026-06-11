@@ -46,7 +46,7 @@ func (b *Bot) refreshConversationPRStateBestEffort(ctx context.Context, orgID, t
 }
 
 func (b *Bot) refreshConversationPRStateForRepo(ctx context.Context, orgID, threadID, rawURL, ownerHint, repoHint string) error {
-	if b == nil || b.store == nil || b.app == nil || strings.TrimSpace(rawURL) == "" {
+	if b == nil || b.store == nil || b.githubTokenSource() == nil || strings.TrimSpace(rawURL) == "" {
 		return nil
 	}
 	parsed, err := parseGitHubPRURL(rawURL)
@@ -66,7 +66,7 @@ func (b *Bot) refreshConversationPRStateForRepo(ctx context.Context, orgID, thre
 		}
 		return fmt.Errorf("resolve github repo for PR state: %w", err)
 	}
-	token, _, err := b.app.InstallationToken(ctx, repoRow.InstallationID, []int64{repoRow.RepoID})
+	token, _, err := b.githubTokenSource().InstallationToken(ctx, repoRow.InstallationID, []int64{repoRow.RepoID})
 	if err != nil {
 		return fmt.Errorf("mint github token for PR state: %w", err)
 	}
@@ -162,8 +162,8 @@ func (b *Bot) BackfillConversationPRStates(ctx context.Context, limit int, force
 	if b == nil || b.store == nil {
 		return PRStateBackfillResult{}, errors.New("database is not configured")
 	}
-	if b.app == nil {
-		return PRStateBackfillResult{}, errors.New("github app is not configured")
+	if b.githubTokenSource() == nil {
+		return PRStateBackfillResult{}, errors.New("github is not configured")
 	}
 	if limit <= 0 {
 		limit = prStateBackfillDefaultLimit

@@ -325,8 +325,8 @@ func (b *Bot) recheckAutoMergeForPR(ctx context.Context, orgID, owner, repo stri
 }
 
 func (b *Bot) githubClientForAutoMerge(ctx context.Context, orgID, owner, repo string) (*github.Client, error) {
-	if b == nil || b.store == nil || b.app == nil {
-		return nil, errors.New("github app or database is not configured")
+	if b == nil || b.store == nil || b.githubTokenSource() == nil {
+		return nil, errors.New("github or database is not configured")
 	}
 	repoRow, err := b.store.Queries.GetGithubRepoForOrg(ctx, sqlc.GetGithubRepoForOrgParams{
 		OrgID: orgID,
@@ -339,7 +339,7 @@ func (b *Bot) githubClientForAutoMerge(ctx context.Context, orgID, owner, repo s
 		}
 		return nil, fmt.Errorf("resolve github repo for auto merge: %w", err)
 	}
-	client, err := b.app.ClientForInstallation(ctx, repoRow.InstallationID)
+	client, err := b.githubTokenSource().ClientForInstallation(ctx, repoRow.InstallationID)
 	if err != nil {
 		return nil, fmt.Errorf("mint github client for auto merge: %w", err)
 	}

@@ -36,7 +36,7 @@ type Manager struct {
 	db     *db.Store
 	orgs   *orgcfg.Store
 	agents *agents.Store
-	app    *githubapp.App
+	app    githubapp.TokenSource
 
 	publicVaultURL      string
 	cacheDir            string
@@ -55,7 +55,7 @@ type Manager struct {
 	skillsNewHTTPClient *http.Client
 }
 
-func NewManager(d *db.Store, orgs *orgcfg.Store, agents *agents.Store, app *githubapp.App) *Manager {
+func NewManager(d *db.Store, orgs *orgcfg.Store, agents *agents.Store, app githubapp.TokenSource) *Manager {
 	return NewManagerWithOptions(d, orgs, agents, app, Options{})
 }
 
@@ -67,7 +67,7 @@ type Options struct {
 	MaxConcurrentGitOps int
 }
 
-func NewManagerWithOptions(d *db.Store, orgs *orgcfg.Store, agents *agents.Store, app *githubapp.App, opts Options) *Manager {
+func NewManagerWithOptions(d *db.Store, orgs *orgcfg.Store, agents *agents.Store, app githubapp.TokenSource, opts Options) *Manager {
 	cacheDir := strings.TrimSpace(opts.CacheDir)
 	maxConcurrent := max(opts.MaxConcurrentGitOps, 1)
 	return &Manager{

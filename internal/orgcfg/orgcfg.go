@@ -59,9 +59,14 @@ type Config struct {
 	// org's Linear workspace. LinearWorkspaceID is Linear's organization
 	// ID — the webhook router's lookup key, mirroring SlackTeamID.
 	// LinearAppUserID is the app's own viewer id in that workspace.
-	LinearAccessToken  string
-	LinearWorkspaceID  string
-	LinearAppUserID    string
+	LinearAccessToken string
+	LinearWorkspaceID string
+	LinearAppUserID   string
+	// GitHubPAT is a personal access token an org pastes as an
+	// alternative to installing the GitHub App. Repos it grants access
+	// to are cached under a synthetic (negative) installation id — see
+	// internal/githubapp's PAT support for how tokens are resolved.
+	GitHubPAT          string
 	SXKey              string
 	DefaultGitHubOwner string
 	DefaultGitHubRepo  string
@@ -184,6 +189,10 @@ func (s *Store) Upsert(ctx context.Context, c Config) (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("encrypt linear access token: %w", err)
 	}
+	gp, err := s.cipher.Encrypt(c.GitHubPAT)
+	if err != nil {
+		return Config{}, fmt.Errorf("encrypt github pat: %w", err)
+	}
 	var teamID *string
 	if c.SlackTeamID != "" {
 		t := c.SlackTeamID
@@ -209,6 +218,7 @@ func (s *Store) Upsert(ctx context.Context, c Config) (Config, error) {
 		LinearAccessTokenEncrypted:     lt,
 		LinearWorkspaceID:              linearWorkspaceID,
 		LinearAppUserID:                c.LinearAppUserID,
+		GithubPatEncrypted:             gp,
 	})
 	if err != nil {
 		return Config{}, fmt.Errorf("upsert org config: %w", err)
@@ -299,6 +309,10 @@ func (s *Store) decrypt(row sqlc.OrgConfig) (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("decrypt linear access token: %w", err)
 	}
+	gp, err := s.cipher.Decrypt(row.GithubPatEncrypted)
+	if err != nil {
+		return Config{}, fmt.Errorf("decrypt github pat: %w", err)
+	}
 	teamID := ""
 	if row.SlackTeamID != nil {
 		teamID = *row.SlackTeamID
@@ -315,6 +329,7 @@ func (s *Store) decrypt(row sqlc.OrgConfig) (Config, error) {
 		LinearAccessToken:     lt,
 		LinearWorkspaceID:     linearWorkspaceID,
 		LinearAppUserID:       row.LinearAppUserID,
+		GitHubPAT:             gp,
 		SXKey:                 sx,
 		AnthropicAPIKey:       ak,
 		ClaudeCodeOAuthToken:  cc,
