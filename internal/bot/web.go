@@ -21,6 +21,7 @@ func (b *Bot) runWeb(ctx context.Context) error {
 
 	mux.HandleFunc("/login", b.auth.LoginHandler)
 	mux.HandleFunc("/signup", b.auth.SignupHandler)
+	mux.HandleFunc("/switch-org", b.auth.SwitchOrgHandler)
 	mux.HandleFunc("/callback", b.auth.CallbackHandler)
 	mux.HandleFunc("/logout", b.auth.LogoutHandler)
 	mux.HandleFunc("/workos/webhook", b.workOSWebhookHandler)

@@ -202,6 +202,23 @@ func (s *Service) SignupHandler(w http.ResponseWriter, r *http.Request) {
 	s.redirectToAuthKit(w, r, workos.UserManagementAuthenticationScreenHintSignUp)
 }
 
+// SwitchOrgHandler lets an already-signed-in user move to a different
+// organization without first logging out. It re-enters the hosted AuthKit
+// flow with prompt=login, which re-presents the sign-in screen and — for
+// users who belong to more than one organization — the organization
+// picker. Selecting an org there returns through /callback, which seals a
+// fresh session bound to the chosen org_id.
+//
+// We deliberately reuse the full AuthKit round-trip rather than calling
+// SwitchOrg directly: the app does not keep a local list of the user's
+// org memberships (WorkOS owns those), and the hosted picker is the same
+// surface users already see at first login, so the experience is
+// consistent. A single-org user who lands here is simply signed straight
+// back into their only org.
+func (s *Service) SwitchOrgHandler(w http.ResponseWriter, r *http.Request) {
+	s.redirectToAuthKitWithInvitation(w, r, workos.UserManagementAuthenticationScreenHintSignIn, "", true)
+}
+
 func (s *Service) redirectToAuthKit(w http.ResponseWriter, r *http.Request, hint workos.UserManagementAuthenticationScreenHint) {
 	s.redirectToAuthKitWithInvitation(w, r, hint, "", false)
 }

@@ -239,6 +239,64 @@ func TestBypassCallbackSkipsStateCheck(t *testing.T) {
 	}
 }
 
+// TestSwitchOrgHandlerRedirectsToAuthKitWithPromptLogin verifies that the
+// "switch organization" link re-enters the hosted AuthKit flow with
+// prompt=login (which re-presents the sign-in screen and, for multi-org
+// users, the org picker) and arms a fresh OAuth state cookie so the
+// returning /callback passes the state gate.
+func TestSwitchOrgHandlerRedirectsToAuthKitWithPromptLogin(t *testing.T) {
+	s := newTestService(t, "test-cookie-password-keep-it-long")
+	s.cfg.RedirectURI = "https://app.example.com/callback"
+	s.client = workos.NewClient("sk_test", workos.WithClientID("client_test"), workos.WithBaseURL("https://api.workos.test"))
+
+	req := httptest.NewRequest(http.MethodGet, "/switch-org", nil)
+	rec := httptest.NewRecorder()
+	s.SwitchOrgHandler(rec, req)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("expected 302 redirect into AuthKit, got %d", rec.Code)
+	}
+	loc := rec.Header().Get("Location")
+	if !strings.HasPrefix(loc, "https://api.workos.test/user_management/authorize?") {
+		t.Fatalf("unexpected AuthKit redirect target: %s", loc)
+	}
+	u, err := url.Parse(loc)
+	if err != nil {
+		t.Fatalf("parse redirect location %q: %v", loc, err)
+	}
+	if got := u.Query().Get("prompt"); got != "login" {
+		t.Fatalf("prompt = %q, want login", got)
+	}
+	var stateCookie *http.Cookie
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == oauthStateCookieName {
+			stateCookie = c
+			break
+		}
+	}
+	if stateCookie == nil {
+		t.Fatal("expected oauth state cookie to be set")
+	}
+}
+
+// TestSwitchOrgHandlerBypassRedirectsHome confirms that in bypass mode
+// (no real WorkOS auth) the handler just bounces the browser back to the
+// app root instead of attempting an AuthKit round-trip.
+func TestSwitchOrgHandlerBypassRedirectsHome(t *testing.T) {
+	s := &Service{cfg: Config{Bypass: true}, statePath: "/"}
+
+	req := httptest.NewRequest(http.MethodGet, "/switch-org", nil)
+	rec := httptest.NewRecorder()
+	s.SwitchOrgHandler(rec, req)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("expected 302 in bypass mode, got %d", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/" {
+		t.Fatalf("expected redirect to /, got %q", loc)
+	}
+}
+
 // TestLogoutBypassRedirectsWithSignedOutParam exercises the bypass-mode
 // branch added in #149: the middleware always fabricates a Principal, so
 // the landing page only re-appears when ?signed_out=1 is set.
