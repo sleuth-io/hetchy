@@ -438,15 +438,15 @@
   // Empty agent slug maps to noAgentID; ensureSelection won't evict this selection during poll propagation.
   function focusTaskAgentGroup(agentSlug) {
     const targetID = compact(agentSlug, '') || noAgentID;
-    // Always drop a stale chat detail so the freshly dispatched task lands in view, even when the group is unchanged.
+    // Drop a stale chat detail and the status filter so the freshly dispatched task lands in view, even when the group is unchanged.
     closeActiveChat({ replace: true });
+    state.statusFilter = 'all';
     if (state.mode === 'agent' && state.selectedID === targetID) {
       renderAll();
       return;
     }
     state.mode = 'agent';
     state.selectedID = targetID;
-    state.statusFilter = 'all';
     setModeButtonState();
     resetScopedWorkSearch();
     renderAll();

@@ -363,6 +363,8 @@ func TestNewTaskFocusesAgentGroupWiring(t *testing.T) {
 		// The helper flips into agent mode for the dispatched agent.
 		"function focusTaskAgentGroup(agentSlug)",
 		"const targetID = compact(agentSlug, '') || noAgentID;",
+		// Filter reset runs before the early-return guard so same-group dispatch also reveals the new task.
+		"state.statusFilter = 'all';",
 		"state.mode = 'agent';",
 		"state.selectedID = targetID;",
 		"setModeButtonState();",
