@@ -136,7 +136,7 @@ type Service struct {
 	// page render. Entries expire after multiOrgCacheTTL so membership
 	// changes are still picked up promptly. now defaults to time.Now and is
 	// overridable in tests to exercise expiry deterministically.
-	multiOrgMu    sync.Mutex
+	multiOrgMu    sync.RWMutex
 	multiOrgCache map[string]multiOrgEntry
 	now           func() time.Time
 }

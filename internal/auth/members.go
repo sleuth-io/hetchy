@@ -166,10 +166,12 @@ func (s *Service) nowFn() time.Time {
 }
 
 // multiOrgCacheGet returns the cached membership-count answer for userID if
-// one is present and unexpired.
+// one is present and unexpired. It takes a read lock so concurrent page
+// renders — the common case once a user's entry is warm — don't serialize
+// on the cache.
 func (s *Service) multiOrgCacheGet(userID string) (bool, bool) {
-	s.multiOrgMu.Lock()
-	defer s.multiOrgMu.Unlock()
+	s.multiOrgMu.RLock()
+	defer s.multiOrgMu.RUnlock()
 	e, ok := s.multiOrgCache[userID]
 	if !ok || !s.nowFn().Before(e.expires) {
 		return false, false
