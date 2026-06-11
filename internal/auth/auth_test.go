@@ -240,109 +240,6 @@ func TestBypassCallbackSkipsStateCheck(t *testing.T) {
 	}
 }
 
-// TestSwitchOrgHandlerRedirectsToAuthKitWithPromptLogin verifies that the
-// "switch organization" link re-enters the hosted AuthKit flow with
-// prompt=login (which re-presents the sign-in screen and, for multi-org
-// users, the org picker) and arms a fresh OAuth state cookie so the
-// returning /callback passes the state gate.
-//
-// It also guards the bug fix: the handler must clear the local session
-// cookie before the AuthKit hop. Without that teardown the browser's live
-// AuthKit SSO session makes WorkOS silently re-issue a code for the *same*
-// org and bounce the user straight back — the "switch organization does
-// nothing" report — instead of re-presenting the picker.
-func TestSwitchOrgHandlerRedirectsToAuthKitWithPromptLogin(t *testing.T) {
-	s := newTestService(t, "test-cookie-password-keep-it-long")
-	s.cfg.RedirectURI = "https://app.example.com/callback"
-	s.client = workos.NewClient("sk_test", workos.WithClientID("client_test"), workos.WithBaseURL("https://api.workos.test"))
-
-	req := httptest.NewRequest(http.MethodGet, "/switch-org", nil)
-	rec := httptest.NewRecorder()
-	s.SwitchOrgHandler(rec, req)
-
-	if rec.Code != http.StatusFound {
-		t.Fatalf("expected 302 redirect into AuthKit, got %d", rec.Code)
-	}
-	loc := rec.Header().Get("Location")
-	if !strings.HasPrefix(loc, "https://api.workos.test/user_management/authorize?") {
-		t.Fatalf("unexpected AuthKit redirect target: %s", loc)
-	}
-	u, err := url.Parse(loc)
-	if err != nil {
-		t.Fatalf("parse redirect location %q: %v", loc, err)
-	}
-	if got := u.Query().Get("prompt"); got != "login" {
-		t.Fatalf("prompt = %q, want login", got)
-	}
-	var stateCookie, sessionCleared *http.Cookie
-	for _, c := range rec.Result().Cookies() {
-		switch c.Name {
-		case oauthStateCookieName:
-			stateCookie = c
-		case SessionCookieName:
-			if c.MaxAge < 0 {
-				sessionCleared = c
-			}
-		}
-	}
-	if stateCookie == nil {
-		t.Fatal("expected oauth state cookie to be set")
-	}
-	if sessionCleared == nil {
-		t.Fatal("expected session cookie to be cleared so AuthKit re-presents the org picker")
-	}
-}
-
-// TestSwitchOrgHandlerMalformedCookieFallsThrough ensures a garbage session
-// cookie does not block the switch-org flow: AuthenticateSession returns
-// Authenticated == false on an invalid sealed value, the WorkOS RevokeSession
-// call is skipped, and the handler still clears the cookie and redirects into
-// AuthKit with prompt=login.
-func TestSwitchOrgHandlerMalformedCookieFallsThrough(t *testing.T) {
-	s := newTestService(t, "test-cookie-password-keep-it-long")
-	s.cfg.RedirectURI = "https://app.example.com/callback"
-	s.client = workos.NewClient("sk_test", workos.WithClientID("client_test"), workos.WithBaseURL("https://api.workos.test"))
-
-	req := httptest.NewRequest(http.MethodGet, "/switch-org", nil)
-	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: "not-a-real-sealed-session"})
-	rec := httptest.NewRecorder()
-	s.SwitchOrgHandler(rec, req)
-
-	if rec.Code != http.StatusFound {
-		t.Fatalf("expected 302 redirect into AuthKit, got %d", rec.Code)
-	}
-	if loc := rec.Header().Get("Location"); !strings.HasPrefix(loc, "https://api.workos.test/user_management/authorize?") {
-		t.Fatalf("unexpected AuthKit redirect target: %s", loc)
-	}
-	var cleared bool
-	for _, c := range rec.Result().Cookies() {
-		if c.Name == SessionCookieName && c.MaxAge < 0 {
-			cleared = true
-		}
-	}
-	if !cleared {
-		t.Fatal("session cookie should be cleared on switch-org even with a malformed cookie")
-	}
-}
-
-// TestSwitchOrgHandlerBypassRedirectsHome confirms that in bypass mode
-// (no real WorkOS auth) the handler just bounces the browser back to the
-// app root instead of attempting an AuthKit round-trip.
-func TestSwitchOrgHandlerBypassRedirectsHome(t *testing.T) {
-	s := &Service{cfg: Config{Bypass: true}, statePath: "/"}
-
-	req := httptest.NewRequest(http.MethodGet, "/switch-org", nil)
-	rec := httptest.NewRecorder()
-	s.SwitchOrgHandler(rec, req)
-
-	if rec.Code != http.StatusFound {
-		t.Fatalf("expected 302 in bypass mode, got %d", rec.Code)
-	}
-	if loc := rec.Header().Get("Location"); loc != "/" {
-		t.Fatalf("expected redirect to /, got %q", loc)
-	}
-}
-
 // TestLogoutBypassRedirectsWithSignedOutParam exercises the bypass-mode
 // branch added in #149: the middleware always fabricates a Principal, so
 // the landing page only re-appears when ?signed_out=1 is set.
@@ -715,5 +612,119 @@ func TestUserHasMultipleOrgsCaches(t *testing.T) {
 	}
 	if calls != 2 {
 		t.Fatalf("expected re-fetch at the expiry boundary, got %d requests", calls)
+	}
+}
+
+// TestListUserOrgs verifies the in-app picker data: only active memberships
+// are requested, each is joined with the WorkOS org display name, the
+// session's current org is flagged, and the rows come back sorted by name.
+func TestListUserOrgs(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/user_management/organization_memberships":
+			if got := r.URL.Query().Get("statuses"); got != "active" {
+				t.Fatalf("statuses filter = %q, want active", got)
+			}
+			if got := r.URL.Query().Get("user_id"); got != "user_multi" {
+				t.Fatalf("user_id = %q, want user_multi", got)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": []map[string]any{
+					{
+						"object": "organization_membership", "id": "om_b",
+						"user_id": "user_multi", "organization_id": "org_b", "status": "active",
+						"directory_managed": false,
+						"created_at":        "2026-01-15T12:00:00.000Z",
+						"updated_at":        "2026-01-15T12:00:00.000Z",
+						"role":              map[string]any{"slug": "member"},
+					},
+					{
+						"object": "organization_membership", "id": "om_a",
+						"user_id": "user_multi", "organization_id": "org_a", "status": "active",
+						"directory_managed": false,
+						"created_at":        "2026-01-15T12:00:00.000Z",
+						"updated_at":        "2026-01-15T12:00:00.000Z",
+						"role":              map[string]any{"slug": "admin"},
+					},
+				},
+				"list_metadata": map[string]any{"before": nil, "after": nil},
+			})
+		case "/organizations/org_a":
+			_ = json.NewEncoder(w).Encode(map[string]any{"object": "organization", "id": "org_a", "name": "Acme"})
+		case "/organizations/org_b":
+			_ = json.NewEncoder(w).Encode(map[string]any{"object": "organization", "id": "org_b", "name": "Beta"})
+		default:
+			t.Fatalf("unexpected WorkOS request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer server.Close()
+
+	s := &Service{client: workos.NewClient("sk_test", workos.WithBaseURL(server.URL))}
+	orgs, err := s.ListUserOrgs(context.Background(), "user_multi", "org_b")
+	if err != nil {
+		t.Fatalf("ListUserOrgs: %v", err)
+	}
+	if len(orgs) != 2 {
+		t.Fatalf("got %d orgs, want 2", len(orgs))
+	}
+	// Sorted by name: Acme before Beta.
+	if orgs[0].Name != "Acme" || orgs[0].OrgID != "org_a" || orgs[0].RoleSlug != "admin" {
+		t.Fatalf("orgs[0] = %+v, want Acme/org_a/admin", orgs[0])
+	}
+	if orgs[0].Current {
+		t.Fatalf("org_a should not be flagged current")
+	}
+	if orgs[1].Name != "Beta" || orgs[1].OrgID != "org_b" || !orgs[1].Current {
+		t.Fatalf("orgs[1] = %+v, want Beta/org_b/current", orgs[1])
+	}
+}
+
+// TestListUserOrgsFallsBackToOrgIDOnNameLookupFailure ensures a failed
+// per-org name lookup yields a still-selectable row labelled with the org
+// ID rather than failing the whole picker.
+func TestListUserOrgsFallsBackToOrgIDOnNameLookupFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/user_management/organization_memberships":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": []map[string]any{{
+					"object": "organization_membership", "id": "om_a",
+					"user_id": "user_x", "organization_id": "org_a", "status": "active",
+					"directory_managed": false,
+					"created_at":        "2026-01-15T12:00:00.000Z",
+					"updated_at":        "2026-01-15T12:00:00.000Z",
+					"role":              map[string]any{"slug": "member"},
+				}},
+				"list_metadata": map[string]any{"before": nil, "after": nil},
+			})
+		default:
+			// Org name lookup (and anything else) fails.
+			http.Error(w, "boom", http.StatusInternalServerError)
+		}
+	}))
+	defer server.Close()
+
+	s := &Service{client: workos.NewClient("sk_test", workos.WithBaseURL(server.URL))}
+	orgs, err := s.ListUserOrgs(context.Background(), "user_x", "org_a")
+	if err != nil {
+		t.Fatalf("ListUserOrgs: %v", err)
+	}
+	if len(orgs) != 1 || orgs[0].Name != "org_a" {
+		t.Fatalf("expected fallback name org_a, got %+v", orgs)
+	}
+}
+
+// TestListUserOrgsBypass confirms bypass mode returns the single bypass org
+// flagged current, with no WorkOS round-trip.
+func TestListUserOrgsBypass(t *testing.T) {
+	s := &Service{cfg: Config{Bypass: true, BypassOrg: "org_bypass", BypassRole: "admin"}}
+	orgs, err := s.ListUserOrgs(context.Background(), "user_bypass", "org_bypass")
+	if err != nil {
+		t.Fatalf("ListUserOrgs: %v", err)
+	}
+	if len(orgs) != 1 || orgs[0].OrgID != "org_bypass" || !orgs[0].Current {
+		t.Fatalf("bypass orgs = %+v, want single current org_bypass", orgs)
 	}
 }

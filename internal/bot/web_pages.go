@@ -99,6 +99,127 @@ func (b *Bot) userHasMultipleOrgs(ctx context.Context, userID string) bool {
 	return has
 }
 
+// switchOrgHandler renders the in-app organization picker (GET) and
+// performs the switch (POST). Unlike bouncing the user through a hosted
+// AuthKit re-login, this keeps them signed in: selecting an org re-issues
+// their session bound to the chosen org via the existing refresh token
+// (auth.SwitchOrg), so they land back in the app as that org without
+// re-entering credentials or being dropped on the login screen.
+func (b *Bot) switchOrgHandler(w http.ResponseWriter, r *http.Request) {
+	p, _ := auth.FromContext(r.Context())
+	switch r.Method {
+	case http.MethodGet:
+		b.renderSwitchOrg(w, r, p, "")
+	case http.MethodPost:
+		b.doSwitchOrg(w, r, p)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// listUserOrgs returns the user's organizations through the test seam when
+// set, otherwise the auth service.
+func (b *Bot) listUserOrgs(ctx context.Context, userID, currentOrgID string) ([]auth.UserOrg, error) {
+	if b.listUserOrgsFn != nil {
+		return b.listUserOrgsFn(ctx, userID, currentOrgID)
+	}
+	return b.auth.ListUserOrgs(ctx, userID, currentOrgID)
+}
+
+// switchOrg re-issues the session bound to orgID through the test seam when
+// set, otherwise the auth service.
+func (b *Bot) switchOrg(w http.ResponseWriter, r *http.Request, orgID string) error {
+	if b.switchOrgFn != nil {
+		return b.switchOrgFn(w, r, orgID)
+	}
+	return b.auth.SwitchOrg(w, r, orgID)
+}
+
+// renderSwitchOrg fetches the user's orgs and shows the picker.
+func (b *Bot) renderSwitchOrg(w http.ResponseWriter, r *http.Request, p auth.Principal, errMsg string) {
+	orgs, err := b.listUserOrgs(r.Context(), p.UserID, p.OrgID)
+	if err != nil {
+		b.log.Error("list user orgs for switch failed", "error", err, "user", p.UserID)
+		http.Error(w, "Could not load your organizations. Please try again.", http.StatusInternalServerError)
+		return
+	}
+	b.renderSwitchOrgWithOrgs(w, r, p, orgs, errMsg)
+}
+
+// renderSwitchOrgWithOrgs shows the picker for an already-fetched org slice,
+// skipping a redundant listUserOrgs round-trip. The POST error path uses this
+// to reuse the slice it already fetched for the IDOR check — re-fetching there
+// also risks silently redirecting (if a concurrent membership change drops the
+// count to <= 1) instead of surfacing the switch failure. A user with one (or
+// zero) orgs has nothing to switch to, so we send them back to the app rather
+// than rendering a single-row picker.
+func (b *Bot) renderSwitchOrgWithOrgs(w http.ResponseWriter, r *http.Request, p auth.Principal, orgs []auth.UserOrg, errMsg string) {
+	if len(orgs) <= 1 {
+		http.Redirect(w, r, "/", http.StatusFound)
+		return
+	}
+	b.renderTemplate(w, webui.SwitchOrg, map[string]any{
+		"Email": p.Email,
+		"Orgs":  orgs,
+		"Error": errMsg,
+	})
+}
+
+// doSwitchOrg validates the chosen org and re-issues the session bound to
+// it. It only lets the user switch into an org they actually belong to —
+// WorkOS would reject a foreign org on the refresh-token exchange anyway,
+// but checking here keeps the failure clean rather than leaning on that.
+func (b *Bot) doSwitchOrg(w http.ResponseWriter, r *http.Request, p auth.Principal) {
+	if err := requireSameOrigin(r); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	orgID := strings.TrimSpace(r.FormValue("org_id"))
+	if orgID == "" {
+		b.renderSwitchOrg(w, r, p, "Please choose an organization.")
+		return
+	}
+	// Already in the requested org — nothing to do.
+	if orgID == p.OrgID {
+		http.Redirect(w, r, "/", http.StatusFound)
+		return
+	}
+	orgs, err := b.listUserOrgs(r.Context(), p.UserID, p.OrgID)
+	if err != nil {
+		b.log.Error("list user orgs for switch failed", "error", err, "user", p.UserID)
+		http.Error(w, "Could not load your organizations. Please try again.", http.StatusInternalServerError)
+		return
+	}
+	if !orgsContain(orgs, orgID) {
+		http.Error(w, "you are not a member of that organization", http.StatusForbidden)
+		return
+	}
+	if err := b.switchOrg(w, r, orgID); err != nil {
+		b.log.Error("switch org failed", "error", err, "user", p.UserID, "org", orgID)
+		// Reuse the slice from the IDOR check rather than re-fetching: it
+		// avoids a second WorkOS round-trip and guarantees the "Could not
+		// switch organization" error actually renders.
+		b.renderSwitchOrgWithOrgs(w, r, p, orgs, "Could not switch organization. Please try again.")
+		return
+	}
+	b.log.Info("switched organization", "user", p.UserID, "from", p.OrgID, "to", orgID)
+	http.Redirect(w, r, "/", http.StatusFound)
+}
+
+// orgsContain reports whether orgID is one of the user's memberships.
+func orgsContain(orgs []auth.UserOrg, orgID string) bool {
+	for _, o := range orgs {
+		if o.OrgID == orgID {
+			return true
+		}
+	}
+	return false
+}
+
 func isAppSPAPath(path string) bool {
 	return path == "/agents" || strings.HasPrefix(path, "/agents/") ||
 		path == "/users" || strings.HasPrefix(path, "/users/") ||

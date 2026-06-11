@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"net/http"
 	"os"
 	"os/exec"
 	"path"
@@ -167,32 +168,37 @@ type Bot struct {
 	// are narrow seams around external systems used by the chat state machine.
 	// Tests install hand-written fakes here so core request logic can be
 	// exercised without GitHub, Daytona, or shell execution.
-	resolveRepoFn             repoResolveFunc
-	runAgentFn                agentRunFunc
-	runFollowUpFn             followUpRunFunc
-	runScriptFn               scriptRunFunc
-	shLinesFn                 shLinesFunc
-	createBootstrapSessionFn  bootstrapSessionFunc
-	runInlineScriptFn         inlineScriptFunc
-	detectViaSandboxFn        bootstrapDetectFunc
-	bootstrapRunFn            bootstrapRunFunc
-	bootstrapAutoHealFn       bootstrapAutoHealFunc
-	recoverRunFn              recoveryLaunchFunc
-	validateRecoveredPRFn     recoveredPRValidationFunc
-	getSandboxFn              func(context.Context, string) (*daytona.Sandbox, error)
-	resumeSandboxFn           func(context.Context, *daytona.Sandbox, blocks.Emitter) error
-	deleteSandboxSessionFn    func(*daytona.Sandbox, string)
-	stopAndArchiveFn          func(context.Context, *daytona.Sandbox)
-	setAutoArchiveIntervalFn  func(context.Context, *daytona.Sandbox, *int) error
-	stopSandboxFn             func(context.Context, *daytona.Sandbox) error
-	archiveSandboxFn          func(context.Context, *daytona.Sandbox) error
-	cleanupSandboxFn          sandboxCleanupFunc
-	ensureSandboxStartedFn    sandboxStartCheckFunc
-	commandLogSnapshotFn      commandLogSnapshotFunc
-	sessionCommandStatusFn    sessionCommandStatusFunc
-	downloadSandboxFileFn     func(context.Context, *daytona.Sandbox, string) ([]byte, error)
-	usersOnlyInOrgFn          func(context.Context, string) ([]string, error)
-	userHasMultipleOrgsFn     func(context.Context, string) (bool, error)
+	resolveRepoFn            repoResolveFunc
+	runAgentFn               agentRunFunc
+	runFollowUpFn            followUpRunFunc
+	runScriptFn              scriptRunFunc
+	shLinesFn                shLinesFunc
+	createBootstrapSessionFn bootstrapSessionFunc
+	runInlineScriptFn        inlineScriptFunc
+	detectViaSandboxFn       bootstrapDetectFunc
+	bootstrapRunFn           bootstrapRunFunc
+	bootstrapAutoHealFn      bootstrapAutoHealFunc
+	recoverRunFn             recoveryLaunchFunc
+	validateRecoveredPRFn    recoveredPRValidationFunc
+	getSandboxFn             func(context.Context, string) (*daytona.Sandbox, error)
+	resumeSandboxFn          func(context.Context, *daytona.Sandbox, blocks.Emitter) error
+	deleteSandboxSessionFn   func(*daytona.Sandbox, string)
+	stopAndArchiveFn         func(context.Context, *daytona.Sandbox)
+	setAutoArchiveIntervalFn func(context.Context, *daytona.Sandbox, *int) error
+	stopSandboxFn            func(context.Context, *daytona.Sandbox) error
+	archiveSandboxFn         func(context.Context, *daytona.Sandbox) error
+	cleanupSandboxFn         sandboxCleanupFunc
+	ensureSandboxStartedFn   sandboxStartCheckFunc
+	commandLogSnapshotFn     commandLogSnapshotFunc
+	sessionCommandStatusFn   sessionCommandStatusFunc
+	downloadSandboxFileFn    func(context.Context, *daytona.Sandbox, string) ([]byte, error)
+	usersOnlyInOrgFn         func(context.Context, string) ([]string, error)
+	userHasMultipleOrgsFn    func(context.Context, string) (bool, error)
+	// listUserOrgsFn and switchOrgFn are test seams for the in-app org
+	// picker (switchOrgHandler). Production leaves them nil and the auth
+	// service answers; tests inject them to avoid a WorkOS round-trip.
+	listUserOrgsFn            func(context.Context, string, string) ([]auth.UserOrg, error)
+	switchOrgFn               func(http.ResponseWriter, *http.Request, string) error
 	deleteWorkOSOrgFn         func(context.Context, string) error
 	workOSOrgHasFeatureFlagFn func(context.Context, string, string) (bool, error)
 	// branchNameFn lets tests bypass the LLM round-trip in

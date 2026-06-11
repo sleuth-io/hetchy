@@ -29,6 +29,7 @@ const (
 	Onboarding Template = "onboarding"
 	Profile    Template = "profile"
 	Settings   Template = "settings"
+	SwitchOrg  Template = "switch_org"
 	Welcome    Template = "welcome"
 )
 
@@ -38,6 +39,7 @@ var templateFiles = map[Template]string{
 	Onboarding: "templates/onboarding.html",
 	Profile:    "templates/profile.html",
 	Settings:   "templates/settings.html",
+	SwitchOrg:  "templates/switch_org.html",
 	Welcome:    "templates/welcome.html",
 }
 
