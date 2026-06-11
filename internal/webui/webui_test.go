@@ -356,7 +356,7 @@ func TestNewTaskFocusesAgentGroupWiring(t *testing.T) {
 	}
 	body := rec.Body.String()
 	wants := []string{
-		// Capture the dispatched agent before taskPayload mutates state.
+		// Snapshot the dispatched agent up front so the post-dispatch switch targets it.
 		"const targetAgent = compact(state.selectedTaskAgent, '');",
 		// submitNewTask must hand that agent to the focus helper.
 		"focusTaskAgentGroup(targetAgent);",

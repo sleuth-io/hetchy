@@ -447,7 +447,6 @@
     state.mode = 'agent';
     state.selectedID = targetID;
     state.statusFilter = 'all';
-    state.selectedRunLimit = initialVisibleRuns;
     setModeButtonState();
     resetScopedWorkSearch();
     renderAll();
