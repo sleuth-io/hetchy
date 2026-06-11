@@ -196,15 +196,19 @@ restore_hetchy_cache_archive() {
 
   [[ -f "$archive" ]] || return 2
   mkdir -p "$local_cache_dir" || return 1
+  # This runs only as a backgrounded subshell (see configure_hetchy_cache),
+  # so exec the tar to make the recorded $! the tar process itself. Without
+  # exec, killing the subshell during an abort orphans the tar child, which
+  # keeps extracting into the cache dir after the script exits.
   case "$archive" in
     *.tar.zst)
-      tar -C "$local_cache_dir" --use-compress-program "zstd -d -T0" -xf "$archive" >/dev/null 2>&1
+      exec tar -C "$local_cache_dir" --use-compress-program "zstd -d -T0" -xf "$archive" >/dev/null 2>&1
       ;;
     *.tar.gz|*.tgz)
-      tar -C "$local_cache_dir" --use-compress-program "$(hetchy_cache_gunzip_program)" -xf "$archive" >/dev/null 2>&1
+      exec tar -C "$local_cache_dir" --use-compress-program "$(hetchy_cache_gunzip_program)" -xf "$archive" >/dev/null 2>&1
       ;;
     *)
-      tar -C "$local_cache_dir" -xf "$archive" >/dev/null 2>&1
+      exec tar -C "$local_cache_dir" -xf "$archive" >/dev/null 2>&1
       ;;
   esac
 }

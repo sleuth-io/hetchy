@@ -368,8 +368,9 @@ func TestNewTaskFocusesAgentGroupWiring(t *testing.T) {
 		"state.mode = 'agent';",
 		"state.selectedID = targetID;",
 		"setModeButtonState();",
-		// Dispatching closes any stale chat detail from the previously selected group.
-		"closeActiveChat({ replace: true });",
+		// Dispatching closes any stale chat detail without its own URL sync, so the group switch records a single route entry instead of a stray one for the old group.
+		"closeActiveChat({ syncURL: false });",
+		"syncRouteURL({ replace: true });",
 		"syncRouteURL();",
 	}
 	for _, want := range wants {

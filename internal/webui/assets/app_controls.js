@@ -439,10 +439,12 @@
   function focusTaskAgentGroup(agentSlug) {
     const targetID = compact(agentSlug, '') || noAgentID;
     // Drop a stale chat detail and the status filter so the freshly dispatched task lands in view, even when the group is unchanged.
-    closeActiveChat({ replace: true });
+    // Suppress closeActiveChat's own URL sync: the selection hasn't moved yet, so it would record a stray entry for the old group before the switch below. A single syncRouteURL at the end captures the final route instead.
+    closeActiveChat({ syncURL: false });
     state.statusFilter = 'all';
     if (state.mode === 'agent' && state.selectedID === targetID) {
       renderAll();
+      syncRouteURL({ replace: true });
       return;
     }
     state.mode = 'agent';
