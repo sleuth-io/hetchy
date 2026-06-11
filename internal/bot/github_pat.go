@@ -56,6 +56,10 @@ func (b *Bot) lookupPATForInstallation(ctx context.Context, installationID int64
 // before anything is persisted, so a typo'd token never replaces a
 // working one. POST-only, admin-gated, same-origin.
 func (b *Bot) githubPATConnectHandler(w http.ResponseWriter, r *http.Request) {
+	if b.github == nil || b.store == nil {
+		http.Error(w, "GitHub is not configured for this environment.", http.StatusServiceUnavailable)
+		return
+	}
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -98,12 +102,14 @@ func (b *Bot) githubPATConnectHandler(w http.ResponseWriter, r *http.Request) {
 
 	current, err := b.orgs.Get(r.Context(), p.OrgID)
 	if err != nil && !errors.Is(err, orgcfg.ErrNotFound) {
+		b.dropOrphanedPATInstallation(p.OrgID, res.InstallationID)
 		http.Error(w, "load config: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	current.OrgID = p.OrgID
 	current.GitHubPAT = pat
 	if _, err := b.orgs.Upsert(r.Context(), current); err != nil {
+		b.dropOrphanedPATInstallation(p.OrgID, res.InstallationID)
 		http.Error(w, "save: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -116,6 +122,20 @@ func (b *Bot) githubPATConnectHandler(w http.ResponseWriter, r *http.Request) {
 		"actor", p.UserID,
 	)
 	http.Redirect(w, r, "/settings/org?tab=integrations&saved=github_pat_connected", http.StatusFound)
+}
+
+// dropOrphanedPATInstallation compensates for a connect that synced an
+// installation but then failed to persist the token: without the PAT in
+// org_configs the synthetic installation can never mint a credential,
+// so leaving it behind would render a connection that silently fails.
+// Best-effort with its own context — the request may already be dead.
+func (b *Bot) dropOrphanedPATInstallation(orgID string, installationID int64) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := b.store.Queries.DeleteGithubInstallation(ctx, installationID); err != nil {
+		b.log.Error("github pat: orphaned installation cleanup failed — sync succeeded but token save did not",
+			"org", orgID, "installation_id", installationID, "error", err)
+	}
 }
 
 // githubPATDisconnectHandler clears the org's stored PAT and drops the
@@ -137,14 +157,10 @@ func (b *Bot) githubPATDisconnectHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	installationID := githubapp.PATInstallationID(p.OrgID)
-	if err := b.store.Queries.DeleteGithubInstallation(r.Context(), installationID); err != nil {
-		b.log.Error("github pat disconnect: delete installation",
-			"org", p.OrgID, "installation_id", installationID, "error", err)
-		http.Error(w, "delete installation failed", http.StatusInternalServerError)
-		return
-	}
-
+	// Clear the secret first, then drop the installation row. If the
+	// delete below fails, the UI still shows the connection and the
+	// disconnect can simply be retried; the reverse order could strand
+	// encrypted PAT bytes in org_configs with no UI path back to them.
 	current, err := b.orgs.Get(r.Context(), p.OrgID)
 	if err != nil && !errors.Is(err, orgcfg.ErrNotFound) {
 		http.Error(w, "load config: "+err.Error(), http.StatusInternalServerError)
@@ -154,6 +170,14 @@ func (b *Bot) githubPATDisconnectHandler(w http.ResponseWriter, r *http.Request)
 	current.GitHubPAT = ""
 	if _, err := b.orgs.Upsert(r.Context(), current); err != nil {
 		http.Error(w, "save: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	installationID := githubapp.PATInstallationID(p.OrgID)
+	if err := b.store.Queries.DeleteGithubInstallation(r.Context(), installationID); err != nil {
+		b.log.Error("github pat disconnect: delete installation after token cleared — retry disconnect from the UI",
+			"org", p.OrgID, "installation_id", installationID, "error", err)
+		http.Error(w, "delete installation failed", http.StatusInternalServerError)
 		return
 	}
 

@@ -323,7 +323,7 @@
           </div>
           {{end}}
           <div class="cred-panel{{if eq $method "pat"}} active{{end}}" data-cred-panel="pat">
-            <p class="cred-help">Create a <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">fine-grained token</a> with access to the repos Hetchy should work in, and Read/Write permission on <strong>Contents</strong> and <strong>Pull requests</strong> (plus read on <strong>Metadata</strong>). Hetchy verifies the token and lists the repos it can push to.</p>
+            <p class="cred-help">Create a <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">fine-grained token</a> with access to the repos Hetchy should work in, and Read/Write permission on <strong>Contents</strong> and <strong>Pull requests</strong> (plus read on <strong>Metadata</strong>). Hetchy verifies the token and lists the repos it can push to. Token expiry is managed on GitHub's side — if the token expires, runs and sync will fail until you paste a fresh one.</p>
             <label for="github_pat">Token</label>
             <input id="github_pat" type="password" name="github_pat" placeholder="github_pat_… or ghp_…" autocomplete="off">
             {{if $hasPAT}}<p class="hint">Saved token: <code>{{.GitHubPATPreview}}</code></p>{{end}}

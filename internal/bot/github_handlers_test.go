@@ -68,12 +68,14 @@ func botWithGithubApp(t *testing.T, withOrg bool) *Bot {
 	if err != nil {
 		t.Fatalf("cipher: %v", err)
 	}
+	app := freshGithubAppForTest(t, "wh-secret")
 	return &Bot{
 		log:              discardLogger(),
 		cfg:              Config{WebPort: "0"},
 		auth:             a,
 		cipher:           cipher,
-		app:              freshGithubAppForTest(t, "wh-secret"),
+		app:              app,
+		github:           &githubapp.Source{App: app},
 		githubWebhookSem: make(chan struct{}, webhookDispatchConcurrency),
 	}
 }

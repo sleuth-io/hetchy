@@ -271,8 +271,17 @@ func (b *Bot) githubSyncHandler(w http.ResponseWriter, r *http.Request) {
 	syncCtx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()
 	if githubapp.IsPATInstallation(installationID) {
+		if b.orgs == nil || b.github == nil {
+			http.Error(w, "GitHub token connections are not configured.", http.StatusServiceUnavailable)
+			return
+		}
 		oc, err := b.orgs.Get(syncCtx, p.OrgID)
-		if err != nil || oc.GitHubPAT == "" {
+		if err != nil {
+			b.log.Error("github pat sync: load org config", "org", p.OrgID, "error", err)
+			http.Error(w, "load org config: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if oc.GitHubPAT == "" {
 			http.Error(w, "no GitHub token stored for this organization", http.StatusBadRequest)
 			return
 		}
