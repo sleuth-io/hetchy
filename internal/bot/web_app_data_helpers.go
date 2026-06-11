@@ -47,11 +47,13 @@ func appDataStateLabel(state, outcome string) string {
 
 // appDataResultLabel is the short chat-card pill label for a run. For
 // terminal "done" runs the label reflects the actual end result — a fresh
-// PR, an updated PR on a follow-up, an answer-only chat, or a merged PR
-// — rather than a generic "Done". Once GitHub reports the PR as merged
-// the label sticks at "PR merged" regardless of which run originally
-// opened or updated it. Other statuses keep their existing short labels.
-func appDataResultLabel(state, outcome, runKind, prURL string, prMerged bool) string {
+// PR, an updated PR on a follow-up, an answer-only chat, a merged PR, or a
+// closed-without-merging PR — rather than a generic "Done". Once GitHub
+// reports the PR as merged the label sticks at "PR merged" regardless of
+// which run originally opened or updated it; a PR that GitHub later reports
+// as closed without merging shows "PR closed". Other statuses keep their
+// existing short labels.
+func appDataResultLabel(state, outcome, runKind, prURL, prState string, prMerged bool) string {
 	switch appDataStatus(state, outcome) {
 	case "running":
 		return "Running"
@@ -62,15 +64,20 @@ func appDataResultLabel(state, outcome, runKind, prURL string, prMerged bool) st
 	case "cancelled":
 		return "Canceled"
 	case "done":
-		return doneRunResultLabel(outcome, runKind, prURL, prMerged)
+		return doneRunResultLabel(outcome, runKind, prURL, prState, prMerged)
 	default:
 		return "Done"
 	}
 }
 
-func doneRunResultLabel(outcome, runKind, prURL string, prMerged bool) string {
+func doneRunResultLabel(outcome, runKind, prURL, prState string, prMerged bool) string {
 	if prMerged && strings.TrimSpace(prURL) != "" {
 		return "PR merged"
+	}
+	// A merged PR is also "closed" on GitHub, but the merged check above
+	// already claimed it; this only fires for PRs closed without merging.
+	if strings.TrimSpace(prURL) != "" && strings.EqualFold(strings.TrimSpace(prState), githubPRStateClosed) {
+		return "PR closed"
 	}
 	switch outcome {
 	case runstore.OutcomeCompletedNoPR:
