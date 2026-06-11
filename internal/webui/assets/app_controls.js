@@ -435,15 +435,15 @@
     backgroundTurn('/api/v1/conversations', payload);
   }
 
-  // Switch the sidebar to the agent group the new chat was dispatched to,
-  // so the freshly created task lands in view. Without this the list stays
-  // pinned to whatever group was selected before opening the form. The
-  // empty agent slug maps to the "No agent" group; buildAgentGroups always
-  // includes every agent plus that group, so ensureSelection won't bounce
-  // the selection away while we wait for the run to show up in poll data.
+  // Empty agent slug maps to noAgentID; ensureSelection won't evict this selection during poll propagation.
   function focusTaskAgentGroup(agentSlug) {
     const targetID = compact(agentSlug, '') || noAgentID;
-    if (state.mode === 'agent' && state.selectedID === targetID) return;
+    // Always drop a stale chat detail so the freshly dispatched task lands in view, even when the group is unchanged.
+    closeActiveChat({ replace: true });
+    if (state.mode === 'agent' && state.selectedID === targetID) {
+      renderAll();
+      return;
+    }
     state.mode = 'agent';
     state.selectedID = targetID;
     state.statusFilter = 'all';

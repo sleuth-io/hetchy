@@ -346,12 +346,7 @@ func TestChatHeaderActionsMenuWiring(t *testing.T) {
 	}
 }
 
-// TestNewTaskFocusesAgentGroupWiring checks that dispatching a new chat
-// switches the sidebar to the agent group the task was created for, so the
-// freshly created task is visible instead of staying pinned to whatever
-// group was selected before the form opened. submitNewTask captures the
-// dispatched agent slug up front and hands it to focusTaskAgentGroup, which
-// flips into agent mode for that agent.
+// TestNewTaskFocusesAgentGroupWiring checks the new chat dispatch switches the sidebar to the dispatched agent's group.
 func TestNewTaskFocusesAgentGroupWiring(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/assets/app_controls.js", nil)
@@ -371,6 +366,8 @@ func TestNewTaskFocusesAgentGroupWiring(t *testing.T) {
 		"state.mode = 'agent';",
 		"state.selectedID = targetID;",
 		"setModeButtonState();",
+		// Dispatching closes any stale chat detail from the previously selected group.
+		"closeActiveChat({ replace: true });",
 		"syncRouteURL();",
 	}
 	for _, want := range wants {
