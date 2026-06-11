@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hetchyhq/hetchy/internal/db/sqlc"
 	"github.com/hetchyhq/hetchy/internal/secrets"
 )
 
@@ -323,5 +324,313 @@ func TestGetBySlugNilDBNotFound(t *testing.T) {
 	_, err = s.GetBySlug(t.Context(), "org", "")
 	if err == nil {
 		t.Fatal("GetBySlug(empty) expected error, got nil")
+	}
+}
+
+func TestProfileFromGetRow(t *testing.T) {
+	row := sqlc.GetAgentProfileBySlugRow{
+		Slug:          "sally",
+		DisplayName:   "Sally Backend",
+		Description:   "Backend specialist",
+		SxBot:         "sx-bot",
+		PersonaAsset:  "asset.png",
+		PersonaPrompt: "You are Sally.",
+		SlackAliases:  []string{"backend", "@api"},
+		Skills:        []string{"golang-pro", "testing"},
+		VaultBackend:  "git@github.com:org/vault.git",
+		TemplateSlug:  "bob",
+		SyncStatus:    "synced",
+		SyncError:     "",
+		Enabled:       true,
+		BuiltIn:       false,
+	}
+	p := profileFromGetRow(row)
+	if p.Slug != "sally" {
+		t.Errorf("Slug = %q, want sally", p.Slug)
+	}
+	if p.DisplayName != "Sally Backend" {
+		t.Errorf("DisplayName = %q, want Sally Backend", p.DisplayName)
+	}
+	if p.Description != "Backend specialist" {
+		t.Errorf("Description = %q, want Backend specialist", p.Description)
+	}
+	if p.SXBot != "sx-bot" {
+		t.Errorf("SXBot = %q, want sx-bot", p.SXBot)
+	}
+	if p.PersonaAsset != "asset.png" {
+		t.Errorf("PersonaAsset = %q, want asset.png", p.PersonaAsset)
+	}
+	if p.PersonaPrompt != "You are Sally." {
+		t.Errorf("PersonaPrompt = %q, want 'You are Sally.'", p.PersonaPrompt)
+	}
+	if p.VaultBackend != "git@github.com:org/vault.git" {
+		t.Errorf("VaultBackend = %q", p.VaultBackend)
+	}
+	if p.TemplateSlug != "bob" {
+		t.Errorf("TemplateSlug = %q, want bob", p.TemplateSlug)
+	}
+	if p.SyncStatus != "synced" {
+		t.Errorf("SyncStatus = %q, want synced", p.SyncStatus)
+	}
+	if !p.Enabled {
+		t.Error("Enabled should be true")
+	}
+	if p.BuiltIn {
+		t.Error("BuiltIn should be false")
+	}
+	// Aliases are cleaned (@ stripped, lowercased, deduped).
+	wantAliases := []string{"backend", "api"}
+	if !slices.Equal(p.SlackAliases, wantAliases) {
+		t.Errorf("SlackAliases = %v, want %v", p.SlackAliases, wantAliases)
+	}
+	wantSkills := []string{"golang-pro", "testing"}
+	if !slices.Equal(p.Skills, wantSkills) {
+		t.Errorf("Skills = %v, want %v", p.Skills, wantSkills)
+	}
+	// SXBotKey is always empty from the package-level function (no cipher).
+	if p.SXBotKey != "" {
+		t.Errorf("SXBotKey = %q, want empty from package-level func", p.SXBotKey)
+	}
+}
+
+func TestStoreProfileFromGetRow(t *testing.T) {
+	row := sqlc.GetAgentProfileBySlugRow{
+		Slug:         "sally",
+		DisplayName:  "Sally Backend",
+		SlackAliases: []string{"backend"},
+		Skills:       []string{"golang-pro"},
+		Enabled:      true,
+	}
+	s := NewStore(nil)
+	p := s.profileFromGetRow(row)
+	if p.Slug != "sally" {
+		t.Errorf("Slug = %q, want sally", p.Slug)
+	}
+	// Without a cipher SXBotKey is always empty.
+	if p.SXBotKey != "" {
+		t.Errorf("SXBotKey should be empty with nil cipher, got %q", p.SXBotKey)
+	}
+}
+
+func TestProfileFromUpsertRow(t *testing.T) {
+	row := sqlc.UpsertAgentProfileRow{
+		Slug:          "sally",
+		DisplayName:   "Sally Backend",
+		Description:   "Backend specialist",
+		SxBot:         "sx-bot",
+		PersonaAsset:  "asset.png",
+		PersonaPrompt: "You are Sally.",
+		SlackAliases:  []string{"backend", "@api"},
+		Skills:        []string{"golang-pro"},
+		VaultBackend:  "git@github.com:org/vault.git",
+		TemplateSlug:  "bob",
+		SyncStatus:    "synced",
+		Enabled:       true,
+		BuiltIn:       false,
+	}
+	p := profileFromUpsertRow(row)
+	if p.Slug != "sally" {
+		t.Errorf("Slug = %q, want sally", p.Slug)
+	}
+	if p.VaultBackend != "git@github.com:org/vault.git" {
+		t.Errorf("VaultBackend = %q", p.VaultBackend)
+	}
+	if p.BuiltIn {
+		t.Error("BuiltIn should be false")
+	}
+	wantAliases := []string{"backend", "api"}
+	if !slices.Equal(p.SlackAliases, wantAliases) {
+		t.Errorf("SlackAliases = %v, want %v", p.SlackAliases, wantAliases)
+	}
+}
+
+func TestProfileFromUpdateNameRow(t *testing.T) {
+	row := sqlc.UpdateAgentProfileNameRow{
+		Slug:         "sally",
+		DisplayName:  "Sally Backend",
+		SlackAliases: []string{"backend"},
+		Skills:       []string{"golang-pro"},
+		VaultBackend: "git@github.com:org/vault.git",
+		Enabled:      true,
+	}
+	p := profileFromUpdateNameRow(row)
+	if p.Slug != "sally" {
+		t.Errorf("Slug = %q, want sally", p.Slug)
+	}
+	if p.DisplayName != "Sally Backend" {
+		t.Errorf("DisplayName = %q, want Sally Backend", p.DisplayName)
+	}
+	if p.VaultBackend != "git@github.com:org/vault.git" {
+		t.Errorf("VaultBackend = %q", p.VaultBackend)
+	}
+	if !p.Enabled {
+		t.Error("Enabled should be true")
+	}
+}
+
+func TestProfileFromTemplateRow(t *testing.T) {
+	row := sqlc.AgentProfileTemplate{
+		Slug:          "archy",
+		DisplayName:   "Architect",
+		Description:   "Architecture specialist",
+		SxBot:         "sx-archy",
+		PersonaAsset:  "archy.png",
+		PersonaPrompt: "You are Archy.",
+		SlackAliases:  []string{"architect", "@arch"},
+		Skills:        []string{"system-design"},
+		Enabled:       true,
+	}
+	p := profileFromTemplateRow(row)
+	if p.Slug != "archy" {
+		t.Errorf("Slug = %q, want archy", p.Slug)
+	}
+	if p.DisplayName != "Architect" {
+		t.Errorf("DisplayName = %q, want Architect", p.DisplayName)
+	}
+	// BuiltIn must always be true for templates.
+	if !p.BuiltIn {
+		t.Error("BuiltIn should be true for template rows")
+	}
+	// TemplateSlug is set to the row's Slug field.
+	if p.TemplateSlug != "archy" {
+		t.Errorf("TemplateSlug = %q, want archy", p.TemplateSlug)
+	}
+	// Aliases cleaned.
+	wantAliases := []string{"architect", "arch"}
+	if !slices.Equal(p.SlackAliases, wantAliases) {
+		t.Errorf("SlackAliases = %v, want %v", p.SlackAliases, wantAliases)
+	}
+	if !p.Enabled {
+		t.Error("Enabled should be true")
+	}
+}
+
+func TestStoreProfileFromListRow(t *testing.T) {
+	row := sqlc.ListAgentProfilesByOrgRow{
+		Slug:         "sally",
+		DisplayName:  "Sally Backend",
+		SlackAliases: []string{"backend"},
+		Skills:       []string{"golang-pro"},
+		VaultBackend: "git@github.com:org/vault.git",
+		TemplateSlug: "bob",
+		SyncStatus:   "synced",
+		Enabled:      true,
+		BuiltIn:      false,
+	}
+	s := NewStore(nil)
+	p := s.profileFromListRow(row)
+	if p.Slug != "sally" {
+		t.Errorf("Slug = %q, want sally", p.Slug)
+	}
+	if !p.Enabled {
+		t.Error("Enabled should be true")
+	}
+	// Without a cipher, SXBotKey is always empty.
+	if p.SXBotKey != "" {
+		t.Errorf("SXBotKey should be empty with nil cipher, got %q", p.SXBotKey)
+	}
+}
+
+func TestStoreProfileFromListRowWithCipher(t *testing.T) {
+	rawKey := strings.Repeat("b", 32)
+	hexKey := hex.EncodeToString([]byte(rawKey))
+	cipher, err := secrets.New(hexKey)
+	if err != nil {
+		t.Fatalf("secrets.New: %v", err)
+	}
+	s := NewStoreWithCipher(nil, cipher)
+
+	const botKey = "sx-secret"
+	encrypted, err := s.encryptBotKey(botKey)
+	if err != nil {
+		t.Fatalf("encryptBotKey: %v", err)
+	}
+	row := sqlc.ListAgentProfilesByOrgRow{
+		Slug:              "sally",
+		SxBotKeyEncrypted: encrypted,
+	}
+	p := s.profileFromListRow(row)
+	if p.SXBotKey != botKey {
+		t.Errorf("SXBotKey = %q, want %q", p.SXBotKey, botKey)
+	}
+}
+
+func TestStoreProfileFromVaultSyncRow(t *testing.T) {
+	row := sqlc.UpdateAgentProfileVaultSyncRow{
+		Slug:         "sally",
+		DisplayName:  "Sally Backend",
+		SlackAliases: []string{"backend"},
+		Skills:       []string{"golang-pro"},
+		VaultBackend: "git@github.com:org/vault.git",
+		TemplateSlug: "bob",
+		SyncStatus:   "synced",
+		SyncError:    "",
+		Enabled:      true,
+		BuiltIn:      false,
+	}
+	s := NewStore(nil)
+	p := s.profileFromVaultSyncRow(row)
+	if p.Slug != "sally" {
+		t.Errorf("Slug = %q, want sally", p.Slug)
+	}
+	if p.VaultBackend != "git@github.com:org/vault.git" {
+		t.Errorf("VaultBackend = %q", p.VaultBackend)
+	}
+	if p.SyncStatus != "synced" {
+		t.Errorf("SyncStatus = %q, want synced", p.SyncStatus)
+	}
+	if p.SyncError != "" {
+		t.Errorf("SyncError = %q, want empty", p.SyncError)
+	}
+	if p.SXBotKey != "" {
+		t.Errorf("SXBotKey should be empty with nil cipher, got %q", p.SXBotKey)
+	}
+}
+
+func TestStoreProfileFromGetRowWithCipher(t *testing.T) {
+	rawKey := strings.Repeat("c", 32)
+	hexKey := hex.EncodeToString([]byte(rawKey))
+	cipher, err := secrets.New(hexKey)
+	if err != nil {
+		t.Fatalf("secrets.New: %v", err)
+	}
+	s := NewStoreWithCipher(nil, cipher)
+
+	const botKey = "sx-get-row-secret"
+	encrypted, err := s.encryptBotKey(botKey)
+	if err != nil {
+		t.Fatalf("encryptBotKey: %v", err)
+	}
+	row := sqlc.GetAgentProfileBySlugRow{
+		Slug:              "sally",
+		SxBotKeyEncrypted: encrypted,
+	}
+	p := s.profileFromGetRow(row)
+	if p.SXBotKey != botKey {
+		t.Errorf("SXBotKey = %q, want %q", p.SXBotKey, botKey)
+	}
+}
+
+func TestStoreProfileFromVaultSyncRowWithCipher(t *testing.T) {
+	rawKey := strings.Repeat("d", 32)
+	hexKey := hex.EncodeToString([]byte(rawKey))
+	cipher, err := secrets.New(hexKey)
+	if err != nil {
+		t.Fatalf("secrets.New: %v", err)
+	}
+	s := NewStoreWithCipher(nil, cipher)
+
+	const botKey = "sx-vault-sync-secret"
+	encrypted, err := s.encryptBotKey(botKey)
+	if err != nil {
+		t.Fatalf("encryptBotKey: %v", err)
+	}
+	row := sqlc.UpdateAgentProfileVaultSyncRow{
+		Slug:              "sally",
+		SxBotKeyEncrypted: encrypted,
+	}
+	p := s.profileFromVaultSyncRow(row)
+	if p.SXBotKey != botKey {
+		t.Errorf("SXBotKey = %q, want %q", p.SXBotKey, botKey)
 	}
 }

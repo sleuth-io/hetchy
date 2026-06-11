@@ -346,6 +346,62 @@ func TestChatHeaderActionsMenuWiring(t *testing.T) {
 	}
 }
 
+func TestGravatarURL(t *testing.T) {
+	// MD5("user@example.com") = b58996c504c5638798eb6b511e6f49af
+	got := GravatarURL("user@example.com")
+	if !strings.Contains(got, "b58996c504c5638798eb6b511e6f49af") {
+		t.Errorf("GravatarURL = %q, missing expected MD5 hash for user@example.com", got)
+	}
+	if !strings.Contains(got, "?d=identicon") {
+		t.Errorf("GravatarURL = %q, missing ?d=identicon fallback param", got)
+	}
+	// Trims whitespace and lowercases before hashing.
+	got2 := GravatarURL("  User@Example.COM  ")
+	if got != got2 {
+		t.Errorf("GravatarURL should normalize email case and whitespace: %q != %q", got, got2)
+	}
+}
+
+func TestAssetHandlerRejectsNonGET(t *testing.T) {
+	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(method, "/assets/app.js", nil)
+		AssetHandler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusMethodNotAllowed {
+			t.Errorf("%s /assets/app.js status = %d, want 405", method, rec.Code)
+		}
+	}
+	// HEAD must be allowed.
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodHead, "/assets/app.js", nil)
+	AssetHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("HEAD /assets/app.js status = %d, want 200", rec.Code)
+	}
+}
+
+func TestRenderLandingTemplate(t *testing.T) {
+	rec := httptest.NewRecorder()
+	Render(nil, rec, Landing, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Landing status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Header().Get("Content-Type"), "text/html") {
+		t.Errorf("Content-Type = %q, want text/html", rec.Header().Get("Content-Type"))
+	}
+	if !strings.Contains(rec.Body.String(), "<html") {
+		t.Errorf("Landing template rendered empty or missing <html element")
+	}
+}
+
+func TestRenderUnknownTemplateReturns500(t *testing.T) {
+	rec := httptest.NewRecorder()
+	Render(nil, rec, Template("nonexistent"), nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("unknown template status = %d, want 500", rec.Code)
+	}
+}
+
 // TestNewTaskFocusesAgentGroupWiring checks the new chat dispatch switches the sidebar to the dispatched agent's group.
 func TestNewTaskFocusesAgentGroupWiring(t *testing.T) {
 	rec := httptest.NewRecorder()
