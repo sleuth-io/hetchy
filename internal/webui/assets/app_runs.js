@@ -521,6 +521,7 @@
         + '<svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><rect x="7" y="7" width="10" height="10" rx="2"/></svg>'
         + '</button>'
       : '';
+    const resultLabel = runResultLabel(run);
     const activeDetails = isActive
       ? '<div class="active-run-details">'
         + '<div class="live-panel">'
@@ -539,7 +540,7 @@
       + '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>'
       + '</button>'
       + stopButton
-      + '<span class="pill ' + esc(run.status) + '">' + esc(runResultLabel(run)) + '</span>'
+      + '<span class="pill ' + esc(run.status) + (resultLabel === 'PR created' ? ' pr-created' : '') + '">' + esc(resultLabel) + '</span>'
       + '</div>'
       + '</div>'
       + activeDetails
