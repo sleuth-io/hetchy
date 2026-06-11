@@ -74,7 +74,7 @@ func TestClaudeTmuxRunnerScript_Embedded(t *testing.T) {
 		// The watchdog kills the session seconds after end_turn, so a
 		// scheduled wakeup can never fire — the tool must stay
 		// disallowed or agents that "wait" via wakeup get silently
-		// truncated mid-task (lost auto-merge assessments in prod).
+		// truncated mid-task.
 		`--disallowedTools ScheduleWakeup`,
 		`HETCHY_CLAUDE_WALL_TIMEOUT_S`,
 		`HETCHY_CLAUDE_IDLE_TIMEOUT_S`,
