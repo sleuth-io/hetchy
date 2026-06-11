@@ -345,3 +345,37 @@ func TestChatHeaderActionsMenuWiring(t *testing.T) {
 		}
 	}
 }
+
+// TestNewTaskFocusesAgentGroupWiring checks the new chat dispatch switches the sidebar to the dispatched agent's group.
+func TestNewTaskFocusesAgentGroupWiring(t *testing.T) {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/assets/app_controls.js", nil)
+	AssetHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/assets/app_controls.js status = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	wants := []string{
+		// Snapshot the dispatched agent up front so the post-dispatch switch targets it.
+		"const targetAgent = compact(state.selectedTaskAgent, '');",
+		// submitNewTask must hand that agent to the focus helper.
+		"focusTaskAgentGroup(targetAgent);",
+		// The helper flips into agent mode for the dispatched agent.
+		"function focusTaskAgentGroup(agentSlug)",
+		"const targetID = compact(agentSlug, '') || noAgentID;",
+		// Filter reset runs before the early-return guard so same-group dispatch also reveals the new task.
+		"state.statusFilter = 'all';",
+		"state.mode = 'agent';",
+		"state.selectedID = targetID;",
+		"setModeButtonState();",
+		// Dispatching closes any stale chat detail without its own URL sync, so the group switch records a single route entry instead of a stray one for the old group.
+		"closeActiveChat({ syncURL: false });",
+		"syncRouteURL({ replace: true });",
+		"syncRouteURL();",
+	}
+	for _, want := range wants {
+		if !strings.Contains(body, want) {
+			t.Errorf("/assets/app_controls.js missing %q", want)
+		}
+	}
+}

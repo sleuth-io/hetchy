@@ -415,6 +415,7 @@
       showToast('new-task-empty', 'Enter a task before dispatching.', 'warn');
       return;
     }
+    const targetAgent = compact(state.selectedTaskAgent, '');
     const conversationID = newConversationID();
     let payload;
     try {
@@ -430,7 +431,29 @@
     closeDialog('new-task-dialog');
     showToast('task-started', 'Task dispatched.', 'success', 2200);
     state.selectedRunLimit = initialVisibleRuns;
+    focusTaskAgentGroup(targetAgent);
     backgroundTurn('/api/v1/conversations', payload);
+  }
+
+  // Empty agent slug maps to noAgentID; ensureSelection won't evict this selection during poll propagation.
+  function focusTaskAgentGroup(agentSlug) {
+    const targetID = compact(agentSlug, '') || noAgentID;
+    // Drop a stale chat detail and the status filter so the freshly dispatched task lands in view, even when the group is unchanged.
+    // Suppress closeActiveChat's own URL sync: the selection hasn't moved yet, so it would record a stray entry for the old group before the switch below. A single syncRouteURL at the end captures the final route instead.
+    closeActiveChat({ syncURL: false });
+    state.statusFilter = 'all';
+    if (state.mode === 'agent' && state.selectedID === targetID) {
+      renderAll();
+      syncRouteURL({ replace: true });
+      return;
+    }
+    state.mode = 'agent';
+    state.selectedID = targetID;
+    setModeButtonState();
+    resetScopedWorkSearch();
+    renderAll();
+    scheduleWorkSearch();
+    syncRouteURL();
   }
 
   async function taskPayload(text, conversationID) {
