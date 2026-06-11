@@ -165,6 +165,7 @@ html.is-dark .pill.failed { background: #351919; color: var(--danger); }
 html.is-dark .pill.done { background: #17301e; color: var(--success); }
 html.is-dark .pill.done.pr-created { background: #1a3a5c; color: #5bb3f7; }
 html.is-dark .pill.done.pr-updated { background: #1a3a5c; color: #5bb3f7; }
+html.is-dark .pill.done.pr-closed { background: #351919; color: var(--danger); }
 html.is-dark .run-card:hover,
 html.is-dark .run-card:focus-visible {
   background: #25252a;

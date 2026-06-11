@@ -156,6 +156,7 @@
 .pill.done { background: #e7f5eb; color: var(--success); }
 .pill.done.pr-created { background: #dff0ff; color: #075a99; }
 .pill.done.pr-updated { background: #dff0ff; color: #075a99; }
+.pill.done.pr-closed { background: #ffe7e3; color: var(--danger); }
 
 .active-run-details {
   display: grid;

@@ -196,7 +196,7 @@ func (b *Bot) appDataRunForConversation(ctx context.Context, orgID string, rec c
 		State:          state,
 		Outcome:        outcome,
 		Status:         appDataStatus(state, outcome),
-		ResultLabel:    appDataResultLabel(state, outcome, runKind, rec.PRURL, rec.PRMerged),
+		ResultLabel:    appDataResultLabel(state, outcome, runKind, rec.PRURL, rec.PRState, rec.PRMerged),
 		RunKind:        runKind,
 		TriggerSource:  run.TriggerSource,
 		JobID:          run.JobID,

@@ -101,8 +101,10 @@ func TestRunCardUsesResultLabel(t *testing.T) {
 		"'PR updated'",
 		"'PR created'",
 		"'PR merged'",
+		"'PR closed'",
 		"'Answered'",
 		"run.pr_merged",
+		"run.pr_state",
 	} {
 		if !strings.Contains(app, want) {
 			t.Fatalf("app.js missing %q", want)
@@ -119,7 +121,7 @@ func TestRunCardUsesResultLabel(t *testing.T) {
 	if !strings.Contains(runsBody, "runResultLabel(run)") {
 		t.Fatalf("app_runs.js still rendering raw statusLabel for run pill: %q", runsBody)
 	}
-	for _, want := range []string{"pr-created", "pr-updated"} {
+	for _, want := range []string{"pr-created", "pr-updated", "pr-closed"} {
 		if !strings.Contains(runsBody, want) {
 			t.Fatalf("app_runs.js missing %q pill class", want)
 		}
