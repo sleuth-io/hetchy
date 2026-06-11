@@ -19,8 +19,20 @@ import (
 //
 // Returns the auto-merge outcome detail map to fold into the run
 // outcome. Emitting the assessment block appends durable events, so
-// callers must reload the event log afterwards.
-func (b *Bot) handleRecoveredAutoMerge(ctx context.Context, run runstore.Run, prURL string, events []runstore.Event, live *liveRun) map[string]any {
+// callers must reload the event log afterwards. A non-nil error means
+// the durable assessment-block write failed and the caller should
+// defer the run for retry, consistent with the other durable writes
+// in finalizeRecoveredRun.
+func (b *Bot) handleRecoveredAutoMerge(ctx context.Context, run runstore.Run, prURL string, events []runstore.Event, live *liveRun) (map[string]any, error) {
+	// Idempotency: an assessment block already in the event log means a
+	// prior attempt (the original run before the crash, or an earlier
+	// recovery retry that failed later in finalize) completed the
+	// evaluation. Reuse its recorded outcome instead of re-evaluating —
+	// re-running could double-emit the block or re-attempt the merge.
+	if detail, ok := recoveredAutoMergeDetailFromEvents(events); ok {
+		return detail, nil
+	}
+
 	off := autoMergeOutcomeDetail{
 		AutoMergeRequested: false,
 		AutoMergeState:     autoMergeStateOff,
@@ -31,11 +43,11 @@ func (b *Bot) handleRecoveredAutoMerge(ctx context.Context, run runstore.Run, pr
 		// is off — never merge on missing information.
 		b.log.Warn("recovered auto merge: load conversation",
 			"run_id", run.ID, "org", run.OrgID, "thread", run.ThreadID, "error", err)
-		return off.asMap()
+		return off.asMap(), nil
 	}
 	opts, _ := resolveChatTaskOptions(rec.TaskOptions, nil)
 	if !opts.AutoMerge {
-		return off.asMap()
+		return off.asMap(), nil
 	}
 
 	b.recordAutoMergeRunEventForRun(ctx, run, autoMergeEventAssessmentStarted, map[string]any{
@@ -55,8 +67,11 @@ func (b *Bot) handleRecoveredAutoMerge(ctx context.Context, run runstore.Run, pr
 		}
 		out = b.applyAutoMergeHumanLabelBestEffort(ctx, run.OrgID, prURL, out)
 		b.emitAutoMergeAssessmentBlock(em, out)
+		if err := em.Err(); err != nil {
+			return out.asMap(), err
+		}
 		b.recordAutoMergeRunEventForRun(ctx, run, autoMergeEventBlocked, out.eventPayload(prURL), b.workerID)
-		return out.asMap()
+		return out.asMap(), nil
 	}
 	b.recordAutoMergeRunEventForRun(ctx, run, autoMergeEventAssessmentRecorded, map[string]any{
 		"pr_url":         prURL,
@@ -71,8 +86,37 @@ func (b *Bot) handleRecoveredAutoMerge(ctx context.Context, run runstore.Run, pr
 	// lands in human review rather than merging stale code.
 	out := b.evaluateAutoMerge(ctx, run.OrgID, run.ThreadID, prURL, assessment)
 	b.emitAutoMergeAssessmentBlock(em, out)
+	if err := em.Err(); err != nil {
+		return out.asMap(), err
+	}
 	b.recordAutoMergeTerminalEventForRun(ctx, run, prURL, out)
-	return out.asMap()
+	return out.asMap(), nil
+}
+
+// recoveredAutoMergeDetailFromEvents returns the outcome detail stored
+// in an already-emitted assessment block's metadata, if one exists in
+// the replayed event log. emitAutoMergeAssessmentBlock stamps the full
+// outcome map into the block meta precisely so retries can recover it
+// without re-running the evaluation.
+func recoveredAutoMergeDetailFromEvents(events []runstore.Event) (map[string]any, bool) {
+	for _, block := range blocksFromRunEvents(events) {
+		if block.Kind != blocks.KindAutoMergeAssessment {
+			continue
+		}
+		if block.Meta != nil {
+			if detail, ok := block.Meta["auto_merge"].(map[string]any); ok {
+				return detail, true
+			}
+		}
+		// Block exists but its meta is unreadable: still treat the
+		// evaluation as done (never re-merge), with a minimal detail.
+		return map[string]any{
+			"auto_merge_requested": true,
+			"auto_merge_state":     autoMergeStateHumanReview,
+			"blocked_reason":       "recovered assessment block metadata unreadable",
+		}, true
+	}
+	return nil, false
 }
 
 // recordRecoveredRunOutcome writes the run outcome for a successfully

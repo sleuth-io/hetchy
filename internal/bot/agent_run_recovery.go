@@ -302,7 +302,12 @@ func (b *Bot) finalizeRecoveredRun(ctx context.Context, sb *daytona.Sandbox, run
 	// auto_merge_* records), so reload before the terminal check.
 	autoMergeDetail := map[string]any{}
 	if prURL != "" {
-		autoMergeDetail = b.handleRecoveredAutoMerge(ctx, run, prURL, events, live)
+		var amErr error
+		autoMergeDetail, amErr = b.handleRecoveredAutoMerge(ctx, run, prURL, events, live)
+		if amErr != nil {
+			b.deferRecoveryForRetry(run, "emit recovered auto merge assessment", amErr)
+			return
+		}
 		events, err = b.runs.EventsAfter(ctx, run.ID, 0)
 		if err != nil {
 			b.deferRecoveryForRetry(run, "reload events: recovered auto merge", err)

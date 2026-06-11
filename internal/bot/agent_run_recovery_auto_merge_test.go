@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -162,6 +163,116 @@ func TestFinalizeRecoveredRunMissingAssessmentBlocksToHumanReview(t *testing.T) 
 	names := recordedEventNames(store)
 	if names[autoMergeEventBlocked] == 0 {
 		t.Fatalf("events = %+v, want blocked event", names)
+	}
+}
+
+func TestFinalizeRecoveredRunReusesExistingAssessment(t *testing.T) {
+	b, store, convs := recoveredAutoMergeTestBot(map[string]bool{chatTaskAutoMergeKey: true})
+	run := recoveredAutoMergeRun()
+
+	// Simulate a prior attempt that completed the evaluation: an
+	// assessment block already in the durable log with the outcome
+	// detail stamped into its meta. Everything goes through one
+	// emitter so block IDs stay unique, as they would in production
+	// where a retry emitter continues after the replayed events.
+	prior := autoMergeOutcomeDetail{
+		AutoMergeRequested: true,
+		AutoMergeState:     autoMergeStateWaitingChecks,
+		AutoMergeLabel:     autoMergeSafeLabel,
+	}
+	em := newAgentRunEmitter(store, run.ID, b.workerID, nil)
+	id := em.Start(blocks.KindClaudeText, "Summary", nil)
+	em.Append(id, "done\n\nHETCHY_AUTO_MERGE_ASSESSMENT\n```json\n"+safeAutoMergeJSON("abc123")+"\n```")
+	em.Done(id, "")
+	b.emitAutoMergeAssessmentBlock(em, prior)
+	router := newAgentLineRouter(em)
+	router.Line(setupSwitchMarker)
+	router.Line(`{"type":"result","subtype":"success","result":"Done: https://github.com/acme/repo/pull/99"}`)
+	b.finalizeRecoveredRun(context.Background(), &daytona.Sandbox{ID: "sandbox-1"}, run, router, em, 0, nil)
+
+	// The prior outcome is reused: no re-evaluation events, and the
+	// recorded outcome carries the prior state.
+	names := recordedEventNames(store)
+	if names[autoMergeEventAssessmentStarted] != 0 {
+		t.Fatalf("events = %+v, want no re-evaluation on retry", names)
+	}
+	up := lastOutcomeUpdate(t, store)
+	if up.detail["auto_merge_state"] != autoMergeStateWaitingChecks {
+		t.Fatalf("detail = %+v, want prior waiting_for_checks state reused", up.detail)
+	}
+	// Exactly one assessment block in the projected conversation.
+	rec := convs.lastUpsert(t)
+	count := 0
+	for _, turn := range rec.ResponseBlocks {
+		for _, blk := range turn {
+			if blk.Kind == blocks.KindAutoMergeAssessment {
+				count++
+			}
+		}
+	}
+	if count != 1 {
+		t.Fatalf("assessment blocks = %d, want exactly 1 (no duplicate on retry)", count)
+	}
+}
+
+func TestFinalizeRecoveredRunDefersOnAssessmentEmitFailure(t *testing.T) {
+	b, store, _ := recoveredAutoMergeTestBot(map[string]bool{chatTaskAutoMergeKey: true})
+	run := recoveredAutoMergeRun()
+
+	// Pre-seed the transcript with the assessment, then make every
+	// durable write fail before finalize runs the auto-merge emission.
+	em := newAgentRunEmitter(store, run.ID, b.workerID, nil)
+	id := em.Start(blocks.KindClaudeText, "Summary", nil)
+	em.Append(id, "done\n\nHETCHY_AUTO_MERGE_ASSESSMENT\n```json\n"+safeAutoMergeJSON("abc123")+"\n```")
+	em.Done(id, "")
+	router := newAgentLineRouter(em)
+	router.Line(setupSwitchMarker)
+	router.Line(`{"type":"result","subtype":"success","result":"Done: https://github.com/acme/repo/pull/99"}`)
+	store.mu.Lock()
+	store.batchErr = errors.New("durable write down")
+	store.appendErr = errors.New("durable write down")
+	store.mu.Unlock()
+
+	b.finalizeRecoveredRun(context.Background(), &daytona.Sandbox{ID: "sandbox-1"}, run, router, em, 0, nil)
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if len(store.updateStates) == 0 {
+		t.Fatal("no state updates recorded")
+	}
+	last := store.updateStates[len(store.updateStates)-1]
+	if last.state != runstore.StateRecovering {
+		t.Fatalf("final state = %q, want recovering (deferred for retry)", last.state)
+	}
+	for _, u := range store.updateStates {
+		if u.state == runstore.StateSucceeded {
+			t.Fatal("run must not succeed when the assessment write failed")
+		}
+	}
+}
+
+func TestRecordRecoveredRunOutcomeDetectsToolingDegradation(t *testing.T) {
+	store := &fakeRunStore{enabled: true}
+	b := &Bot{log: discardLogger(), runs: store, workerID: "worker-1"}
+	transcript := []blocks.Block{{
+		Kind: blocks.KindNotify,
+		Meta: map[string]any{ToolingDegradedMetaKey: map[string]string{
+			"label":   "sx-install",
+			"message": "sx install failed",
+		}},
+	}}
+
+	b.recordRecoveredRunOutcome(context.Background(), recoveredAutoMergeRun(), "https://github.com/acme/repo/pull/99", transcript, map[string]any{})
+
+	up := lastOutcomeUpdate(t, store)
+	if up.outcome != runstore.OutcomeDegradedMissingSkills {
+		t.Fatalf("outcome = %q, want %q", up.outcome, runstore.OutcomeDegradedMissingSkills)
+	}
+	if up.detail["completion_outcome"] != runstore.OutcomeCompletedWithVerifiedPR {
+		t.Fatalf("detail = %+v, want completion_outcome preserved", up.detail)
+	}
+	if up.detail["tooling_degraded"] == nil {
+		t.Fatalf("detail = %+v, want tooling_degraded recorded", up.detail)
 	}
 }
 
