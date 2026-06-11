@@ -119,6 +119,11 @@ func TestRunCardUsesResultLabel(t *testing.T) {
 	if !strings.Contains(runsBody, "runResultLabel(run)") {
 		t.Fatalf("app_runs.js still rendering raw statusLabel for run pill: %q", runsBody)
 	}
+	for _, want := range []string{"pr-created", "pr-updated"} {
+		if !strings.Contains(runsBody, want) {
+			t.Fatalf("app_runs.js missing %q pill class", want)
+		}
+	}
 }
 
 func TestRenderAppTemplate(t *testing.T) {
