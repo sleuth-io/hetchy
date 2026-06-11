@@ -154,6 +154,11 @@ func TestConditionalTasksPromptRespectsOptions(t *testing.T) {
 		"NOT `statusCheckRollupState`",
 		"automated AI review",
 		"LOW severity",
+		// Foreground-wait rule: turn-ending waits (wakeups, background
+		// notifications) silently truncate the run.
+		"Session lifetime",
+		"never resumes your turn",
+		"Never end your turn to wait",
 	} {
 		if !strings.Contains(prompt, w) {
 			t.Errorf("conditional tasks prompt missing %q\n%s", w, prompt)
@@ -175,10 +180,21 @@ func TestConditionalTasksPromptRespectsOptions(t *testing.T) {
 		"`head_sha`",
 		"MUST be JSON arrays",
 		"never use counts like `0`",
+		// The session-lifetime rule must accompany auto merge too: the
+		// assessment is only emitted after the check loop finishes.
+		"Never end your turn to wait",
 	} {
 		if !strings.Contains(prompt, w) {
 			t.Errorf("auto merge prompt missing %q\n%s", w, prompt)
 		}
+	}
+
+	// ValidateChanges alone is covered by the empty-prompt assertion
+	// above; ReviewCodeBeforePush is the non-empty prompt that must
+	// still omit the rule.
+	prompt = conditionalTasksPrompt(chatTaskOptions{ReviewCodeBeforePush: true})
+	if strings.Contains(prompt, "Session lifetime") {
+		t.Fatalf("session lifetime rule should only accompany waiting-prone tasks, got:\n%s", prompt)
 	}
 }
 
