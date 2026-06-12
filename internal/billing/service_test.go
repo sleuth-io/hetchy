@@ -124,7 +124,7 @@ func TestSetRepoFlavorDisabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetRepoFlavor on disabled service: unexpected error: %v", err)
 	}
-	if rs.OrgID != "org-1" || rs.GitHubOwner != "owner" || rs.GitHubRepo != "repo" {
+	if rs.OrgID != "org-1" || rs.GitHubOwner != "owner" || rs.GitHubRepo != "repo" || rs.Flavor != FlavorStandard {
 		t.Errorf("SetRepoFlavor disabled: unexpected value %+v", rs)
 	}
 }
@@ -249,30 +249,24 @@ func TestSetLastPaymentErrorDisabled(t *testing.T) {
 // Tests for topupUnitCentsForPlan (private, same package)
 
 func TestTopupUnitCentsForPlan(t *testing.T) {
+	starterPlan, _ := PaidPlanByCode(PlanStarter)
+	studioPlan, _ := PaidPlanByCode(PlanStudio)
+	defaultPlan := DefaultPaidPlan()
 	cases := []struct {
 		planCode string
-		wantMin  int
+		want     int
 	}{
-		{PlanStarter, 2500},
-		{PlanStudio, 2200},
-		{"unknown-plan", 0},
+		{PlanStarter, starterPlan.TopupUnitUSDCents},
+		{PlanStudio, studioPlan.TopupUnitUSDCents},
+		{"unknown-plan", defaultPlan.TopupUnitUSDCents},
 	}
 	for _, tc := range cases {
 		t.Run(tc.planCode, func(t *testing.T) {
 			got := topupUnitCentsForPlan(tc.planCode)
-			if got < tc.wantMin {
-				t.Errorf("topupUnitCentsForPlan(%q) = %d, want >= %d", tc.planCode, got, tc.wantMin)
+			if got != tc.want {
+				t.Errorf("topupUnitCentsForPlan(%q) = %d, want %d", tc.planCode, got, tc.want)
 			}
 		})
-	}
-}
-
-func TestTopupUnitCentsForPlanUnknownFallsBackToDefault(t *testing.T) {
-	got := topupUnitCentsForPlan("no-such-plan")
-	def := DefaultPaidPlan()
-	want := def.TopupUnitUSDCents
-	if got != want {
-		t.Errorf("topupUnitCentsForPlan(unknown) = %d, want default %d", got, want)
 	}
 }
 

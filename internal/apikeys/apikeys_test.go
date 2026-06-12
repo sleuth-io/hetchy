@@ -1,12 +1,14 @@
 package apikeys
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/hetchyhq/hetchy/internal/db"
 	"github.com/hetchyhq/hetchy/internal/db/sqlc"
 )
 
@@ -23,6 +25,14 @@ func TestStoreEnabledNilDB(t *testing.T) {
 	s := &Store{db: nil}
 	if s.Enabled() {
 		t.Error("Store with nil db should not be enabled")
+	}
+}
+
+func TestStoreEnabledNilQueries(t *testing.T) {
+	// db.Store with nil Queries also makes apikeys.Store.Enabled() return false
+	s := &Store{db: &db.Store{}}
+	if s.Enabled() {
+		t.Error("Store with db.Store.Queries==nil should not be enabled")
 	}
 }
 
@@ -46,16 +56,14 @@ func TestCreateDisabledStore(t *testing.T) {
 	}
 }
 
-func TestCreateEmptyOrgID(t *testing.T) {
-	// Store that reports Enabled() = false when db is nil, but we need
-	// a store that passes Enabled() to reach the validation logic.
-	// Use a non-nil store with nil Queries to simulate DB unavailability.
-	// Actually Enabled() checks s.db.Queries != nil — skip that path and
-	// just use nil store to verify ErrNotConfigured instead.
+func TestListDisabledStore(t *testing.T) {
 	var s *Store
-	_, err := s.Create(context.Background(), "", "mykey", "user-1")
-	if !errors.Is(err, ErrNotConfigured) {
-		t.Errorf("Create with nil store: got %v, want ErrNotConfigured", err)
+	keys, err := s.List(context.Background(), "org-1")
+	if err != nil {
+		t.Fatalf("List on nil store: unexpected error %v", err)
+	}
+	if keys != nil {
+		t.Errorf("List on nil store: expected nil slice, got %v", keys)
 	}
 }
 
@@ -72,15 +80,16 @@ func TestAuthenticateDisabledStore(t *testing.T) {
 	}
 }
 
-func TestAuthenticateWrongPrefix(t *testing.T) {
-	// A store with nil db is disabled — but the prefix check happens first
-	// in a real (non-nil) store. To test the prefix rejection without a DB,
-	// we need an enabled store. Since we cannot construct one without a real
-	// DB, we verify the ErrNotConfigured path covers the disabled case and
-	// add a unit test for the prefix helper directly.
-	token := "ghp_notahetchy_token"
-	if strings.HasPrefix(token, keyPrefix) {
-		t.Errorf("token %q incorrectly matches prefix %q", token, keyPrefix)
+func TestAuthenticateEmptyToken(t *testing.T) {
+	// empty token has no hetchy_ prefix — but disabled store returns ErrNotConfigured
+	// before the prefix check. This tests both the nil-store and the token format.
+	var s *Store
+	_, ok, err := s.Authenticate(context.Background(), "")
+	if !errors.Is(err, ErrNotConfigured) {
+		t.Errorf("Authenticate empty token on nil store: err=%v, want ErrNotConfigured", err)
+	}
+	if ok {
+		t.Error("Authenticate empty token: ok should be false")
 	}
 }
 
@@ -122,10 +131,10 @@ func TestHashToken(t *testing.T) {
 	if len(h1) != 32 {
 		t.Errorf("hashToken: expected 32 bytes (SHA-256), got %d", len(h1))
 	}
-	if string(h1) != string(h2) {
+	if !bytes.Equal(h1, h2) {
 		t.Error("hashToken: same input should produce same hash")
 	}
-	if string(h1) == string(h3) {
+	if bytes.Equal(h1, h3) {
 		t.Error("hashToken: different inputs should produce different hashes")
 	}
 }
