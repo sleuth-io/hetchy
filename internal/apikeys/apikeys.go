@@ -24,8 +24,19 @@ const (
 
 var ErrNotConfigured = errors.New("apikeys: store not configured")
 
+// querier is a narrow interface for the DB operations needed by this package.
+// Using an interface here allows unit tests to inject a fake without a real
+// Postgres connection.
+type querier interface {
+	CreateOrgAPIKey(ctx context.Context, arg sqlc.CreateOrgAPIKeyParams) (sqlc.OrgApiKey, error)
+	ListOrgAPIKeys(ctx context.Context, orgID string) ([]sqlc.OrgApiKey, error)
+	GetOrgAPIKeyByHash(ctx context.Context, keyHash []byte) (sqlc.OrgApiKey, error)
+	TouchOrgAPIKeyLastUsed(ctx context.Context, id string) error
+	RevokeOrgAPIKey(ctx context.Context, arg sqlc.RevokeOrgAPIKeyParams) (int64, error)
+}
+
 type Store struct {
-	db *db.Store
+	q querier
 }
 
 type Key struct {
@@ -44,11 +55,14 @@ type CreatedKey struct {
 }
 
 func New(d *db.Store) *Store {
-	return &Store{db: d}
+	if d == nil || d.Queries == nil {
+		return &Store{}
+	}
+	return &Store{q: d.Queries}
 }
 
 func (s *Store) Enabled() bool {
-	return s != nil && s.db != nil && s.db.Queries != nil
+	return s != nil && s.q != nil
 }
 
 func (s *Store) Create(ctx context.Context, orgID, name, createdBy string) (CreatedKey, error) {
@@ -74,7 +88,7 @@ func (s *Store) Create(ctx context.Context, orgID, name, createdBy string) (Crea
 	if err != nil {
 		return CreatedKey{}, err
 	}
-	row, err := s.db.Queries.CreateOrgAPIKey(ctx, sqlc.CreateOrgAPIKeyParams{
+	row, err := s.q.CreateOrgAPIKey(ctx, sqlc.CreateOrgAPIKeyParams{
 		ID:        id,
 		OrgID:     orgID,
 		Name:      name,
@@ -92,7 +106,7 @@ func (s *Store) List(ctx context.Context, orgID string) ([]Key, error) {
 	if !s.Enabled() {
 		return nil, nil
 	}
-	rows, err := s.db.Queries.ListOrgAPIKeys(ctx, orgID)
+	rows, err := s.q.ListOrgAPIKeys(ctx, orgID)
 	if err != nil {
 		return nil, fmt.Errorf("list api keys: %w", err)
 	}
@@ -111,7 +125,7 @@ func (s *Store) Authenticate(ctx context.Context, token string) (Key, bool, erro
 	if !strings.HasPrefix(token, keyPrefix) {
 		return Key{}, false, nil
 	}
-	row, err := s.db.Queries.GetOrgAPIKeyByHash(ctx, hashToken(token))
+	row, err := s.q.GetOrgAPIKeyByHash(ctx, hashToken(token))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Key{}, false, nil
@@ -125,14 +139,14 @@ func (s *Store) Touch(ctx context.Context, id string) error {
 	if !s.Enabled() || strings.TrimSpace(id) == "" {
 		return nil
 	}
-	return s.db.Queries.TouchOrgAPIKeyLastUsed(ctx, id)
+	return s.q.TouchOrgAPIKeyLastUsed(ctx, id)
 }
 
 func (s *Store) Revoke(ctx context.Context, orgID, id string) error {
 	if !s.Enabled() {
 		return ErrNotConfigured
 	}
-	rows, err := s.db.Queries.RevokeOrgAPIKey(ctx, sqlc.RevokeOrgAPIKeyParams{
+	rows, err := s.q.RevokeOrgAPIKey(ctx, sqlc.RevokeOrgAPIKeyParams{
 		OrgID: orgID,
 		ID:    id,
 	})
