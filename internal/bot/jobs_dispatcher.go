@@ -133,7 +133,7 @@ func dispatchJobNow(ctx context.Context, store manualJobRunner, workerID, orgID,
 		return jobs.Execution{}, err
 	}
 	go func() {
-		if _, err := dispatch(context.Background(), claim); err != nil && log != nil {
+		if _, err := dispatchClaimRecovered(context.Background(), dispatch, claim); err != nil && log != nil {
 			log.Warn("manual job dispatch failed", "org", orgID, "job_id", jobID, "execution_id", claim.Execution.ID, "error", err)
 		}
 	}()
