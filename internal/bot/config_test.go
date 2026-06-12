@@ -528,6 +528,9 @@ func TestComposeForwardsArtifactUploadEnv(t *testing.T) {
 		"DAYTONA_AUTO_ARCHIVE_MINUTES",
 		"HETCHY_SANDBOX_VERSION",
 		"HETCHY_PUBLIC_BASE_URL",
+		"HETCHY_JOB_DISPATCH_INTERVAL_SECONDS",
+		"HETCHY_JOB_DISPATCH_LIMIT",
+		"HETCHY_JOB_DISPATCH_CONCURRENCY",
 	} {
 		want := key + ": ${" + key + ":-}"
 		if !strings.Contains(compose, want) {

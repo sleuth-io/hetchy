@@ -59,15 +59,8 @@ func (b *Bot) dispatchDueJobsTick(ctx context.Context) {
 		Limit:       int32(b.cfg.JobDispatchLimit),
 		Concurrency: b.cfg.JobDispatchConcurrency,
 	})
-	if err != nil {
-		// Shutdown mid-dispatch surfaces as a context error — not a
-		// dispatch failure worth an error-level log line.
-		if ctx.Err() != nil || errors.Is(err, jobs.ErrNotConfigured) {
-			return
-		}
-		b.log.Error("scheduled job dispatch failed", "error", err)
-		return
-	}
+	// Stats first: a tick can partially succeed (one job panics, four
+	// finish), and the error below must not swallow those counts.
 	if result.Claimed > 0 {
 		b.log.Info("scheduled job dispatch",
 			"claimed", result.Claimed,
@@ -75,5 +68,13 @@ func (b *Bot) dispatchDueJobsTick(ctx context.Context) {
 			"succeeded", result.Succeeded,
 			"failed", result.Failed,
 		)
+	}
+	if err != nil {
+		// Shutdown mid-dispatch surfaces as a context error — not a
+		// dispatch failure worth an error-level log line.
+		if ctx.Err() != nil || errors.Is(err, jobs.ErrNotConfigured) {
+			return
+		}
+		b.log.Error("scheduled job dispatch failed", "error", err)
 	}
 }
