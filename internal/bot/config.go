@@ -3,6 +3,7 @@ package bot
 import (
 	"errors"
 	"fmt"
+	"math"
 	"net/url"
 	"os"
 	"strconv"
@@ -55,6 +56,18 @@ type Config struct {
 	// under SSE + recovery-loop concurrency.
 	DatabaseMaxConns int32
 	WebPort          string
+
+	// JobDispatchIntervalSeconds is the in-process scheduled-job
+	// dispatcher's tick interval. 0 disables the loop entirely for
+	// deployments that prefer an external cron invoking
+	// `hetchy --dispatch-due-jobs`. Claiming is FOR UPDATE SKIP LOCKED,
+	// so an in-process loop and an external cron coexist safely during
+	// a migration between the two.
+	JobDispatchIntervalSeconds int
+	// JobDispatchLimit caps how many due jobs one tick claims.
+	JobDispatchLimit int
+	// JobDispatchConcurrency caps how many claimed jobs run at once.
+	JobDispatchConcurrency int
 
 	WorkOSAPIKey          string
 	WorkOSClientID        string
@@ -162,6 +175,46 @@ const (
 	defaultSXGitMaxConcurrentOps        = 4
 )
 
+const (
+	defaultJobDispatchIntervalSeconds = 60
+	defaultJobDispatchLimit           = 5
+	defaultJobDispatchConcurrency     = 1
+)
+
+// loadJobDispatchConfig reads the in-process scheduled-job dispatcher
+// settings. Interval 0 disables the loop (external-cron deployments);
+// limit and concurrency must stay positive.
+func loadJobDispatchConfig() (interval, limit, concurrency int, err error) {
+	interval = defaultJobDispatchIntervalSeconds
+	if v := strings.TrimSpace(os.Getenv("HETCHY_JOB_DISPATCH_INTERVAL_SECONDS")); v != "" {
+		n, perr := strconv.Atoi(v)
+		if perr != nil || n < 0 {
+			return 0, 0, 0, fmt.Errorf("HETCHY_JOB_DISPATCH_INTERVAL_SECONDS must be a non-negative integer, 0 to disable (got %q)", v)
+		}
+		interval = n
+	}
+	limit = defaultJobDispatchLimit
+	if v := strings.TrimSpace(os.Getenv("HETCHY_JOB_DISPATCH_LIMIT")); v != "" {
+		// Upper bound matches the int32 the claim query takes; without
+		// it an oversized value would wrap negative and silently
+		// dispatch nothing.
+		n, perr := strconv.Atoi(v)
+		if perr != nil || n < 1 || n > math.MaxInt32 {
+			return 0, 0, 0, fmt.Errorf("HETCHY_JOB_DISPATCH_LIMIT must be a positive int32 (got %q)", v)
+		}
+		limit = n
+	}
+	concurrency = defaultJobDispatchConcurrency
+	if v := strings.TrimSpace(os.Getenv("HETCHY_JOB_DISPATCH_CONCURRENCY")); v != "" {
+		n, perr := strconv.Atoi(v)
+		if perr != nil || n < 1 {
+			return 0, 0, 0, fmt.Errorf("HETCHY_JOB_DISPATCH_CONCURRENCY must be a positive integer (got %q)", v)
+		}
+		concurrency = n
+	}
+	return interval, limit, concurrency, nil
+}
+
 // LoadConfig reads required and optional env vars. Set AUTH_BYPASS=1 to
 // skip the WorkOS round-trip for tests/CI.
 func LoadConfig() (Config, error) {
@@ -263,6 +316,10 @@ func LoadConfig() (Config, error) {
 		}
 		autoArchiveMinutes = n
 	}
+	jobInterval, jobLimit, jobConcurrency, err := loadJobDispatchConfig()
+	if err != nil {
+		return Config{}, err
+	}
 	sxRuntime, err := loadSXRuntimeConfig(env)
 	if err != nil {
 		return Config{}, err
@@ -281,6 +338,9 @@ func LoadConfig() (Config, error) {
 		DatabaseURL:                 os.Getenv("DATABASE_URL"),
 		DatabaseMaxConns:            dbMaxConns,
 		WebPort:                     port,
+		JobDispatchIntervalSeconds:  jobInterval,
+		JobDispatchLimit:            jobLimit,
+		JobDispatchConcurrency:      jobConcurrency,
 		WorkOSAPIKey:                strings.TrimSpace(os.Getenv("WORKOS_API_KEY")),
 		WorkOSClientID:              strings.TrimSpace(os.Getenv("WORKOS_CLIENT_ID")),
 		WorkOSCookiePassword:        strings.TrimSpace(os.Getenv("WORKOS_COOKIE_PASSWORD")),

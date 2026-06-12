@@ -590,3 +590,46 @@ func TestGetenvDefault(t *testing.T) {
 		}
 	})
 }
+
+func TestLoadConfig_JobDispatchSettings(t *testing.T) {
+	setEnv(t, requiredEnv())
+	clearEnv(t, "HETCHY_JOB_DISPATCH_INTERVAL_SECONDS", "HETCHY_JOB_DISPATCH_LIMIT", "HETCHY_JOB_DISPATCH_CONCURRENCY")
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.JobDispatchIntervalSeconds != defaultJobDispatchIntervalSeconds ||
+		cfg.JobDispatchLimit != defaultJobDispatchLimit ||
+		cfg.JobDispatchConcurrency != defaultJobDispatchConcurrency {
+		t.Errorf("defaults not applied: interval=%d limit=%d concurrency=%d",
+			cfg.JobDispatchIntervalSeconds, cfg.JobDispatchLimit, cfg.JobDispatchConcurrency)
+	}
+
+	t.Setenv("HETCHY_JOB_DISPATCH_INTERVAL_SECONDS", "0")
+	t.Setenv("HETCHY_JOB_DISPATCH_LIMIT", "9")
+	t.Setenv("HETCHY_JOB_DISPATCH_CONCURRENCY", "2")
+	cfg, err = LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig with overrides: %v", err)
+	}
+	if cfg.JobDispatchIntervalSeconds != 0 || cfg.JobDispatchLimit != 9 || cfg.JobDispatchConcurrency != 2 {
+		t.Errorf("overrides not applied: interval=%d limit=%d concurrency=%d",
+			cfg.JobDispatchIntervalSeconds, cfg.JobDispatchLimit, cfg.JobDispatchConcurrency)
+	}
+
+	for env, bad := range map[string]string{
+		"HETCHY_JOB_DISPATCH_INTERVAL_SECONDS": "-1",
+		"HETCHY_JOB_DISPATCH_LIMIT":            "0",
+		"HETCHY_JOB_DISPATCH_CONCURRENCY":      "nope",
+	} {
+		t.Run(env, func(t *testing.T) {
+			setEnv(t, requiredEnv())
+			clearEnv(t, "HETCHY_JOB_DISPATCH_INTERVAL_SECONDS", "HETCHY_JOB_DISPATCH_LIMIT", "HETCHY_JOB_DISPATCH_CONCURRENCY")
+			t.Setenv(env, bad)
+			if _, err := LoadConfig(); err == nil {
+				t.Errorf("%s=%q must be rejected", env, bad)
+			}
+		})
+	}
+}

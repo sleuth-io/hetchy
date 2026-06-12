@@ -46,6 +46,22 @@ type manualJobRunner interface {
 
 type claimedJobDispatcher func(context.Context, jobs.ClaimedExecution) (string, error)
 
+// dispatchClaimRecovered converts a panicking job into a counted
+// failure. The dispatcher used to run only in a one-shot cron process
+// where a panic killed just that invocation; now that
+// runJobDispatchLoop dispatches in-process, an unrecovered panic would
+// take down the whole web app. The execution row is left to the
+// stale-claim release to mark failed.
+func dispatchClaimRecovered(ctx context.Context, dispatch claimedJobDispatcher, claim jobs.ClaimedExecution) (status string, err error) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			status = jobs.StatusFailed
+			err = fmt.Errorf("job %s dispatch panicked: %v", claim.Job.ID, rec)
+		}
+	}()
+	return dispatch(ctx, claim)
+}
+
 func (b *Bot) DispatchDueJobs(ctx context.Context, opts JobDispatchOptions) (JobDispatchResult, error) {
 	if b.jobs == nil {
 		return JobDispatchResult{}, jobs.ErrNotConfigured
@@ -83,7 +99,7 @@ func dispatchDueJobs(ctx context.Context, store dueJobClaimer, workerID string, 
 		sem <- struct{}{}
 		wg.Go(func() {
 			defer func() { <-sem }()
-			status, err := dispatch(ctx, claim)
+			status, err := dispatchClaimRecovered(ctx, dispatch, claim)
 			mu.Lock()
 			defer mu.Unlock()
 			result.Started++
