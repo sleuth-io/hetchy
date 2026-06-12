@@ -10,6 +10,7 @@ import (
 
 	"github.com/hetchyhq/hetchy/internal/apikeys"
 	"github.com/hetchyhq/hetchy/internal/auth"
+	"github.com/hetchyhq/hetchy/internal/githubapp"
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
 	"github.com/hetchyhq/hetchy/internal/sxsync"
 	"github.com/hetchyhq/hetchy/internal/webui"
@@ -73,6 +74,7 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 			"SXGitVaultSelectedRepo":       strings.TrimSpace(r.URL.Query().Get("sx_git_vault_repo")),
 			"SXExpand":                     strings.TrimSpace(r.URL.Query().Get("expand")) == "sx",
 			"GitHubAppEnabled":             b.app != nil,
+			"GitHubPATPreview":             previewSecret(current.GitHubPAT),
 			"DefaultRepoSlug":              defaultRepoSlug,
 		}
 		if err := b.populateSettingsTabData(r.Context(), p.OrgID, tab, data); err != nil {
@@ -200,7 +202,11 @@ type integrationInstallation struct {
 	AccountType    string
 	Suspended      bool
 	ManageURL      string
-	Repos          []integrationRepo
+	// IsPAT marks the synthetic installation backing a personal access
+	// token connection — the template swaps the disconnect action and
+	// the manage link for token-appropriate ones.
+	IsPAT bool
+	Repos []integrationRepo
 }
 
 // integrationRepo is the slim view a settings template needs.
@@ -423,6 +429,7 @@ func (b *Bot) loadIntegrationsView(ctx context.Context, orgID string) ([]integra
 			AccountType:    row.AccountType,
 			Suspended:      row.SuspendedAt.Valid,
 			ManageURL:      githubInstallationManageURL(row.AccountType, row.AccountLogin, row.InstallationID),
+			IsPAT:          githubapp.IsPATInstallation(row.InstallationID),
 		}
 		for _, rr := range installRepos {
 			repo := integrationRepo{Owner: rr.Owner, Name: rr.Name, DefaultBranch: rr.DefaultBranch, Private: rr.Private}
@@ -439,6 +446,9 @@ func (b *Bot) loadIntegrationsView(ctx context.Context, orgID string) ([]integra
 // installs in the personal settings page. Used to surface a "Manage on
 // GitHub" link from the Integrations tab.
 func githubInstallationManageURL(accountType, accountLogin string, installationID int64) string {
+	if githubapp.IsPATInstallation(installationID) {
+		return "https://github.com/settings/tokens"
+	}
 	if accountType == "Organization" {
 		return fmt.Sprintf("https://github.com/organizations/%s/settings/installations/%d", accountLogin, installationID)
 	}
@@ -464,6 +474,10 @@ func errorMessage(s string) string {
 		return "That Codex subscription auth is not usable. Re-run `codex login` and paste `jq -c . ~/.codex/auth.json`."
 	case "openai_oauth_unverified":
 		return "Couldn't verify that Codex subscription auth. The value wasn't saved - please try again in a moment."
+	case "github_pat_invalid":
+		return "GitHub rejected that token. Double-check you copied a valid personal access token and try again."
+	case "github_pat_unverified":
+		return "Couldn't verify that token with GitHub. The token wasn't saved - please try again in a moment."
 	default:
 		return ""
 	}
@@ -484,6 +498,8 @@ var savedMessages = map[string]string{
 	"github_synced":               "Sync complete.",
 	"github_install_conflict":     "That GitHub installation is already connected to another Hetchy organization. Have the existing org uninstall first (or pick a different account).",
 	"github_disconnected":         "GitHub installation removed. The Hetchy GitHub App has been uninstalled from that account.",
+	"github_pat_connected":        "GitHub connected. Repos accessible to the token have been synced.",
+	"github_pat_disconnected":     "GitHub token removed. Delete the token on GitHub if it's no longer needed.",
 	"slack_disconnected":          "Slack disconnected. The Hetchy app has been removed from that workspace.",
 	"slack_already_disconnected":  "Slack was already disconnected.",
 	"linear_installed":            "Linear installed. Mention or delegate issues to the Hetchy agent to start runs.",

@@ -122,6 +122,11 @@ type Bot struct {
 	// button is hidden and inbound webhooks refused in that case, so
 	// every read of this field must nil-check.
 	app *githubapp.App
+	// github routes installation-token requests by id sign: real App
+	// installations mint through app; synthetic negative ids resolve to
+	// the org's stored PAT. Always non-nil — PAT connections work even
+	// when no GitHub App is configured for the environment.
+	github *githubapp.Source
 	// slackUsers maps Slack user IDs to WorkOS user IDs so a chat
 	// started in Slack is attributed to the right hetchy user. Lazily
 	// populated and cached for the process lifetime — see
@@ -209,6 +214,9 @@ type Bot struct {
 	deleteWorkOSUsersFn func(context.Context, []string) error
 	lookupRepoFn        func(context.Context, string, string, string) (sqlc.GithubRepo, error)
 	githubTokenMinTTLFn func(context.Context, int64, []int64, time.Duration) (string, time.Time, error)
+	// syncPATFn is the test seam around githubapp.Source.SyncPAT, whose
+	// real implementation needs a live db pool for its transaction.
+	syncPATFn func(context.Context, string, string) (githubapp.SyncResult, error)
 	// cleanupSandboxByIDFn is called by chatCancelHandler for opportunistic
 	// cleanup of a fresh-run sandbox; overridable in tests.
 	cleanupSandboxByIDFn func(string, string)
@@ -393,10 +401,11 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 			"env", cfg.Env,
 		)
 	}
+	b.github = &githubapp.Source{App: b.app, LookupPAT: b.lookupPATForInstallation}
 	if cfg.SXCacheDir != "" {
 		_ = os.Setenv("SX_CACHE_DIR", cfg.SXCacheDir)
 	}
-	b.sx = sxsync.NewManagerWithOptions(store, orgStore, agentStore, b.app, sxsync.Options{
+	b.sx = sxsync.NewManagerWithOptions(store, orgStore, agentStore, b.github, sxsync.Options{
 		PublicVaultURL:      cfg.SXPublicVaultURL,
 		CacheDir:            cfg.SXCacheDir,
 		CacheMinFreeBytes:   cfg.SXCacheMinFreeBytes,

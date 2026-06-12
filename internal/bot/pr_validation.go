@@ -81,8 +81,8 @@ func (b *Bot) validateReportedPR(ctx context.Context, repo repoCtx, expectedBran
 }
 
 func (b *Bot) githubTokenForPRValidation(ctx context.Context, repo repoCtx) (string, error) {
-	if b != nil && b.app != nil && repo.InstallID != 0 && repo.RepoID != 0 {
-		token, _, err := b.app.InstallationToken(ctx, repo.InstallID, []int64{repo.RepoID})
+	if src := b.githubTokenSource(); src != nil && repo.InstallID != 0 && repo.RepoID != 0 {
+		token, _, err := src.InstallationToken(ctx, repo.InstallID, []int64{repo.RepoID})
 		if err == nil {
 			return token, nil
 		}

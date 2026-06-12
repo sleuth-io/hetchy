@@ -23,7 +23,7 @@ func TestEvaluateAutoMergeBlocksInvalidURLAndMissingClient(t *testing.T) {
 	}
 
 	got = (&Bot{}).evaluateAutoMerge(t.Context(), "org_1", "thread_1", "https://github.com/o/r/pull/7", assessment)
-	if got.AutoMergeState != autoMergeStateHumanReview || !strings.Contains(got.BlockedReason, "github app or database is not configured") {
+	if got.AutoMergeState != autoMergeStateHumanReview || !strings.Contains(got.BlockedReason, "github or database is not configured") {
 		t.Fatalf("missing client outcome = %+v", got)
 	}
 }
@@ -528,14 +528,14 @@ func TestHandleAutoMergeAfterVerifiedPREmitsRecordedAssessment(t *testing.T) {
 	if out["auto_merge_state"] != autoMergeStateHumanReview || out["judged_head_sha"] != "abc123" {
 		t.Fatalf("outcome = %+v, want human review for judged head", out)
 	}
-	if !strings.Contains(string(mustMarshalJSON(t, out)), "github app or database is not configured") {
+	if !strings.Contains(string(mustMarshalJSON(t, out)), "github or database is not configured") {
 		t.Fatalf("outcome = %+v, want github client configuration reason", out)
 	}
 	snapshot := emit.Snapshot()
 	if len(snapshot) != 1 || snapshot[0].Kind != blocks.KindAutoMergeAssessment || snapshot[0].Summary != "Human review needed" {
 		t.Fatalf("emitted blocks = %+v, want auto merge assessment block", snapshot)
 	}
-	if !strings.Contains(snapshot[0].Body, "Judged head: `abc123`") || !strings.Contains(snapshot[0].Body, "github app or database is not configured") {
+	if !strings.Contains(snapshot[0].Body, "Judged head: `abc123`") || !strings.Contains(snapshot[0].Body, "github or database is not configured") {
 		t.Fatalf("emitted body = %q, want assessment details", snapshot[0].Body)
 	}
 }

@@ -234,10 +234,6 @@ func (b *Bot) githubSetupHandler(w http.ResponseWriter, r *http.Request) {
 // Integrations tab. POST-only and admin-gated since sync runs against
 // GitHub APIs (cheap but not free).
 func (b *Bot) githubSyncHandler(w http.ResponseWriter, r *http.Request) {
-	if b.app == nil {
-		http.Error(w, "GitHub App is not configured for this environment.", http.StatusServiceUnavailable)
-		return
-	}
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -274,10 +270,36 @@ func (b *Bot) githubSyncHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	syncCtx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()
-	if _, err := b.app.SyncInstallation(syncCtx, b.store, installationID); err != nil {
-		b.log.Error("github sync failed", "id", installationID, "error", err)
-		http.Error(w, "sync failed: "+err.Error(), http.StatusInternalServerError)
-		return
+	if githubapp.IsPATInstallation(installationID) {
+		if b.orgs == nil || b.github == nil {
+			http.Error(w, "GitHub token connections are not configured.", http.StatusServiceUnavailable)
+			return
+		}
+		oc, err := b.orgs.Get(syncCtx, p.OrgID)
+		if err != nil {
+			b.log.Error("github pat sync: load org config", "org", p.OrgID, "error", err)
+			http.Error(w, "load org config: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if oc.GitHubPAT == "" {
+			http.Error(w, "no GitHub token stored for this organization", http.StatusBadRequest)
+			return
+		}
+		if _, err := b.syncGithubPAT(syncCtx, p.OrgID, oc.GitHubPAT); err != nil {
+			b.log.Error("github pat sync failed", "id", installationID, "error", err)
+			http.Error(w, "sync failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	} else {
+		if b.app == nil {
+			http.Error(w, "GitHub App is not configured for this environment.", http.StatusServiceUnavailable)
+			return
+		}
+		if _, err := b.app.SyncInstallation(syncCtx, b.store, installationID); err != nil {
+			b.log.Error("github sync failed", "id", installationID, "error", err)
+			http.Error(w, "sync failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 	redirect := "/settings/org?tab=integrations&saved=github_synced"
 	if strings.TrimSpace(r.FormValue("return_to")) == "sx_git_vault" {

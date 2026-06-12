@@ -84,7 +84,7 @@ func (b *Bot) startArtifactRun(ctx context.Context, prefix string, repo repoCtx)
 }
 
 func (b *Bot) addGitHubTokenRefreshEnv(ctx context.Context, prefix string, env map[string]string, repo repoCtx) error {
-	if b == nil || b.artifactSlots == nil || (b.app == nil && b.githubTokenMinTTLFn == nil) || repo.InstallID == 0 || repo.RepoID == 0 {
+	if b == nil || b.artifactSlots == nil || (b.githubTokenSource() == nil && b.githubTokenMinTTLFn == nil) || repo.InstallID == 0 || repo.RepoID == 0 {
 		return errArtifactSlotsDisabled
 	}
 	_, token, err := b.artifactSlots.Start(ctx, prefix, nil, artifactSlotRunOptions{
@@ -315,7 +315,7 @@ func (b *Bot) artifactSlotsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (b *Bot) artifactGitHubTokenHandler(w http.ResponseWriter, r *http.Request, token string) {
-	if b == nil || b.artifactSlots == nil || (b.app == nil && b.githubTokenMinTTLFn == nil) {
+	if b == nil || b.artifactSlots == nil || (b.githubTokenSource() == nil && b.githubTokenMinTTLFn == nil) {
 		http.Error(w, "github token refresh unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -349,7 +349,11 @@ func (b *Bot) githubTokenMinTTL(ctx context.Context, installationID int64, repoI
 	if b.githubTokenMinTTLFn != nil {
 		return b.githubTokenMinTTLFn(ctx, installationID, repoIDs, minTTL)
 	}
-	return b.app.InstallationTokenMinTTL(ctx, installationID, repoIDs, minTTL)
+	src := b.githubTokenSource()
+	if src == nil {
+		return "", time.Time{}, errors.New("github is not configured")
+	}
+	return src.InstallationTokenMinTTL(ctx, installationID, repoIDs, minTTL)
 }
 
 func bearerToken(header string) string {

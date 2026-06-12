@@ -65,8 +65,8 @@ func (b *Bot) resolveRepo(ctx context.Context, orgID, owner, name string) (repoC
 	if owner == "" || name == "" {
 		return repoCtx{}, fmt.Errorf("repo not selected (owner=%q name=%q)", owner, name)
 	}
-	if b.app == nil {
-		return repoCtx{}, errors.New("github app not configured for this environment")
+	if b.githubTokenSource() == nil {
+		return repoCtx{}, errors.New("github is not configured for this environment")
 	}
 	row, err := b.store.Queries.GetGithubRepoForOrg(ctx, sqlc.GetGithubRepoForOrgParams{
 		OrgID: orgID,
@@ -76,7 +76,7 @@ func (b *Bot) resolveRepo(ctx context.Context, orgID, owner, name string) (repoC
 	if err != nil {
 		return repoCtx{}, fmt.Errorf("lookup %s/%s for org %s: %w", owner, name, orgID, err)
 	}
-	tok, exp, err := b.app.InstallationTokenMinTTL(ctx, row.InstallationID, []int64{row.RepoID}, sandboxGitHubTokenMinTTL)
+	tok, exp, err := b.githubTokenMinTTL(ctx, row.InstallationID, []int64{row.RepoID}, sandboxGitHubTokenMinTTL)
 	if err != nil {
 		// IDs not visible in the caller's "resolve repo failed" log.
 		b.log.Warn("github installation token mint failed",

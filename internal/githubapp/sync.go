@@ -19,6 +19,9 @@ type SyncResult struct {
 	Repos          int
 	Teams          int
 	TeamMembers    int
+	// Truncated is set by PAT syncs that hit the repo paging cap; App
+	// syncs always page to the end.
+	Truncated bool
 }
 
 // SyncInstallation refreshes the cached repos + (for org installs)

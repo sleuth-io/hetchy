@@ -15,7 +15,8 @@ SELECT
     openai_codex_oauth_token_encrypted,
     linear_access_token_encrypted,
     linear_workspace_id,
-    linear_app_user_id
+    linear_app_user_id,
+    github_pat_encrypted
 FROM org_configs
 WHERE org_id = $1;
 
@@ -36,7 +37,8 @@ SELECT
     openai_codex_oauth_token_encrypted,
     linear_access_token_encrypted,
     linear_workspace_id,
-    linear_app_user_id
+    linear_app_user_id,
+    github_pat_encrypted
 FROM org_configs
 WHERE slack_team_id = $1;
 
@@ -59,7 +61,8 @@ SELECT
     openai_codex_oauth_token_encrypted,
     linear_access_token_encrypted,
     linear_workspace_id,
-    linear_app_user_id
+    linear_app_user_id,
+    github_pat_encrypted
 FROM org_configs
 WHERE linear_workspace_id = $1;
 
@@ -89,7 +92,8 @@ SELECT
     openai_codex_oauth_token_encrypted,
     linear_access_token_encrypted,
     linear_workspace_id,
-    linear_app_user_id
+    linear_app_user_id,
+    github_pat_encrypted
 FROM org_configs
 WHERE slack_bot_token_encrypted IS NOT NULL
   AND slack_socket_token_encrypted IS NOT NULL;
@@ -109,9 +113,10 @@ INSERT INTO org_configs (
     openai_codex_oauth_token_encrypted,
     linear_access_token_encrypted,
     linear_workspace_id,
-    linear_app_user_id
+    linear_app_user_id,
+    github_pat_encrypted
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
 )
 ON CONFLICT (org_id) DO UPDATE SET
     slack_bot_token_encrypted          = EXCLUDED.slack_bot_token_encrypted,
@@ -127,6 +132,7 @@ ON CONFLICT (org_id) DO UPDATE SET
     linear_access_token_encrypted      = EXCLUDED.linear_access_token_encrypted,
     linear_workspace_id                = EXCLUDED.linear_workspace_id,
     linear_app_user_id                 = EXCLUDED.linear_app_user_id,
+    github_pat_encrypted               = EXCLUDED.github_pat_encrypted,
     updated_at                         = NOW()
 RETURNING
     org_id,
@@ -144,7 +150,8 @@ RETURNING
     openai_codex_oauth_token_encrypted,
     linear_access_token_encrypted,
     linear_workspace_id,
-    linear_app_user_id;
+    linear_app_user_id,
+    github_pat_encrypted;
 
 -- name: DeleteOrgConfig :exec
 DELETE FROM org_configs WHERE org_id = $1;

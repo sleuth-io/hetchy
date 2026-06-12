@@ -304,6 +304,7 @@ type OrgConfig struct {
 	LinearAccessTokenEncrypted     []byte             `json:"linear_access_token_encrypted"`
 	LinearWorkspaceID              *string            `json:"linear_workspace_id"`
 	LinearAppUserID                string             `json:"linear_app_user_id"`
+	GithubPatEncrypted             []byte             `json:"github_pat_encrypted"`
 }
 
 type OrgSxVault struct {
