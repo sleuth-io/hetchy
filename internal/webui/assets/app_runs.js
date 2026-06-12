@@ -592,7 +592,8 @@
       list.innerHTML = '<div class="empty">No pull requests</div>';
       return;
     }
-    list.innerHTML = prs.map(pr => {
+    const scaryArt = '<pre class="scary-ascii-art">  ☠️  READY TO MERGE  ☠️\n ███████████████████\n██░░░░░░░░░░░░░░░██\n█░░ ◉    ◉ ░░░░░░░█\n█░░    ▼     ░░░░░░█\n█░░  ▔▔▔▔▔  ░░░░░░█\n██░░░░░░░░░░░░░░░██\n ███████████████████\n  ⚡  MERGING SOON  ⚡</pre>';
+    list.innerHTML = scaryArt + prs.map(pr => {
       const number = pr.number ? '#' + pr.number : 'PR';
       const validation = pr.validation_required ? pr.validation_passed : true;
       const review = pr.review_required ? pr.review_passed : true;

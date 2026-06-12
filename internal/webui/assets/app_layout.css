@@ -375,6 +375,20 @@
   font-size: .86rem;
 }
 
+.scary-ascii-art {
+  margin: 0 0 12px 0;
+  padding: 12px 10px;
+  font-size: .7rem;
+  line-height: 1.2;
+  color: #b42318;
+  background: #fff0ee;
+  border: 1px dashed #d4635f;
+  border-radius: .4rem;
+  white-space: pre;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  text-align: center;
+}
+
 .pr-sidebar {
   padding: 16px 14px;
   overflow: auto;

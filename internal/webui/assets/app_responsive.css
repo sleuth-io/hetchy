@@ -205,6 +205,11 @@ html.is-dark .group-sub,
 html.is-dark .empty {
   color: var(--muted);
 }
+html.is-dark .scary-ascii-art {
+  color: #ff6b6b;
+  background: #2a1515;
+  border-color: #5a3030;
+}
 html.is-dark .pr-check::before { background: var(--surface); border-color: #4a4a52; }
 html.is-dark .pr-check.is-checked::before { border-color: #2d7040; }
 html.is-dark .round-tool,
