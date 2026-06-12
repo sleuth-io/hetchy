@@ -22,7 +22,10 @@ const (
 	displayPrefixLen = 18
 )
 
-var ErrNotConfigured = errors.New("apikeys: store not configured")
+var (
+	ErrNotConfigured = errors.New("apikeys: store not configured")
+	ErrNotFound      = errors.New("apikeys: key not found")
+)
 
 // querier is a narrow interface for the DB operations needed by this package.
 // Using an interface here allows unit tests to inject a fake without a real
@@ -136,7 +139,8 @@ func (s *Store) Authenticate(ctx context.Context, token string) (Key, bool, erro
 }
 
 func (s *Store) Touch(ctx context.Context, id string) error {
-	if !s.Enabled() || strings.TrimSpace(id) == "" {
+	id = strings.TrimSpace(id)
+	if !s.Enabled() || id == "" {
 		return nil
 	}
 	return s.q.TouchOrgAPIKeyLastUsed(ctx, id)
@@ -154,7 +158,7 @@ func (s *Store) Revoke(ctx context.Context, orgID, id string) error {
 		return fmt.Errorf("revoke api key: %w", err)
 	}
 	if rows == 0 {
-		return pgx.ErrNoRows
+		return ErrNotFound
 	}
 	return nil
 }

@@ -1,6 +1,7 @@
 package apikeys
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strings"
@@ -23,22 +24,37 @@ type fakeQuerier struct {
 }
 
 func (f *fakeQuerier) CreateOrgAPIKey(ctx context.Context, arg sqlc.CreateOrgAPIKeyParams) (sqlc.OrgApiKey, error) {
+	if f.createFn == nil {
+		panic("fakeQuerier.createFn not set")
+	}
 	return f.createFn(ctx, arg)
 }
 
 func (f *fakeQuerier) ListOrgAPIKeys(ctx context.Context, orgID string) ([]sqlc.OrgApiKey, error) {
+	if f.listFn == nil {
+		panic("fakeQuerier.listFn not set")
+	}
 	return f.listFn(ctx, orgID)
 }
 
 func (f *fakeQuerier) GetOrgAPIKeyByHash(ctx context.Context, keyHash []byte) (sqlc.OrgApiKey, error) {
+	if f.getFn == nil {
+		panic("fakeQuerier.getFn not set")
+	}
 	return f.getFn(ctx, keyHash)
 }
 
 func (f *fakeQuerier) TouchOrgAPIKeyLastUsed(ctx context.Context, id string) error {
+	if f.touchFn == nil {
+		panic("fakeQuerier.touchFn not set")
+	}
 	return f.touchFn(ctx, id)
 }
 
 func (f *fakeQuerier) RevokeOrgAPIKey(ctx context.Context, arg sqlc.RevokeOrgAPIKeyParams) (int64, error) {
+	if f.revokeFn == nil {
+		panic("fakeQuerier.revokeFn not set")
+	}
 	return f.revokeFn(ctx, arg)
 }
 
@@ -336,8 +352,12 @@ func TestAuthenticateNotFound(t *testing.T) {
 
 func TestAuthenticateSuccess(t *testing.T) {
 	token := keyPrefix + "realtokenxxxxxxxxxxxxxxxxx"
+	expectedHash := hashToken(token)
 	q := &fakeQuerier{
 		getFn: func(_ context.Context, hash []byte) (sqlc.OrgApiKey, error) {
+			if !bytes.Equal(hash, expectedHash) {
+				t.Errorf("GetOrgAPIKeyByHash called with wrong hash: got %x, want %x", hash, expectedHash)
+			}
 			return sqlc.OrgApiKey{ID: "ak_abc", OrgID: "org1", Name: "prod"}, nil
 		},
 	}
@@ -456,8 +476,8 @@ func TestRevokeNotFound(t *testing.T) {
 	s := newFakeStore(q)
 
 	err := s.Revoke(t.Context(), "org1", "ak_nonexistent")
-	if !errors.Is(err, pgx.ErrNoRows) {
-		t.Errorf("Revoke(not found): error = %v, want pgx.ErrNoRows", err)
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("Revoke(not found): error = %v, want ErrNotFound", err)
 	}
 }
 
