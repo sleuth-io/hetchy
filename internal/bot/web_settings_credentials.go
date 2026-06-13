@@ -7,8 +7,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/jackc/pgx/v5"
-
+	"github.com/hetchyhq/hetchy/internal/apikeys"
 	"github.com/hetchyhq/hetchy/internal/auth"
 	"github.com/hetchyhq/hetchy/internal/db/sqlc"
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
@@ -68,7 +67,7 @@ func (b *Bot) apiKeySettingsActionHandler(w http.ResponseWriter, r *http.Request
 			return
 		}
 		if err := b.apiKeys.Revoke(r.Context(), p.OrgID, id); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
+			if errors.Is(err, apikeys.ErrNotFound) {
 				http.NotFound(w, r)
 				return
 			}
