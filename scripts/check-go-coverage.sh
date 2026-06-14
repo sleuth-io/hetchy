@@ -55,9 +55,11 @@ coverage_for_dir() {
   local dir="$1"
   local out_profile="$2"
   local out_report="$3"
-  # COVERAGE_COVERPKG lets the repo-wide gate count cross-package
-  # coverage (a test in internal/bot covering internal/billing counts).
-  # Unset, it defaults to the tested package — the old per-package gate.
+  # COVERAGE_COVERPKG sets which packages' statements are counted,
+  # enabling cross-package coverage (a test in internal/bot covering
+  # internal/billing counts). It defaults to $pkg, which itself defaults
+  # to ./... — so an argument-less run measures the whole repo. Pass a
+  # single package as $1 to scope both to that package (per-package gate).
   local coverpkg="${COVERAGE_COVERPKG:-$pkg}"
   (
     cd "$dir"
