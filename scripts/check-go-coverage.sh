@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-pkg="${1:-./internal/bot}"
-min_file="${2:-.github/coverage/internal-bot.min}"
+pkg="${1:-./...}"
+min_file="${2:-.github/coverage/repo-total.min}"
 compare_ignore_re="${COVERAGE_COMPARE_IGNORE_REGEX:-^docs/}"
 
 if [[ ! -f "$min_file" ]]; then
@@ -24,6 +24,11 @@ coverage_source_re() {
   local pkg_path="$pkg"
   pkg_path="${pkg_path#./}"
   pkg_path="${pkg_path%/...}"
+  # Repo-wide target (./... or ...): any Go file is coverage-relevant.
+  if [[ -z "$pkg_path" || "$pkg_path" == "..." ]]; then
+    printf '[.]go$'
+    return
+  fi
   printf '^%s/.*[.]go$' "$pkg_path"
 }
 
@@ -50,9 +55,15 @@ coverage_for_dir() {
   local dir="$1"
   local out_profile="$2"
   local out_report="$3"
+  # COVERAGE_COVERPKG sets which packages' statements are counted,
+  # enabling cross-package coverage (a test in internal/bot covering
+  # internal/billing counts). It defaults to $pkg, which itself defaults
+  # to ./... — so an argument-less run measures the whole repo. Pass a
+  # single package as $1 to scope both to that package (per-package gate).
+  local coverpkg="${COVERAGE_COVERPKG:-$pkg}"
   (
     cd "$dir"
-    go test -coverprofile="$out_profile" "$pkg" >&2
+    go test -coverpkg="$coverpkg" -coverprofile="$out_profile" "$pkg" >&2
     go tool cover -func="$out_profile" > "$out_report"
   )
   awk '/^total:/ { sub(/%/, "", $3); print $3 }' "$out_report"
