@@ -101,19 +101,42 @@ type Attachment struct {
 	CreatedAt   time.Time
 }
 
+// querier is the narrow DB interface required by Store. Using an interface
+// here lets unit tests inject a fake without a real Postgres connection.
+type querier interface {
+	GetConversation(ctx context.Context, arg sqlc.GetConversationParams) (sqlc.GetConversationRow, error)
+	SearchConversations(ctx context.Context, arg sqlc.SearchConversationsParams) ([]sqlc.SearchConversationsRow, error)
+	SaveConversationProgress(ctx context.Context, arg sqlc.SaveConversationProgressParams) error
+	SaveConversationRunMetadata(ctx context.Context, arg sqlc.SaveConversationRunMetadataParams) error
+	UpsertConversation(ctx context.Context, arg sqlc.UpsertConversationParams) (sqlc.UpsertConversationRow, error)
+	SaveConversationTaskOptions(ctx context.Context, arg sqlc.SaveConversationTaskOptionsParams) error
+	DeleteConversation(ctx context.Context, arg sqlc.DeleteConversationParams) error
+	RenameConversation(ctx context.Context, arg sqlc.RenameConversationParams) (int64, error)
+	SaveConversationAttachment(ctx context.Context, arg sqlc.SaveConversationAttachmentParams) (sqlc.ConversationAttachment, error)
+	ListConversationAttachments(ctx context.Context, arg sqlc.ListConversationAttachmentsParams) ([]sqlc.ListConversationAttachmentsRow, error)
+	ListConversationAttachmentsForTurn(ctx context.Context, arg sqlc.ListConversationAttachmentsForTurnParams) ([]sqlc.ConversationAttachment, error)
+	DeleteConversationAttachmentsForTurn(ctx context.Context, arg sqlc.DeleteConversationAttachmentsForTurnParams) error
+	GetConversationAttachment(ctx context.Context, arg sqlc.GetConversationAttachmentParams) (sqlc.ConversationAttachment, error)
+}
+
 // Store wraps the sqlc queries with the loose Record shape used elsewhere.
-type Store struct{ db *db.Store }
+type Store struct{ q querier }
 
 // New returns a Store. Pass nil to disable persistence (Get returns
 // ErrNotFound, Upsert is a no-op) — useful for tests.
-func New(d *db.Store) *Store { return &Store{db: d} }
+func New(d *db.Store) *Store {
+	if d == nil {
+		return &Store{}
+	}
+	return &Store{q: d.Queries}
+}
 
 // Get fetches the conversation for (orgID, threadID).
 func (s *Store) Get(ctx context.Context, orgID, threadID string) (Record, error) {
-	if s == nil || s.db == nil {
+	if s == nil || s.q == nil {
 		return Record{}, ErrNotFound
 	}
-	row, err := s.db.Queries.GetConversation(ctx, sqlc.GetConversationParams{
+	row, err := s.q.GetConversation(ctx, sqlc.GetConversationParams{
 		OrgID:    orgID,
 		ThreadID: threadID,
 	})
@@ -170,10 +193,10 @@ func escapeILIKEWildcards(s string) string {
 // so a user typing "50%" matches the literal text "50%" rather than
 // "50<anything>". The matching SQL clause uses ESCAPE '\'.
 func (s *Store) Search(ctx context.Context, orgID string, opts SearchOptions) ([]Record, error) {
-	if s == nil || s.db == nil {
+	if s == nil || s.q == nil {
 		return nil, nil
 	}
-	rows, err := s.db.Queries.SearchConversations(ctx, sqlc.SearchConversationsParams{
+	rows, err := s.q.SearchConversations(ctx, sqlc.SearchConversationsParams{
 		OrgID:           orgID,
 		FilterCreatorID: opts.FilterCreatorID,
 		CreatorID:       opts.CreatorID,
@@ -209,14 +232,14 @@ func (s *Store) Search(ctx context.Context, orgID string, opts SearchOptions) ([
 // Used by chatPersister to surface in-flight progress without
 // disturbing the canonical record. No-op when the store is nil.
 func (s *Store) SaveProgress(ctx context.Context, r Record) error {
-	if s == nil || s.db == nil {
+	if s == nil || s.q == nil {
 		return nil
 	}
 	encoded, err := encodeBlocks(r.ResponseBlocks)
 	if err != nil {
 		return fmt.Errorf("encode response_blocks: %w", err)
 	}
-	if err := s.db.Queries.SaveConversationProgress(ctx, sqlc.SaveConversationProgressParams{
+	if err := s.q.SaveConversationProgress(ctx, sqlc.SaveConversationProgressParams{
 		OrgID:          r.OrgID,
 		ThreadID:       r.ThreadID,
 		History:        r.History,
@@ -233,10 +256,10 @@ func (s *Store) SaveProgress(ctx context.Context, r Record) error {
 // values so a best-effort mid-run save cannot erase metadata written
 // by a later terminal Upsert.
 func (s *Store) SaveRunMetadata(ctx context.Context, r Record) error {
-	if s == nil || s.db == nil {
+	if s == nil || s.q == nil {
 		return nil
 	}
-	if err := s.db.Queries.SaveConversationRunMetadata(ctx, sqlc.SaveConversationRunMetadataParams{
+	if err := s.q.SaveConversationRunMetadata(ctx, sqlc.SaveConversationRunMetadataParams{
 		OrgID:     r.OrgID,
 		ThreadID:  r.ThreadID,
 		SandboxID: r.SandboxID,
@@ -250,14 +273,14 @@ func (s *Store) SaveRunMetadata(ctx context.Context, r Record) error {
 
 // Upsert writes the supplied record. No-op when the store is nil.
 func (s *Store) Upsert(ctx context.Context, r Record) error {
-	if s == nil || s.db == nil {
+	if s == nil || s.q == nil {
 		return nil
 	}
 	encoded, err := encodeBlocks(r.ResponseBlocks)
 	if err != nil {
 		return fmt.Errorf("encode response_blocks: %w", err)
 	}
-	_, err = s.db.Queries.UpsertConversation(ctx, sqlc.UpsertConversationParams{
+	_, err = s.q.UpsertConversation(ctx, sqlc.UpsertConversationParams{
 		OrgID:          r.OrgID,
 		ThreadID:       r.ThreadID,
 		SandboxID:      r.SandboxID,
@@ -282,10 +305,10 @@ func (s *Store) Upsert(ctx context.Context, r Record) error {
 // SaveTaskOptions updates the generic per-chat task option bag without
 // touching transcript or terminal run state. No-op when the store is nil.
 func (s *Store) SaveTaskOptions(ctx context.Context, orgID, threadID string, opts map[string]bool) error {
-	if s == nil || s.db == nil {
+	if s == nil || s.q == nil {
 		return nil
 	}
-	if err := s.db.Queries.SaveConversationTaskOptions(ctx, sqlc.SaveConversationTaskOptionsParams{
+	if err := s.q.SaveConversationTaskOptions(ctx, sqlc.SaveConversationTaskOptionsParams{
 		OrgID:       orgID,
 		ThreadID:    threadID,
 		TaskOptions: encodeTaskOptions(opts),
@@ -297,10 +320,10 @@ func (s *Store) SaveTaskOptions(ctx context.Context, orgID, threadID string, opt
 
 // Delete removes the conversation for (orgID, threadID). No-op if absent.
 func (s *Store) Delete(ctx context.Context, orgID, threadID string) error {
-	if s == nil || s.db == nil {
+	if s == nil || s.q == nil {
 		return nil
 	}
-	if err := s.db.Queries.DeleteConversation(ctx, sqlc.DeleteConversationParams{
+	if err := s.q.DeleteConversation(ctx, sqlc.DeleteConversationParams{
 		OrgID:    orgID,
 		ThreadID: threadID,
 	}); err != nil {
@@ -313,10 +336,10 @@ func (s *Store) Delete(ctx context.Context, orgID, threadID string) error {
 // if no row exists for (orgID, threadID) so the handler can answer 404
 // instead of pretending the write succeeded. No-op if the store is nil.
 func (s *Store) Rename(ctx context.Context, orgID, threadID, title string) error {
-	if s == nil || s.db == nil {
+	if s == nil || s.q == nil {
 		return nil
 	}
-	rows, err := s.db.Queries.RenameConversation(ctx, sqlc.RenameConversationParams{
+	rows, err := s.q.RenameConversation(ctx, sqlc.RenameConversationParams{
 		OrgID:       orgID,
 		ThreadID:    threadID,
 		CustomTitle: title,
@@ -335,11 +358,11 @@ func (s *Store) Rename(ctx context.Context, orgID, threadID, title string) error
 // already exists so the FK can associate the files with it, and must
 // populate IDs, content types, sources, and sizes before calling.
 func (s *Store) SaveAttachments(ctx context.Context, attachments []Attachment) error {
-	if s == nil || s.db == nil || len(attachments) == 0 {
+	if s == nil || s.q == nil || len(attachments) == 0 {
 		return nil
 	}
 	for _, a := range attachments {
-		_, err := s.db.Queries.SaveConversationAttachment(ctx, sqlc.SaveConversationAttachmentParams{
+		_, err := s.q.SaveConversationAttachment(ctx, sqlc.SaveConversationAttachmentParams{
 			ID:          a.ID,
 			OrgID:       a.OrgID,
 			ThreadID:    a.ThreadID,
@@ -360,10 +383,10 @@ func (s *Store) SaveAttachments(ctx context.Context, attachments []Attachment) e
 
 // ListAttachments returns attachment metadata for the whole conversation.
 func (s *Store) ListAttachments(ctx context.Context, orgID, threadID string) ([]Attachment, error) {
-	if s == nil || s.db == nil {
+	if s == nil || s.q == nil {
 		return nil, nil
 	}
-	rows, err := s.db.Queries.ListConversationAttachments(ctx, sqlc.ListConversationAttachmentsParams{
+	rows, err := s.q.ListConversationAttachments(ctx, sqlc.ListConversationAttachmentsParams{
 		OrgID:    orgID,
 		ThreadID: threadID,
 	})
@@ -379,10 +402,10 @@ func (s *Store) ListAttachments(ctx context.Context, orgID, threadID string) ([]
 
 // ListAttachmentsForTurn returns attachment contents for one prompt turn.
 func (s *Store) ListAttachmentsForTurn(ctx context.Context, orgID, threadID string, turnIndex int) ([]Attachment, error) {
-	if s == nil || s.db == nil {
+	if s == nil || s.q == nil {
 		return nil, nil
 	}
-	rows, err := s.db.Queries.ListConversationAttachmentsForTurn(ctx, sqlc.ListConversationAttachmentsForTurnParams{
+	rows, err := s.q.ListConversationAttachmentsForTurn(ctx, sqlc.ListConversationAttachmentsForTurnParams{
 		OrgID:     orgID,
 		ThreadID:  threadID,
 		TurnIndex: int32(turnIndex),
@@ -401,10 +424,10 @@ func (s *Store) ListAttachmentsForTurn(ctx context.Context, orgID, threadID stri
 // Retry paths replace History[0], so they must also replace turn-0
 // files instead of carrying stale failed-attempt context forward.
 func (s *Store) DeleteAttachmentsForTurn(ctx context.Context, orgID, threadID string, turnIndex int) error {
-	if s == nil || s.db == nil {
+	if s == nil || s.q == nil {
 		return nil
 	}
-	if err := s.db.Queries.DeleteConversationAttachmentsForTurn(ctx, sqlc.DeleteConversationAttachmentsForTurnParams{
+	if err := s.q.DeleteConversationAttachmentsForTurn(ctx, sqlc.DeleteConversationAttachmentsForTurnParams{
 		OrgID:     orgID,
 		ThreadID:  threadID,
 		TurnIndex: int32(turnIndex),
@@ -416,10 +439,10 @@ func (s *Store) DeleteAttachmentsForTurn(ctx context.Context, orgID, threadID st
 
 // GetAttachment returns one attachment with its data for download.
 func (s *Store) GetAttachment(ctx context.Context, orgID, attachmentID string) (Attachment, error) {
-	if s == nil || s.db == nil {
+	if s == nil || s.q == nil {
 		return Attachment{}, ErrNotFound
 	}
-	row, err := s.db.Queries.GetConversationAttachment(ctx, sqlc.GetConversationAttachmentParams{
+	row, err := s.q.GetConversationAttachment(ctx, sqlc.GetConversationAttachmentParams{
 		OrgID: orgID,
 		ID:    attachmentID,
 	})
