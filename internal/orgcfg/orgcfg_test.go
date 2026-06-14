@@ -661,6 +661,9 @@ func TestDelete_ErrorAtEachStep(t *testing.T) {
 		name  string
 		build func() *fakeTxQuerier
 	}{
+		{"linearSessions", func() *fakeTxQuerier {
+			return &fakeTxQuerier{deleteLinearAgentSessionsByOrgFn: func(_ context.Context, _ string) error { return sentinel }}
+		}},
 		{"repoSecretValues", func() *fakeTxQuerier {
 			return &fakeTxQuerier{deleteRepoSecretValuesByOrgFn: func(_ context.Context, _ string) error { return sentinel }}
 		}},
