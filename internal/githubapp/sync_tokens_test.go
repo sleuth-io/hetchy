@@ -45,9 +45,11 @@ type rewriteTransport struct {
 }
 
 func (rt rewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	req.URL.Scheme = rt.base.Scheme
-	req.URL.Host = rt.base.Host
-	return http.DefaultTransport.RoundTrip(req)
+	// RoundTripper must not mutate the request it's given; clone first.
+	clone := req.Clone(req.Context())
+	clone.URL.Scheme = rt.base.Scheme
+	clone.URL.Host = rt.base.Host
+	return http.DefaultTransport.RoundTrip(clone)
 }
 
 // tokenMintHandler responds to the CreateInstallationToken endpoint with
@@ -106,13 +108,41 @@ func TestInstallationToken_MintsAndCaches(t *testing.T) {
 	}
 }
 
-func TestInstallationTokenMinTTL_FloorsAtSafetyWindow(t *testing.T) {
-	srv := httptest.NewServer(tokenMintHandler("ghs_ttl"))
+// TestInstallationToken_NarrowerScopeReMints guards the security-critical
+// path: a token cached for a BROAD repo set [1,2] must never be handed to
+// a caller asking for a NARROWER set [1], which would silently grant that
+// caller access to repo 2. The cache must re-mint instead.
+func TestInstallationToken_NarrowerScopeReMints(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		tokenMintHandler("ghs_scoped")(w, r)
+	}))
 	defer srv.Close()
 	app := newAppWithGitHubStub(t, srv)
 
-	// A sub-window minTTL is raised to the safety window; the call still
-	// succeeds and caches.
+	if _, _, err := app.InstallationToken(context.Background(), 99, []int64{1, 2}); err != nil {
+		t.Fatalf("broad mint: %v", err)
+	}
+	if _, _, err := app.InstallationToken(context.Background(), 99, []int64{1}); err != nil {
+		t.Fatalf("narrow mint: %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("narrowing [1,2]->[1] must re-mint, not reuse the broad token; got %d mints", calls)
+	}
+}
+
+func TestInstallationTokenMinTTL_FloorsAtSafetyWindow(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		tokenMintHandler("ghs_ttl")(w, r)
+	}))
+	defer srv.Close()
+	app := newAppWithGitHubStub(t, srv)
+
+	// A sub-window minTTL is raised to the safety window; the call mints
+	// once and caches.
 	tok, _, err := app.InstallationTokenMinTTL(context.Background(), 7, nil, time.Minute)
 	if err != nil {
 		t.Fatalf("InstallationTokenMinTTL small: %v", err)
@@ -120,11 +150,19 @@ func TestInstallationTokenMinTTL_FloorsAtSafetyWindow(t *testing.T) {
 	if tok != "ghs_ttl" {
 		t.Errorf("token = %q", tok)
 	}
+	if calls != 1 {
+		t.Fatalf("first call should mint once, got %d mints", calls)
+	}
 
-	// A large minTTL (longer than the hour the stub grants) forces a
-	// re-mint every time because the cached token never satisfies it.
+	// A large minTTL (longer than the hour the stub grants) must force a
+	// re-mint: the cached 1h token can never satisfy a 90m floor. Assert
+	// the mint actually happened — without the call counter this test
+	// would pass even if the stale token were wrongly served from cache.
 	if _, _, err := app.InstallationTokenMinTTL(context.Background(), 7, nil, 90*time.Minute); err != nil {
 		t.Fatalf("InstallationTokenMinTTL large: %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("large minTTL must re-mint past the cached token, got %d mints", calls)
 	}
 }
 

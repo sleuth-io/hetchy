@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-pkg="${1:-./internal/bot}"
+pkg="${1:-./...}"
 min_file="${2:-.github/coverage/repo-total.min}"
 compare_ignore_re="${COVERAGE_COMPARE_IGNORE_REGEX:-^docs/}"
 

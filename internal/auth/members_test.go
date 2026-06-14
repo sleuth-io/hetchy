@@ -98,6 +98,40 @@ func TestCountAdmins(t *testing.T) {
 	}
 }
 
+// TestCountAdminsPaginates proves countAdmins sums admins across pages,
+// not just the first. The single-page happy-path test would pass even if
+// the iterator loop stopped after page one; this one wouldn't.
+func TestCountAdminsPaginates(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/user_management/organization_memberships" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		// Page 1 carries an `after` cursor; page 2 (requested with that
+		// cursor) closes the list. One active admin on each page.
+		if r.URL.Query().Get("after") == "" {
+			writeJSON(w, map[string]any{
+				"data":          []map[string]any{membershipRow("om_a", "user_a", "org_x", "active", "admin")},
+				"list_metadata": map[string]any{"before": nil, "after": "cursor_page2"},
+			})
+			return
+		}
+		writeJSON(w, map[string]any{
+			"data":          []map[string]any{membershipRow("om_b", "user_b", "org_x", "active", "admin")},
+			"list_metadata": map[string]any{"before": nil, "after": nil},
+		})
+	}))
+	defer server.Close()
+
+	s := &Service{client: workos.NewClient("sk_test", workos.WithBaseURL(server.URL))}
+	count, err := s.countAdmins(context.Background(), "org_x")
+	if err != nil {
+		t.Fatalf("countAdmins: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("countAdmins across two pages = %d, want 2", count)
+	}
+}
+
 func TestCountAdminsPropagatesError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "boom", http.StatusBadRequest)
@@ -549,7 +583,11 @@ func TestRemoveMemberSelf(t *testing.T) {
 }
 
 func TestRemoveMemberLastAdmin(t *testing.T) {
+	var deleted bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			deleted = true
+		}
 		switch r.URL.Path {
 		case "/user_management/organization_memberships/om_admin":
 			writeJSON(w, membershipRow("om_admin", "user_target", "org_x", "active", "admin"))
@@ -568,6 +606,12 @@ func TestRemoveMemberLastAdmin(t *testing.T) {
 	err := s.RemoveMember(context.Background(), "om_admin", "org_x", "user_caller")
 	if err == nil || !strings.Contains(err.Error(), "last admin") {
 		t.Fatalf("err = %v, want last-admin guard", err)
+	}
+	// The guard must block before the destructive call — assert the
+	// DELETE never reached WorkOS, so the test fails if the guard is
+	// removed rather than relying on the mock's incidental response.
+	if deleted {
+		t.Fatal("last-admin guard tripped but DeleteOrganizationMembership was still called")
 	}
 }
 
@@ -628,7 +672,11 @@ func TestUpdateMemberRoleSelf(t *testing.T) {
 }
 
 func TestUpdateMemberRoleDemoteLastAdmin(t *testing.T) {
+	var mutated bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut {
+			mutated = true
+		}
 		switch r.URL.Path {
 		case "/user_management/organization_memberships/om_admin":
 			writeJSON(w, membershipRow("om_admin", "user_target", "org_x", "active", "admin"))
@@ -646,6 +694,11 @@ func TestUpdateMemberRoleDemoteLastAdmin(t *testing.T) {
 	err := s.UpdateMemberRole(context.Background(), "om_admin", "org_x", "user_caller", "member")
 	if err == nil || !strings.Contains(err.Error(), "last admin") {
 		t.Fatalf("err = %v, want last-admin demote guard", err)
+	}
+	// Assert the demotion never reached WorkOS, so removing the guard
+	// fails this test instead of silently demoting the last admin.
+	if mutated {
+		t.Fatal("last-admin demote guard tripped but UpdateOrganizationMembership was still called")
 	}
 }
 
@@ -1092,8 +1145,15 @@ type jwtClaims struct {
 
 // fakeAccessToken builds an unsigned JWT (header.payload.signature) whose
 // payload carries the given claims. The WorkOS session helper does not verify
-// the signature on unseal — it only base64url-decodes the payload — so a
-// fabricated token is sufficient to exercise the Middleware authed path.
+// the inner JWT signature on unseal — it only base64url-decodes the payload —
+// so a fabricated token is sufficient to exercise the Middleware authed path.
+//
+// This is not a Middleware weakness: the trust boundary is the session
+// cookie's AES-GCM seal (keyed by CookiePassword, applied by
+// SealSessionFromAuthResponse). An attacker can't produce a cookie that
+// unseals without that key, so the inner JWT — already vouched for by WorkOS
+// at login and sealed in — is not re-verified. A test in this package can
+// forge the inner token precisely because it owns the sealing key.
 func fakeAccessToken(t *testing.T, claims jwtClaims) string {
 	t.Helper()
 	enc := func(v any) string {

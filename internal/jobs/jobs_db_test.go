@@ -33,6 +33,9 @@ type fakeDBTX struct {
 	query map[string]pgx.Rows
 	// exec maps a substring of the SQL to the result returned for Exec.
 	exec map[string]execResult
+	// lastQueryRowArgs captures the args of the most recent QueryRow so a
+	// test can assert the Store forwarded org scoping into the query.
+	lastQueryRowArgs []any
 }
 
 type execResult struct {
@@ -64,7 +67,8 @@ func (f *fakeDBTX) Query(_ context.Context, sql string, _ ...any) (pgx.Rows, err
 	return nil, fmt.Errorf("unexpected query: %s", sql)
 }
 
-func (f *fakeDBTX) QueryRow(_ context.Context, sql string, _ ...any) pgx.Row {
+func (f *fakeDBTX) QueryRow(_ context.Context, sql string, args ...any) pgx.Row {
+	f.lastQueryRowArgs = args
 	for frag, row := range f.queryRow {
 		if strings.Contains(sql, frag) {
 			return row
@@ -445,6 +449,27 @@ func TestGetHappyPath(t *testing.T) {
 	}
 	if job.ID != "job_1" {
 		t.Fatalf("unexpected job: %+v", job)
+	}
+}
+
+// TestGetForwardsOrgScope proves Get passes the caller's orgID into the
+// query as the org_id parameter ($1 in GetAgentJob's WHERE org_id = $1).
+// Without this, a regression that dropped org scoping from the Get call
+// would read another org's job; the happy-path test alone wouldn't catch
+// it because the fake returns its row regardless of args.
+func TestGetForwardsOrgScope(t *testing.T) {
+	f := &fakeDBTX{queryRow: map[string]pgx.Row{
+		"FROM agent_jobs": agentJobRow{job: sampleJobRow("job_1", "org_1")},
+	}}
+	s := newFakeStore(f)
+	if _, err := s.Get(t.Context(), "org_1", "job_1"); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if len(f.lastQueryRowArgs) < 2 {
+		t.Fatalf("expected at least 2 query args (org_id, id), got %v", f.lastQueryRowArgs)
+	}
+	if f.lastQueryRowArgs[0] != "org_1" || f.lastQueryRowArgs[1] != "job_1" {
+		t.Fatalf("query args = %v, want [org_1 job_1] (org scope must be forwarded)", f.lastQueryRowArgs)
 	}
 }
 
