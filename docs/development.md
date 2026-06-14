@@ -15,7 +15,7 @@ make install       # Install to ~/.local/bin
 make test          # Run tests
 make lint          # Run linters
 make format        # Format code
-make coverage-bot  # Check internal/bot coverage against the committed floor
+make coverage      # Check repo-wide coverage against the committed floor
 ```
 
 ## Pre-push Checks
@@ -24,9 +24,12 @@ make coverage-bot  # Check internal/bot coverage against the committed floor
 make prepush       # Format, lint, build, migration order
 ```
 
-The bot coverage floor is source-controlled in
-`.github/coverage/internal-bot.min`. CI reads this file, but does not update it;
-raise the value intentionally when a change increases coverage.
+The coverage floor is source-controlled in
+`.github/coverage/repo-total.min` and measured repo-wide with
+`-coverpkg=./...` (a test in one package counts toward any package it
+exercises). On a pull request CI also compares against the base branch
+and fails on any regression below it, so the committed floor is only the
+absolute minimum; raise it intentionally when coverage climbs.
 
 ## Debugging
 

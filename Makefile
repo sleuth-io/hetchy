@@ -1,4 +1,4 @@
-.PHONY: help build install test coverage-bot ci lint format clean tidy deps verify update-deps init prepush postpull bot logs dev services-up services-down services-logs snapshot push-snapshot db-up db-down db-status db-new check-migrations sqlc-generate pg-up pg-down pg-logs pg-psql pg-reset slack-app
+.PHONY: help build install test coverage ci lint format clean tidy deps verify update-deps init prepush postpull bot logs dev services-up services-down services-logs snapshot push-snapshot db-up db-down db-status db-new check-migrations sqlc-generate pg-up pg-down pg-logs pg-psql pg-reset slack-app
 
 # Default target
 help: ## Show this help message
@@ -38,8 +38,8 @@ test: ## Run tests
 	@echo "Running tests..."
 	@go test -race -cover ./...
 
-coverage-bot: ## Check internal/bot coverage against the CI baseline
-	@bash scripts/check-go-coverage.sh ./internal/bot .github/coverage/internal-bot.min
+coverage: ## Check repo-wide coverage against the CI baseline
+	@COVERAGE_COVERPKG=./... bash scripts/check-go-coverage.sh ./... .github/coverage/repo-total.min
 
 ci: ## Run the same read-only checks CI does (gofmt, vet, lint, test -v, build)
 	@echo "Checking formatting..."
@@ -54,8 +54,8 @@ ci: ## Run the same read-only checks CI does (gofmt, vet, lint, test -v, build)
 	@go tool golangci-lint run
 	@echo "Running tests..."
 	@go test -v -race -cover ./...
-	@echo "Checking bot coverage..."
-	@bash scripts/check-go-coverage.sh ./internal/bot .github/coverage/internal-bot.min
+	@echo "Checking coverage..."
+	@COVERAGE_COVERPKG=./... bash scripts/check-go-coverage.sh ./... .github/coverage/repo-total.min
 	@echo "Building..."
 	@go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) $(MAIN_PATH)
 	@echo "✓ all CI checks passed"
