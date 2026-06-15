@@ -72,21 +72,58 @@ type Config struct {
 	DefaultGitHubRepo  string
 }
 
-// Store wires a *db.Store to a *secrets.Cipher and exposes plaintext
+// querier is the narrow database interface needed by Store for reads and upserts.
+// Using an interface here lets unit tests inject a fake without a real Postgres
+// connection.
+type querier interface {
+	GetOrgConfig(ctx context.Context, orgID string) (sqlc.OrgConfig, error)
+	GetOrgConfigBySlackTeamID(ctx context.Context, slackTeamID *string) (sqlc.OrgConfig, error)
+	GetOrgConfigByLinearWorkspaceID(ctx context.Context, linearWorkspaceID *string) (sqlc.OrgConfig, error)
+	ListOrgConfigsWithSlack(ctx context.Context) ([]sqlc.OrgConfig, error)
+	UpsertOrgConfig(ctx context.Context, arg sqlc.UpsertOrgConfigParams) (sqlc.OrgConfig, error)
+}
+
+// txQuerier is the view of sqlc.Queries required inside the Delete transaction.
+type txQuerier interface {
+	DeleteLinearAgentSessionsByOrg(ctx context.Context, orgID string) error
+	DeleteRepoSecretValuesByOrg(ctx context.Context, orgID string) error
+	DeleteRepoSetupSpecsByOrg(ctx context.Context, orgID string) error
+	DeleteGithubInstallationsByOrg(ctx context.Context, orgID string) error
+	DeleteAgentRunsByOrg(ctx context.Context, orgID string) error
+	DeleteAgentProfilesByOrg(ctx context.Context, orgID string) error
+	DeleteConversationsByOrg(ctx context.Context, orgID string) error
+	DeleteOrgAPIKeysByOrg(ctx context.Context, orgID string) error
+	DeleteOrgConfig(ctx context.Context, orgID string) error
+}
+
+// txRunner wraps the DB transaction plumbing. It runs fn inside a transaction
+// and commits on success or rolls back on error.
+type txRunner func(context.Context, func(txQuerier) error) error
+
+// Store wires a querier and txRunner to a *secrets.Cipher and exposes plaintext
 // reads/writes for org_configs.
 type Store struct {
-	db     *db.Store
+	q      querier
+	tx     txRunner
 	cipher *secrets.Cipher
 }
 
 // New constructs a Store. Both arguments are required.
 func New(d *db.Store, c *secrets.Cipher) *Store {
-	return &Store{db: d, cipher: c}
+	return &Store{
+		q:      d.Queries,
+		cipher: c,
+		tx: func(ctx context.Context, fn func(txQuerier) error) error {
+			return d.WithTx(ctx, func(q *sqlc.Queries) error {
+				return fn(q)
+			})
+		},
+	}
 }
 
 // Get returns the decrypted config for orgID, or ErrNotFound.
 func (s *Store) Get(ctx context.Context, orgID string) (Config, error) {
-	row, err := s.db.Queries.GetOrgConfig(ctx, orgID)
+	row, err := s.q.GetOrgConfig(ctx, orgID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Config{}, ErrNotFound
@@ -103,7 +140,7 @@ func (s *Store) GetBySlackTeamID(ctx context.Context, teamID string) (Config, er
 	if teamID == "" {
 		return Config{}, ErrNotFound
 	}
-	row, err := s.db.Queries.GetOrgConfigBySlackTeamID(ctx, &teamID)
+	row, err := s.q.GetOrgConfigBySlackTeamID(ctx, &teamID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Config{}, ErrNotFound
@@ -121,7 +158,7 @@ func (s *Store) GetByLinearWorkspaceID(ctx context.Context, workspaceID string) 
 	if workspaceID == "" {
 		return Config{}, ErrNotFound
 	}
-	row, err := s.db.Queries.GetOrgConfigByLinearWorkspaceID(ctx, &workspaceID)
+	row, err := s.q.GetOrgConfigByLinearWorkspaceID(ctx, &workspaceID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Config{}, ErrNotFound
@@ -140,7 +177,7 @@ func (s *Store) GetByLinearWorkspaceID(ctx context.Context, workspaceID string) 
 // need to enumerate all Slack-connected orgs (HTTP + socket), add a
 // different query — don't generalize this one.
 func (s *Store) ListWithSlack(ctx context.Context) ([]Config, error) {
-	rows, err := s.db.Queries.ListOrgConfigsWithSlack(ctx)
+	rows, err := s.q.ListOrgConfigsWithSlack(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list slack orgs: %w", err)
 	}
@@ -203,7 +240,7 @@ func (s *Store) Upsert(ctx context.Context, c Config) (Config, error) {
 		w := c.LinearWorkspaceID
 		linearWorkspaceID = &w
 	}
-	row, err := s.db.Queries.UpsertOrgConfig(ctx, sqlc.UpsertOrgConfigParams{
+	row, err := s.q.UpsertOrgConfig(ctx, sqlc.UpsertOrgConfigParams{
 		OrgID:                          c.OrgID,
 		SlackBotTokenEncrypted:         sb,
 		SlackSocketTokenEncrypted:      ss,
@@ -244,7 +281,7 @@ func (s *Store) Delete(ctx context.Context, orgID string) error {
 	if orgID == "" {
 		return errors.New("orgcfg: empty orgID")
 	}
-	return s.db.WithTx(ctx, func(q *sqlc.Queries) error {
+	return s.tx(ctx, func(q txQuerier) error {
 		if err := q.DeleteLinearAgentSessionsByOrg(ctx, orgID); err != nil {
 			return fmt.Errorf("delete linear agent sessions: %w", err)
 		}
