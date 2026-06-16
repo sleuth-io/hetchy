@@ -31,8 +31,34 @@ type AutoTopupper interface {
 	PurchaseTopupUnit(context.Context, Account, string) (string, error)
 }
 
+// serviceStore is the subset of Store methods used by Service. Extracted as an
+// interface so tests can inject a fake without a real database.
+type serviceStore interface {
+	Enabled() bool
+	EnsureAccount(ctx context.Context, orgID string) (Account, error)
+	RepoFlavor(ctx context.Context, orgID, owner, repo string) (Flavor, error)
+	AdmitRun(ctx context.Context, orgID, runID string, credits int, flavor Flavor, startedAt time.Time) (Reservation, Account, error)
+	AutoTopup(ctx context.Context, orgID string, reserveCredits int, purchase func(context.Context, Account, string) (string, error)) (Account, error)
+	SetLastPaymentError(ctx context.Context, orgID, msg string) error
+	FinalizeRun(ctx context.Context, runID, terminalState string, endedAt time.Time) error
+	Overview(ctx context.Context, orgID string, meterLimit int32) (Overview, error)
+	UpdateTopupSettings(ctx context.Context, orgID string, settings TopupSettings) (TopupSettings, error)
+	ListRepoSettings(ctx context.Context, orgID string) (map[string]RepoSetting, error)
+	SetRepoFlavor(ctx context.Context, orgID, owner, repo, flavor string) (RepoSetting, error)
+	SetStripeCustomer(ctx context.Context, orgID, customerID string) (Account, error)
+	FindAccountByStripeCustomer(ctx context.Context, customerID string) (Account, error)
+	UpsertAccountMirror(ctx context.Context, mirror AccountMirror) (Account, error)
+	SetBillingExempt(ctx context.Context, orgID string, exempt bool) (Account, error)
+	ListAccountOrgIDs(ctx context.Context) ([]string, error)
+	ListBillingExemptOrgIDs(ctx context.Context) ([]string, error)
+	SetPendingPlanChange(ctx context.Context, orgID, planCode string, effectiveAt time.Time) (Account, error)
+	ClearPendingPlanChange(ctx context.Context, orgID string) (Account, error)
+	GrantTopupCredits(ctx context.Context, orgID string, credits int) (Account, error)
+	GrantTopupCreditsOnce(ctx context.Context, eventID, eventType, orgID string, credits int) (Account, bool, error)
+}
+
 type Service struct {
-	store    *Store
+	store    serviceStore
 	topupper AutoTopupper
 }
 
