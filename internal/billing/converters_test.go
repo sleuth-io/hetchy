@@ -16,41 +16,75 @@ func makeTimestamptz(t time.Time) pgtype.Timestamptz {
 
 func TestAccountFromRow(t *testing.T) {
 	now := time.Date(2026, 1, 15, 12, 0, 0, 0, time.UTC)
+	periodStart := now
+	periodEnd := now.Add(30 * 24 * time.Hour)
+	pendingAt := now.Add(60 * 24 * time.Hour)
+	updatedAt := now.Add(time.Hour)
 	row := sqlc.BillingAccount{
 		OrgID:                  "org1",
 		StripeCustomerID:       "cus_1",
 		StripeSubscriptionID:   "sub_1",
 		PlanCode:               PlanStudio,
 		Status:                 "active",
-		CurrentPeriodStart:     makeTimestamptz(now),
-		CurrentPeriodEnd:       makeTimestamptz(now.Add(30 * 24 * time.Hour)),
+		CurrentPeriodStart:     makeTimestamptz(periodStart),
+		CurrentPeriodEnd:       makeTimestamptz(periodEnd),
 		IncludedCredits:        500,
 		IncludedCreditsUsed:    100,
 		TopupCredits:           200,
 		MaxFlavor:              FlavorPlus,
 		PerRunMaxCredits:       12,
-		BillingExempt:          false,
-		LastPaymentError:       "",
+		BillingExempt:          true,
+		LastPaymentError:       "card declined",
 		PendingPlanCode:        PlanGrowth,
-		PendingPlanEffectiveAt: makeTimestamptz(now.Add(60 * 24 * time.Hour)),
+		PendingPlanEffectiveAt: makeTimestamptz(pendingAt),
 		CreatedAt:              makeTimestamptz(now),
-		UpdatedAt:              makeTimestamptz(now),
+		UpdatedAt:              makeTimestamptz(updatedAt),
 	}
 	got := accountFromRow(row)
-	if got.OrgID != "org1" || got.PlanCode != PlanStudio || got.IncludedCredits != 500 {
-		t.Errorf("accountFromRow basic fields mismatch: %+v", got)
+	if got.OrgID != "org1" {
+		t.Errorf("OrgID = %q, want %q", got.OrgID, "org1")
 	}
-	if got.IncludedCreditsUsed != 100 || got.TopupCredits != 200 {
-		t.Errorf("accountFromRow credit fields mismatch: %+v", got)
+	if got.StripeCustomerID != "cus_1" {
+		t.Errorf("StripeCustomerID = %q, want %q", got.StripeCustomerID, "cus_1")
+	}
+	if got.StripeSubscriptionID != "sub_1" {
+		t.Errorf("StripeSubscriptionID = %q, want %q", got.StripeSubscriptionID, "sub_1")
+	}
+	if got.PlanCode != PlanStudio {
+		t.Errorf("PlanCode = %q, want %q", got.PlanCode, PlanStudio)
+	}
+	if got.Status != "active" {
+		t.Errorf("Status = %q, want %q", got.Status, "active")
+	}
+	if !got.CurrentPeriodStart.Equal(periodStart) {
+		t.Errorf("CurrentPeriodStart = %v, want %v", got.CurrentPeriodStart, periodStart)
+	}
+	if !got.CurrentPeriodEnd.Equal(periodEnd) {
+		t.Errorf("CurrentPeriodEnd = %v, want %v", got.CurrentPeriodEnd, periodEnd)
+	}
+	if got.IncludedCredits != 500 || got.IncludedCreditsUsed != 100 || got.TopupCredits != 200 {
+		t.Errorf("credit fields: included=%d used=%d topup=%d", got.IncludedCredits, got.IncludedCreditsUsed, got.TopupCredits)
 	}
 	if got.MaxFlavor != FlavorPlus || got.PerRunMaxCredits != 12 {
-		t.Errorf("accountFromRow flavor fields mismatch: %+v", got)
+		t.Errorf("flavor/perRun: maxFlavor=%q perRun=%d", got.MaxFlavor, got.PerRunMaxCredits)
+	}
+	if !got.BillingExempt {
+		t.Error("BillingExempt should be true")
+	}
+	if got.LastPaymentError != "card declined" {
+		t.Errorf("LastPaymentError = %q, want %q", got.LastPaymentError, "card declined")
 	}
 	if got.PendingPlanCode != PlanGrowth {
-		t.Errorf("accountFromRow pending plan = %q, want %q", got.PendingPlanCode, PlanGrowth)
+		t.Errorf("PendingPlanCode = %q, want %q", got.PendingPlanCode, PlanGrowth)
 	}
-	if got.CreatedAt.IsZero() {
-		t.Error("accountFromRow CreatedAt should be non-zero")
+	if !got.PendingPlanEffectiveAt.Equal(pendingAt) {
+		t.Errorf("PendingPlanEffectiveAt = %v, want %v", got.PendingPlanEffectiveAt, pendingAt)
+	}
+	if !got.CreatedAt.Equal(now) {
+		t.Errorf("CreatedAt = %v, want %v", got.CreatedAt, now)
+	}
+	if !got.UpdatedAt.Equal(updatedAt) {
+		t.Errorf("UpdatedAt = %v, want %v", got.UpdatedAt, updatedAt)
 	}
 }
 

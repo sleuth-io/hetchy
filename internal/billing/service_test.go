@@ -396,7 +396,12 @@ func TestAdmitRunAutoTopupPaymentError(t *testing.T) {
 	store.autoTopup = func(_ context.Context, _ string, _ int, _ func(context.Context, Account, string) (string, error)) (Account, error) {
 		return Account{}, autoTopupPaymentError{err: paymentErr}
 	}
-	store.setLastPaymentError = func(_ context.Context, _ string, _ string) error { return nil }
+
+	var capturedErrOrgID string
+	store.setLastPaymentError = func(_ context.Context, orgID string, _ string) error {
+		capturedErrOrgID = orgID
+		return nil
+	}
 
 	tp := &fakeTopupper{purchaseTopupUnit: func(_ context.Context, _ Account, _ string) (string, error) {
 		return "", paymentErr
@@ -409,6 +414,9 @@ func TestAdmitRunAutoTopupPaymentError(t *testing.T) {
 	}
 	if !errors.Is(err, paymentErr) {
 		t.Errorf("expected wrapped paymentErr, got %v", err)
+	}
+	if capturedErrOrgID != "org1" {
+		t.Errorf("SetLastPaymentError called with orgID %q, want %q", capturedErrOrgID, "org1")
 	}
 }
 
@@ -482,9 +490,9 @@ func TestFinalizeRunEnabled(t *testing.T) {
 // newDelegateFakeStore builds a fakeStore wired with stubs for all delegate methods.
 func newDelegateFakeStore(wantAccount Account, wantTopup TopupSettings, wantRepoSetting RepoSetting) *fakeStore {
 	store := enabledFakeStore()
-	store.overview = func(_ context.Context, orgID string, limit int32) (Overview, error) {
-		if orgID != "org1" || limit != 10 {
-			return Overview{}, errors.New("unexpected args")
+	store.overview = func(_ context.Context, orgID string, _ int32) (Overview, error) {
+		if orgID != "org1" {
+			return Overview{}, errors.New("unexpected orgID")
 		}
 		return Overview{Account: wantAccount}, nil
 	}

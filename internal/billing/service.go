@@ -123,15 +123,16 @@ func (s *Service) maybeAutoTopup(ctx context.Context, account Account, reserveCr
 	if s.topupper != nil {
 		purchase = s.topupper.PurchaseTopupUnit
 	}
-	account, err := s.store.AutoTopup(ctx, account.OrgID, reserveCredits, purchase)
+	orgID := account.OrgID
+	updated, err := s.store.AutoTopup(ctx, orgID, reserveCredits, purchase)
 	if err != nil {
 		var paymentErr autoTopupPaymentError
 		if errors.As(err, &paymentErr) {
-			_ = s.store.SetLastPaymentError(ctx, account.OrgID, paymentErr.err.Error())
+			_ = s.store.SetLastPaymentError(ctx, orgID, paymentErr.err.Error())
 		}
 		return Account{}, err
 	}
-	return account, nil
+	return updated, nil
 }
 
 func topupUnitCentsForPlan(planCode string) int {
