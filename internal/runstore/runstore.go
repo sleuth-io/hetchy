@@ -87,19 +87,71 @@ type PendingEvent struct {
 	Data  []byte
 }
 
-type Store struct {
-	db *db.Store
+// querier is the narrow DB interface required by Store. Using an interface
+// here lets unit tests inject a fake without a real Postgres connection.
+type querier interface {
+	CreateAgentRun(ctx context.Context, arg sqlc.CreateAgentRunParams) (sqlc.AgentRun, error)
+	GetAgentRun(ctx context.Context, id string) (sqlc.AgentRun, error)
+	GetAgentRunByRequest(ctx context.Context, arg sqlc.GetAgentRunByRequestParams) (sqlc.AgentRun, error)
+	GetActiveAgentRunForThread(ctx context.Context, arg sqlc.GetActiveAgentRunForThreadParams) (sqlc.AgentRun, error)
+	GetLatestAgentRunForThread(ctx context.Context, arg sqlc.GetLatestAgentRunForThreadParams) (sqlc.AgentRun, error)
+	ListLatestAgentRunsForThreads(ctx context.Context, arg sqlc.ListLatestAgentRunsForThreadsParams) ([]sqlc.AgentRun, error)
+	UpdateAgentRunKind(ctx context.Context, arg sqlc.UpdateAgentRunKindParams) error
+	UpdateAgentRunBranch(ctx context.Context, arg sqlc.UpdateAgentRunBranchParams) error
+	UpdateAgentRunSandbox(ctx context.Context, arg sqlc.UpdateAgentRunSandboxParams) error
+	UpdateAgentRunSession(ctx context.Context, arg sqlc.UpdateAgentRunSessionParams) error
+	UpdateAgentRunCommand(ctx context.Context, arg sqlc.UpdateAgentRunCommandParams) error
+	UpdateAgentRunState(ctx context.Context, arg sqlc.UpdateAgentRunStateParams) error
+	UpdateAgentRunOutcome(ctx context.Context, arg sqlc.UpdateAgentRunOutcomeParams) error
+	TouchAgentRunLease(ctx context.Context, arg sqlc.TouchAgentRunLeaseParams) error
+	UpdateAgentRunLogCursor(ctx context.Context, arg sqlc.UpdateAgentRunLogCursorParams) error
+	ListExpiredAgentRuns(ctx context.Context, limit int32) ([]sqlc.AgentRun, error)
+	ListStaleAgentRuns(ctx context.Context, arg sqlc.ListStaleAgentRunsParams) ([]sqlc.AgentRun, error)
+	ListActiveAgentRunsForLeaseOwnerPrefix(ctx context.Context, arg sqlc.ListActiveAgentRunsForLeaseOwnerPrefixParams) ([]sqlc.AgentRun, error)
+	ClaimAgentRunLease(ctx context.Context, arg sqlc.ClaimAgentRunLeaseParams) (sqlc.AgentRun, error)
+	ClaimAgentRunLeaseFromOwner(ctx context.Context, arg sqlc.ClaimAgentRunLeaseFromOwnerParams) (sqlc.AgentRun, error)
+	ClaimStaleAgentRunLease(ctx context.Context, arg sqlc.ClaimStaleAgentRunLeaseParams) (sqlc.AgentRun, error)
+	AppendAgentRunEvent(ctx context.Context, arg sqlc.AppendAgentRunEventParams) (int64, error)
+	ListAgentRunEventsFromSeq(ctx context.Context, arg sqlc.ListAgentRunEventsFromSeqParams) ([]sqlc.AgentRunEvent, error)
 }
 
-func New(d *db.Store) *Store { return &Store{db: d} }
+// txQuerier is the view of sqlc.Queries required inside transactions.
+type txQuerier interface {
+	ClaimAgentRunForCancel(ctx context.Context, arg sqlc.ClaimAgentRunForCancelParams) (sqlc.AgentRun, error)
+	AppendAgentRunEvent(ctx context.Context, arg sqlc.AppendAgentRunEventParams) (int64, error)
+	UpdateAgentRunState(ctx context.Context, arg sqlc.UpdateAgentRunStateParams) error
+	UpdateAgentRunLogCursor(ctx context.Context, arg sqlc.UpdateAgentRunLogCursorParams) error
+}
 
-func (s *Store) Enabled() bool { return s != nil && s.db != nil }
+// txRunner runs fn inside a database transaction, committing on success.
+type txRunner func(ctx context.Context, fn func(txQuerier) error) error
+
+type Store struct {
+	q  querier
+	tx txRunner
+}
+
+func New(d *db.Store) *Store {
+	if d == nil {
+		return &Store{}
+	}
+	return &Store{
+		q: d.Queries,
+		tx: func(ctx context.Context, fn func(txQuerier) error) error {
+			return d.WithTx(ctx, func(q *sqlc.Queries) error {
+				return fn(q)
+			})
+		},
+	}
+}
+
+func (s *Store) Enabled() bool { return s != nil && s.q != nil }
 
 func (s *Store) Create(ctx context.Context, r Run, leaseOwner string, leaseDuration time.Duration) (Run, bool, error) {
 	if !s.Enabled() {
 		return Run{}, false, nil
 	}
-	row, err := s.db.Queries.CreateAgentRun(ctx, sqlc.CreateAgentRunParams{
+	row, err := s.q.CreateAgentRun(ctx, sqlc.CreateAgentRunParams{
 		ID:             r.ID,
 		OrgID:          r.OrgID,
 		ThreadID:       r.ThreadID,
@@ -113,22 +165,22 @@ func (s *Store) Create(ctx context.Context, r Run, leaseOwner string, leaseDurat
 		LeaseDuration:  interval(leaseDuration),
 	})
 	if err == nil {
-		return fromRunRow(sqlc.AgentRun(row)), true, nil
+		return fromRunRow(row), true, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return Run{}, false, fmt.Errorf("create run: %w", err)
 	}
-	existing, err := s.db.Queries.GetAgentRunByRequest(ctx, sqlc.GetAgentRunByRequestParams{
+	existing, err := s.q.GetAgentRunByRequest(ctx, sqlc.GetAgentRunByRequestParams{
 		OrgID:     r.OrgID,
 		RequestID: r.RequestID,
 	})
 	if err == nil {
-		return fromRunRow(sqlc.AgentRun(existing)), false, nil
+		return fromRunRow(existing), false, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return Run{}, false, fmt.Errorf("get existing run: %w", err)
 	}
-	active, err := s.db.Queries.GetActiveAgentRunForThread(ctx, sqlc.GetActiveAgentRunForThreadParams{
+	active, err := s.q.GetActiveAgentRunForThread(ctx, sqlc.GetActiveAgentRunForThreadParams{
 		OrgID:    r.OrgID,
 		ThreadID: r.ThreadID,
 	})
@@ -138,32 +190,32 @@ func (s *Store) Create(ctx context.Context, r Run, leaseOwner string, leaseDurat
 		}
 		return Run{}, false, fmt.Errorf("get active run: %w", err)
 	}
-	return fromRunRow(sqlc.AgentRun(active)), false, nil
+	return fromRunRow(active), false, nil
 }
 
 func (s *Store) Get(ctx context.Context, id string) (Run, error) {
 	if !s.Enabled() {
 		return Run{}, pgx.ErrNoRows
 	}
-	row, err := s.db.Queries.GetAgentRun(ctx, id)
+	row, err := s.q.GetAgentRun(ctx, id)
 	if err != nil {
 		return Run{}, err
 	}
-	return fromRunRow(sqlc.AgentRun(row)), nil
+	return fromRunRow(row), nil
 }
 
 func (s *Store) LatestForThread(ctx context.Context, orgID, threadID string) (Run, error) {
 	if !s.Enabled() {
 		return Run{}, pgx.ErrNoRows
 	}
-	row, err := s.db.Queries.GetLatestAgentRunForThread(ctx, sqlc.GetLatestAgentRunForThreadParams{
+	row, err := s.q.GetLatestAgentRunForThread(ctx, sqlc.GetLatestAgentRunForThreadParams{
 		OrgID:    orgID,
 		ThreadID: threadID,
 	})
 	if err != nil {
 		return Run{}, err
 	}
-	return fromRunRow(sqlc.AgentRun(row)), nil
+	return fromRunRow(row), nil
 }
 
 func (s *Store) LatestForThreads(ctx context.Context, orgID string, threadIDs []string) (map[string]Run, error) {
@@ -171,7 +223,7 @@ func (s *Store) LatestForThreads(ctx context.Context, orgID string, threadIDs []
 	if !s.Enabled() || len(threadIDs) == 0 {
 		return out, nil
 	}
-	rows, err := s.db.Queries.ListLatestAgentRunsForThreads(ctx, sqlc.ListLatestAgentRunsForThreadsParams{
+	rows, err := s.q.ListLatestAgentRunsForThreads(ctx, sqlc.ListLatestAgentRunsForThreadsParams{
 		OrgID:     orgID,
 		ThreadIds: threadIDs,
 	})
@@ -179,7 +231,7 @@ func (s *Store) LatestForThreads(ctx context.Context, orgID string, threadIDs []
 		return nil, err
 	}
 	for _, row := range rows {
-		run := fromRunRow(sqlc.AgentRun(row))
+		run := fromRunRow(row)
 		out[run.ThreadID] = run
 	}
 	return out, nil
@@ -189,49 +241,49 @@ func (s *Store) ActiveForThread(ctx context.Context, orgID, threadID string) (Ru
 	if !s.Enabled() {
 		return Run{}, pgx.ErrNoRows
 	}
-	row, err := s.db.Queries.GetActiveAgentRunForThread(ctx, sqlc.GetActiveAgentRunForThreadParams{
+	row, err := s.q.GetActiveAgentRunForThread(ctx, sqlc.GetActiveAgentRunForThreadParams{
 		OrgID:    orgID,
 		ThreadID: threadID,
 	})
 	if err != nil {
 		return Run{}, err
 	}
-	return fromRunRow(sqlc.AgentRun(row)), nil
+	return fromRunRow(row), nil
 }
 
 func (s *Store) UpdateKind(ctx context.Context, id, kind, leaseOwner string) {
 	if !s.Enabled() || id == "" {
 		return
 	}
-	_ = s.db.Queries.UpdateAgentRunKind(ctx, sqlc.UpdateAgentRunKindParams{ID: id, RunKind: kind, LeaseOwner: leaseOwner})
+	_ = s.q.UpdateAgentRunKind(ctx, sqlc.UpdateAgentRunKindParams{ID: id, RunKind: kind, LeaseOwner: leaseOwner})
 }
 
 func (s *Store) UpdateBranch(ctx context.Context, id, branch, leaseOwner string) {
 	if !s.Enabled() || id == "" {
 		return
 	}
-	_ = s.db.Queries.UpdateAgentRunBranch(ctx, sqlc.UpdateAgentRunBranchParams{ID: id, Branch: branch, LeaseOwner: leaseOwner})
+	_ = s.q.UpdateAgentRunBranch(ctx, sqlc.UpdateAgentRunBranchParams{ID: id, Branch: branch, LeaseOwner: leaseOwner})
 }
 
 func (s *Store) UpdateSandbox(ctx context.Context, id, sandboxID, leaseOwner string) {
 	if !s.Enabled() || id == "" {
 		return
 	}
-	_ = s.db.Queries.UpdateAgentRunSandbox(ctx, sqlc.UpdateAgentRunSandboxParams{ID: id, SandboxID: sandboxID, LeaseOwner: leaseOwner})
+	_ = s.q.UpdateAgentRunSandbox(ctx, sqlc.UpdateAgentRunSandboxParams{ID: id, SandboxID: sandboxID, LeaseOwner: leaseOwner})
 }
 
 func (s *Store) UpdateSession(ctx context.Context, id, sessionID, leaseOwner string) {
 	if !s.Enabled() || id == "" {
 		return
 	}
-	_ = s.db.Queries.UpdateAgentRunSession(ctx, sqlc.UpdateAgentRunSessionParams{ID: id, SessionID: sessionID, LeaseOwner: leaseOwner})
+	_ = s.q.UpdateAgentRunSession(ctx, sqlc.UpdateAgentRunSessionParams{ID: id, SessionID: sessionID, LeaseOwner: leaseOwner})
 }
 
 func (s *Store) UpdateCommand(ctx context.Context, id, sessionID, commandID, commandStep, leaseOwner string, leaseDuration time.Duration) {
 	if !s.Enabled() || id == "" {
 		return
 	}
-	_ = s.db.Queries.UpdateAgentRunCommand(ctx, sqlc.UpdateAgentRunCommandParams{
+	_ = s.q.UpdateAgentRunCommand(ctx, sqlc.UpdateAgentRunCommandParams{
 		ID:            id,
 		SessionID:     sessionID,
 		CommandID:     commandID,
@@ -245,7 +297,7 @@ func (s *Store) UpdateState(ctx context.Context, id, state, lastErr, leaseOwner 
 	if !s.Enabled() || id == "" {
 		return
 	}
-	_ = s.db.Queries.UpdateAgentRunState(ctx, sqlc.UpdateAgentRunStateParams{ID: id, State: state, LastError: lastErr, LeaseOwner: leaseOwner})
+	_ = s.q.UpdateAgentRunState(ctx, sqlc.UpdateAgentRunStateParams{ID: id, State: state, LastError: lastErr, LeaseOwner: leaseOwner})
 }
 
 func (s *Store) UpdateOutcome(ctx context.Context, id, outcome string, detail map[string]any, qualityScore *int32, leaseOwner string) {
@@ -259,7 +311,7 @@ func (s *Store) UpdateOutcome(ctx context.Context, id, outcome string, detail ma
 	if err != nil {
 		raw = []byte(`{"error":"marshal outcome detail"}`)
 	}
-	_ = s.db.Queries.UpdateAgentRunOutcome(ctx, sqlc.UpdateAgentRunOutcomeParams{
+	_ = s.q.UpdateAgentRunOutcome(ctx, sqlc.UpdateAgentRunOutcomeParams{
 		ID:            id,
 		Outcome:       outcome,
 		OutcomeDetail: raw,
@@ -272,7 +324,7 @@ func (s *Store) TouchLease(ctx context.Context, id, leaseOwner string, leaseDura
 	if !s.Enabled() || id == "" {
 		return
 	}
-	_ = s.db.Queries.TouchAgentRunLease(ctx, sqlc.TouchAgentRunLeaseParams{
+	_ = s.q.TouchAgentRunLease(ctx, sqlc.TouchAgentRunLeaseParams{
 		ID:            id,
 		LeaseOwner:    leaseOwner,
 		LeaseDuration: interval(leaseDuration),
@@ -283,20 +335,20 @@ func (s *Store) UpdateLogCursor(ctx context.Context, id string, cursor int64, le
 	if !s.Enabled() || id == "" {
 		return
 	}
-	_ = s.db.Queries.UpdateAgentRunLogCursor(ctx, sqlc.UpdateAgentRunLogCursorParams{ID: id, LogCursor: cursor, LeaseOwner: leaseOwner})
+	_ = s.q.UpdateAgentRunLogCursor(ctx, sqlc.UpdateAgentRunLogCursorParams{ID: id, LogCursor: cursor, LeaseOwner: leaseOwner})
 }
 
 func (s *Store) ListExpired(ctx context.Context, limit int32) ([]Run, error) {
 	if !s.Enabled() {
 		return nil, nil
 	}
-	rows, err := s.db.Queries.ListExpiredAgentRuns(ctx, limit)
+	rows, err := s.q.ListExpiredAgentRuns(ctx, limit)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]Run, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, fromRunRow(sqlc.AgentRun(row)))
+		out = append(out, fromRunRow(row))
 	}
 	return out, nil
 }
@@ -305,7 +357,7 @@ func (s *Store) ListStale(ctx context.Context, limit int32, staleAfter time.Dura
 	if !s.Enabled() {
 		return nil, nil
 	}
-	rows, err := s.db.Queries.ListStaleAgentRuns(ctx, sqlc.ListStaleAgentRunsParams{
+	rows, err := s.q.ListStaleAgentRuns(ctx, sqlc.ListStaleAgentRunsParams{
 		StaleAfter: interval(staleAfter),
 		LimitCount: limit,
 	})
@@ -314,7 +366,7 @@ func (s *Store) ListStale(ctx context.Context, limit int32, staleAfter time.Dura
 	}
 	out := make([]Run, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, fromRunRow(sqlc.AgentRun(row)))
+		out = append(out, fromRunRow(row))
 	}
 	return out, nil
 }
@@ -323,7 +375,7 @@ func (s *Store) ListActiveForLeaseOwnerPrefix(ctx context.Context, prefix string
 	if !s.Enabled() || prefix == "" {
 		return nil, nil
 	}
-	rows, err := s.db.Queries.ListActiveAgentRunsForLeaseOwnerPrefix(ctx, sqlc.ListActiveAgentRunsForLeaseOwnerPrefixParams{
+	rows, err := s.q.ListActiveAgentRunsForLeaseOwnerPrefix(ctx, sqlc.ListActiveAgentRunsForLeaseOwnerPrefixParams{
 		LeaseOwnerPrefix: prefix,
 		LimitCount:       limit,
 	})
@@ -332,7 +384,7 @@ func (s *Store) ListActiveForLeaseOwnerPrefix(ctx context.Context, prefix string
 	}
 	out := make([]Run, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, fromRunRow(sqlc.AgentRun(row)))
+		out = append(out, fromRunRow(row))
 	}
 	return out, nil
 }
@@ -341,7 +393,7 @@ func (s *Store) Claim(ctx context.Context, id, leaseOwner string, leaseDuration 
 	if !s.Enabled() {
 		return Run{}, pgx.ErrNoRows
 	}
-	row, err := s.db.Queries.ClaimAgentRunLease(ctx, sqlc.ClaimAgentRunLeaseParams{
+	row, err := s.q.ClaimAgentRunLease(ctx, sqlc.ClaimAgentRunLeaseParams{
 		ID:            id,
 		LeaseOwner:    leaseOwner,
 		LeaseDuration: interval(leaseDuration),
@@ -349,14 +401,14 @@ func (s *Store) Claim(ctx context.Context, id, leaseOwner string, leaseDuration 
 	if err != nil {
 		return Run{}, err
 	}
-	return fromRunRow(sqlc.AgentRun(row)), nil
+	return fromRunRow(row), nil
 }
 
 func (s *Store) ClaimFromOwner(ctx context.Context, id, leaseOwner, previousLeaseOwner string, leaseDuration time.Duration) (Run, error) {
 	if !s.Enabled() {
 		return Run{}, pgx.ErrNoRows
 	}
-	row, err := s.db.Queries.ClaimAgentRunLeaseFromOwner(ctx, sqlc.ClaimAgentRunLeaseFromOwnerParams{
+	row, err := s.q.ClaimAgentRunLeaseFromOwner(ctx, sqlc.ClaimAgentRunLeaseFromOwnerParams{
 		ID:                 id,
 		LeaseOwner:         leaseOwner,
 		PreviousLeaseOwner: previousLeaseOwner,
@@ -365,14 +417,14 @@ func (s *Store) ClaimFromOwner(ctx context.Context, id, leaseOwner, previousLeas
 	if err != nil {
 		return Run{}, err
 	}
-	return fromRunRow(sqlc.AgentRun(row)), nil
+	return fromRunRow(row), nil
 }
 
 func (s *Store) ClaimStale(ctx context.Context, id, leaseOwner string, leaseDuration, staleAfter time.Duration) (Run, error) {
 	if !s.Enabled() {
 		return Run{}, pgx.ErrNoRows
 	}
-	row, err := s.db.Queries.ClaimStaleAgentRunLease(ctx, sqlc.ClaimStaleAgentRunLeaseParams{
+	row, err := s.q.ClaimStaleAgentRunLease(ctx, sqlc.ClaimStaleAgentRunLeaseParams{
 		ID:            id,
 		LeaseOwner:    leaseOwner,
 		LeaseDuration: interval(leaseDuration),
@@ -381,7 +433,7 @@ func (s *Store) ClaimStale(ctx context.Context, id, leaseOwner string, leaseDura
 	if err != nil {
 		return Run{}, err
 	}
-	return fromRunRow(sqlc.AgentRun(row)), nil
+	return fromRunRow(row), nil
 }
 
 func (s *Store) Cancel(ctx context.Context, id, lastErr, leaseOwner string, leaseDuration time.Duration, events []PendingEvent) (Run, error) {
@@ -389,7 +441,7 @@ func (s *Store) Cancel(ctx context.Context, id, lastErr, leaseOwner string, leas
 		return Run{}, pgx.ErrNoRows
 	}
 	var run Run
-	err := s.db.WithTx(ctx, func(q *sqlc.Queries) error {
+	err := s.tx(ctx, func(q txQuerier) error {
 		row, err := q.ClaimAgentRunForCancel(ctx, sqlc.ClaimAgentRunForCancelParams{
 			ID:            id,
 			LeaseOwner:    leaseOwner,
@@ -398,7 +450,7 @@ func (s *Store) Cancel(ctx context.Context, id, lastErr, leaseOwner string, leas
 		if err != nil {
 			return err
 		}
-		run = fromRunRow(sqlc.AgentRun(row))
+		run = fromRunRow(row)
 		for _, ev := range events {
 			if _, err := q.AppendAgentRunEvent(ctx, sqlc.AppendAgentRunEventParams{
 				RunID:      id,
@@ -432,7 +484,7 @@ func (s *Store) AppendEvent(ctx context.Context, runID, event string, data []byt
 		return 0, nil
 	}
 
-	seq, err := s.db.Queries.AppendAgentRunEvent(ctx, sqlc.AppendAgentRunEventParams{
+	seq, err := s.q.AppendAgentRunEvent(ctx, sqlc.AppendAgentRunEventParams{
 		RunID:      runID,
 		Event:      event,
 		Data:       data,
@@ -449,7 +501,7 @@ func (s *Store) AppendEventsAndAdvanceCursor(ctx context.Context, runID string, 
 		return nil, nil
 	}
 	seqs := make([]int64, 0, len(events))
-	err := s.db.WithTx(ctx, func(q *sqlc.Queries) error {
+	err := s.tx(ctx, func(q txQuerier) error {
 		for _, ev := range events {
 			seq, err := q.AppendAgentRunEvent(ctx, sqlc.AppendAgentRunEventParams{
 				RunID:      runID,
@@ -502,7 +554,7 @@ func (s *Store) EventsAfterLimit(ctx context.Context, runID string, seq int64, l
 	if limit <= 0 {
 		limit = agentRunEventPageLimit
 	}
-	rows, err := s.db.Queries.ListAgentRunEventsFromSeq(ctx, sqlc.ListAgentRunEventsFromSeqParams{
+	rows, err := s.q.ListAgentRunEventsFromSeq(ctx, sqlc.ListAgentRunEventsFromSeqParams{
 		RunID: runID,
 		Seq:   seq,
 		Limit: limit,
