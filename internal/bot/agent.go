@@ -765,7 +765,7 @@ func (b *Bot) runScript(ctx context.Context, sb *daytona.Sandbox, sessionID, lab
 	scriptPath := "/tmp/sf-" + label + ".sh"
 	body := strings.TrimRight(scriptBody, "\n")
 	writeCmd := heredocWriteCmd(scriptPath, body, true)
-	if _, err := b.shLines(ctx, sb.ID, sb.Process, sessionID, "write-script", writeCmd, 15*time.Second, 0, true, func(string) {}); err != nil {
+	if _, err := b.shLines(ctx, sb.ID, sb.Process, sessionID, "write-script", writeCmd, 30*time.Second, 0, true, func(string) {}); err != nil {
 		return "", fmt.Errorf("%w: write script: %w", errAgentSetupBeforeRuntime, err)
 	}
 

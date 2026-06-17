@@ -124,6 +124,27 @@ func TestConversationDetailOverlaysDurableRunEvents(t *testing.T) {
 	}
 }
 
+func TestLatestPRURLFromBlocksOnlyUsesResultBlocks(t *testing.T) {
+	toolFixtureURL := "https://github.com/o/r/pull/7"
+	resultURL := "https://github.com/acme/repo/pull/222"
+
+	got := latestPRURLFromBlocks([]blocks.Block{
+		{Kind: blocks.KindToolUse, Title: "Running grep", Body: "matched test fixture " + toolFixtureURL},
+		{Kind: blocks.KindSetup, Title: "Sandbox setup", Body: "bootstrap output " + toolFixtureURL},
+	})
+	if got != "" {
+		t.Fatalf("latestPRURLFromBlocks returned %q from non-result blocks", got)
+	}
+
+	got = latestPRURLFromBlocks([]blocks.Block{
+		{Kind: blocks.KindToolUse, Title: "Running grep", Body: "matched test fixture " + toolFixtureURL},
+		{Kind: blocks.KindResult, Title: "Done", Body: "PR ready: " + resultURL},
+	})
+	if got != resultURL {
+		t.Fatalf("latestPRURLFromBlocks = %q, want %q", got, resultURL)
+	}
+}
+
 func TestConversationDetailOverlaysFollowUpDurableRunEvents(t *testing.T) {
 	cases := []struct {
 		name      string
