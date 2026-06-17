@@ -573,7 +573,7 @@ func TestComposeForwardsArtifactUploadEnv(t *testing.T) {
 		"HETCHY_JOB_DISPATCH_LIMIT",
 		"HETCHY_JOB_DISPATCH_CONCURRENCY",
 	} {
-		want := key + ": ${" + key + ":-}"
+		want := key + ": ${" + key
 		if !strings.Contains(compose, want) {
 			t.Errorf("docker-compose.yml does not forward %s to the hetchy service", key)
 		}

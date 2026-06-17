@@ -1,56 +1,98 @@
 # Deployment Guide
 
-This guide covers deploying Hetchy to production environments.
+The simplest self-host deployment is Docker Compose with local auth and bundled
+Postgres:
 
-## Docker
+```bash
+cp .env.example .env
+docker compose up --build
+```
 
-### Build Image
+For production, run the same container behind HTTPS, use managed Postgres, and
+set `HETCHY_PUBLIC_BASE_URL` to the public origin.
+
+## Required Process Config
+
+| Variable | Description |
+|---|---|
+| `HETCHY_AUTH_MODE` | `local` for username/password self-host auth, `workos` for hosted WorkOS auth. |
+| `HETCHY_PUBLIC_BASE_URL` | Public `http(s)://host` origin used for callbacks and generated links. |
+| `DATABASE_URL` | Postgres connection string. |
+| `SECRETS_ENCRYPTION_KEY` | 32-byte random secret used to encrypt per-org credentials. |
+| `DAYTONA_API_URL` | Daytona API endpoint, usually `https://app.daytona.io/api`. |
+| `DAYTONA_API_KEY` | Daytona API key. |
+| `DAYTONA_SNAPSHOT` | Snapshot base name. Hetchy appends its sandbox content version. |
+
+See [.env.example](../.env.example) for all optional values.
+
+## Docker Compose
+
+Compose reads `.env`, starts Postgres, runs migrations, and starts the web
+process:
+
+```bash
+docker compose up --build
+```
+
+For HTTPS deployments:
+
+- Put Hetchy behind a reverse proxy or load balancer.
+- Set `HETCHY_PUBLIC_BASE_URL=https://your-host`.
+- Clear `COOKIE_INSECURE`.
+- Set `HETCHY_TRUSTED_PROXY=true` only if the proxy overwrites
+  `X-Forwarded-For` or `X-Real-IP`.
+
+## Single Container
+
+Build:
 
 ```bash
 docker build -t hetchy .
 ```
 
-### Run Container
+Run with a managed Postgres URL and the required env values:
 
 ```bash
-docker run -p 8080:8080 \
-  -e DAYTONA_API_KEY=... \
+docker run --rm -p 8080:8080 \
+  --env-file .env \
+  -e DATABASE_URL='postgresql://user:pass@host:5432/hetchy?sslmode=require' \
   hetchy
 ```
 
-Per-org settings (Anthropic API key, GitHub token + repo, Slack tokens,
-optional SX key) are configured at `/settings/org` after sign-up.
-
-## Docker Compose
+Run migrations before starting new versions:
 
 ```bash
-docker compose up
+docker run --rm --env-file .env hetchy --migrate-status
+docker run --rm --env-file .env hetchy --migrate-up
 ```
 
-The compose file reads environment variables from your shell (injected by Doppler) and binds port 8080.
+## Per-Organization Setup
 
-## Environment Variables
+After signup, organization admins configure these in the UI:
 
-| Variable | Description |
-|----------|-------------|
-| `DAYTONA_API_URL` | Daytona API endpoint |
-| `DAYTONA_API_KEY` | Daytona API key |
-| `DAYTONA_SNAPSHOT` | Daytona snapshot base name, e.g. `universal-coding`; the app appends its build-time sandbox version |
-| `DAYTONA_CACHE_VOLUMES_DISABLED` | Set to `1` to disable pooled dependency cache archive volumes |
-| `DAYTONA_CACHE_VOLUME_PREFIX` | Prefix for Daytona dependency cache archive pool volumes (default: `hetchy-cache`; creates up to 10 dev, 10 staging, and 80 prod volumes) |
-| `DAYTONA_CACHE_PRUNE_DAYS` | Best-effort local dependency cache pruning age before archiving in days (default: `30`) |
-| `DAYTONA_AUTO_ARCHIVE_MINUTES` | Minutes a successful stopped sandbox remains unarchived before Daytona auto-archives it (default: `60`) |
-| `HETCHY_PUBLIC_BASE_URL` | Required outside dev. Externally reachable `http(s)://host` app origin used for sandbox callbacks and generated links |
-| `HETCHY_SANDBOX_VERSION` | Optional runtime override for the content-addressed sandbox version; normally stamped into the binary |
-| `SANDBOX_VERSION` | Optional build-time Docker arg override for the content-addressed sandbox version; when unset, the Dockerfile computes it from `sandbox/` |
-| `HETCHY_SX_PUBLIC_VAULT_URL` | Public git sx vault containing seeded agent personas and scoped role skills; defaults to `https://github.com/hetchyhq/hetchy-sx-vault.git`; set to `disabled`, `off`, `none`, or `-` to skip the public vault install |
-| `HETCHY_SX_CACHE_DIR` | Server-side SX cache root for Git Vault clones; leave unset in dev to use SX's normal user cache dir. In non-dev, Hetchy auto-uses `/data/hetchy/sx-cache` when Railway's `/data` volume exists; set explicitly to override |
-| `HETCHY_SX_CACHE_MIN_FREE_MB` | Minimum free space required in `HETCHY_SX_CACHE_DIR` before SX Git Vault work runs (default: `512`; set `0` to disable) |
-| `HETCHY_SX_GIT_OPERATION_TIMEOUT_SECONDS` | Timeout for server-side SX Git Vault clone/pull/push operations triggered by custom-agent writes (default: `180`) |
-| `HETCHY_SX_GIT_MAX_CONCURRENT_OPS` | Global cap for concurrent server-side SX Git Vault operations; per-org operations are also serialized (default: `4`) |
-| `WEB_PORT` | Web UI port (default: 8080) |
-| `DISABLE_SLACK` | Set to 1 to run web UI only |
-| `DATABASE_URL` | PostgreSQL connection string (optional, enables conversation persistence) |
-| `HETCHY_S3_BUCKET` | S3 bucket used for validation proof artifacts |
-| `HETCHY_S3_REGION` | AWS region for the validation proof artifact bucket |
-| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` | AWS credentials used to mint pre-signed artifact upload URLs; session token is optional |
+- GitHub PAT or GitHub App installation.
+- Anthropic or OpenAI credentials.
+- Default repository.
+- Optional Slack, Linear, and SX vault credentials.
+
+## Scheduled Jobs
+
+The main process dispatches scheduled jobs by default. To disable in-process
+dispatch and run an external scheduler instead:
+
+```dotenv
+HETCHY_JOB_DISPATCH_INTERVAL_SECONDS=0
+```
+
+Then invoke:
+
+```bash
+hetchy --dispatch-due-jobs
+```
+
+## Optional Services
+
+- Slack: see [Slack setup](slack-setup.md).
+- Linear: see [Linear setup](linear-setup.md).
+- Artifact uploads: see [Artifact storage](artifacts-storage.md).
+- Billing: see [Stripe billing setup](stripe-billing-setup.md).

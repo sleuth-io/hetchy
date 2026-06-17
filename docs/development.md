@@ -81,7 +81,7 @@ make pg-psql      # open a psql shell
 make pg-reset     # wipe the volume (asks for confirmation)
 ```
 
-Set `DATABASE_URL` in your Doppler **dev** config:
+Set `DATABASE_URL` in your local shell or `.env`:
 
 ```
 DATABASE_URL=postgresql://postgres:postgres@localhost:5433/hetchy?sslmode=disable

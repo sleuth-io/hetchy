@@ -1,413 +1,171 @@
 # Hetchy
 
-A Slack bot and web UI that converts natural language requests into pull requests by running [Claude Code](https://claude.com/claude-code) inside isolated [Daytona](https://daytona.io) sandboxes.
+Hetchy turns natural-language requests into pull requests by running coding
+agents inside isolated [Daytona](https://daytona.io) sandboxes. It provides a
+web UI, optional Slack and Linear integrations, multi-organization auth, repo
+configuration, agent profiles, real-time run streaming, and follow-up turns on
+the same pull request.
 
-## Overview
+## What It Does
 
-Hetchy automates code changes by:
-1. Receiving requests via Slack or a web interface
-2. Spinning up an isolated Daytona sandbox with your repository
-3. Running Claude Code to implement the requested changes
-4. Creating a branch, committing changes, and opening a pull request
-5. Supporting conversational follow-ups to refine changes on the same PR
-6. Cleaning up the sandbox when complete
+1. Receives a request from the web UI, Slack, Linear, or a scheduled job.
+2. Starts or resumes a Daytona sandbox for the selected repository.
+3. Runs Claude Code or OpenAI Codex with the org's configured credentials.
+4. Commits the result on a branch and opens a pull request.
+5. Streams progress back to the user and supports follow-up instructions.
 
-## Features
+## Self-Host Quick Start
 
-- **Dual Interface**: Slack bot and web UI for submitting requests
-- **Isolated Execution**: Each request runs in a fresh Daytona sandbox
-- **Automated PR Workflow**: Automatically creates branches, commits, and opens PRs
-- **Real-time Updates**: Streams progress updates as the bot works
-- **Conversational Refinement**: Reply in the Slack thread or reload the web session to iterate on the same PR without losing context
-- **Session Sharing**: Web sessions are URL-addressable (UUID in query param) — share the URL to resume work from any browser
-- **Cost-aware Sandboxes**: Successful sandboxes are stopped between requests and auto-archived after a short grace window so quick follow-ups resume faster
-- **Daytona Cloud Sandboxes**: Dev, staging, and production use Daytona Cloud for isolated execution
+The default self-host path uses local username/password auth, bundled Postgres,
+per-org GitHub personal access tokens, and Daytona Cloud.
 
-## Prerequisites
-
-- Go 1.25.6 or later
-- Docker (for local Postgres and sandbox image builds)
-- [Doppler CLI](https://docs.doppler.com/docs/install-cli) for secrets management
-- A GitHub account that can install the Hetchy GitHub App on the orgs/repos you want the bot to act on (no PAT required — installation tokens are minted per-request)
-- Anthropic API key
-- Slack app with required tokens (optional, for Slack integration) — see [Slack App Setup](docs/slack-setup.md) for detailed instructions
-- Daytona API key
-
-## Quick Start
-
-### 1. Clone the Repository
+### 1. Clone
 
 ```bash
 git clone https://github.com/hetchyhq/hetchy.git
 cd hetchy
 ```
 
-### 2. Point `dev.hetchy.ai` at localhost
-
-Local dev runs on the hostname `dev.hetchy.ai` rather than `localhost`. We use a real-looking hostname in dev so:
-
-- The dev GitHub App's Setup URL can be configured once (`https://dev.hetchy.ai:8080/integrations/github/setup`) and resolved by every developer's browser via `/etc/hosts` rather than each developer having to fork their own App.
-- WorkOS redirect URIs are stable across machines.
-- Cookies behave the way they will in production (real domain, not `localhost`).
-
-Add this line to `/etc/hosts`:
-
-```
-127.0.0.1   dev.hetchy.ai
-```
-
-From here on, `dev.hetchy.ai:8080` is the URL you use in the browser, in WorkOS redirect config, and in the dev GitHub/Slack App configuration. `localhost:8080` works too but isn't what the rest of the docs assume.
-
-### 3. Configure Environment
-
-**This project uses Doppler for secrets management. We do not use `.env` files.**
-
-The `.env.example` file documents the required variables; configure them in Doppler instead.
-
-#### Install and set up Doppler
+### 2. Configure
 
 ```bash
-# macOS
-brew install doppler
-
-# Linux
-(curl -Ls --tlsv1.2 --proto "=https" --retry 3 https://cli.doppler.com/install.sh || wget -t 3 -qO- https://cli.doppler.com/install.sh) | sudo sh
+cp .env.example .env
+openssl rand -base64 32
 ```
 
+Edit `.env`:
+
+- Set `SECRETS_ENCRYPTION_KEY` to the generated random value.
+- Set `DAYTONA_API_KEY` to a Daytona API key.
+- Leave `HETCHY_AUTH_MODE=local` for self-hosting.
+- Leave `DATABASE_URL=postgresql://postgres:postgres@postgres:5432/hetchy?sslmode=disable`
+  when using Docker Compose.
+
+The quick-start URL is `http://localhost:8080`. If you publish Hetchy behind a
+real hostname, set `HETCHY_PUBLIC_BASE_URL` to that origin. If a reverse proxy
+terminates traffic and overwrites `X-Forwarded-For`/`X-Real-IP`, set
+`HETCHY_TRUSTED_PROXY=true`.
+
+### 3. Start
+
 ```bash
-doppler login
-doppler setup   # uses the project/config defined in doppler.yaml
+docker compose up --build
 ```
 
-Each developer should then switch their default config to their personal
-one, which inherits from `dev` and lets you override secrets (e.g. your
-own Slack bot tokens) without affecting other devs:
+Compose starts Postgres, runs migrations, and starts the Hetchy web process.
+Open `http://localhost:8080`, sign up with email/password, and create your first
+organization.
+
+## First Organization Setup
+
+After signup, go to **Organization settings -> Integrations**.
+
+### Required
+
+- **GitHub**: connect a personal access token. See
+  [GitHub PAT setup](docs/github-pat-setup.md).
+- **AI credentials**: add an Anthropic API key, Claude Code OAuth token, OpenAI
+  API key, or Codex auth JSON in the credentials settings.
+- **Daytona**: the server-side `DAYTONA_API_KEY` and `DAYTONA_SNAPSHOT` must
+  be valid. See [Daytona setup](docs/daytona-setup.md).
+
+### Optional
+
+- **Slack**: connect a workspace manually or through OAuth. See
+  [Slack setup](docs/slack-setup.md).
+- **Linear**: configure OAuth and webhooks. See
+  [Linear setup](docs/linear-setup.md).
+- **Proof artifacts**: configure AWS S3 if you want uploaded screenshots
+  and recordings. See [artifact storage](docs/artifacts-storage.md).
+- **SX skills vault**: use the default public vault, a fork, or disable it. See
+  [SX setup](docs/sx-setup.md).
+- **Billing/Stripe**: optional and disabled when Stripe env vars are empty. See
+  [Stripe billing setup](docs/stripe-billing-setup.md).
+
+## Common Configuration
+
+| Variable | Required | Description |
+|---|---:|---|
+| `HETCHY_AUTH_MODE` | yes | `local` for self-host username/password auth, `workos` for hosted WorkOS AuthKit. |
+| `HETCHY_PUBLIC_BASE_URL` | yes | Public `http(s)://host` origin used in generated links and callbacks. |
+| `SECRETS_ENCRYPTION_KEY` | yes | 32-byte secret used to encrypt per-org credentials at rest. |
+| `DATABASE_URL` | yes | Postgres connection string. Compose uses the bundled `postgres` service. |
+| `DAYTONA_API_URL` | yes | Daytona API URL, usually `https://app.daytona.io/api`. |
+| `DAYTONA_API_KEY` | yes | API key for the Daytona account/org that owns sandboxes. |
+| `DAYTONA_SNAPSHOT` | yes | Snapshot base name. The binary resolves a versioned snapshot from this base. |
+| `COOKIE_INSECURE` | local HTTP | Set to `1` for plain HTTP. Leave empty behind HTTPS. |
+| `HETCHY_TRUSTED_PROXY` | proxy only | Trust `X-Forwarded-For`/`X-Real-IP` for local-auth rate limiting. |
+| `HETCHY_JOB_DISPATCH_INTERVAL_SECONDS` | no | Scheduled-job dispatch interval. Empty defaults to 60 seconds; `0` disables. |
+| `GITHUB_APP_*` | no | Optional GitHub App path. PAT mode works without these. |
+| `WORKOS_*` | WorkOS only | Required only when `HETCHY_AUTH_MODE=workos`. |
+| `HETCHY_S3_BUCKET`, `HETCHY_S3_REGION` | no | Enables proof artifact upload when set. |
+
+See [.env.example](.env.example) for the full list.
+
+## GitHub Access
+
+Self-hosted installs can run without a GitHub App. Organization admins paste a
+GitHub personal access token in Hetchy's settings UI; Hetchy validates it,
+stores it encrypted, syncs writable repositories, and uses it for branch/PR
+work.
+
+A GitHub App is still supported for webhook-driven hosted deployments. PAT mode
+does not receive GitHub App webhooks, so Hetchy refreshes repository and pull
+request state on demand. If stale PR state becomes a problem in a deployment,
+run the backfill command periodically:
 
 ```bash
-doppler configure set config dev_personal
+docker compose run --rm hetchy --backfill-pr-states
 ```
 
-If `dev_personal` doesn't exist yet, create it as a branch of `dev` in
-the Doppler dashboard. From this point on, every `doppler run …`
-or `doppler secrets set …` lands in your personal config without needing
-a `--config` flag.
+## Daytona Snapshots
 
-#### Required secrets in Doppler
-
-Hetchy is multi-tenant. Per-org integrations (GitHub App installations,
-Slack bot/socket tokens, Anthropic API key, optional SX key, default
-repo selection) are configured by each org's admin at
-`/settings/org?tab=integrations` after they sign up — they live in the
-database, not in Doppler. Doppler only holds the *process-level* config:
-
-| Variable | Description |
-|----------|-------------|
-| `WORKOS_API_KEY` | WorkOS API key (sk_test_…) |
-| `WORKOS_CLIENT_ID` | WorkOS client ID (client_test_…) |
-| `WORKOS_COOKIE_PASSWORD` | 32-byte secret for sealing session cookies |
-| `WORKOS_REDIRECT_URI` | OAuth callback URL — must match a Redirect URI in the WorkOS dashboard (use `http://dev.hetchy.ai:8080/callback` for local dev) |
-| `WORKOS_WEBHOOK_SECRET` | WorkOS webhook signing secret for `POST /workos/webhook`; optional in local dev because comped billing sync also refreshes when Billing / Usage loads |
-| `LOGOUT_RETURN_TO` | Legacy public app root fallback; no longer controls post-logout redirect |
-| `HETCHY_PUBLIC_BASE_URL` | Required outside dev. Externally reachable `http(s)://host` app origin used for sandbox callbacks and non-Stripe generated links |
-| `HETCHY_TRUSTED_PROXY` | Set to `true` only when Hetchy runs behind a trusted reverse proxy that overwrites `X-Forwarded-For`/`X-Real-IP`; enables proxy-aware local-auth rate limiting |
-| `STRIPE_RETURN_TO` | Public app root for Stripe Checkout and Customer Portal return URLs |
-| `SECRETS_ENCRYPTION_KEY` | 32-byte key used to encrypt per-org tokens at rest |
-| `DATABASE_URL` | Postgres connection string (required) |
-| `DAYTONA_API_URL` | Daytona API endpoint |
-| `DAYTONA_API_KEY` | Daytona API key |
-| `DAYTONA_SNAPSHOT` | Daytona sandbox snapshot base name, e.g. `universal-coding`; the app appends its build-time sandbox version |
-| `DAYTONA_CACHE_VOLUMES_DISABLED` | Set to `1` to disable pooled dependency cache archive volumes |
-| `DAYTONA_CACHE_VOLUME_PREFIX` | Prefix for Daytona dependency cache archive pool volumes (default: `hetchy-cache`; creates up to 10 dev, 10 staging, and 80 prod volumes) |
-| `DAYTONA_CACHE_PRUNE_DAYS` | Best-effort local dependency cache pruning age before archiving in days (default: `30`) |
-| `DAYTONA_AUTO_ARCHIVE_MINUTES` | Minutes a successful stopped sandbox remains unarchived before Daytona auto-archives it (default: `60`) |
-| `HETCHY_SX_PUBLIC_VAULT_URL` | Public git sx vault containing Hetchy's seeded agent personas and scoped role skills; defaults to `https://github.com/hetchyhq/hetchy-sx-vault.git`; set to `disabled`, `off`, `none`, or `-` to skip the public vault install |
-| `HETCHY_SX_CACHE_DIR` | Server-side SX cache root for Git Vault clones; leave unset in dev to use SX's normal user cache dir. In non-dev, Hetchy auto-uses `/data/hetchy/sx-cache` when Railway's `/data` volume exists; set explicitly to override |
-| `HETCHY_SX_CACHE_MIN_FREE_MB` | Minimum free space required in `HETCHY_SX_CACHE_DIR` before SX Git Vault work runs (default: `512`; set `0` to disable) |
-| `HETCHY_SX_GIT_OPERATION_TIMEOUT_SECONDS` | Timeout for server-side SX Git Vault clone/pull/push operations triggered by custom-agent writes (default: `180`) |
-| `HETCHY_SX_GIT_MAX_CONCURRENT_OPS` | Global cap for concurrent server-side SX Git Vault operations; per-org operations are also serialized (default: `4`) |
-| `WEB_PORT` | Web UI port (default: 8080) |
-| `GITHUB_APP_ID` | Numeric ID of this env's GitHub App |
-| `GITHUB_APP_SLUG` | App slug — used to build the install URL `github.com/apps/<slug>/installations/new` |
-| `GITHUB_APP_CLIENT_ID` | App Client ID (captured for completeness; only used if user-OAuth is added later) |
-| `GITHUB_APP_PRIVATE_KEY` | Multi-line PEM contents of the App's private key |
-| `GITHUB_APP_WEBHOOK_SECRET` | HMAC-SHA256 secret used to verify inbound App webhooks |
-| `AUTH_BYPASS` | Set to `1` for tests/CI to skip the WorkOS round-trip |
-| `COOKIE_INSECURE` | Set to `1` when running over plain HTTP locally (the `bot` make targets do this for you) |
-
-Generate the two random keys with:
+Hetchy expects a versioned Daytona snapshot built from `sandbox/`. To build and
+push the snapshot for your Daytona account:
 
 ```bash
-openssl rand -base64 32   # for WORKOS_COOKIE_PASSWORD
-openssl rand -base64 32   # for SECRETS_ENCRYPTION_KEY
-```
-
-#### Per-org Slack setup
-
-Each organization brings its own Slack bot. Tokens are configured at
-`/settings/org` after signup, not in Doppler. For step-by-step Slack app
-setup instructions (creating the app, enabling Socket Mode, OAuth scopes,
-event subscriptions), see [Slack App Setup](docs/slack-setup.md).
-
-For local development, every dev runs against their own personal Slack
-app (Socket Mode) so multiple developers can work in parallel without
-sharing an events tunnel:
-
-```bash
-# One-time: visit https://api.slack.com/apps and click "Generate Token"
-# under "Your App Configuration Tokens". Save the xoxe.xoxp- token.
-export SLACK_CONFIG_TOKEN=xoxe.xoxp-...
-
-make slack-app NAME=Dylan
-```
-
-This creates a `Hetchy (Dylan)` app from `scripts/slack-manifest.template.json`
-and prints the next manual steps:
-
-1. **Install App → Install to Workspace** to capture the `xoxb-` bot token.
-2. **Basic Information → App-Level Tokens → Generate Token and Scopes**
-   with scope `connections:write` for the `xapp-` socket token.
-3. Run the printed `doppler secrets set …` command (lands in your
-   `dev_personal` config) and paste the two tokens into your org settings
-   at `/settings/org` after signup.
-
-#### Per-env GitHub App setup
-
-GitHub access is gated by a GitHub App rather than per-org PATs — orgs
-install the App on the GitHub accounts whose repos they want the bot to
-work in. Each Hetchy environment (dev / staging / prod) has its own
-App so that webhooks land on the right host and a misconfigured dev
-App can't impersonate prod.
-
-For local dev, create one App on the `hetchyhq` GitHub org:
-
-1. Go to <https://github.com/organizations/hetchyhq/settings/apps/new>.
-2. **Setup URL**: `https://dev.hetchy.ai:8080/integrations/github/setup`
-3. **Webhook URL**: `https://dev.hetchy.ai:8080/integrations/github/webhook`
-   (dev doesn't need to receive webhooks — the URL is required by GitHub but
-   nothing will reach it unless you tunnel; that's fine.)
-4. **Webhook secret**: generate with `openssl rand -hex 32` and save.
-5. **Repository permissions**: Contents (R/W), Pull requests (R/W),
-   Workflows (R/W), Issues (R/W), Checks (R), Commit statuses (R),
-   Metadata (R, default).
-6. **Organization permissions**: Members (R).
-7. **Subscribe to events**: Installation target, Installation
-   repositories, Member, Membership, Organization, Team, Team add,
-   Pull request, Push.
-8. **Where can this App be installed?**: Any account.
-9. After creation: copy the App ID, Client ID, slug; click "Generate a
-   private key" and save the `.pem` file.
-10. Drop the values into Doppler:
-
-```bash
-doppler secrets set \
-  GITHUB_APP_ID=<app id> \
-  GITHUB_APP_SLUG=<app slug> \
-  GITHUB_APP_CLIENT_ID=<client id> \
-  GITHUB_APP_WEBHOOK_SECRET=<hex secret> \
-  GITHUB_APP_PRIVATE_KEY="$(cat /path/to/<slug>.private-key.pem)"
-```
-
-Repeat for staging and prod with the appropriate hostnames. App IDs and
-private keys are env-specific.
-
-**Rotating the webhook secret.** Change it in two places at the same
-time: the App's settings page on GitHub (regenerate, copy) and Doppler
-(`doppler secrets set GITHUB_APP_WEBHOOK_SECRET=…`). In-flight events
-delivered between the GitHub change and the Doppler restart will fail
-HMAC verification and GitHub will retry them — the bot rejects them
-with a 401 and the events drop after GitHub gives up (~5 retries with
-exponential backoff). For zero-loss rotation, redeploy with the new
-secret quickly and rely on GitHub's redelivery; for events that
-genuinely matter, rotate during a quiet window.
-
-**Rotating the private key.** Generate a new key on the App page
-(GitHub keeps the old one valid until you explicitly delete it), drop
-the new PEM into Doppler, redeploy, then delete the old key on
-GitHub. Cached installation tokens stay valid for up to an hour
-across rotations, so there's no traffic dip.
-
-#### Backfill stored pull request state
-
-Hetchy stores GitHub pull request state from GitHub App webhooks so the
-app UI can hide PRs that are already closed or merged. If the
-columns were just added, webhooks were disabled, or you need to refresh
-old rows, run the one-shot backfill after migrations are applied:
-
-```bash
-make build
-doppler run -- ./dist/hetchy --backfill-pr-states
-```
-
-Useful flags:
-
-```bash
-# Scan more than the default 1000 conversations.
-doppler run -- ./dist/hetchy --backfill-pr-states --backfill-pr-states-limit 5000
-
-# Refresh rows even if they already have pr_state_checked_at.
-doppler run -- ./dist/hetchy --backfill-pr-states --backfill-pr-states-force
-```
-
-The command writes only the stored PR state columns on matching
-conversations. It logs start, candidate count, periodic progress, row
-failures, and final counts. In a deployed container the binary is
-`/app/hetchy`; run the same flags with that binary and the target
-environment's normal secrets loaded.
-
-### 4. Set Up Daytona Cloud
-
-Set in Doppler:
-- `DAYTONA_API_URL=https://app.daytona.io/api`
-- `DAYTONA_API_KEY=dtn_...`
-
-Then build and push the sandbox snapshot:
-
-```bash
-doppler run -- sh -c 'daytona login --api-key "$DAYTONA_API_KEY"'
+export DAYTONA_API_KEY=dtn_...
+export DAYTONA_API_URL=https://app.daytona.io/api
 make push-snapshot
 ```
 
-Daytona API-key login uses the organization associated with the API key.
+The app resolves `${DAYTONA_SNAPSHOT}-${sandbox_version}` at runtime. See
+[Daytona setup](docs/daytona-setup.md) for details.
 
-`DAYTONA_SNAPSHOT` is a base name. Hetchy stamps a deterministic version
-from the `sandbox/` directory during local builds, GitHub sandbox workflow
-runs, and Railway Dockerfile builds, then creates sandboxes from
-`${DAYTONA_SNAPSHOT}-${version}`. `make push-snapshot` computes the same
-version and skips the Docker build when that Daytona snapshot is already
-active.
+## Local Development
 
-In GitHub, configure these repository secrets for the sandbox workflow:
-
-- `DAYTONA_API_KEY`
-- `DAYTONA_API_URL` (optional for Daytona Cloud)
-
-In Railway production, enable GitHub "Wait for CI" so the workflow completes
-before Railway deploys the matching app revision.
-
-Scheduled jobs are dispatched by an in-process loop inside the main app —
-no separate cron service is required. The loop ticks every 60 seconds by
-default; tune it with `HETCHY_JOB_DISPATCH_INTERVAL_SECONDS` (0 disables it),
-`HETCHY_JOB_DISPATCH_LIMIT`, and `HETCHY_JOB_DISPATCH_CONCURRENCY`.
-Deployments that prefer an external scheduler can disable the loop and run
-`hetchy --dispatch-due-jobs` from cron instead; job claiming uses
-`FOR UPDATE SKIP LOCKED`, so both modes (and multiple replicas) coexist
-safely without double-running jobs.
-
-### 5. Start the Database
-
-Hetchy requires a PostgreSQL database. For local development:
+Use the Makefile when developing Hetchy itself:
 
 ```bash
-# Start the local Postgres container
 make pg-up
-```
-
-This starts a Postgres 16 container on port 5433 (to avoid conflicts with other local Postgres instances). The database will be available at `postgresql://postgres:postgres@localhost:5433/hetchy`.
-
-For production or Supabase usage, configure the `DATABASE_URL` variable in Doppler instead.
-
-### 6. Run the Bot
-
-```bash
-# Apply pending migrations, then run the bot + web UI together
 make db-up
 make bot
 ```
 
-`make bot` runs the single Hetchy binary with live-reload (via air) — it
-serves the web UI on `http://dev.hetchy.ai:8080` (or your configured
-`WEB_PORT`) and connects to Slack over Socket Mode using the tokens
-configured per-org at `/settings/org`. The live-reload build stamps the
-current sandbox content version automatically, matching the snapshot name used
-by deployed builds.
+`make bot` uses live reload and writes logs to `/tmp/hetchy.log`. For local
+developer auth shortcuts, you can set `AUTH_BYPASS=1`, but never use bypass in
+production.
 
-## Usage
+Before opening a pull request:
 
-### First-time signup
-
-1. Navigate to `http://dev.hetchy.ai:8080` — you'll see the landing page.
-2. Click **Sign up**, complete the AuthKit form (email + password by default).
-3. After verifying, you'll land on **Create your organization** — type a
-   name and submit. Hetchy creates the org in WorkOS, makes you its admin,
-   and bounces you to **Organization settings → Integrations**.
-4. Click **Enable** on each integration:
-   - **Claude (Anthropic)** — paste your `sk-ant-…` API key (required).
-   - **GitHub** — install the Hetchy GitHub App on the org or account
-     whose repos you want the bot to work in. You'll be redirected to
-     GitHub to choose repos, then sent back to Hetchy. Optionally set a
-     default repo so chat messages don't have to specify one each time.
-   - **Slack** — connect a workspace if you want to chat from Slack.
-   - **SX** — paste an SX bot key if you're using Sleuth-managed skills.
-5. You're now ready to chat.
-
-### Via Web UI
-
-1. Navigate to `http://dev.hetchy.ai:8080` while logged in.
-2. Optionally open the **+** menu to choose an agent or toggle validation.
-   The default is no specialized agent with validation enabled.
-3. Enter your request in natural language.
-4. Pick Opus, Sonnet, or Haiku from the model chooser when you want to steer the Claude Code run.
-5. Watch real-time progress updates via SSE streaming.
-6. Receive the PR URL when complete.
-7. Bookmark or share the URL to resume the session later — each session has a stable UUID in the query string.
-
-If you haven't set a default repo, the bot will reply asking which repo
-to work in — answer with `owner/name` and it picks up where you left
-off. Subsequent messages on the same thread reuse that repo.
-
-### Agents
-
-Hetchy seeds each organization with three optional agent profiles. The profiles
-live as org-scoped database rows, so admins can rename or delete their copy in
-**Organization settings → Agents**. Each profile maps to an sx bot identity so
-the public sx vault can load a persona plus role-specific skills before Claude
-runs in the Daytona sandbox.
-
-| Agent | Slack aliases | Bundled skills |
-|-------|---------------|----------------|
-| `Bob` | `@bob`, `@backend`, `@api`, `@server` | `golang-pro`, `golang-testing`, `neon-postgres`, `database-migrations` |
-| `Alice` | `@alice`, `@frontend`, `@front-end`, `@ui`, `@ux`, `@web` | `frontend-design`, `react-best-practices`, `webapp-testing`, `extract-design-system` |
-| `Archy` | `@archy`, `@architect`, `@architecture`, `@design` | `improve-codebase-architecture`, `architecture-blueprint-generator`, `documentation-and-adrs`, `software-architecture` |
-
-The seeded profile metadata lives in the database; the agent assets live in the public
-`https://github.com/hetchyhq/hetchy-sx-vault.git` sx vault. Hetchy uses that
-vault by default; set `HETCHY_SX_PUBLIC_VAULT_URL` to test a fork or alternate
-vault, or to `disabled`, `off`, `none`, or `-` to skip the public vault install.
-Per-org skills.new assets are installed separately afterward.
-The Agents settings tab shows the skills currently attached to each seeded
-profile; skill editing will land there later.
-
-### Via Slack
-
-1. Invite the bot to a channel
-2. Mention the bot with your request: `@bot add a health check endpoint`
-3. The bot replies with progress in the thread
-4. Get the PR URL in the final message
-5. Reply in the thread to make further changes to the same PR
-
-To route a new Slack thread to a built-in agent, include the agent name or
-alias at the start of the request, for example `@bot @Archy design the
-migration plan`. If the Slack workspace has users named for the agents,
-direct mentions like `@Sally` can resolve to a configured custom agent.
-
-### Example Requests
-
-- "Add a health check endpoint to the API"
-- "Update the README with installation instructions"
-- "Fix the timeout bug in the authentication handler"
-- "Add unit tests for the user service"
-- "Refactor the database connection pooling"
+```bash
+make prepush
+go test ./...
+```
 
 ## Documentation
 
-- [Slack App Setup](docs/slack-setup.md) - Detailed instructions for configuring a Slack app
-- [Development Guide](docs/development.md) - Building, testing, and contributing
-- [Deployment Guide](docs/deployment.md) - Docker and production deployment
-- [Architecture](docs/architecture.md) - System design and project structure
-- [Troubleshooting](docs/troubleshooting.md) - Common issues and solutions
+- [Deployment guide](docs/deployment.md)
+- [Development guide](docs/development.md)
+- [GitHub PAT setup](docs/github-pat-setup.md)
+- [Daytona setup](docs/daytona-setup.md)
+- [Slack setup](docs/slack-setup.md)
+- [Linear setup](docs/linear-setup.md)
+- [Artifact storage](docs/artifacts-storage.md)
+- [SX setup](docs/sx-setup.md)
+- [Architecture](docs/architecture.md)
+- [Troubleshooting](docs/troubleshooting.md)
 
-## Built with
+## License
 
-- [Claude Code](https://claude.com/claude-code) — AI coding agent
-- [Daytona](https://daytona.io) — sandbox orchestration
-- [Slack SDK for Go](https://github.com/slack-go/slack) — Slack integration
+Hetchy is licensed under the [Apache License 2.0](LICENSE).

@@ -16,14 +16,23 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      HAS_DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY != '' }}
 
     steps:
+      - name: Skip without Daytona secret
+        if: env.HAS_DAYTONA_API_KEY != 'true'
+        run: echo "Skipping sandbox snapshot build because DAYTONA_API_KEY is not configured."
+
       - uses: actions/checkout@v4
+        if: env.HAS_DAYTONA_API_KEY == 'true'
 
       - name: Compute sandbox version
+        if: env.HAS_DAYTONA_API_KEY == 'true'
         run: echo "SANDBOX_VERSION=$(./scripts/sandbox-version.sh)" >> "$GITHUB_ENV"
 
       - name: Install Daytona CLI
+        if: env.HAS_DAYTONA_API_KEY == 'true'
         run: |
           install -d "$HOME/.local/bin"
           curl -fsSL \
@@ -36,6 +45,7 @@ jobs:
           "$HOME/.local/bin/daytona" version
 
       - name: Ensure Daytona snapshot
+        if: env.HAS_DAYTONA_API_KEY == 'true'
         env:
           DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
           DAYTONA_API_URL: ${{ secrets.DAYTONA_API_URL }}
@@ -45,6 +55,7 @@ jobs:
         run: ./scripts/push-snapshot.sh
 
       - name: Ensure Daytona plus snapshot
+        if: env.HAS_DAYTONA_API_KEY == 'true'
         env:
           DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
           DAYTONA_API_URL: ${{ secrets.DAYTONA_API_URL }}

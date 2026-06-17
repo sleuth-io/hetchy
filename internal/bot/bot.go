@@ -402,7 +402,7 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 		}
 		b.app = app
 		log.Info("github app configured", "app_id", cfg.GitHubAppID, "slug", cfg.GitHubAppSlug)
-	} else if cfg.Env != "dev" {
+	} else if cfg.Env != "dev" && cfg.AuthMode != auth.AuthModeLocal {
 		log.Warn("github app: GITHUB_APP_ID is not set — integration install button + webhooks disabled",
 			"env", cfg.Env,
 		)
@@ -464,14 +464,18 @@ func daytonaLogTarget(apiURL string) (mode, url string) {
 }
 
 // warnIfSlackOAuthMisconfigured surfaces a startup-time warning when
-// the env is anything other than dev but the Slack OAuth/HTTP-transport
-// env vars are missing or partial. Without this, a misconfigured
-// staging/prod box silently starts up and Slack starts retrying every
-// event into a closed-from-our-side endpoint — discoverable only via
-// log volume an hour later. dev mode legitimately runs with these
-// blank (Socket Mode does its own auth via xapp- tokens).
+// the env is anything other than dev and Slack OAuth/HTTP-transport
+// env vars are partially configured. A fully blank Slack config is a
+// valid self-host choice; a partial config usually means Slack will
+// retry events into endpoints we cannot verify.
 func (b *Bot) warnIfSlackOAuthMisconfigured() {
 	if b.cfg.Env == "dev" {
+		return
+	}
+	if b.cfg.SlackSigningSecret == "" &&
+		b.cfg.SlackClientID == "" &&
+		b.cfg.SlackClientSecret == "" &&
+		b.cfg.SlackOAuthRedirectURI == "" {
 		return
 	}
 	missing := []string{}

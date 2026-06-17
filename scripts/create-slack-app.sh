@@ -11,11 +11,9 @@ set -euo pipefail
 #   Tokens" -> Generate Token. Tokens expire in 12 hours; refresh tokens
 #   last 12 weeks. Save both somewhere safe.
 #
-# Each dev has a `dev_personal` Doppler config that inherits from `dev`
-# and allows overrides. Set it as the default with `doppler setup` (or
-# `doppler configure set config dev_personal`); then this script's
-# printed `doppler secrets set` command will land in your personal
-# config without any --config flag.
+# The normal local-dev path is to paste the generated bot and socket
+# tokens into Hetchy's settings UI. OAuth app credentials are only needed
+# when testing the Slack OAuth install flow.
 
 NAME="${1:?usage: $0 <NAME>}"
 TOKEN="${SLACK_CONFIG_TOKEN:?SLACK_CONFIG_TOKEN must be set (generate at https://api.slack.com/apps)}"
@@ -83,19 +81,18 @@ Next steps:
   3. Paste both tokens into your local Hetchy at
        http://localhost:8080/settings/org
        (Bot token + Socket token fields are stored encrypted in
-        your local Postgres; they do NOT go in Doppler.)
+        your local Postgres; they do not need to go in .env.)
 
   4. Restart `make bot` so it opens a Socket Mode connection with the
      new tokens.
 
-Optional: save these app credentials to your dev_personal Doppler
-config in case you later want to test the OAuth Install button flow
-locally. They are NOT needed for normal Socket Mode dev:
+Optional: add these app credentials to your deployment environment or
+.env in case you later want to test the OAuth Install button flow.
+They are NOT needed for normal Socket Mode dev:
 
-  doppler secrets set \\
-    SLACK_APP_ID={app_id} \\
-    SLACK_CLIENT_ID={client_id} \\
-    SLACK_CLIENT_SECRET={client_secret} \\
-    SLACK_SIGNING_SECRET={signing_secret}
+  SLACK_CLIENT_ID={client_id}
+  SLACK_CLIENT_SECRET={client_secret}
+  SLACK_SIGNING_SECRET={signing_secret}
+  SLACK_OAUTH_REDIRECT_URI=https://your-hetchy-host/slack/oauth/callback
 """)
 '

@@ -65,7 +65,7 @@ Examples:
     --webhook-url https://app.hetchy.ai/stripe/webhook
 
 The script prints STRIPE_SUBSCRIPTION_PRICE_IDS and STRIPE_TOPUP_PRICE_IDS at
-the end. Store those values in the matching Doppler config.
+the end. Store those values in the matching deployment environment or .env.
 EOF
 }
 
@@ -636,7 +636,7 @@ fi
 cat <<'EOF'
 
 Notes:
-- Keep STRIPE_SECRET_KEY in Doppler separate from this script; Stripe does not expose it here.
+- Keep STRIPE_SECRET_KEY in your deployment secrets separately from this script; Stripe does not expose it here.
 - Existing subscriptions keep their old Price IDs even when this script deactivates a replaced price.
 - The app reads the Price ID maps above; it does not look up Stripe lookup keys at runtime.
 EOF
