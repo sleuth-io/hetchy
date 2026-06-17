@@ -480,6 +480,33 @@ func TestLoadConfig_BypassRelaxesWorkOSRequirements(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_LocalAuthRelaxesWorkOSRequirements(t *testing.T) {
+	clearEnv(t, "AUTH_BYPASS", "WORKOS_API_KEY", "WORKOS_CLIENT_ID", "WORKOS_COOKIE_PASSWORD", "WORKOS_REDIRECT_URI")
+	setEnv(t, map[string]string{
+		"HETCHY_ENV":             "dev",
+		"HETCHY_AUTH_MODE":       "local",
+		"HETCHY_PUBLIC_BASE_URL": "http://localhost:8080",
+		"DATABASE_URL":           "postgres://localhost/x",
+		"SECRETS_ENCRYPTION_KEY": strings.Repeat("k", 32),
+		"DAYTONA_SNAPSHOT":       "snap",
+		"HETCHY_SANDBOX_VERSION": "abc123def456",
+	})
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.AuthMode != "local" {
+		t.Fatalf("AuthMode = %q, want local", cfg.AuthMode)
+	}
+	if cfg.WorkOSAPIKey != "" || cfg.WorkOSClientID != "" || cfg.WorkOSRedirectURI != "" {
+		t.Fatalf("local auth should not require WorkOS config: %+v", cfg)
+	}
+	if cfg.CookieSecure {
+		t.Fatal("CookieSecure should be false for http local auth base URL")
+	}
+}
+
 func TestResolveDaytonaSnapshot(t *testing.T) {
 	cases := []struct {
 		name    string

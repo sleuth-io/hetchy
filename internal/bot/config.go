@@ -76,6 +76,10 @@ type Config struct {
 	WorkOSWebhookSecret   string
 	LogoutReturnTo        string
 	PublicBaseURLOverride string
+	// AuthMode selects the real auth backend: "workos" for hosted AuthKit
+	// or "local" for self-hosted username/password auth. AUTH_BYPASS still
+	// overrides both for tests and local development shortcuts.
+	AuthMode string
 	// CookieSecure is the Secure flag on the session cookie. Defaults to
 	// true; set COOKIE_INSECURE=1 to disable it for local HTTP dev.
 	CookieSecure bool
@@ -223,6 +227,15 @@ func LoadConfig() (Config, error) {
 	if env == "" {
 		env = "prod"
 	}
+	authMode := strings.ToLower(strings.TrimSpace(os.Getenv("HETCHY_AUTH_MODE")))
+	if authMode == "" {
+		authMode = "workos"
+	}
+	switch authMode {
+	case "workos", "local":
+	default:
+		return Config{}, fmt.Errorf("HETCHY_AUTH_MODE must be workos or local (got %q)", authMode)
+	}
 	publicBaseURLOverride := strings.TrimSpace(os.Getenv("HETCHY_PUBLIC_BASE_URL"))
 	if publicBaseURLOverride != "" && publicOrigin(publicBaseURLOverride) == "" {
 		return Config{}, errors.New("HETCHY_PUBLIC_BASE_URL must be an http(s) URL with scheme and host")
@@ -233,16 +246,16 @@ func LoadConfig() (Config, error) {
 		"SECRETS_ENCRYPTION_KEY",
 		"DAYTONA_SNAPSHOT",
 	}
-	if !bypass {
+	if !bypass && authMode == "workos" {
 		required = append(required,
 			"WORKOS_API_KEY",
 			"WORKOS_CLIENT_ID",
 			"WORKOS_COOKIE_PASSWORD",
 			"WORKOS_REDIRECT_URI",
 		)
-		if env != "dev" {
-			required = append(required, "HETCHY_PUBLIC_BASE_URL")
-		}
+	}
+	if !bypass && env != "dev" {
+		required = append(required, "HETCHY_PUBLIC_BASE_URL")
 	}
 	var missing []string
 	for _, key := range required {
@@ -273,8 +286,15 @@ func LoadConfig() (Config, error) {
 	// config; deriving from the URI removes that dependency.
 	cookieSecure := os.Getenv("COOKIE_INSECURE") == ""
 	if cookieSecure {
-		if u, err := url.Parse(strings.TrimSpace(os.Getenv("WORKOS_REDIRECT_URI"))); err == nil && u.Scheme == "http" {
-			cookieSecure = false
+		for _, raw := range []string{
+			strings.TrimSpace(os.Getenv("WORKOS_REDIRECT_URI")),
+			publicBaseURLOverride,
+			logout,
+		} {
+			if u, err := url.Parse(raw); err == nil && u.Scheme == "http" {
+				cookieSecure = false
+				break
+			}
 		}
 	}
 
@@ -348,6 +368,7 @@ func LoadConfig() (Config, error) {
 		WorkOSWebhookSecret:         strings.TrimSpace(os.Getenv("WORKOS_WEBHOOK_SECRET")),
 		LogoutReturnTo:              logout,
 		PublicBaseURLOverride:       publicBaseURLOverride,
+		AuthMode:                    authMode,
 		CookieSecure:                cookieSecure,
 		SecretsEncryptionKey:        strings.TrimSpace(os.Getenv("SECRETS_ENCRYPTION_KEY")),
 		SlackSigningSecret:          strings.TrimSpace(os.Getenv("SLACK_SIGNING_SECRET")),

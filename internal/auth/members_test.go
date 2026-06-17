@@ -467,7 +467,7 @@ func TestSendInvitation(t *testing.T) {
 	defer server.Close()
 
 	s := &Service{client: workos.NewClient("sk_test", workos.WithBaseURL(server.URL))}
-	if err := s.SendInvitation(context.Background(), "new@example.com", "org_x", "member", "user_inviter"); err != nil {
+	if _, err := s.SendInvitation(context.Background(), "new@example.com", "org_x", "member", "user_inviter"); err != nil {
 		t.Fatalf("SendInvitation: %v", err)
 	}
 	if gotBody["email"] != "new@example.com" || gotBody["organization_id"] != "org_x" ||
@@ -478,7 +478,7 @@ func TestSendInvitation(t *testing.T) {
 
 func TestSendInvitationBypass(t *testing.T) {
 	s := &Service{cfg: Config{Bypass: true}}
-	if err := s.SendInvitation(context.Background(), "a@e.com", "org_x", "member", "u"); err != nil {
+	if _, err := s.SendInvitation(context.Background(), "a@e.com", "org_x", "member", "u"); err != nil {
 		t.Fatalf("bypass SendInvitation: %v", err)
 	}
 }

@@ -1,13 +1,14 @@
 // Package auth wires WorkOS AuthKit into the web server. It owns:
 //
 //   - the /login, /signup, /callback, /logout HTTP handlers
-//   - the session cookie format (sealed JWE produced by the WorkOS SDK)
+//   - the session cookie format (sealed JWE produced by WorkOS, or a
+//     server-backed local session token in local auth mode)
 //   - middleware that validates the cookie and puts a Principal on the
 //     request context for downstream handlers
 //
-// The package deliberately does not store users or organizations locally.
-// WorkOS owns those. Anything the app needs to remember per-org lives in
-// internal/orgcfg, keyed by the WorkOS organization_id.
+// WorkOS remains the hosted auth provider. Self-hosted deployments can set
+// HETCHY_AUTH_MODE=local to use the local username/password backend while
+// preserving the same Principal and org/membership contract downstream.
 package auth
 
 import (
@@ -22,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hetchyhq/hetchy/internal/db/sqlc"
 	workos "github.com/workos/workos-go/v7"
 )
 
@@ -96,10 +98,14 @@ func WithPrincipal(ctx context.Context, p Principal) context.Context {
 
 // Config holds everything the auth service needs at construction time.
 type Config struct {
+	// Mode selects the real auth backend. Empty defaults to "workos".
+	Mode string
+
 	APIKey         string
 	ClientID       string
 	CookiePassword string
 	RedirectURI    string
+	LocalQueries   sqlc.Querier
 	// CookieSecure controls the Secure attribute on the session cookie.
 	// MUST be true in any production deployment served over HTTPS — the
 	// cookie holds a sealed refresh token. Leave false only when running
@@ -119,6 +125,7 @@ type Config struct {
 type Service struct {
 	cfg    Config
 	client *workos.Client
+	local  *localAuthStore
 	// statePath is the cookie Path attribute for the OAuth state cookie,
 	// derived from cfg.RedirectURI so the cookie is only sent to /callback
 	// (or whatever path the IdP redirects to), not every request on the app.
@@ -157,8 +164,19 @@ type multiOrgEntry struct {
 
 // New constructs a Service. The returned value is safe for concurrent use.
 func New(cfg Config) (*Service, error) {
+	mode, err := normalizeAuthMode(cfg.Mode)
+	if err != nil {
+		return nil, err
+	}
+	cfg.Mode = mode
 	if cfg.Bypass {
 		return &Service{cfg: cfg, statePath: "/"}, nil
+	}
+	if mode == AuthModeLocal {
+		if cfg.LocalQueries == nil {
+			return nil, errors.New("auth: LocalQueries is required when Mode is local")
+		}
+		return &Service{cfg: cfg, local: newLocalAuthStore(cfg.LocalQueries), statePath: "/"}, nil
 	}
 	if cfg.APIKey == "" || cfg.ClientID == "" || cfg.CookiePassword == "" || cfg.RedirectURI == "" {
 		return nil, errors.New("auth: APIKey, ClientID, CookiePassword, RedirectURI are required (set AUTH_BYPASS=1 for tests)")
@@ -174,6 +192,12 @@ func New(cfg Config) (*Service, error) {
 	}
 	c := workos.NewClient(cfg.APIKey, workos.WithClientID(cfg.ClientID))
 	return &Service{cfg: cfg, client: c, statePath: statePath, stateKey: stateKey, publicHost: ru.Host}, nil
+}
+
+// IsLocalMode reports whether this Service is using the local username/password
+// backend instead of WorkOS.
+func (s *Service) IsLocalMode() bool {
+	return s != nil && s.cfg.Mode == AuthModeLocal
 }
 
 // redirectPath extracts the path component of the configured redirect URI so
@@ -195,6 +219,10 @@ func redirectPath(redirectURI string) (string, error) {
 // missing or mismatched — most often caused by cookies being blocked), we
 // show an error page instead of redirecting again, which would loop.
 func (s *Service) LoginHandler(w http.ResponseWriter, r *http.Request) {
+	if s.IsLocalMode() {
+		s.localLoginHandler(w, r)
+		return
+	}
 	if r.URL.Query().Get("error") == "callback_failed" {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusBadRequest)
@@ -222,6 +250,10 @@ a.btn:hover{background:#0b5ed7}</style></head>
 
 // SignupHandler redirects to AuthKit's sign-up screen.
 func (s *Service) SignupHandler(w http.ResponseWriter, r *http.Request) {
+	if s.IsLocalMode() {
+		s.localSignupHandler(w, r)
+		return
+	}
 	s.redirectToAuthKit(w, r, workos.UserManagementAuthenticationScreenHintSignUp)
 }
 
@@ -283,6 +315,10 @@ func (s *Service) redirectToAuthKitWithInvitation(w http.ResponseWriter, r *http
 //
 // Normal login callbacks still require the signed state cookie.
 func (s *Service) CallbackHandler(w http.ResponseWriter, r *http.Request) {
+	if s.IsLocalMode() {
+		http.Redirect(w, r, "/", http.StatusFound)
+		return
+	}
 	if s.cfg.Bypass {
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
@@ -388,6 +424,10 @@ func (s *Service) revokeCurrentSession(w http.ResponseWriter, r *http.Request) {
 	if s.cfg.Bypass {
 		return
 	}
+	if s.IsLocalMode() {
+		s.localRevokeCurrentSession(r)
+		return
+	}
 	if cookie, err := r.Cookie(SessionCookieName); err == nil && cookie.Value != "" {
 		if res, err := workos.AuthenticateSession(cookie.Value, s.cfg.CookiePassword); err == nil && res.Authenticated && res.SessionID != "" {
 			if err := s.client.UserManagement().RevokeSession(r.Context(), &workos.UserManagementRevokeSessionParams{
@@ -417,6 +457,10 @@ func (s *Service) LogoutHandler(w http.ResponseWriter, r *http.Request) {
 	if s.cfg.Bypass {
 		// bypass: no real session to revoke; ?signed_out=1 lets indexHandler show the landing page.
 		http.Redirect(w, r, "/?"+SignedOutParam+"=1", http.StatusFound)
+		return
+	}
+	if s.IsLocalMode() {
+		http.Redirect(w, r, "/", http.StatusFound)
 		return
 	}
 	// Redirect to the canonical root of the app. Prefer the host parsed from
@@ -451,6 +495,10 @@ func (s *Service) Middleware(next http.Handler) http.Handler {
 				SessionID: "bypass",
 			}
 			next.ServeHTTP(w, r.WithContext(withPrincipal(r.Context(), p)))
+			return
+		}
+		if s.IsLocalMode() {
+			s.localMiddleware(next).ServeHTTP(w, r)
 			return
 		}
 		cookie, err := r.Cookie(SessionCookieName)
@@ -507,6 +555,9 @@ func (s *Service) CreateOrganization(ctx context.Context, name string) (string, 
 	if s.cfg.Bypass {
 		return "org_bypass", nil
 	}
+	if s.IsLocalMode() {
+		return s.localCreateOrganization(ctx, name)
+	}
 	org, err := s.client.Organizations().Create(ctx, &workos.OrganizationsCreateParams{Name: name})
 	if err != nil {
 		return "", err
@@ -522,6 +573,9 @@ func (s *Service) GetOrganizationName(ctx context.Context, orgID string) (string
 	if s.cfg.Bypass {
 		return orgID, nil
 	}
+	if s.IsLocalMode() {
+		return s.localGetOrganizationName(ctx, orgID)
+	}
 	org, err := s.client.Organizations().Get(ctx, orgID)
 	if err != nil {
 		return "", err
@@ -536,6 +590,9 @@ func (s *Service) UpdateOrganizationName(ctx context.Context, orgID, name string
 	if s.cfg.Bypass {
 		return nil
 	}
+	if s.IsLocalMode() {
+		return s.localUpdateOrganizationName(ctx, orgID, name)
+	}
 	_, err := s.client.Organizations().Update(ctx, orgID, &workos.OrganizationsUpdateParams{Name: &name})
 	return err
 }
@@ -547,6 +604,9 @@ func (s *Service) OrganizationHasFeatureFlag(ctx context.Context, orgID, slug st
 	orgID = strings.TrimSpace(orgID)
 	slug = strings.TrimSpace(slug)
 	if s.cfg.Bypass || s.client == nil || orgID == "" || slug == "" {
+		return false, nil
+	}
+	if s.IsLocalMode() {
 		return false, nil
 	}
 	limit := 100
@@ -570,6 +630,9 @@ func (s *Service) DeleteOrganization(ctx context.Context, orgID string) error {
 	if s.cfg.Bypass {
 		return nil
 	}
+	if s.IsLocalMode() {
+		return s.localDeleteOrganization(ctx, orgID)
+	}
 	return s.client.Organizations().Delete(ctx, orgID)
 }
 
@@ -578,6 +641,9 @@ func (s *Service) DeleteOrganization(ctx context.Context, orgID string) error {
 func (s *Service) AddUserToOrganization(ctx context.Context, userID, orgID, roleSlug string) error {
 	if s.cfg.Bypass {
 		return nil
+	}
+	if s.IsLocalMode() {
+		return s.localAddUserToOrganization(ctx, userID, orgID, roleSlug)
 	}
 	_, err := s.client.UserManagement().CreateOrganizationMembership(ctx, &workos.UserManagementCreateOrganizationMembershipParams{
 		UserID:         userID,
@@ -593,6 +659,9 @@ func (s *Service) AddUserToOrganization(ctx context.Context, userID, orgID, role
 func (s *Service) SwitchOrg(w http.ResponseWriter, r *http.Request, orgID string) error {
 	if s.cfg.Bypass {
 		return nil
+	}
+	if s.IsLocalMode() {
+		return s.localSwitchOrg(w, r, orgID)
 	}
 	cookie, err := r.Cookie(SessionCookieName)
 	if err != nil {

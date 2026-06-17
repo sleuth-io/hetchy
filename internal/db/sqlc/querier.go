@@ -11,6 +11,7 @@ import (
 )
 
 type Querier interface {
+	AcceptLocalAuthInvitation(ctx context.Context, id string) error
 	// Appends intentionally serialize per run on the agent_runs row lock so
 	// next_event_seq stays monotonic and replay order is deterministic.
 	AppendAgentRunEvent(ctx context.Context, arg AppendAgentRunEventParams) (int64, error)
@@ -20,9 +21,16 @@ type Querier interface {
 	ClaimStaleAgentRunLease(ctx context.Context, arg ClaimStaleAgentRunLeaseParams) (AgentRun, error)
 	ClearBillingPendingPlanChange(ctx context.Context, orgID string) (BillingAccount, error)
 	CountAgentProfilesByOrg(ctx context.Context, orgID string) (int64, error)
+	CountLocalAuthAdmins(ctx context.Context, orgID string) (int32, error)
+	CountLocalAuthUserOrgs(ctx context.Context, userID string) (int32, error)
 	CreateAgentJob(ctx context.Context, arg CreateAgentJobParams) (AgentJob, error)
 	CreateAgentJobExecution(ctx context.Context, arg CreateAgentJobExecutionParams) (AgentJobExecution, error)
 	CreateAgentRun(ctx context.Context, arg CreateAgentRunParams) (AgentRun, error)
+	CreateLocalAuthInvitation(ctx context.Context, arg CreateLocalAuthInvitationParams) (LocalAuthInvitation, error)
+	CreateLocalAuthMembership(ctx context.Context, arg CreateLocalAuthMembershipParams) (LocalAuthMembership, error)
+	CreateLocalAuthOrg(ctx context.Context, arg CreateLocalAuthOrgParams) (LocalAuthOrg, error)
+	CreateLocalAuthSession(ctx context.Context, arg CreateLocalAuthSessionParams) (LocalAuthSession, error)
+	CreateLocalAuthUser(ctx context.Context, arg CreateLocalAuthUserParams) (LocalAuthUser, error)
 	CreateOrgAPIKey(ctx context.Context, arg CreateOrgAPIKeyParams) (OrgApiKey, error)
 	DeleteAgentJob(ctx context.Context, arg DeleteAgentJobParams) (int64, error)
 	DeleteAgentProfilesByOrg(ctx context.Context, orgID string) error
@@ -31,6 +39,7 @@ type Querier interface {
 	DeleteConversation(ctx context.Context, arg DeleteConversationParams) error
 	DeleteConversationAttachmentsForTurn(ctx context.Context, arg DeleteConversationAttachmentsForTurnParams) error
 	DeleteConversationsByOrg(ctx context.Context, orgID string) error
+	DeleteExpiredLocalAuthSessions(ctx context.Context) error
 	DeleteGithubInstallation(ctx context.Context, installationID int64) error
 	// github_repos / github_teams / github_team_members cascade via FK.
 	DeleteGithubInstallationsByOrg(ctx context.Context, orgID string) error
@@ -45,6 +54,11 @@ type Querier interface {
 	// retention window only disables open-PR resume for ancient issues.
 	DeleteLinearAgentSessionsBefore(ctx context.Context, createdAt pgtype.Timestamptz) (int64, error)
 	DeleteLinearAgentSessionsByOrg(ctx context.Context, orgID string) error
+	DeleteLocalAuthMembership(ctx context.Context, id string) error
+	DeleteLocalAuthOrg(ctx context.Context, id string) error
+	DeleteLocalAuthSession(ctx context.Context, id string) error
+	DeleteLocalAuthSessionsForUser(ctx context.Context, userID string) error
+	DeleteLocalAuthUser(ctx context.Context, id string) error
 	DeleteOrgAPIKeysByOrg(ctx context.Context, orgID string) error
 	DeleteOrgConfig(ctx context.Context, orgID string) error
 	DeleteOrgSXVault(ctx context.Context, orgID string) error
@@ -60,6 +74,7 @@ type Querier interface {
 	EnsureBillingAccount(ctx context.Context, orgID string) (BillingAccount, error)
 	EnsureBillingTopupSettings(ctx context.Context, orgID string) (BillingTopupSetting, error)
 	FinalizeBillingRunMeter(ctx context.Context, arg FinalizeBillingRunMeterParams) (BillingRunMeter, error)
+	FindLocalAuthOrgUserByEmail(ctx context.Context, arg FindLocalAuthOrgUserByEmailParams) (LocalAuthUser, error)
 	GetActiveAgentRunForThread(ctx context.Context, arg GetActiveAgentRunForThreadParams) (AgentRun, error)
 	GetAgentJob(ctx context.Context, arg GetAgentJobParams) (AgentJob, error)
 	GetAgentJobExecution(ctx context.Context, arg GetAgentJobExecutionParams) (AgentJobExecution, error)
@@ -87,6 +102,14 @@ type Querier interface {
 	GetLatestAgentJobExecution(ctx context.Context, arg GetLatestAgentJobExecutionParams) (AgentJobExecution, error)
 	GetLatestAgentRunForThread(ctx context.Context, arg GetLatestAgentRunForThreadParams) (AgentRun, error)
 	GetLinearAgentSession(ctx context.Context, agentSessionID string) (LinearAgentSession, error)
+	GetLocalAuthInvitation(ctx context.Context, id string) (LocalAuthInvitation, error)
+	GetLocalAuthInvitationByTokenHash(ctx context.Context, tokenHash []byte) (LocalAuthInvitation, error)
+	GetLocalAuthMembership(ctx context.Context, id string) (LocalAuthMembership, error)
+	GetLocalAuthMembershipForUserOrg(ctx context.Context, arg GetLocalAuthMembershipForUserOrgParams) (LocalAuthMembership, error)
+	GetLocalAuthOrg(ctx context.Context, id string) (LocalAuthOrg, error)
+	GetLocalAuthSession(ctx context.Context, id string) (GetLocalAuthSessionRow, error)
+	GetLocalAuthUserByEmail(ctx context.Context, emailNormalized string) (LocalAuthUser, error)
+	GetLocalAuthUserByID(ctx context.Context, id string) (LocalAuthUser, error)
 	GetOrgAPIKeyByHash(ctx context.Context, keyHash []byte) (OrgApiKey, error)
 	GetOrgConfig(ctx context.Context, orgID string) (OrgConfig, error)
 	// Routes inbound Linear webhooks (organizationId at the payload root)
@@ -144,6 +167,9 @@ type Querier interface {
 	// conversation lookups on heavily-discussed issues — an open PR, if
 	// any, is virtually always within the newest handful of sessions.
 	ListLinearAgentSessionsByIssue(ctx context.Context, arg ListLinearAgentSessionsByIssueParams) ([]LinearAgentSession, error)
+	ListLocalAuthInvitations(ctx context.Context, orgID string) ([]LocalAuthInvitation, error)
+	ListLocalAuthMembers(ctx context.Context, orgID string) ([]ListLocalAuthMembersRow, error)
+	ListLocalAuthUserOrgs(ctx context.Context, userID string) ([]ListLocalAuthUserOrgsRow, error)
 	ListOrgAPIKeys(ctx context.Context, orgID string) ([]OrgApiKey, error)
 	// Lists Socket-Mode-installed orgs only. The slackManager iterates
 	// this on startup to open one socket per org.
@@ -172,6 +198,7 @@ type Querier interface {
 	ReleaseStaleRunningAgentJobExecutions(ctx context.Context, staleAfter pgtype.Interval) (int64, error)
 	RenameConversation(ctx context.Context, arg RenameConversationParams) (int64, error)
 	ResetBillingTopupMonthlyUsage(ctx context.Context, arg ResetBillingTopupMonthlyUsageParams) (BillingTopupSetting, error)
+	RevokeLocalAuthInvitation(ctx context.Context, arg RevokeLocalAuthInvitationParams) error
 	RevokeOrgAPIKey(ctx context.Context, arg RevokeOrgAPIKeyParams) (int64, error)
 	SaveConversationAttachment(ctx context.Context, arg SaveConversationAttachmentParams) (ConversationAttachment, error)
 	SaveConversationPRState(ctx context.Context, arg SaveConversationPRStateParams) error
@@ -237,6 +264,7 @@ type Querier interface {
 	SetBillingLastPaymentError(ctx context.Context, arg SetBillingLastPaymentErrorParams) error
 	SetBillingPendingPlanChange(ctx context.Context, arg SetBillingPendingPlanChangeParams) (BillingAccount, error)
 	TouchAgentRunLease(ctx context.Context, arg TouchAgentRunLeaseParams) error
+	TouchLocalAuthSession(ctx context.Context, id string) error
 	TouchOrgAPIKeyLastUsed(ctx context.Context, id string) error
 	UpdateAgentJob(ctx context.Context, arg UpdateAgentJobParams) (AgentJob, error)
 	UpdateAgentJobLastRun(ctx context.Context, arg UpdateAgentJobLastRunParams) error
@@ -256,6 +284,11 @@ type Querier interface {
 	UpdateBillingReservedBalances(ctx context.Context, arg UpdateBillingReservedBalancesParams) (BillingAccount, error)
 	UpdateBillingStripeCustomer(ctx context.Context, arg UpdateBillingStripeCustomerParams) (BillingAccount, error)
 	UpdateBillingTopupSettings(ctx context.Context, arg UpdateBillingTopupSettingsParams) (BillingTopupSetting, error)
+	UpdateLocalAuthMembershipRole(ctx context.Context, arg UpdateLocalAuthMembershipRoleParams) (LocalAuthMembership, error)
+	UpdateLocalAuthOrgName(ctx context.Context, arg UpdateLocalAuthOrgNameParams) (LocalAuthOrg, error)
+	UpdateLocalAuthSessionOrg(ctx context.Context, arg UpdateLocalAuthSessionOrgParams) (LocalAuthSession, error)
+	UpdateLocalAuthUserPassword(ctx context.Context, arg UpdateLocalAuthUserPasswordParams) error
+	UpdateLocalAuthUserProfile(ctx context.Context, arg UpdateLocalAuthUserProfileParams) (LocalAuthUser, error)
 	// Lightweight status update used by the runtime apply path: bumps
 	// success/failure counters and the validation_status without
 	// rewriting the whole spec. Avoids re-encoding all the JSONB blobs on

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/hetchyhq/hetchy/internal/auth"
@@ -42,13 +43,19 @@ func (b *Bot) inviteHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unknown role", http.StatusBadRequest)
 		return
 	}
-	if err := b.auth.SendInvitation(r.Context(), email, p.OrgID, role, p.UserID); err != nil {
+	inviteToken, err := b.auth.SendInvitation(r.Context(), email, p.OrgID, role, p.UserID)
+	if err != nil {
 		b.log.Error("send invitation failed", "error", err, "org", p.OrgID, "email", email)
 		http.Error(w, "send invite: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	b.log.Info("invitation sent", "org", p.OrgID, "email", email, "role", role, "inviter", p.UserID)
-	http.Redirect(w, r, "/settings/org?tab=members&saved=invited", http.StatusFound)
+	dest := "/settings/org?tab=members&saved=invited"
+	if inviteToken != "" {
+		inviteURL := b.cfg.PublicBaseURL() + "/signup?invite=" + url.QueryEscape(inviteToken)
+		dest += "&invite_url=" + url.QueryEscape(inviteURL)
+	}
+	http.Redirect(w, r, dest, http.StatusFound)
 }
 
 // invitationActionHandler handles /settings/org/invitations/{id}/revoke.

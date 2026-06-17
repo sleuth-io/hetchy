@@ -5,8 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
+	"github.com/hetchyhq/hetchy/internal/db/sqlc"
+	"github.com/jackc/pgx/v5"
 	workos "github.com/workos/workos-go/v7"
 )
 
@@ -20,6 +23,13 @@ func formatExpiry(s string) string {
 	t, err := time.Parse(time.RFC3339, s)
 	if err != nil {
 		return s
+	}
+	return t.UTC().Format(time.DateOnly)
+}
+
+func formatPGExpiry(t time.Time) string {
+	if t.IsZero() {
+		return ""
 	}
 	return t.UTC().Format(time.DateOnly)
 }
@@ -98,6 +108,13 @@ func (s *Service) GetProfile(ctx context.Context, userID string) (Profile, error
 	if s.cfg.Bypass {
 		return Profile{UserID: userID, Email: s.cfg.BypassEmail, FirstName: "Bypass", LastName: "User"}, nil
 	}
+	if s.IsLocalMode() {
+		u, err := s.local.q.GetLocalAuthUserByID(ctx, userID)
+		if err != nil {
+			return Profile{}, fmt.Errorf("get local user: %w", err)
+		}
+		return Profile{UserID: u.ID, Email: u.Email, FirstName: u.FirstName, LastName: u.LastName}, nil
+	}
 	u, err := s.client.UserManagement().Get(ctx, userID)
 	if err != nil {
 		return Profile{}, fmt.Errorf("get user: %w", err)
@@ -125,6 +142,13 @@ func (s *Service) GetProfile(ctx context.Context, userID string) (Profile, error
 func (s *Service) UserHasMultipleOrgs(ctx context.Context, userID string) (bool, error) {
 	if s.cfg.Bypass {
 		return false, nil
+	}
+	if s.IsLocalMode() {
+		count, err := s.local.q.CountLocalAuthUserOrgs(ctx, userID)
+		if err != nil {
+			return false, fmt.Errorf("count local user orgs: %w", err)
+		}
+		return count > 1, nil
 	}
 	if v, ok := s.multiOrgCacheGet(userID); ok {
 		return v, nil
@@ -222,6 +246,23 @@ func (s *Service) ListUserOrgs(ctx context.Context, userID, currentOrgID string)
 			Current:  s.cfg.BypassOrg == currentOrgID,
 		}}, nil
 	}
+	if s.IsLocalMode() {
+		rows, err := s.local.q.ListLocalAuthUserOrgs(ctx, userID)
+		if err != nil {
+			return nil, fmt.Errorf("list local user orgs: %w", err)
+		}
+		out := make([]UserOrg, 0, len(rows))
+		for _, row := range rows {
+			out = append(out, UserOrg{
+				OrgID:    row.OrgID,
+				Name:     row.OrgName,
+				RoleSlug: row.RoleSlug,
+				Current:  row.OrgID == currentOrgID,
+			})
+		}
+		sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+		return out, nil
+	}
 	uid := userID
 	active := workos.OrganizationMembershipCreatedDataStatusActive
 	it := s.client.UserManagement().ListOrganizationMemberships(ctx, &workos.UserManagementListOrganizationMembershipsParams{
@@ -256,6 +297,14 @@ func (s *Service) UpdateProfile(ctx context.Context, userID, firstName, lastName
 	if s.cfg.Bypass {
 		return nil
 	}
+	if s.IsLocalMode() {
+		_, err := s.local.q.UpdateLocalAuthUserProfile(ctx, sqlc.UpdateLocalAuthUserProfileParams{
+			ID:        userID,
+			FirstName: strings.TrimSpace(firstName),
+			LastName:  strings.TrimSpace(lastName),
+		})
+		return err
+	}
 	fn, ln := firstName, lastName
 	_, err := s.client.UserManagement().Update(ctx, userID, &workos.UserManagementUpdateParams{
 		FirstName: &fn,
@@ -271,6 +320,9 @@ func (s *Service) UpdateProfile(ctx context.Context, userID, firstName, lastName
 func (s *Service) RequestPasswordReset(ctx context.Context, email string) (string, error) {
 	if s.cfg.Bypass {
 		return "/", nil
+	}
+	if s.IsLocalMode() {
+		return "", errors.New("auth: password reset links are not available in local auth mode")
 	}
 	pr, err := s.client.UserManagement().ResetPassword(ctx, &workos.UserManagementResetPasswordParams{Email: email})
 	if err != nil {
@@ -290,6 +342,25 @@ func (s *Service) ListMembers(ctx context.Context, orgID string) ([]Member, erro
 			Email: s.cfg.BypassEmail, FirstName: "Bypass", LastName: "User",
 			RoleSlug: s.cfg.BypassRole, Status: "active",
 		}}, nil
+	}
+	if s.IsLocalMode() {
+		rows, err := s.local.q.ListLocalAuthMembers(ctx, orgID)
+		if err != nil {
+			return nil, fmt.Errorf("list local memberships: %w", err)
+		}
+		out := make([]Member, 0, len(rows))
+		for _, row := range rows {
+			out = append(out, Member{
+				MembershipID: row.MembershipID,
+				UserID:       row.UserID,
+				Email:        row.Email,
+				FirstName:    row.FirstName,
+				LastName:     row.LastName,
+				RoleSlug:     row.RoleSlug,
+				Status:       "active",
+			})
+		}
+		return out, nil
 	}
 	org := orgID
 	it := s.client.UserManagement().ListOrganizationMemberships(ctx, &workos.UserManagementListOrganizationMembershipsParams{
@@ -342,6 +413,24 @@ func (s *Service) UsersOnlyInOrganization(ctx context.Context, orgID string) ([]
 		}
 		return nil, nil
 	}
+	if s.IsLocalMode() {
+		members, err := s.local.q.ListLocalAuthMembers(ctx, orgID)
+		if err != nil {
+			return nil, fmt.Errorf("list local org memberships for deletion: %w", err)
+		}
+		var out []string
+		for _, member := range members {
+			count, err := s.local.q.CountLocalAuthUserOrgs(ctx, member.UserID)
+			if err != nil {
+				return nil, fmt.Errorf("count local orgs for user %s: %w", member.UserID, err)
+			}
+			if count <= 1 {
+				out = append(out, member.UserID)
+			}
+		}
+		sort.Strings(out)
+		return out, nil
+	}
 
 	org := orgID
 	it := s.client.UserManagement().ListOrganizationMemberships(ctx, &workos.UserManagementListOrganizationMembershipsParams{
@@ -389,6 +478,17 @@ func (s *Service) DeleteUsers(ctx context.Context, userIDs []string) error {
 	if s.cfg.Bypass {
 		return nil
 	}
+	if s.IsLocalMode() {
+		for _, userID := range userIDs {
+			if userID == "" {
+				continue
+			}
+			if err := s.local.q.DeleteLocalAuthUser(ctx, userID); err != nil {
+				return fmt.Errorf("delete local user %s: %w", userID, err)
+			}
+		}
+		return nil
+	}
 	for _, userID := range userIDs {
 		if userID == "" {
 			continue
@@ -419,6 +519,19 @@ func (s *Service) FindOrgUserByEmail(ctx context.Context, orgID, email string) (
 			return Profile{UserID: s.cfg.BypassUser, Email: email, FirstName: "Bypass", LastName: "User"}, true, nil
 		}
 		return Profile{}, false, nil
+	}
+	if s.IsLocalMode() {
+		u, err := s.local.q.FindLocalAuthOrgUserByEmail(ctx, sqlc.FindLocalAuthOrgUserByEmailParams{
+			OrgID:           orgID,
+			EmailNormalized: normalizeEmail(email),
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Profile{}, false, nil
+		}
+		if err != nil {
+			return Profile{}, false, fmt.Errorf("find local user by email: %w", err)
+		}
+		return Profile{UserID: u.ID, Email: u.Email, FirstName: u.FirstName, LastName: u.LastName}, true, nil
 	}
 	org := orgID
 	em := email
@@ -451,6 +564,26 @@ func (s *Service) ListInvitations(ctx context.Context, orgID string) ([]Invitati
 	if s.cfg.Bypass {
 		return nil, nil
 	}
+	if s.IsLocalMode() {
+		rows, err := s.local.q.ListLocalAuthInvitations(ctx, orgID)
+		if err != nil {
+			return nil, fmt.Errorf("list local invitations: %w", err)
+		}
+		out := make([]Invitation, 0, len(rows))
+		for _, row := range rows {
+			expires := ""
+			if row.ExpiresAt.Valid {
+				expires = formatPGExpiry(row.ExpiresAt.Time)
+			}
+			out = append(out, Invitation{
+				ID:        row.ID,
+				Email:     row.Email,
+				RoleSlug:  row.RoleSlug,
+				ExpiresAt: expires,
+			})
+		}
+		return out, nil
+	}
 	org := orgID
 	it := s.client.UserManagement().ListInvitations(ctx, &workos.UserManagementListInvitationsParams{
 		OrganizationID: &org,
@@ -476,9 +609,12 @@ func (s *Service) ListInvitations(ctx context.Context, orgID string) ([]Invitati
 // SendInvitation creates a pending invitation. WorkOS sends the email
 // — the recipient lands in AuthKit, accepts, and gets a session bound
 // to orgID. inviterUserID is shown in the invitation email.
-func (s *Service) SendInvitation(ctx context.Context, email, orgID, roleSlug, inviterUserID string) error {
+func (s *Service) SendInvitation(ctx context.Context, email, orgID, roleSlug, inviterUserID string) (string, error) {
 	if s.cfg.Bypass {
-		return nil
+		return "", nil
+	}
+	if s.IsLocalMode() {
+		return s.localSendInvitation(ctx, email, orgID, roleSlug, inviterUserID)
 	}
 	org, role, inv := orgID, roleSlug, inviterUserID
 	_, err := s.client.UserManagement().SendInvitation(ctx, &workos.UserManagementSendInvitationParams{
@@ -487,7 +623,7 @@ func (s *Service) SendInvitation(ctx context.Context, email, orgID, roleSlug, in
 		RoleSlug:       &role,
 		InviterUserID:  &inv,
 	})
-	return err
+	return "", err
 }
 
 // RevokeInvitation cancels a pending invitation. expectedOrgID gates the
@@ -498,6 +634,16 @@ func (s *Service) SendInvitation(ctx context.Context, email, orgID, roleSlug, in
 func (s *Service) RevokeInvitation(ctx context.Context, id, expectedOrgID string) error {
 	if s.cfg.Bypass {
 		return nil
+	}
+	if s.IsLocalMode() {
+		inv, err := s.local.q.GetLocalAuthInvitation(ctx, id)
+		if err != nil {
+			return fmt.Errorf("get local invitation: %w", err)
+		}
+		if inv.OrgID != expectedOrgID {
+			return ErrCrossOrg
+		}
+		return s.local.q.RevokeLocalAuthInvitation(ctx, sqlc.RevokeLocalAuthInvitationParams{ID: id, OrgID: expectedOrgID})
 	}
 	inv, err := s.client.UserManagement().GetInvitation(ctx, id)
 	if err != nil {
@@ -532,6 +678,28 @@ func (s *Service) RemoveMember(ctx context.Context, membershipID, expectedOrgID,
 	if s.cfg.Bypass {
 		return nil
 	}
+	if s.IsLocalMode() {
+		m, err := s.local.q.GetLocalAuthMembership(ctx, membershipID)
+		if err != nil {
+			return fmt.Errorf("get local membership: %w", err)
+		}
+		if m.OrgID != expectedOrgID {
+			return ErrCrossOrg
+		}
+		if m.UserID == callerUserID {
+			return errors.New("auth: you cannot remove your own membership")
+		}
+		if m.RoleSlug == "admin" {
+			count, err := s.local.q.CountLocalAuthAdmins(ctx, expectedOrgID)
+			if err != nil {
+				return fmt.Errorf("count local admins: %w", err)
+			}
+			if count <= 1 {
+				return errors.New("auth: cannot remove the last admin in the organization")
+			}
+		}
+		return s.local.q.DeleteLocalAuthMembership(ctx, membershipID)
+	}
 	m, err := s.resolveOrgMember(ctx, membershipID, expectedOrgID)
 	if err != nil {
 		return err
@@ -558,6 +726,29 @@ func (s *Service) RemoveMember(ctx context.Context, membershipID, expectedOrgID,
 func (s *Service) UpdateMemberRole(ctx context.Context, membershipID, expectedOrgID, callerUserID, roleSlug string) error {
 	if s.cfg.Bypass {
 		return nil
+	}
+	if s.IsLocalMode() {
+		m, err := s.local.q.GetLocalAuthMembership(ctx, membershipID)
+		if err != nil {
+			return fmt.Errorf("get local membership: %w", err)
+		}
+		if m.OrgID != expectedOrgID {
+			return ErrCrossOrg
+		}
+		if m.UserID == callerUserID {
+			return errors.New("auth: you cannot change your own role")
+		}
+		if m.RoleSlug == "admin" && roleSlug != "admin" {
+			count, err := s.local.q.CountLocalAuthAdmins(ctx, expectedOrgID)
+			if err != nil {
+				return fmt.Errorf("count local admins: %w", err)
+			}
+			if count <= 1 {
+				return errors.New("auth: cannot demote the last admin in the organization")
+			}
+		}
+		_, err = s.local.q.UpdateLocalAuthMembershipRole(ctx, sqlc.UpdateLocalAuthMembershipRoleParams{ID: membershipID, RoleSlug: roleSlug})
+		return err
 	}
 	m, err := s.resolveOrgMember(ctx, membershipID, expectedOrgID)
 	if err != nil {
@@ -593,6 +784,13 @@ func (s *Service) UpdateMemberRole(ctx context.Context, membershipID, expectedOr
 // lock keyed on orgID. For now the failure mode is a (rare) recovered-
 // by-WorkOS-support situation rather than data loss.
 func (s *Service) countAdmins(ctx context.Context, orgID string) (int, error) {
+	if s.IsLocalMode() {
+		count, err := s.local.q.CountLocalAuthAdmins(ctx, orgID)
+		if err != nil {
+			return 0, fmt.Errorf("count local admins: %w", err)
+		}
+		return int(count), nil
+	}
 	org := orgID
 	it := s.client.UserManagement().ListOrganizationMemberships(ctx, &workos.UserManagementListOrganizationMembershipsParams{
 		OrganizationID: &org,

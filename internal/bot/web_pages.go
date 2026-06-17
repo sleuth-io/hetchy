@@ -349,11 +349,14 @@ func (b *Bot) profileHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		b.renderTemplate(w, webui.Profile, map[string]any{
-			"UserID":    prof.UserID,
-			"Email":     prof.Email,
-			"FirstName": prof.FirstName,
-			"LastName":  prof.LastName,
-			"Saved":     r.URL.Query().Get("saved") == "1",
+			"UserID":        prof.UserID,
+			"Email":         prof.Email,
+			"FirstName":     prof.FirstName,
+			"LastName":      prof.LastName,
+			"Saved":         r.URL.Query().Get("saved") == "1",
+			"LocalAuth":     b.auth.IsLocalMode(),
+			"PasswordSaved": r.URL.Query().Get("password_saved") == "1",
+			"PasswordError": strings.TrimSpace(r.URL.Query().Get("password_error")),
 		})
 		return
 	}
@@ -390,6 +393,26 @@ func (b *Bot) passwordResetHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := requireSameOrigin(r); err != nil {
 		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	if b.auth.IsLocalMode() {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "bad form", http.StatusBadRequest)
+			return
+		}
+		current := r.FormValue("current_password")
+		next := r.FormValue("new_password")
+		confirm := r.FormValue("confirm_password")
+		if next == "" || next != confirm {
+			http.Redirect(w, r, "/settings/profile?password_error="+url.QueryEscape("New passwords do not match."), http.StatusFound)
+			return
+		}
+		if err := b.auth.ChangePassword(r.Context(), p.UserID, current, next); err != nil {
+			b.log.Warn("local password change failed", "error", err, "user", p.UserID)
+			http.Redirect(w, r, "/settings/profile?password_error="+url.QueryEscape(err.Error()), http.StatusFound)
+			return
+		}
+		http.Redirect(w, r, "/settings/profile?password_saved=1", http.StatusFound)
 		return
 	}
 	resetURL, err := b.auth.RequestPasswordReset(r.Context(), p.Email)

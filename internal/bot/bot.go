@@ -291,10 +291,12 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 	}
 
 	authSvc, err := auth.New(auth.Config{
+		Mode:           cfg.AuthMode,
 		APIKey:         cfg.WorkOSAPIKey,
 		ClientID:       cfg.WorkOSClientID,
 		CookiePassword: cfg.WorkOSCookiePassword,
 		RedirectURI:    cfg.WorkOSRedirectURI,
+		LocalQueries:   store.Queries,
 		CookieSecure:   cfg.CookieSecure,
 		Bypass:         cfg.AuthBypass,
 		BypassUser:     cfg.AuthBypassUser,
