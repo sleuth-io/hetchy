@@ -103,3 +103,31 @@ func TestSpecJSONShape(t *testing.T) {
 		t.Errorf("expected deferred_capabilities to be omitted when empty: %s", string(encoded))
 	}
 }
+
+func TestNeedsGenerationUpgrade(t *testing.T) {
+	t.Run("nil spec returns false", func(t *testing.T) {
+		if NeedsGenerationUpgrade(nil) {
+			t.Error("NeedsGenerationUpgrade(nil) should return false")
+		}
+	})
+	t.Run("zero generation treated as old", func(t *testing.T) {
+		spec := &Spec{BootstrapGeneration: 0}
+		if !NeedsGenerationUpgrade(spec) {
+			t.Error("NeedsGenerationUpgrade(gen=0) should return true (zero is treated as old)")
+		}
+	})
+	t.Run("generation below current needs upgrade", func(t *testing.T) {
+		spec := &Spec{BootstrapGeneration: CurrentBootstrapGeneration - 1}
+		if !NeedsGenerationUpgrade(spec) {
+			t.Errorf("NeedsGenerationUpgrade(gen=%d) should return true when current=%d",
+				spec.BootstrapGeneration, CurrentBootstrapGeneration)
+		}
+	})
+	t.Run("current generation does not need upgrade", func(t *testing.T) {
+		spec := &Spec{BootstrapGeneration: CurrentBootstrapGeneration}
+		if NeedsGenerationUpgrade(spec) {
+			t.Errorf("NeedsGenerationUpgrade(gen=%d) should return false when at current=%d",
+				spec.BootstrapGeneration, CurrentBootstrapGeneration)
+		}
+	})
+}
