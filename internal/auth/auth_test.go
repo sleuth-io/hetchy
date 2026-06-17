@@ -89,6 +89,83 @@ func TestOAuthStateKeyIsDomainSeparated(t *testing.T) {
 	}
 }
 
+func TestValidEmailRejectsDegenerateAddresses(t *testing.T) {
+	cases := []struct {
+		email string
+		want  bool
+	}{
+		{"ada@example.com", true},
+		{"first.last+tag@example.co.uk", true},
+		{"@", false},
+		{"a@", false},
+		{"@example.com", false},
+		{"ada@example", false},
+		{"ada@x.c", false},
+		{" Ada@example.com ", true},
+		{"Ada Lovelace <ada@example.com>", false},
+	}
+	for _, tc := range cases {
+		if got := validEmail(tc.email); got != tc.want {
+			t.Fatalf("validEmail(%q) = %v, want %v", tc.email, got, tc.want)
+		}
+	}
+}
+
+func TestLocalSameOriginAllowsMissingPrivacyHeaders(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/login", nil)
+	req.Host = "app.example.com"
+	if err := requireLocalSameOrigin(req); err != nil {
+		t.Fatalf("missing Origin/Referer should be allowed, got %v", err)
+	}
+
+	req.Header.Set("Origin", "https://evil.example.com")
+	if err := requireLocalSameOrigin(req); err == nil {
+		t.Fatal("mismatched Origin should still be rejected")
+	}
+}
+
+func TestLocalAuthCSRFTokenRoundTrip(t *testing.T) {
+	s := &Service{cfg: Config{}}
+	rec := httptest.NewRecorder()
+	token, err := s.issueLocalAuthCSRFToken(rec)
+	if err != nil {
+		t.Fatalf("issueLocalAuthCSRFToken: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(url.Values{"csrf_token": {token}}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(rec.Result().Cookies()[0])
+	if err := req.ParseForm(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.requireLocalAuthCSRF(req); err != nil {
+		t.Fatalf("requireLocalAuthCSRF: %v", err)
+	}
+
+	req.Form.Set("csrf_token", "wrong")
+	if err := s.requireLocalAuthCSRF(req); err == nil {
+		t.Fatal("mismatched csrf token should fail")
+	}
+}
+
+func TestLocalAuthRateLimitResetsAfterWindow(t *testing.T) {
+	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
+	s := &Service{now: func() time.Time { return now }}
+	req := httptest.NewRequest(http.MethodPost, "/login", nil)
+	req.RemoteAddr = "203.0.113.10:4444"
+	for i := range localAuthRateLimit {
+		if !s.allowLocalAuthAttempt(req) {
+			t.Fatalf("attempt %d unexpectedly blocked", i+1)
+		}
+	}
+	if s.allowLocalAuthAttempt(req) {
+		t.Fatal("attempt past limit should be blocked")
+	}
+	now = now.Add(localAuthRateWindow)
+	if !s.allowLocalAuthAttempt(req) {
+		t.Fatal("attempt should be allowed after rate window resets")
+	}
+}
+
 func TestCallbackRejectsMissingState(t *testing.T) {
 	s := newTestService(t, "test-cookie-password-keep-it-long")
 

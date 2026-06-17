@@ -409,7 +409,7 @@ func (b *Bot) passwordResetHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := b.auth.ChangePassword(r.Context(), p.UserID, current, next); err != nil {
 			b.log.Warn("local password change failed", "error", err, "user", p.UserID)
-			http.Redirect(w, r, "/settings/profile?password_error="+url.QueryEscape(err.Error()), http.StatusFound)
+			http.Redirect(w, r, "/settings/profile?password_error="+url.QueryEscape(localPasswordChangeErrorMessage(err)), http.StatusFound)
 			return
 		}
 		http.Redirect(w, r, "/settings/profile?password_saved=1", http.StatusFound)
@@ -422,6 +422,17 @@ func (b *Bot) passwordResetHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, resetURL, http.StatusFound)
+}
+
+func localPasswordChangeErrorMessage(err error) string {
+	if errors.Is(err, auth.ErrCurrentPasswordIncorrect) {
+		return "Current password is incorrect."
+	}
+	msg := err.Error()
+	if strings.HasPrefix(msg, "password must be at least ") {
+		return msg + "."
+	}
+	return "Something went wrong. Please try again."
 }
 
 // requireSameOrigin defends state-mutating POST handlers against CSRF.

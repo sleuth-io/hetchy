@@ -23,8 +23,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hetchyhq/hetchy/internal/db/sqlc"
 	workos "github.com/workos/workos-go/v7"
+
+	"github.com/hetchyhq/hetchy/internal/db/sqlc"
 )
 
 // SessionCookieName is the cookie that holds the sealed WorkOS session.
@@ -145,6 +146,8 @@ type Service struct {
 	// overridable in tests to exercise expiry deterministically.
 	multiOrgMu    sync.RWMutex
 	multiOrgCache map[string]multiOrgEntry
+	localRateMu   sync.Mutex
+	localRate     map[string]localAuthRateEntry
 	now           func() time.Time
 }
 

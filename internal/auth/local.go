@@ -2,24 +2,17 @@ package auth
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
 	"crypto/subtle"
-	"encoding/base64"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"html/template"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
-	"github.com/hetchyhq/hetchy/internal/db/sqlc"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgtype"
 	"golang.org/x/crypto/bcrypt"
+
+	"github.com/hetchyhq/hetchy/internal/db/sqlc"
 )
 
 const (
@@ -29,7 +22,18 @@ const (
 	localSessionTTL     = 7 * 24 * time.Hour
 	localInvitationTTL  = 7 * 24 * time.Hour
 	localPasswordMinLen = 8
+
+	localAuthCSRFCookieName = "hetchy_local_auth_csrf"
+	localAuthCSRFTokenTTL   = 15 * time.Minute
+	localAuthRateLimit      = 20
+	localAuthRateWindow     = time.Minute
+	localAuthRateMaxEntries = 4096
 )
+
+// ErrCurrentPasswordIncorrect is safe to surface to an end user. Other
+// ChangePassword errors may wrap database or bcrypt internals and should be
+// mapped to a generic message by handlers.
+var ErrCurrentPasswordIncorrect = errors.New("current password is incorrect")
 
 type localAuthStore struct {
 	q sqlc.Querier
@@ -48,66 +52,6 @@ func normalizeAuthMode(raw string) (string, error) {
 	default:
 		return "", fmt.Errorf("auth: unsupported mode %q", raw)
 	}
-}
-
-func normalizeEmail(email string) string {
-	return strings.ToLower(strings.TrimSpace(email))
-}
-
-func validEmail(email string) bool {
-	email = strings.TrimSpace(email)
-	return email != "" && strings.Contains(email, "@")
-}
-
-func localID(prefix string) (string, error) {
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return "", err
-	}
-	return prefix + hex.EncodeToString(b[:]), nil
-}
-
-func localToken() (string, []byte, error) {
-	var b [32]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return "", nil, err
-	}
-	token := base64.RawURLEncoding.EncodeToString(b[:])
-	sum := sha256.Sum256([]byte(token))
-	return token, sum[:], nil
-}
-
-func hashLocalToken(token string) []byte {
-	sum := sha256.Sum256([]byte(token))
-	return sum[:]
-}
-
-func localSessionCookieValue(sessionID, secret string) string {
-	return sessionID + "." + secret
-}
-
-func parseLocalSessionCookieValue(value string) (sessionID, secret string, ok bool) {
-	sessionID, secret, ok = strings.Cut(value, ".")
-	if !ok || sessionID == "" || secret == "" {
-		return "", "", false
-	}
-	return sessionID, secret, true
-}
-
-func pgTimestamp(t time.Time) pgtype.Timestamptz {
-	return pgtype.Timestamptz{Time: t, Valid: true}
-}
-
-func stringPtrIfNotEmpty(s string) *string {
-	if s == "" {
-		return nil
-	}
-	return &s
-}
-
-func isUniqueViolation(err error) bool {
-	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
 type localInvitation struct {
@@ -204,6 +148,14 @@ func (s *Service) handleLocalSignupPost(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "bad form", http.StatusBadRequest)
 		return
 	}
+	if err := s.requireLocalAuthCSRF(r); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	if !s.allowLocalAuthAttempt(r) {
+		http.Error(w, "too many attempts; wait a minute and try again", http.StatusTooManyRequests)
+		return
+	}
 	email := strings.TrimSpace(r.FormValue("email"))
 	first := strings.TrimSpace(r.FormValue("first_name"))
 	last := strings.TrimSpace(r.FormValue("last_name"))
@@ -234,6 +186,7 @@ func (s *Service) handleLocalSignupPost(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var activeOrgID string
+	var invite localInvitation
 	if inviteToken != "" {
 		inv, ok, err := s.localInvitationFromRequest(r.Context(), inviteToken)
 		if err != nil {
@@ -252,6 +205,7 @@ func (s *Service) handleLocalSignupPost(w http.ResponseWriter, r *http.Request) 
 			s.renderLocalAuthPage(w, data)
 			return
 		}
+		invite = inv
 		activeOrgID = inv.row.OrgID
 	}
 
@@ -283,7 +237,7 @@ func (s *Service) handleLocalSignupPost(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if inviteToken != "" {
-		if err := s.localAcceptInvitationForUser(r.Context(), inviteToken, user.ID); err != nil {
+		if err := s.localAcceptInvitationForUser(r.Context(), invite, user.ID); err != nil {
 			http.Error(w, "accept invitation: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -306,6 +260,14 @@ func (s *Service) handleLocalLoginPost(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	if err := s.requireLocalAuthCSRF(r); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	if !s.allowLocalAuthAttempt(r) {
+		http.Error(w, "too many attempts; wait a minute and try again", http.StatusTooManyRequests)
 		return
 	}
 	email := strings.TrimSpace(r.FormValue("email"))
@@ -362,7 +324,7 @@ func (s *Service) handleLocalLoginPost(w http.ResponseWriter, r *http.Request) {
 			s.renderLocalAuthPage(w, data)
 			return
 		}
-		if err := s.localAcceptInvitationForUser(r.Context(), inviteToken, user.ID); err != nil {
+		if err := s.localAcceptInvitationForUser(r.Context(), inv, user.ID); err != nil {
 			http.Error(w, "accept invitation: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -388,12 +350,8 @@ func (s *Service) handleLocalLoginPost(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, dest, http.StatusFound)
 }
 
-func (s *Service) localAcceptInvitationForUser(ctx context.Context, token, userID string) error {
-	inv, ok, err := s.localInvitationFromRequest(ctx, token)
-	if err != nil {
-		return err
-	}
-	if !ok {
+func (s *Service) localAcceptInvitationForUser(ctx context.Context, inv localInvitation, userID string) error {
+	if inv.row.ID == "" {
 		return errors.New("invitation is invalid or expired")
 	}
 	membershipID, err := localID("om_local_")
@@ -406,7 +364,9 @@ func (s *Service) localAcceptInvitationForUser(ctx context.Context, token, userI
 		OrgID:    inv.row.OrgID,
 		RoleSlug: inv.row.RoleSlug,
 	}); err != nil {
-		return err
+		if !isUniqueViolation(err) {
+			return err
+		}
 	}
 	return s.local.q.AcceptLocalAuthInvitation(ctx, inv.row.ID)
 }
@@ -490,6 +450,16 @@ func (s *Service) localRevokeCurrentSession(r *http.Request) {
 		// Logout should still complete if the DB row has already expired.
 		return
 	}
+}
+
+// DeleteExpiredLocalAuthSessions removes server-side local sessions whose TTL
+// has elapsed. WorkOS mode has no local session table, so callers can invoke
+// this unconditionally from process-level cleanup loops.
+func (s *Service) DeleteExpiredLocalAuthSessions(ctx context.Context) error {
+	if s.cfg.Bypass || !s.IsLocalMode() {
+		return nil
+	}
+	return s.local.q.DeleteExpiredLocalAuthSessions(ctx)
 }
 
 func (s *Service) localCreateOrganization(ctx context.Context, name string) (string, error) {
@@ -607,7 +577,7 @@ func (s *Service) ChangePassword(ctx context.Context, userID, currentPassword, n
 		return fmt.Errorf("get user: %w", err)
 	}
 	if bcrypt.CompareHashAndPassword(user.PasswordHash, []byte(currentPassword)) != nil {
-		return errors.New("current password is incorrect")
+		return ErrCurrentPasswordIncorrect
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
 	if err != nil {
@@ -618,128 +588,3 @@ func (s *Service) ChangePassword(ctx context.Context, userID, currentPassword, n
 		PasswordHash: hash,
 	})
 }
-
-func requireLocalSameOrigin(r *http.Request) error {
-	host := r.Host
-	if host == "" {
-		return errors.New("missing host header")
-	}
-	if origin := r.Header.Get("Origin"); origin != "" {
-		u, err := url.Parse(origin)
-		if err != nil {
-			return fmt.Errorf("invalid origin: %w", err)
-		}
-		if u.Host != host {
-			return fmt.Errorf("origin %q does not match host %q", u.Host, host)
-		}
-		return nil
-	}
-	if referer := r.Header.Get("Referer"); referer != "" {
-		u, err := url.Parse(referer)
-		if err != nil {
-			return fmt.Errorf("invalid referer: %w", err)
-		}
-		if u.Host != host {
-			return fmt.Errorf("referer %q does not match host %q", u.Host, host)
-		}
-		return nil
-	}
-	return errors.New("missing Origin and Referer headers")
-}
-
-type localAuthPageData struct {
-	Mode          string
-	Title         string
-	Eyebrow       string
-	SubmitLabel   string
-	AlternateText string
-	AlternateURL  string
-	AlternateLink string
-	Email         string
-	FirstName     string
-	LastName      string
-	InviteToken   string
-	InviteEmail   string
-	InviteRole    string
-	Error         string
-}
-
-func (s *Service) renderLocalAuthPage(w http.ResponseWriter, data localAuthPageData) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-cache")
-	if err := localAuthTemplate.Execute(w, data); err != nil {
-		http.Error(w, "render auth page: "+err.Error(), http.StatusInternalServerError)
-	}
-}
-
-var localAuthTemplate = template.Must(template.New("local-auth").Parse(`<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{.Title}} - Hetchy</title>
-<script src="/assets/theme_bootstrap.js"></script>
-<link rel="stylesheet" href="/assets/landing.css">
-<style>
-.auth-form{display:grid;gap:.8rem;margin-top:1.1rem}
-.auth-form label{display:grid;gap:.3rem;color:#4f5a68;font-size:.84rem;font-weight:600}
-.auth-form input{width:100%;min-height:2.55rem;border:1px solid #cad5e3;border-radius:8px;padding:.65rem .75rem;background:#fff;color:#111418;font:inherit}
-.auth-form input:focus{outline:none;border-color:#0b93f6;box-shadow:0 0 0 3px rgba(11,147,246,.14)}
-.auth-form .name-row{display:grid;grid-template-columns:1fr 1fr;gap:.75rem}
-.auth-form button{min-height:2.75rem;border:0;border-radius:8px;background:#0b93f6;color:#fff;font:inherit;font-weight:650;cursor:pointer}
-.auth-form button:hover{background:#087fd8}
-.auth-note{margin:.9rem 0 0;color:#5e6878;font-size:.9rem;line-height:1.45}
-.auth-note a{color:#0b5ec0;font-weight:650}
-.auth-alert{margin:1rem 0 0;padding:.7rem .8rem;border-radius:8px;background:#fff1f1;color:#9f1d1d;border:1px solid #ffd0d0;font-size:.9rem}
-.invite-banner{margin:1rem 0 0;padding:.7rem .8rem;border-radius:8px;background:#eff8ff;color:#164b78;border:1px solid #cfe8ff;font-size:.9rem}
-html.is-dark .auth-form label{color:#c6c6cb}
-html.is-dark .auth-form input{background:#1c1c1f;color:#f5f5f7;border-color:#383842}
-html.is-dark .auth-form input:focus{border-color:#7dc4ff;box-shadow:0 0 0 3px rgba(125,196,255,.12)}
-html.is-dark .auth-form button{background:#7dc4ff;color:#101317}
-html.is-dark .auth-form button:hover{background:#9fd3ff}
-html.is-dark .auth-note{color:#b8b8bc}
-html.is-dark .auth-note a{color:#7dc4ff}
-html.is-dark .auth-alert{background:#331717;color:#ffb4b4;border-color:#5b2828}
-html.is-dark .invite-banner{background:#16273a;color:#cde8ff;border-color:#24445f}
-@media (max-width:480px){.auth-form .name-row{grid-template-columns:1fr}}
-</style>
-</head>
-<body>
-<main class="entry-shell">
-  <section class="entry-panel" aria-labelledby="auth-title">
-    <a class="brand" href="/" aria-label="Hetchy home">
-      <img class="brand-mark" src="data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2032%2032%27%3E%3Crect%20width%3D%2732%27%20height%3D%2732%27%20rx%3D%276%27%20fill%3D%27%230d1117%27%2F%3E%3Cg%20fill%3D%27%237dc4ff%27%3E%3Crect%20x%3D%276%27%20y%3D%276%27%20width%3D%276%27%20height%3D%2720%27%2F%3E%3Crect%20x%3D%2720%27%20y%3D%276%27%20width%3D%276%27%20height%3D%2720%27%2F%3E%3Crect%20x%3D%276%27%20y%3D%2714%27%20width%3D%2720%27%20height%3D%274%27%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E" alt="">
-      <span>Hetchy</span>
-    </a>
-    <div class="entry-copy">
-      <p class="eyebrow">{{.Eyebrow}}</p>
-      <h1 id="auth-title">{{.Title}}</h1>
-      <p class="lede">Use your email and password to access Hetchy.</p>
-    </div>
-    {{if .Error}}<div class="auth-alert">{{.Error}}</div>{{end}}
-    {{if .InviteEmail}}<div class="invite-banner">Invitation for {{.InviteEmail}} as {{.InviteRole}}.</div>{{end}}
-    <form method="POST" class="auth-form" action="/{{.Mode}}">
-      {{if .InviteToken}}<input type="hidden" name="invite" value="{{.InviteToken}}">{{end}}
-      {{if eq .Mode "signup"}}
-      <div class="name-row">
-        <label>First name
-          <input type="text" name="first_name" value="{{.FirstName}}" autocomplete="given-name">
-        </label>
-        <label>Last name
-          <input type="text" name="last_name" value="{{.LastName}}" autocomplete="family-name">
-        </label>
-      </div>
-      {{end}}
-      <label>Email
-        <input type="email" name="email" value="{{.Email}}" autocomplete="email" required>
-      </label>
-      <label>Password
-        <input type="password" name="password" autocomplete="{{if eq .Mode "signup"}}new-password{{else}}current-password{{end}}" required minlength="8">
-      </label>
-      <button type="submit">{{.SubmitLabel}}</button>
-    </form>
-    <p class="auth-note">{{.AlternateText}} <a href="{{.AlternateURL}}{{if .InviteToken}}?invite={{.InviteToken}}{{end}}">{{.AlternateLink}}</a>.</p>
-  </section>
-</main>
-</body>
-</html>`))

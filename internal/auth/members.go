@@ -8,9 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hetchyhq/hetchy/internal/db/sqlc"
 	"github.com/jackc/pgx/v5"
 	workos "github.com/workos/workos-go/v7"
+
+	"github.com/hetchyhq/hetchy/internal/db/sqlc"
 )
 
 // formatExpiry trims a WorkOS RFC-3339 timestamp to a friendly

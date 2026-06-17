@@ -15,6 +15,7 @@ import (
 	"github.com/hetchyhq/hetchy/internal/bootstrap"
 	"github.com/hetchyhq/hetchy/internal/db/sqlc"
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
+	"github.com/hetchyhq/hetchy/internal/secrets"
 	"github.com/hetchyhq/hetchy/internal/sxsync"
 )
 
@@ -279,6 +280,38 @@ func TestInviteHandlerBypassAuthSuccessAndValidation(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("member invite status = %d want %d", rec.Code, http.StatusForbidden)
+	}
+}
+
+func TestLocalInviteURLFlashRoundTrip(t *testing.T) {
+	b := newBypassOrgBot(t, "admin")
+	cipher, err := secrets.New(strings.Repeat("k", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.cipher = cipher
+	const inviteURL = "http://localhost:8080/signup?invite=secret-token"
+
+	rec := httptest.NewRecorder()
+	if err := b.setLocalInviteURLFlash(rec, inviteURL); err != nil {
+		t.Fatalf("setLocalInviteURLFlash: %v", err)
+	}
+	cookies := rec.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("cookies = %d, want 1", len(cookies))
+	}
+	if strings.Contains(cookies[0].Value, "secret-token") {
+		t.Fatal("flash cookie should not expose the raw invite token")
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/settings/org?tab=members", nil)
+	req.AddCookie(cookies[0])
+	clearRec := httptest.NewRecorder()
+	if got := b.consumeLocalInviteURLFlash(clearRec, req); got != inviteURL {
+		t.Fatalf("consumeLocalInviteURLFlash = %q, want %q", got, inviteURL)
+	}
+	if cleared := clearRec.Result().Cookies()[0]; cleared.Name != localInviteFlashCookieName || cleared.MaxAge >= 0 {
+		t.Fatalf("flash cookie was not cleared: %+v", cleared)
 	}
 }
 

@@ -512,6 +512,7 @@ func (b *Bot) Run(ctx context.Context) error {
 	go b.runRecoveryLoop(ctx)
 	go b.runLinearSessionCleanupLoop(ctx)
 	go b.runJobDispatchLoop(ctx)
+	go b.runLocalAuthSessionCleanupLoop(ctx)
 	go func() { errCh <- b.runWeb(ctx) }()
 	go func() { errCh <- b.slack.Run(ctx) }()
 

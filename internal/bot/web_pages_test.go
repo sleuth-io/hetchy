@@ -228,6 +228,22 @@ func TestRequireSameOrigin(t *testing.T) {
 	}
 }
 
+func TestLocalPasswordChangeErrorMessage(t *testing.T) {
+	cases := []struct {
+		err  error
+		want string
+	}{
+		{auth.ErrCurrentPasswordIncorrect, "Current password is incorrect."},
+		{errors.New("password must be at least 8 characters"), "password must be at least 8 characters."},
+		{errors.New("get user: db down"), "Something went wrong. Please try again."},
+	}
+	for _, tc := range cases {
+		if got := localPasswordChangeErrorMessage(tc.err); got != tc.want {
+			t.Fatalf("localPasswordChangeErrorMessage(%v) = %q, want %q", tc.err, got, tc.want)
+		}
+	}
+}
+
 func TestPageTemplates_RenderFavicon(t *testing.T) {
 	b := newBypassBot(t)
 	cases := []struct {

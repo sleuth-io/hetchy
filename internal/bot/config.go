@@ -219,28 +219,20 @@ func loadJobDispatchConfig() (interval, limit, concurrency int, err error) {
 	return interval, limit, concurrency, nil
 }
 
-// LoadConfig reads required and optional env vars. Set AUTH_BYPASS=1 to
-// skip the WorkOS round-trip for tests/CI.
-func LoadConfig() (Config, error) {
-	bypass := os.Getenv("AUTH_BYPASS") != ""
-	env := strings.TrimSpace(os.Getenv("HETCHY_ENV"))
-	if env == "" {
-		env = "prod"
-	}
+func loadAuthModeEnv() (string, error) {
 	authMode := strings.ToLower(strings.TrimSpace(os.Getenv("HETCHY_AUTH_MODE")))
 	if authMode == "" {
-		authMode = "workos"
+		return "workos", nil
 	}
 	switch authMode {
 	case "workos", "local":
+		return authMode, nil
 	default:
-		return Config{}, fmt.Errorf("HETCHY_AUTH_MODE must be workos or local (got %q)", authMode)
+		return "", fmt.Errorf("HETCHY_AUTH_MODE must be workos or local (got %q)", authMode)
 	}
-	publicBaseURLOverride := strings.TrimSpace(os.Getenv("HETCHY_PUBLIC_BASE_URL"))
-	if publicBaseURLOverride != "" && publicOrigin(publicBaseURLOverride) == "" {
-		return Config{}, errors.New("HETCHY_PUBLIC_BASE_URL must be an http(s) URL with scheme and host")
-	}
+}
 
+func requiredConfigEnvKeys(bypass bool, authMode, env string) []string {
 	required := []string{
 		"DATABASE_URL",
 		"SECRETS_ENCRYPTION_KEY",
@@ -257,13 +249,110 @@ func LoadConfig() (Config, error) {
 	if !bypass && env != "dev" {
 		required = append(required, "HETCHY_PUBLIC_BASE_URL")
 	}
+	return required
+}
+
+func missingRequiredConfigEnv(keys []string) []string {
 	var missing []string
-	for _, key := range required {
+	for _, key := range keys {
 		if strings.TrimSpace(os.Getenv(key)) == "" {
 			missing = append(missing, key)
 		}
 	}
-	if len(missing) > 0 {
+	return missing
+}
+
+func loadCookieSecure(publicBaseURLOverride, logout string) bool {
+	// CookieSecure defaults to true (required for production HTTPS). It is
+	// forced to false when COOKIE_INSECURE=1 is set OR when WORKOS_REDIRECT_URI
+	// starts with http:// — that scheme indicates the server is running over
+	// plain HTTP (local dev), where browsers refuse Secure cookies. Relying
+	// solely on COOKIE_INSECURE=1 breaks when Doppler (or any secret manager)
+	// overwrites the Makefile-exported value with an empty string from its own
+	// config; deriving from the URI removes that dependency.
+	if os.Getenv("COOKIE_INSECURE") != "" {
+		return false
+	}
+	for _, raw := range []string{
+		strings.TrimSpace(os.Getenv("WORKOS_REDIRECT_URI")),
+		publicBaseURLOverride,
+		logout,
+	} {
+		if u, err := url.Parse(raw); err == nil && u.Scheme == "http" {
+			return false
+		}
+	}
+	return true
+}
+
+func loadGitHubAppID() (int64, error) {
+	v := os.Getenv("GITHUB_APP_ID")
+	if v == "" {
+		return 0, nil
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("GITHUB_APP_ID must be numeric: %w", err)
+	}
+	return n, nil
+}
+
+func loadDatabaseMaxConns() (int32, error) {
+	v := strings.TrimSpace(os.Getenv("DATABASE_MAX_CONNS"))
+	if v == "" {
+		return 0, nil
+	}
+	n, err := strconv.ParseInt(v, 10, 32)
+	if err != nil || n < 1 {
+		return 0, fmt.Errorf("DATABASE_MAX_CONNS must be a positive integer (got %q)", v)
+	}
+	return int32(n), nil
+}
+
+type daytonaCacheConfig struct {
+	volumePrefix       string
+	pruneDays          int
+	autoArchiveMinutes int
+}
+
+func loadDaytonaCacheConfig() (daytonaCacheConfig, error) {
+	pruneDays, err := positiveIntEnv("DAYTONA_CACHE_PRUNE_DAYS", defaultCachePruneDays)
+	if err != nil {
+		return daytonaCacheConfig{}, err
+	}
+	volumePrefix := strings.TrimSpace(os.Getenv("DAYTONA_CACHE_VOLUME_PREFIX"))
+	if volumePrefix == "" {
+		volumePrefix = defaultCacheVolumePrefix
+	}
+	autoArchiveMinutes, err := positiveIntEnv("DAYTONA_AUTO_ARCHIVE_MINUTES", defaultDaytonaAutoArchiveMinutes)
+	if err != nil {
+		return daytonaCacheConfig{}, err
+	}
+	return daytonaCacheConfig{
+		volumePrefix:       volumePrefix,
+		pruneDays:          pruneDays,
+		autoArchiveMinutes: autoArchiveMinutes,
+	}, nil
+}
+
+// LoadConfig reads required and optional env vars. Set AUTH_BYPASS=1 to
+// skip the WorkOS round-trip for tests/CI.
+func LoadConfig() (Config, error) {
+	bypass := os.Getenv("AUTH_BYPASS") != ""
+	env := strings.TrimSpace(os.Getenv("HETCHY_ENV"))
+	if env == "" {
+		env = "prod"
+	}
+	authMode, err := loadAuthModeEnv()
+	if err != nil {
+		return Config{}, err
+	}
+	publicBaseURLOverride := strings.TrimSpace(os.Getenv("HETCHY_PUBLIC_BASE_URL"))
+	if publicBaseURLOverride != "" && publicOrigin(publicBaseURLOverride) == "" {
+		return Config{}, errors.New("HETCHY_PUBLIC_BASE_URL must be an http(s) URL with scheme and host")
+	}
+
+	if missing := missingRequiredConfigEnv(requiredConfigEnvKeys(bypass, authMode, env)); len(missing) > 0 {
 		return Config{}, fmt.Errorf("missing required env vars: %v", missing)
 	}
 
@@ -277,64 +366,19 @@ func LoadConfig() (Config, error) {
 	port := getenvDefault("WEB_PORT", "8080")
 	logout := getenvDefault("LOGOUT_RETURN_TO", "http://localhost:"+port+"/")
 	stripeReturnTo := getenvDefault("STRIPE_RETURN_TO", logout)
-	// CookieSecure defaults to true (required for production HTTPS). It is
-	// forced to false when COOKIE_INSECURE=1 is set OR when WORKOS_REDIRECT_URI
-	// starts with http:// — that scheme indicates the server is running over
-	// plain HTTP (local dev), where browsers refuse Secure cookies. Relying
-	// solely on COOKIE_INSECURE=1 breaks when Doppler (or any secret manager)
-	// overwrites the Makefile-exported value with an empty string from its own
-	// config; deriving from the URI removes that dependency.
-	cookieSecure := os.Getenv("COOKIE_INSECURE") == ""
-	if cookieSecure {
-		for _, raw := range []string{
-			strings.TrimSpace(os.Getenv("WORKOS_REDIRECT_URI")),
-			publicBaseURLOverride,
-			logout,
-		} {
-			if u, err := url.Parse(raw); err == nil && u.Scheme == "http" {
-				cookieSecure = false
-				break
-			}
-		}
-	}
+	cookieSecure := loadCookieSecure(publicBaseURLOverride, logout)
 
-	var ghAppID int64
-	if v := os.Getenv("GITHUB_APP_ID"); v != "" {
-		n, err := strconv.ParseInt(v, 10, 64)
-		if err != nil {
-			return Config{}, fmt.Errorf("GITHUB_APP_ID must be numeric: %w", err)
-		}
-		ghAppID = n
+	ghAppID, err := loadGitHubAppID()
+	if err != nil {
+		return Config{}, err
 	}
-
-	var dbMaxConns int32
-	if v := strings.TrimSpace(os.Getenv("DATABASE_MAX_CONNS")); v != "" {
-		n, err := strconv.ParseInt(v, 10, 32)
-		if err != nil || n < 1 {
-			return Config{}, fmt.Errorf("DATABASE_MAX_CONNS must be a positive integer (got %q)", v)
-		}
-		dbMaxConns = int32(n)
+	dbMaxConns, err := loadDatabaseMaxConns()
+	if err != nil {
+		return Config{}, err
 	}
-
-	cachePruneDays := defaultCachePruneDays
-	if v := strings.TrimSpace(os.Getenv("DAYTONA_CACHE_PRUNE_DAYS")); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n < 1 {
-			return Config{}, fmt.Errorf("DAYTONA_CACHE_PRUNE_DAYS must be a positive integer (got %q)", v)
-		}
-		cachePruneDays = n
-	}
-	cacheVolumePrefix := strings.TrimSpace(os.Getenv("DAYTONA_CACHE_VOLUME_PREFIX"))
-	if cacheVolumePrefix == "" {
-		cacheVolumePrefix = defaultCacheVolumePrefix
-	}
-	autoArchiveMinutes := defaultDaytonaAutoArchiveMinutes
-	if v := strings.TrimSpace(os.Getenv("DAYTONA_AUTO_ARCHIVE_MINUTES")); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n < 1 {
-			return Config{}, fmt.Errorf("DAYTONA_AUTO_ARCHIVE_MINUTES must be a positive integer (got %q)", v)
-		}
-		autoArchiveMinutes = n
+	cacheConfig, err := loadDaytonaCacheConfig()
+	if err != nil {
+		return Config{}, err
 	}
 	jobInterval, jobLimit, jobConcurrency, err := loadJobDispatchConfig()
 	if err != nil {
@@ -352,9 +396,9 @@ func LoadConfig() (Config, error) {
 		Snapshot:                    resolvedSnapshot,
 		SandboxSnapshotVersion:      sandboxSnapshotVersion,
 		DaytonaCacheVolumesDisabled: strings.TrimSpace(os.Getenv("DAYTONA_CACHE_VOLUMES_DISABLED")) == "1",
-		DaytonaCacheVolumePrefix:    cacheVolumePrefix,
-		DaytonaCachePruneDays:       cachePruneDays,
-		DaytonaAutoArchiveMinutes:   autoArchiveMinutes,
+		DaytonaCacheVolumePrefix:    cacheConfig.volumePrefix,
+		DaytonaCachePruneDays:       cacheConfig.pruneDays,
+		DaytonaAutoArchiveMinutes:   cacheConfig.autoArchiveMinutes,
 		DatabaseURL:                 os.Getenv("DATABASE_URL"),
 		DatabaseMaxConns:            dbMaxConns,
 		WebPort:                     port,

@@ -57,7 +57,7 @@ func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
 			"Saved":                        r.URL.Query().Get("saved") == "1",
 			"SavedMessage":                 savedMessage(r.URL.Query().Get("saved")),
 			"ErrorMessage":                 errorMessage(r.URL.Query().Get("error")),
-			"LocalInviteURL":               strings.TrimSpace(r.URL.Query().Get("invite_url")),
+			"LocalInviteURL":               b.consumeLocalInviteURLFlash(w, r),
 			"AnthropicAPIKeyPreview":       previewSecret(current.AnthropicAPIKey),
 			"ClaudeCodeOAuthTokenPreview":  previewSecret(current.ClaudeCodeOAuthToken),
 			"OpenAIAPIKeyPreview":          previewSecret(current.OpenAIAPIKey),
