@@ -21,8 +21,8 @@ Four items that used to be major blockers are done:
    organizations, local memberships, local sessions, local invite links, org
    switching, and local password changes.
 4. **Self-host docs and packaging have a first public pass.** The README,
-   `.env.example`, Docker Compose defaults, setup docs, workflow guards, and OSS
-   hygiene files now target the local-auth + GitHub PAT + Daytona path.
+   `.env.example`, Docker Compose defaults, setup docs, sandbox workflow guard,
+   and OSS hygiene files now target the local-auth + GitHub PAT + Daytona path.
 
 The next real blocker is **release validation from a clean checkout**. The app
 can now be explained and configured without WorkOS, but the public release still
@@ -58,7 +58,7 @@ Recommended path from here:
 | Artifacts/S3 | Optional, documented | Unset `HETCHY_S3_BUCKET` disables proof artifact upload; AWS S3 docs exist. | Add local storage or MinIO endpoint support later. |
 | Auth without WorkOS | Done | `HETCHY_AUTH_MODE=local` adds local username/password signup/login, local users/orgs/memberships/sessions, invite links, org switching, and password changes while preserving WorkOS mode. | Document and self-host test the local-auth path. |
 | Docker Compose self-host | Done first pass | Compose defaults to local auth, bundled Postgres, and self-host env values. | Validate `docker compose --env-file .env.example config` and a clean startup. |
-| Repo hygiene | Done first pass | License, contributing, security, code of conduct, issue/PR templates, workflow guards, email scrub, and root screenshot cleanup are done. | Final maintainer review before public flip. |
+| Repo hygiene | Done first pass | License, contributing, security, code of conduct, issue/PR templates, sandbox workflow guard, internal scratch doc cleanup, and root screenshot cleanup are done. | Guard `claude-pr-review.yml` in a separate PR because self-modifying review workflow PRs skip Claude review. |
 
 ---
 
@@ -165,7 +165,7 @@ The self-host path now defaults to local auth and per-org GitHub PAT setup:
 - Deployment and troubleshooting docs no longer assume Doppler.
 - Repo hygiene files exist: `LICENSE`, `CONTRIBUTING.md`, `SECURITY.md`,
   `CODE_OF_CONDUCT.md`, issue templates, and PR template.
-- Secret-backed GitHub Actions now skip when required secrets are unavailable.
+- The sandbox snapshot workflow now skips when required secrets are unavailable.
 - Historical research/prototype scratch docs and the stale root screenshot were
   removed.
 
@@ -205,7 +205,8 @@ Before flipping public, only maintainer review remains:
 | Add `CONTRIBUTING.md` | Done | High |
 | Add `SECURITY.md` | Done | High |
 | Add `CODE_OF_CONDUCT.md` | Done | Medium |
-| Guard secret-backed workflows (`build-sandbox.yml`, `claude-pr-review.yml`) for forks/missing secrets | Done | High |
+| Guard sandbox workflow (`build-sandbox.yml`) for missing secrets | Done | High |
+| Guard Claude review workflow (`claude-pr-review.yml`) for forks/missing secrets | Deferred | High |
 | Add issue/PR templates | Done | Medium |
 | Rewrite `.env.example` as canonical self-host config | Done | High |
 | Rewrite README around self-host quick start | Done | High |
@@ -266,7 +267,9 @@ Status: **complete first pass**
 - Plan is current.
 - License/security/contributing files are in place.
 - Historical research/prototype scratch docs are removed.
-- Secret-backed GitHub Actions are guarded.
+- The sandbox snapshot GitHub Action is guarded.
+- The Claude review workflow guard is deferred to a separate PR because changing
+  the review workflow in this PR causes the review action to skip validation.
 - Root screenshot was removed; ignored local scratch files remain ignored.
 
 ### Phase 1 - Local Multi-Org Auth

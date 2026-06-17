@@ -11,40 +11,28 @@ jobs:
       contents: read
       pull-requests: write
       id-token: write
-    env:
-      HAS_REVIEW_SECRETS: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' && secrets.SKILLS_SITE_API_KEY != '' }}
-      IS_SAME_REPO_PR: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
 
     steps:
-      - name: Skip unavailable review
-        if: env.IS_SAME_REPO_PR != 'true' || env.HAS_REVIEW_SECRETS != 'true'
-        run: echo "Skipping Claude review for fork PRs or missing review secrets."
-
       - name: Checkout code
-        if: env.IS_SAME_REPO_PR == 'true' && env.HAS_REVIEW_SECRETS == 'true'
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Install sx
-        if: env.IS_SAME_REPO_PR == 'true' && env.HAS_REVIEW_SECRETS == 'true'
         run: |
           curl -fsSL https://raw.githubusercontent.com/sleuth-io/sx/main/install.sh | bash
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Setup sx config
-        if: env.IS_SAME_REPO_PR == 'true' && env.HAS_REVIEW_SECRETS == 'true'
         run: |
           mkdir -p "$HOME/.config/sx"
           mkdir -p "$HOME/.claude"
           printf '%s\n' '{' '  "type": "sleuth",' '  "repositoryUrl": "https://app.skills.new",' '  "authToken": "${{ secrets.SKILLS_SITE_API_KEY }}"' '}' > "$HOME/.config/sx/config.json"
 
       - name: Install skills
-        if: env.IS_SAME_REPO_PR == 'true' && env.HAS_REVIEW_SECRETS == 'true'
         run: sx install
 
       - name: Discover installed Claude skills
-        if: env.IS_SAME_REPO_PR == 'true' && env.HAS_REVIEW_SECRETS == 'true'
         id: discover-skills
         run: |
           # sx install puts assets under $HOME/.claude. Mirror them into the
@@ -74,7 +62,6 @@ jobs:
           fi
 
       - name: Claude Code Review
-        if: env.IS_SAME_REPO_PR == 'true' && env.HAS_REVIEW_SECRETS == 'true'
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
