@@ -410,18 +410,20 @@ func TestTruncate(t *testing.T) {
 		}
 	})
 	t.Run("truncation respects multi-byte rune boundary", func(t *testing.T) {
-		// "日本語" encodes as 9 bytes (3 bytes per rune). Truncating at 5 bytes
-		// would land in the middle of the second rune; truncate should walk
-		// back to the end of the first rune (byte 3).
+		// "日本語" encodes as 9 bytes (3 bytes per rune). Truncating at byte 5
+		// lands in the middle of the second rune 本; the loop walks end back
+		// to 3 (the start of 本), so the result is s[:3] == "日".
 		input := "日本語extra"
 		got := truncate(input, 5)
 		if !strings.HasSuffix(got, "\n... [truncated]") {
 			t.Errorf("truncate multi-byte = %q, expected truncation marker", got)
 		}
-		// The kept prefix must be valid UTF-8.
 		prefix := strings.TrimSuffix(got, "\n... [truncated]")
 		if !utf8.ValidString(prefix) {
 			t.Errorf("truncated prefix is not valid UTF-8: %q", prefix)
+		}
+		if prefix != "日" {
+			t.Errorf("truncated prefix = %q, want \"日\" (only the first rune before the cut point)", prefix)
 		}
 	})
 }
