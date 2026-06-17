@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // TestDetectFixture builds a small synthetic repo on disk and runs the
@@ -195,4 +196,258 @@ func mustWrite(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
+}
+
+func TestExtractComposeServices(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{
+			name:  "empty input",
+			input: "",
+			want:  nil,
+		},
+		{
+			name:  "no services block",
+			input: "version: '3'\nnetworks:\n  default:\n",
+			want:  nil,
+		},
+		{
+			name:  "basic services",
+			input: "version: '3'\nservices:\n  web:\n  db:\n  redis:\n",
+			want:  []string{"web", "db", "redis"},
+		},
+		{
+			name:  "services block ends at next top-level key",
+			input: "services:\n  api:\n  worker:\nvolumes:\n  data:\n",
+			want:  []string{"api", "worker"},
+		},
+		{
+			name:  "services with inline config",
+			input: "services:\n  app:\n    image: nginx\n  cache:\n    image: redis\n",
+			want:  []string{"app", "cache"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := extractComposeServices([]byte(tc.input))
+			if len(got) != len(tc.want) {
+				t.Fatalf("extractComposeServices() = %v, want %v", got, tc.want)
+			}
+			for i := range tc.want {
+				if got[i] != tc.want[i] {
+					t.Errorf("services[%d] = %q, want %q", i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestDetectDockerCompose(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "docker-compose.yml"), strings.TrimLeft(`
+version: '3'
+services:
+  web:
+    image: nginx
+  db:
+    image: postgres
+`, "\n"))
+
+	hints, err := Detect(root)
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	if hints.DockerCompose == nil {
+		t.Fatal("expected DockerCompose hint")
+	}
+	if hints.DockerCompose.Path != "docker-compose.yml" {
+		t.Errorf("DockerCompose.Path = %q, want docker-compose.yml", hints.DockerCompose.Path)
+	}
+	if len(hints.DockerCompose.Services) != 2 {
+		t.Errorf("DockerCompose.Services = %v, want [web db]", hints.DockerCompose.Services)
+	}
+	if hints.DockerCompose.Excerpt == "" {
+		t.Error("expected non-empty DockerCompose.Excerpt")
+	}
+}
+
+func TestDetectDockerComposeYamlExtension(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "compose.yaml"), "services:\n  app:\n    image: myapp\n")
+
+	hints, err := Detect(root)
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	if hints.DockerCompose == nil {
+		t.Fatal("expected DockerCompose hint for compose.yaml")
+	}
+	if hints.DockerCompose.Path != "compose.yaml" {
+		t.Errorf("DockerCompose.Path = %q, want compose.yaml", hints.DockerCompose.Path)
+	}
+}
+
+func TestDetectDockerfile(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "Dockerfile"), strings.TrimLeft(`
+FROM golang:1.25
+WORKDIR /app
+EXPOSE 8080 9090
+CMD ["./server"]
+`, "\n"))
+
+	hints, err := Detect(root)
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	if hints.Dockerfile == nil {
+		t.Fatal("expected Dockerfile hint")
+	}
+	if hints.Dockerfile.Path != "Dockerfile" {
+		t.Errorf("Dockerfile.Path = %q, want Dockerfile", hints.Dockerfile.Path)
+	}
+	wantExposes := []string{"8080", "9090"}
+	if len(hints.Dockerfile.Exposes) != len(wantExposes) {
+		t.Fatalf("Dockerfile.Exposes = %v, want %v", hints.Dockerfile.Exposes, wantExposes)
+	}
+	for i, want := range wantExposes {
+		if hints.Dockerfile.Exposes[i] != want {
+			t.Errorf("Exposes[%d] = %q, want %q", i, hints.Dockerfile.Exposes[i], want)
+		}
+	}
+	if hints.Dockerfile.Cmd != `["./server"]` {
+		t.Errorf("Dockerfile.Cmd = %q, want [\"./server\"]", hints.Dockerfile.Cmd)
+	}
+}
+
+func TestDetectDockerfileNoExposesNoCmd(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "Dockerfile"), "FROM ubuntu:24.04\nRUN apt-get update\n")
+
+	hints, err := Detect(root)
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	if hints.Dockerfile == nil {
+		t.Fatal("expected Dockerfile hint")
+	}
+	if len(hints.Dockerfile.Exposes) != 0 {
+		t.Errorf("Dockerfile.Exposes = %v, want empty", hints.Dockerfile.Exposes)
+	}
+	if hints.Dockerfile.Cmd != "" {
+		t.Errorf("Dockerfile.Cmd = %q, want empty", hints.Dockerfile.Cmd)
+	}
+}
+
+func TestDetectPackageJSONValid(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "package.json"), `{
+  "name": "my-app",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js",
+    "test": "jest"
+  }
+}`)
+
+	hints, err := Detect(root)
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	if hints.PackageJSON == nil {
+		t.Fatal("expected PackageJSON hint")
+	}
+	if hints.PackageJSON.Path != "package.json" {
+		t.Errorf("PackageJSON.Path = %q, want package.json", hints.PackageJSON.Path)
+	}
+	if hints.PackageJSON.Scripts["start"] != "node server.js" {
+		t.Errorf("Scripts[start] = %q, want 'node server.js'", hints.PackageJSON.Scripts["start"])
+	}
+}
+
+func TestDetectPackageJSONInvalidJSON(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "package.json"), `{not valid json`)
+
+	hints, err := Detect(root)
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	if hints.PackageJSON == nil {
+		t.Fatal("expected PackageJSON hint even for invalid JSON")
+	}
+	if hints.PackageJSON.Path != "package.json" {
+		t.Errorf("PackageJSON.Path = %q, want package.json", hints.PackageJSON.Path)
+	}
+	if len(hints.PackageJSON.Scripts) != 0 {
+		t.Errorf("PackageJSON.Scripts should be empty for invalid JSON, got %v", hints.PackageJSON.Scripts)
+	}
+}
+
+func TestTruncate(t *testing.T) {
+	t.Run("short string unchanged", func(t *testing.T) {
+		got := truncate("hello", 100)
+		if got != "hello" {
+			t.Errorf("truncate short = %q, want hello", got)
+		}
+	})
+	t.Run("exact length unchanged", func(t *testing.T) {
+		got := truncate("hello", 5)
+		if got != "hello" {
+			t.Errorf("truncate exact = %q, want hello", got)
+		}
+	})
+	t.Run("long string truncated with marker", func(t *testing.T) {
+		got := truncate("abcdefgh", 4)
+		if !strings.HasSuffix(got, "\n... [truncated]") {
+			t.Errorf("truncated string should end with marker, got %q", got)
+		}
+		if !strings.HasPrefix(got, "abcd") {
+			t.Errorf("truncated string should start with abcd, got %q", got)
+		}
+	})
+	t.Run("truncation respects multi-byte rune boundary", func(t *testing.T) {
+		// "日本語" encodes as 9 bytes (3 bytes per rune). Truncating at byte 5
+		// lands in the middle of the second rune 本; the loop walks end back
+		// to 3 (the start of 本), so the result is s[:3] == "日".
+		input := "日本語extra"
+		got := truncate(input, 5)
+		if !strings.HasSuffix(got, "\n... [truncated]") {
+			t.Errorf("truncate multi-byte = %q, expected truncation marker", got)
+		}
+		prefix := strings.TrimSuffix(got, "\n... [truncated]")
+		if !utf8.ValidString(prefix) {
+			t.Errorf("truncated prefix is not valid UTF-8: %q", prefix)
+		}
+		if prefix != "日" {
+			t.Errorf("truncated prefix = %q, want \"日\" (only the first rune before the cut point)", prefix)
+		}
+	})
+}
+
+func TestHeadLines(t *testing.T) {
+	t.Run("fewer lines than n returns full string", func(t *testing.T) {
+		input := "line1\nline2\nline3"
+		got := headLines(input, 10)
+		if got != input {
+			t.Errorf("headLines(few lines) = %q, want %q", got, input)
+		}
+	})
+	t.Run("more lines than n truncates at nth newline", func(t *testing.T) {
+		input := "line1\nline2\nline3\nline4\nline5"
+		got := headLines(input, 3)
+		want := "line1\nline2\nline3"
+		if got != want {
+			t.Errorf("headLines(3) = %q, want %q", got, want)
+		}
+	})
+	t.Run("empty string", func(t *testing.T) {
+		got := headLines("", 5)
+		if got != "" {
+			t.Errorf("headLines(empty) = %q, want empty", got)
+		}
+	})
 }
