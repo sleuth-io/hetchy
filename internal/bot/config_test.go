@@ -131,6 +131,20 @@ func TestLoadConfig_StripeReturnToOverridesPublicBase(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_TrustedProxy(t *testing.T) {
+	clearEnv(t, "AUTH_BYPASS", "HETCHY_TRUSTED_PROXY")
+	setEnv(t, requiredEnv())
+	t.Setenv("HETCHY_TRUSTED_PROXY", "true")
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if !cfg.TrustedProxy {
+		t.Fatal("TrustedProxy should be true")
+	}
+}
+
 func TestPublicBaseURLDevDerivesExternalOrigin(t *testing.T) {
 	clearEnv(t, "AUTH_BYPASS", "LOGOUT_RETURN_TO", "HETCHY_PUBLIC_BASE_URL")
 	env := requiredEnv()

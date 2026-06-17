@@ -109,6 +109,7 @@ database, not in Doppler. Doppler only holds the *process-level* config:
 | `WORKOS_WEBHOOK_SECRET` | WorkOS webhook signing secret for `POST /workos/webhook`; optional in local dev because comped billing sync also refreshes when Billing / Usage loads |
 | `LOGOUT_RETURN_TO` | Legacy public app root fallback; no longer controls post-logout redirect |
 | `HETCHY_PUBLIC_BASE_URL` | Required outside dev. Externally reachable `http(s)://host` app origin used for sandbox callbacks and non-Stripe generated links |
+| `HETCHY_TRUSTED_PROXY` | Set to `true` only when Hetchy runs behind a trusted reverse proxy that overwrites `X-Forwarded-For`/`X-Real-IP`; enables proxy-aware local-auth rate limiting |
 | `STRIPE_RETURN_TO` | Public app root for Stripe Checkout and Customer Portal return URLs |
 | `SECRETS_ENCRYPTION_KEY` | 32-byte key used to encrypt per-org tokens at rest |
 | `DATABASE_URL` | Postgres connection string (required) |

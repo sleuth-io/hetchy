@@ -166,6 +166,52 @@ func TestLocalAuthRateLimitResetsAfterWindow(t *testing.T) {
 	}
 }
 
+func TestLocalAuthClientIPTrustsProxyHeadersOnlyWhenEnabled(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/login", nil)
+	req.RemoteAddr = "10.0.0.5:4444"
+	req.Header.Set("X-Forwarded-For", "198.51.100.9, 10.0.0.5")
+	req.Header.Set("X-Real-IP", "198.51.100.10")
+
+	s := &Service{}
+	if got := s.localAuthClientIP(req); got != "10.0.0.5" {
+		t.Fatalf("localAuthClientIP without TrustedProxy = %q, want RemoteAddr", got)
+	}
+
+	s.cfg.TrustedProxy = true
+	if got := s.localAuthClientIP(req); got != "198.51.100.9" {
+		t.Fatalf("localAuthClientIP with TrustedProxy = %q, want first X-Forwarded-For IP", got)
+	}
+
+	req.Header.Set("X-Forwarded-For", "not an ip")
+	if got := s.localAuthClientIP(req); got != "198.51.100.10" {
+		t.Fatalf("localAuthClientIP with invalid X-Forwarded-For = %q, want X-Real-IP", got)
+	}
+}
+
+func TestLocalAuthIPHelpers(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		remote string
+		want   string
+	}{
+		{name: "host port", remote: "[2001:db8::1]:4444", want: "2001:db8::1"},
+		{name: "no port", remote: "203.0.113.15", want: "203.0.113.15"},
+		{name: "empty", remote: "", want: "unknown"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/login", nil)
+			req.RemoteAddr = tc.remote
+			if got := remoteAddrIP(req); got != tc.want {
+				t.Fatalf("remoteAddrIP = %q, want %q", got, tc.want)
+			}
+		})
+	}
+
+	if got := singleHeaderIP("  not-an-ip  "); got != "" {
+		t.Fatalf("singleHeaderIP invalid = %q, want empty", got)
+	}
+}
+
 func TestCallbackRejectsMissingState(t *testing.T) {
 	s := newTestService(t, "test-cookie-password-keep-it-long")
 

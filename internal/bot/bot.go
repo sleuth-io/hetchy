@@ -298,6 +298,7 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 		RedirectURI:    cfg.WorkOSRedirectURI,
 		LocalQueries:   store.Queries,
 		CookieSecure:   cfg.CookieSecure,
+		TrustedProxy:   cfg.TrustedProxy,
 		Bypass:         cfg.AuthBypass,
 		BypassUser:     cfg.AuthBypassUser,
 		BypassOrg:      cfg.AuthBypassOrg,

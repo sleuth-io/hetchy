@@ -51,7 +51,7 @@ func (s *Service) requireLocalAuthCSRF(r *http.Request) error {
 }
 
 func (s *Service) allowLocalAuthAttempt(r *http.Request) bool {
-	key := r.URL.Path + "|" + localAuthClientIP(r)
+	key := r.URL.Path + "|" + s.localAuthClientIP(r)
 	now := s.nowFn()
 	s.localRateMu.Lock()
 	defer s.localRateMu.Unlock()
@@ -79,7 +79,36 @@ func (s *Service) pruneLocalAuthRateEntries(now time.Time) {
 	}
 }
 
-func localAuthClientIP(r *http.Request) string {
+func (s *Service) localAuthClientIP(r *http.Request) string {
+	if s.cfg.TrustedProxy {
+		if ip := forwardedHeaderIP(r.Header.Get("X-Forwarded-For")); ip != "" {
+			return ip
+		}
+		if ip := singleHeaderIP(r.Header.Get("X-Real-IP")); ip != "" {
+			return ip
+		}
+	}
+	return remoteAddrIP(r)
+}
+
+func forwardedHeaderIP(value string) string {
+	first, _, _ := strings.Cut(value, ",")
+	return singleHeaderIP(first)
+}
+
+func singleHeaderIP(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	ip := net.ParseIP(value)
+	if ip == nil {
+		return ""
+	}
+	return ip.String()
+}
+
+func remoteAddrIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
 	if err == nil && host != "" {
 		return host

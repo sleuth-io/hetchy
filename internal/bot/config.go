@@ -83,6 +83,10 @@ type Config struct {
 	// CookieSecure is the Secure flag on the session cookie. Defaults to
 	// true; set COOKIE_INSECURE=1 to disable it for local HTTP dev.
 	CookieSecure bool
+	// TrustedProxy allows Hetchy to trust X-Forwarded-For/X-Real-IP for
+	// security-sensitive client IP detection. Enable only behind a proxy
+	// that overwrites those headers.
+	TrustedProxy bool
 
 	SecretsEncryptionKey string
 
@@ -309,6 +313,15 @@ func loadDatabaseMaxConns() (int32, error) {
 	return int32(n), nil
 }
 
+func truthyEnv(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
 type daytonaCacheConfig struct {
 	volumePrefix       string
 	pruneDays          int
@@ -414,6 +427,7 @@ func LoadConfig() (Config, error) {
 		PublicBaseURLOverride:       publicBaseURLOverride,
 		AuthMode:                    authMode,
 		CookieSecure:                cookieSecure,
+		TrustedProxy:                truthyEnv("HETCHY_TRUSTED_PROXY"),
 		SecretsEncryptionKey:        strings.TrimSpace(os.Getenv("SECRETS_ENCRYPTION_KEY")),
 		SlackSigningSecret:          strings.TrimSpace(os.Getenv("SLACK_SIGNING_SECRET")),
 		SlackClientID:               strings.TrimSpace(os.Getenv("SLACK_CLIENT_ID")),

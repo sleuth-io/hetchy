@@ -112,6 +112,11 @@ type Config struct {
 	// cookie holds a sealed refresh token. Leave false only when running
 	// over plain HTTP locally.
 	CookieSecure bool
+	// TrustedProxy enables using X-Forwarded-For/X-Real-IP for client IP
+	// detection in local auth protections. Enable only when every request
+	// reaches Hetchy through a trusted reverse proxy that overwrites those
+	// headers.
+	TrustedProxy bool
 	// Bypass short-circuits the middleware for tests/CI. When true the
 	// middleware fabricates a Principal from BypassUser/BypassOrg/BypassRole
 	// instead of consulting WorkOS.
