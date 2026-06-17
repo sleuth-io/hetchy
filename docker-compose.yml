@@ -132,6 +132,12 @@ services:
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
       AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
 
+      # In-process scheduled-job dispatch. Defaults apply when unset;
+      # interval 0 disables the loop for external-cron setups.
+      HETCHY_JOB_DISPATCH_INTERVAL_SECONDS: ${HETCHY_JOB_DISPATCH_INTERVAL_SECONDS:-}
+      HETCHY_JOB_DISPATCH_LIMIT: ${HETCHY_JOB_DISPATCH_LIMIT:-}
+      HETCHY_JOB_DISPATCH_CONCURRENCY: ${HETCHY_JOB_DISPATCH_CONCURRENCY:-}
+
       # Database — defaults to the bundled postgres service. Override
       # DATABASE_URL to point at Supabase or another instance.
       # Nested ${...} in default values is unsupported by Docker Compose interpolation,

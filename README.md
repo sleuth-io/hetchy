@@ -283,14 +283,14 @@ In GitHub, configure these repository secrets for the sandbox workflow:
 In Railway production, enable GitHub "Wait for CI" so the workflow completes
 before Railway deploys the matching app revision.
 
-For scheduled jobs on Railway, configure the separate `Hetchy Cron` service
-with the custom config file path `/railway.jobs.json`, auto-deploy enabled,
-and GitHub "Wait for CI" enabled. The `Hetchy App` service owns the production
-pre-deploy migration step, so `hetchy --dispatch-due-jobs` checks the database
-schema version against the binary's embedded migrations before claiming jobs.
-If the cron service deploys before app migrations finish, that scheduled tick
-exits successfully without running jobs; the next cron tick will retry due
-jobs against the updated schema.
+Scheduled jobs are dispatched by an in-process loop inside the main app —
+no separate cron service is required. The loop ticks every 60 seconds by
+default; tune it with `HETCHY_JOB_DISPATCH_INTERVAL_SECONDS` (0 disables it),
+`HETCHY_JOB_DISPATCH_LIMIT`, and `HETCHY_JOB_DISPATCH_CONCURRENCY`.
+Deployments that prefer an external scheduler can disable the loop and run
+`hetchy --dispatch-due-jobs` from cron instead; job claiming uses
+`FOR UPDATE SKIP LOCKED`, so both modes (and multiple replicas) coexist
+safely without double-running jobs.
 
 ### 5. Start the Database
 

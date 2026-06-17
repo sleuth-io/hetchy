@@ -217,6 +217,9 @@ type Bot struct {
 	// syncPATFn is the test seam around githubapp.Source.SyncPAT, whose
 	// real implementation needs a live db pool for its transaction.
 	syncPATFn func(context.Context, string, string) (githubapp.SyncResult, error)
+	// dispatchDueJobsFn is the test seam the in-process job dispatch
+	// loop calls instead of DispatchDueJobs (which needs a live db).
+	dispatchDueJobsFn func(context.Context, JobDispatchOptions) (JobDispatchResult, error)
 	// cleanupSandboxByIDFn is called by chatCancelHandler for opportunistic
 	// cleanup of a fresh-run sandbox; overridable in tests.
 	cleanupSandboxByIDFn func(string, string)
@@ -506,6 +509,7 @@ func (b *Bot) Run(ctx context.Context) error {
 	errCh := make(chan error, 2)
 	go b.runRecoveryLoop(ctx)
 	go b.runLinearSessionCleanupLoop(ctx)
+	go b.runJobDispatchLoop(ctx)
 	go func() { errCh <- b.runWeb(ctx) }()
 	go func() { errCh <- b.slack.Run(ctx) }()
 
