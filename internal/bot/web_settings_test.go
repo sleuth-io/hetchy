@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"slices"
 	"strings"
 	"testing"
@@ -15,6 +16,7 @@ import (
 	"github.com/hetchyhq/hetchy/internal/bootstrap"
 	"github.com/hetchyhq/hetchy/internal/db/sqlc"
 	"github.com/hetchyhq/hetchy/internal/orgcfg"
+	"github.com/hetchyhq/hetchy/internal/secrets"
 	"github.com/hetchyhq/hetchy/internal/sxsync"
 )
 
@@ -279,6 +281,194 @@ func TestInviteHandlerBypassAuthSuccessAndValidation(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("member invite status = %d want %d", rec.Code, http.StatusForbidden)
+	}
+}
+
+type localInviteQuerier struct {
+	sqlc.Querier
+	created sqlc.CreateLocalAuthInvitationParams
+}
+
+func (q *localInviteQuerier) CreateLocalAuthInvitation(_ context.Context, arg sqlc.CreateLocalAuthInvitationParams) (sqlc.LocalAuthInvitation, error) {
+	q.created = arg
+	return sqlc.LocalAuthInvitation{
+		ID:              arg.ID,
+		OrgID:           arg.OrgID,
+		Email:           arg.Email,
+		EmailNormalized: arg.EmailNormalized,
+		RoleSlug:        arg.RoleSlug,
+		TokenHash:       arg.TokenHash,
+		ExpiresAt:       arg.ExpiresAt,
+		CreatedBy:       arg.CreatedBy,
+	}, nil
+}
+
+func TestInviteHandlerLocalAuthSetsFlash(t *testing.T) {
+	q := &localInviteQuerier{}
+	a, err := auth.New(auth.Config{Mode: auth.AuthModeLocal, LocalQueries: q})
+	if err != nil {
+		t.Fatalf("auth.New: %v", err)
+	}
+	b := newBypassOrgBot(t, "admin")
+	b.auth = a
+	b.cfg.PublicBaseURLOverride = "https://app.example.test"
+	cipher, err := secrets.New(strings.Repeat("k", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.cipher = cipher
+
+	rec := httptest.NewRecorder()
+	req := settingsFormRequest(http.MethodPost, "/settings/org/invite", "email=new%40example.com&role=member")
+	req = req.WithContext(auth.WithPrincipal(req.Context(), auth.Principal{
+		UserID: "user_local_admin",
+		OrgID:  "org_local_test",
+		Role:   "admin",
+	}))
+	b.inviteHandler(rec, req)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("invite status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Location"); got != "/settings/org?tab=members&saved=invited" {
+		t.Fatalf("invite redirect = %q", got)
+	}
+	if strings.Contains(rec.Header().Get("Location"), "invite=") {
+		t.Fatal("redirect should not expose local invite token")
+	}
+	if q.created.OrgID != "org_local_test" || q.created.EmailNormalized != "new@example.com" || q.created.RoleSlug != "member" {
+		t.Fatalf("created invitation = %+v", q.created)
+	}
+	if q.created.CreatedBy == nil || *q.created.CreatedBy != "user_local_admin" {
+		t.Fatalf("created by = %v, want user_local_admin", q.created.CreatedBy)
+	}
+
+	var flash *http.Cookie
+	for _, cookie := range rec.Result().Cookies() {
+		if cookie.Name == localInviteFlashCookieName {
+			flash = cookie
+			break
+		}
+	}
+	if flash == nil {
+		t.Fatal("missing local invite flash cookie")
+	}
+	if strings.Contains(flash.Value, "invite=") {
+		t.Fatal("flash cookie should not expose the raw invite URL")
+	}
+
+	clearRec := httptest.NewRecorder()
+	consumeReq := httptest.NewRequest(http.MethodGet, "/settings/org?tab=members", nil)
+	consumeReq.AddCookie(flash)
+	inviteURL := b.consumeLocalInviteURLFlash(clearRec, consumeReq)
+	parsed, err := url.Parse(inviteURL)
+	if err != nil {
+		t.Fatalf("parse invite URL %q: %v", inviteURL, err)
+	}
+	if parsed.Scheme != "https" || parsed.Host != "app.example.test" || parsed.Path != "/signup" {
+		t.Fatalf("invite URL = %q", inviteURL)
+	}
+	if parsed.Query().Get("invite") == "" {
+		t.Fatalf("invite URL missing token: %q", inviteURL)
+	}
+}
+
+func TestLocalInviteURLFlashRoundTrip(t *testing.T) {
+	b := newBypassOrgBot(t, "admin")
+	cipher, err := secrets.New(strings.Repeat("k", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.cipher = cipher
+	const inviteURL = "http://localhost:8080/signup?invite=secret-token"
+
+	rec := httptest.NewRecorder()
+	if err := b.setLocalInviteURLFlash(rec, inviteURL); err != nil {
+		t.Fatalf("setLocalInviteURLFlash: %v", err)
+	}
+	cookies := rec.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("cookies = %d, want 1", len(cookies))
+	}
+	if strings.Contains(cookies[0].Value, "secret-token") {
+		t.Fatal("flash cookie should not expose the raw invite token")
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/settings/org?tab=members", nil)
+	req.AddCookie(cookies[0])
+	clearRec := httptest.NewRecorder()
+	if got := b.consumeLocalInviteURLFlash(clearRec, req); got != inviteURL {
+		t.Fatalf("consumeLocalInviteURLFlash = %q, want %q", got, inviteURL)
+	}
+	if cleared := clearRec.Result().Cookies()[0]; cleared.Name != localInviteFlashCookieName || cleared.MaxAge >= 0 {
+		t.Fatalf("flash cookie was not cleared: %+v", cleared)
+	}
+}
+
+func TestLocalInviteURLFlashPlainMissingAndInvalid(t *testing.T) {
+	b := newBypassOrgBot(t, "admin")
+	const inviteURL = "http://localhost:8080/signup?invite=plain-token"
+
+	encoded, err := b.encodeLocalInviteFlash(inviteURL)
+	if err != nil {
+		t.Fatalf("encodeLocalInviteFlash: %v", err)
+	}
+	decoded, err := b.decodeLocalInviteFlash(encoded)
+	if err != nil {
+		t.Fatalf("decodeLocalInviteFlash: %v", err)
+	}
+	if decoded != inviteURL {
+		t.Fatalf("decodeLocalInviteFlash = %q, want %q", decoded, inviteURL)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/settings/org?tab=members", nil)
+	if got := b.consumeLocalInviteURLFlash(rec, req); got != "" {
+		t.Fatalf("consume missing flash = %q, want empty", got)
+	}
+	if len(rec.Result().Cookies()) != 0 {
+		t.Fatal("missing flash should not set a clearing cookie")
+	}
+
+	req.AddCookie(&http.Cookie{Name: localInviteFlashCookieName, Value: "%%%not-base64"})
+	rec = httptest.NewRecorder()
+	if got := b.consumeLocalInviteURLFlash(rec, req); got != "" {
+		t.Fatalf("consume invalid flash = %q, want empty", got)
+	}
+	if cleared := rec.Result().Cookies()[0]; cleared.Name != localInviteFlashCookieName || cleared.MaxAge >= 0 {
+		t.Fatalf("invalid flash cookie was not cleared: %+v", cleared)
+	}
+}
+
+type localAuthCleanupQuerier struct {
+	sqlc.Querier
+	calls int
+	err   error
+}
+
+func (q *localAuthCleanupQuerier) DeleteExpiredLocalAuthSessions(context.Context) error {
+	q.calls++
+	return q.err
+}
+
+func TestLocalAuthSessionCleanup(t *testing.T) {
+	(&Bot{log: discardLogger()}).runLocalAuthSessionCleanupLoop(context.Background())
+
+	q := &localAuthCleanupQuerier{}
+	a, err := auth.New(auth.Config{Mode: auth.AuthModeLocal, LocalQueries: q})
+	if err != nil {
+		t.Fatalf("auth.New: %v", err)
+	}
+	b := &Bot{log: discardLogger(), auth: a}
+	b.cleanupExpiredLocalAuthSessions(context.Background())
+	if q.calls != 1 {
+		t.Fatalf("cleanup calls = %d, want 1", q.calls)
+	}
+
+	q.err = context.Canceled
+	b.cleanupExpiredLocalAuthSessions(context.Background())
+	if q.calls != 2 {
+		t.Fatalf("cleanup calls after canceled error = %d, want 2", q.calls)
 	}
 }
 

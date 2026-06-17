@@ -275,6 +275,58 @@ type LinearAgentSession struct {
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 }
 
+type LocalAuthInvitation struct {
+	ID              string             `json:"id"`
+	OrgID           string             `json:"org_id"`
+	Email           string             `json:"email"`
+	EmailNormalized string             `json:"email_normalized"`
+	RoleSlug        string             `json:"role_slug"`
+	TokenHash       []byte             `json:"token_hash"`
+	ExpiresAt       pgtype.Timestamptz `json:"expires_at"`
+	AcceptedAt      pgtype.Timestamptz `json:"accepted_at"`
+	RevokedAt       pgtype.Timestamptz `json:"revoked_at"`
+	CreatedBy       *string            `json:"created_by"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
+type LocalAuthMembership struct {
+	ID        string             `json:"id"`
+	UserID    string             `json:"user_id"`
+	OrgID     string             `json:"org_id"`
+	RoleSlug  string             `json:"role_slug"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
+type LocalAuthOrg struct {
+	ID        string             `json:"id"`
+	Name      string             `json:"name"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
+type LocalAuthSession struct {
+	ID          string             `json:"id"`
+	UserID      string             `json:"user_id"`
+	TokenHash   []byte             `json:"token_hash"`
+	ActiveOrgID *string            `json:"active_org_id"`
+	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
+	LastSeenAt  pgtype.Timestamptz `json:"last_seen_at"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type LocalAuthUser struct {
+	ID              string             `json:"id"`
+	Email           string             `json:"email"`
+	EmailNormalized string             `json:"email_normalized"`
+	PasswordHash    []byte             `json:"password_hash"`
+	FirstName       string             `json:"first_name"`
+	LastName        string             `json:"last_name"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
 type OrgApiKey struct {
 	ID         string             `json:"id"`
 	OrgID      string             `json:"org_id"`

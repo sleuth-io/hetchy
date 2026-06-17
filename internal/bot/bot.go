@@ -291,11 +291,14 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 	}
 
 	authSvc, err := auth.New(auth.Config{
+		Mode:           cfg.AuthMode,
 		APIKey:         cfg.WorkOSAPIKey,
 		ClientID:       cfg.WorkOSClientID,
 		CookiePassword: cfg.WorkOSCookiePassword,
 		RedirectURI:    cfg.WorkOSRedirectURI,
+		LocalQueries:   store.Queries,
 		CookieSecure:   cfg.CookieSecure,
+		TrustedProxy:   cfg.TrustedProxy,
 		Bypass:         cfg.AuthBypass,
 		BypassUser:     cfg.AuthBypassUser,
 		BypassOrg:      cfg.AuthBypassOrg,
@@ -510,6 +513,7 @@ func (b *Bot) Run(ctx context.Context) error {
 	go b.runRecoveryLoop(ctx)
 	go b.runLinearSessionCleanupLoop(ctx)
 	go b.runJobDispatchLoop(ctx)
+	go b.runLocalAuthSessionCleanupLoop(ctx)
 	go func() { errCh <- b.runWeb(ctx) }()
 	go func() { errCh <- b.slack.Run(ctx) }()
 

@@ -142,7 +142,11 @@
     <div class="danger-zone-row">
       <div class="danger-zone-text">
         <h4>Delete this organization</h4>
+        {{if .LocalAuth}}
+        <p class="hint">Permanently deletes <strong>{{.OrgName}}</strong>, local memberships, local-only user accounts that belong only to this organization, and every Hetchy record tied to it (conversations, agents, GitHub installations, bootstrap specs). This cannot be undone.</p>
+        {{else}}
         <p class="hint">Permanently deletes <strong>{{.OrgName}}</strong> from WorkOS, deletes WorkOS user accounts that belong only to this organization, and wipes every Hetchy record tied to it (members, conversations, agents, GitHub installations, bootstrap specs). This cannot be undone.</p>
+        {{end}}
       </div>
       <form method="POST" action="/settings/org/delete" id="org-delete-form" class="org-delete-form">
         <button type="submit" class="danger-btn">Delete organization</button>
@@ -153,7 +157,11 @@
   <dialog class="app-dialog" id="org-delete-dialog" aria-labelledby="org-delete-title">
     <div class="dlg-body">
       <h3 id="org-delete-title">Delete organization?</h3>
+      {{if .LocalAuth}}
+      <p>This permanently deletes <code>{{.OrgName}}</code>, local memberships, local-only user accounts that do not belong to another organization, and every Hetchy record tied to it (conversations, agents, GitHub installations, bootstrap specs and secret values).</p>
+      {{else}}
       <p>This permanently deletes <code>{{.OrgName}}</code> from WorkOS and removes every Hetchy record tied to it (members, conversations, agents, GitHub installations, bootstrap specs and secret values). WorkOS user accounts are deleted only for members who do not belong to another organization; every member loses access to this organization immediately.</p>
+      {{end}}
       <p>This action <strong>cannot be undone</strong>. You will be logged out once it completes.</p>
     </div>
     <div class="dlg-actions">
@@ -1305,6 +1313,12 @@
   <p class="desc">Manage who can use this organization.</p>
 
   {{if .SavedMessage}}<div class="saved-banner">{{.SavedMessage}}</div>{{end}}
+  {{if .LocalInviteURL}}
+  <div class="saved-banner">
+    <p style="margin:.1rem 0 .45rem">Invitation link created. Share this with the invited user.</p>
+    <input type="text" value="{{.LocalInviteURL}}" readonly onclick="this.select()" aria-label="Invitation link">
+  </div>
+  {{end}}
 
   <p class="section-title">Invite by email</p>
   <form method="POST" action="/settings/org/invite" class="invite-form">
@@ -1319,7 +1333,7 @@
         <option value="admin">admin</option>
       </select>
     </div>
-    <button type="submit">Send invite</button>
+    <button type="submit">{{if .LocalAuth}}Create invite link{{else}}Send invite{{end}}</button>
   </form>
 
   <p class="section-title">Members</p>

@@ -2,11 +2,19 @@ package bot
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"net/http"
+	"net/url"
 	"strings"
+	"time"
 
 	"github.com/hetchyhq/hetchy/internal/auth"
+)
+
+const (
+	localInviteFlashCookieName = "hetchy_local_invite_flash"
+	localInviteFlashTTL        = 5 * time.Minute
 )
 
 // inviteHandler creates a pending WorkOS invitation. WorkOS sends the
@@ -42,13 +50,87 @@ func (b *Bot) inviteHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unknown role", http.StatusBadRequest)
 		return
 	}
-	if err := b.auth.SendInvitation(r.Context(), email, p.OrgID, role, p.UserID); err != nil {
+	inviteToken, err := b.auth.SendInvitation(r.Context(), email, p.OrgID, role, p.UserID)
+	if err != nil {
 		b.log.Error("send invitation failed", "error", err, "org", p.OrgID, "email", email)
 		http.Error(w, "send invite: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	b.log.Info("invitation sent", "org", p.OrgID, "email", email, "role", role, "inviter", p.UserID)
-	http.Redirect(w, r, "/settings/org?tab=members&saved=invited", http.StatusFound)
+	dest := "/settings/org?tab=members&saved=invited"
+	if inviteToken != "" {
+		inviteURL := b.cfg.PublicBaseURL() + "/signup?invite=" + url.QueryEscape(inviteToken)
+		if err := b.setLocalInviteURLFlash(w, inviteURL); err != nil {
+			b.log.Error("set local invite flash failed", "error", err, "org", p.OrgID)
+			http.Error(w, "send invite: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+	http.Redirect(w, r, dest, http.StatusFound)
+}
+
+func (b *Bot) setLocalInviteURLFlash(w http.ResponseWriter, inviteURL string) error {
+	value, err := b.encodeLocalInviteFlash(inviteURL)
+	if err != nil {
+		return err
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     localInviteFlashCookieName,
+		Value:    value,
+		Path:     "/settings/org",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   b.cfg.CookieSecure,
+		Expires:  time.Now().Add(localInviteFlashTTL),
+		MaxAge:   int(localInviteFlashTTL.Seconds()),
+	})
+	return nil
+}
+
+func (b *Bot) consumeLocalInviteURLFlash(w http.ResponseWriter, r *http.Request) string {
+	cookie, err := r.Cookie(localInviteFlashCookieName)
+	if err != nil || cookie.Value == "" {
+		return ""
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     localInviteFlashCookieName,
+		Value:    "",
+		Path:     "/settings/org",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   b.cfg.CookieSecure,
+		Expires:  time.Unix(0, 0),
+		MaxAge:   -1,
+	})
+	value, err := b.decodeLocalInviteFlash(cookie.Value)
+	if err != nil {
+		b.log.Warn("decode local invite flash failed", "error", err)
+		return ""
+	}
+	return value
+}
+
+func (b *Bot) encodeLocalInviteFlash(inviteURL string) (string, error) {
+	raw := []byte(inviteURL)
+	if b.cipher != nil {
+		encrypted, err := b.cipher.Encrypt(inviteURL)
+		if err != nil {
+			return "", err
+		}
+		raw = encrypted
+	}
+	return base64.RawURLEncoding.EncodeToString(raw), nil
+}
+
+func (b *Bot) decodeLocalInviteFlash(value string) (string, error) {
+	raw, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil {
+		return "", err
+	}
+	if b.cipher == nil {
+		return string(raw), nil
+	}
+	return b.cipher.Decrypt(raw)
 }
 
 // invitationActionHandler handles /settings/org/invitations/{id}/revoke.

@@ -420,6 +420,9 @@ func (b *Bot) overlayDurableRunProjection(ctx context.Context, orgID string, rec
 func latestPRURLFromBlocks(turnBlocks []blocks.Block) string {
 	var latest string
 	for _, block := range turnBlocks {
+		if block.Kind != blocks.KindResult {
+			continue
+		}
 		if m := lastMatch(prURLRe, block.Title); m != "" {
 			latest = m
 		}
