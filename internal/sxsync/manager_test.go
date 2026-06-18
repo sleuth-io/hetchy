@@ -664,3 +664,38 @@ func TestNextAgentVersionIsSkillsNewNumericVersion(t *testing.T) {
 		}
 	}
 }
+
+func TestShouldPruneMissingRemoteAgentEmptySlug(t *testing.T) {
+	remote := map[string]struct{}{}
+	profile := agents.Profile{
+		Slug:         "  ",
+		VaultBackend: BackendSkillsNew,
+		Enabled:      true,
+	}
+	if shouldPruneMissingRemoteAgent(BackendSkillsNew, remote, profile) {
+		t.Error("empty slug should not be pruned")
+	}
+}
+
+func TestShouldPruneMissingRemoteAgentEmptyActiveBackend(t *testing.T) {
+	remote := map[string]struct{}{}
+	profile := agents.Profile{
+		Slug:         "custom-agent",
+		VaultBackend: BackendSkillsNew,
+		Enabled:      true,
+	}
+	if shouldPruneMissingRemoteAgent("", remote, profile) {
+		t.Error("empty activeBackend means no vault is configured; should not prune")
+	}
+}
+
+func TestShouldImportRemoteAgentNilManager(t *testing.T) {
+	var m *Manager
+	ok, err := m.shouldImportRemoteAgent(context.Background(), "org1", agents.Profile{Slug: "custom"})
+	if err != nil {
+		t.Fatalf("shouldImportRemoteAgent(nil manager): %v", err)
+	}
+	if !ok {
+		t.Error("nil manager should allow import (no existing state to check)")
+	}
+}
