@@ -17,6 +17,21 @@ URLs, stores uploaded files under `HETCHY_ARTIFACT_DIR`, and serves the signed
 GET URLs from the web process. Set `HETCHY_PUBLIC_BASE_URL` to the externally
 reachable origin before using proof links outside localhost.
 
+That reachability requirement includes the Daytona sandbox. With local
+filesystem storage, the signed upload URL points back at the Hetchy web process.
+If Hetchy is running only on `localhost`, a private LAN address, or a host that
+Daytona cannot reach, the agent run can still proceed but screenshot and
+recording uploads will fail. A typical symptom is the agent reporting that the
+artifact upload service at `localhost:<port>` was not reachable.
+
+For end-to-end artifact testing with Daytona Cloud, use one of these setups:
+
+- Run Hetchy behind a public HTTPS origin and set `HETCHY_PUBLIC_BASE_URL` to
+  that origin.
+- Use AWS S3 artifact storage instead of local filesystem storage.
+- Temporarily use a public tunnel for local testing. This is useful for a short
+  smoke test, but it should not be treated as a production deployment pattern.
+
 To disable proof artifact uploads entirely:
 
 ```dotenv
@@ -45,8 +60,20 @@ AWS_SESSION_TOKEN=
 The AWS identity needs permission to presign `PutObject` and `GetObject` for the
 bucket prefix Hetchy writes into.
 
+S3 is the recommended path when Hetchy itself is private, local-only, or
+otherwise unreachable from Daytona sandboxes. In this mode, the sandbox uploads
+artifacts directly to S3 using presigned URLs, and reviewers open presigned S3
+GET URLs from the pull request body. `HETCHY_PUBLIC_BASE_URL` should still be
+set correctly for app links, callbacks, and any Hetchy-hosted APIs the sandbox
+may call, but artifact file transfer does not depend on the web process being
+public.
+
+GitHub's `camo.githubusercontent.com` image URLs are only GitHub's rendered
+Markdown proxy/cache for remote images. They are not a durable artifact storage
+backend and do not replace local storage or S3.
+
 ## Current Boundary
 
 Custom S3-compatible endpoints, such as MinIO, are not wired through process
-config yet. Use local filesystem storage for simple self-hosting, or AWS S3 for
-object storage.
+config yet. Use local filesystem storage for public self-hosting, or AWS S3 for
+private/local-only deployments that still need reviewer-visible proof artifacts.

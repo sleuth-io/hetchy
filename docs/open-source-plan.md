@@ -229,7 +229,10 @@ Compose now enables local filesystem proof artifact storage by default via
 `HETCHY_ARTIFACT_DIR=/data/hetchy/artifacts` and a named Docker volume. Hetchy
 mints signed PUT and GET URLs from the web process, stores uploads under the
 configured directory, and keeps AWS S3 as an optional alternative when
-`HETCHY_ARTIFACT_DIR` is empty.
+`HETCHY_ARTIFACT_DIR` is empty. The docs now call out the important deployment
+boundary: local filesystem artifacts require `HETCHY_PUBLIC_BASE_URL` to be a
+public origin reachable from Daytona sandboxes. Private or local-only instances
+should use S3 when they need screenshot or recording uploads.
 
 Remaining follow-up:
 

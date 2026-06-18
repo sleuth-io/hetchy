@@ -42,9 +42,11 @@ Edit `.env`:
   when using Docker Compose.
 
 The quick-start URL is `http://localhost:8080`. If you publish Hetchy behind a
-real hostname, set `HETCHY_PUBLIC_BASE_URL` to that origin. If a reverse proxy
-terminates traffic and overwrites `X-Forwarded-For`/`X-Real-IP`, set
-`HETCHY_TRUSTED_PROXY=true`.
+real hostname, set `HETCHY_PUBLIC_BASE_URL` to that origin. This URL must be
+reachable from Daytona sandboxes when using local filesystem proof artifacts,
+because the sandbox uploads screenshots and recordings back to the Hetchy web
+process. If a reverse proxy terminates traffic and overwrites
+`X-Forwarded-For`/`X-Real-IP`, set `HETCHY_TRUSTED_PROXY=true`.
 
 ### 3. Prepare Daytona
 
@@ -90,7 +92,9 @@ After signup, go to **Organization settings -> Integrations**.
 - **Linear**: configure OAuth and webhooks. See
   [Linear setup](docs/linear-setup.md).
 - **Proof artifacts**: local filesystem storage is enabled by default in
-  Compose; S3 is optional. See [artifact storage](docs/artifacts-storage.md).
+  Compose and requires a public Hetchy origin for Daytona uploads; S3 is the
+  better option for private or local-only instances. See
+  [artifact storage](docs/artifacts-storage.md).
 - **SX skills vault**: use the default public vault, a fork, or disable it. See
   [SX setup](docs/sx-setup.md).
 - **Billing/Stripe**: optional and disabled when Stripe env vars are empty. See
