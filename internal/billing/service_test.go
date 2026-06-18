@@ -621,6 +621,22 @@ func TestStoreEnabledNilDB(t *testing.T) {
 	}
 }
 
+// --- Store.FinalizeRun disabled/no-op paths ---
+
+func TestStoreFinalizeRunDisabledReturnsNil(t *testing.T) {
+	s := NewStore(nil)
+	if err := s.FinalizeRun(context.Background(), "run1", "success", time.Now()); err != nil {
+		t.Errorf("FinalizeRun on disabled store should return nil, got %v", err)
+	}
+}
+
+func TestStoreFinalizeRunEmptyRunIDReturnsNil(t *testing.T) {
+	s := NewStore(nil)
+	if err := s.FinalizeRun(context.Background(), "", "success", time.Now()); err != nil {
+		t.Errorf("FinalizeRun with empty runID should return nil, got %v", err)
+	}
+}
+
 // --- Store method early-returns when not enabled ---
 
 func TestStoreDisabledMethodsReturnEarlyErrors(t *testing.T) {
