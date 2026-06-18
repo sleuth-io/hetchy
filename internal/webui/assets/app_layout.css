@@ -379,6 +379,15 @@
   padding: 16px 14px;
   overflow: auto;
 }
+.scary-art {
+  font-family: monospace;
+  font-size: .72rem;
+  line-height: 1.4;
+  color: var(--muted);
+  text-align: center;
+  margin: 0 0 10px;
+  white-space: pre;
+}
 .pr-head {
   display: flex;
   align-items: center;
