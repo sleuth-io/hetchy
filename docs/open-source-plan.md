@@ -6,7 +6,7 @@ Date: 2026-06-17
 ## TL;DR
 
 The open-source path is now narrower than the original 2026-06-11 assessment.
-Three items that used to be major blockers are done:
+Four items that used to be major blockers are done:
 
 1. **GitHub PAT support is implemented.** Hetchy can run without a configured
    GitHub App by storing a per-org personal access token in `org_configs`,
@@ -20,17 +20,21 @@ Three items that used to be major blockers are done:
    `HETCHY_AUTH_MODE=local`, open username/password signup, local users, local
    organizations, local memberships, local sessions, local invite links, org
    switching, and local password changes.
+4. **Self-host docs and packaging have a first public pass.** The README,
+   `.env.example`, Docker Compose defaults, setup docs, sandbox workflow guard,
+   and OSS hygiene files now target the local-auth + GitHub PAT + Daytona path.
 
-The next real blocker is **self-host docs and packaging**. The app can now run
-without WorkOS, but the README, `.env.example`, Docker Compose path, and setup
-docs still need to be rewritten around the local-auth + GitHub PAT + Daytona
-self-host path.
+The next real blocker is **release validation from a clean checkout**. The app
+can now be explained and configured without WorkOS, but the public release still
+needs a clean `cp .env.example .env && docker compose up` smoke test, a Daytona
+snapshot decision, and a final maintainer review before flipping the repository
+public.
 
 Recommended path from here:
 
-1. Finish self-host packaging and public docs around `.env`, Docker Compose,
-   GitHub PAT setup, Daytona setup, and optional Slack/Linear integrations.
-2. Complete repo hygiene before flipping the repository public.
+1. Validate the self-host quick start from a clean checkout.
+2. Decide whether to publish a prebuilt Daytona snapshot or require operators to
+   build their own with `make push-snapshot`.
 3. Treat local filesystem artifacts, PAT-mode PR-state polling, generic OIDC,
    and a local Docker executor as follow-up polish unless a release test proves
    one of them is blocking.
@@ -43,18 +47,18 @@ Recommended path from here:
 |---|---|---|---|
 | GitHub PAT fallback | Done | Implemented with PAT-backed synthetic installations, per-org encrypted token storage, repo sync, and settings UI. | Update README/self-host docs; consider scheduled PR-state polling for PAT repos. |
 | In-process scheduled jobs | Done | Main app loop dispatches due jobs using `HETCHY_JOB_DISPATCH_INTERVAL_SECONDS`; external `--dispatch-due-jobs` remains optional. | Remove stale cron/Railway assumptions from docs. |
-| Slack BYO app | Code ready | Per-org encrypted Slack tokens and Socket Mode/HTTP transports already exist. | Extend `docs/slack-setup.md` for self-host OAuth/manual-token paths. |
-| Linear BYO app | Code ready | Per-workspace OAuth token storage already follows the org config pattern. | Add `docs/linear-setup.md`. |
+| Slack BYO app | Docs ready | Per-org encrypted Slack tokens and OAuth/manual-token docs exist. | Smoke test OAuth install on the public self-host URL. |
+| Linear BYO app | Docs ready | Per-workspace OAuth token storage and setup docs exist. | Smoke test OAuth install on the public self-host URL. |
 | Billing | Code ready | Stripe is env-gated; billing disabled means run admission skips billing checks. | Document hosted-only/optional billing setup. |
-| Doppler dependency | Code ready, docs stale | `godotenv.Load()` already supports plain `.env`; current docs still center Doppler. | Rewrite `.env.example` and README for self-host first. |
+| Doppler dependency | Done | `godotenv.Load()` supports plain `.env`; README/deployment/troubleshooting now target `.env`. | Watch for stale Doppler mentions in future docs. |
 | Anthropic credentials | Code ready | Credentials are already per-org encrypted config and injected at run time. | Document setup flow. |
-| sx / skills vault | Code ready | Public vault can be disabled with `HETCHY_SX_PUBLIC_VAULT_URL=disabled`. | Document disabled mode and default vault behavior. |
-| Daytona executor | Acceptable for v1 | Daytona remains required for v1; `DAYTONA_API_URL` override exists. | Document Daytona account/API key/snapshot setup. |
+| sx / skills vault | Docs ready | Public vault can be disabled with `HETCHY_SX_PUBLIC_VAULT_URL=disabled`. | Validate public vault install in self-host smoke. |
+| Daytona executor | Acceptable for v1 | Daytona remains required for v1; setup docs cover API key and snapshot build. | Decide prebuilt public snapshot vs. operator-built snapshot. |
 | Local Docker executor | Deferred | Requires a real executor abstraction and is the largest remaining technical project. | Do not block OSS release. |
-| Artifacts/S3 | Optional but degraded | Unset `HETCHY_S3_BUCKET` disables proof artifact upload. | Add local storage later, or document S3/MinIO as optional. |
+| Artifacts/S3 | Optional, documented | Unset `HETCHY_S3_BUCKET` disables proof artifact upload; AWS S3 docs exist. | Add local storage or MinIO endpoint support later. |
 | Auth without WorkOS | Done | `HETCHY_AUTH_MODE=local` adds local username/password signup/login, local users/orgs/memberships/sessions, invite links, org switching, and password changes while preserving WorkOS mode. | Document and self-host test the local-auth path. |
-| Docker Compose self-host | Partial | Compose exists and now includes job-dispatch envs, but still assumes hosted/dev auth shape. | Update for `HETCHY_AUTH_MODE=local`. |
-| Repo hygiene | Open | No public OSS scaffolding files yet; root has internal/scratch files to decide on. | Add license/docs/templates, guard secret-backed workflows, scrub personal email. |
+| Docker Compose self-host | Done first pass | Compose defaults to local auth, bundled Postgres, and self-host env values. | Validate `docker compose --env-file .env.example config` and a clean startup. |
+| Repo hygiene | Done first pass | License, contributing, security, code of conduct, issue/PR templates, sandbox workflow guard, internal scratch doc cleanup, and root screenshot cleanup are done. | Guard `claude-pr-review.yml` in a separate PR because self-modifying review workflow PRs skip Claude review. |
 
 ---
 
@@ -146,64 +150,79 @@ The local backend also supports:
 
 WorkOS remains the default and hosted-product auth provider.
 
+### Self-Host Packaging And OSS Hygiene
+
+Status: **done first pass**
+
+The self-host path now defaults to local auth and per-org GitHub PAT setup:
+
+- `.env.example` is a copy-to-`.env` self-host template.
+- `docker-compose.yml` defaults to `HETCHY_AUTH_MODE=local` and bundled
+  Postgres.
+- `README.md` starts with `cp .env.example .env` and `docker compose up --build`.
+- Setup docs exist for GitHub PATs, Daytona, Slack, Linear, artifact storage,
+  and SX.
+- Deployment and troubleshooting docs no longer assume Doppler.
+- Repo hygiene files exist: `LICENSE`, `CONTRIBUTING.md`, `SECURITY.md`,
+  `CODE_OF_CONDUCT.md`, issue templates, and PR template.
+- The sandbox snapshot workflow now skips when required secrets are unavailable.
+- Historical research/prototype scratch docs and the stale root screenshot were
+  removed.
+
 ---
 
 ## Remaining Engineering Work
 
 ### 1. Self-Host Docs And Packaging
 
-Status: **blocking for public usability**
+Status: **done first pass; release validation remains**
 
-The current README is still maintainer-oriented: Doppler, `dev.hetchy.ai`, WorkOS,
-and GitHub App setup dominate. For open source, the primary setup path should be:
+The primary setup path is now:
 
 ```bash
 cp .env.example .env
-docker compose up
+docker compose up --build
 ```
 
-The self-host docs should make these paths clear:
+Release validation should still prove this from a clean checkout:
 
-- required: Postgres, `SECRETS_ENCRYPTION_KEY`, Daytona API key/snapshot,
-  `HETCHY_AUTH_MODE=local`
-- configured in UI: GitHub PAT, Anthropic API key or Claude OAuth, optional
-  Slack/Linear credentials
-- optional process config: GitHub App, Stripe, S3/MinIO, public sx vault, WorkOS
+- compose config renders from `.env.example`
+- the app starts, runs migrations, and opens the local-auth signup flow
+- a local user can create an organization
+- org settings accept GitHub PAT and AI credentials
+- a Daytona snapshot can be resolved and a run can start
 
 ### 2. Repo Hygiene
 
-Status: **open**
+Status: **done first pass**
 
-Before flipping public:
+Before flipping public, only maintainer review remains:
 
 | Item | Status | Priority |
 |---|---|---|
-| Add `LICENSE` (Apache-2.0 recommended) | Open | Blocking |
-| Remove personal email from `docs/research/repo-bootstrap-and-validation.md:4` | Open | Blocking |
-| Add `CONTRIBUTING.md` | Open | High |
-| Add `SECURITY.md` | Open | High |
-| Add `CODE_OF_CONDUCT.md` | Open | Medium |
-| Guard secret-backed workflows (`build-sandbox.yml`, `claude-pr-review.yml`) for forks/missing secrets | Open | High |
-| Add issue/PR templates | Open | Medium |
-| Rewrite `.env.example` as canonical self-host config | Open | High |
-| Rewrite README around self-host quick start | Open | High |
-| Decide fate of `GEMINI.md`, `state.json`, root screenshot PNG, and `.claude/` | Open | Low |
+| Add `LICENSE` (Apache-2.0) | Done | Blocking |
+| Remove personal email from historical research docs | Done | Blocking |
+| Add `CONTRIBUTING.md` | Done | High |
+| Add `SECURITY.md` | Done | High |
+| Add `CODE_OF_CONDUCT.md` | Done | Medium |
+| Guard sandbox workflow (`build-sandbox.yml`) for missing secrets | Done | High |
+| Guard Claude review workflow (`claude-pr-review.yml`) for forks/missing secrets | Deferred | High |
+| Add issue/PR templates | Done | Medium |
+| Rewrite `.env.example` as canonical self-host config | Done | High |
+| Rewrite README around self-host quick start | Done | High |
+| Decide fate of `GEMINI.md`, `state.json`, root screenshot PNG, and `.claude/` | Done | Low |
 
 ### 3. Daytona Documentation
 
-Status: **required docs, not a code blocker**
+Status: **docs done; public snapshot decision open**
 
 Daytona remains required for v1. That is acceptable for the first OSS release
 because Daytona is available to self-hosters via API key and `DAYTONA_API_URL`.
 
-Document:
-
-- Daytona Cloud setup
-- self-hosted Daytona API URL if supported by the operator
-- `DAYTONA_API_KEY`
-- `DAYTONA_SNAPSHOT`
-- how to build/push the sandbox snapshot with `scripts/push-snapshot.sh`
-- whether Hetchy publishes a prebuilt public snapshot/image
+The docs now cover Daytona Cloud setup, self-hosted/local API URLs,
+`DAYTONA_API_KEY`, `DAYTONA_SNAPSHOT`, and `make push-snapshot`. The remaining
+decision is whether Hetchy publishes a prebuilt public snapshot/image or
+requires operators to build and push their own.
 
 ### 4. Local Artifact Storage
 
@@ -215,7 +234,7 @@ self-host story would add:
 
 - local filesystem artifact storage under a configured directory
 - authenticated or signed GET URLs served by the web process
-- optional MinIO/S3 endpoint docs
+- optional MinIO/S3-compatible endpoint support and docs
 
 ### 5. PAT-Mode PR-State Polling
 
@@ -243,11 +262,15 @@ remains 6-8 weeks.
 
 Goal: make the repository safe to inspect publicly while local auth is underway.
 
-- Keep this plan current.
-- Add license/security/contributing files.
-- Remove the personal email.
-- Guard secret-backed GitHub Actions.
-- Decide what to remove or move from root/internal scratch files.
+Status: **complete first pass**
+
+- Plan is current.
+- License/security/contributing files are in place.
+- Historical research/prototype scratch docs are removed.
+- The sandbox snapshot GitHub Action is guarded.
+- The Claude review workflow guard is deferred to a separate PR because changing
+  the review workflow in this PR causes the review action to skip validation.
+- Root screenshot was removed; ignored local scratch files remain ignored.
 
 ### Phase 1 - Local Multi-Org Auth
 
@@ -266,11 +289,13 @@ Status: **complete**
 
 Goal: make the first-run experience coherent.
 
-- Rewrite `.env.example`.
-- Rewrite README around self-host quick start.
-- Update `docker-compose.yml` for local auth.
-- Add GitHub PAT, Anthropic, Daytona, Slack, and Linear setup docs.
-- Verify `docker compose up` from a clean checkout.
+Status: **docs/config complete; smoke test pending**
+
+- `.env.example` is rewritten.
+- README is rewritten around self-host quick start.
+- `docker-compose.yml` defaults to local auth.
+- GitHub PAT, Daytona, Slack, Linear, artifact storage, and SX docs exist.
+- `docker compose up` from a clean checkout still needs release validation.
 
 ### Phase 3 - OSS Polish
 
@@ -291,11 +316,9 @@ This is valuable, but it is not launch-blocking.
 
 ## Open Decisions
 
-1. **License**: Apache-2.0 is still the recommendation.
+1. **License**: Apache-2.0 is selected.
 2. **Repo split**: keep one repo; hosted-only behavior remains env-gated.
-3. **Local auth invitation model**: decide whether v1 needs email invites or an
-   admin-created invite/link flow is enough.
-4. **Initial setup flow**: decide whether first local admin is created by CLI/env
-   bootstrap or by a first-run browser setup screen.
+3. **Local auth invitation model**: admin-created invite links are enough for v1.
+4. **Initial setup flow**: browser signup plus onboarding is the v1 setup flow.
 5. **Public sandbox artifact**: decide whether to publish a prebuilt sandbox image
    or require operators to build/push their own Daytona snapshot.

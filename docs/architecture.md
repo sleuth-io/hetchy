@@ -62,7 +62,7 @@ hetchy/
 ├── Makefile                # All build, test, dev, and deployment targets
 ├── Dockerfile              # Application container image
 ├── docker-compose.yml      # Local app/Postgres stack
-└── doppler.yaml            # Doppler project and config binding
+└── .env.example            # Self-host environment template
 ```
 
 ## Package Overview

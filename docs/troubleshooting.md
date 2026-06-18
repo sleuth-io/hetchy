@@ -18,7 +18,8 @@ This guide covers common issues and their solutions.
 
 **Solutions:**
 - Check Claude Code output in bot logs
-- Verify GitHub token has repo scope
+- Verify the org has a connected GitHub PAT or GitHub App installation
+- Confirm the token has repository Contents and Pull requests read/write access
 - Ensure base branch exists in repository
 
 ## Slack Connection Issues
@@ -49,10 +50,21 @@ For detailed Slack setup issues, see the [Slack Setup Guide](slack-setup.md#comm
 
 **Solutions:**
 - Verify `DATABASE_URL` is correctly formatted
+- With Docker Compose, run `docker compose logs postgres`
 - For local development, ensure `make pg-up` has been run
 - For Supabase, verify you're using the direct connection (port 5432) for migrations
 - Check that connection pooler URLs include `?default_query_exec_mode=exec`
 - Review database logs: `make pg-logs` (for local)
+
+## Local Auth Issues
+
+**Symptoms:** Signup/login fails or sessions disappear
+
+**Solutions:**
+- Verify `HETCHY_AUTH_MODE=local`
+- Verify `SECRETS_ENCRYPTION_KEY` is stable across restarts
+- Use `COOKIE_INSECURE=1` only for plain HTTP; remove it behind HTTPS
+- Set `HETCHY_PUBLIC_BASE_URL` to the exact browser origin users open
 
 ## Build Failures
 
@@ -64,12 +76,13 @@ For detailed Slack setup issues, see the [Slack Setup Guide](slack-setup.md#comm
 - Check for syntax errors in recent changes
 - Review build logs for specific error messages
 
-## Doppler Configuration Issues
+## Environment Configuration Issues
 
 **Symptoms:** Bot fails to start with missing environment variables
 
 **Solutions:**
-- Verify Doppler is installed and authenticated: `doppler login`
-- Ensure you're in the correct project: `doppler setup`
-- Check that all required secrets are set: `doppler secrets`
-- Verify the Doppler CLI is using the correct config (check `doppler.yaml`)
+- Start from the self-host template: `cp .env.example .env`
+- Set `DATABASE_URL`, `SECRETS_ENCRYPTION_KEY`, `DAYTONA_API_KEY`, and `DAYTONA_SNAPSHOT`
+- In local auth mode, leave WorkOS values empty
+- In WorkOS mode, set the required `WORKOS_*` values
+- Run `docker compose config` to catch malformed compose or env values

@@ -521,6 +521,19 @@ func TestLoadConfig_LocalAuthRelaxesWorkOSRequirements(t *testing.T) {
 	}
 }
 
+func TestLoadCookieSecureRequiresExplicitInsecureFlag(t *testing.T) {
+	t.Setenv("WORKOS_REDIRECT_URI", "")
+	t.Setenv("COOKIE_INSECURE", "0")
+	if !loadCookieSecure("https://app.example.com", "") {
+		t.Fatal("COOKIE_INSECURE=0 should not disable secure cookies")
+	}
+
+	t.Setenv("COOKIE_INSECURE", "1")
+	if loadCookieSecure("https://app.example.com", "") {
+		t.Fatal("COOKIE_INSECURE=1 should disable secure cookies")
+	}
+}
+
 func TestResolveDaytonaSnapshot(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -568,7 +581,7 @@ func TestComposeForwardsArtifactUploadEnv(t *testing.T) {
 		"DAYTONA_CACHE_PRUNE_DAYS",
 		"DAYTONA_AUTO_ARCHIVE_MINUTES",
 		"HETCHY_SANDBOX_VERSION",
-		"HETCHY_PUBLIC_BASE_URL",
+		"COOKIE_INSECURE",
 		"HETCHY_JOB_DISPATCH_INTERVAL_SECONDS",
 		"HETCHY_JOB_DISPATCH_LIMIT",
 		"HETCHY_JOB_DISPATCH_CONCURRENCY",
@@ -577,6 +590,9 @@ func TestComposeForwardsArtifactUploadEnv(t *testing.T) {
 		if !strings.Contains(compose, want) {
 			t.Errorf("docker-compose.yml does not forward %s to the hetchy service", key)
 		}
+	}
+	if want := "HETCHY_PUBLIC_BASE_URL: ${HETCHY_PUBLIC_BASE_URL:-http://localhost:8080}"; !strings.Contains(compose, want) {
+		t.Errorf("docker-compose.yml does not provide self-host public URL default")
 	}
 }
 

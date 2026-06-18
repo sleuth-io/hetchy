@@ -9,7 +9,7 @@
 #     uses `daytona snapshot push` (which mints a one-time push token from
 #     the cloud registry; requires `daytona login` to have been run).
 #
-# Required env (typically injected via `doppler run --`):
+# Required env:
 #   DAYTONA_API_KEY   — auth (always)
 #   DAYTONA_API_URL   — empty/cloud URL or http://localhost:3000/api for local
 #
@@ -47,7 +47,7 @@ SNAPSHOT_MEMORY_GB="${SNAPSHOT_MEMORY_GB:-6}"
 SNAPSHOT_DISK_GB="${SNAPSHOT_DISK_GB:-10}"
 
 if [[ -z "${DAYTONA_API_KEY:-}" ]]; then
-  echo "ERROR: DAYTONA_API_KEY is not set. Run via 'doppler run -- $0' or export it manually." >&2
+  echo "ERROR: DAYTONA_API_KEY is not set. Export it or add it to .env." >&2
   exit 1
 fi
 
@@ -56,7 +56,6 @@ if [[ "$API_URL" == *"localhost"* || "$API_URL" == *"127.0.0.1"* ]]; then
   is_local=true
 fi
 
-echo "doppler:         ${DOPPLER_PROJECT:-?}/${DOPPLER_CONFIG:-?}"
 echo "DAYTONA_API_URL: $API_URL"
 echo "snapshot base:   $SNAPSHOT_NAME"
 echo "snapshot tag:    $SNAPSHOT_TAG"
@@ -172,8 +171,8 @@ else
     daytona login --api-key "$DAYTONA_API_KEY"
   fi
   # `snapshot push` requires the keychain-stored creds from `daytona login
-  # --api-key`. Unset DAYTONA_API_KEY/URL so the doppler-injected env
-  # does not shadow the CLI's persisted credentials.
+  # --api-key`. Unset DAYTONA_API_KEY/URL so shell/.env values do not
+  # shadow the CLI's persisted credentials.
   env -u DAYTONA_API_KEY -u DAYTONA_API_URL \
     daytona snapshot push "$SNAPSHOT_NAME:$SNAPSHOT_TAG" --name "$SNAPSHOT_FULL_NAME" \
       --cpu "$SNAPSHOT_CPU" --memory "$SNAPSHOT_MEMORY_GB" --disk "$SNAPSHOT_DISK_GB"

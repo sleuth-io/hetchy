@@ -1,7 +1,7 @@
 services:
-  # Local Postgres for development. Mirrors Supabase's Postgres surface (no
-  # auth/storage/etc.) — enough for sqlc + golang-migrate. Port 5432 is
-  # exposed on the host so `make bot` running on the host can connect to it.
+  # Postgres for local self-hosting and development. Port 5432 is exposed on
+  # the host as 5433 by default so host-side tools can connect without
+  # colliding with another local Postgres.
   postgres:
     image: postgres:16-alpine
     container_name: hetchy-postgres
@@ -64,33 +64,40 @@ services:
       migration:
         condition: service_completed_successfully
     environment:
-      # Runtime mode — gates dev-only UI affordances (manual Slack
-      # token paste, etc.). Defaults to prod so a missing var is the
-      # safe choice; `make bot` overrides to dev.
+      # Runtime mode and public URL.
       HETCHY_ENV: ${HETCHY_ENV:-prod}
+      HETCHY_PUBLIC_BASE_URL: ${HETCHY_PUBLIC_BASE_URL:-http://localhost:8080}
 
-      # Slack — process-level config for the deployed Hetchy app
-      # (one app per env: dev/staging/prod). Per-org bot tokens land
-      # in the database after OAuth install, not here.
+      # Auth. Self-hosted deployments use local username/password auth by
+      # default. Hosted deployments can set HETCHY_AUTH_MODE=workos and fill
+      # the WorkOS variables below.
+      HETCHY_AUTH_MODE: ${HETCHY_AUTH_MODE:-local}
+      HETCHY_TRUSTED_PROXY: ${HETCHY_TRUSTED_PROXY:-}
+      COOKIE_INSECURE: ${COOKIE_INSECURE:-}
+
+      # Slack OAuth is optional. Per-org manual tokens and OAuth installs land
+      # in the database after signup.
       SLACK_CLIENT_ID: ${SLACK_CLIENT_ID:-}
       SLACK_CLIENT_SECRET: ${SLACK_CLIENT_SECRET:-}
       SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-}
       SLACK_OAUTH_REDIRECT_URI: ${SLACK_OAUTH_REDIRECT_URI:-}
-      # Reference-only / not consumed by the Go code today.
-      SLACK_APP_ID: ${SLACK_APP_ID:-}
-      SLACK_VERIFICATION_TOKEN: ${SLACK_VERIFICATION_TOKEN:-}
 
-      # GitHub App — process-level config for the deployed Hetchy
-      # GitHub App (one App per env: dev/staging/prod). Per-org
-      # installation tokens are minted on demand; nothing org-specific
-      # lives here.
+      # Linear OAuth is optional.
+      LINEAR_CLIENT_ID: ${LINEAR_CLIENT_ID:-}
+      LINEAR_CLIENT_SECRET: ${LINEAR_CLIENT_SECRET:-}
+      LINEAR_WEBHOOK_SECRET: ${LINEAR_WEBHOOK_SECRET:-}
+      LINEAR_OAUTH_REDIRECT_URI: ${LINEAR_OAUTH_REDIRECT_URI:-}
+
+      # GitHub App is optional for self-hosting. The UI supports a per-org
+      # GitHub PAT without these process-level credentials.
       GITHUB_APP_ID: ${GITHUB_APP_ID:-}
       GITHUB_APP_SLUG: ${GITHUB_APP_SLUG:-}
       GITHUB_APP_CLIENT_ID: ${GITHUB_APP_CLIENT_ID:-}
       GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
       GITHUB_APP_WEBHOOK_SECRET: ${GITHUB_APP_WEBHOOK_SECRET:-}
 
-      # Daytona Cloud configuration.
+      # Daytona sandbox configuration. DAYTONA_API_KEY is required for useful
+      # agent runs.
       DAYTONA_API_URL: ${DAYTONA_API_URL:-https://app.daytona.io/api}
       DAYTONA_API_KEY: ${DAYTONA_API_KEY:-}
       DAYTONA_SNAPSHOT: ${DAYTONA_SNAPSHOT:-universal-coding}
@@ -104,14 +111,13 @@ services:
       HETCHY_SX_GIT_OPERATION_TIMEOUT_SECONDS: ${HETCHY_SX_GIT_OPERATION_TIMEOUT_SECONDS:-}
       HETCHY_SX_GIT_MAX_CONCURRENT_OPS: ${HETCHY_SX_GIT_MAX_CONCURRENT_OPS:-}
 
-      # WorkOS configuration
+      # WorkOS configuration, only required when HETCHY_AUTH_MODE=workos.
       WORKOS_API_KEY: ${WORKOS_API_KEY:-}
       WORKOS_CLIENT_ID: ${WORKOS_CLIENT_ID:-}
       WORKOS_COOKIE_PASSWORD: ${WORKOS_COOKIE_PASSWORD:-}
       WORKOS_REDIRECT_URI: ${WORKOS_REDIRECT_URI:-}
       WORKOS_WEBHOOK_SECRET: ${WORKOS_WEBHOOK_SECRET:-}
       LOGOUT_RETURN_TO: ${LOGOUT_RETURN_TO:-}
-      HETCHY_PUBLIC_BASE_URL: ${HETCHY_PUBLIC_BASE_URL:-}
       SECRETS_ENCRYPTION_KEY: ${SECRETS_ENCRYPTION_KEY:-}
 
       # Stripe billing.
@@ -144,15 +150,11 @@ services:
       # so defaults are hardcoded to match the postgres service's own defaults above.
       DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/hetchy?sslmode=disable}
       # Optional pgx pool ceiling. Empty leaves the pgx default
-      # (max(4, NumCPU)). Set in Doppler per environment — see
-      # internal/db/db.go for sizing guidance.
+      # (max(4, NumCPU)). See internal/db/db.go for sizing guidance.
       DATABASE_MAX_CONNS: ${DATABASE_MAX_CONNS:-}
 
-      # Web UI configuration
+      # Web UI configuration.
       WEB_PORT: ${WEB_PORT:-8080}
-      # Set to 1 only when serving over plain HTTP (local dev). In
-      # production, leave empty so session cookies require TLS.
-      COOKIE_INSECURE: ${COOKIE_INSECURE:-}
     healthcheck:
       # CMD avoids shell redirection; -O /dev/null discards output without
       # requiring a shell.
