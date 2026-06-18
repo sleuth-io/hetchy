@@ -26,18 +26,17 @@ Four items that used to be major blockers are done:
 
 The next real blocker is **release validation from a clean checkout**. The app
 can now be explained and configured without WorkOS, but the public release still
-needs a clean `cp .env.example .env && docker compose up` smoke test, a Daytona
-snapshot decision, and a final maintainer review before flipping the repository
-public.
+needs a clean `cp .env.example .env && docker compose up` smoke test, a
+hardened operator-built Daytona snapshot flow, and a final maintainer review
+before flipping the repository public.
 
 Recommended path from here:
 
 1. Validate the self-host quick start from a clean checkout.
-2. Decide whether to publish a prebuilt Daytona snapshot or require operators to
-   build their own with `make push-snapshot`.
-3. Treat local filesystem artifacts, PAT-mode PR-state polling, generic OIDC,
-   and a local Docker executor as follow-up polish unless a release test proves
-   one of them is blocking.
+2. Keep the Daytona snapshot operator-built for v1, using `make push-snapshot`
+   plus `make oss-check` instead of maintaining a public sandbox image.
+3. Treat generic OIDC and a local Docker executor as follow-up polish unless a
+   release test proves one of them is blocking.
 
 ---
 
@@ -45,7 +44,7 @@ Recommended path from here:
 
 | Area | Status | Notes | Next action |
 |---|---|---|---|
-| GitHub PAT fallback | Done | Implemented with PAT-backed synthetic installations, per-org encrypted token storage, repo sync, and settings UI. | Update README/self-host docs; consider scheduled PR-state polling for PAT repos. |
+| GitHub PAT fallback | Done | Implemented with PAT-backed synthetic installations, per-org encrypted token storage, repo sync, settings UI, and scheduled PAT-backed PR-state polling. | Watch self-host polling behavior in smoke tests. |
 | In-process scheduled jobs | Done | Main app loop dispatches due jobs using `HETCHY_JOB_DISPATCH_INTERVAL_SECONDS`; external `--dispatch-due-jobs` remains optional. | Remove stale cron/Railway assumptions from docs. |
 | Slack BYO app | Docs ready | Per-org encrypted Slack tokens and OAuth/manual-token docs exist. | Smoke test OAuth install on the public self-host URL. |
 | Linear BYO app | Docs ready | Per-workspace OAuth token storage and setup docs exist. | Smoke test OAuth install on the public self-host URL. |
@@ -53,9 +52,9 @@ Recommended path from here:
 | Doppler dependency | Done | `godotenv.Load()` supports plain `.env`; README/deployment/troubleshooting now target `.env`. | Watch for stale Doppler mentions in future docs. |
 | Anthropic credentials | Code ready | Credentials are already per-org encrypted config and injected at run time. | Document setup flow. |
 | sx / skills vault | Docs ready | Public vault can be disabled with `HETCHY_SX_PUBLIC_VAULT_URL=disabled`. | Validate public vault install in self-host smoke. |
-| Daytona executor | Acceptable for v1 | Daytona remains required for v1; setup docs cover API key and snapshot build. | Decide prebuilt public snapshot vs. operator-built snapshot. |
+| Daytona executor | Acceptable for v1 | Daytona remains required for v1; setup docs cover API key and an operator-built snapshot. | Keep `make push-snapshot` and `make oss-check` clear and reliable. |
 | Local Docker executor | Deferred | Requires a real executor abstraction and is the largest remaining technical project. | Do not block OSS release. |
-| Artifacts/S3 | Optional, documented | Unset `HETCHY_S3_BUCKET` disables proof artifact upload; AWS S3 docs exist. | Add local storage or MinIO endpoint support later. |
+| Artifacts | Done for v1 | Compose defaults to local filesystem artifact storage; S3 remains optional when `HETCHY_ARTIFACT_DIR` is empty. | MinIO/S3-compatible endpoint support can wait. |
 | Auth without WorkOS | Done | `HETCHY_AUTH_MODE=local` adds local username/password signup/login, local users/orgs/memberships/sessions, invite links, org switching, and password changes while preserving WorkOS mode. | Document and self-host test the local-auth path. |
 | Docker Compose self-host | Done first pass | Compose defaults to local auth, bundled Postgres, and self-host env values. | Validate `docker compose --env-file .env.example config` and a clean startup. |
 | Repo hygiene | Done first pass | License, contributing, security, code of conduct, issue/PR templates, sandbox workflow guard, internal scratch doc cleanup, and root screenshot cleanup are done. | Guard `claude-pr-review.yml` in a separate PR because self-modifying review workflow PRs skip Claude review. |
@@ -85,10 +84,7 @@ The current implementation:
 
 Remaining follow-up:
 
-- README and `.env.example` still talk as if GitHub App setup is the only path.
-- PAT-connected repos do not receive GitHub App webhooks. On-demand refresh works,
-  and the one-shot PR-state backfill exists, but we should schedule periodic
-  backfill in PAT mode if stale PR state becomes visible in self-host testing.
+- Watch self-host polling behavior and GitHub API usage after public release.
 
 ### In-Process Scheduled Jobs
 
@@ -214,36 +210,40 @@ Before flipping public, only maintainer review remains:
 
 ### 3. Daytona Documentation
 
-Status: **docs done; public snapshot decision open**
+Status: **docs done; operator-built snapshot selected**
 
 Daytona remains required for v1. That is acceptable for the first OSS release
 because Daytona is available to self-hosters via API key and `DAYTONA_API_URL`.
 
 The docs now cover Daytona Cloud setup, self-hosted/local API URLs,
-`DAYTONA_API_KEY`, `DAYTONA_SNAPSHOT`, and `make push-snapshot`. The remaining
-decision is whether Hetchy publishes a prebuilt public snapshot/image or
-requires operators to build and push their own.
+`DAYTONA_API_KEY`, `DAYTONA_SNAPSHOT`, `make push-snapshot`, and
+`make oss-check`. For v1, Hetchy requires operators to build and push their own
+snapshot instead of maintaining a public prebuilt sandbox image. This keeps forks
+and local `sandbox/` changes on the same path as upstream releases.
 
 ### 4. Local Artifact Storage
 
-Status: **deferred**
+Status: **done for v1**
 
-S3 proof artifacts are already optional. Without `HETCHY_S3_BUCKET`, validation
-proof upload is disabled. This is acceptable for an initial release, but a better
-self-host story would add:
+Compose now enables local filesystem proof artifact storage by default via
+`HETCHY_ARTIFACT_DIR=/data/hetchy/artifacts` and a named Docker volume. Hetchy
+mints signed PUT and GET URLs from the web process, stores uploads under the
+configured directory, and keeps AWS S3 as an optional alternative when
+`HETCHY_ARTIFACT_DIR` is empty.
 
-- local filesystem artifact storage under a configured directory
-- authenticated or signed GET URLs served by the web process
+Remaining follow-up:
+
 - optional MinIO/S3-compatible endpoint support and docs
 
 ### 5. PAT-Mode PR-State Polling
 
-Status: **deferred unless stale state hurts UX**
+Status: **done for v1**
 
-PAT-connected repos do not get GitHub App webhooks. Hetchy already has
-`BackfillConversationPRStates` and a one-shot CLI flag. If self-host testing shows
-stale PR state is confusing, schedule that backfill from the in-process job loop
-or a lightweight maintenance loop when PAT mode is in use.
+PAT-connected repos do not get GitHub App webhooks. Hetchy now runs an
+in-process maintenance loop controlled by `HETCHY_PR_STATE_POLL_INTERVAL_SECONDS`
+and `HETCHY_PR_STATE_POLL_LIMIT`. The loop only selects stale open/unknown PRs
+whose repository is backed by a synthetic PAT installation. The one-shot
+`--backfill-pr-states` command remains available for manual repair.
 
 ### 6. Local Docker Executor
 
@@ -301,9 +301,8 @@ Status: **docs/config complete; smoke test pending**
 
 Goal: remove rough edges without expanding scope.
 
-- Local filesystem artifacts or MinIO docs.
-- Scheduled PAT-mode PR-state backfill if needed.
-- Public sandbox snapshot/image story.
+- MinIO/S3-compatible endpoint support.
+- Hardened operator-built Daytona snapshot workflow.
 - Optional generic OIDC plan.
 
 ### Phase 4 - Executor Abstraction
@@ -320,5 +319,6 @@ This is valuable, but it is not launch-blocking.
 2. **Repo split**: keep one repo; hosted-only behavior remains env-gated.
 3. **Local auth invitation model**: admin-created invite links are enough for v1.
 4. **Initial setup flow**: browser signup plus onboarding is the v1 setup flow.
-5. **Public sandbox artifact**: decide whether to publish a prebuilt sandbox image
-   or require operators to build/push their own Daytona snapshot.
+5. **Public sandbox artifact**: operator-built Daytona snapshots are selected
+   for v1; revisit public images only if release packaging becomes more
+   automated.

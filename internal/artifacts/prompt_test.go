@@ -23,11 +23,13 @@ func TestUploadInstructions_NonZeroSlotCount(t *testing.T) {
 		"Do not print $HETCHY_ARTIFACT_SLOTS",
 		"signed URLs",
 		"slot index, kind, content_type",
-		`text like "$GET_URL"`,
+		"not literal text like",
+		`"$GET_URL"`,
 		"<<'EOF'",
 		"gh pr view",
 		"PR body still contains literal GET_URL",
 		"PR body is missing expanded artifact URL",
+		"grep -Eq 'https?://'",
 	}
 	for _, w := range wants {
 		if !strings.Contains(got, w) {

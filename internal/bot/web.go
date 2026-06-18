@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/hetchyhq/hetchy/internal/artifacts"
 	"github.com/hetchyhq/hetchy/internal/webui"
 )
 
@@ -59,9 +60,11 @@ func (b *Bot) runWeb(ctx context.Context) error {
 	mux.Handle("/integrations/github/pat/disconnect", b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.githubPATDisconnectHandler))))
 
 	// Sandbox artifact uploads use bearer tokens minted per agent run,
-	// not WorkOS cookies. The handler validates the token before issuing
-	// any S3 presigned URLs.
+	// not WorkOS cookies. The slot handler validates the token before
+	// issuing upload URLs; the local artifact handler validates signed
+	// PUT/GET URLs when local storage is configured.
 	mux.HandleFunc(artifactSlotPath, b.artifactSlotsHandler)
+	mux.HandleFunc(artifacts.LocalPath, b.localArtifactHandler)
 
 	mux.Handle("/", b.auth.Middleware(http.HandlerFunc(b.indexHandler)))
 	mux.Handle("/onboarding", b.auth.Middleware(b.auth.RequireAuth(http.HandlerFunc(b.onboardingHandler))))

@@ -130,8 +130,9 @@ services:
       STRIPE_RETURN_TO: ${STRIPE_RETURN_TO:-}
 
       # Proof artifact upload. Validation runs use these settings
-      # to mint pre-signed S3 slots so screenshots and recordings can be
-      # linked in PR bodies.
+      # to mint pre-signed slots so screenshots and recordings can be linked
+      # in PR bodies. Local filesystem storage takes precedence over S3.
+      HETCHY_ARTIFACT_DIR: ${HETCHY_ARTIFACT_DIR:-}
       HETCHY_S3_BUCKET: ${HETCHY_S3_BUCKET:-}
       HETCHY_S3_REGION: ${HETCHY_S3_REGION:-}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
@@ -143,6 +144,8 @@ services:
       HETCHY_JOB_DISPATCH_INTERVAL_SECONDS: ${HETCHY_JOB_DISPATCH_INTERVAL_SECONDS:-}
       HETCHY_JOB_DISPATCH_LIMIT: ${HETCHY_JOB_DISPATCH_LIMIT:-}
       HETCHY_JOB_DISPATCH_CONCURRENCY: ${HETCHY_JOB_DISPATCH_CONCURRENCY:-}
+      HETCHY_PR_STATE_POLL_INTERVAL_SECONDS: ${HETCHY_PR_STATE_POLL_INTERVAL_SECONDS:-}
+      HETCHY_PR_STATE_POLL_LIMIT: ${HETCHY_PR_STATE_POLL_LIMIT:-}
 
       # Database — defaults to the bundled postgres service. Override
       # DATABASE_URL to point at Supabase or another instance.
@@ -155,6 +158,8 @@ services:
 
       # Web UI configuration.
       WEB_PORT: ${WEB_PORT:-8080}
+    volumes:
+      - hetchy-artifacts-data:/data/hetchy/artifacts
     healthcheck:
       # CMD avoids shell redirection; -O /dev/null discards output without
       # requiring a shell.
@@ -166,3 +171,4 @@ services:
 
 volumes:
   hetchy-postgres-data:
+  hetchy-artifacts-data:

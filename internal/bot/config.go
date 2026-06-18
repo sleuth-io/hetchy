@@ -68,6 +68,11 @@ type Config struct {
 	JobDispatchLimit int
 	// JobDispatchConcurrency caps how many claimed jobs run at once.
 	JobDispatchConcurrency int
+	// PRStatePollIntervalSeconds controls the in-process maintenance loop that
+	// refreshes PR state for PAT-backed repos. 0 disables it.
+	PRStatePollIntervalSeconds int
+	// PRStatePollLimit caps how many stale PAT-backed PRs one tick refreshes.
+	PRStatePollLimit int
 
 	WorkOSAPIKey          string
 	WorkOSClientID        string
@@ -148,11 +153,14 @@ type Config struct {
 	AuthBypassRole  string
 	AuthBypassEmail string
 
-	// S3Bucket and S3Region pin the proof-artifact bucket the bot
-	// presigns into. Both empty disables the artifact upload path.
-	// AWS credentials
-	// come from the standard SDK chain (env vars, ~/.aws/credentials,
-	// IAM role) — we don't read them here.
+	// ArtifactDir enables local filesystem proof-artifact storage. When set,
+	// it takes precedence over S3 and Hetchy serves signed PUT/GET URLs from
+	// the web process.
+	ArtifactDir string
+	// S3Bucket and S3Region pin the proof-artifact bucket the bot presigns
+	// into when ArtifactDir is empty. Both empty disables the artifact upload
+	// path. AWS credentials come from the standard SDK chain (env vars,
+	// ~/.aws/credentials, IAM role) — we don't read them here.
 	S3Bucket string
 	S3Region string
 
@@ -189,6 +197,11 @@ const (
 	defaultJobDispatchConcurrency     = 1
 )
 
+const (
+	defaultPRStatePollIntervalSeconds = 300
+	defaultPRStatePollLimit           = 100
+)
+
 // loadJobDispatchConfig reads the in-process scheduled-job dispatcher
 // settings. Interval 0 disables the loop (external-cron deployments);
 // limit and concurrency must stay positive.
@@ -221,6 +234,26 @@ func loadJobDispatchConfig() (interval, limit, concurrency int, err error) {
 		concurrency = n
 	}
 	return interval, limit, concurrency, nil
+}
+
+func loadPRStatePollConfig() (interval, limit int, err error) {
+	interval = defaultPRStatePollIntervalSeconds
+	if v := strings.TrimSpace(os.Getenv("HETCHY_PR_STATE_POLL_INTERVAL_SECONDS")); v != "" {
+		n, perr := strconv.Atoi(v)
+		if perr != nil || n < 0 {
+			return 0, 0, fmt.Errorf("HETCHY_PR_STATE_POLL_INTERVAL_SECONDS must be a non-negative integer, 0 to disable (got %q)", v)
+		}
+		interval = n
+	}
+	limit = defaultPRStatePollLimit
+	if v := strings.TrimSpace(os.Getenv("HETCHY_PR_STATE_POLL_LIMIT")); v != "" {
+		n, perr := strconv.Atoi(v)
+		if perr != nil || n < 1 || n > prStateBackfillMaxLimit {
+			return 0, 0, fmt.Errorf("HETCHY_PR_STATE_POLL_LIMIT must be between 1 and %d (got %q)", prStateBackfillMaxLimit, v)
+		}
+		limit = n
+	}
+	return interval, limit, nil
 }
 
 func loadAuthModeEnv() (string, error) {
@@ -394,6 +427,10 @@ func LoadConfig() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	prStatePollInterval, prStatePollLimit, err := loadPRStatePollConfig()
+	if err != nil {
+		return Config{}, err
+	}
 	sxRuntime, err := loadSXRuntimeConfig(env)
 	if err != nil {
 		return Config{}, err
@@ -415,6 +452,8 @@ func LoadConfig() (Config, error) {
 		JobDispatchIntervalSeconds:  jobInterval,
 		JobDispatchLimit:            jobLimit,
 		JobDispatchConcurrency:      jobConcurrency,
+		PRStatePollIntervalSeconds:  prStatePollInterval,
+		PRStatePollLimit:            prStatePollLimit,
 		WorkOSAPIKey:                strings.TrimSpace(os.Getenv("WORKOS_API_KEY")),
 		WorkOSClientID:              strings.TrimSpace(os.Getenv("WORKOS_CLIENT_ID")),
 		WorkOSCookiePassword:        strings.TrimSpace(os.Getenv("WORKOS_COOKIE_PASSWORD")),
@@ -456,6 +495,7 @@ func LoadConfig() (Config, error) {
 		AuthBypassOrg:                os.Getenv("AUTH_BYPASS_ORG"),
 		AuthBypassRole:               getenvDefault("AUTH_BYPASS_ROLE", "admin"),
 		AuthBypassEmail:              getenvDefault("AUTH_BYPASS_EMAIL", "bypass@hetchy.local"),
+		ArtifactDir:                  strings.TrimSpace(os.Getenv("HETCHY_ARTIFACT_DIR")),
 		S3Bucket:                     strings.TrimSpace(os.Getenv("HETCHY_S3_BUCKET")),
 		S3Region:                     strings.TrimSpace(os.Getenv("HETCHY_S3_REGION")),
 		SXPublicVaultURL:             getenvDefaultTrimAllowDisabled("HETCHY_SX_PUBLIC_VAULT_URL", DefaultSXPublicVaultURL),

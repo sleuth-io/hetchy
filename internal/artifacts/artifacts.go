@@ -1,11 +1,10 @@
-// Package artifacts mints AWS S3 pre-signed URLs for validation proof
+// Package artifacts mints signed upload/download URLs for validation proof
 // artifacts the in-sandbox coding agent attaches to PR markdown.
 //
-// The agent receives short-lived PUT URLs, uploads screenshots,
-// recordings, or diagrams without AWS credentials, then links the
-// matching GET URLs in the PR. SigV4 caps signed URL lifetime at 7
-// days, so old PRs may stop rendering the linked artifacts before the
-// bucket lifecycle removes the objects.
+// The agent receives short-lived PUT URLs, uploads screenshots, recordings, or
+// diagrams without backend credentials, then links the matching GET URLs in the
+// PR. S3-backed GET URLs inherit SigV4's 7 day maximum; local filesystem GET
+// URLs use the same expiry for consistent behavior.
 package artifacts
 
 import (
@@ -79,9 +78,9 @@ var artifactSpecs = map[string]artifactSpec{
 }
 
 var (
-	// ErrNotConfigured is returned by New when bucket or region is
-	// empty. Callers treat this as "artifact upload disabled".
-	ErrNotConfigured = errors.New("artifacts: HETCHY_S3_BUCKET / HETCHY_S3_REGION not set")
+	// ErrNotConfigured is returned when no artifact storage backend is
+	// configured. Callers treat this as "artifact upload disabled".
+	ErrNotConfigured = errors.New("artifacts: storage backend not configured")
 
 	// ErrInvalidRequest marks invalid kind/content_type/count inputs.
 	ErrInvalidRequest = errors.New("artifacts: invalid slot request")
@@ -93,6 +92,10 @@ func specFor(kind, contentType string) (artifactSpec, error) {
 		return artifactSpec{}, fmt.Errorf("%w: unsupported kind/content_type %q/%q", ErrInvalidRequest, kind, contentType)
 	}
 	return spec, nil
+}
+
+func objectKey(prefix string, spec artifactSpec, index int) string {
+	return fmt.Sprintf("%s/%s-%03d%s", prefix, spec.stem, index, spec.ext)
 }
 
 // ValidateRequest verifies that req names a supported artifact type and
@@ -187,7 +190,7 @@ func (s *Signer) MintSlots(ctx context.Context, prefix string, req MintRequest) 
 	slots := make([]Slot, 0, req.Count)
 	for i := range req.Count {
 		index := req.StartIndex + i
-		key := fmt.Sprintf("%s/%s-%03d%s", prefix, spec.stem, index, spec.ext)
+		key := objectKey(prefix, spec, index)
 		// ContentType is baked into the SigV4 signature, so the agent
 		// must send the matching Content-Type header on PUT. Without
 		// this, S3 may store an object as application/octet-stream and

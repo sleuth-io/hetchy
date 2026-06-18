@@ -388,6 +388,75 @@ func (q *Queries) ListConversationsByPRURL(ctx context.Context, arg ListConversa
 	return items, nil
 }
 
+const listPATConversationPRStatePollCandidates = `-- name: ListPATConversationPRStatePollCandidates :many
+SELECT c.org_id, c.thread_id, c.github_owner, c.github_repo, c.pr_url
+FROM conversations c
+JOIN github_app_installations pat_i
+  ON pat_i.org_id = c.org_id
+ AND pat_i.suspended_at IS NULL
+JOIN github_repos r
+  ON r.installation_id = pat_i.installation_id
+ AND lower(r.owner) = lower(c.github_owner)
+ AND lower(r.name) = lower(c.github_repo)
+WHERE c.pr_url <> ''
+  AND r.installation_id < 0
+  AND NOT EXISTS (
+      SELECT 1
+      FROM github_app_installations app_i
+      JOIN github_repos app_r
+        ON app_r.installation_id = app_i.installation_id
+      WHERE app_i.org_id = c.org_id
+        AND app_i.suspended_at IS NULL
+        AND app_i.installation_id > 0
+        AND lower(app_r.owner) = lower(c.github_owner)
+        AND lower(app_r.name) = lower(c.github_repo)
+  )
+  AND COALESCE(c.pr_state, '') <> 'closed'
+  AND NOT COALESCE(c.pr_merged, false)
+  AND (c.pr_state_checked_at IS NULL OR c.pr_state_checked_at < $1::timestamptz)
+ORDER BY c.pr_state_checked_at ASC NULLS FIRST, c.updated_at DESC, c.thread_id DESC
+LIMIT $2
+`
+
+type ListPATConversationPRStatePollCandidatesParams struct {
+	CheckedBefore pgtype.Timestamptz `json:"checked_before"`
+	Lim           int32              `json:"lim"`
+}
+
+type ListPATConversationPRStatePollCandidatesRow struct {
+	OrgID       string `json:"org_id"`
+	ThreadID    string `json:"thread_id"`
+	GithubOwner string `json:"github_owner"`
+	GithubRepo  string `json:"github_repo"`
+	PrUrl       string `json:"pr_url"`
+}
+
+func (q *Queries) ListPATConversationPRStatePollCandidates(ctx context.Context, arg ListPATConversationPRStatePollCandidatesParams) ([]ListPATConversationPRStatePollCandidatesRow, error) {
+	rows, err := q.db.Query(ctx, listPATConversationPRStatePollCandidates, arg.CheckedBefore, arg.Lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListPATConversationPRStatePollCandidatesRow
+	for rows.Next() {
+		var i ListPATConversationPRStatePollCandidatesRow
+		if err := rows.Scan(
+			&i.OrgID,
+			&i.ThreadID,
+			&i.GithubOwner,
+			&i.GithubRepo,
+			&i.PrUrl,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const renameConversation = `-- name: RenameConversation :execrows
 UPDATE conversations SET custom_title = $3
 WHERE org_id = $1 AND thread_id = $2

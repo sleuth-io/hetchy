@@ -46,7 +46,21 @@ real hostname, set `HETCHY_PUBLIC_BASE_URL` to that origin. If a reverse proxy
 terminates traffic and overwrites `X-Forwarded-For`/`X-Real-IP`, set
 `HETCHY_TRUSTED_PROXY=true`.
 
-### 3. Start
+### 3. Prepare Daytona
+
+Install Docker and the Daytona CLI, then build and register the sandbox snapshot
+that agent runs use:
+
+```bash
+make push-snapshot
+make oss-check
+```
+
+`make push-snapshot` reads `.env`, builds `sandbox/`, and waits for the
+versioned Daytona snapshot to become active. `make oss-check` verifies the
+self-host config, Docker/Compose setup, Daytona auth, and active snapshot.
+
+### 4. Start
 
 ```bash
 docker compose up --build
@@ -75,8 +89,8 @@ After signup, go to **Organization settings -> Integrations**.
   [Slack setup](docs/slack-setup.md).
 - **Linear**: configure OAuth and webhooks. See
   [Linear setup](docs/linear-setup.md).
-- **Proof artifacts**: configure AWS S3 if you want uploaded screenshots
-  and recordings. See [artifact storage](docs/artifacts-storage.md).
+- **Proof artifacts**: local filesystem storage is enabled by default in
+  Compose; S3 is optional. See [artifact storage](docs/artifacts-storage.md).
 - **SX skills vault**: use the default public vault, a fork, or disable it. See
   [SX setup](docs/sx-setup.md).
 - **Billing/Stripe**: optional and disabled when Stripe env vars are empty. See
@@ -96,9 +110,11 @@ After signup, go to **Organization settings -> Integrations**.
 | `COOKIE_INSECURE` | local HTTP | Set to `1` for plain HTTP. Leave empty behind HTTPS. |
 | `HETCHY_TRUSTED_PROXY` | proxy only | Trust `X-Forwarded-For`/`X-Real-IP` for local-auth rate limiting. |
 | `HETCHY_JOB_DISPATCH_INTERVAL_SECONDS` | no | Scheduled-job dispatch interval. Empty defaults to 60 seconds; `0` disables. |
+| `HETCHY_PR_STATE_POLL_INTERVAL_SECONDS` | no | PAT-backed PR-state polling interval. Empty defaults to 300 seconds; `0` disables. |
 | `GITHUB_APP_*` | no | Optional GitHub App path. PAT mode works without these. |
 | `WORKOS_*` | WorkOS only | Required only when `HETCHY_AUTH_MODE=workos`. |
-| `HETCHY_S3_BUCKET`, `HETCHY_S3_REGION` | no | Enables proof artifact upload when set. |
+| `HETCHY_ARTIFACT_DIR` | no | Enables local filesystem proof artifact storage when set. |
+| `HETCHY_S3_BUCKET`, `HETCHY_S3_REGION` | no | Enables S3 proof artifact upload when `HETCHY_ARTIFACT_DIR` is empty. |
 
 See [.env.example](.env.example) for the full list.
 
@@ -111,8 +127,8 @@ work.
 
 A GitHub App is still supported for webhook-driven hosted deployments. PAT mode
 does not receive GitHub App webhooks, so Hetchy refreshes repository and pull
-request state on demand. If stale PR state becomes a problem in a deployment,
-run the backfill command periodically:
+request state on demand and periodically polls stale open/unknown PRs for
+PAT-backed repos. The one-shot backfill remains available for manual repair:
 
 ```bash
 docker compose run --rm hetchy --backfill-pr-states
@@ -121,12 +137,12 @@ docker compose run --rm hetchy --backfill-pr-states
 ## Daytona Snapshots
 
 Hetchy expects a versioned Daytona snapshot built from `sandbox/`. To build and
-push the snapshot for your Daytona account:
+push the snapshot for your Daytona account, set Daytona values in `.env` and
+run:
 
 ```bash
-export DAYTONA_API_KEY=dtn_...
-export DAYTONA_API_URL=https://app.daytona.io/api
 make push-snapshot
+make oss-check
 ```
 
 The app resolves `${DAYTONA_SNAPSHOT}-${sandbox_version}` at runtime. See

@@ -56,6 +56,7 @@ Run with a managed Postgres URL and the required env values:
 docker run --rm -p 8080:8080 \
   --env-file .env \
   -e DATABASE_URL='postgresql://user:pass@host:5432/hetchy?sslmode=require' \
+  -v hetchy-artifacts:/data/hetchy/artifacts \
   hetchy
 ```
 
@@ -89,6 +90,19 @@ Then invoke:
 ```bash
 hetchy --dispatch-due-jobs
 ```
+
+## PAT PR-State Polling
+
+PAT-connected repositories do not receive GitHub App webhooks. The main process
+polls stale open/unknown PR state for PAT-backed repos by default:
+
+```dotenv
+HETCHY_PR_STATE_POLL_INTERVAL_SECONDS=
+HETCHY_PR_STATE_POLL_LIMIT=
+```
+
+Leave these empty for defaults. Set `HETCHY_PR_STATE_POLL_INTERVAL_SECONDS=0`
+to disable polling.
 
 ## Optional Services
 

@@ -6,7 +6,7 @@ sequenceDiagram
     participant GH as GitHub App/API
     participant Daytona as Daytona sandbox
     participant Claude as Claude Code
-    participant S3 as S3 artifact slots
+    participant Artifacts as Artifact storage
 
     User->>Transport: Send request
     Transport->>DB: Load org config / principal
@@ -40,7 +40,7 @@ sequenceDiagram
             else Spec exists
                 Bot->>Bot: Reuse saved spec as-is
             end
-            Bot->>S3: Mint proof artifact upload slots (if configured)
+            Bot->>Artifacts: Mint proof artifact upload slots (if configured)
         end
 
         Bot->>Daytona: Write and run agent.sh or followup.sh

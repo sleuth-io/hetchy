@@ -20,17 +20,25 @@ a snapshot name like `universal-coding-<version>`.
 
 ## Build And Push The Snapshot
 
-Install Docker and the Daytona CLI, then run:
+Install Docker and the Daytona CLI. Then set Daytona values in `.env` and run:
 
 ```bash
-export DAYTONA_API_URL=https://app.daytona.io/api
-export DAYTONA_API_KEY=dtn_...
 make push-snapshot
 ```
 
 The script builds `sandbox/`, computes the content version with
 `scripts/sandbox-version.sh`, pushes the image to Daytona, and waits for the
-versioned snapshot to become active.
+versioned snapshot to become active. It exits before the build when required
+tools, Daytona auth, Docker, or the local Daytona registry are not available.
+
+After the snapshot is active, run the self-host setup check:
+
+```bash
+make oss-check
+```
+
+This verifies `.env`, Docker, Docker Compose, Daytona auth, and the active
+`${DAYTONA_SNAPSHOT}-<sandbox_version>` snapshot in one place.
 
 To build a larger snapshot variant:
 
@@ -48,7 +56,13 @@ it pushes to the local registry and registers the snapshot over the Daytona API.
 
 ## Common Failures
 
-- `DAYTONA_API_KEY is not set`: export it or put it in `.env`.
+- `DAYTONA_API_KEY is not set to a real key`: set it in `.env` or export it.
+- `Docker is installed but the daemon is not reachable`: start Docker and rerun
+  `make push-snapshot`.
+- `Daytona CLI is installed but is not logged in`: run
+  `daytona login --api-key <key>` or `DAYTONA_CLI_LOGIN=1 make push-snapshot`.
+- `local Daytona registry is not reachable`: start self-hosted Daytona or set
+  `LOCAL_REGISTRY_HOST_PORT` to the host registry port Docker can push to.
 - Snapshot not found at run time: rebuild and push the snapshot after changing
   files under `sandbox/`.
 - Snapshot exists but is not active: check the Daytona dashboard or rerun

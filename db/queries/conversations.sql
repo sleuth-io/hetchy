@@ -216,6 +216,35 @@ WHERE pr_url <> ''
 ORDER BY updated_at DESC, thread_id DESC
 LIMIT sqlc.arg(lim);
 
+-- name: ListPATConversationPRStatePollCandidates :many
+SELECT c.org_id, c.thread_id, c.github_owner, c.github_repo, c.pr_url
+FROM conversations c
+JOIN github_app_installations pat_i
+  ON pat_i.org_id = c.org_id
+ AND pat_i.suspended_at IS NULL
+JOIN github_repos r
+  ON r.installation_id = pat_i.installation_id
+ AND lower(r.owner) = lower(c.github_owner)
+ AND lower(r.name) = lower(c.github_repo)
+WHERE c.pr_url <> ''
+  AND r.installation_id < 0
+  AND NOT EXISTS (
+      SELECT 1
+      FROM github_app_installations app_i
+      JOIN github_repos app_r
+        ON app_r.installation_id = app_i.installation_id
+      WHERE app_i.org_id = c.org_id
+        AND app_i.suspended_at IS NULL
+        AND app_i.installation_id > 0
+        AND lower(app_r.owner) = lower(c.github_owner)
+        AND lower(app_r.name) = lower(c.github_repo)
+  )
+  AND COALESCE(c.pr_state, '') <> 'closed'
+  AND NOT COALESCE(c.pr_merged, false)
+  AND (c.pr_state_checked_at IS NULL OR c.pr_state_checked_at < sqlc.arg(checked_before)::timestamptz)
+ORDER BY c.pr_state_checked_at ASC NULLS FIRST, c.updated_at DESC, c.thread_id DESC
+LIMIT sqlc.arg(lim);
+
 -- name: SaveConversationTaskOptions :exec
 UPDATE conversations
    SET task_options = $3,
