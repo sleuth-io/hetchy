@@ -73,7 +73,7 @@ services:
       # the WorkOS variables below.
       HETCHY_AUTH_MODE: ${HETCHY_AUTH_MODE:-local}
       HETCHY_TRUSTED_PROXY: ${HETCHY_TRUSTED_PROXY:-}
-      COOKIE_INSECURE: ${COOKIE_INSECURE:-1}
+      COOKIE_INSECURE: ${COOKIE_INSECURE:-}
 
       # Slack OAuth is optional. Per-org manual tokens and OAuth installs land
       # in the database after signup.

@@ -38,7 +38,7 @@ For HTTPS deployments:
 
 - Put Hetchy behind a reverse proxy or load balancer.
 - Set `HETCHY_PUBLIC_BASE_URL=https://your-host`.
-- Clear `COOKIE_INSECURE`.
+- Remove `COOKIE_INSECURE` from your `.env`.
 - Set `HETCHY_TRUSTED_PROXY=true` only if the proxy overwrites
   `X-Forwarded-For` or `X-Real-IP`.
 

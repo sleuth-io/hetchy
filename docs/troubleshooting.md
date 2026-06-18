@@ -63,7 +63,7 @@ For detailed Slack setup issues, see the [Slack Setup Guide](slack-setup.md#comm
 **Solutions:**
 - Verify `HETCHY_AUTH_MODE=local`
 - Verify `SECRETS_ENCRYPTION_KEY` is stable across restarts
-- Use `COOKIE_INSECURE=1` only for plain HTTP; clear it behind HTTPS
+- Use `COOKIE_INSECURE=1` only for plain HTTP; remove it behind HTTPS
 - Set `HETCHY_PUBLIC_BASE_URL` to the exact browser origin users open
 
 ## Build Failures

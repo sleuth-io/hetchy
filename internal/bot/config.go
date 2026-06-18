@@ -270,11 +270,8 @@ func loadCookieSecure(publicBaseURLOverride, logout string) bool {
 	// CookieSecure defaults to true (required for production HTTPS). It is
 	// forced to false when COOKIE_INSECURE=1 is set OR when WORKOS_REDIRECT_URI
 	// starts with http:// — that scheme indicates the server is running over
-	// plain HTTP (local dev), where browsers refuse Secure cookies. Relying
-	// solely on COOKIE_INSECURE=1 breaks when Doppler (or any secret manager)
-	// overwrites the Makefile-exported value with an empty string from its own
-	// config; deriving from the URI removes that dependency.
-	if os.Getenv("COOKIE_INSECURE") != "" {
+	// plain HTTP (local dev), where browsers refuse Secure cookies.
+	if os.Getenv("COOKIE_INSECURE") == "1" {
 		return false
 	}
 	for _, raw := range []string{
