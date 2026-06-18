@@ -623,17 +623,17 @@ func TestStoreEnabledNilDB(t *testing.T) {
 
 // --- Store.FinalizeRun disabled/no-op paths ---
 
+// TestStoreFinalizeRunDisabledReturnsNil verifies that both the "store not enabled"
+// and "runID is empty" guards in Store.FinalizeRun return nil without error.
+// Both conditions are in a single short-circuit expression; without a live DB we can
+// only exercise the !s.Enabled() branch, but we confirm nil is returned for both
+// a non-empty and an empty runID to document the no-op contract.
 func TestStoreFinalizeRunDisabledReturnsNil(t *testing.T) {
 	s := NewStore(nil)
-	if err := s.FinalizeRun(context.Background(), "run1", "success", time.Now()); err != nil {
-		t.Errorf("FinalizeRun on disabled store should return nil, got %v", err)
-	}
-}
-
-func TestStoreFinalizeRunEmptyRunIDReturnsNil(t *testing.T) {
-	s := NewStore(nil)
-	if err := s.FinalizeRun(context.Background(), "", "success", time.Now()); err != nil {
-		t.Errorf("FinalizeRun with empty runID should return nil, got %v", err)
+	for _, runID := range []string{"run1", ""} {
+		if err := s.FinalizeRun(context.Background(), runID, "success", time.Now()); err != nil {
+			t.Errorf("FinalizeRun on disabled store (runID=%q) should return nil, got %v", runID, err)
+		}
 	}
 }
 

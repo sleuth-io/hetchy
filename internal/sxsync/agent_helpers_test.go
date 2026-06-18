@@ -120,8 +120,9 @@ func TestNormalizeProfileSetsDefaults(t *testing.T) {
 	if got.PersonaAsset != "my-custom-agent" {
 		t.Errorf("PersonaAsset should default to slug, got %q", got.PersonaAsset)
 	}
-	if !strings.Contains(got.PersonaPrompt, "my-custom-agent") {
-		t.Errorf("PersonaPrompt = %q, want to contain slug", got.PersonaPrompt)
+	wantPrompt := "You are my-custom-agent, a custom Hetchy agent."
+	if got.PersonaPrompt != wantPrompt {
+		t.Errorf("PersonaPrompt = %q, want %q", got.PersonaPrompt, wantPrompt)
 	}
 	if !got.Enabled {
 		t.Error("Enabled should always be true after normalizeProfile")
@@ -154,8 +155,14 @@ func TestNormalizeProfilePreservesExplicitValues(t *testing.T) {
 	if got.PersonaPrompt != "You are custom." {
 		t.Errorf("PersonaPrompt = %q, want trimmed", got.PersonaPrompt)
 	}
-	if len(got.Skills) != 2 {
-		t.Errorf("Skills = %v, want deduped [skill-a skill-b]", got.Skills)
+	wantSkills := []string{"skill-a", "skill-b"}
+	if len(got.Skills) != len(wantSkills) {
+		t.Fatalf("Skills = %v, want %v", got.Skills, wantSkills)
+	}
+	for i, w := range wantSkills {
+		if got.Skills[i] != w {
+			t.Errorf("Skills[%d] = %q, want %q", i, got.Skills[i], w)
+		}
 	}
 }
 
