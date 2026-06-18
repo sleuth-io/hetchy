@@ -254,6 +254,48 @@ func TestLocalStoreRejectsMalformedRequests(t *testing.T) {
 	}
 }
 
+func TestSafeArtifactKeyRejectsTraversal(t *testing.T) {
+	for _, key := range []string{
+		"",
+		"../etc/passwd",
+		"../../root",
+		"/etc/shadow",
+		"a/../../b",
+		`a\..\..\b`,
+	} {
+		t.Run(key, func(t *testing.T) {
+			if got, err := safeArtifactKey(key); err == nil {
+				t.Fatalf("safeArtifactKey(%q) = %q, want error", key, got)
+			}
+		})
+	}
+}
+
+func TestLocalStoreRejectsSignedTraversalToken(t *testing.T) {
+	store, err := NewLocal(t.TempDir(), "https://app.example.test", strings.Repeat("s", 32))
+	if err != nil {
+		t.Fatalf("NewLocal: %v", err)
+	}
+	store.now = func() time.Time { return time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC) }
+	putURL, err := store.signedURL(localArtifactToken{
+		Op:          localOpPut,
+		Key:         "../outside.png",
+		ContentType: ContentTypePNG,
+		Expires:     store.now().Add(PutExpiry).Unix(),
+	})
+	if err != nil {
+		t.Fatalf("signedURL: %v", err)
+	}
+	parsed, _ := url.Parse(putURL)
+	req := httptest.NewRequest(http.MethodPut, parsed.Path, bytes.NewReader([]byte("png")))
+	req.Header.Set("Content-Type", ContentTypePNG)
+	rec := httptest.NewRecorder()
+	store.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("PUT status = %d body=%q, want 403", rec.Code, rec.Body.String())
+	}
+}
+
 func TestNewLocalValidatesConfig(t *testing.T) {
 	for _, tc := range []struct {
 		name    string

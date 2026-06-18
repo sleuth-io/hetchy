@@ -318,6 +318,9 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 	case errors.Is(err, artifacts.ErrNotConfigured):
 		log.Info("artifact upload disabled: HETCHY_ARTIFACT_DIR and HETCHY_S3_BUCKET / HETCHY_S3_REGION not set")
 		artifactSigner = nil
+	case err != nil && cfg.ArtifactDir != "":
+		store.Close()
+		return nil, fmt.Errorf("local artifact storage: %w", err)
 	case err != nil:
 		log.Warn("artifact signer disabled", "error", err)
 		artifactSigner = nil

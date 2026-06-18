@@ -219,15 +219,18 @@ LIMIT sqlc.arg(lim);
 -- name: ListPATConversationPRStatePollCandidates :many
 SELECT c.org_id, c.thread_id, c.github_owner, c.github_repo, c.pr_url
 FROM conversations c
-JOIN github_app_installations pat_i
-  ON pat_i.org_id = c.org_id
- AND pat_i.suspended_at IS NULL
-JOIN github_repos r
-  ON r.installation_id = pat_i.installation_id
- AND lower(r.owner) = lower(c.github_owner)
- AND lower(r.name) = lower(c.github_repo)
 WHERE c.pr_url <> ''
-  AND r.installation_id < 0
+  AND EXISTS (
+      SELECT 1
+      FROM github_app_installations pat_i
+      JOIN github_repos r
+        ON r.installation_id = pat_i.installation_id
+      WHERE pat_i.org_id = c.org_id
+        AND pat_i.suspended_at IS NULL
+        AND pat_i.installation_id < 0
+        AND lower(r.owner) = lower(c.github_owner)
+        AND lower(r.name) = lower(c.github_repo)
+  )
   AND NOT EXISTS (
       SELECT 1
       FROM github_app_installations app_i

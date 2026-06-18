@@ -69,11 +69,6 @@ require_command() {
   fi
 }
 
-is_placeholder() {
-  local value="$1"
-  [[ -z "$value" || "$value" == *replace_me* || "$value" == replace-with-* ]]
-}
-
 if is_placeholder "${DAYTONA_API_KEY:-}"; then
   echo "ERROR: DAYTONA_API_KEY is not set to a real key." >&2
   echo "       Export it or set it in $ENV_FILE before running make push-snapshot." >&2

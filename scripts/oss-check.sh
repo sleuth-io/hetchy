@@ -28,11 +28,6 @@ have_command() {
   command -v "$1" >/dev/null 2>&1
 }
 
-is_placeholder() {
-  local value="$1"
-  [[ -z "$value" || "$value" == *replace_me* || "$value" == replace-with-* ]]
-}
-
 snapshot_field() {
   local field="$1"
   local expected="$2"
@@ -67,15 +62,15 @@ check_command() {
 check_compose_config() {
   local output
   if [[ -f "$ENV_FILE" ]]; then
-    if output=$(docker compose --env-file "$ENV_FILE" config >/dev/null 2>&1); then
+    if output=$(docker compose --env-file "$ENV_FILE" config 2>&1 >/dev/null); then
       pass "docker compose config renders with $ENV_FILE"
     else
-      fail "docker compose config failed with $ENV_FILE"
+      fail "docker compose config failed with $ENV_FILE: $output"
     fi
-  elif output=$(docker compose config >/dev/null 2>&1); then
+  elif output=$(docker compose config 2>&1 >/dev/null); then
     pass "docker compose config renders with default values"
   else
-    fail "docker compose config failed"
+    fail "docker compose config failed: $output"
   fi
 }
 

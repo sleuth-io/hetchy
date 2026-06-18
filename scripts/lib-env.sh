@@ -42,3 +42,8 @@ hetchy_env_default() {
     export "$key=$value"
   fi
 }
+
+is_placeholder() {
+  local value="$1"
+  [[ -z "$value" || "$value" == *replace_me* || "$value" == replace-with-* ]]
+}
