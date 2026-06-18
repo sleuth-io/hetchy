@@ -167,19 +167,34 @@ func (s *LocalStore) handlePut(w http.ResponseWriter, r *http.Request, rawToken 
 		return
 	}
 	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }()
-	defer tmp.Close()
+	closed := false
+	closeTmp := func() error {
+		if closed {
+			return nil
+		}
+		closed = true
+		return tmp.Close()
+	}
+	defer func() {
+		_ = closeTmp()
+		_ = os.Remove(tmpName)
+	}()
 
 	limited := http.MaxBytesReader(w, r.Body, MaxLocalArtifactBytes)
 	if _, err := io.Copy(tmp, limited); err != nil {
-		http.Error(w, "artifact upload failed", http.StatusRequestEntityTooLarge)
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			http.Error(w, "artifact too large", http.StatusRequestEntityTooLarge)
+			return
+		}
+		http.Error(w, "artifact upload failed", http.StatusInternalServerError)
 		return
 	}
 	if err := tmp.Chmod(0o600); err != nil {
 		http.Error(w, "artifact upload failed", http.StatusInternalServerError)
 		return
 	}
-	if err := tmp.Close(); err != nil {
+	if err := closeTmp(); err != nil {
 		http.Error(w, "artifact upload failed", http.StatusInternalServerError)
 		return
 	}

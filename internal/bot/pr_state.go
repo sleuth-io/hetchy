@@ -171,7 +171,7 @@ func (b *Bot) BackfillConversationPRStates(ctx context.Context, limit int, force
 		return PRStateBackfillResult{}, errors.New("database is not configured")
 	}
 	if b.githubTokenSource() == nil {
-		return PRStateBackfillResult{}, errors.New("github is not configured")
+		return PRStateBackfillResult{}, errors.New("github source is not initialized")
 	}
 	if limit <= 0 {
 		limit = prStateBackfillDefaultLimit
@@ -201,7 +201,7 @@ func (b *Bot) PollPATConversationPRStates(ctx context.Context, limit int, staleA
 		return PRStateBackfillResult{}, errors.New("database is not configured")
 	}
 	if b.githubTokenSource() == nil {
-		return PRStateBackfillResult{}, errors.New("github is not configured")
+		return PRStateBackfillResult{}, errors.New("github source is not initialized")
 	}
 	if limit <= 0 {
 		limit = defaultPRStatePollLimit
