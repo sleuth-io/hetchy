@@ -3,6 +3,7 @@ package artifacts
 import (
 	"bytes"
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -127,7 +128,7 @@ func TestLocalStoreRejectsExpiredToken(t *testing.T) {
 
 func TestNewLocalMissingRootReturnsSentinel(t *testing.T) {
 	store, err := NewLocal("", "https://app.example.test", strings.Repeat("s", 32))
-	if err != ErrNotConfigured {
+	if !errors.Is(err, ErrNotConfigured) {
 		t.Fatalf("NewLocal error = %v, want ErrNotConfigured", err)
 	}
 	if store != nil {
