@@ -391,6 +391,14 @@
   font-size: .78rem;
   font-weight: 650;
 }
+.pr-skull {
+  margin: 0 0 10px;
+  text-align: center;
+  font-size: .62rem;
+  line-height: 1.35;
+  color: var(--danger);
+  opacity: .6;
+}
 .pr-list {
   display: flex;
   flex-direction: column;
