@@ -21,6 +21,22 @@ import (
 	"github.com/hetchyhq/hetchy/internal/secrets"
 )
 
+// querier is a narrow interface for the DB operations needed by this package.
+// Using an interface here allows unit tests to inject a fake without a real
+// Postgres connection.
+type querier interface {
+	CountAgentProfilesByOrg(ctx context.Context, orgID string) (int64, error)
+	SeedDefaultAgentProfilesForOrg(ctx context.Context, orgID string) error
+	ListAgentProfilesByOrg(ctx context.Context, orgID string) ([]sqlc.ListAgentProfilesByOrgRow, error)
+	GetAgentProfileBySlug(ctx context.Context, arg sqlc.GetAgentProfileBySlugParams) (sqlc.GetAgentProfileBySlugRow, error)
+	UpsertAgentProfile(ctx context.Context, arg sqlc.UpsertAgentProfileParams) (sqlc.UpsertAgentProfileRow, error)
+	UpdateAgentProfileName(ctx context.Context, arg sqlc.UpdateAgentProfileNameParams) (sqlc.UpdateAgentProfileNameRow, error)
+	ListAgentProfileTemplates(ctx context.Context) ([]sqlc.AgentProfileTemplate, error)
+	GetAgentProfileTemplate(ctx context.Context, slug string) (sqlc.AgentProfileTemplate, error)
+	UpdateAgentProfileVaultSync(ctx context.Context, arg sqlc.UpdateAgentProfileVaultSyncParams) (sqlc.UpdateAgentProfileVaultSyncRow, error)
+	DisableAgentProfile(ctx context.Context, arg sqlc.DisableAgentProfileParams) (int64, error)
+}
+
 // DefaultSlug is empty because a Hetchy chat does not require a
 // specialized persona. Callers opt into a profile by slug or alias.
 const DefaultSlug = ""
@@ -48,14 +64,22 @@ type Profile struct {
 }
 
 type Store struct {
-	db     *db.Store
+	q      querier
 	cipher *secrets.Cipher
 }
 
-func NewStore(d *db.Store) *Store { return &Store{db: d} }
+func NewStore(d *db.Store) *Store {
+	if d == nil {
+		return &Store{}
+	}
+	return &Store{q: d.Queries}
+}
 
 func NewStoreWithCipher(d *db.Store, cipher *secrets.Cipher) *Store {
-	return &Store{db: d, cipher: cipher}
+	if d == nil {
+		return &Store{cipher: cipher}
+	}
+	return &Store{q: d.Queries, cipher: cipher}
 }
 
 // FallbackProfiles mirrors the database seed templates for DB-less unit tests
@@ -111,13 +135,13 @@ Take a systems view first: clarify boundaries, data flow, migration paths, opera
 }
 
 func (s *Store) List(ctx context.Context, orgID string) ([]Profile, error) {
-	if s == nil || s.db == nil || orgID == "" {
+	if s == nil || s.q == nil || orgID == "" {
 		return FallbackProfiles(), nil
 	}
 	if err := s.EnsureSeeded(ctx, orgID); err != nil {
 		return nil, err
 	}
-	rows, err := s.db.Queries.ListAgentProfilesByOrg(ctx, orgID)
+	rows, err := s.q.ListAgentProfilesByOrg(ctx, orgID)
 	if err != nil {
 		return nil, fmt.Errorf("list agent profiles: %w", err)
 	}
@@ -135,17 +159,17 @@ func (s *Store) List(ctx context.Context, orgID string) ([]Profile, error) {
 // data is requested. It intentionally counts disabled rows too: when an admin
 // deletes every starter agent we must not resurrect them on the next page load.
 func (s *Store) EnsureSeeded(ctx context.Context, orgID string) error {
-	if s == nil || s.db == nil || orgID == "" {
+	if s == nil || s.q == nil || orgID == "" {
 		return nil
 	}
-	n, err := s.db.Queries.CountAgentProfilesByOrg(ctx, orgID)
+	n, err := s.q.CountAgentProfilesByOrg(ctx, orgID)
 	if err != nil {
 		return fmt.Errorf("count agent profiles: %w", err)
 	}
 	if n > 0 {
 		return nil
 	}
-	if err := s.db.Queries.SeedDefaultAgentProfilesForOrg(ctx, orgID); err != nil {
+	if err := s.q.SeedDefaultAgentProfilesForOrg(ctx, orgID); err != nil {
 		return fmt.Errorf("seed default agent profiles: %w", err)
 	}
 	return nil
@@ -174,7 +198,7 @@ func (s *Store) GetBySlug(ctx context.Context, orgID, slug string) (Profile, err
 	if slug == "" {
 		return Profile{}, fmt.Errorf("%w: empty agent", ErrNotFound)
 	}
-	if s == nil || s.db == nil || orgID == "" {
+	if s == nil || s.q == nil || orgID == "" {
 		for _, p := range FallbackProfiles() {
 			if p.Enabled && p.Slug == slug {
 				return p, nil
@@ -185,7 +209,7 @@ func (s *Store) GetBySlug(ctx context.Context, orgID, slug string) (Profile, err
 	if err := s.EnsureSeeded(ctx, orgID); err != nil {
 		return Profile{}, err
 	}
-	row, err := s.db.Queries.GetAgentProfileBySlug(ctx, sqlc.GetAgentProfileBySlugParams{
+	row, err := s.q.GetAgentProfileBySlug(ctx, sqlc.GetAgentProfileBySlugParams{
 		OrgID: orgID,
 		Slug:  slug,
 	})
@@ -202,7 +226,7 @@ func (s *Store) GetBySlug(ctx context.Context, orgID, slug string) (Profile, err
 }
 
 func (s *Store) Upsert(ctx context.Context, orgID string, p Profile) (Profile, error) {
-	if s == nil || s.db == nil {
+	if s == nil || s.q == nil {
 		return Profile{}, errors.New("agents: store disabled")
 	}
 	if orgID == "" {
@@ -219,7 +243,7 @@ func (s *Store) Upsert(ctx context.Context, orgID string, p Profile) (Profile, e
 	if display == "" {
 		display = slug
 	}
-	row, err := s.db.Queries.UpsertAgentProfile(ctx, sqlc.UpsertAgentProfileParams{
+	row, err := s.q.UpsertAgentProfile(ctx, sqlc.UpsertAgentProfileParams{
 		OrgID:         orgID,
 		Slug:          slug,
 		DisplayName:   display,
@@ -239,13 +263,13 @@ func (s *Store) Upsert(ctx context.Context, orgID string, p Profile) (Profile, e
 }
 
 func (s *Store) GetCustom(ctx context.Context, orgID, slug string) (Profile, error) {
-	if s == nil || s.db == nil {
+	if s == nil || s.q == nil || orgID == "" {
 		return Profile{}, ErrNotFound
 	}
 	if err := s.EnsureSeeded(ctx, orgID); err != nil {
 		return Profile{}, err
 	}
-	row, err := s.db.Queries.GetAgentProfileBySlug(ctx, sqlc.GetAgentProfileBySlugParams{
+	row, err := s.q.GetAgentProfileBySlug(ctx, sqlc.GetAgentProfileBySlugParams{
 		OrgID: orgID,
 		Slug:  NormalizeSlug(slug),
 	})
@@ -262,7 +286,7 @@ func (s *Store) GetCustom(ctx context.Context, orgID, slug string) (Profile, err
 }
 
 func (s *Store) UpdateName(ctx context.Context, orgID, slug, displayName string) (Profile, error) {
-	if s == nil || s.db == nil {
+	if s == nil || s.q == nil {
 		return Profile{}, errors.New("agents: store disabled")
 	}
 	if orgID == "" {
@@ -275,7 +299,7 @@ func (s *Store) UpdateName(ctx context.Context, orgID, slug, displayName string)
 	if display == "" {
 		return Profile{}, errors.New("agents: display name required")
 	}
-	row, err := s.db.Queries.UpdateAgentProfileName(ctx, sqlc.UpdateAgentProfileNameParams{
+	row, err := s.q.UpdateAgentProfileName(ctx, sqlc.UpdateAgentProfileNameParams{
 		OrgID:       orgID,
 		Slug:        NormalizeSlug(slug),
 		DisplayName: display,
@@ -290,10 +314,10 @@ func (s *Store) UpdateName(ctx context.Context, orgID, slug, displayName string)
 }
 
 func (s *Store) ListTemplates(ctx context.Context) ([]Profile, error) {
-	if s == nil || s.db == nil {
+	if s == nil || s.q == nil {
 		return FallbackProfiles(), nil
 	}
-	rows, err := s.db.Queries.ListAgentProfileTemplates(ctx)
+	rows, err := s.q.ListAgentProfileTemplates(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list agent templates: %w", err)
 	}
@@ -309,7 +333,7 @@ func (s *Store) GetTemplate(ctx context.Context, slug string) (Profile, error) {
 	if slug == "" {
 		return Profile{}, ErrNotFound
 	}
-	if s == nil || s.db == nil {
+	if s == nil || s.q == nil {
 		for _, p := range FallbackProfiles() {
 			if p.Slug == slug {
 				return p, nil
@@ -317,7 +341,7 @@ func (s *Store) GetTemplate(ctx context.Context, slug string) (Profile, error) {
 		}
 		return Profile{}, ErrNotFound
 	}
-	row, err := s.db.Queries.GetAgentProfileTemplate(ctx, slug)
+	row, err := s.q.GetAgentProfileTemplate(ctx, slug)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Profile{}, ErrNotFound
@@ -328,14 +352,14 @@ func (s *Store) GetTemplate(ctx context.Context, slug string) (Profile, error) {
 }
 
 func (s *Store) UpdateVaultSync(ctx context.Context, orgID, slug, backend, botKey, templateSlug, status, syncErr string) (Profile, error) {
-	if s == nil || s.db == nil {
+	if s == nil || s.q == nil {
 		return Profile{}, errors.New("agents: store disabled")
 	}
 	encrypted, err := s.encryptBotKey(botKey)
 	if err != nil {
 		return Profile{}, err
 	}
-	row, err := s.db.Queries.UpdateAgentProfileVaultSync(ctx, sqlc.UpdateAgentProfileVaultSyncParams{
+	row, err := s.q.UpdateAgentProfileVaultSync(ctx, sqlc.UpdateAgentProfileVaultSyncParams{
 		OrgID:             orgID,
 		Slug:              NormalizeSlug(slug),
 		VaultBackend:      strings.TrimSpace(backend),
@@ -354,7 +378,7 @@ func (s *Store) UpdateVaultSync(ctx context.Context, orgID, slug, backend, botKe
 }
 
 func (s *Store) Delete(ctx context.Context, orgID, slug string) error {
-	if s == nil || s.db == nil {
+	if s == nil || s.q == nil {
 		return errors.New("agents: store disabled")
 	}
 	if orgID == "" {
@@ -363,7 +387,7 @@ func (s *Store) Delete(ctx context.Context, orgID, slug string) error {
 	if err := s.EnsureSeeded(ctx, orgID); err != nil {
 		return err
 	}
-	n, err := s.db.Queries.DisableAgentProfile(ctx, sqlc.DisableAgentProfileParams{
+	n, err := s.q.DisableAgentProfile(ctx, sqlc.DisableAgentProfileParams{
 		OrgID: orgID,
 		Slug:  NormalizeSlug(slug),
 	})
