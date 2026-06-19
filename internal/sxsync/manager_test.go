@@ -91,6 +91,108 @@ func TestProfilesFromRemoteAgentsUsesBotsAndMatchingAgentAssets(t *testing.T) {
 	}
 }
 
+func TestMergeRemoteAgentStatePreservesLocalFields(t *testing.T) {
+	existing := agents.Profile{
+		Slug:        "reviewer",
+		DisplayName: "Local Reviewer",
+		Description: "Local description",
+		Skills:      []string{"old"},
+		SXBot:       "old-bot",
+	}
+	remote := agents.Profile{
+		Skills:       []string{" new ", "", "new", "lint"},
+		SXBot:        " remote-bot ",
+		PersonaAsset: " remote-agent ",
+		VaultBackend: " skills-new ",
+	}
+
+	got := mergeRemoteAgentState(existing, remote)
+	if got.DisplayName != existing.DisplayName || got.Description != existing.Description {
+		t.Fatalf("local display fields were not preserved: %+v", got)
+	}
+	if strings.Join(got.Skills, ",") != "new,lint" {
+		t.Fatalf("skills = %+v, want cleaned remote skills", got.Skills)
+	}
+	if got.SXBot != "remote-bot" || got.PersonaAsset != "remote-agent" || got.VaultBackend != "skills-new" {
+		t.Fatalf("remote sync fields not applied: %+v", got)
+	}
+}
+
+func TestShouldImportRemoteAgentNilManagerDefaultsToImport(t *testing.T) {
+	var m *Manager
+	got, err := m.shouldImportRemoteAgent(context.Background(), "org", agents.Profile{})
+	if err != nil {
+		t.Fatalf("shouldImportRemoteAgent: %v", err)
+	}
+	if !got {
+		t.Fatal("nil manager should default to import")
+	}
+}
+
+func TestShouldImportRemoteAgentRow(t *testing.T) {
+	tests := []struct {
+		name    string
+		enabled bool
+		backend string
+		want    bool
+	}{
+		{name: "enabled local wins", enabled: true, backend: BackendSkillsNew, want: false},
+		{name: "disabled skills new imports", backend: BackendSkillsNew, want: true},
+		{name: "disabled git imports", backend: BackendGitHubGit, want: true},
+		{name: "disabled unknown skips", backend: "other", want: false},
+		{name: "disabled blank skips", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := shouldImportRemoteAgentRow(tt.enabled, agents.Profile{VaultBackend: tt.backend})
+			if got != tt.want {
+				t.Fatalf("shouldImportRemoteAgentRow() = %t, want %t", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestShouldPruneMissingRemoteAgentBoundaries(t *testing.T) {
+	remote := map[string]struct{}{"kept": {}}
+	tests := []struct {
+		name          string
+		activeBackend string
+		profile       agents.Profile
+		want          bool
+	}{
+		{name: "disabled", activeBackend: BackendSkillsNew, profile: agents.Profile{Slug: "old", Enabled: false}, want: false},
+		{name: "built in", activeBackend: BackendSkillsNew, profile: agents.Profile{Slug: "old", Enabled: true, BuiltIn: true}, want: false},
+		{name: "blank slug", activeBackend: BackendSkillsNew, profile: agents.Profile{Enabled: true}, want: false},
+		{name: "still remote", activeBackend: BackendSkillsNew, profile: agents.Profile{Slug: "kept", Enabled: true}, want: false},
+		{name: "no active backend", profile: agents.Profile{Slug: "old", Enabled: true}, want: false},
+		{name: "matching backend", activeBackend: BackendSkillsNew, profile: agents.Profile{Slug: "old", Enabled: true, VaultBackend: BackendSkillsNew}, want: true},
+		{name: "blank backend follows active", activeBackend: BackendSkillsNew, profile: agents.Profile{Slug: "old", Enabled: true}, want: true},
+		{name: "other backend", activeBackend: BackendSkillsNew, profile: agents.Profile{Slug: "old", Enabled: true, VaultBackend: BackendGitHubGit}, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := shouldPruneMissingRemoteAgent(tt.activeBackend, remote, tt.profile)
+			if got != tt.want {
+				t.Fatalf("shouldPruneMissingRemoteAgent() = %t, want %t", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLooksLikeMissingSXBot(t *testing.T) {
+	if !looksLikeMissingSXBot(errors.New(`bot "reviewer" not found`)) {
+		t.Fatal("expected bot not found error to match")
+	}
+	if looksLikeMissingSXBot(errors.New(`asset "reviewer" not found`)) {
+		t.Fatal("asset not found should not match missing bot")
+	}
+	if looksLikeMissingSXBot(nil) {
+		t.Fatal("nil error should not match")
+	}
+}
+
 func TestPublicSkillCandidatesRecognizesRepositoryPrefixedNames(t *testing.T) {
 	got := publicSkillCandidates("https://github.com/hetchyhq/hetchy-sx-vault.git", "sx-hetchyhq-hetchy-sx-vault-fix-pr_skill")
 	want := []string{"sx-hetchyhq-hetchy-sx-vault-fix-pr_skill", "sx-hetchyhq-hetchy-sx-vault-fix-pr", "fix-pr_skill", "fix-pr"}
@@ -125,6 +227,36 @@ func TestFetchSkillCandidatesAppendsSlugifiedDisplayName(t *testing.T) {
 	}
 }
 
+func TestSkillSummaryHelpers(t *testing.T) {
+	base := skillSummariesFromAssets([]sxlib.AssetSummary{
+		{Name: "beta", Description: "B", LatestVersion: "2"},
+		{Name: " ", Description: "blank"},
+		{Name: "alpha", Description: "A", LatestVersion: "1"},
+	}, "Source")
+
+	if len(base) != 2 || base[0].Name != "alpha" || base[1].Name != "beta" {
+		t.Fatalf("skillSummariesFromAssets sorted/nonblank = %+v", base)
+	}
+	if base[0].Source != "Source" || base[0].LatestVersion != "1" {
+		t.Fatalf("skill summary fields = %+v", base[0])
+	}
+
+	merged := mergeSkillSummaries(base, []SkillSummary{
+		{Name: "Beta", Source: "duplicate"},
+		{Name: "gamma", Source: "extra"},
+		{Name: " "},
+	})
+	if got := []string{merged[0].Name, merged[1].Name, merged[2].Name}; strings.Join(got, ",") != "alpha,beta,gamma" {
+		t.Fatalf("mergeSkillSummaries = %+v", merged)
+	}
+
+	if sourceLabelForBackend(BackendSkillsNew) != "Skills.new" ||
+		sourceLabelForBackend(BackendGitHubGit) != "Git vault" ||
+		sourceLabelForBackend("other") != "SX" {
+		t.Fatal("sourceLabelForBackend returned unexpected label")
+	}
+}
+
 func TestOrgSkillCandidatesFallsBackToSlug(t *testing.T) {
 	got := orgSkillCandidates("Bootstrap Spec System")
 	want := []string{"Bootstrap Spec System", "bootstrap-spec-system"}
@@ -136,6 +268,21 @@ func TestOrgSkillCandidatesFallsBackToSlug(t *testing.T) {
 	}
 	if got := orgSkillCandidates(" "); got != nil {
 		t.Fatalf("orgSkillCandidates blank = %+v, want nil", got)
+	}
+}
+
+func TestBotTeamState(t *testing.T) {
+	bots := []sxlib.BotSummary{
+		{Name: "reviewer", Teams: []string{"backend", "frontend"}},
+	}
+	if found, hasTeam := botTeamState(bots, "reviewer", "backend"); !found || !hasTeam {
+		t.Fatalf("botTeamState existing team = (%t, %t), want both true", found, hasTeam)
+	}
+	if found, hasTeam := botTeamState(bots, "reviewer", "security"); !found || hasTeam {
+		t.Fatalf("botTeamState missing team = (%t, %t), want true false", found, hasTeam)
+	}
+	if found, hasTeam := botTeamState(bots, "missing", "backend"); found || hasTeam {
+		t.Fatalf("botTeamState missing bot = (%t, %t), want both false", found, hasTeam)
 	}
 }
 

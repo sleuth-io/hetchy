@@ -50,7 +50,7 @@ jobs:
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             export COVERAGE_COMPARE_REF="origin/${{ github.base_ref }}"
           fi
-          COVERAGE_COVERPKG=./... bash scripts/check-go-coverage.sh ./... .github/coverage/repo-total.min
+          bash scripts/check-go-coverage.sh ./... .github/coverage/repo-total.min
 
       - name: Build
         run: make build

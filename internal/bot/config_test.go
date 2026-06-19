@@ -749,3 +749,125 @@ func TestLoadConfig_JobDispatchSettings(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadAuthModeEnv(t *testing.T) {
+	tests := []struct {
+		name    string
+		raw     string
+		want    string
+		wantErr bool
+	}{
+		{name: "default", want: "workos"},
+		{name: "workos", raw: " WorkOS ", want: "workos"},
+		{name: "local", raw: "LOCAL", want: "local"},
+		{name: "invalid", raw: "magic", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("HETCHY_AUTH_MODE", tt.raw)
+			got, err := loadAuthModeEnv()
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("loadAuthModeEnv() err = %v, wantErr %v", err, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Fatalf("loadAuthModeEnv() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRequiredConfigEnvKeys(t *testing.T) {
+	tests := []struct {
+		name     string
+		bypass   bool
+		authMode string
+		env      string
+		want     []string
+	}{
+		{
+			name:     "prod workos",
+			authMode: "workos",
+			env:      "prod",
+			want: []string{
+				"DATABASE_URL", "SECRETS_ENCRYPTION_KEY", "DAYTONA_SNAPSHOT",
+				"WORKOS_API_KEY", "WORKOS_CLIENT_ID", "WORKOS_COOKIE_PASSWORD",
+				"WORKOS_REDIRECT_URI", "HETCHY_PUBLIC_BASE_URL",
+			},
+		},
+		{
+			name:     "dev local",
+			authMode: "local",
+			env:      "dev",
+			want:     []string{"DATABASE_URL", "SECRETS_ENCRYPTION_KEY", "DAYTONA_SNAPSHOT"},
+		},
+		{
+			name:     "bypass prod",
+			bypass:   true,
+			authMode: "workos",
+			env:      "prod",
+			want:     []string{"DATABASE_URL", "SECRETS_ENCRYPTION_KEY", "DAYTONA_SNAPSHOT"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := requiredConfigEnvKeys(tt.bypass, tt.authMode, tt.env)
+			if strings.Join(got, ",") != strings.Join(tt.want, ",") {
+				t.Fatalf("requiredConfigEnvKeys() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMissingRequiredConfigEnvTrimsValues(t *testing.T) {
+	t.Setenv("SET_VALUE", " value ")
+	t.Setenv("SPACES_ONLY", "   ")
+	t.Setenv("EMPTY_VALUE", "")
+
+	got := missingRequiredConfigEnv([]string{"SET_VALUE", "SPACES_ONLY", "EMPTY_VALUE"})
+	want := []string{"SPACES_ONLY", "EMPTY_VALUE"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("missingRequiredConfigEnv() = %v, want %v", got, want)
+	}
+}
+
+func TestLoadCookieSecureSources(t *testing.T) {
+	t.Setenv("COOKIE_INSECURE", "")
+	t.Setenv("WORKOS_REDIRECT_URI", "http://localhost:8080/callback")
+	if loadCookieSecure("https://app.example.test", "https://app.example.test/logout") {
+		t.Fatal("http WorkOS redirect should disable secure cookies")
+	}
+
+	t.Setenv("WORKOS_REDIRECT_URI", "https://app.example.test/callback")
+	if loadCookieSecure("http://localhost:8080", "https://app.example.test/logout") {
+		t.Fatal("http public base should disable secure cookies")
+	}
+
+	if loadCookieSecure("https://app.example.test", "http://localhost:8080/logout") {
+		t.Fatal("http logout URL should disable secure cookies")
+	}
+
+	if !loadCookieSecure("https://app.example.test", "https://app.example.test/logout") {
+		t.Fatal("https-only config should keep secure cookies enabled")
+	}
+}
+
+func TestTruthyEnv(t *testing.T) {
+	for _, value := range []string{"1", "true", "TRUE", " yes ", "on"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("HETCHY_TEST_BOOL", value)
+			if !truthyEnv("HETCHY_TEST_BOOL") {
+				t.Fatalf("truthyEnv(%q) = false", value)
+			}
+		})
+	}
+	for _, value := range []string{"", "0", "false", "no", "off", "maybe"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("HETCHY_TEST_BOOL", value)
+			if truthyEnv("HETCHY_TEST_BOOL") {
+				t.Fatalf("truthyEnv(%q) = true", value)
+			}
+		})
+	}
+}

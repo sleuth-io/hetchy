@@ -25,11 +25,10 @@ make prepush       # Format, lint, build, migration order
 ```
 
 The coverage floor is source-controlled in
-`.github/coverage/repo-total.min` and measured repo-wide with
-`-coverpkg=./...` (a test in one package counts toward any package it
-exercises). On a pull request CI also compares against the base branch
-and fails on any regression below it, so the committed floor is only the
-absolute minimum; raise it intentionally when coverage climbs.
+`.github/coverage/repo-total.min` and measured repo-wide with Go's standard
+package coverage aggregation. On a pull request CI also compares against the
+base branch and fails on any regression below it, so the committed floor is
+only the absolute minimum; raise it intentionally when coverage climbs.
 
 ## Debugging
 
