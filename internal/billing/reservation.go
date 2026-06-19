@@ -24,69 +24,75 @@ func (s *Store) AdmitRun(ctx context.Context, orgID, runID string, credits int, 
 	var reservation Reservation
 	var account Account
 	err := s.db.WithTx(ctx, func(q *sqlc.Queries) error {
-		if existing, err := q.GetBillingCreditReservationForUpdate(ctx, runID); err == nil {
-			row, err := q.LockBillingAccountForUpdate(ctx, orgID)
-			if err != nil {
-				return err
-			}
-			reservation = reservationFromRow(existing)
-			account = accountFromRow(row)
-			return upsertRunMeterStart(ctx, q, runID, orgID, flavor, startedAt)
-		} else if !errors.Is(err, pgx.ErrNoRows) {
-			return err
-		}
-
-		row, err := q.LockBillingAccountForUpdate(ctx, orgID)
-		if err != nil {
-			return err
-		}
-		account = accountFromRow(row)
-		if account.BillingExempt {
-			// reserved_credits stays 0: comped orgs are never charged. At
-			// finalization, captured_credits will exceed reserved_credits,
-			// which is intentional — it records observational usage only.
-			inserted, err := q.InsertBillingCreditReservation(ctx, sqlc.InsertBillingCreditReservationParams{
-				RunID: runID, OrgID: orgID, Status: ReservationComped,
-			})
-			if err != nil {
-				return err
-			}
-			reservation = reservationFromRow(inserted)
-			return upsertRunMeterStart(ctx, q, runID, orgID, flavor, startedAt)
-		}
-		available := account.Balance()
-		if available < credits {
-			return InsufficientCreditsError{Needed: credits, Available: available}
-		}
-		fromIncluded := min(credits, account.IncludedRemaining())
-		fromTopup := credits - fromIncluded
-		row, err = q.UpdateBillingReservedBalances(ctx, sqlc.UpdateBillingReservedBalancesParams{
-			OrgID:               orgID,
-			IncludedCreditsUsed: int32(fromIncluded),
-			TopupCredits:        int32(fromTopup),
-		})
-		if err != nil {
-			return err
-		}
-		account = accountFromRow(row)
-		inserted, err := q.InsertBillingCreditReservation(ctx, sqlc.InsertBillingCreditReservationParams{
-			RunID:               runID,
-			OrgID:               orgID,
-			ReservedCredits:     int32(credits),
-			FromIncludedCredits: int32(fromIncluded),
-			FromTopupCredits:    int32(fromTopup),
-			Status:              ReservationReserved,
-		})
-		if err != nil {
-			return err
-		}
-		reservation = reservationFromRow(inserted)
-		return upsertRunMeterStart(ctx, q, runID, orgID, flavor, startedAt)
+		var err error
+		reservation, account, err = admitRunTx(ctx, q, orgID, runID, credits, flavor, startedAt)
+		return err
 	})
 	if err != nil {
 		return Reservation{}, Account{}, err
 	}
 	return reservation, account, nil
+}
+
+func admitRunTx(ctx context.Context, q *sqlc.Queries, orgID, runID string, credits int, flavor Flavor, startedAt time.Time) (Reservation, Account, error) {
+	if existing, err := q.GetBillingCreditReservationForUpdate(ctx, runID); err == nil {
+		row, err := q.LockBillingAccountForUpdate(ctx, orgID)
+		if err != nil {
+			return Reservation{}, Account{}, err
+		}
+		reservation := reservationFromRow(existing)
+		account := accountFromRow(row)
+		return reservation, account, upsertRunMeterStart(ctx, q, runID, orgID, flavor, startedAt)
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return Reservation{}, Account{}, err
+	}
+
+	row, err := q.LockBillingAccountForUpdate(ctx, orgID)
+	if err != nil {
+		return Reservation{}, Account{}, err
+	}
+	account := accountFromRow(row)
+	if account.BillingExempt {
+		// reserved_credits stays 0: comped orgs are never charged. At
+		// finalization, captured_credits will exceed reserved_credits,
+		// which is intentional: it records observational usage only.
+		inserted, err := q.InsertBillingCreditReservation(ctx, sqlc.InsertBillingCreditReservationParams{
+			RunID: runID, OrgID: orgID, Status: ReservationComped,
+		})
+		if err != nil {
+			return Reservation{}, Account{}, err
+		}
+		reservation := reservationFromRow(inserted)
+		return reservation, account, upsertRunMeterStart(ctx, q, runID, orgID, flavor, startedAt)
+	}
+	available := account.Balance()
+	if available < credits {
+		return Reservation{}, Account{}, InsufficientCreditsError{Needed: credits, Available: available}
+	}
+	fromIncluded := min(credits, account.IncludedRemaining())
+	fromTopup := credits - fromIncluded
+	row, err = q.UpdateBillingReservedBalances(ctx, sqlc.UpdateBillingReservedBalancesParams{
+		OrgID:               orgID,
+		IncludedCreditsUsed: int32(fromIncluded),
+		TopupCredits:        int32(fromTopup),
+	})
+	if err != nil {
+		return Reservation{}, Account{}, err
+	}
+	account = accountFromRow(row)
+	inserted, err := q.InsertBillingCreditReservation(ctx, sqlc.InsertBillingCreditReservationParams{
+		RunID:               runID,
+		OrgID:               orgID,
+		ReservedCredits:     int32(credits),
+		FromIncludedCredits: int32(fromIncluded),
+		FromTopupCredits:    int32(fromTopup),
+		Status:              ReservationReserved,
+	})
+	if err != nil {
+		return Reservation{}, Account{}, err
+	}
+	reservation := reservationFromRow(inserted)
+	return reservation, account, upsertRunMeterStart(ctx, q, runID, orgID, flavor, startedAt)
 }
 
 func upsertRunMeterStart(ctx context.Context, q *sqlc.Queries, runID, orgID string, flavor Flavor, startedAt time.Time) error {
@@ -114,78 +120,82 @@ func (s *Store) FinalizeRun(ctx context.Context, runID, terminalState string, en
 		endedAt = time.Now()
 	}
 	return s.db.WithTx(ctx, func(q *sqlc.Queries) error {
-		meterRow, err := q.GetBillingRunMeterForUpdate(ctx, runID)
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return nil
-			}
-			return err
-		}
-		meter := runMeterFromRow(meterRow)
-		if meter.TerminalState != "" {
+		return finalizeRunTx(ctx, q, runID, terminalState, endedAt)
+	})
+}
+
+func finalizeRunTx(ctx context.Context, q *sqlc.Queries, runID, terminalState string, endedAt time.Time) error {
+	meterRow, err := q.GetBillingRunMeterForUpdate(ctx, runID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
-		minutes, credits := BillableCredits(meter.StartedAt, endedAt, meter.Multiplier)
-		if terminalState == "" {
-			terminalState = "unknown"
-		}
-		resRow, err := q.GetBillingCreditReservationForUpdate(ctx, runID)
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return finalizeRunMeter(ctx, q, runID, endedAt, minutes, credits, terminalState)
-			}
-			return err
-		}
-		res := reservationFromRow(resRow)
-		if res.Status == ReservationComped {
-			// Record actual credits for visibility in the billing meter, but do not
-			// deduct from the account balance — comped orgs are never charged.
-			if err := finalizeRunMeter(ctx, q, runID, endedAt, minutes, credits, terminalState); err != nil {
-				return err
-			}
-			_, err := q.UpdateBillingCreditReservationCaptured(ctx, sqlc.UpdateBillingCreditReservationCapturedParams{
-				RunID:           runID,
-				CapturedCredits: int32(credits),
-				ReleasedCredits: 0, // nothing was reserved, so nothing to release
-				Status:          ReservationComped,
-			})
-			return err
-		}
-		if res.Status != ReservationReserved {
+		return err
+	}
+	meter := runMeterFromRow(meterRow)
+	if meter.TerminalState != "" {
+		return nil
+	}
+	minutes, credits := BillableCredits(meter.StartedAt, endedAt, meter.Multiplier)
+	if terminalState == "" {
+		terminalState = "unknown"
+	}
+	resRow, err := q.GetBillingCreditReservationForUpdate(ctx, runID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return finalizeRunMeter(ctx, q, runID, endedAt, minutes, credits, terminalState)
 		}
-		if _, err := q.LockBillingAccountForUpdate(ctx, res.OrgID); err != nil {
-			return err
-		}
-		if res.ReservedCredits > 0 {
-			credits = min(credits, res.ReservedCredits)
-		}
+		return err
+	}
+	res := reservationFromRow(resRow)
+	if res.Status == ReservationComped {
+		// Record actual credits for visibility in the billing meter, but do not
+		// deduct from the account balance: comped orgs are never charged.
 		if err := finalizeRunMeter(ctx, q, runID, endedAt, minutes, credits, terminalState); err != nil {
 			return err
 		}
-		releasedIncluded, releasedTopup, extraCredits := captureDeltas(res, credits)
-		includedDelta := -releasedIncluded + extraCredits
-		topupDelta := releasedTopup
-		if _, err := q.UpdateBillingCapturedBalances(ctx, sqlc.UpdateBillingCapturedBalancesParams{
-			OrgID:               res.OrgID,
-			IncludedCreditsUsed: int32(includedDelta),
-			TopupCredits:        int32(topupDelta),
-		}); err != nil {
-			return err
-		}
-		released := releasedIncluded + releasedTopup
-		status := ReservationCaptured
-		if released > 0 {
-			status = ReservationReleased
-		}
-		_, err = q.UpdateBillingCreditReservationCaptured(ctx, sqlc.UpdateBillingCreditReservationCapturedParams{
+		_, err := q.UpdateBillingCreditReservationCaptured(ctx, sqlc.UpdateBillingCreditReservationCapturedParams{
 			RunID:           runID,
 			CapturedCredits: int32(credits),
-			ReleasedCredits: int32(released),
-			Status:          status,
+			ReleasedCredits: 0, // nothing was reserved, so nothing to release
+			Status:          ReservationComped,
 		})
 		return err
+	}
+	if res.Status != ReservationReserved {
+		return finalizeRunMeter(ctx, q, runID, endedAt, minutes, credits, terminalState)
+	}
+	if _, err := q.LockBillingAccountForUpdate(ctx, res.OrgID); err != nil {
+		return err
+	}
+	if res.ReservedCredits > 0 {
+		credits = min(credits, res.ReservedCredits)
+	}
+	if err := finalizeRunMeter(ctx, q, runID, endedAt, minutes, credits, terminalState); err != nil {
+		return err
+	}
+	releasedIncluded, releasedTopup, extraCredits := captureDeltas(res, credits)
+	includedDelta := -releasedIncluded + extraCredits
+	topupDelta := releasedTopup
+	if _, err := q.UpdateBillingCapturedBalances(ctx, sqlc.UpdateBillingCapturedBalancesParams{
+		OrgID:               res.OrgID,
+		IncludedCreditsUsed: int32(includedDelta),
+		TopupCredits:        int32(topupDelta),
+	}); err != nil {
+		return err
+	}
+	released := releasedIncluded + releasedTopup
+	status := ReservationCaptured
+	if released > 0 {
+		status = ReservationReleased
+	}
+	_, err = q.UpdateBillingCreditReservationCaptured(ctx, sqlc.UpdateBillingCreditReservationCapturedParams{
+		RunID:           runID,
+		CapturedCredits: int32(credits),
+		ReleasedCredits: int32(released),
+		Status:          status,
 	})
+	return err
 }
 
 func finalizeRunMeter(ctx context.Context, q *sqlc.Queries, runID string, endedAt time.Time, minutes, credits int, terminalState string) error {

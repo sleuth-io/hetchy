@@ -204,40 +204,43 @@ func (s *Store) GrantTopupCreditsOnce(ctx context.Context, eventID, eventType, o
 	var account Account
 	processed := false
 	err := s.db.WithTx(ctx, func(q *sqlc.Queries) error {
-		inserted, err := q.InsertBillingStripeEvent(ctx, sqlc.InsertBillingStripeEventParams{
-			EventID:   eventID,
-			EventType: eventType,
-			OrgID:     orgID,
-		})
-		if err != nil {
-			return err
-		}
-		if !inserted {
-			row, err := q.GetBillingAccount(ctx, orgID)
-			if err != nil {
-				return err
-			}
-			account = accountFromRow(row)
-			return nil
-		}
-		if _, err := q.EnsureBillingAccount(ctx, orgID); err != nil {
-			return err
-		}
-		row, err := q.GrantBillingTopupCredits(ctx, sqlc.GrantBillingTopupCreditsParams{
-			OrgID:        orgID,
-			TopupCredits: int32(credits),
-		})
-		if err != nil {
-			return err
-		}
-		account = accountFromRow(row)
-		processed = true
-		return nil
+		var err error
+		account, processed, err = grantTopupCreditsOnceTx(ctx, q, eventID, eventType, orgID, credits)
+		return err
 	})
 	if err != nil {
 		return Account{}, false, fmt.Errorf("grant top-up credits once: %w", err)
 	}
 	return account, processed, nil
+}
+
+func grantTopupCreditsOnceTx(ctx context.Context, q *sqlc.Queries, eventID, eventType, orgID string, credits int) (Account, bool, error) {
+	inserted, err := q.InsertBillingStripeEvent(ctx, sqlc.InsertBillingStripeEventParams{
+		EventID:   eventID,
+		EventType: eventType,
+		OrgID:     orgID,
+	})
+	if err != nil {
+		return Account{}, false, err
+	}
+	if !inserted {
+		row, err := q.GetBillingAccount(ctx, orgID)
+		if err != nil {
+			return Account{}, false, err
+		}
+		return accountFromRow(row), false, nil
+	}
+	if _, err := q.EnsureBillingAccount(ctx, orgID); err != nil {
+		return Account{}, false, err
+	}
+	row, err := q.GrantBillingTopupCredits(ctx, sqlc.GrantBillingTopupCreditsParams{
+		OrgID:        orgID,
+		TopupCredits: int32(credits),
+	})
+	if err != nil {
+		return Account{}, false, err
+	}
+	return accountFromRow(row), true, nil
 }
 
 func (s *Store) SetLastPaymentError(ctx context.Context, orgID, msg string) error {

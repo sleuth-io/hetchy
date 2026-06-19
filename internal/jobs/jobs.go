@@ -273,50 +273,56 @@ func (s *Store) ClaimDue(ctx context.Context, worker string, limit int32, now ti
 	}
 	var out []ClaimedExecution
 	err := s.db.WithTx(ctx, func(q *sqlc.Queries) error {
-		rows, err := q.ListClaimableDueAgentJobs(ctx, sqlc.ListClaimableDueAgentJobsParams{
-			NowAt:      timeParam(now),
-			LimitCount: limit,
-		})
-		if err != nil {
-			return fmt.Errorf("list due jobs: %w", err)
-		}
-		out = make([]ClaimedExecution, 0, len(rows))
-		for _, row := range rows {
-			job, err := jobFromRow(row)
-			if err != nil {
-				return err
-			}
-			scheduledFor := job.NextRunAt
-			if scheduledFor.IsZero() {
-				scheduledFor = now
-			}
-			next, err := NextRun(job.CronSchedule, job.Timezone, now)
-			if err != nil {
-				return fmt.Errorf("next run for job %s: %w", job.ID, err)
-			}
-			execRow, err := q.CreateAgentJobExecution(ctx, sqlc.CreateAgentJobExecutionParams{
-				ID:           newID("jobexec"),
-				JobID:        job.ID,
-				OrgID:        job.OrgID,
-				ScheduledFor: timeParam(scheduledFor),
-				ClaimedBy:    worker,
-			})
-			if err != nil {
-				return fmt.Errorf("create execution for job %s: %w", job.ID, err)
-			}
-			if err := q.UpdateAgentJobNextRun(ctx, sqlc.UpdateAgentJobNextRunParams{
-				ID:        job.ID,
-				NextRunAt: timeParam(next),
-			}); err != nil {
-				return fmt.Errorf("update next run for job %s: %w", job.ID, err)
-			}
-			job.NextRunAt = next
-			out = append(out, ClaimedExecution{Job: job, Execution: executionFromRow(execRow)})
-		}
-		return nil
+		var err error
+		out, err = claimDueTx(ctx, q, worker, limit, now)
+		return err
 	})
 	if err != nil {
 		return nil, err
+	}
+	return out, nil
+}
+
+func claimDueTx(ctx context.Context, q *sqlc.Queries, worker string, limit int32, now time.Time) ([]ClaimedExecution, error) {
+	rows, err := q.ListClaimableDueAgentJobs(ctx, sqlc.ListClaimableDueAgentJobsParams{
+		NowAt:      timeParam(now),
+		LimitCount: limit,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list due jobs: %w", err)
+	}
+	out := make([]ClaimedExecution, 0, len(rows))
+	for _, row := range rows {
+		job, err := jobFromRow(row)
+		if err != nil {
+			return nil, err
+		}
+		scheduledFor := job.NextRunAt
+		if scheduledFor.IsZero() {
+			scheduledFor = now
+		}
+		next, err := NextRun(job.CronSchedule, job.Timezone, now)
+		if err != nil {
+			return nil, fmt.Errorf("next run for job %s: %w", job.ID, err)
+		}
+		execRow, err := q.CreateAgentJobExecution(ctx, sqlc.CreateAgentJobExecutionParams{
+			ID:           newID("jobexec"),
+			JobID:        job.ID,
+			OrgID:        job.OrgID,
+			ScheduledFor: timeParam(scheduledFor),
+			ClaimedBy:    worker,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("create execution for job %s: %w", job.ID, err)
+		}
+		if err := q.UpdateAgentJobNextRun(ctx, sqlc.UpdateAgentJobNextRunParams{
+			ID:        job.ID,
+			NextRunAt: timeParam(next),
+		}); err != nil {
+			return nil, fmt.Errorf("update next run for job %s: %w", job.ID, err)
+		}
+		job.NextRunAt = next
+		out = append(out, ClaimedExecution{Job: job, Execution: executionFromRow(execRow)})
 	}
 	return out, nil
 }
@@ -327,41 +333,46 @@ func (s *Store) RunNow(ctx context.Context, orgID, jobID, worker string, now tim
 	}
 	var out ClaimedExecution
 	err := s.db.WithTx(ctx, func(q *sqlc.Queries) error {
-		row, err := q.GetAgentJobForUpdate(ctx, sqlc.GetAgentJobForUpdateParams{OrgID: orgID, ID: jobID})
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return ErrNotFound
-			}
-			return fmt.Errorf("get job for run now: %w", err)
-		}
-		active, err := q.HasActiveAgentJobExecution(ctx, row.ID)
-		if err != nil {
-			return fmt.Errorf("check active execution: %w", err)
-		}
-		if active {
-			return ErrOverlap
-		}
-		execRow, err := q.CreateAgentJobExecution(ctx, sqlc.CreateAgentJobExecutionParams{
-			ID:           newID("jobexec"),
-			JobID:        row.ID,
-			OrgID:        row.OrgID,
-			ScheduledFor: timeParam(now),
-			ClaimedBy:    worker,
-		})
-		if err != nil {
-			return fmt.Errorf("create manual execution: %w", err)
-		}
-		job, err := jobFromRow(row)
-		if err != nil {
-			return err
-		}
-		out = ClaimedExecution{Job: job, Execution: executionFromRow(execRow)}
-		return nil
+		var err error
+		out, err = runNowTx(ctx, q, orgID, jobID, worker, now)
+		return err
 	})
 	if err != nil {
 		return ClaimedExecution{}, err
 	}
 	return out, nil
+}
+
+func runNowTx(ctx context.Context, q *sqlc.Queries, orgID, jobID, worker string, now time.Time) (ClaimedExecution, error) {
+	row, err := q.GetAgentJobForUpdate(ctx, sqlc.GetAgentJobForUpdateParams{OrgID: orgID, ID: jobID})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ClaimedExecution{}, ErrNotFound
+		}
+		return ClaimedExecution{}, fmt.Errorf("get job for run now: %w", err)
+	}
+	active, err := q.HasActiveAgentJobExecution(ctx, row.ID)
+	if err != nil {
+		return ClaimedExecution{}, fmt.Errorf("check active execution: %w", err)
+	}
+	if active {
+		return ClaimedExecution{}, ErrOverlap
+	}
+	execRow, err := q.CreateAgentJobExecution(ctx, sqlc.CreateAgentJobExecutionParams{
+		ID:           newID("jobexec"),
+		JobID:        row.ID,
+		OrgID:        row.OrgID,
+		ScheduledFor: timeParam(now),
+		ClaimedBy:    worker,
+	})
+	if err != nil {
+		return ClaimedExecution{}, fmt.Errorf("create manual execution: %w", err)
+	}
+	job, err := jobFromRow(row)
+	if err != nil {
+		return ClaimedExecution{}, err
+	}
+	return ClaimedExecution{Job: job, Execution: executionFromRow(execRow)}, nil
 }
 
 func (s *Store) MarkRunning(ctx context.Context, orgID, executionID string, runID *string) error {
@@ -391,39 +402,43 @@ func (s *Store) FinishExecution(ctx context.Context, orgID, executionID, status,
 	}
 	message = strings.TrimSpace(message)
 	return s.db.WithTx(ctx, func(q *sqlc.Queries) error {
-		execRow, err := q.GetAgentJobExecution(ctx, sqlc.GetAgentJobExecutionParams{OrgID: orgID, ID: executionID})
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return ErrNotFound
-			}
-			return fmt.Errorf("get execution: %w", err)
-		}
-		n, err := q.MarkAgentJobExecutionFinished(ctx, sqlc.MarkAgentJobExecutionFinishedParams{
-			OrgID:  orgID,
-			ID:     executionID,
-			Status: status,
-			Error:  message,
-		})
-		if err != nil {
-			return fmt.Errorf("mark execution finished: %w", err)
-		}
-		if n == 0 {
+		return finishExecutionTx(ctx, q, orgID, executionID, status, message)
+	})
+}
+
+func finishExecutionTx(ctx context.Context, q *sqlc.Queries, orgID, executionID, status, message string) error {
+	execRow, err := q.GetAgentJobExecution(ctx, sqlc.GetAgentJobExecutionParams{OrgID: orgID, ID: executionID})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
-		runID := ""
-		if execRow.RunID != nil {
-			runID = *execRow.RunID
-		}
-		if err := q.UpdateAgentJobLastRun(ctx, sqlc.UpdateAgentJobLastRunParams{
-			ID:        execRow.JobID,
-			LastRunAt: execRow.ScheduledFor,
-			LastRunID: stringPtrParam(runID),
-			LastError: message,
-		}); err != nil {
-			return fmt.Errorf("update job last run: %w", err)
-		}
-		return nil
+		return fmt.Errorf("get execution: %w", err)
+	}
+	n, err := q.MarkAgentJobExecutionFinished(ctx, sqlc.MarkAgentJobExecutionFinishedParams{
+		OrgID:  orgID,
+		ID:     executionID,
+		Status: status,
+		Error:  message,
 	})
+	if err != nil {
+		return fmt.Errorf("mark execution finished: %w", err)
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	runID := ""
+	if execRow.RunID != nil {
+		runID = *execRow.RunID
+	}
+	if err := q.UpdateAgentJobLastRun(ctx, sqlc.UpdateAgentJobLastRunParams{
+		ID:        execRow.JobID,
+		LastRunAt: execRow.ScheduledFor,
+		LastRunID: stringPtrParam(runID),
+		LastError: message,
+	}); err != nil {
+		return fmt.Errorf("update job last run: %w", err)
+	}
+	return nil
 }
 
 func NextRun(expr, timezone string, after time.Time) (time.Time, error) {

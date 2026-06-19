@@ -110,6 +110,89 @@ func TestLocalStoreRejectsWrongContentType(t *testing.T) {
 	}
 }
 
+func TestLocalStoreAcceptsContentTypeParameters(t *testing.T) {
+	store, err := NewLocal(t.TempDir(), "https://app.example.test", strings.Repeat("s", 32))
+	if err != nil {
+		t.Fatalf("NewLocal: %v", err)
+	}
+	slots, err := store.MintSlots(context.Background(), "org_1/42/req_1", MintRequest{
+		Kind:        KindScreenshot,
+		ContentType: ContentTypePNG,
+		Count:       1,
+	})
+	if err != nil {
+		t.Fatalf("MintSlots: %v", err)
+	}
+	putURL, _ := url.Parse(slots[0].PutURL)
+	req := httptest.NewRequest(http.MethodPut, putURL.Path, bytes.NewReader([]byte("png")))
+	req.Header.Set("Content-Type", ContentTypePNG+"; charset=binary")
+	rec := httptest.NewRecorder()
+	store.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("PUT status = %d body=%q, want 201", rec.Code, rec.Body.String())
+	}
+}
+
+func TestLocalStoreSignedTokensAreOperationSpecific(t *testing.T) {
+	store, err := NewLocal(t.TempDir(), "https://app.example.test", strings.Repeat("s", 32))
+	if err != nil {
+		t.Fatalf("NewLocal: %v", err)
+	}
+	slots, err := store.MintSlots(context.Background(), "org_1/42/req_1", MintRequest{
+		Kind:        KindScreenshot,
+		ContentType: ContentTypePNG,
+		Count:       1,
+	})
+	if err != nil {
+		t.Fatalf("MintSlots: %v", err)
+	}
+
+	getURL, _ := url.Parse(slots[0].GetURL)
+	putWithGetToken := httptest.NewRequest(http.MethodPut, getURL.Path, bytes.NewReader([]byte("png")))
+	putWithGetToken.Header.Set("Content-Type", ContentTypePNG)
+	putRec := httptest.NewRecorder()
+	store.ServeHTTP(putRec, putWithGetToken)
+	if putRec.Code != http.StatusForbidden {
+		t.Fatalf("PUT with GET token status = %d body=%q, want 403", putRec.Code, putRec.Body.String())
+	}
+
+	putURL, _ := url.Parse(slots[0].PutURL)
+	getWithPutToken := httptest.NewRequest(http.MethodGet, putURL.Path, nil)
+	getRec := httptest.NewRecorder()
+	store.ServeHTTP(getRec, getWithPutToken)
+	if getRec.Code != http.StatusForbidden {
+		t.Fatalf("GET with PUT token status = %d body=%q, want 403", getRec.Code, getRec.Body.String())
+	}
+}
+
+func TestLocalStoreRejectsTamperedSignedToken(t *testing.T) {
+	store, err := NewLocal(t.TempDir(), "https://app.example.test", strings.Repeat("s", 32))
+	if err != nil {
+		t.Fatalf("NewLocal: %v", err)
+	}
+	slots, err := store.MintSlots(context.Background(), "org_1/42/req_1", MintRequest{
+		Kind:        KindScreenshot,
+		ContentType: ContentTypePNG,
+		Count:       1,
+	})
+	if err != nil {
+		t.Fatalf("MintSlots: %v", err)
+	}
+	getURL, _ := url.Parse(slots[0].GetURL)
+	tampered := getURL.Path
+	if prefix, ok := strings.CutSuffix(tampered, "A"); ok {
+		tampered = prefix + "B"
+	} else {
+		tampered += "A"
+	}
+	req := httptest.NewRequest(http.MethodGet, tampered, nil)
+	rec := httptest.NewRecorder()
+	store.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("tampered GET status = %d body=%q, want 403", rec.Code, rec.Body.String())
+	}
+}
+
 func TestLocalStoreUploadCopyErrorStatus(t *testing.T) {
 	store, err := NewLocal(t.TempDir(), "https://app.example.test", strings.Repeat("s", 32))
 	if err != nil {
