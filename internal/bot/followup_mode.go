@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hetchyhq/hetchy/internal/convstore"
-	"github.com/hetchyhq/hetchy/internal/orgcfg"
+	"github.com/sleuth-io/hetchy/internal/convstore"
+	"github.com/sleuth-io/hetchy/internal/orgcfg"
 )
 
 type followUpMode string

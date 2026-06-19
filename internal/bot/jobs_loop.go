@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/hetchyhq/hetchy/internal/jobs"
+	"github.com/sleuth-io/hetchy/internal/jobs"
 )
 
 // runJobDispatchLoop claims and runs due scheduled jobs on a fixed

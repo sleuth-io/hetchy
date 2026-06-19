@@ -4,7 +4,7 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/hetchyhq/hetchy/internal/artifacts"
+	"github.com/sleuth-io/hetchy/internal/artifacts"
 )
 
 type artifactHTTPServer interface {

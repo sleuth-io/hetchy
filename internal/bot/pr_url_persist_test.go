@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hetchyhq/hetchy/internal/blocks"
-	"github.com/hetchyhq/hetchy/internal/convstore"
+	"github.com/sleuth-io/hetchy/internal/blocks"
+	"github.com/sleuth-io/hetchy/internal/convstore"
 )
 
 func TestPRURLPersistingEmitterFindsURLSplitAcrossAppends(t *testing.T) {
@@ -17,10 +17,10 @@ func TestPRURLPersistingEmitterFindsURLSplitAcrossAppends(t *testing.T) {
 	}, newCaptureEmitter())
 
 	id := emit.Start(blocks.KindResult, "Done!", nil)
-	emit.Append(id, "Opened https://github.com/hetchyhq/het")
+	emit.Append(id, "Opened https://github.com/sleuth-io/het")
 	emit.Append(id, "chy/pull/222")
 
-	const want = "https://github.com/hetchyhq/hetchy/pull/222"
+	const want = "https://github.com/sleuth-io/hetchy/pull/222"
 	if got := emit.Latest(); got != want {
 		t.Fatalf("Latest() = %q, want %q", got, want)
 	}

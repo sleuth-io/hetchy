@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hetchyhq/hetchy/internal/auth"
-	"github.com/hetchyhq/hetchy/internal/orgcfg"
+	"github.com/sleuth-io/hetchy/internal/auth"
+	"github.com/sleuth-io/hetchy/internal/orgcfg"
 )
 
 func TestAPIKeySettingsActionHandlerRejectsInvalidRequests(t *testing.T) {
@@ -78,25 +78,25 @@ func TestApplyDefaultRepoChange(t *testing.T) {
 		{
 			name:      "absent field leaves existing selection",
 			form:      map[string][]string{},
-			current:   orgcfg.Config{DefaultGitHubOwner: "hetchyhq", DefaultGitHubRepo: "hetchy"},
+			current:   orgcfg.Config{DefaultGitHubOwner: "sleuth-io", DefaultGitHubRepo: "hetchy"},
 			wantOK:    true,
-			wantOwner: "hetchyhq",
+			wantOwner: "sleuth-io",
 			wantRepo:  "hetchy",
 			wantCode:  http.StatusOK,
 		},
 		{
 			name:     "blank field clears selection",
 			form:     map[string][]string{"default_repo": {""}},
-			current:  orgcfg.Config{DefaultGitHubOwner: "hetchyhq", DefaultGitHubRepo: "hetchy"},
+			current:  orgcfg.Config{DefaultGitHubOwner: "sleuth-io", DefaultGitHubRepo: "hetchy"},
 			wantOK:   true,
 			wantCode: http.StatusOK,
 		},
 		{
 			name:      "malformed field errors before store lookup",
 			form:      map[string][]string{"default_repo": {"not-a-slug"}},
-			current:   orgcfg.Config{DefaultGitHubOwner: "hetchyhq", DefaultGitHubRepo: "hetchy"},
+			current:   orgcfg.Config{DefaultGitHubOwner: "sleuth-io", DefaultGitHubRepo: "hetchy"},
 			wantOK:    false,
-			wantOwner: "hetchyhq",
+			wantOwner: "sleuth-io",
 			wantRepo:  "hetchy",
 			wantCode:  http.StatusBadRequest,
 		},

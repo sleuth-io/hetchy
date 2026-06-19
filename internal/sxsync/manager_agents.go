@@ -10,8 +10,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	sxlib "github.com/sleuth-io/sx/pkg/sxvault"
 
-	"github.com/hetchyhq/hetchy/internal/agents"
-	"github.com/hetchyhq/hetchy/internal/db/sqlc"
+	"github.com/sleuth-io/hetchy/internal/agents"
+	"github.com/sleuth-io/hetchy/internal/db/sqlc"
 )
 
 func (m *Manager) SyncAgents(ctx context.Context, orgID string, actor Actor) ([]agents.Profile, error) {

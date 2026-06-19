@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/hetchyhq/hetchy/internal/auth"
-	"github.com/hetchyhq/hetchy/internal/db/sqlc"
+	"github.com/sleuth-io/hetchy/internal/auth"
+	"github.com/sleuth-io/hetchy/internal/db/sqlc"
 )
 
 // repositorySummary is the shape returned by GET /api/v1/repositories. The

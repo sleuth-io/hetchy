@@ -9,8 +9,8 @@ import (
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/hetchyhq/hetchy/internal/blocks"
-	"github.com/hetchyhq/hetchy/internal/runstore"
+	"github.com/sleuth-io/hetchy/internal/blocks"
+	"github.com/sleuth-io/hetchy/internal/runstore"
 )
 
 const recoverySweepInterval = 30 * time.Second

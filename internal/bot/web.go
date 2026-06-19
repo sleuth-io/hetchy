@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/hetchyhq/hetchy/internal/artifacts"
-	"github.com/hetchyhq/hetchy/internal/webui"
+	"github.com/sleuth-io/hetchy/internal/artifacts"
+	"github.com/sleuth-io/hetchy/internal/webui"
 )
 
 func (b *Bot) runWeb(ctx context.Context) error {

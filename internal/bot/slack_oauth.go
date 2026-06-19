@@ -15,8 +15,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/slack-go/slack"
 
-	"github.com/hetchyhq/hetchy/internal/auth"
-	"github.com/hetchyhq/hetchy/internal/orgcfg"
+	"github.com/sleuth-io/hetchy/internal/auth"
+	"github.com/sleuth-io/hetchy/internal/orgcfg"
 )
 
 // slackInstallScopes is the bot scope list requested at OAuth time. Must

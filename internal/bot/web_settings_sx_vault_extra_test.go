@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/hetchyhq/hetchy/internal/orgcfg"
+	"github.com/sleuth-io/hetchy/internal/orgcfg"
 )
 
 func TestSXVaultSettingsHandlerExistingAndDelete(t *testing.T) {

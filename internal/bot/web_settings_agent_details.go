@@ -18,9 +18,9 @@ import (
 	"github.com/yuin/goldmark/parser"
 	"github.com/yuin/goldmark/renderer/html"
 
-	"github.com/hetchyhq/hetchy/internal/agents"
-	"github.com/hetchyhq/hetchy/internal/auth"
-	"github.com/hetchyhq/hetchy/internal/sxsync"
+	"github.com/sleuth-io/hetchy/internal/agents"
+	"github.com/sleuth-io/hetchy/internal/auth"
+	"github.com/sleuth-io/hetchy/internal/sxsync"
 )
 
 // Max bytes we will return from a single file inside a skill zip. Skills are

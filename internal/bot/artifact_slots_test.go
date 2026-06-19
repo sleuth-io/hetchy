@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hetchyhq/hetchy/internal/artifacts"
+	"github.com/sleuth-io/hetchy/internal/artifacts"
 )
 
 type fakeArtifactMinter struct {

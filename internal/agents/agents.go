@@ -16,9 +16,9 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/hetchyhq/hetchy/internal/db"
-	"github.com/hetchyhq/hetchy/internal/db/sqlc"
-	"github.com/hetchyhq/hetchy/internal/secrets"
+	"github.com/sleuth-io/hetchy/internal/db"
+	"github.com/sleuth-io/hetchy/internal/db/sqlc"
+	"github.com/sleuth-io/hetchy/internal/secrets"
 )
 
 // querier is a narrow interface for the DB operations needed by this package.

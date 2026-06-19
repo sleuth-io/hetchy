@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/hetchyhq/hetchy/internal/agents"
-	"github.com/hetchyhq/hetchy/internal/sxsync"
+	"github.com/sleuth-io/hetchy/internal/agents"
+	"github.com/sleuth-io/hetchy/internal/sxsync"
 )
 
 type agentSettingsView struct {

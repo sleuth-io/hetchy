@@ -10,8 +10,8 @@ import (
 	"github.com/google/go-github/v66/github"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/hetchyhq/hetchy/internal/convstore"
-	"github.com/hetchyhq/hetchy/internal/runstore"
+	"github.com/sleuth-io/hetchy/internal/convstore"
+	"github.com/sleuth-io/hetchy/internal/runstore"
 )
 
 type autoMergeDetail struct {

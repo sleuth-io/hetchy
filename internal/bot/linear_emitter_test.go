@@ -6,8 +6,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/hetchyhq/hetchy/internal/blocks"
-	"github.com/hetchyhq/hetchy/internal/linear"
+	"github.com/sleuth-io/hetchy/internal/blocks"
+	"github.com/sleuth-io/hetchy/internal/linear"
 )
 
 // fakeLinearAPI records every call the emitter and webhook handler

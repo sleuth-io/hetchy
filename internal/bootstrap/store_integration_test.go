@@ -23,9 +23,9 @@ import (
 	"os"
 	"testing"
 
-	"github.com/hetchyhq/hetchy/internal/db"
-	"github.com/hetchyhq/hetchy/internal/db/sqlc"
-	"github.com/hetchyhq/hetchy/internal/secrets"
+	"github.com/sleuth-io/hetchy/internal/db"
+	"github.com/sleuth-io/hetchy/internal/db/sqlc"
+	"github.com/sleuth-io/hetchy/internal/secrets"
 )
 
 func sqlcGetParams(installID, repoID int64, path, name string) sqlc.GetRepoSecretValueParams {

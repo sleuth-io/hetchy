@@ -11,7 +11,7 @@ import (
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
 	sdkerrors "github.com/daytonaio/daytona/libs/sdk-go/pkg/errors"
 
-	"github.com/hetchyhq/hetchy/internal/blocks"
+	"github.com/sleuth-io/hetchy/internal/blocks"
 )
 
 // botWithStartFn returns a minimal Bot whose startFn is controlled by the

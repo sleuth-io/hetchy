@@ -4,8 +4,8 @@ import (
 	"encoding/base64"
 	"strings"
 
-	"github.com/hetchyhq/hetchy/internal/agents"
-	"github.com/hetchyhq/hetchy/internal/orgcfg"
+	"github.com/sleuth-io/hetchy/internal/agents"
+	"github.com/sleuth-io/hetchy/internal/orgcfg"
 )
 
 // claudeAuthEnv picks the env-var name + value to inject into the

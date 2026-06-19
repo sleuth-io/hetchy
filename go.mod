@@ -1,4 +1,4 @@
-module github.com/hetchyhq/hetchy
+module github.com/sleuth-io/hetchy
 
 go 1.25.6
 

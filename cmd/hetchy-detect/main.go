@@ -21,7 +21,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/hetchyhq/hetchy/internal/bootstrap"
+	"github.com/sleuth-io/hetchy/internal/bootstrap"
 )
 
 func main() {

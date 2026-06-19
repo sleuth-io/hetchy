@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hetchyhq/hetchy/internal/blocks"
-	"github.com/hetchyhq/hetchy/internal/convstore"
+	"github.com/sleuth-io/hetchy/internal/blocks"
+	"github.com/sleuth-io/hetchy/internal/convstore"
 )
 
 // appendMode controls how the persister stitches the live recorder

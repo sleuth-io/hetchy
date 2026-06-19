@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/hetchyhq/hetchy/internal/bootstrap"
+	"github.com/sleuth-io/hetchy/internal/bootstrap"
 )
 
 func (b *Bot) saveBootstrapSpecResult(ctx context.Context, res *bootstrap.LoopResult, repo repoCtx) (*bootstrap.Spec, error) {

@@ -14,9 +14,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/joho/godotenv"
 
-	"github.com/hetchyhq/hetchy/db/migrations"
-	"github.com/hetchyhq/hetchy/internal/bot"
-	"github.com/hetchyhq/hetchy/internal/buildinfo"
+	"github.com/sleuth-io/hetchy/db/migrations"
+	"github.com/sleuth-io/hetchy/internal/bot"
+	"github.com/sleuth-io/hetchy/internal/buildinfo"
 )
 
 // parseLogLevel maps LOG_LEVEL to slog.Level. Unset or unrecognized

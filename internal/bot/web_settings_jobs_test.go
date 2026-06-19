@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hetchyhq/hetchy/internal/agents"
-	"github.com/hetchyhq/hetchy/internal/jobs"
-	"github.com/hetchyhq/hetchy/internal/sxsync"
-	"github.com/hetchyhq/hetchy/internal/webui"
+	"github.com/sleuth-io/hetchy/internal/agents"
+	"github.com/sleuth-io/hetchy/internal/jobs"
+	"github.com/sleuth-io/hetchy/internal/sxsync"
+	"github.com/sleuth-io/hetchy/internal/webui"
 )
 
 func TestSettingsTemplate_RendersJobsTabForAdmin(t *testing.T) {

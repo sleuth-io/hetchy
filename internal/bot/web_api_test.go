@@ -12,14 +12,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hetchyhq/hetchy/internal/agents"
-	"github.com/hetchyhq/hetchy/internal/auth"
-	"github.com/hetchyhq/hetchy/internal/blocks"
-	"github.com/hetchyhq/hetchy/internal/convstore"
-	"github.com/hetchyhq/hetchy/internal/db/sqlc"
-	"github.com/hetchyhq/hetchy/internal/jobs"
-	"github.com/hetchyhq/hetchy/internal/runstore"
-	"github.com/hetchyhq/hetchy/internal/sxsync"
+	"github.com/sleuth-io/hetchy/internal/agents"
+	"github.com/sleuth-io/hetchy/internal/auth"
+	"github.com/sleuth-io/hetchy/internal/blocks"
+	"github.com/sleuth-io/hetchy/internal/convstore"
+	"github.com/sleuth-io/hetchy/internal/db/sqlc"
+	"github.com/sleuth-io/hetchy/internal/jobs"
+	"github.com/sleuth-io/hetchy/internal/runstore"
+	"github.com/sleuth-io/hetchy/internal/sxsync"
 )
 
 // TestExtractSXSkillsSurvivesPersistenceRoundTrip pins the contract
@@ -73,7 +73,7 @@ func TestConversationDetailOverlaysDurableRunEvents(t *testing.T) {
 		}),
 		runEventForTest(t, "block_done", sseEvent{ID: "p1", Status: blocks.StatusDone}),
 		runEventForTest(t, "block_start", sseEvent{ID: "p2", Kind: blocks.KindResult, Title: "Done!"}),
-		runEventForTest(t, "block_append", sseEvent{ID: "p2", Delta: "https://github.com/hetchyhq/hetchy/pull/222"}),
+		runEventForTest(t, "block_append", sseEvent{ID: "p2", Delta: "https://github.com/sleuth-io/hetchy/pull/222"}),
 		runEventForTest(t, "block_done", sseEvent{ID: "p2", Status: blocks.StatusDone}),
 	}
 	for i := range events {
@@ -107,7 +107,7 @@ func TestConversationDetailOverlaysDurableRunEvents(t *testing.T) {
 
 	detail := b.conversationDetailResponse(context.Background(), "org-1", rec, conversationIncludeOptions{Turns: true})
 
-	if detail.PRURL != "https://github.com/hetchyhq/hetchy/pull/222" {
+	if detail.PRURL != "https://github.com/sleuth-io/hetchy/pull/222" {
 		t.Fatalf("detail PRURL = %q", detail.PRURL)
 	}
 	if detail.SandboxID != "sandbox-1" || detail.Branch != "feature/pr" {
@@ -303,7 +303,7 @@ func TestRepoWorkdirAppendsRepoName(t *testing.T) {
 		slug string
 		want string
 	}{
-		{"hetchyhq/hetchy", "/home/daytona/work/hetchy"},
+		{"sleuth-io/hetchy", "/home/daytona/work/hetchy"},
 		{"sleuth-io/sx", "/home/daytona/work/sx"},
 		{"owner/Repo.Name-WithDots", "/home/daytona/work/Repo.Name-WithDots"},
 		{"single-segment", "/home/daytona/work/single-segment"},
@@ -865,8 +865,8 @@ func TestAppDataHandlerAggregatesRunsAndPRs(t *testing.T) {
 		OrgID:       "org_test",
 		ThreadID:    "thread-1",
 		History:     []string{"Ship the agent UI"},
-		PRURL:       "https://github.com/hetchyhq/hetchy/pull/321",
-		GitHubOwner: "hetchyhq",
+		PRURL:       "https://github.com/sleuth-io/hetchy/pull/321",
+		GitHubOwner: "sleuth-io",
 		GitHubRepo:  "hetchy",
 		CreatorID:   "user_test",
 		AgentSlug:   "alice",
@@ -924,7 +924,7 @@ func TestAppDataHandlerAggregatesRunsAndPRs(t *testing.T) {
 	if run.CurrentStep != "Sandbox" {
 		t.Fatalf("current_step = %q, want Sandbox", run.CurrentStep)
 	}
-	if run.PRNumber != "321" || run.Repository != "hetchyhq/hetchy" || run.AgentSlug != "alice" {
+	if run.PRNumber != "321" || run.Repository != "sleuth-io/hetchy" || run.AgentSlug != "alice" {
 		t.Fatalf("run metadata = %+v", run)
 	}
 	if run.UpdatedAt != runUpdatedAt.Format(time.RFC3339) {
@@ -1250,7 +1250,7 @@ func TestAppDataLifecycleStepText(t *testing.T) {
 		{text: "agent learned a bootstrap spec", want: "Learning"},
 		{text: "bootstrapping repository", want: "Bootstrap"},
 		{text: "sx skills installed", want: "Skills"},
-		{text: "gh pr create https://github.com/hetchyhq/hetchy/pull/321", want: "PR"},
+		{text: "gh pr create https://github.com/sleuth-io/hetchy/pull/321", want: "PR"},
 		{text: "cloning repo checkout", want: "Sandbox"},
 		{text: "validation proof accepted", want: "Validating"},
 		{text: "ordinary coding update", want: ""},
@@ -1294,7 +1294,7 @@ func TestAppDataStatusAndStateLabels(t *testing.T) {
 }
 
 func TestAppDataResultLabel(t *testing.T) {
-	const prURL = "https://github.com/hetchyhq/hetchy/pull/321"
+	const prURL = "https://github.com/sleuth-io/hetchy/pull/321"
 	cases := []struct {
 		name     string
 		state    string
@@ -1505,9 +1505,9 @@ func TestAppDataStepKindClassification(t *testing.T) {
 		{name: "setup default", kind: blocks.KindSetup, text: "installing dependencies", want: "Sandbox"},
 		{name: "notify pr", kind: blocks.KindNotify, text: "PR opened", want: "PR"},
 		{name: "notify fallback", kind: blocks.KindNotify, text: "validation proof accepted", want: "Validating"},
-		{name: "agent pr", kind: blocks.KindClaudeText, text: "created PR https://github.com/hetchyhq/hetchy/pull/1", want: "PR"},
+		{name: "agent pr", kind: blocks.KindClaudeText, text: "created PR https://github.com/sleuth-io/hetchy/pull/1", want: "PR"},
 		{name: "agent coding", kind: blocks.KindToolUse, text: "reading files", want: "Coding"},
-		{name: "result pr", kind: blocks.KindResult, text: "https://github.com/hetchyhq/hetchy/pull/1", want: "PR"},
+		{name: "result pr", kind: blocks.KindResult, text: "https://github.com/sleuth-io/hetchy/pull/1", want: "PR"},
 		{name: "result validation", kind: blocks.KindResult, text: "done", want: "Validating"},
 		{name: "error lifecycle", kind: blocks.KindError, text: "recovering from stale run", want: "Recovering"},
 		{name: "unknown lifecycle", kind: "", text: "sandbox ready", want: "Sandbox"},
@@ -1561,7 +1561,7 @@ func TestAppDataMilestones(t *testing.T) {
 		},
 		{
 			name: "no run with pr",
-			rec:  convstore.Record{History: []string{"Ship it"}, PRURL: "https://github.com/hetchyhq/hetchy/pull/1"},
+			rec:  convstore.Record{History: []string{"Ship it"}, PRURL: "https://github.com/sleuth-io/hetchy/pull/1"},
 			want: []string{"done", "done", "done", "done", "done"},
 		},
 		{
@@ -1584,7 +1584,7 @@ func TestAppDataMilestones(t *testing.T) {
 		},
 		{
 			name: "running after pr",
-			rec:  convstore.Record{PRURL: "https://github.com/hetchyhq/hetchy/pull/1"},
+			rec:  convstore.Record{PRURL: "https://github.com/sleuth-io/hetchy/pull/1"},
 			run:  runstore.Run{State: runstore.StateRunning, SandboxID: "sandbox-1", CommandStep: "run-script"},
 			has:  true,
 			want: []string{"done", "done", "done", "done", "current"},
@@ -1597,7 +1597,7 @@ func TestAppDataMilestones(t *testing.T) {
 		},
 		{
 			name: "failed with pr",
-			rec:  convstore.Record{PRURL: "https://github.com/hetchyhq/hetchy/pull/1"},
+			rec:  convstore.Record{PRURL: "https://github.com/sleuth-io/hetchy/pull/1"},
 			run:  runstore.Run{State: runstore.StateFailed, SandboxID: "sandbox-1"},
 			has:  true,
 			want: []string{"done", "done", "done", "done", "pending"},
@@ -1625,11 +1625,11 @@ func TestPullRequestNumber(t *testing.T) {
 	}{
 		{raw: "", want: ""},
 		{raw: "not a url", want: ""},
-		{raw: "https://example.com/hetchyhq/hetchy/pull/321", want: ""},
-		{raw: "https://github.com/hetchyhq/hetchy/pull/not-a-number", want: ""},
-		{raw: "https://github.com/hetchyhq/hetchy/pull/321", want: "321"},
-		{raw: "https://github.com/hetchyhq/hetchy/pull/321/files", want: "321"},
-		{raw: "https://github.com/hetchyhq/hetchy/pull/321?tab=checks", want: "321"},
+		{raw: "https://example.com/sleuth-io/hetchy/pull/321", want: ""},
+		{raw: "https://github.com/sleuth-io/hetchy/pull/not-a-number", want: ""},
+		{raw: "https://github.com/sleuth-io/hetchy/pull/321", want: "321"},
+		{raw: "https://github.com/sleuth-io/hetchy/pull/321/files", want: "321"},
+		{raw: "https://github.com/sleuth-io/hetchy/pull/321?tab=checks", want: "321"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.raw, func(t *testing.T) {
@@ -1653,9 +1653,9 @@ func TestAppDataHandlerExcludesClosedAndMergedPRs(t *testing.T) {
 			OrgID:       "org_test",
 			ThreadID:    "thread-open",
 			History:     []string{"open"},
-			PRURL:       "https://github.com/hetchyhq/hetchy/pull/1",
+			PRURL:       "https://github.com/sleuth-io/hetchy/pull/1",
 			PRState:     githubPRStateOpen,
-			GitHubOwner: "hetchyhq",
+			GitHubOwner: "sleuth-io",
 			GitHubRepo:  "hetchy",
 			TaskOptions: noRequiredChecks,
 			UpdatedAt:   updatedAt,
@@ -1664,10 +1664,10 @@ func TestAppDataHandlerExcludesClosedAndMergedPRs(t *testing.T) {
 			OrgID:       "org_test",
 			ThreadID:    "thread-merged",
 			History:     []string{"merged"},
-			PRURL:       "https://github.com/hetchyhq/hetchy/pull/2",
+			PRURL:       "https://github.com/sleuth-io/hetchy/pull/2",
 			PRState:     githubPRStateClosed,
 			PRMerged:    true,
-			GitHubOwner: "hetchyhq",
+			GitHubOwner: "sleuth-io",
 			GitHubRepo:  "hetchy",
 			TaskOptions: noRequiredChecks,
 			UpdatedAt:   updatedAt,
@@ -1676,9 +1676,9 @@ func TestAppDataHandlerExcludesClosedAndMergedPRs(t *testing.T) {
 			OrgID:       "org_test",
 			ThreadID:    "thread-closed",
 			History:     []string{"closed"},
-			PRURL:       "https://github.com/hetchyhq/hetchy/pull/3",
+			PRURL:       "https://github.com/sleuth-io/hetchy/pull/3",
 			PRState:     githubPRStateClosed,
-			GitHubOwner: "hetchyhq",
+			GitHubOwner: "sleuth-io",
 			GitHubRepo:  "hetchy",
 			TaskOptions: noRequiredChecks,
 			UpdatedAt:   updatedAt,
@@ -1733,7 +1733,7 @@ func TestAppDataPRReadinessRequiresVerifiedOutcome(t *testing.T) {
 		ConversationID: "thread-1",
 		Title:          "Ship it",
 		State:          runstore.StateSucceeded,
-		PRURL:          "https://github.com/hetchyhq/hetchy/pull/321",
+		PRURL:          "https://github.com/sleuth-io/hetchy/pull/321",
 		TaskOptions: map[string]bool{
 			chatTaskValidateKey:             true,
 			chatTaskReviewCodeBeforePushKey: true,

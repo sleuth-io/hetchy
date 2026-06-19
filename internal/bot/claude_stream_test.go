@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hetchyhq/hetchy/internal/blocks"
+	"github.com/sleuth-io/hetchy/internal/blocks"
 )
 
 func TestClaudeStream_AssistantText(t *testing.T) {

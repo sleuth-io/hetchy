@@ -13,7 +13,7 @@ VERSION?=$(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT?=$(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
 DATE?=$(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 SANDBOX_VERSION?=$(shell ./scripts/sandbox-version.sh 2>/dev/null || echo "dev")
-LDFLAGS=-ldflags "-X github.com/hetchyhq/hetchy/internal/buildinfo.Version=$(VERSION) -X github.com/hetchyhq/hetchy/internal/buildinfo.Commit=$(COMMIT) -X github.com/hetchyhq/hetchy/internal/buildinfo.Date=$(DATE) -X github.com/hetchyhq/hetchy/internal/buildinfo.SandboxSnapshotVersion=$(SANDBOX_VERSION)"
+LDFLAGS=-ldflags "-X github.com/sleuth-io/hetchy/internal/buildinfo.Version=$(VERSION) -X github.com/sleuth-io/hetchy/internal/buildinfo.Commit=$(COMMIT) -X github.com/sleuth-io/hetchy/internal/buildinfo.Date=$(DATE) -X github.com/sleuth-io/hetchy/internal/buildinfo.SandboxSnapshotVersion=$(SANDBOX_VERSION)"
 
 # Local support services. Daytona runs in Daytona Cloud for dev/staging/prod;
 # the host-side bot only needs the local Postgres container from compose.

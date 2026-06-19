@@ -6,7 +6,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/hetchyhq/hetchy/internal/blocks"
+	"github.com/sleuth-io/hetchy/internal/blocks"
 )
 
 // agentLineRouter consumes the line-by-line output of agent.sh /

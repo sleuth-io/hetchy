@@ -7,8 +7,8 @@ import (
 
 	"github.com/google/go-github/v66/github"
 
-	"github.com/hetchyhq/hetchy/internal/db"
-	"github.com/hetchyhq/hetchy/internal/db/sqlc"
+	"github.com/sleuth-io/hetchy/internal/db"
+	"github.com/sleuth-io/hetchy/internal/db/sqlc"
 )
 
 // SyncResult summarises a single SyncInstallation run. The HTTP setup

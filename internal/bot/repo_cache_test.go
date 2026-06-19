@@ -229,7 +229,7 @@ func TestPrepareRepoWorkdir_FreshCloneSeedsCache(t *testing.T) {
 
 	script := repoCacheHarness(originBare) + "\nhetchy_prepare_repo_workdir\n"
 	out, err := runBashScript(t, script, map[string]string{
-		"SF_REPO":                             "hetchyhq/hetchy",
+		"SF_REPO":                             "sleuth-io/hetchy",
 		"SF_WORKDIR":                          workdir,
 		"SF_BASE_BRANCH":                      "main",
 		"HETCHY_CACHE_STATUS":                 "mounted",
@@ -282,7 +282,7 @@ func TestPrepareRepoWorkdir_WarmCacheRestoresAndHardResets(t *testing.T) {
 	workdir := filepath.Join(t.TempDir(), "src", "hetchy")
 	script := repoCacheHarness(originBare) + "\nhetchy_prepare_repo_workdir\n"
 	out, err := runBashScript(t, script, map[string]string{
-		"SF_REPO":                        "hetchyhq/hetchy",
+		"SF_REPO":                        "sleuth-io/hetchy",
 		"SF_WORKDIR":                     workdir,
 		"SF_BASE_BRANCH":                 "main",
 		"HETCHY_CACHE_STATUS":            "mounted",
@@ -333,7 +333,7 @@ func TestPrepareRepoWorkdir_SkipsWarmCacheBelowCloneThreshold(t *testing.T) {
 	workdir := filepath.Join(t.TempDir(), "src", "hetchy")
 	script := repoCacheHarness(originBare) + "\nhetchy_prepare_repo_workdir\n"
 	out, err := runBashScript(t, script, map[string]string{
-		"SF_REPO":             "hetchyhq/hetchy",
+		"SF_REPO":             "sleuth-io/hetchy",
 		"SF_WORKDIR":          workdir,
 		"SF_BASE_BRANCH":      "main",
 		"HETCHY_CACHE_STATUS": "mounted",
@@ -393,7 +393,7 @@ func TestPrepareRepoWorkdir_ExistingCheckoutIsReused(t *testing.T) {
 	cacheMount := t.TempDir()
 	script := repoCacheHarness(originBare) + "\nhetchy_prepare_repo_workdir\n"
 	out, err := runBashScript(t, script, map[string]string{
-		"SF_REPO":             "hetchyhq/hetchy",
+		"SF_REPO":             "sleuth-io/hetchy",
 		"SF_WORKDIR":          workdir,
 		"SF_BASE_BRANCH":      "main",
 		"HETCHY_CACHE_STATUS": "mounted",
@@ -423,7 +423,7 @@ func TestPrepareRepoWorkdir_NoCacheStatusFallsBackToClone(t *testing.T) {
 
 	script := repoCacheHarness(originBare) + "\nhetchy_prepare_repo_workdir\n"
 	out, err := runBashScript(t, script, map[string]string{
-		"SF_REPO":        "hetchyhq/hetchy",
+		"SF_REPO":        "sleuth-io/hetchy",
 		"SF_WORKDIR":     workdir,
 		"SF_BASE_BRANCH": "main",
 		// HETCHY_CACHE_STATUS deliberately unset.

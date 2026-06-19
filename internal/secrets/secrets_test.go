@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hetchyhq/hetchy/internal/secrets"
+	"github.com/sleuth-io/hetchy/internal/secrets"
 )
 
 func TestRoundTrip(t *testing.T) {

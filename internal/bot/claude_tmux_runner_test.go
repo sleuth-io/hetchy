@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hetchyhq/hetchy/internal/blocks"
+	"github.com/sleuth-io/hetchy/internal/blocks"
 )
 
 func appendFile(t *testing.T, path, content string) {

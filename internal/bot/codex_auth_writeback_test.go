@@ -9,7 +9,7 @@ import (
 
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
 
-	"github.com/hetchyhq/hetchy/internal/orgcfg"
+	"github.com/sleuth-io/hetchy/internal/orgcfg"
 )
 
 func TestPersistOpenAICodexAuthJSONWritesRefreshedAuth(t *testing.T) {
@@ -21,7 +21,7 @@ func TestPersistOpenAICodexAuthJSONWritesRefreshedAuth(t *testing.T) {
 		OrgID:                 "org_1",
 		OpenAICodexOAuthToken: original,
 		SXKey:                 "sx-key",
-		DefaultGitHubOwner:    "hetchyhq",
+		DefaultGitHubOwner:    "sleuth-io",
 		DefaultGitHubRepo:     "hetchy",
 	}}
 	var gotPath string
@@ -54,7 +54,7 @@ func TestPersistOpenAICodexAuthJSONWritesRefreshedAuth(t *testing.T) {
 	if got != want {
 		t.Fatalf("stored auth json = %s, want %s", got, want)
 	}
-	if store.upserts[0].SXKey != "sx-key" || store.upserts[0].DefaultGitHubOwner != "hetchyhq" || store.upserts[0].DefaultGitHubRepo != "hetchy" {
+	if store.upserts[0].SXKey != "sx-key" || store.upserts[0].DefaultGitHubOwner != "sleuth-io" || store.upserts[0].DefaultGitHubRepo != "hetchy" {
 		t.Fatalf("upsert did not preserve org settings: %+v", store.upserts[0])
 	}
 }

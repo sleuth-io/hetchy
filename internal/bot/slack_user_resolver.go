@@ -8,7 +8,7 @@ import (
 
 	"github.com/slack-go/slack"
 
-	"github.com/hetchyhq/hetchy/internal/auth"
+	"github.com/sleuth-io/hetchy/internal/auth"
 )
 
 // slackUserResolver maps a Slack user_id to the WorkOS user_id of the

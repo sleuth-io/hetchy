@@ -18,8 +18,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/hetchyhq/hetchy/internal/db"
-	"github.com/hetchyhq/hetchy/internal/runstore"
+	"github.com/sleuth-io/hetchy/internal/db"
+	"github.com/sleuth-io/hetchy/internal/runstore"
 )
 
 func newRunstoreTestStore(t *testing.T) (*runstore.Store, *pgxpool.Pool) {

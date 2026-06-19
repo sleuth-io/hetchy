@@ -5,8 +5,8 @@ import (
 	"errors"
 	"maps"
 
-	"github.com/hetchyhq/hetchy/internal/agents"
-	"github.com/hetchyhq/hetchy/internal/sxsync"
+	"github.com/sleuth-io/hetchy/internal/agents"
+	"github.com/sleuth-io/hetchy/internal/sxsync"
 )
 
 func (b *Bot) addOrgSXVaultEnv(ctx context.Context, orgID string, agent agents.Profile, env map[string]string) {

@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hetchyhq/hetchy/internal/auth"
-	"github.com/hetchyhq/hetchy/internal/jobs"
+	"github.com/sleuth-io/hetchy/internal/auth"
+	"github.com/sleuth-io/hetchy/internal/jobs"
 )
 
 const jobsAPIPrefix = "/api/v1/jobs"

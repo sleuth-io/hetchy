@@ -11,7 +11,7 @@ import (
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
 
-	"github.com/hetchyhq/hetchy/internal/orgcfg"
+	"github.com/sleuth-io/hetchy/internal/orgcfg"
 )
 
 // maxSlackBodyBytes caps the request body for /slack/* endpoints. Slack

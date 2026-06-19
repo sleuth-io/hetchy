@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hetchyhq/hetchy/internal/auth"
-	"github.com/hetchyhq/hetchy/internal/linear"
-	"github.com/hetchyhq/hetchy/internal/secrets"
+	"github.com/sleuth-io/hetchy/internal/auth"
+	"github.com/sleuth-io/hetchy/internal/linear"
+	"github.com/sleuth-io/hetchy/internal/secrets"
 )
 
 func newLinearOAuthTestBot(t *testing.T) (*Bot, *fakeOrgStore) {

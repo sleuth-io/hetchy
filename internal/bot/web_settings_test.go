@@ -12,12 +12,12 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/hetchyhq/hetchy/internal/auth"
-	"github.com/hetchyhq/hetchy/internal/bootstrap"
-	"github.com/hetchyhq/hetchy/internal/db/sqlc"
-	"github.com/hetchyhq/hetchy/internal/orgcfg"
-	"github.com/hetchyhq/hetchy/internal/secrets"
-	"github.com/hetchyhq/hetchy/internal/sxsync"
+	"github.com/sleuth-io/hetchy/internal/auth"
+	"github.com/sleuth-io/hetchy/internal/bootstrap"
+	"github.com/sleuth-io/hetchy/internal/db/sqlc"
+	"github.com/sleuth-io/hetchy/internal/orgcfg"
+	"github.com/sleuth-io/hetchy/internal/secrets"
+	"github.com/sleuth-io/hetchy/internal/sxsync"
 )
 
 func TestGithubInstallationManageURL(t *testing.T) {
@@ -27,7 +27,7 @@ func TestGithubInstallationManageURL(t *testing.T) {
 		id          int64
 		want        string
 	}{
-		{"Organization", "hetchyhq", 42, "https://github.com/organizations/hetchyhq/settings/installations/42"},
+		{"Organization", "sleuth-io", 42, "https://github.com/organizations/sleuth-io/settings/installations/42"},
 		{"User", "dylan", 99, "https://github.com/settings/installations/99"},
 	}
 	for _, tc := range cases {
@@ -54,7 +54,7 @@ func TestLoadBootstrapStatusUsesRepoAndBootstrapFakes(t *testing.T) {
 	b := newBypassOrgBot(t, "admin")
 	b.bootstrap = boot
 	b.lookupRepoFn = func(_ context.Context, orgID, owner, name string) (sqlc.GithubRepo, error) {
-		if orgID != "org_test" || owner != "hetchyhq" {
+		if orgID != "org_test" || owner != "sleuth-io" {
 			t.Fatalf("lookup repo got org=%q owner=%q", orgID, owner)
 		}
 		if name == "missing" {
@@ -64,8 +64,8 @@ func TestLoadBootstrapStatusUsesRepoAndBootstrapFakes(t *testing.T) {
 	}
 
 	got, err := b.loadBootstrapStatus(context.Background(), []integrationRepo{
-		{OrgID: "org_test", Owner: "hetchyhq", Name: "hetchy"},
-		{OrgID: "org_test", Owner: "hetchyhq", Name: "missing"},
+		{OrgID: "org_test", Owner: "sleuth-io", Name: "hetchy"},
+		{OrgID: "org_test", Owner: "sleuth-io", Name: "missing"},
 	})
 	if err != nil {
 		t.Fatalf("loadBootstrapStatus: %v", err)
@@ -73,7 +73,7 @@ func TestLoadBootstrapStatusUsesRepoAndBootstrapFakes(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("status count = %d, want 1: %#v", len(got), got)
 	}
-	status := got["hetchyhq/hetchy"]
+	status := got["sleuth-io/hetchy"]
 	if status.Status != string(bootstrap.StatusPartial) || status.Kind != "node" {
 		t.Fatalf("status = %+v", status)
 	}
@@ -137,7 +137,7 @@ func TestSettingsHandlerGetAndPostWithFakes(t *testing.T) {
 			OrgID:                "org_test",
 			AnthropicAPIKey:      "sk-ant-old",
 			SlackBotToken:        "xoxb-old",
-			DefaultGitHubOwner:   "hetchyhq",
+			DefaultGitHubOwner:   "sleuth-io",
 			DefaultGitHubRepo:    "hetchy",
 			ClaudeCodeOAuthToken: "oauth-old",
 			SXKey:                "sx-old",

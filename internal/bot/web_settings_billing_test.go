@@ -13,10 +13,10 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/hetchyhq/hetchy/internal/auth"
-	"github.com/hetchyhq/hetchy/internal/billing"
-	"github.com/hetchyhq/hetchy/internal/db"
-	"github.com/hetchyhq/hetchy/internal/db/sqlc"
+	"github.com/sleuth-io/hetchy/internal/auth"
+	"github.com/sleuth-io/hetchy/internal/billing"
+	"github.com/sleuth-io/hetchy/internal/db"
+	"github.com/sleuth-io/hetchy/internal/db/sqlc"
 )
 
 func TestLoadBillingOverviewDisabledDefaults(t *testing.T) {

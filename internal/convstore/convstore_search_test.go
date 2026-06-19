@@ -20,8 +20,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/hetchyhq/hetchy/internal/convstore"
-	"github.com/hetchyhq/hetchy/internal/db"
+	"github.com/sleuth-io/hetchy/internal/convstore"
+	"github.com/sleuth-io/hetchy/internal/db"
 )
 
 // newSearchTestStore opens a convstore and a raw pgxpool for test setup.

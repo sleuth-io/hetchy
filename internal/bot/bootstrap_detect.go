@@ -12,7 +12,7 @@ import (
 
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
 
-	"github.com/hetchyhq/hetchy/internal/bootstrap"
+	"github.com/sleuth-io/hetchy/internal/bootstrap"
 )
 
 // detectViaSandbox runs bootstrap.Detect against the sandbox's checkout

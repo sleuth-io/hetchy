@@ -11,7 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/hetchyhq/hetchy/internal/db/sqlc"
+	"github.com/sleuth-io/hetchy/internal/db/sqlc"
 )
 
 type autoTopupPaymentError struct {

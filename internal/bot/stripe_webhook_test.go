@@ -17,9 +17,9 @@ import (
 	"github.com/stripe/stripe-go/v85"
 	"github.com/stripe/stripe-go/v85/webhook"
 
-	"github.com/hetchyhq/hetchy/internal/billing"
-	"github.com/hetchyhq/hetchy/internal/db"
-	"github.com/hetchyhq/hetchy/internal/db/sqlc"
+	"github.com/sleuth-io/hetchy/internal/billing"
+	"github.com/sleuth-io/hetchy/internal/db"
+	"github.com/sleuth-io/hetchy/internal/db/sqlc"
 )
 
 func TestStripeWebhookHandlerValidation(t *testing.T) {

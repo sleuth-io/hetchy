@@ -11,7 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/hetchyhq/hetchy/internal/runstore"
+	"github.com/sleuth-io/hetchy/internal/runstore"
 )
 
 const recoveryStartupLimit = 20

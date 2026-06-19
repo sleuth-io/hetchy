@@ -4,7 +4,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/hetchyhq/hetchy/internal/blocks"
+	"github.com/sleuth-io/hetchy/internal/blocks"
 )
 
 // captureEmitter is a test-only blocks.Emitter that records every call

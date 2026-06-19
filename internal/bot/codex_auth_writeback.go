@@ -12,7 +12,7 @@ import (
 
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
 
-	"github.com/hetchyhq/hetchy/internal/orgcfg"
+	"github.com/sleuth-io/hetchy/internal/orgcfg"
 )
 
 const (

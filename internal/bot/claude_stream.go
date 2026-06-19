@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hetchyhq/hetchy/internal/blocks"
+	"github.com/sleuth-io/hetchy/internal/blocks"
 )
 
 // claudeStreamParser turns the NDJSON output of

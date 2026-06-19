@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/hetchyhq/hetchy/internal/jobs"
+	"github.com/sleuth-io/hetchy/internal/jobs"
 )
 
 type jobRunContextKey struct{}

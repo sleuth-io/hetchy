@@ -3,8 +3,8 @@ package bot
 import (
 	"context"
 
-	"github.com/hetchyhq/hetchy/internal/blocks"
-	"github.com/hetchyhq/hetchy/internal/runstore"
+	"github.com/sleuth-io/hetchy/internal/blocks"
+	"github.com/sleuth-io/hetchy/internal/runstore"
 )
 
 // handleRecoveredAutoMerge is handleAutoMergeAfterVerifiedPR for runs

@@ -12,7 +12,7 @@ import (
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackutilsx"
 
-	"github.com/hetchyhq/hetchy/internal/blocks"
+	"github.com/sleuth-io/hetchy/internal/blocks"
 )
 
 // slackEmitter posts a single live "status" message per turn and edits

@@ -15,7 +15,7 @@ func TestBuildValidationPromptCoversThreeFlows(t *testing.T) {
 		LessonsMD:            "- Restart the app after rebuilding before HTTP validation.\n",
 	}
 	args := ValidationArgs{
-		OwnerRepo: "hetchyhq/hetchy",
+		OwnerRepo: "sleuth-io/hetchy",
 		Branch:    "feature/sf-abc123",
 		Diff:      "diff --git a/foo.go b/foo.go\n+ new line",
 		PRBody:    "## Summary\nFix the thing.",
@@ -52,7 +52,7 @@ func TestBuildValidationPromptCoversThreeFlows(t *testing.T) {
 		"For CLI tools",
 		"http://localhost:8080",
 		"AUTH_BYPASS",
-		"hetchyhq/hetchy",
+		"sleuth-io/hetchy",
 		"feature/sf-abc123",
 		"/tmp/hetchy-validate/",
 		"summary.md",

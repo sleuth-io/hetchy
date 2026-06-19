@@ -6,9 +6,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/hetchyhq/hetchy/internal/blocks"
-	"github.com/hetchyhq/hetchy/internal/convstore"
-	"github.com/hetchyhq/hetchy/internal/orgcfg"
+	"github.com/sleuth-io/hetchy/internal/blocks"
+	"github.com/sleuth-io/hetchy/internal/convstore"
+	"github.com/sleuth-io/hetchy/internal/orgcfg"
 )
 
 type fakeConversationStore struct {

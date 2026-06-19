@@ -7,14 +7,14 @@ import (
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
 	sxlib "github.com/sleuth-io/sx/pkg/sxvault"
 
-	"github.com/hetchyhq/hetchy/internal/agents"
-	"github.com/hetchyhq/hetchy/internal/blocks"
-	"github.com/hetchyhq/hetchy/internal/bootstrap"
-	"github.com/hetchyhq/hetchy/internal/convstore"
-	"github.com/hetchyhq/hetchy/internal/linear"
-	"github.com/hetchyhq/hetchy/internal/orgcfg"
-	"github.com/hetchyhq/hetchy/internal/runstore"
-	"github.com/hetchyhq/hetchy/internal/sxsync"
+	"github.com/sleuth-io/hetchy/internal/agents"
+	"github.com/sleuth-io/hetchy/internal/blocks"
+	"github.com/sleuth-io/hetchy/internal/bootstrap"
+	"github.com/sleuth-io/hetchy/internal/convstore"
+	"github.com/sleuth-io/hetchy/internal/linear"
+	"github.com/sleuth-io/hetchy/internal/orgcfg"
+	"github.com/sleuth-io/hetchy/internal/runstore"
+	"github.com/sleuth-io/hetchy/internal/sxsync"
 )
 
 type conversationStore interface {

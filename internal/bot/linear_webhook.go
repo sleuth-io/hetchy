@@ -11,9 +11,9 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/hetchyhq/hetchy/internal/db/sqlc"
-	"github.com/hetchyhq/hetchy/internal/linear"
-	"github.com/hetchyhq/hetchy/internal/orgcfg"
+	"github.com/sleuth-io/hetchy/internal/db/sqlc"
+	"github.com/sleuth-io/hetchy/internal/linear"
+	"github.com/sleuth-io/hetchy/internal/orgcfg"
 )
 
 // linearWebhookDedup rejects redelivered/replayed webhook IDs inside

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hetchyhq/hetchy/internal/orgcfg"
+	"github.com/sleuth-io/hetchy/internal/orgcfg"
 )
 
 func TestSettingsHandlerRejectsInvalidAnthropicCredential(t *testing.T) {

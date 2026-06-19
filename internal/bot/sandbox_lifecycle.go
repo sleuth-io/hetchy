@@ -7,7 +7,7 @@ import (
 
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
 
-	"github.com/hetchyhq/hetchy/internal/blocks"
+	"github.com/sleuth-io/hetchy/internal/blocks"
 )
 
 func (b *Bot) resumeSandboxForRun(ctx context.Context, sb *daytona.Sandbox, emit blocks.Emitter) error {

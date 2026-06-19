@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/hetchyhq/hetchy/internal/blocks"
+	"github.com/sleuth-io/hetchy/internal/blocks"
 )
 
 func parseAutoMergeAssessmentFromBlocks(bs []blocks.Block) (*autoMergeAssessment, error) {

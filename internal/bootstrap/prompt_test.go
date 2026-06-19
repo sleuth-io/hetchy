@@ -43,7 +43,7 @@ func TestBuildPromptContent(t *testing.T) {
 		ReadmeExcerpt: "# Foo\n\nA test repo.",
 	}
 	args := PromptArgs{
-		OwnerRepo:       "hetchyhq/hetchy",
+		OwnerRepo:       "sleuth-io/hetchy",
 		Path:            "",
 		SuppliedSecrets: []string{"GITHUB_TOKEN"},
 	}
@@ -51,7 +51,7 @@ func TestBuildPromptContent(t *testing.T) {
 
 	mustContain := []string{
 		// Identifying the target
-		"hetchyhq/hetchy",
+		"sleuth-io/hetchy",
 		// Goal statement (informs the agent's stop criteria)
 		"Goal: the app responds well enough",
 		// Step 1 — "interpret, don't execute literally"

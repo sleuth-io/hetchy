@@ -10,7 +10,7 @@ import (
 
 	sxlib "github.com/sleuth-io/sx/pkg/sxvault"
 
-	"github.com/hetchyhq/hetchy/internal/agents"
+	"github.com/sleuth-io/hetchy/internal/agents"
 )
 
 // AssetZip is the value sxsync returns when callers need the raw zip bytes

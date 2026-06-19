@@ -11,8 +11,8 @@ import (
 
 	"github.com/google/go-github/v66/github"
 
-	"github.com/hetchyhq/hetchy/internal/blocks"
-	"github.com/hetchyhq/hetchy/internal/convstore"
+	"github.com/sleuth-io/hetchy/internal/blocks"
+	"github.com/sleuth-io/hetchy/internal/convstore"
 )
 
 func TestEvaluateAutoMergeBlocksInvalidURLAndMissingClient(t *testing.T) {

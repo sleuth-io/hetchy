@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hetchyhq/hetchy/internal/auth"
-	"github.com/hetchyhq/hetchy/internal/jobs"
+	"github.com/sleuth-io/hetchy/internal/auth"
+	"github.com/sleuth-io/hetchy/internal/jobs"
 )
 
 func TestJobsCollectionHandlerRoutesAndRejectsMethods(t *testing.T) {

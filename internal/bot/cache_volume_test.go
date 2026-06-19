@@ -13,10 +13,10 @@ import (
 	sdkerrors "github.com/daytonaio/daytona/libs/sdk-go/pkg/errors"
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/types"
 
-	"github.com/hetchyhq/hetchy/internal/agents"
-	"github.com/hetchyhq/hetchy/internal/blocks"
-	"github.com/hetchyhq/hetchy/internal/convstore"
-	"github.com/hetchyhq/hetchy/internal/orgcfg"
+	"github.com/sleuth-io/hetchy/internal/agents"
+	"github.com/sleuth-io/hetchy/internal/blocks"
+	"github.com/sleuth-io/hetchy/internal/convstore"
+	"github.com/sleuth-io/hetchy/internal/orgcfg"
 )
 
 func TestDaytonaCacheVolumeRouteStableSafeAndPooled(t *testing.T) {
@@ -212,7 +212,7 @@ func TestHandleRequestFreshRunAttachesCacheVolumeAndEnv(t *testing.T) {
 		wait: []fakeCacheVolumeResult{{vol: &types.Volume{ID: "vol-1", Name: "cache", State: "ready"}}},
 	}
 	b.resolveRepoFn = func(context.Context, string, string, string) (repoCtx, error) {
-		return repoCtx{Slug: "hetchyhq/hetchy", BaseBranch: "main", GitHubToken: "token", InstallID: 11, RepoID: 22}, nil
+		return repoCtx{Slug: "sleuth-io/hetchy", BaseBranch: "main", GitHubToken: "token", InstallID: 11, RepoID: 22}, nil
 	}
 	var params types.SnapshotParams
 	b.createFn = func(_ context.Context, raw any) (*daytona.Sandbox, error) {
@@ -224,13 +224,13 @@ func TestHandleRequestFreshRunAttachesCacheVolumeAndEnv(t *testing.T) {
 		return &daytona.Sandbox{ID: "sandbox-1"}, nil
 	}
 	b.runAgentFn = func(_ context.Context, _ *daytona.Sandbox, _ repoCtx, _ orgcfg.Config, _ agents.Profile, _ string, _ string, _ string, _ chatTaskOptions, _ ClaudeModel, _ blocks.Emitter) (string, error) {
-		return "https://github.com/hetchyhq/hetchy/pull/2", nil
+		return "https://github.com/sleuth-io/hetchy/pull/2", nil
 	}
 	b.deleteSandboxSessionFn = func(*daytona.Sandbox, string) {}
 	b.stopAndArchiveFn = func(context.Context, *daytona.Sandbox) {}
 
 	b.HandleRequest(context.Background(),
-		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant", DefaultGitHubOwner: "hetchyhq", DefaultGitHubRepo: "hetchy"},
+		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant", DefaultGitHubOwner: "sleuth-io", DefaultGitHubRepo: "hetchy"},
 		"ship it", "req-1", "thread-1", "user-1",
 		chatTaskOptionPatch{}, nil, nil, ClaudeModelOpus, newCaptureEmitter())
 
@@ -268,7 +268,7 @@ func TestHandleRequestFreshRunMarksCacheUnavailableWhenVolumeResolveFails(t *tes
 		get: []fakeCacheVolumeResult{{err: sdkerrors.NewDaytonaError("boom", http.StatusInternalServerError, nil)}},
 	}
 	b.resolveRepoFn = func(context.Context, string, string, string) (repoCtx, error) {
-		return repoCtx{Slug: "hetchyhq/hetchy", BaseBranch: "main", GitHubToken: "token", InstallID: 11, RepoID: 22}, nil
+		return repoCtx{Slug: "sleuth-io/hetchy", BaseBranch: "main", GitHubToken: "token", InstallID: 11, RepoID: 22}, nil
 	}
 	var params types.SnapshotParams
 	b.createFn = func(_ context.Context, raw any) (*daytona.Sandbox, error) {
@@ -279,13 +279,13 @@ func TestHandleRequestFreshRunMarksCacheUnavailableWhenVolumeResolveFails(t *tes
 		if repo.CacheMounted {
 			t.Fatal("repo.CacheMounted should be false when volume resolution fails")
 		}
-		return "https://github.com/hetchyhq/hetchy/pull/2", nil
+		return "https://github.com/sleuth-io/hetchy/pull/2", nil
 	}
 	b.deleteSandboxSessionFn = func(*daytona.Sandbox, string) {}
 	b.stopAndArchiveFn = func(context.Context, *daytona.Sandbox) {}
 
 	b.HandleRequest(context.Background(),
-		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant", DefaultGitHubOwner: "hetchyhq", DefaultGitHubRepo: "hetchy"},
+		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant", DefaultGitHubOwner: "sleuth-io", DefaultGitHubRepo: "hetchy"},
 		"ship it", "req-1", "thread-1", "user-1",
 		chatTaskOptionPatch{}, nil, nil, ClaudeModelOpus, newCaptureEmitter())
 
@@ -309,7 +309,7 @@ func TestHandleRequestFreshRunSkipsCacheMountWithoutRepoIdentity(t *testing.T) {
 	b.cfg = Config{Env: "dev", Snapshot: "snap"}
 	b.cacheVols = &fakeCacheVolumeService{unexpected: true}
 	b.resolveRepoFn = func(context.Context, string, string, string) (repoCtx, error) {
-		return repoCtx{Slug: "hetchyhq/hetchy", BaseBranch: "main", GitHubToken: "token"}, nil
+		return repoCtx{Slug: "sleuth-io/hetchy", BaseBranch: "main", GitHubToken: "token"}, nil
 	}
 	var params types.SnapshotParams
 	b.createFn = func(_ context.Context, raw any) (*daytona.Sandbox, error) {
@@ -317,13 +317,13 @@ func TestHandleRequestFreshRunSkipsCacheMountWithoutRepoIdentity(t *testing.T) {
 		return &daytona.Sandbox{ID: "sandbox-1"}, nil
 	}
 	b.runAgentFn = func(_ context.Context, _ *daytona.Sandbox, _ repoCtx, _ orgcfg.Config, _ agents.Profile, _ string, _ string, _ string, _ chatTaskOptions, _ ClaudeModel, _ blocks.Emitter) (string, error) {
-		return "https://github.com/hetchyhq/hetchy/pull/2", nil
+		return "https://github.com/sleuth-io/hetchy/pull/2", nil
 	}
 	b.deleteSandboxSessionFn = func(*daytona.Sandbox, string) {}
 	b.stopAndArchiveFn = func(context.Context, *daytona.Sandbox) {}
 
 	b.HandleRequest(context.Background(),
-		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant", DefaultGitHubOwner: "hetchyhq", DefaultGitHubRepo: "hetchy"},
+		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant", DefaultGitHubOwner: "sleuth-io", DefaultGitHubRepo: "hetchy"},
 		"ship it", "req-1", "thread-1", "user-1",
 		chatTaskOptionPatch{}, nil, nil, ClaudeModelOpus, newCaptureEmitter())
 

@@ -28,9 +28,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hetchyhq/hetchy/internal/db"
-	"github.com/hetchyhq/hetchy/internal/db/sqlc"
-	"github.com/hetchyhq/hetchy/internal/secrets"
+	"github.com/sleuth-io/hetchy/internal/db"
+	"github.com/sleuth-io/hetchy/internal/db/sqlc"
+	"github.com/sleuth-io/hetchy/internal/secrets"
 )
 
 func newE2EStore(t *testing.T, label string) (*Store, int64, int64) {
@@ -101,7 +101,7 @@ func TestEndToEndHetchy(t *testing.T) {
 	// 2. Render bootstrap prompt (sanity — must include "AUTH_BYPASS"
 	// from the .env.example excerpt; this is the single most important
 	// hint for hetchy's bootstrap path).
-	prompt := BuildPrompt(hints, PromptArgs{OwnerRepo: "hetchyhq/hetchy"})
+	prompt := BuildPrompt(hints, PromptArgs{OwnerRepo: "sleuth-io/hetchy"})
 	if !strings.Contains(prompt, "AUTH_BYPASS") {
 		t.Error("hetchy prompt missing AUTH_BYPASS — bootstrap would block on WorkOS")
 	}
@@ -195,7 +195,7 @@ curl -fsS http://localhost:8080/`
 
 	// 6. Validation prompt for a synthetic diff.
 	vprompt := BuildValidationPrompt(read, ValidationArgs{
-		OwnerRepo: "hetchyhq/hetchy",
+		OwnerRepo: "sleuth-io/hetchy",
 		Branch:    "feature/sf-test",
 		Diff:      "diff --git a/internal/bot/agent.go ... +new line",
 		PRBody:    "## Summary\nAdd a feature.",

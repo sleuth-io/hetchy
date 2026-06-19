@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hetchyhq/hetchy/internal/jobs"
+	"github.com/sleuth-io/hetchy/internal/jobs"
 )
 
 func TestDispatchClaimRecovered_ConvertsPanicToFailure(t *testing.T) {

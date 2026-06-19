@@ -11,11 +11,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hetchyhq/hetchy/internal/auth"
-	"github.com/hetchyhq/hetchy/internal/blocks"
-	"github.com/hetchyhq/hetchy/internal/convstore"
-	"github.com/hetchyhq/hetchy/internal/orgcfg"
-	"github.com/hetchyhq/hetchy/internal/runstore"
+	"github.com/sleuth-io/hetchy/internal/auth"
+	"github.com/sleuth-io/hetchy/internal/blocks"
+	"github.com/sleuth-io/hetchy/internal/convstore"
+	"github.com/sleuth-io/hetchy/internal/orgcfg"
+	"github.com/sleuth-io/hetchy/internal/runstore"
 )
 
 func TestParseMultipartChatPostBodyReadsAttachments(t *testing.T) {
@@ -30,7 +30,7 @@ func TestParseMultipartChatPostBodyReadsAttachments(t *testing.T) {
 		"action_pr_checks_for_done": "false",
 		"auto_merge":                "true",
 		"agent_slug":                "bob",
-		"repository":                "hetchyhq/hetchy",
+		"repository":                "sleuth-io/hetchy",
 	}
 	for k, v := range fields {
 		if err := writer.WriteField(k, v); err != nil {
@@ -61,8 +61,8 @@ func TestParseMultipartChatPostBodyReadsAttachments(t *testing.T) {
 	if body.AgentSlug == nil || *body.AgentSlug != "bob" {
 		t.Fatalf("agent slug = %v, want bob", body.AgentSlug)
 	}
-	if body.Repository == nil || *body.Repository != "hetchyhq/hetchy" {
-		t.Fatalf("repository = %v, want hetchyhq/hetchy", body.Repository)
+	if body.Repository == nil || *body.Repository != "sleuth-io/hetchy" {
+		t.Fatalf("repository = %v, want sleuth-io/hetchy", body.Repository)
 	}
 	if body.Validate == nil || *body.Validate {
 		t.Fatalf("validate = %v, want false", body.Validate)
@@ -98,7 +98,7 @@ func TestParseJSONChatPostBody(t *testing.T) {
 		"action_pr_checks_for_done":true,
 		"auto_merge":true,
 		"agent_slug":"alice",
-		"repository":"hetchyhq/hetchy"
+		"repository":"sleuth-io/hetchy"
 	}`)
 	req := httptest.NewRequest(http.MethodPost, "/chat", bytes.NewReader(bodyJSON))
 	req.Header.Set("Content-Type", "application/json")
@@ -114,8 +114,8 @@ func TestParseJSONChatPostBody(t *testing.T) {
 	if body.AgentSlug == nil || *body.AgentSlug != "alice" {
 		t.Fatalf("agent slug = %v, want alice", body.AgentSlug)
 	}
-	if body.Repository == nil || *body.Repository != "hetchyhq/hetchy" {
-		t.Fatalf("repository = %v, want hetchyhq/hetchy", body.Repository)
+	if body.Repository == nil || *body.Repository != "sleuth-io/hetchy" {
+		t.Fatalf("repository = %v, want sleuth-io/hetchy", body.Repository)
 	}
 	if body.Validate == nil || !*body.Validate {
 		t.Fatalf("validate = %v, want true", body.Validate)
@@ -165,7 +165,7 @@ func TestParseConversationAPIJSONBody(t *testing.T) {
 		"message":"ship with context",
 		"model":"sonnet",
 		"agent":"bob",
-		"repository":"hetchyhq/hetchy",
+		"repository":"sleuth-io/hetchy",
 		"task_options":{
 			"validate":false,
 			"review_code_before_push":true,

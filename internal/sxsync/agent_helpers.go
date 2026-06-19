@@ -13,8 +13,8 @@ import (
 
 	sxlib "github.com/sleuth-io/sx/pkg/sxvault"
 
-	"github.com/hetchyhq/hetchy/internal/agents"
-	"github.com/hetchyhq/hetchy/internal/db/sqlc"
+	"github.com/sleuth-io/hetchy/internal/agents"
+	"github.com/sleuth-io/hetchy/internal/db/sqlc"
 )
 
 func ReadUploadedSkillZip(file multipart.File, maxBytes int64) ([]byte, error) {

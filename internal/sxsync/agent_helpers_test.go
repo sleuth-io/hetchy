@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hetchyhq/hetchy/internal/agents"
-	"github.com/hetchyhq/hetchy/internal/db/sqlc"
+	"github.com/sleuth-io/hetchy/internal/agents"
+	"github.com/sleuth-io/hetchy/internal/db/sqlc"
 )
 
 // failReader is a multipart.File that always errors on Read.
@@ -270,7 +270,7 @@ func TestSplitRepoSlug(t *testing.T) {
 		wantName  string
 		wantOK    bool
 	}{
-		{"hetchyhq/hetchy", "hetchyhq", "hetchy", true},
+		{"sleuth-io/hetchy", "sleuth-io", "hetchy", true},
 		{"owner/repo", "owner", "repo", true},
 		{"  owner / repo  ", "owner", "repo", true},
 		{"", "", "", false},
@@ -325,7 +325,7 @@ func TestGithubRepoURL(t *testing.T) {
 		name  string
 		want  string
 	}{
-		{"hetchyhq", "hetchy", "https://github.com/hetchyhq/hetchy.git"},
+		{"sleuth-io", "hetchy", "https://github.com/sleuth-io/hetchy.git"},
 		{"owner", "repo", "https://github.com/owner/repo.git"},
 	}
 	for _, tc := range cases {

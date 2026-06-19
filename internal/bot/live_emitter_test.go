@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hetchyhq/hetchy/internal/blocks"
+	"github.com/sleuth-io/hetchy/internal/blocks"
 )
 
 // TestLiveEmitter_StartIncludesStartedAt asserts that block_start

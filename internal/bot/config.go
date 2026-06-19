@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/hetchyhq/hetchy/internal/billing"
-	"github.com/hetchyhq/hetchy/internal/buildinfo"
+	"github.com/sleuth-io/hetchy/internal/billing"
+	"github.com/sleuth-io/hetchy/internal/buildinfo"
 )
 
 // Config holds runtime configuration loaded from the environment.

@@ -8,12 +8,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hetchyhq/hetchy/internal/apikeys"
-	"github.com/hetchyhq/hetchy/internal/auth"
-	"github.com/hetchyhq/hetchy/internal/githubapp"
-	"github.com/hetchyhq/hetchy/internal/orgcfg"
-	"github.com/hetchyhq/hetchy/internal/sxsync"
-	"github.com/hetchyhq/hetchy/internal/webui"
+	"github.com/sleuth-io/hetchy/internal/apikeys"
+	"github.com/sleuth-io/hetchy/internal/auth"
+	"github.com/sleuth-io/hetchy/internal/githubapp"
+	"github.com/sleuth-io/hetchy/internal/orgcfg"
+	"github.com/sleuth-io/hetchy/internal/sxsync"
+	"github.com/sleuth-io/hetchy/internal/webui"
 )
 
 func (b *Bot) settingsHandler(w http.ResponseWriter, r *http.Request) {
