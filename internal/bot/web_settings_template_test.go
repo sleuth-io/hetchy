@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hetchyhq/hetchy/internal/auth"
-	"github.com/hetchyhq/hetchy/internal/webui"
+	"github.com/sleuth-io/hetchy/internal/auth"
+	"github.com/sleuth-io/hetchy/internal/webui"
 )
 
 func TestSettingsTemplate_GeneralTab(t *testing.T) {
@@ -375,9 +375,9 @@ func TestSettingsIntegrationsTemplate_DisconnectActionsUseDangerButton(t *testin
 		"IsAdmin":                true,
 		"Tab":                    "integrations",
 		"GitHubAppEnabled":       true,
-		"GitHubInstallations":    []integrationInstallation{{InstallationID: 42, AccountLogin: "hetchyhq", AccountType: "Organization", ManageURL: "https://github.com/organizations/hetchyhq/settings/installations/42", Repos: []integrationRepo{{Owner: "hetchyhq", Name: "hetchy", DefaultBranch: "main"}}}},
-		"GitHubRepos":            []integrationRepo{{Owner: "hetchyhq", Name: "hetchy", DefaultBranch: "main"}},
-		"DefaultRepoSlug":        "hetchyhq/hetchy",
+		"GitHubInstallations":    []integrationInstallation{{InstallationID: 42, AccountLogin: "sleuth-io", AccountType: "Organization", ManageURL: "https://github.com/organizations/sleuth-io/settings/installations/42", Repos: []integrationRepo{{Owner: "sleuth-io", Name: "hetchy", DefaultBranch: "main"}}}},
+		"GitHubRepos":            []integrationRepo{{Owner: "sleuth-io", Name: "hetchy", DefaultBranch: "main"}},
+		"DefaultRepoSlug":        "sleuth-io/hetchy",
 		"SlackOAuthEnabled":      true,
 		"SlackTeamID":            "T123456",
 		"IsDev":                  false,
@@ -392,11 +392,11 @@ func TestSettingsIntegrationsTemplate_DisconnectActionsUseDangerButton(t *testin
 		`id="integration-disconnect-dialog"`,
 		`action="/integrations/github/disconnect"`,
 		`action="/slack/disconnect"`,
-		`data-confirm-title="Disconnect hetchyhq?"`,
+		`data-confirm-title="Disconnect sleuth-io?"`,
 		`data-confirm-message="The Hetchy GitHub App will be uninstalled from that account, dropping access to all 1 repo. You can reinstall later from this page."`,
 		`data-confirm-title="Disconnect Slack?"`,
 		`data-confirm-message="The Hetchy app will be removed from the workspace and you will need to reinstall to re-enable."`,
-		`Disconnect hetchyhq?`,
+		`Disconnect sleuth-io?`,
 		`Connected workspace: <code>T123456</code>`,
 	} {
 		if !strings.Contains(body, want) {

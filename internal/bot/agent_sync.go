@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/hetchyhq/hetchy/internal/sxsync"
+	"github.com/sleuth-io/hetchy/internal/sxsync"
 )
 
 func (b *Bot) syncSXAgents(ctx context.Context, orgID string, actor sxsync.Actor) error {

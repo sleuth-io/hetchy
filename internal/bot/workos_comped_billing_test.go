@@ -15,9 +15,9 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	workos "github.com/workos/workos-go/v7"
 
-	"github.com/hetchyhq/hetchy/internal/billing"
-	"github.com/hetchyhq/hetchy/internal/db"
-	"github.com/hetchyhq/hetchy/internal/db/sqlc"
+	"github.com/sleuth-io/hetchy/internal/billing"
+	"github.com/sleuth-io/hetchy/internal/db"
+	"github.com/sleuth-io/hetchy/internal/db/sqlc"
 )
 
 func TestWorkOSWebhookHandlerMissingSecret(t *testing.T) {

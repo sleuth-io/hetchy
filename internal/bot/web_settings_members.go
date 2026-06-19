@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hetchyhq/hetchy/internal/auth"
+	"github.com/sleuth-io/hetchy/internal/auth"
 )
 
 const (

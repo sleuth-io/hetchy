@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hetchyhq/hetchy/internal/db"
-	"github.com/hetchyhq/hetchy/internal/db/sqlc"
+	"github.com/sleuth-io/hetchy/internal/db"
+	"github.com/sleuth-io/hetchy/internal/db/sqlc"
 )
 
 // nonNilStorePlaceholder returns a *db.Store that passes SyncInstallation's

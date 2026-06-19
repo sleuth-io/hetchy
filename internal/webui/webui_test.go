@@ -78,7 +78,7 @@ func TestAppAutoMergeComposerAndSidebarWiring(t *testing.T) {
 		"DisplayName":     "Test User",
 		"GravatarURL":     "https://example.com/avatar.png",
 		"UserID":          "user_test",
-		"DefaultRepoSlug": "hetchyhq/hetchy",
+		"DefaultRepoSlug": "sleuth-io/hetchy",
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
@@ -136,7 +136,7 @@ func TestRenderAppTemplate(t *testing.T) {
 		"GravatarURL":     "https://example.com/avatar.png",
 		"UserID":          "user_test",
 		"OpenAIEnabled":   true,
-		"DefaultRepoSlug": "hetchyhq/hetchy",
+		"DefaultRepoSlug": "sleuth-io/hetchy",
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
@@ -144,7 +144,7 @@ func TestRenderAppTemplate(t *testing.T) {
 	body := rec.Body.String()
 	for _, want := range []string{
 		`data-current-user-id="user_test"`,
-		`data-default-repo-slug="hetchyhq/hetchy"`,
+		`data-default-repo-slug="sleuth-io/hetchy"`,
 		`data-app-data-limit="80"`,
 		`href="/assets/app.css`,
 		`href="/assets/app_layout.css`,

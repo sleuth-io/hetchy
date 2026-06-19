@@ -24,10 +24,10 @@ ARG DATE=unknown
 ARG SANDBOX_VERSION=
 RUN sandbox_version="${SANDBOX_VERSION:-$(./scripts/sandbox-version.sh)}" && \
     CGO_ENABLED=0 GOOS=linux go build \
-    -ldflags "-X github.com/hetchyhq/hetchy/internal/buildinfo.Version=${VERSION} \
-              -X github.com/hetchyhq/hetchy/internal/buildinfo.Commit=${COMMIT} \
-              -X github.com/hetchyhq/hetchy/internal/buildinfo.Date=${DATE} \
-              -X github.com/hetchyhq/hetchy/internal/buildinfo.SandboxSnapshotVersion=${sandbox_version}" \
+    -ldflags "-X github.com/sleuth-io/hetchy/internal/buildinfo.Version=${VERSION} \
+              -X github.com/sleuth-io/hetchy/internal/buildinfo.Commit=${COMMIT} \
+              -X github.com/sleuth-io/hetchy/internal/buildinfo.Date=${DATE} \
+              -X github.com/sleuth-io/hetchy/internal/buildinfo.SandboxSnapshotVersion=${sandbox_version}" \
     -o hetchy \
     ./cmd/hetchy
 

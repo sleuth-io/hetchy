@@ -13,9 +13,9 @@ import (
 
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
 
-	"github.com/hetchyhq/hetchy/internal/blocks"
-	"github.com/hetchyhq/hetchy/internal/bootstrap"
-	"github.com/hetchyhq/hetchy/internal/orgcfg"
+	"github.com/sleuth-io/hetchy/internal/blocks"
+	"github.com/sleuth-io/hetchy/internal/bootstrap"
+	"github.com/sleuth-io/hetchy/internal/orgcfg"
 )
 
 type bootstrapInlineCall struct {
@@ -88,7 +88,7 @@ func TestEnsureBootstrapSpecRunsFirstTimeBootstrapWithFakes(t *testing.T) {
 	}
 
 	repo := repoCtx{
-		Slug:        "hetchyhq/hetchy",
+		Slug:        "sleuth-io/hetchy",
 		BaseBranch:  "main",
 		GitHubToken: "ghs_test",
 		InstallID:   11,
@@ -109,10 +109,10 @@ func TestEnsureBootstrapSpecRunsFirstTimeBootstrapWithFakes(t *testing.T) {
 	if len(inlineCalls) != 1 || inlineCalls[0].label != "setup-clone" {
 		t.Fatalf("inline calls = %+v", inlineCalls)
 	}
-	if env := inlineCalls[0].env; env["SF_REPO"] != "hetchyhq/hetchy" || env["SF_BASE_BRANCH"] != "main" || env["GITHUB_TOKEN"] != "ghs_test" {
+	if env := inlineCalls[0].env; env["SF_REPO"] != "sleuth-io/hetchy" || env["SF_BASE_BRANCH"] != "main" || env["GITHUB_TOKEN"] != "ghs_test" {
 		t.Fatalf("clone env = %+v", env)
 	}
-	if runInput.OwnerRepo != "hetchyhq/hetchy" || runInput.RepoDir != "/home/daytona/work/hetchy" || runInput.SuppliedSecrets["DATABASE_URL"] != "postgres://test" {
+	if runInput.OwnerRepo != "sleuth-io/hetchy" || runInput.RepoDir != "/home/daytona/work/hetchy" || runInput.SuppliedSecrets["DATABASE_URL"] != "postgres://test" {
 		t.Fatalf("bootstrap input = %+v", runInput)
 	}
 	if len(boot.savedSpecs) != 1 {
@@ -258,7 +258,7 @@ func TestEnsureBootstrapSpecReturnsExistingFreshSpecWithoutSandboxCheck(t *testi
 	}
 
 	spec, err := b.ensureBootstrapSpec(context.Background(), &daytona.Sandbox{ID: "sandbox-1"}, repoCtx{
-		Slug:      "hetchyhq/hetchy",
+		Slug:      "sleuth-io/hetchy",
 		InstallID: 11,
 		RepoID:    22,
 	}, orgcfg.Config{}, "req-1", newCaptureEmitter())

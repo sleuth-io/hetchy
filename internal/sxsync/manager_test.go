@@ -11,7 +11,7 @@ import (
 
 	sxlib "github.com/sleuth-io/sx/pkg/sxvault"
 
-	"github.com/hetchyhq/hetchy/internal/agents"
+	"github.com/sleuth-io/hetchy/internal/agents"
 )
 
 func TestBotDescriptionUsesProfileDescription(t *testing.T) {

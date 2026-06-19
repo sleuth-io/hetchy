@@ -12,8 +12,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/hetchyhq/hetchy/internal/db"
-	"github.com/hetchyhq/hetchy/internal/db/sqlc"
+	"github.com/sleuth-io/hetchy/internal/db"
+	"github.com/sleuth-io/hetchy/internal/db/sqlc"
 )
 
 // fakeDBTX implements sqlc.DBTX so the jobs store can be exercised without a
@@ -346,7 +346,7 @@ func sampleJobRow(id, orgID string) sqlc.AgentJob {
 		OrgID:           orgID,
 		Name:            "Nightly",
 		Definition:      "do the thing",
-		PrimaryOwner:    "hetchyhq",
+		PrimaryOwner:    "sleuth-io",
 		PrimaryRepo:     "api",
 		AdditionalRepos: []byte(`[]`),
 		CronSchedule:    "0 0 * * *",
@@ -374,7 +374,7 @@ func validInput() JobInput {
 	return JobInput{
 		Name:         "Nightly",
 		Definition:   "do the thing",
-		PrimaryOwner: "hetchyhq",
+		PrimaryOwner: "sleuth-io",
 		PrimaryRepo:  "api",
 		CronSchedule: "0 0 * * *",
 		Timezone:     "UTC",
@@ -384,10 +384,10 @@ func validInput() JobInput {
 
 func TestValidateReposHappyPath(t *testing.T) {
 	f := &fakeDBTX{queryRow: map[string]pgx.Row{
-		"FROM github_repos": githubRepoRow{repo: sqlc.GithubRepo{InstallationID: 7, Owner: "hetchyhq", Name: "api"}},
+		"FROM github_repos": githubRepoRow{repo: sqlc.GithubRepo{InstallationID: 7, Owner: "sleuth-io", Name: "api"}},
 	}}
 	s := newFakeStore(f)
-	in := JobInput{PrimaryOwner: "hetchyhq", PrimaryRepo: "api", AdditionalRepos: []RepoRef{{Owner: "hetchyhq", Name: "web"}}}
+	in := JobInput{PrimaryOwner: "sleuth-io", PrimaryRepo: "api", AdditionalRepos: []RepoRef{{Owner: "sleuth-io", Name: "web"}}}
 	if err := s.validateRepos(t.Context(), "org_1", in); err != nil {
 		t.Fatalf("validateRepos: %v", err)
 	}
@@ -413,7 +413,7 @@ func TestValidateReposPrimaryQueryError(t *testing.T) {
 		"FROM github_repos": errRow{err: errors.New("boom")},
 	}}
 	s := newFakeStore(f)
-	in := JobInput{PrimaryOwner: "hetchyhq", PrimaryRepo: "api"}
+	in := JobInput{PrimaryOwner: "sleuth-io", PrimaryRepo: "api"}
 	err := s.validateRepos(t.Context(), "org_1", in)
 	if err == nil || errors.Is(err, ErrInvalidInput) || !strings.Contains(err.Error(), "validate primary repository") {
 		t.Fatalf("want non-invalid validate primary error, got %v", err)
@@ -446,11 +446,11 @@ func (r reposByOwner) QueryRow(_ context.Context, _ string, args ...any) pgx.Row
 
 func TestValidateReposAdditionalNotAccessible(t *testing.T) {
 	f := reposByOwner{rows: map[string]pgx.Row{
-		"hetchyhq": githubRepoRow{repo: sqlc.GithubRepo{InstallationID: 7, Owner: "hetchyhq", Name: "api"}},
-		"other":    errRow{err: pgx.ErrNoRows},
+		"sleuth-io": githubRepoRow{repo: sqlc.GithubRepo{InstallationID: 7, Owner: "sleuth-io", Name: "api"}},
+		"other":     errRow{err: pgx.ErrNoRows},
 	}}
 	s := NewStore(&db.Store{Queries: sqlc.New(f)}, nil)
-	in := JobInput{PrimaryOwner: "hetchyhq", PrimaryRepo: "api", AdditionalRepos: []RepoRef{{Owner: "other", Name: "repo"}}}
+	in := JobInput{PrimaryOwner: "sleuth-io", PrimaryRepo: "api", AdditionalRepos: []RepoRef{{Owner: "other", Name: "repo"}}}
 	err := s.validateRepos(t.Context(), "org_1", in)
 	if !errors.Is(err, ErrInvalidInput) || !strings.Contains(InvalidInputMessage(err), "additional repository other/repo is not accessible") {
 		t.Fatalf("want additional not accessible invalid input, got %v", err)
@@ -459,11 +459,11 @@ func TestValidateReposAdditionalNotAccessible(t *testing.T) {
 
 func TestValidateReposAdditionalQueryError(t *testing.T) {
 	f := reposByOwner{rows: map[string]pgx.Row{
-		"hetchyhq": githubRepoRow{repo: sqlc.GithubRepo{InstallationID: 7, Owner: "hetchyhq", Name: "api"}},
-		"other":    errRow{err: errors.New("kaboom")},
+		"sleuth-io": githubRepoRow{repo: sqlc.GithubRepo{InstallationID: 7, Owner: "sleuth-io", Name: "api"}},
+		"other":     errRow{err: errors.New("kaboom")},
 	}}
 	s := NewStore(&db.Store{Queries: sqlc.New(f)}, nil)
-	in := JobInput{PrimaryOwner: "hetchyhq", PrimaryRepo: "api", AdditionalRepos: []RepoRef{{Owner: "other", Name: "repo"}}}
+	in := JobInput{PrimaryOwner: "sleuth-io", PrimaryRepo: "api", AdditionalRepos: []RepoRef{{Owner: "other", Name: "repo"}}}
 	err := s.validateRepos(t.Context(), "org_1", in)
 	if err == nil || errors.Is(err, ErrInvalidInput) || !strings.Contains(err.Error(), "validate additional repository other/repo") {
 		t.Fatalf("want additional validate error, got %v", err)
@@ -472,11 +472,11 @@ func TestValidateReposAdditionalQueryError(t *testing.T) {
 
 func TestValidateReposDifferentInstallation(t *testing.T) {
 	f := reposByOwner{rows: map[string]pgx.Row{
-		"hetchyhq": githubRepoRow{repo: sqlc.GithubRepo{InstallationID: 7, Owner: "hetchyhq", Name: "api"}},
-		"other":    githubRepoRow{repo: sqlc.GithubRepo{InstallationID: 9, Owner: "other", Name: "repo"}},
+		"sleuth-io": githubRepoRow{repo: sqlc.GithubRepo{InstallationID: 7, Owner: "sleuth-io", Name: "api"}},
+		"other":     githubRepoRow{repo: sqlc.GithubRepo{InstallationID: 9, Owner: "other", Name: "repo"}},
 	}}
 	s := NewStore(&db.Store{Queries: sqlc.New(f)}, nil)
-	in := JobInput{PrimaryOwner: "hetchyhq", PrimaryRepo: "api", AdditionalRepos: []RepoRef{{Owner: "other", Name: "repo"}}}
+	in := JobInput{PrimaryOwner: "sleuth-io", PrimaryRepo: "api", AdditionalRepos: []RepoRef{{Owner: "other", Name: "repo"}}}
 	err := s.validateRepos(t.Context(), "org_1", in)
 	if !errors.Is(err, ErrInvalidInput) || !strings.Contains(InvalidInputMessage(err), "different GitHub App installation") {
 		t.Fatalf("want different installation invalid input, got %v", err)
@@ -485,7 +485,7 @@ func TestValidateReposDifferentInstallation(t *testing.T) {
 
 func TestCreateHappyPath(t *testing.T) {
 	f := &fakeDBTX{queryRow: map[string]pgx.Row{
-		"FROM github_repos":      githubRepoRow{repo: sqlc.GithubRepo{InstallationID: 7, Owner: "hetchyhq", Name: "api"}},
+		"FROM github_repos":      githubRepoRow{repo: sqlc.GithubRepo{InstallationID: 7, Owner: "sleuth-io", Name: "api"}},
 		"INSERT INTO agent_jobs": agentJobRow{job: sampleJobRow("job_1", "org_1")},
 	}}
 	s := newFakeStore(f)
@@ -509,7 +509,7 @@ func TestCreateValidationError(t *testing.T) {
 
 func TestCreateInsertError(t *testing.T) {
 	f := &fakeDBTX{queryRow: map[string]pgx.Row{
-		"FROM github_repos":      githubRepoRow{repo: sqlc.GithubRepo{InstallationID: 7, Owner: "hetchyhq", Name: "api"}},
+		"FROM github_repos":      githubRepoRow{repo: sqlc.GithubRepo{InstallationID: 7, Owner: "sleuth-io", Name: "api"}},
 		"INSERT INTO agent_jobs": errRow{err: errors.New("insert failed")},
 	}}
 	s := newFakeStore(f)
@@ -521,7 +521,7 @@ func TestCreateInsertError(t *testing.T) {
 
 func TestUpdateHappyPath(t *testing.T) {
 	f := &fakeDBTX{queryRow: map[string]pgx.Row{
-		"FROM github_repos": githubRepoRow{repo: sqlc.GithubRepo{InstallationID: 7, Owner: "hetchyhq", Name: "api"}},
+		"FROM github_repos": githubRepoRow{repo: sqlc.GithubRepo{InstallationID: 7, Owner: "sleuth-io", Name: "api"}},
 		"UPDATE agent_jobs": agentJobRow{job: sampleJobRow("job_1", "org_1")},
 	}}
 	s := newFakeStore(f)
@@ -536,7 +536,7 @@ func TestUpdateHappyPath(t *testing.T) {
 
 func TestUpdateNotFound(t *testing.T) {
 	f := &fakeDBTX{queryRow: map[string]pgx.Row{
-		"FROM github_repos": githubRepoRow{repo: sqlc.GithubRepo{InstallationID: 7, Owner: "hetchyhq", Name: "api"}},
+		"FROM github_repos": githubRepoRow{repo: sqlc.GithubRepo{InstallationID: 7, Owner: "sleuth-io", Name: "api"}},
 		"UPDATE agent_jobs": errRow{err: pgx.ErrNoRows},
 	}}
 	s := newFakeStore(f)
@@ -548,7 +548,7 @@ func TestUpdateNotFound(t *testing.T) {
 
 func TestUpdateError(t *testing.T) {
 	f := &fakeDBTX{queryRow: map[string]pgx.Row{
-		"FROM github_repos": githubRepoRow{repo: sqlc.GithubRepo{InstallationID: 7, Owner: "hetchyhq", Name: "api"}},
+		"FROM github_repos": githubRepoRow{repo: sqlc.GithubRepo{InstallationID: 7, Owner: "sleuth-io", Name: "api"}},
 		"UPDATE agent_jobs": errRow{err: errors.New("update boom")},
 	}}
 	s := newFakeStore(f)

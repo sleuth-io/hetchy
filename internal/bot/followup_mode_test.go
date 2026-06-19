@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hetchyhq/hetchy/internal/convstore"
-	"github.com/hetchyhq/hetchy/internal/orgcfg"
+	"github.com/sleuth-io/hetchy/internal/convstore"
+	"github.com/sleuth-io/hetchy/internal/orgcfg"
 )
 
 func TestRequestFollowUpModeParsesAnthropicJSON(t *testing.T) {

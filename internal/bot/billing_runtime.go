@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hetchyhq/hetchy/internal/billing"
-	"github.com/hetchyhq/hetchy/internal/blocks"
-	"github.com/hetchyhq/hetchy/internal/runstore"
+	"github.com/sleuth-io/hetchy/internal/billing"
+	"github.com/sleuth-io/hetchy/internal/blocks"
+	"github.com/sleuth-io/hetchy/internal/runstore"
 )
 
 func (b *Bot) admitBillingForRun(ctx context.Context, orgID, owner, repo string, emit blocks.Emitter) (billing.Flavor, bool) {

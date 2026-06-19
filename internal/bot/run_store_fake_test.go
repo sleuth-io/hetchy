@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hetchyhq/hetchy/internal/runstore"
+	"github.com/sleuth-io/hetchy/internal/runstore"
 )
 
 type fakeRunStore struct {

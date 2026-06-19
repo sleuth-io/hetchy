@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/hetchyhq/hetchy/internal/agents"
+	"github.com/sleuth-io/hetchy/internal/agents"
 )
 
 func TestExtractSlackAgent(t *testing.T) {
@@ -47,11 +47,11 @@ func TestExtractSlackRepoMention(t *testing.T) {
 		want string
 		ok   bool
 	}{
-		{"exact repo", "hetchyhq/hetchy", "hetchyhq/hetchy", true},
-		{"repo in sentence", "add this in the hetchyhq/hetchy repository", "hetchyhq/hetchy", true},
-		{"github url", "use https://github.com/hetchyhq/hetchy please", "hetchyhq/hetchy", true},
-		{"github url path", "see https://github.com/hetchyhq/hetchy/pull/252", "hetchyhq/hetchy", true},
-		{"github git url", "use https://github.com/hetchyhq/hetchy.git please", "hetchyhq/hetchy", true},
+		{"exact repo", "sleuth-io/hetchy", "sleuth-io/hetchy", true},
+		{"repo in sentence", "add this in the sleuth-io/hetchy repository", "sleuth-io/hetchy", true},
+		{"github url", "use https://github.com/sleuth-io/hetchy please", "sleuth-io/hetchy", true},
+		{"github url path", "see https://github.com/sleuth-io/hetchy/pull/252", "sleuth-io/hetchy", true},
+		{"github git url", "use https://github.com/sleuth-io/hetchy.git please", "sleuth-io/hetchy", true},
 		{"no repo", "use the Hetchy Bot to ship it", "", false},
 		{"invalid repo token", "use acme/web$site", "", false},
 	}

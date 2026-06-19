@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hetchyhq/hetchy/internal/agents"
-	"github.com/hetchyhq/hetchy/internal/orgcfg"
-	"github.com/hetchyhq/hetchy/internal/sxsync"
+	"github.com/sleuth-io/hetchy/internal/agents"
+	"github.com/sleuth-io/hetchy/internal/orgcfg"
+	"github.com/sleuth-io/hetchy/internal/sxsync"
 )
 
 func TestSettingsMessageHelpersCoverSentinels(t *testing.T) {

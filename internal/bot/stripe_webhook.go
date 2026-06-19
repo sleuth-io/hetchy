@@ -14,7 +14,7 @@ import (
 	"github.com/stripe/stripe-go/v85"
 	"github.com/stripe/stripe-go/v85/webhook"
 
-	"github.com/hetchyhq/hetchy/internal/billing"
+	"github.com/sleuth-io/hetchy/internal/billing"
 )
 
 func (b *Bot) stripeWebhookHandler(w http.ResponseWriter, r *http.Request) {

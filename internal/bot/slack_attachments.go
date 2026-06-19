@@ -10,7 +10,7 @@ import (
 
 	"github.com/slack-go/slack"
 
-	"github.com/hetchyhq/hetchy/internal/convstore"
+	"github.com/sleuth-io/hetchy/internal/convstore"
 )
 
 const slackAttachmentDownloadTimeout = 45 * time.Second

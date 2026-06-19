@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hetchyhq/hetchy/internal/bootstrap"
+	"github.com/sleuth-io/hetchy/internal/bootstrap"
 )
 
 func TestInferIdentityPrefersGoModule(t *testing.T) {

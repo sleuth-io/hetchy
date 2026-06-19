@@ -73,7 +73,7 @@ formatters:
       sections:
         - standard
         - default
-        - prefix(github.com/hetchyhq/hetchy)
+        - prefix(github.com/sleuth-io/hetchy)
   exclusions:
     generated: lax
     paths:

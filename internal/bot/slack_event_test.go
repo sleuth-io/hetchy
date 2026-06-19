@@ -10,10 +10,10 @@ import (
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
 	"github.com/slack-go/slack"
 
-	"github.com/hetchyhq/hetchy/internal/agents"
-	"github.com/hetchyhq/hetchy/internal/blocks"
-	"github.com/hetchyhq/hetchy/internal/convstore"
-	"github.com/hetchyhq/hetchy/internal/orgcfg"
+	"github.com/sleuth-io/hetchy/internal/agents"
+	"github.com/sleuth-io/hetchy/internal/blocks"
+	"github.com/sleuth-io/hetchy/internal/convstore"
+	"github.com/sleuth-io/hetchy/internal/orgcfg"
 )
 
 // newMinimalBotForSlackTest creates a Bot with just enough wiring for
@@ -243,18 +243,18 @@ func TestHandleSlackEvent_NaturalAgentPhraseUsesInlineRepo(t *testing.T) {
 		channel: "C123",
 		user:    "U1",
 		ts:      "111.000",
-		text:    "<@B123> use the frontend to add ascii art in the hetchyhq/hetchy repository",
+		text:    "<@B123> use the frontend to add ascii art in the sleuth-io/hetchy repository",
 	}, cli)
 
-	if gotOwner != "hetchyhq" || gotName != "hetchy" {
-		t.Fatalf("repo resolver got %s/%s, want hetchyhq/hetchy", gotOwner, gotName)
+	if gotOwner != "sleuth-io" || gotName != "hetchy" {
+		t.Fatalf("repo resolver got %s/%s, want sleuth-io/hetchy", gotOwner, gotName)
 	}
 	first := convs.upserts[0]
 	if first.AgentSlug != "alice" {
 		t.Fatalf("agent slug = %q, want alice", first.AgentSlug)
 	}
-	if first.GitHubOwner != "hetchyhq" || first.GitHubRepo != "hetchy" {
-		t.Fatalf("initial conversation repo = %s/%s, want hetchyhq/hetchy", first.GitHubOwner, first.GitHubRepo)
+	if first.GitHubOwner != "sleuth-io" || first.GitHubRepo != "hetchy" {
+		t.Fatalf("initial conversation repo = %s/%s, want sleuth-io/hetchy", first.GitHubOwner, first.GitHubRepo)
 	}
 	for _, c := range fs.Calls() {
 		if strings.Contains(c.Text, "Which repository?") {
@@ -305,11 +305,11 @@ func TestHandleSlackEvent_RepoOnlyReplyFallsBackToPendingConversation(t *testing
 		channel: "C123",
 		user:    "U1",
 		ts:      "222.333",
-		text:    "hetchyhq/hetchy",
+		text:    "sleuth-io/hetchy",
 	}, cli)
 
-	if gotOwner != "hetchyhq" || gotName != "hetchy" {
-		t.Fatalf("repo resolver got %s/%s, want hetchyhq/hetchy", gotOwner, gotName)
+	if gotOwner != "sleuth-io" || gotName != "hetchy" {
+		t.Fatalf("repo resolver got %s/%s, want sleuth-io/hetchy", gotOwner, gotName)
 	}
 	workingMsg := findWorkingMsg(t, fs)
 	if want := "<http://localhost:3000/?session=111.000|View full details>"; !strings.Contains(workingMsg, want) {

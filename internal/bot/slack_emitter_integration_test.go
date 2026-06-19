@@ -14,7 +14,7 @@ import (
 
 	"github.com/slack-go/slack"
 
-	"github.com/hetchyhq/hetchy/internal/blocks"
+	"github.com/sleuth-io/hetchy/internal/blocks"
 )
 
 // fakeSlackCall is one captured request to the fake slack server.
@@ -330,7 +330,7 @@ func TestSlackEmitter_TeeResultPostsTerminalMentionAndPR(t *testing.T) {
 	id := emit.Start(blocks.KindToolUse, "Reading README.md", nil)
 	emit.Done(id, "287 lines")
 	emit.Notify("Bootstrap spec — no changes", "Agent reviewed the validation run and reported no spec improvements were warranted.")
-	emit.Result("Done!", "https://github.com/hetchyhq/hetchy/pull/183\n\nReply here to make further changes to this PR.")
+	emit.Result("Done!", "https://github.com/sleuth-io/hetchy/pull/183\n\nReply here to make further changes to this PR.")
 
 	calls := fs.Calls()
 	terminalIdx := -1
@@ -349,7 +349,7 @@ func TestSlackEmitter_TeeResultPostsTerminalMentionAndPR(t *testing.T) {
 	if !strings.Contains(terminal, "<@U1>") {
 		t.Errorf("terminal result should @mention the user, got %q", terminal)
 	}
-	if !strings.Contains(terminal, "https://github.com/hetchyhq/hetchy/pull/183") {
+	if !strings.Contains(terminal, "https://github.com/sleuth-io/hetchy/pull/183") {
 		t.Errorf("terminal result should include PR URL, got %q", terminal)
 	}
 	if !strings.Contains(terminal, "View full details") {

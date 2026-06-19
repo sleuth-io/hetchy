@@ -3,7 +3,7 @@ package bot
 import (
 	"encoding/json"
 
-	"github.com/hetchyhq/hetchy/internal/runstore"
+	"github.com/sleuth-io/hetchy/internal/runstore"
 )
 
 type runActivityEvent struct {

@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hetchyhq/hetchy/internal/artifacts"
+	"github.com/sleuth-io/hetchy/internal/artifacts"
 )
 
 const artifactSlotPath = "/api/artifact-slots"

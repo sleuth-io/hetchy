@@ -9,10 +9,10 @@ import (
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/types"
 
-	"github.com/hetchyhq/hetchy/internal/agents"
-	"github.com/hetchyhq/hetchy/internal/blocks"
-	"github.com/hetchyhq/hetchy/internal/convstore"
-	"github.com/hetchyhq/hetchy/internal/orgcfg"
+	"github.com/sleuth-io/hetchy/internal/agents"
+	"github.com/sleuth-io/hetchy/internal/blocks"
+	"github.com/sleuth-io/hetchy/internal/convstore"
+	"github.com/sleuth-io/hetchy/internal/orgcfg"
 )
 
 func TestFreshRunCreatesSandboxWithAutoArchiveInterval(t *testing.T) {
@@ -20,7 +20,7 @@ func TestFreshRunCreatesSandboxWithAutoArchiveInterval(t *testing.T) {
 	b := testCoreBot(convs)
 	b.cfg = Config{Snapshot: "snap"}
 	b.resolveRepoFn = func(context.Context, string, string, string) (repoCtx, error) {
-		return repoCtx{Slug: "hetchyhq/hetchy", BaseBranch: "main", GitHubToken: "token"}, nil
+		return repoCtx{Slug: "sleuth-io/hetchy", BaseBranch: "main", GitHubToken: "token"}, nil
 	}
 	var gotAutoArchive int
 	b.createFn = func(_ context.Context, params any) (*daytona.Sandbox, error) {
@@ -35,13 +35,13 @@ func TestFreshRunCreatesSandboxWithAutoArchiveInterval(t *testing.T) {
 		return &daytona.Sandbox{ID: "sandbox-1"}, nil
 	}
 	b.runAgentFn = func(context.Context, *daytona.Sandbox, repoCtx, orgcfg.Config, agents.Profile, string, string, string, chatTaskOptions, ClaudeModel, blocks.Emitter) (string, error) {
-		return "https://github.com/hetchyhq/hetchy/pull/2", nil
+		return "https://github.com/sleuth-io/hetchy/pull/2", nil
 	}
 	b.deleteSandboxSessionFn = func(*daytona.Sandbox, string) {}
 	b.stopAndArchiveFn = func(context.Context, *daytona.Sandbox) {}
 
 	b.HandleRequest(context.Background(),
-		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant", DefaultGitHubOwner: "hetchyhq", DefaultGitHubRepo: "hetchy"},
+		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant", DefaultGitHubOwner: "sleuth-io", DefaultGitHubRepo: "hetchy"},
 		"ship it", "req-1", "thread-1", "user-1",
 		chatTaskOptionPatch{}, nil, nil, ClaudeModelOpus, newCaptureEmitter())
 

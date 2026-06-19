@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/hetchyhq/hetchy/internal/artifacts"
-	"github.com/hetchyhq/hetchy/internal/bootstrap"
-	"github.com/hetchyhq/hetchy/internal/convstore"
+	"github.com/sleuth-io/hetchy/internal/artifacts"
+	"github.com/sleuth-io/hetchy/internal/bootstrap"
+	"github.com/sleuth-io/hetchy/internal/convstore"
 )
 
 // The no-hard-wrap rule on bullet 5 also covers the Validation section

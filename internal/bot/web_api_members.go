@@ -3,7 +3,7 @@ package bot
 import (
 	"net/http"
 
-	"github.com/hetchyhq/hetchy/internal/auth"
+	"github.com/sleuth-io/hetchy/internal/auth"
 )
 
 // memberSummary is the shape returned by GET /api/v1/members.

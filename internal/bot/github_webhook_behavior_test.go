@@ -10,14 +10,14 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/hetchyhq/hetchy/internal/db"
-	"github.com/hetchyhq/hetchy/internal/db/sqlc"
+	"github.com/sleuth-io/hetchy/internal/db"
+	"github.com/sleuth-io/hetchy/internal/db/sqlc"
 )
 
 func TestWebhookRepoSlugUsesFullNameFallback(t *testing.T) {
-	owner, repo := webhookRepoSlug("", " ", " hetchyhq/hetchy ")
-	if owner != "hetchyhq" || repo != "hetchy" {
-		t.Fatalf("webhookRepoSlug fallback = %q/%q, want hetchyhq/hetchy", owner, repo)
+	owner, repo := webhookRepoSlug("", " ", " sleuth-io/hetchy ")
+	if owner != "sleuth-io" || repo != "hetchy" {
+		t.Fatalf("webhookRepoSlug fallback = %q/%q, want sleuth-io/hetchy", owner, repo)
 	}
 
 	owner, repo = webhookRepoSlug("octo", "repo", "ignored/full-name")
@@ -35,7 +35,7 @@ func TestHandlePullRequestEventSavesCanonicalPRState(t *testing.T) {
 	b.handlePullRequestEvent(context.Background(), []byte(`{
 		"action": "closed",
 		"installation": {"id": 42},
-		"repository": {"full_name": "hetchyhq/hetchy"},
+		"repository": {"full_name": "sleuth-io/hetchy"},
 		"pull_request": {"number": 12, "state": "closed", "merged": true}
 	}`))
 
@@ -43,9 +43,9 @@ func TestHandlePullRequestEventSavesCanonicalPRState(t *testing.T) {
 	assertWebhookArg(t, call.args, 0, "closed")
 	assertWebhookArg(t, call.args, 1, true)
 	assertWebhookArg(t, call.args, 4, "org1")
-	assertWebhookArg(t, call.args, 5, "hetchyhq")
+	assertWebhookArg(t, call.args, 5, "sleuth-io")
 	assertWebhookArg(t, call.args, 6, "hetchy")
-	assertWebhookArg(t, call.args, 7, "https://github.com/hetchyhq/hetchy/pull/12")
+	assertWebhookArg(t, call.args, 7, "https://github.com/sleuth-io/hetchy/pull/12")
 	assertWebhookArg(t, call.args, 8, int32(12))
 }
 
@@ -55,10 +55,10 @@ func TestHandlePullRequestEventSkipsMalformedPayloadsBeforeDB(t *testing.T) {
 		body string
 	}{
 		{name: "invalid json", body: `{`},
-		{name: "missing installation", body: `{"repository":{"full_name":"hetchyhq/hetchy"},"pull_request":{"number":12}}`},
-		{name: "missing pull request", body: `{"installation":{"id":42},"repository":{"full_name":"hetchyhq/hetchy"}}`},
+		{name: "missing installation", body: `{"repository":{"full_name":"sleuth-io/hetchy"},"pull_request":{"number":12}}`},
+		{name: "missing pull request", body: `{"installation":{"id":42},"repository":{"full_name":"sleuth-io/hetchy"}}`},
 		{name: "missing repository slug", body: `{"installation":{"id":42},"repository":{},"pull_request":{"number":12}}`},
-		{name: "zero pr number", body: `{"installation":{"id":42},"repository":{"full_name":"hetchyhq/hetchy"},"pull_request":{"number":0}}`},
+		{name: "zero pr number", body: `{"installation":{"id":42},"repository":{"full_name":"sleuth-io/hetchy"},"pull_request":{"number":0}}`},
 	}
 
 	for _, tt := range tests {
@@ -84,7 +84,7 @@ func TestWebhookEventActionGuardsSkipDB(t *testing.T) {
 				b.handlePullRequestReviewEvent(context.Background(), []byte(`{
 					"action": "edited",
 					"installation": {"id": 42},
-					"repository": {"full_name": "hetchyhq/hetchy"},
+					"repository": {"full_name": "sleuth-io/hetchy"},
 					"pull_request": {"number": 12}
 				}`))
 			},
@@ -95,7 +95,7 @@ func TestWebhookEventActionGuardsSkipDB(t *testing.T) {
 				b.handleCheckRunEvent(context.Background(), []byte(`{
 					"action": "created",
 					"installation": {"id": 42},
-					"repository": {"full_name": "hetchyhq/hetchy"},
+					"repository": {"full_name": "sleuth-io/hetchy"},
 					"check_run": {"head_sha": "abc123"}
 				}`))
 			},
@@ -106,7 +106,7 @@ func TestWebhookEventActionGuardsSkipDB(t *testing.T) {
 				b.handleCheckSuiteEvent(context.Background(), []byte(`{
 					"action": "rerequested",
 					"installation": {"id": 42},
-					"repository": {"full_name": "hetchyhq/hetchy"},
+					"repository": {"full_name": "sleuth-io/hetchy"},
 					"check_suite": {"head_sha": "abc123"}
 				}`))
 			},
@@ -117,7 +117,7 @@ func TestWebhookEventActionGuardsSkipDB(t *testing.T) {
 				b.handleStatusEvent(context.Background(), []byte(`{
 					"sha": " ",
 					"installation": {"id": 42},
-					"repository": {"full_name": "hetchyhq/hetchy"}
+					"repository": {"full_name": "sleuth-io/hetchy"}
 				}`))
 			},
 		},
@@ -146,7 +146,7 @@ func TestHandleCheckAndStatusEventsResolveInstallation(t *testing.T) {
 				b.handlePullRequestReviewEvent(context.Background(), []byte(`{
 					"action": "submitted",
 					"installation": {"id": 42},
-					"repository": {"full_name": "hetchyhq/hetchy"},
+					"repository": {"full_name": "sleuth-io/hetchy"},
 					"pull_request": {"number": 12}
 				}`))
 			},
@@ -157,7 +157,7 @@ func TestHandleCheckAndStatusEventsResolveInstallation(t *testing.T) {
 				b.handleCheckRunEvent(context.Background(), []byte(`{
 					"action": "completed",
 					"installation": {"id": 42},
-					"repository": {"full_name": "hetchyhq/hetchy"},
+					"repository": {"full_name": "sleuth-io/hetchy"},
 					"check_run": {"pull_requests": [{"number": 12}]}
 				}`))
 			},
@@ -168,7 +168,7 @@ func TestHandleCheckAndStatusEventsResolveInstallation(t *testing.T) {
 				b.handleCheckSuiteEvent(context.Background(), []byte(`{
 					"action": "completed",
 					"installation": {"id": 42},
-					"repository": {"full_name": "hetchyhq/hetchy"},
+					"repository": {"full_name": "sleuth-io/hetchy"},
 					"check_suite": {"pull_requests": [{"number": 12}]}
 				}`))
 			},
@@ -179,7 +179,7 @@ func TestHandleCheckAndStatusEventsResolveInstallation(t *testing.T) {
 				b.handleStatusEvent(context.Background(), []byte(`{
 					"sha": "abc123",
 					"installation": {"id": 42},
-					"repository": {"full_name": "hetchyhq/hetchy"}
+					"repository": {"full_name": "sleuth-io/hetchy"}
 				}`))
 			},
 		},
@@ -354,7 +354,7 @@ func webhookInstallationRow(installationID int64, orgID string) webhookRow {
 	return webhookRow{values: []any{
 		installationID,
 		orgID,
-		"hetchyhq",
+		"sleuth-io",
 		"Organization",
 		int64(99),
 		pgtype.Timestamptz{},

@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hetchyhq/hetchy/internal/blocks"
-	"github.com/hetchyhq/hetchy/internal/orgcfg"
+	"github.com/sleuth-io/hetchy/internal/blocks"
+	"github.com/sleuth-io/hetchy/internal/orgcfg"
 )
 
 // TestClaudeAuthEnv pins the deliberate precedence: when both creds

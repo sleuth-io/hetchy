@@ -22,7 +22,7 @@ per-org GitHub personal access tokens, and Daytona Cloud.
 ### 1. Clone
 
 ```bash
-git clone https://github.com/hetchyhq/hetchy.git
+git clone https://github.com/sleuth-io/hetchy.git
 cd hetchy
 ```
 

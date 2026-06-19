@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hetchyhq/hetchy/internal/db"
-	"github.com/hetchyhq/hetchy/internal/db/sqlc"
+	"github.com/sleuth-io/hetchy/internal/db"
+	"github.com/sleuth-io/hetchy/internal/db/sqlc"
 )
 
 func TestParseScheduleRequiresStandardFiveFieldCron(t *testing.T) {
@@ -111,7 +111,7 @@ func TestRepoRefSlug(t *testing.T) {
 	}{
 		{RepoRef{Owner: "hetchyhq", Name: "api"}, "hetchyhq/api"},
 		{RepoRef{Owner: "", Name: "api"}, ""},
-		{RepoRef{Owner: "hetchyhq", Name: ""}, ""},
+		{RepoRef{Owner: "sleuth-io", Name: ""}, ""},
 		{RepoRef{Owner: "", Name: ""}, ""},
 	}
 	for _, tc := range tests {

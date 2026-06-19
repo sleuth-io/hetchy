@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hetchyhq/hetchy/internal/orgcfg"
+	"github.com/sleuth-io/hetchy/internal/orgcfg"
 )
 
 // branchNameModel is the Anthropic model used to suggest a slug for

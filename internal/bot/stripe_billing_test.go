@@ -7,7 +7,7 @@ import (
 
 	"github.com/stripe/stripe-go/v85"
 
-	"github.com/hetchyhq/hetchy/internal/billing"
+	"github.com/sleuth-io/hetchy/internal/billing"
 )
 
 func TestSettingsURLUsesStripeReturnTo(t *testing.T) {

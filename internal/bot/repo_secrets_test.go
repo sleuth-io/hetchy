@@ -13,8 +13,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/hetchyhq/hetchy/internal/bootstrap"
-	"github.com/hetchyhq/hetchy/internal/db/sqlc"
+	"github.com/sleuth-io/hetchy/internal/bootstrap"
+	"github.com/sleuth-io/hetchy/internal/db/sqlc"
 )
 
 type fakeBootstrapStore struct {
@@ -224,7 +224,7 @@ func newRepoSecretTestBot(t *testing.T, boot *fakeBootstrapStore) *Bot {
 	b := newBypassOrgBot(t, "admin")
 	b.bootstrap = boot
 	b.lookupRepoFn = func(_ context.Context, orgID, owner, name string) (sqlc.GithubRepo, error) {
-		if orgID != "org_test" || owner != "hetchyhq" || name != "hetchy" {
+		if orgID != "org_test" || owner != "sleuth-io" || name != "hetchy" {
 			t.Fatalf("lookup repo got org=%q repo=%s/%s", orgID, owner, name)
 		}
 		return sqlc.GithubRepo{
@@ -256,7 +256,7 @@ func TestRepoSecretsHandlerUsesBootstrapStoreFakes(t *testing.T) {
 	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.repoSecretsHandler)))
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/repo-secrets?owner=hetchyhq&name=hetchy&path=apps/web", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/repo-secrets?owner=sleuth-io&name=hetchy&path=apps/web", nil)
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET status = %d body=%q", rec.Code, rec.Body.String())
@@ -265,7 +265,7 @@ func TestRepoSecretsHandlerUsesBootstrapStoreFakes(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &listResp); err != nil {
 		t.Fatalf("decode list response: %v", err)
 	}
-	if listResp.Owner != "hetchyhq" || listResp.Repo != "hetchy" || listResp.Path != "apps/web" {
+	if listResp.Owner != "sleuth-io" || listResp.Repo != "hetchy" || listResp.Path != "apps/web" {
 		t.Fatalf("list response repo identity = %+v", listResp)
 	}
 	if len(listResp.Secrets) != 2 || !listResp.Secrets[0].Filled || listResp.Secrets[1].Name != "EMPTY_TOKEN" {
@@ -274,7 +274,7 @@ func TestRepoSecretsHandlerUsesBootstrapStoreFakes(t *testing.T) {
 
 	rec = httptest.NewRecorder()
 	req = sameOriginJSONRequest(http.MethodPut, "/api/repo-secrets", `{
-		"owner":"hetchyhq",
+		"owner":"sleuth-io",
 		"name":"hetchy",
 		"path":"apps/web",
 		"secret_name":"API_KEY",
@@ -286,7 +286,7 @@ func TestRepoSecretsHandlerUsesBootstrapStoreFakes(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	req = sameOriginJSONRequest(http.MethodDelete, "/api/repo-secrets?owner=hetchyhq&name=hetchy&path=apps/web&secret_name=API_KEY", "")
+	req = sameOriginJSONRequest(http.MethodDelete, "/api/repo-secrets?owner=sleuth-io&name=hetchy&path=apps/web&secret_name=API_KEY", "")
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("DELETE status = %d body=%q", rec.Code, rec.Body.String())
@@ -374,7 +374,7 @@ func TestRepoBootstrapResetHandlerUsesBootstrapStoreFake(t *testing.T) {
 	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.repoBootstrapResetHandler)))
 
 	rec := httptest.NewRecorder()
-	req := sameOriginJSONRequest(http.MethodDelete, "/api/repo-bootstrap?owner=hetchyhq&name=hetchy&path=apps/web", "")
+	req := sameOriginJSONRequest(http.MethodDelete, "/api/repo-bootstrap?owner=sleuth-io&name=hetchy&path=apps/web", "")
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())

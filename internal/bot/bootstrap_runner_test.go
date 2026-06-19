@@ -11,7 +11,7 @@ import (
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
 	toolbox "github.com/daytonaio/daytona/libs/toolbox-api-client-go"
 
-	"github.com/hetchyhq/hetchy/internal/blocks"
+	"github.com/sleuth-io/hetchy/internal/blocks"
 )
 
 type bootstrapRunnerSHCall struct {

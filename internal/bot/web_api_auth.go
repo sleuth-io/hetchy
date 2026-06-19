@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/hetchyhq/hetchy/internal/auth"
+	"github.com/sleuth-io/hetchy/internal/auth"
 )
 
 func (b *Bot) apiAuthMiddleware(next http.Handler) http.Handler {

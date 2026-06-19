@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hetchyhq/hetchy/internal/billing"
-	"github.com/hetchyhq/hetchy/internal/webui"
+	"github.com/sleuth-io/hetchy/internal/billing"
+	"github.com/sleuth-io/hetchy/internal/webui"
 )
 
 func TestSettingsTemplate_RendersBillingTabLayout(t *testing.T) {

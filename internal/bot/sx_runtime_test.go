@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/hetchyhq/hetchy/internal/agents"
-	"github.com/hetchyhq/hetchy/internal/sxsync"
+	"github.com/sleuth-io/hetchy/internal/agents"
+	"github.com/sleuth-io/hetchy/internal/sxsync"
 )
 
 func TestAddOrgSXVaultEnvInjectsSkillsNewRuntimeToken(t *testing.T) {

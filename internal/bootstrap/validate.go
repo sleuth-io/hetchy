@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/hetchyhq/hetchy/internal/artifacts"
+	"github.com/sleuth-io/hetchy/internal/artifacts"
 )
 
 // ValidationArgs is everything BuildValidationPrompt needs beyond the

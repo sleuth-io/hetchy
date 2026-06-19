@@ -13,10 +13,10 @@ import (
 	sdkerrors "github.com/daytonaio/daytona/libs/sdk-go/pkg/errors"
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/types"
 
-	"github.com/hetchyhq/hetchy/internal/agents"
-	"github.com/hetchyhq/hetchy/internal/blocks"
-	"github.com/hetchyhq/hetchy/internal/convstore"
-	"github.com/hetchyhq/hetchy/internal/orgcfg"
+	"github.com/sleuth-io/hetchy/internal/agents"
+	"github.com/sleuth-io/hetchy/internal/blocks"
+	"github.com/sleuth-io/hetchy/internal/convstore"
+	"github.com/sleuth-io/hetchy/internal/orgcfg"
 )
 
 func TestHandleRequestPersistsRepoPromptWithFakeStore(t *testing.T) {
@@ -62,8 +62,8 @@ func TestHandleRequestDefaultRepoResolveFailureClearsRepo(t *testing.T) {
 	convs := &fakeConversationStore{getErr: convstore.ErrNotFound}
 	b := testCoreBot(convs)
 	b.resolveRepoFn = func(_ context.Context, _, owner, name string) (repoCtx, error) {
-		if owner != "hetchyhq" || name != "hetchy" {
-			t.Fatalf("resolve repo got %s/%s, want hetchyhq/hetchy", owner, name)
+		if owner != "sleuth-io" || name != "hetchy" {
+			t.Fatalf("resolve repo got %s/%s, want sleuth-io/hetchy", owner, name)
 		}
 		return repoCtx{}, errors.New("repo denied")
 	}
@@ -74,7 +74,7 @@ func TestHandleRequestDefaultRepoResolveFailureClearsRepo(t *testing.T) {
 	emit := newCaptureEmitter()
 
 	b.HandleRequest(context.Background(),
-		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant", DefaultGitHubOwner: "hetchyhq", DefaultGitHubRepo: "hetchy"},
+		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant", DefaultGitHubOwner: "sleuth-io", DefaultGitHubRepo: "hetchy"},
 		"ship it", "req-1", "thread-1", "user-1",
 		chatTaskOptionPatch{}, nil, nil, ClaudeModelOpus, emit)
 
@@ -135,8 +135,8 @@ func TestHandleRequestAwaitingRepoValidReplyRunsOriginalRequest(t *testing.T) {
 	}
 	b := testCoreBot(convs)
 	b.resolveRepoFn = func(_ context.Context, _, owner, name string) (repoCtx, error) {
-		if owner != "hetchyhq" || name != "hetchy" {
-			t.Fatalf("resolve repo got %s/%s, want hetchyhq/hetchy", owner, name)
+		if owner != "sleuth-io" || name != "hetchy" {
+			t.Fatalf("resolve repo got %s/%s, want sleuth-io/hetchy", owner, name)
 		}
 		return repoCtx{}, errors.New("repo denied")
 	}
@@ -148,7 +148,7 @@ func TestHandleRequestAwaitingRepoValidReplyRunsOriginalRequest(t *testing.T) {
 
 	b.HandleRequest(context.Background(),
 		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant"},
-		"hetchyhq/hetchy", "req-2", "thread-1", "user-1",
+		"sleuth-io/hetchy", "req-2", "thread-1", "user-1",
 		chatTaskOptionPatch{}, nil, nil, ClaudeModelOpus, emit,
 		convstore.Attachment{Filename: "repo-context.txt", Data: []byte("use this after repo selection")})
 
@@ -175,16 +175,16 @@ func TestHandleRequestFreshRunAgentFailureUsesMocks(t *testing.T) {
 	convs := &fakeConversationStore{getErr: convstore.ErrNotFound}
 	b := testCoreBot(convs)
 	b.resolveRepoFn = func(_ context.Context, orgID, owner, name string) (repoCtx, error) {
-		if orgID != "org_test" || owner != "hetchyhq" || name != "hetchy" {
+		if orgID != "org_test" || owner != "sleuth-io" || name != "hetchy" {
 			t.Fatalf("resolve repo got %s %s/%s", orgID, owner, name)
 		}
-		return repoCtx{Slug: "hetchyhq/hetchy", BaseBranch: "main", GitHubToken: "token"}, nil
+		return repoCtx{Slug: "sleuth-io/hetchy", BaseBranch: "main", GitHubToken: "token"}, nil
 	}
 	b.createFn = func(context.Context, any) (*daytona.Sandbox, error) {
 		return &daytona.Sandbox{ID: "sandbox-1"}, nil
 	}
 	b.runAgentFn = func(_ context.Context, sb *daytona.Sandbox, repo repoCtx, _ orgcfg.Config, _ agents.Profile, userRequest, requestID, branch string, _ chatTaskOptions, model ClaudeModel, emit blocks.Emitter) (string, error) {
-		if sb.ID != "sandbox-1" || repo.Slug != "hetchyhq/hetchy" || userRequest != "ship it" || requestID != "req-1" || branch != "feature/sf-req-1" || model != ClaudeModelHaiku {
+		if sb.ID != "sandbox-1" || repo.Slug != "sleuth-io/hetchy" || userRequest != "ship it" || requestID != "req-1" || branch != "feature/sf-req-1" || model != ClaudeModelHaiku {
 			t.Fatalf("unexpected runAgent args: sandbox=%s repo=%s request=%q requestID=%q branch=%q model=%s", sb.ID, repo.Slug, userRequest, requestID, branch, model)
 		}
 		emit.Notify("Agent started", "fake runner reached")
@@ -193,7 +193,7 @@ func TestHandleRequestFreshRunAgentFailureUsesMocks(t *testing.T) {
 	emit := newCaptureEmitter()
 
 	b.HandleRequest(context.Background(),
-		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant", DefaultGitHubOwner: "hetchyhq", DefaultGitHubRepo: "hetchy"},
+		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant", DefaultGitHubOwner: "sleuth-io", DefaultGitHubRepo: "hetchy"},
 		"ship it", "req-1", "thread-1", "user-1",
 		chatTaskOptionPatch{}, nil, nil, ClaudeModelHaiku, emit)
 
@@ -216,24 +216,24 @@ func TestHandleRequestFreshRunFailureKeepsDiscoveredPR(t *testing.T) {
 	convs := &fakeConversationStore{getErr: convstore.ErrNotFound}
 	b := testCoreBot(convs)
 	b.resolveRepoFn = func(context.Context, string, string, string) (repoCtx, error) {
-		return repoCtx{Slug: "hetchyhq/hetchy", BaseBranch: "main", GitHubToken: "token"}, nil
+		return repoCtx{Slug: "sleuth-io/hetchy", BaseBranch: "main", GitHubToken: "token"}, nil
 	}
 	b.createFn = func(context.Context, any) (*daytona.Sandbox, error) {
 		return &daytona.Sandbox{ID: "sandbox-1"}, nil
 	}
 	b.runAgentFn = func(_ context.Context, _ *daytona.Sandbox, _ repoCtx, _ orgcfg.Config, _ agents.Profile, _ string, _ string, _ string, _ chatTaskOptions, _ ClaudeModel, emit blocks.Emitter) (string, error) {
-		emit.Notify("PR opened", "https://github.com/hetchyhq/hetchy/pull/222")
+		emit.Notify("PR opened", "https://github.com/sleuth-io/hetchy/pull/222")
 		return "", errors.New("timed out while waiting for review")
 	}
 	emit := newCaptureEmitter()
 
 	b.HandleRequest(context.Background(),
-		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant", DefaultGitHubOwner: "hetchyhq", DefaultGitHubRepo: "hetchy"},
+		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant", DefaultGitHubOwner: "sleuth-io", DefaultGitHubRepo: "hetchy"},
 		"ship it", "req-1", "thread-1", "user-1",
 		chatTaskOptionPatch{}, nil, nil, ClaudeModelOpus, emit)
 
 	rec := convs.lastUpsert(t)
-	if rec.PRURL != "https://github.com/hetchyhq/hetchy/pull/222" {
+	if rec.PRURL != "https://github.com/sleuth-io/hetchy/pull/222" {
 		t.Fatalf("PRURL = %q, want discovered PR", rec.PRURL)
 	}
 }
@@ -242,14 +242,14 @@ func TestHandleRequestFreshRunSuccessUsesMocks(t *testing.T) {
 	convs := &fakeConversationStore{getErr: convstore.ErrNotFound}
 	b := testCoreBot(convs)
 	b.resolveRepoFn = func(context.Context, string, string, string) (repoCtx, error) {
-		return repoCtx{Slug: "hetchyhq/hetchy", BaseBranch: "main", GitHubToken: "token"}, nil
+		return repoCtx{Slug: "sleuth-io/hetchy", BaseBranch: "main", GitHubToken: "token"}, nil
 	}
 	b.createFn = func(context.Context, any) (*daytona.Sandbox, error) {
 		return &daytona.Sandbox{ID: "sandbox-1"}, nil
 	}
 	b.runAgentFn = func(_ context.Context, _ *daytona.Sandbox, _ repoCtx, _ orgcfg.Config, _ agents.Profile, _ string, _ string, _ string, _ chatTaskOptions, _ ClaudeModel, emit blocks.Emitter) (string, error) {
 		emit.Notify("Agent started", "fake runner reached")
-		return "https://github.com/hetchyhq/hetchy/pull/2", nil
+		return "https://github.com/sleuth-io/hetchy/pull/2", nil
 	}
 	var deletedSession, archivedSandbox string
 	b.deleteSandboxSessionFn = func(sb *daytona.Sandbox, sessionID string) {
@@ -262,7 +262,7 @@ func TestHandleRequestFreshRunSuccessUsesMocks(t *testing.T) {
 	emit := newCaptureEmitter()
 
 	b.HandleRequest(context.Background(),
-		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant", DefaultGitHubOwner: "hetchyhq", DefaultGitHubRepo: "hetchy"},
+		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant", DefaultGitHubOwner: "sleuth-io", DefaultGitHubRepo: "hetchy"},
 		"ship it", "req-1", "thread-1", "user-1",
 		chatTaskOptionPatch{}, nil, nil, ClaudeModelOpus, emit)
 
@@ -276,7 +276,7 @@ func TestHandleRequestFreshRunSuccessUsesMocks(t *testing.T) {
 		t.Fatalf("archived sandbox = %q, want sandbox-1", archivedSandbox)
 	}
 	rec := convs.lastUpsert(t)
-	if rec.PRURL != "https://github.com/hetchyhq/hetchy/pull/2" {
+	if rec.PRURL != "https://github.com/sleuth-io/hetchy/pull/2" {
 		t.Fatalf("PRURL = %q, want fake PR", rec.PRURL)
 	}
 	if rec.SandboxID != "sandbox-1" || rec.Branch != "feature/sf-req-1" {
@@ -288,7 +288,7 @@ func TestHandleRequestFreshRunNoPRKeepsBranchForRetry(t *testing.T) {
 	convs := &fakeConversationStore{getErr: convstore.ErrNotFound}
 	b := testCoreBot(convs)
 	b.resolveRepoFn = func(context.Context, string, string, string) (repoCtx, error) {
-		return repoCtx{Slug: "hetchyhq/hetchy", BaseBranch: "main", GitHubToken: "token"}, nil
+		return repoCtx{Slug: "sleuth-io/hetchy", BaseBranch: "main", GitHubToken: "token"}, nil
 	}
 	b.createFn = func(context.Context, any) (*daytona.Sandbox, error) {
 		return &daytona.Sandbox{ID: "sandbox-1"}, nil
@@ -308,7 +308,7 @@ func TestHandleRequestFreshRunNoPRKeepsBranchForRetry(t *testing.T) {
 	emit := newCaptureEmitter()
 
 	b.HandleRequest(context.Background(),
-		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant", DefaultGitHubOwner: "hetchyhq", DefaultGitHubRepo: "hetchy"},
+		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant", DefaultGitHubOwner: "sleuth-io", DefaultGitHubRepo: "hetchy"},
 		"can I switch repo here?", "req-1", "thread-1", "user-1",
 		chatTaskOptionPatch{}, nil, nil, ClaudeModelOpus, emit)
 
@@ -337,14 +337,14 @@ func TestHandleRequestNoPRRetryUsesExistingSandboxAndOriginalHistory(t *testing.
 			ThreadID:    "thread-1",
 			SandboxID:   "sandbox-1",
 			Branch:      "feature/sf-req-1",
-			GitHubOwner: "hetchyhq",
+			GitHubOwner: "sleuth-io",
 			GitHubRepo:  "hetchy",
 			History:     []string{"original implementation request"},
 		},
 	}
 	b := testCoreBot(convs)
 	b.resolveRepoFn = func(context.Context, string, string, string) (repoCtx, error) {
-		return repoCtx{Slug: "hetchyhq/hetchy", GitHubToken: "token"}, nil
+		return repoCtx{Slug: "sleuth-io/hetchy", GitHubToken: "token"}, nil
 	}
 	b.getSandboxFn = func(_ context.Context, sandboxID string) (*daytona.Sandbox, error) {
 		if sandboxID != "sandbox-1" {
@@ -367,7 +367,7 @@ func TestHandleRequestNoPRRetryUsesExistingSandboxAndOriginalHistory(t *testing.
 		if mode != followUpModeChange {
 			t.Fatalf("mode = %s, want change", mode)
 		}
-		return "https://github.com/hetchyhq/hetchy/pull/9", nil
+		return "https://github.com/sleuth-io/hetchy/pull/9", nil
 	}
 	emit := newCaptureEmitter()
 
@@ -386,7 +386,7 @@ func TestHandleRequestNoPRRetryUsesExistingSandboxAndOriginalHistory(t *testing.
 	if len(rec.History) != 2 || rec.History[0] != "original implementation request" || rec.History[1] != "Try to create the pull request again" {
 		t.Fatalf("persisted history = %#v", rec.History)
 	}
-	if rec.PRURL != "https://github.com/hetchyhq/hetchy/pull/9" {
+	if rec.PRURL != "https://github.com/sleuth-io/hetchy/pull/9" {
 		t.Fatalf("PRURL = %q", rec.PRURL)
 	}
 }
@@ -396,7 +396,7 @@ func TestHandleRequestRetryAfterFailurePreservesOriginalHistory(t *testing.T) {
 		rec: convstore.Record{
 			OrgID:       "org_test",
 			ThreadID:    "thread-1",
-			GitHubOwner: "hetchyhq",
+			GitHubOwner: "sleuth-io",
 			GitHubRepo:  "hetchy",
 			Branch:      "feature/stale-local-only",
 			History:     []string{"old failed request", "previous retry"},
@@ -412,8 +412,8 @@ func TestHandleRequestRetryAfterFailurePreservesOriginalHistory(t *testing.T) {
 	}
 	b := testCoreBot(convs)
 	b.resolveRepoFn = func(_ context.Context, _, owner, name string) (repoCtx, error) {
-		if owner != "hetchyhq" || name != "hetchy" {
-			t.Fatalf("resolve repo got %s/%s, want hetchyhq/hetchy", owner, name)
+		if owner != "sleuth-io" || name != "hetchy" {
+			t.Fatalf("resolve repo got %s/%s, want sleuth-io/hetchy", owner, name)
 		}
 		return repoCtx{}, errors.New("repo denied")
 	}
@@ -475,8 +475,8 @@ func TestHandleRequestSavesTaskOptionsBeforeFollowUp(t *testing.T) {
 			ThreadID:    "thread-1",
 			SandboxID:   "sandbox-1",
 			Branch:      "feature/sf-old",
-			PRURL:       "https://github.com/hetchyhq/hetchy/pull/1",
-			GitHubOwner: "hetchyhq",
+			PRURL:       "https://github.com/sleuth-io/hetchy/pull/1",
+			GitHubOwner: "sleuth-io",
 			GitHubRepo:  "hetchy",
 			History:     []string{"first request"},
 			TaskOptions: map[string]bool{chatTaskValidateKey: true},
@@ -515,15 +515,15 @@ func TestHandleRequestFollowUpAgentFailureUsesMocks(t *testing.T) {
 			ThreadID:    "thread-1",
 			SandboxID:   "sandbox-1",
 			Branch:      "feature/sf-old",
-			PRURL:       "https://github.com/hetchyhq/hetchy/pull/1",
-			GitHubOwner: "hetchyhq",
+			PRURL:       "https://github.com/sleuth-io/hetchy/pull/1",
+			GitHubOwner: "sleuth-io",
 			GitHubRepo:  "hetchy",
 			History:     []string{"first request"},
 		},
 	}
 	b := testCoreBot(convs)
 	b.resolveRepoFn = func(context.Context, string, string, string) (repoCtx, error) {
-		return repoCtx{Slug: "hetchyhq/hetchy", BaseBranch: "main", GitHubToken: "token"}, nil
+		return repoCtx{Slug: "sleuth-io/hetchy", BaseBranch: "main", GitHubToken: "token"}, nil
 	}
 	b.getSandboxFn = func(_ context.Context, id string) (*daytona.Sandbox, error) {
 		if id != "sandbox-1" {
@@ -533,7 +533,7 @@ func TestHandleRequestFollowUpAgentFailureUsesMocks(t *testing.T) {
 	}
 	b.resumeSandboxFn = func(context.Context, *daytona.Sandbox, blocks.Emitter) error { return nil }
 	b.runFollowUpFn = func(_ context.Context, sb *daytona.Sandbox, repo repoCtx, _ orgcfg.Config, rec convstore.Record, _ agents.Profile, text, requestID string, _ chatTaskOptions, _ ClaudeModel, _ followUpMode, emit blocks.Emitter) (string, error) {
-		if sb.ID != "sandbox-1" || repo.Slug != "hetchyhq/hetchy" || rec.PRURL == "" || text != "follow up" || requestID != "req-2" {
+		if sb.ID != "sandbox-1" || repo.Slug != "sleuth-io/hetchy" || rec.PRURL == "" || text != "follow up" || requestID != "req-2" {
 			t.Fatalf("unexpected runFollowUp args: sandbox=%s repo=%s pr=%q text=%q requestID=%q", sb.ID, repo.Slug, rec.PRURL, text, requestID)
 		}
 		emit.Notify("Follow-up started", "fake runner reached")
@@ -572,15 +572,15 @@ func TestHandleRequestFollowUpSuccessUsesMocks(t *testing.T) {
 			ThreadID:    "thread-1",
 			SandboxID:   "sandbox-1",
 			Branch:      "feature/sf-old",
-			PRURL:       "https://github.com/hetchyhq/hetchy/pull/1",
-			GitHubOwner: "hetchyhq",
+			PRURL:       "https://github.com/sleuth-io/hetchy/pull/1",
+			GitHubOwner: "sleuth-io",
 			GitHubRepo:  "hetchy",
 			History:     []string{"first request"},
 		},
 	}
 	b := testCoreBot(convs)
 	b.resolveRepoFn = func(context.Context, string, string, string) (repoCtx, error) {
-		return repoCtx{Slug: "hetchyhq/hetchy", BaseBranch: "main", GitHubToken: "token"}, nil
+		return repoCtx{Slug: "sleuth-io/hetchy", BaseBranch: "main", GitHubToken: "token"}, nil
 	}
 	b.getSandboxFn = func(_ context.Context, id string) (*daytona.Sandbox, error) {
 		return &daytona.Sandbox{ID: id}, nil
@@ -588,7 +588,7 @@ func TestHandleRequestFollowUpSuccessUsesMocks(t *testing.T) {
 	b.resumeSandboxFn = func(context.Context, *daytona.Sandbox, blocks.Emitter) error { return nil }
 	b.runFollowUpFn = func(_ context.Context, _ *daytona.Sandbox, _ repoCtx, _ orgcfg.Config, _ convstore.Record, _ agents.Profile, _ string, _ string, _ chatTaskOptions, _ ClaudeModel, _ followUpMode, emit blocks.Emitter) (string, error) {
 		emit.Notify("Follow-up started", "fake runner reached")
-		return "https://github.com/hetchyhq/hetchy/pull/2", nil
+		return "https://github.com/sleuth-io/hetchy/pull/2", nil
 	}
 	var deletedSession, archivedSandbox string
 	b.deleteSandboxSessionFn = func(sb *daytona.Sandbox, sessionID string) {
@@ -615,7 +615,7 @@ func TestHandleRequestFollowUpSuccessUsesMocks(t *testing.T) {
 		t.Fatalf("archived sandbox = %q, want sandbox-1", archivedSandbox)
 	}
 	rec := convs.lastUpsert(t)
-	if rec.PRURL != "https://github.com/hetchyhq/hetchy/pull/2" {
+	if rec.PRURL != "https://github.com/sleuth-io/hetchy/pull/2" {
 		t.Fatalf("PRURL = %q, want updated fake PR", rec.PRURL)
 	}
 	if got := rec.History; len(got) != 2 || got[1] != "follow up" {
@@ -630,15 +630,15 @@ func TestHandleRequestFollowUpResumeConflictCreatesReplacementSandbox(t *testing
 			ThreadID:    "thread-1",
 			SandboxID:   "sandbox-old",
 			Branch:      "feature/sf-old",
-			PRURL:       "https://github.com/hetchyhq/hetchy/pull/1",
-			GitHubOwner: "hetchyhq",
+			PRURL:       "https://github.com/sleuth-io/hetchy/pull/1",
+			GitHubOwner: "sleuth-io",
 			GitHubRepo:  "hetchy",
 			History:     []string{"first request"},
 		},
 	}
 	b := testCoreBot(convs)
 	b.resolveRepoFn = func(context.Context, string, string, string) (repoCtx, error) {
-		return repoCtx{Slug: "hetchyhq/hetchy", BaseBranch: "main", GitHubToken: "token"}, nil
+		return repoCtx{Slug: "sleuth-io/hetchy", BaseBranch: "main", GitHubToken: "token"}, nil
 	}
 	b.getSandboxFn = func(_ context.Context, id string) (*daytona.Sandbox, error) {
 		if id != "sandbox-old" {
@@ -659,7 +659,7 @@ func TestHandleRequestFollowUpResumeConflictCreatesReplacementSandbox(t *testing
 			t.Fatalf("unexpected replacement follow-up args: sandbox=%s rec=%+v text=%q", sb.ID, rec, text)
 		}
 		emit.Notify("Follow-up started", "replacement reached")
-		return "https://github.com/hetchyhq/hetchy/pull/1", nil
+		return "https://github.com/sleuth-io/hetchy/pull/1", nil
 	}
 	b.deleteSandboxSessionFn = func(*daytona.Sandbox, string) {}
 	b.stopAndArchiveFn = func(context.Context, *daytona.Sandbox) {}
@@ -692,8 +692,8 @@ func TestHandleRequestFollowUpErroredResumeCreatesReplacementSandboxWithCache(t 
 			ThreadID:    "thread-1",
 			SandboxID:   "sandbox-old",
 			Branch:      "feature/sf-old",
-			PRURL:       "https://github.com/hetchyhq/hetchy/pull/1",
-			GitHubOwner: "hetchyhq",
+			PRURL:       "https://github.com/sleuth-io/hetchy/pull/1",
+			GitHubOwner: "sleuth-io",
 			GitHubRepo:  "hetchy",
 			History:     []string{"first request"},
 		},
@@ -706,7 +706,7 @@ func TestHandleRequestFollowUpErroredResumeCreatesReplacementSandboxWithCache(t 
 	}
 	b.resolveRepoFn = func(context.Context, string, string, string) (repoCtx, error) {
 		return repoCtx{
-			Slug:        "hetchyhq/hetchy",
+			Slug:        "sleuth-io/hetchy",
 			BaseBranch:  "main",
 			GitHubToken: "token",
 			InstallID:   10,
@@ -748,7 +748,7 @@ func TestHandleRequestFollowUpErroredResumeCreatesReplacementSandboxWithCache(t 
 			t.Fatalf("unexpected replacement follow-up args: sandbox=%s rec=%+v text=%q", sb.ID, rec, text)
 		}
 		emit.Notify("Follow-up started", "replacement reached")
-		return "https://github.com/hetchyhq/hetchy/pull/1", nil
+		return "https://github.com/sleuth-io/hetchy/pull/1", nil
 	}
 	b.deleteSandboxSessionFn = func(*daytona.Sandbox, string) {}
 	b.stopAndArchiveFn = func(context.Context, *daytona.Sandbox) {}
@@ -784,15 +784,15 @@ func TestHandleRequestFollowUpNewPRStartsFreshRun(t *testing.T) {
 			ThreadID:    "thread-1",
 			SandboxID:   "sandbox-old",
 			Branch:      "feature/sf-old",
-			PRURL:       "https://github.com/hetchyhq/hetchy/pull/1",
-			GitHubOwner: "hetchyhq",
+			PRURL:       "https://github.com/sleuth-io/hetchy/pull/1",
+			GitHubOwner: "sleuth-io",
 			GitHubRepo:  "hetchy",
 			History:     []string{"first request"},
 		},
 	}
 	b := testCoreBot(convs)
 	b.resolveRepoFn = func(context.Context, string, string, string) (repoCtx, error) {
-		return repoCtx{Slug: "hetchyhq/hetchy", BaseBranch: "main", GitHubToken: "token"}, nil
+		return repoCtx{Slug: "sleuth-io/hetchy", BaseBranch: "main", GitHubToken: "token"}, nil
 	}
 	b.createFn = func(context.Context, any) (*daytona.Sandbox, error) {
 		return &daytona.Sandbox{ID: "sandbox-new"}, nil
@@ -809,7 +809,7 @@ func TestHandleRequestFollowUpNewPRStartsFreshRun(t *testing.T) {
 			t.Fatalf("fresh run target = sandbox %s branch %s", sb.ID, branch)
 		}
 		gotRequest = userRequest
-		return "https://github.com/hetchyhq/hetchy/pull/2", nil
+		return "https://github.com/sleuth-io/hetchy/pull/2", nil
 	}
 	b.deleteSandboxSessionFn = func(*daytona.Sandbox, string) {}
 	b.stopAndArchiveFn = func(context.Context, *daytona.Sandbox) {}
@@ -820,11 +820,11 @@ func TestHandleRequestFollowUpNewPRStartsFreshRun(t *testing.T) {
 		"fix it and open a new PR", "req-2", "thread-1", "user-1",
 		chatTaskOptionPatch{}, nil, nil, ClaudeModelOpus, emit)
 
-	if !strings.Contains(gotRequest, "Create a NEW pull request") || !strings.Contains(gotRequest, "https://github.com/hetchyhq/hetchy/pull/1") {
+	if !strings.Contains(gotRequest, "Create a NEW pull request") || !strings.Contains(gotRequest, "https://github.com/sleuth-io/hetchy/pull/1") {
 		t.Fatalf("new PR request missing prior context:\n%s", gotRequest)
 	}
 	rec := convs.lastUpsert(t)
-	if rec.SandboxID != "sandbox-new" || rec.Branch != "feature/sf-new" || rec.PRURL != "https://github.com/hetchyhq/hetchy/pull/2" {
+	if rec.SandboxID != "sandbox-new" || rec.Branch != "feature/sf-new" || rec.PRURL != "https://github.com/sleuth-io/hetchy/pull/2" {
 		t.Fatalf("new PR record = %+v", rec)
 	}
 	if got := rec.History; len(got) != 2 || got[1] != "fix it and open a new PR" {
@@ -839,15 +839,15 @@ func TestHandleRequestFollowUpAnswerOnlyKeepsExistingPR(t *testing.T) {
 			ThreadID:    "thread-1",
 			SandboxID:   "sandbox-1",
 			Branch:      "feature/sf-old",
-			PRURL:       "https://github.com/hetchyhq/hetchy/pull/1",
-			GitHubOwner: "hetchyhq",
+			PRURL:       "https://github.com/sleuth-io/hetchy/pull/1",
+			GitHubOwner: "sleuth-io",
 			GitHubRepo:  "hetchy",
 			History:     []string{"first request"},
 		},
 	}
 	b := testCoreBot(convs)
 	b.resolveRepoFn = func(context.Context, string, string, string) (repoCtx, error) {
-		return repoCtx{Slug: "hetchyhq/hetchy", BaseBranch: "main", GitHubToken: "token"}, nil
+		return repoCtx{Slug: "sleuth-io/hetchy", BaseBranch: "main", GitHubToken: "token"}, nil
 	}
 	b.getSandboxFn = func(_ context.Context, id string) (*daytona.Sandbox, error) {
 		return &daytona.Sandbox{ID: id}, nil
@@ -885,7 +885,7 @@ func TestHandleRequestFollowUpAnswerOnlyKeepsExistingPR(t *testing.T) {
 		t.Fatalf("archived sandbox = %q, want sandbox-1", archivedSandbox)
 	}
 	rec := convs.lastUpsert(t)
-	if rec.PRURL != "https://github.com/hetchyhq/hetchy/pull/1" {
+	if rec.PRURL != "https://github.com/sleuth-io/hetchy/pull/1" {
 		t.Fatalf("follow-up should keep existing PR URL, got %+v", rec)
 	}
 }
@@ -1063,7 +1063,7 @@ func TestHandleRequestRetryAfterFailureRunsWithOriginalRequestContext(t *testing
 		rec: convstore.Record{
 			OrgID:       "org_test",
 			ThreadID:    "thread-1",
-			GitHubOwner: "hetchyhq",
+			GitHubOwner: "sleuth-io",
 			GitHubRepo:  "hetchy",
 			History: []string{
 				"fix chat autoscroll when user scrolled up",
@@ -1086,7 +1086,7 @@ func TestHandleRequestRetryAfterFailureRunsWithOriginalRequestContext(t *testing
 	b.runAgentFn = func(_ context.Context, _ *daytona.Sandbox, _ repoCtx, _ orgcfg.Config, _ agents.Profile, userRequest, _ string, _ string, _ chatTaskOptions, _ ClaudeModel, emit blocks.Emitter) (string, error) {
 		capturedRequest = userRequest
 		emit.Notify("Agent started", "fake runner reached")
-		return "https://github.com/hetchyhq/hetchy/pull/7", nil
+		return "https://github.com/sleuth-io/hetchy/pull/7", nil
 	}
 	b.deleteSandboxSessionFn = func(*daytona.Sandbox, string) {}
 	b.stopAndArchiveFn = func(context.Context, *daytona.Sandbox) {}

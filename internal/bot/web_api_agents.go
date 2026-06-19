@@ -7,10 +7,10 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/hetchyhq/hetchy/internal/agents"
-	"github.com/hetchyhq/hetchy/internal/auth"
-	"github.com/hetchyhq/hetchy/internal/jobs"
-	"github.com/hetchyhq/hetchy/internal/sxsync"
+	"github.com/sleuth-io/hetchy/internal/agents"
+	"github.com/sleuth-io/hetchy/internal/auth"
+	"github.com/sleuth-io/hetchy/internal/jobs"
+	"github.com/sleuth-io/hetchy/internal/sxsync"
 )
 
 type agentSummary struct {

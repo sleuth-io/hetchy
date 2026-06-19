@@ -25,7 +25,7 @@ import (
 
 	workos "github.com/workos/workos-go/v7"
 
-	"github.com/hetchyhq/hetchy/internal/db/sqlc"
+	"github.com/sleuth-io/hetchy/internal/db/sqlc"
 )
 
 // SessionCookieName is the cookie that holds the sealed WorkOS session.

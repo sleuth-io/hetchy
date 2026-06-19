@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/hetchyhq/hetchy/internal/orgcfg"
+	"github.com/sleuth-io/hetchy/internal/orgcfg"
 )
 
 type fakeOrgStore struct {

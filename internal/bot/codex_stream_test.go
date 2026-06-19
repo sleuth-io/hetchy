@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hetchyhq/hetchy/internal/blocks"
+	"github.com/sleuth-io/hetchy/internal/blocks"
 )
 
 func TestCodexStreamParser_TextCommandAndFinal(t *testing.T) {
@@ -13,12 +13,12 @@ func TestCodexStreamParser_TextCommandAndFinal(t *testing.T) {
 
 	p.Line(`{"type":"agent_message","message":"I'll make the change.\n"}`)
 	p.Line(`{"type":"exec_command","id":"cmd-1","command":"go test ./internal/bot"}`)
-	p.Line(`{"type":"exec_command_output","id":"cmd-1","output":"ok github.com/hetchyhq/hetchy/internal/bot"}`)
+	p.Line(`{"type":"exec_command_output","id":"cmd-1","output":"ok github.com/sleuth-io/hetchy/internal/bot"}`)
 	p.Line(`{"type":"exec_command_completed","id":"cmd-1","exit_code":0}`)
-	p.Line(`{"type":"codex_final","text":"Done: https://github.com/hetchyhq/hetchy/pull/42\n"}`)
+	p.Line(`{"type":"codex_final","text":"Done: https://github.com/sleuth-io/hetchy/pull/42\n"}`)
 
 	prURL := p.Finish()
-	if prURL != "https://github.com/hetchyhq/hetchy/pull/42" {
+	if prURL != "https://github.com/sleuth-io/hetchy/pull/42" {
 		t.Fatalf("PR URL = %q", prURL)
 	}
 	if len(emit.Blocks) != 2 {
@@ -41,11 +41,11 @@ func TestCodexStreamParser_CurrentCodexThreadEvents(t *testing.T) {
 	p.Line(`{"type":"item.started","item":{"id":"cmd-1","type":"command_execution","command":"sed -n '1,20p' README.md","aggregated_output":"","status":"in_progress"}}`)
 	p.Line(`{"type":"item.updated","item":{"id":"cmd-1","type":"command_execution","command":"sed -n '1,20p' README.md","aggregated_output":"# Hetchy\n","status":"in_progress"}}`)
 	p.Line(`{"type":"item.completed","item":{"id":"cmd-1","type":"command_execution","command":"sed -n '1,20p' README.md","aggregated_output":"# Hetchy\nMore output\n","exit_code":0,"status":"completed"}}`)
-	p.Line(`{"type":"item.completed","item":{"id":"msg-1","type":"agent_message","text":"Done: https://github.com/hetchyhq/hetchy/pull/44"}}`)
+	p.Line(`{"type":"item.completed","item":{"id":"msg-1","type":"agent_message","text":"Done: https://github.com/sleuth-io/hetchy/pull/44"}}`)
 	p.Line(`{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0,"output_tokens":2,"reasoning_output_tokens":0}}`)
 
 	prURL := p.Finish()
-	if prURL != "https://github.com/hetchyhq/hetchy/pull/44" {
+	if prURL != "https://github.com/sleuth-io/hetchy/pull/44" {
 		t.Fatalf("PR URL = %q", prURL)
 	}
 	if len(emit.Blocks) != 2 {
@@ -73,11 +73,11 @@ func TestCodexStreamParser_ExtractsPRURLFromCommandOutput(t *testing.T) {
 	p := newCodexStreamParser(emit)
 
 	p.Line(`{"type":"item.started","item":{"id":"cmd-1","type":"command_execution","command":"gh pr create","aggregated_output":"","status":"in_progress"}}`)
-	p.Line(`{"type":"item.completed","item":{"id":"cmd-1","type":"command_execution","command":"gh pr create","aggregated_output":"https://github.com/hetchyhq/hetchy/pull/212\n","exit_code":0,"status":"completed"}}`)
+	p.Line(`{"type":"item.completed","item":{"id":"cmd-1","type":"command_execution","command":"gh pr create","aggregated_output":"https://github.com/sleuth-io/hetchy/pull/212\n","exit_code":0,"status":"completed"}}`)
 	p.Line(`{"type":"item.completed","item":{"id":"msg-1","type":"agent_message","text":"Done."}}`)
 
 	prURL := p.Finish()
-	if prURL != "https://github.com/hetchyhq/hetchy/pull/212" {
+	if prURL != "https://github.com/sleuth-io/hetchy/pull/212" {
 		t.Fatalf("PR URL = %q", prURL)
 	}
 }
@@ -86,10 +86,10 @@ func TestCodexStreamParser_CommandDoneFinalEventFallsThrough(t *testing.T) {
 	emit := newCaptureEmitter()
 	p := newCodexStreamParser(emit)
 
-	p.Line(`{"type":"exec_complete","last_agent_message":"Done: https://github.com/hetchyhq/hetchy/pull/43"}`)
+	p.Line(`{"type":"exec_complete","last_agent_message":"Done: https://github.com/sleuth-io/hetchy/pull/43"}`)
 
 	prURL := p.Finish()
-	if prURL != "https://github.com/hetchyhq/hetchy/pull/43" {
+	if prURL != "https://github.com/sleuth-io/hetchy/pull/43" {
 		t.Fatalf("PR URL = %q", prURL)
 	}
 	if len(emit.Blocks) != 1 {

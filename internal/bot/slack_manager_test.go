@@ -8,7 +8,7 @@ import (
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
 
-	"github.com/hetchyhq/hetchy/internal/orgcfg"
+	"github.com/sleuth-io/hetchy/internal/orgcfg"
 )
 
 func TestSlackManagerRunNoConfiguredOrgsExitsOnCancel(t *testing.T) {

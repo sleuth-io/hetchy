@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hetchyhq/hetchy/internal/agents"
+	"github.com/sleuth-io/hetchy/internal/agents"
 )
 
 func TestShouldImportRemoteAgentRowRevivesDisabledRemoteAgents(t *testing.T) {

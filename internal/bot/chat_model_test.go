@@ -3,7 +3,7 @@ package bot
 import (
 	"testing"
 
-	"github.com/hetchyhq/hetchy/internal/convstore"
+	"github.com/sleuth-io/hetchy/internal/convstore"
 )
 
 func TestParseClaudeModel(t *testing.T) {

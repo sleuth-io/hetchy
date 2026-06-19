@@ -12,6 +12,6 @@ date="${DATE:-$(date -u +"%Y-%m-%dT%H:%M:%SZ")}"
 sandbox_version="${SANDBOX_VERSION:-$(./scripts/sandbox-version.sh 2>/dev/null || echo "dev")}"
 
 go build \
-  -ldflags "-X github.com/hetchyhq/hetchy/internal/buildinfo.Version=${version} -X github.com/hetchyhq/hetchy/internal/buildinfo.Commit=${commit} -X github.com/hetchyhq/hetchy/internal/buildinfo.Date=${date} -X github.com/hetchyhq/hetchy/internal/buildinfo.SandboxSnapshotVersion=${sandbox_version}" \
+  -ldflags "-X github.com/sleuth-io/hetchy/internal/buildinfo.Version=${version} -X github.com/sleuth-io/hetchy/internal/buildinfo.Commit=${commit} -X github.com/sleuth-io/hetchy/internal/buildinfo.Date=${date} -X github.com/sleuth-io/hetchy/internal/buildinfo.SandboxSnapshotVersion=${sandbox_version}" \
   -o "$out" \
   ./cmd/hetchy

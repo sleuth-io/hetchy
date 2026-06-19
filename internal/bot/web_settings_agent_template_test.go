@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hetchyhq/hetchy/internal/sxsync"
-	"github.com/hetchyhq/hetchy/internal/webui"
+	"github.com/sleuth-io/hetchy/internal/sxsync"
+	"github.com/sleuth-io/hetchy/internal/webui"
 )
 
 func TestSettingsTemplate_RendersAgentsTab(t *testing.T) {

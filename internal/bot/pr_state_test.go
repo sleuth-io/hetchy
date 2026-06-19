@@ -35,7 +35,7 @@ func TestPRStateStorageHelpers(t *testing.T) {
 	if got := pgTimestamptz(when); !got.Valid || !got.Time.Equal(when) {
 		t.Fatalf("pgTimestamptz = %+v, want valid %s", got, when)
 	}
-	if got := canonicalGitHubPRURL("hetchyhq", "hetchy", 262); got != "https://github.com/hetchyhq/hetchy/pull/262" {
+	if got := canonicalGitHubPRURL("sleuth-io", "hetchy", 262); got != "https://github.com/sleuth-io/hetchy/pull/262" {
 		t.Fatalf("canonicalGitHubPRURL = %q", got)
 	}
 }

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hetchyhq/hetchy/internal/auth"
+	"github.com/sleuth-io/hetchy/internal/auth"
 )
 
 // TestSwitchOrgHandler_POSTSwitchErrorReusesFetchedOrgs proves the POST error

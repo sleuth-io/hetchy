@@ -8,9 +8,9 @@ import (
 
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
 
-	"github.com/hetchyhq/hetchy/internal/blocks"
-	"github.com/hetchyhq/hetchy/internal/convstore"
-	"github.com/hetchyhq/hetchy/internal/runstore"
+	"github.com/sleuth-io/hetchy/internal/blocks"
+	"github.com/sleuth-io/hetchy/internal/convstore"
+	"github.com/sleuth-io/hetchy/internal/runstore"
 )
 
 func TestHandleFreshSandboxCreateErrorPersistsFailure(t *testing.T) {
@@ -201,7 +201,7 @@ func TestHandleFreshAgentRunErrorPreservesPRURLOnCancel(t *testing.T) {
 		History:  []string{"ship it"},
 	}
 	recorder := recorderWithNotifyBlock("Running")
-	const wantPR = "https://github.com/hetchyhq/hetchy/pull/777"
+	const wantPR = "https://github.com/sleuth-io/hetchy/pull/777"
 	capture := newCaptureEmitter()
 	emit := newPRURLPersistingEmitter(discardLogger(), convs, rec, capture)
 	id := emit.Start(blocks.KindResult, "Done!", nil)
@@ -245,10 +245,10 @@ func TestHandleFollowUpRunErrorPreservesPRURLOnCancel(t *testing.T) {
 		ThreadID: "thread-1",
 		History:  []string{"first turn"},
 		Branch:   "feature/sf-1",
-		PRURL:    "https://github.com/hetchyhq/hetchy/pull/1",
+		PRURL:    "https://github.com/sleuth-io/hetchy/pull/1",
 	}
 	recorder := recorderWithNotifyBlock("Continuing")
-	const wantPR = "https://github.com/hetchyhq/hetchy/pull/2"
+	const wantPR = "https://github.com/sleuth-io/hetchy/pull/2"
 	capture := newCaptureEmitter()
 	emit := newPRURLPersistingEmitter(discardLogger(), convs, rec, capture)
 	id := emit.Start(blocks.KindResult, "Done!", nil)
@@ -287,7 +287,7 @@ func TestHandleFollowUpRunErrorProjectsPRVerificationFailure(t *testing.T) {
 		ThreadID: "thread-1",
 		History:  []string{"first turn"},
 		Branch:   "feature/sf-1",
-		PRURL:    "https://github.com/hetchyhq/hetchy/pull/1",
+		PRURL:    "https://github.com/sleuth-io/hetchy/pull/1",
 	}
 	recorder := recorderWithNotifyBlock("Continuing")
 	emit := newCaptureEmitter()
@@ -299,7 +299,7 @@ func TestHandleFollowUpRunErrorProjectsPRVerificationFailure(t *testing.T) {
 		t.Fatalf("expected PR verification error, got calls=%v", emit.Calls)
 	}
 	got := convs.lastUpsert(t)
-	if got.PRURL != "https://github.com/hetchyhq/hetchy/pull/1" {
+	if got.PRURL != "https://github.com/sleuth-io/hetchy/pull/1" {
 		t.Fatalf("follow-up failure should keep existing PRURL, got %q", got.PRURL)
 	}
 	if len(got.History) != 2 || got.History[1] != "follow up" {
@@ -337,7 +337,7 @@ func TestHandleFollowUpRunErrorStopsPreRuntimeSetupFailure(t *testing.T) {
 		ThreadID:  "thread-1",
 		History:   []string{"first turn"},
 		Branch:    "feature/sf-1",
-		PRURL:     "https://github.com/hetchyhq/hetchy/pull/1",
+		PRURL:     "https://github.com/sleuth-io/hetchy/pull/1",
 		SandboxID: "sandbox-1",
 	}
 	recorder := recorderWithNotifyBlock("Sandbox setup")
@@ -351,7 +351,7 @@ func TestHandleFollowUpRunErrorStopsPreRuntimeSetupFailure(t *testing.T) {
 		t.Fatalf("expected setup failure, got calls=%v", emit.Calls)
 	}
 	got := convs.lastUpsert(t)
-	if got.PRURL != "https://github.com/hetchyhq/hetchy/pull/1" {
+	if got.PRURL != "https://github.com/sleuth-io/hetchy/pull/1" {
 		t.Fatalf("follow-up setup failure should keep existing PRURL, got %q", got.PRURL)
 	}
 	if len(got.History) != 2 || got.History[1] != "follow up" {
