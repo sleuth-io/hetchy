@@ -27,7 +27,7 @@ flowchart TD
     DeclareSecrets --> UseSpec
     SaveFailing --> BootstrapSkipped
 
-    UseSpec --> MintSlots[Mint default artifact slots\nif S3 is configured]
+    UseSpec --> MintSlots[Mint default artifact slots\nif storage is configured]
     MintSlots --> MergePrompt[Merge validation prompt\ninto agent prompt]
     MergePrompt --> ApplySpec[agent.sh/followup.sh decodes\nsetup/start/stop/health scripts\nand lessons.md]
     ApplySpec --> StartApp[Run setup.sh,\nstop.sh, start.sh,\npoll health.sh for 90s]

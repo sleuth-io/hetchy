@@ -41,6 +41,9 @@ RUN apk add --no-cache ca-certificates git tzdata
 RUN addgroup -g 1000 appuser && \
     adduser -D -u 1000 -G appuser appuser
 
+RUN mkdir -p /data/hetchy/artifacts && \
+    chown -R appuser:appuser /data
+
 WORKDIR /app
 
 # Copy binary from builder

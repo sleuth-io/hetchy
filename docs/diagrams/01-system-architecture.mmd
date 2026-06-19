@@ -34,7 +34,7 @@ graph TB
         GitHub["GitHub App + API"]
         Daytona["Daytona Cloud\nsnapshots, sandboxes\npooled cache volumes"]
         Claude["Claude Code in sandbox\nAnthropic API"]
-        S3["AWS S3\nproof artifacts"]
+        ArtifactStore["local filesystem or AWS S3\nproof artifacts"]
     end
 
     Browser -->|"GET pages/assets"| HTTP
@@ -63,7 +63,7 @@ graph TB
     Daytona --> Claude
     Claude -->|"push branch, gh pr create"| GitHub
     BotCore -->|"verify reported PR"| GitHub
-    Artifacts -->|"presign PUT/GET"| S3
+    Artifacts -->|"sign PUT/GET"| ArtifactStore
     Claude -->|"request/upload proof slots"| Artifacts
     BotCore -->|"thread replies"| SlackAPI
 

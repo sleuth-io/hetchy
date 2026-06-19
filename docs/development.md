@@ -131,6 +131,7 @@ The bot opens a pool at startup if `DATABASE_URL` is set; otherwise it runs with
 | `make services-logs` | Tail supporting service logs |
 | `make snapshot` | Build custom sandbox image |
 | `make push-snapshot` | Build and push snapshot |
+| `make oss-check` | Check self-host env, Docker, Compose, Daytona auth, and snapshot |
 | `make pg-up` | Start local Postgres container |
 | `make pg-down` | Stop local Postgres container |
 | `make pg-logs` | Tail Postgres logs |

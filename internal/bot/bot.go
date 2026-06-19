@@ -106,9 +106,9 @@ type Bot struct {
 	auth               *auth.Service
 	slack              *slackManager
 	bootstrap          bootstrapStore
-	// artifacts is the S3 presigner used to mint per-request proof
-	// artifact upload slots for the validation prompt. Nil when
-	// HETCHY_S3_BUCKET / HETCHY_S3_REGION aren't configured.
+	// artifacts mints per-request proof artifact upload slots for the
+	// validation prompt. It is nil when local/S3 artifact storage is not
+	// configured.
 	artifacts artifactMinter
 	// artifactSlots tracks run-scoped bearer tokens for in-sandbox
 	// requests that need more slots than the default batch.
@@ -220,6 +220,9 @@ type Bot struct {
 	// dispatchDueJobsFn is the test seam the in-process job dispatch
 	// loop calls instead of DispatchDueJobs (which needs a live db).
 	dispatchDueJobsFn func(context.Context, JobDispatchOptions) (JobDispatchResult, error)
+	// prStatePollFn is the test seam the in-process PAT PR-state poll loop
+	// calls instead of PollPATConversationPRStates.
+	prStatePollFn func(context.Context, int, time.Duration) (PRStateBackfillResult, error)
 	// cleanupSandboxByIDFn is called by chatCancelHandler for opportunistic
 	// cleanup of a fresh-run sandbox; overridable in tests.
 	cleanupSandboxByIDFn func(string, string)
@@ -310,21 +313,19 @@ func New(cfg Config, log *slog.Logger) (*Bot, error) {
 		return nil, fmt.Errorf("auth: %w", err)
 	}
 
-	// Artifact upload signer. ErrNotConfigured is the "feature
-	// disabled" sentinel — log + continue. Other errors mean AWS
-	// config loading itself failed (corrupt ~/.aws/config, etc.); we
-	// also continue without the feature rather than refusing to
-	// start, since hetchy is useful without proof artifact upload.
-	artifactSigner, err := artifacts.New(context.Background(), cfg.S3Bucket, cfg.S3Region)
+	artifactSigner, artifactMode, err := newArtifactMinter(context.Background(), cfg)
 	switch {
 	case errors.Is(err, artifacts.ErrNotConfigured):
-		log.Info("artifact upload disabled: HETCHY_S3_BUCKET / HETCHY_S3_REGION not set")
+		log.Info("artifact upload disabled: HETCHY_ARTIFACT_DIR and HETCHY_S3_BUCKET / HETCHY_S3_REGION not set")
 		artifactSigner = nil
+	case err != nil && cfg.ArtifactDir != "":
+		store.Close()
+		return nil, fmt.Errorf("local artifact storage: %w", err)
 	case err != nil:
 		log.Warn("artifact signer disabled", "error", err)
 		artifactSigner = nil
 	default:
-		log.Info("artifact upload configured", "bucket", cfg.S3Bucket, "region", cfg.S3Region)
+		log.Info("artifact upload configured", "mode", artifactMode)
 	}
 
 	orgStore := orgcfg.New(store, cipher)
@@ -517,6 +518,7 @@ func (b *Bot) Run(ctx context.Context) error {
 	go b.runRecoveryLoop(ctx)
 	go b.runLinearSessionCleanupLoop(ctx)
 	go b.runJobDispatchLoop(ctx)
+	go b.runPRStatePollLoop(ctx)
 	go b.runLocalAuthSessionCleanupLoop(ctx)
 	go func() { errCh <- b.runWeb(ctx) }()
 	go func() { errCh <- b.slack.Run(ctx) }()

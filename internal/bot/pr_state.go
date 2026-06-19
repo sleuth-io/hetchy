@@ -31,6 +31,14 @@ type PRStateBackfillResult struct {
 	Failed  int
 }
 
+type prStateCandidate struct {
+	OrgID       string
+	ThreadID    string
+	GithubOwner string
+	GithubRepo  string
+	PRURL       string
+}
+
 func (b *Bot) refreshConversationPRState(ctx context.Context, orgID, threadID, rawURL string) error {
 	return b.refreshConversationPRStateForRepo(ctx, orgID, threadID, rawURL, "", "")
 }
@@ -163,7 +171,7 @@ func (b *Bot) BackfillConversationPRStates(ctx context.Context, limit int, force
 		return PRStateBackfillResult{}, errors.New("database is not configured")
 	}
 	if b.githubTokenSource() == nil {
-		return PRStateBackfillResult{}, errors.New("github is not configured")
+		return PRStateBackfillResult{}, errors.New("github source is not initialized")
 	}
 	if limit <= 0 {
 		limit = prStateBackfillDefaultLimit
@@ -185,46 +193,113 @@ func (b *Bot) BackfillConversationPRStates(ctx context.Context, limit int, force
 	if b.log != nil {
 		b.log.Info("backfill conversation PR states candidates loaded", "total", total)
 	}
+	return b.refreshPRStateCandidates(ctx, rowsToPRStateCandidates(rows), "backfill")
+}
+
+func (b *Bot) PollPATConversationPRStates(ctx context.Context, limit int, staleAfter time.Duration) (PRStateBackfillResult, error) {
+	if b == nil || b.store == nil {
+		return PRStateBackfillResult{}, errors.New("database is not configured")
+	}
+	if b.githubTokenSource() == nil {
+		return PRStateBackfillResult{}, errors.New("github source is not initialized")
+	}
+	if limit <= 0 {
+		limit = defaultPRStatePollLimit
+	}
+	if limit > prStateBackfillMaxLimit {
+		limit = prStateBackfillMaxLimit
+	}
+	if staleAfter <= 0 {
+		staleAfter = time.Duration(defaultPRStatePollIntervalSeconds) * time.Second
+	}
+	checkedBefore := time.Now().Add(-staleAfter)
+	if b.log != nil {
+		b.log.Info("poll PAT conversation PR states starting",
+			"limit", limit, "stale_after", staleAfter, "checked_before", checkedBefore.UTC().Format(time.RFC3339))
+	}
+	rows, err := b.store.Queries.ListPATConversationPRStatePollCandidates(ctx, sqlc.ListPATConversationPRStatePollCandidatesParams{
+		CheckedBefore: pgTimestamptz(checkedBefore),
+		Lim:           int32(limit),
+	})
+	if err != nil {
+		return PRStateBackfillResult{}, fmt.Errorf("list PAT PR state poll candidates: %w", err)
+	}
+	if b.log != nil {
+		b.log.Info("poll PAT conversation PR states candidates loaded", "total", len(rows))
+	}
+	return b.refreshPRStateCandidates(ctx, patRowsToPRStateCandidates(rows), "poll PAT")
+}
+
+func rowsToPRStateCandidates(rows []sqlc.ListConversationPRStateBackfillCandidatesRow) []prStateCandidate {
+	candidates := make([]prStateCandidate, 0, len(rows))
+	for _, row := range rows {
+		candidates = append(candidates, prStateCandidate{
+			OrgID:       row.OrgID,
+			ThreadID:    row.ThreadID,
+			GithubOwner: row.GithubOwner,
+			GithubRepo:  row.GithubRepo,
+			PRURL:       row.PrUrl,
+		})
+	}
+	return candidates
+}
+
+func patRowsToPRStateCandidates(rows []sqlc.ListPATConversationPRStatePollCandidatesRow) []prStateCandidate {
+	candidates := make([]prStateCandidate, 0, len(rows))
+	for _, row := range rows {
+		candidates = append(candidates, prStateCandidate{
+			OrgID:       row.OrgID,
+			ThreadID:    row.ThreadID,
+			GithubOwner: row.GithubOwner,
+			GithubRepo:  row.GithubRepo,
+			PRURL:       row.PrUrl,
+		})
+	}
+	return candidates
+}
+
+func (b *Bot) refreshPRStateCandidates(ctx context.Context, rows []prStateCandidate, label string) (PRStateBackfillResult, error) {
 	var result PRStateBackfillResult
+	total := len(rows)
 	for _, row := range rows {
 		result.Scanned++
 		if b.log != nil {
-			b.log.Debug("backfill conversation PR state candidate",
+			b.log.Debug(label+" conversation PR state candidate",
 				"index", result.Scanned, "total", total, "org", row.OrgID, "thread", row.ThreadID,
-				"repo", row.GithubOwner+"/"+row.GithubRepo, "pr_url", row.PrUrl)
+				"repo", row.GithubOwner+"/"+row.GithubRepo, "pr_url", row.PRURL)
 		}
-		if strings.TrimSpace(row.PrUrl) == "" {
+		if strings.TrimSpace(row.PRURL) == "" {
 			result.Skipped++
-			b.logPRStateBackfillProgress(result, total)
+			b.logPRStateProgress(label, result, total)
 			continue
 		}
-		if err := b.refreshConversationPRStateForRepo(ctx, row.OrgID, row.ThreadID, row.PrUrl, row.GithubOwner, row.GithubRepo); err != nil {
+		if err := b.refreshConversationPRStateForRepo(ctx, row.OrgID, row.ThreadID, row.PRURL, row.GithubOwner, row.GithubRepo); err != nil {
 			result.Failed++
 			if b.log != nil {
-				b.log.Warn("backfill conversation PR state failed",
-					"org", row.OrgID, "thread", row.ThreadID, "pr_url", row.PrUrl, "error", err)
+				b.log.Warn(label+" conversation PR state failed",
+					"org", row.OrgID, "thread", row.ThreadID, "pr_url", row.PRURL, "error", err)
 			}
-			b.logPRStateBackfillProgress(result, total)
+			b.logPRStateProgress(label, result, total)
 			continue
 		}
 		result.Updated++
-		b.logPRStateBackfillProgress(result, total)
+		b.logPRStateProgress(label, result, total)
 	}
 	if b.log != nil {
-		b.log.Info("backfill conversation PR states complete",
+		b.log.Info(label+" conversation PR states complete",
 			"scanned", result.Scanned, "updated", result.Updated, "skipped", result.Skipped, "failed", result.Failed)
 	}
 	return result, nil
 }
 
-func (b *Bot) logPRStateBackfillProgress(result PRStateBackfillResult, total int) {
+func (b *Bot) logPRStateProgress(label string, result PRStateBackfillResult, total int) {
 	if b == nil || b.log == nil || result.Scanned == 0 {
 		return
 	}
 	if result.Scanned%prStateBackfillProgressEvery != 0 && result.Scanned != total {
 		return
 	}
-	b.log.Info("backfill conversation PR states progress",
+	b.log.Info(label+" conversation PR states progress",
 		"scanned", result.Scanned, "total", total, "remaining", total-result.Scanned,
 		"updated", result.Updated, "skipped", result.Skipped, "failed", result.Failed)
 }

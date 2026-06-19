@@ -181,6 +181,7 @@ type Querier interface {
 	// of Slack connection," write a different query — don't rename this
 	// one.
 	ListOrgConfigsWithSlack(ctx context.Context) ([]OrgConfig, error)
+	ListPATConversationPRStatePollCandidates(ctx context.Context, arg ListPATConversationPRStatePollCandidatesParams) ([]ListPATConversationPRStatePollCandidatesRow, error)
 	ListRepoBillingSettingsByOrg(ctx context.Context, orgID string) ([]RepoBillingSetting, error)
 	// Used by the bootstrap apply step to build the env block, and by the
 	// settings UI to show which keys are filled in vs. blank.

@@ -17,6 +17,7 @@
 #   SNAPSHOT_NAME             base snapshot name, default: universal-coding
 #   SNAPSHOT_TAG              content version, default: scripts/sandbox-version.sh
 #   SNAPSHOT_FULL_NAME        default: $SNAPSHOT_NAME-$SNAPSHOT_TAG
+#   ENV_FILE                  dotenv file to read missing env from, default: .env
 #   LOCAL_REGISTRY_HOST_PORT  default: localhost:6000
 #   LOCAL_REGISTRY_INTERNAL   default: registry:6000
 #   SNAPSHOT_CPU              default: 2 (vCPUs per sandbox)
@@ -25,7 +26,19 @@
 #   DAYTONA_CLI_LOGIN         set to 1 to run daytona login before cloud push
 set -euo pipefail
 
-SNAPSHOT_NAME="${SNAPSHOT_NAME:-universal-coding}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$ROOT_DIR"
+
+# shellcheck source=scripts/lib-env.sh
+source "$SCRIPT_DIR/lib-env.sh"
+
+ENV_FILE="${ENV_FILE:-.env}"
+hetchy_env_default DAYTONA_API_KEY "$ENV_FILE"
+hetchy_env_default DAYTONA_API_URL "$ENV_FILE"
+hetchy_env_default DAYTONA_SNAPSHOT "$ENV_FILE"
+
+SNAPSHOT_NAME="${SNAPSHOT_NAME:-${DAYTONA_SNAPSHOT:-universal-coding}}"
 SNAPSHOT_TAG="${SNAPSHOT_TAG:-$(./scripts/sandbox-version.sh)}"
 SNAPSHOT_FULL_NAME="${SNAPSHOT_FULL_NAME:-$SNAPSHOT_NAME-$SNAPSHOT_TAG}"
 LOCAL_REGISTRY_HOST_PORT="${LOCAL_REGISTRY_HOST_PORT:-localhost:6000}"
@@ -46,17 +59,42 @@ SNAPSHOT_CPU="${SNAPSHOT_CPU:-2}"
 SNAPSHOT_MEMORY_GB="${SNAPSHOT_MEMORY_GB:-6}"
 SNAPSHOT_DISK_GB="${SNAPSHOT_DISK_GB:-10}"
 
-if [[ -z "${DAYTONA_API_KEY:-}" ]]; then
-  echo "ERROR: DAYTONA_API_KEY is not set. Export it or add it to .env." >&2
+require_command() {
+  local cmd="$1"
+  local message="$2"
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    echo "ERROR: $cmd is not installed or not on PATH." >&2
+    echo "       $message" >&2
+    exit 1
+  fi
+}
+
+if is_placeholder "${DAYTONA_API_KEY:-}"; then
+  echo "ERROR: DAYTONA_API_KEY is not set to a real key." >&2
+  echo "       Export it or set it in $ENV_FILE before running make push-snapshot." >&2
   exit 1
 fi
+
+require_command curl "Install curl before pushing the Daytona snapshot."
+require_command python3 "Install Python 3 before pushing the Daytona snapshot."
 
 is_local=false
 if [[ "$API_URL" == *"localhost"* || "$API_URL" == *"127.0.0.1"* ]]; then
   is_local=true
 fi
 
+if [[ -n "${DAYTONA_SNAPSHOT:-}" && "$SNAPSHOT_NAME" != "$DAYTONA_SNAPSHOT" ]]; then
+  echo "WARNING: SNAPSHOT_NAME=$SNAPSHOT_NAME differs from DAYTONA_SNAPSHOT=$DAYTONA_SNAPSHOT." >&2
+  echo "         Keep the app's DAYTONA_SNAPSHOT aligned with the snapshot base you push." >&2
+  echo >&2
+fi
+
 echo "DAYTONA_API_URL: $API_URL"
+if $is_local; then
+  echo "target:          self-hosted/local Daytona"
+else
+  echo "target:          Daytona Cloud or remote Daytona"
+fi
 echo "snapshot base:   $SNAPSHOT_NAME"
 echo "snapshot tag:    $SNAPSHOT_TAG"
 echo "snapshot name:   $SNAPSHOT_FULL_NAME (from local image $SNAPSHOT_NAME:$SNAPSHOT_TAG)"
@@ -64,10 +102,19 @@ echo "resources:       cpu=${SNAPSHOT_CPU} memory=${SNAPSHOT_MEMORY_GB}GB disk=$
 echo
 
 api() {
-  curl -sS --fail-with-body \
+  local output status
+  set +e
+  output=$(curl -sS --fail-with-body \
     -H "Authorization: Bearer $DAYTONA_API_KEY" \
     -H "Content-Type: application/json" \
-    "$@"
+    "$@" 2>&1)
+  status=$?
+  set -e
+  if [[ "$status" -ne 0 ]]; then
+    printf '%s\n' "$output" >&2
+    return "$status"
+  fi
+  printf '%s' "$output"
 }
 
 # Find an existing snapshot by name.
@@ -108,7 +155,8 @@ ensure_existing_active() {
   #   0 = active/done, 1 = not found/build, 2 = bad state/abort, 3 = API failure/abort.
   local resp id state
   if ! resp=$(find_snapshot_json); then
-    echo "ERROR: failed to query Daytona snapshots" >&2
+    echo "ERROR: failed to query Daytona snapshots at $API_URL." >&2
+    echo "       Check DAYTONA_API_URL and DAYTONA_API_KEY, then rerun make push-snapshot." >&2
     return 3
   fi
   id=$(snapshot_field id "$resp")
@@ -145,6 +193,35 @@ else
   fi
 fi
 
+require_command docker "Install Docker Desktop or Docker Engine before building the sandbox image."
+if ! docker info >/dev/null 2>&1; then
+  echo "ERROR: Docker is installed but the daemon is not reachable." >&2
+  echo "       Start Docker, then rerun make push-snapshot." >&2
+  exit 1
+fi
+
+if $is_local; then
+  registry_status=$(curl -sS -o /dev/null -w '%{http_code}' "http://$LOCAL_REGISTRY_HOST_PORT/v2/" 2>/dev/null || true)
+  case "$registry_status" in
+    2*|3*|401) ;;
+    *)
+      echo "ERROR: local Daytona registry is not reachable at http://$LOCAL_REGISTRY_HOST_PORT/v2/." >&2
+      echo "       Start self-hosted Daytona, or set LOCAL_REGISTRY_HOST_PORT to the host:port Docker can push to." >&2
+      exit 1
+      ;;
+  esac
+else
+  require_command daytona "Install the Daytona CLI: https://www.daytona.io/docs/en/installation/installation/"
+  if [[ "${DAYTONA_CLI_LOGIN:-}" == "1" ]]; then
+    echo "→ logging Daytona CLI in with DAYTONA_API_KEY"
+    daytona login --api-key "$DAYTONA_API_KEY"
+  elif ! env -u DAYTONA_API_KEY -u DAYTONA_API_URL daytona snapshot list >/dev/null 2>&1; then
+    echo "ERROR: Daytona CLI is installed but is not logged in for snapshot pushes." >&2
+    echo "       Run 'daytona login --api-key <key>' first, or use DAYTONA_CLI_LOGIN=1 make push-snapshot." >&2
+    exit 1
+  fi
+fi
+
 echo "→ building local sandbox image $SNAPSHOT_NAME:$SNAPSHOT_TAG"
 docker build --platform=linux/amd64 -t "$SNAPSHOT_NAME:$SNAPSHOT_TAG" sandbox
 echo
@@ -163,13 +240,6 @@ if $is_local; then
   wait_until_active
 else
   echo "→ cloud Daytona; using 'daytona snapshot push'"
-  if ! command -v daytona >/dev/null 2>&1; then
-    echo "ERROR: daytona CLI not found. Install it: curl -fsSL https://download.daytona.io/daytona/install.sh | bash" >&2
-    exit 1
-  fi
-  if [[ "${DAYTONA_CLI_LOGIN:-}" == "1" ]]; then
-    daytona login --api-key "$DAYTONA_API_KEY"
-  fi
   # `snapshot push` requires the keychain-stored creds from `daytona login
   # --api-key`. Unset DAYTONA_API_KEY/URL so shell/.env values do not
   # shadow the CLI's persisted credentials.

@@ -28,7 +28,7 @@ graph LR
         Blocks["blocks\nBlock model\nEmitter, Recorder, Tee"]
         Bootstrap["bootstrap\nDetect, prompt, Run\nSpec/store/validation"]
         Agents["agents\norg profiles\naliases and personas"]
-        Artifacts["artifacts\nS3 presigned slots"]
+        Artifacts["artifacts\nsigned proof slots"]
     end
 
     subgraph stores["Stores and integrations"]
@@ -95,6 +95,7 @@ graph LR
     GitHubApp --> DB
     Auth --> DB
     Artifacts --> S3SDK["AWS S3 SDK"]
+    Artifacts --> LocalFiles["local filesystem"]
 
     style cmd fill:#e3f2fd,stroke:#1976D2
     style bot fill:#f3e5f5,stroke:#7B1FA2

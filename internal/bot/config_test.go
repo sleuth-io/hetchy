@@ -61,7 +61,7 @@ func TestLoadConfig_AllRequiredSet(t *testing.T) {
 
 func TestLoadConfig_AppliesDefaults(t *testing.T) {
 	clearEnv(t, "AUTH_BYPASS", "WEB_PORT", "DAYTONA_API_URL", "LOGOUT_RETURN_TO", "HETCHY_PUBLIC_BASE_URL", "SLACK_OAUTH_REDIRECT_URI", "HETCHY_SX_PUBLIC_VAULT_URL",
-		"STRIPE_RETURN_TO",
+		"STRIPE_RETURN_TO", "HETCHY_ARTIFACT_DIR", "HETCHY_PR_STATE_POLL_INTERVAL_SECONDS", "HETCHY_PR_STATE_POLL_LIMIT",
 		"DAYTONA_CACHE_VOLUMES_DISABLED", "DAYTONA_CACHE_VOLUME_PREFIX", "DAYTONA_CACHE_PRUNE_DAYS", "DAYTONA_AUTO_ARCHIVE_MINUTES",
 		"HETCHY_SX_CACHE_DIR", "SX_CACHE_DIR", "HETCHY_SX_CACHE_MIN_FREE_MB", "HETCHY_SX_GIT_OPERATION_TIMEOUT_SECONDS", "HETCHY_SX_GIT_MAX_CONCURRENT_OPS")
 	setEnv(t, requiredEnv())
@@ -111,6 +111,15 @@ func TestLoadConfig_AppliesDefaults(t *testing.T) {
 	if cfg.SXGitMaxConcurrentOps != defaultSXGitMaxConcurrentOps {
 		t.Errorf("SXGitMaxConcurrentOps default = %d", cfg.SXGitMaxConcurrentOps)
 	}
+	if cfg.ArtifactDir != "" {
+		t.Errorf("ArtifactDir default = %q", cfg.ArtifactDir)
+	}
+	if cfg.PRStatePollIntervalSeconds != defaultPRStatePollIntervalSeconds {
+		t.Errorf("PRStatePollIntervalSeconds default = %d", cfg.PRStatePollIntervalSeconds)
+	}
+	if cfg.PRStatePollLimit != defaultPRStatePollLimit {
+		t.Errorf("PRStatePollLimit default = %d", cfg.PRStatePollLimit)
+	}
 }
 
 func TestLoadConfig_StripeReturnToOverridesPublicBase(t *testing.T) {
@@ -142,6 +151,53 @@ func TestLoadConfig_TrustedProxy(t *testing.T) {
 	}
 	if !cfg.TrustedProxy {
 		t.Fatal("TrustedProxy should be true")
+	}
+}
+
+func TestLoadConfig_ArtifactAndPRStatePollOverrides(t *testing.T) {
+	clearEnv(t, "AUTH_BYPASS")
+	setEnv(t, requiredEnv())
+	t.Setenv("HETCHY_ARTIFACT_DIR", " /data/hetchy/artifacts ")
+	t.Setenv("HETCHY_PR_STATE_POLL_INTERVAL_SECONDS", "120")
+	t.Setenv("HETCHY_PR_STATE_POLL_LIMIT", "25")
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.ArtifactDir != "/data/hetchy/artifacts" {
+		t.Fatalf("ArtifactDir = %q", cfg.ArtifactDir)
+	}
+	if cfg.PRStatePollIntervalSeconds != 120 {
+		t.Fatalf("PRStatePollIntervalSeconds = %d", cfg.PRStatePollIntervalSeconds)
+	}
+	if cfg.PRStatePollLimit != 25 {
+		t.Fatalf("PRStatePollLimit = %d", cfg.PRStatePollLimit)
+	}
+}
+
+func TestLoadConfig_PRStatePollValidation(t *testing.T) {
+	for _, tc := range []struct {
+		key   string
+		value string
+	}{
+		{"HETCHY_PR_STATE_POLL_INTERVAL_SECONDS", "-1"},
+		{"HETCHY_PR_STATE_POLL_INTERVAL_SECONDS", "nope"},
+		{"HETCHY_PR_STATE_POLL_LIMIT", "0"},
+		{"HETCHY_PR_STATE_POLL_LIMIT", "nope"},
+	} {
+		t.Run(tc.key+"="+tc.value, func(t *testing.T) {
+			clearEnv(t, "AUTH_BYPASS", "HETCHY_PR_STATE_POLL_INTERVAL_SECONDS", "HETCHY_PR_STATE_POLL_LIMIT")
+			setEnv(t, requiredEnv())
+			t.Setenv(tc.key, tc.value)
+			_, err := LoadConfig()
+			if err == nil {
+				t.Fatal("expected LoadConfig error")
+			}
+			if !strings.Contains(err.Error(), tc.key) {
+				t.Fatalf("error = %v, want %s", err, tc.key)
+			}
+		})
 	}
 }
 

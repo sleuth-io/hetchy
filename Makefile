@@ -1,4 +1,4 @@
-.PHONY: help build install test coverage ci lint format clean tidy deps verify update-deps init prepush postpull bot logs dev services-up services-down services-logs snapshot push-snapshot db-up db-down db-status db-new check-migrations sqlc-generate pg-up pg-down pg-logs pg-psql pg-reset slack-app
+.PHONY: help build install test coverage ci lint format clean tidy deps verify update-deps init prepush postpull bot logs dev services-up services-down services-logs snapshot push-snapshot oss-check db-up db-down db-status db-new check-migrations sqlc-generate pg-up pg-down pg-logs pg-psql pg-reset slack-app
 
 # Default target
 help: ## Show this help message
@@ -22,6 +22,11 @@ SNAPSHOT_TAG     ?= $(SANDBOX_VERSION)
 COMPOSE          = docker compose
 SERVICES         = postgres
 LOG_FILE         ?= /tmp/hetchy.log
+
+PUSH_SNAPSHOT_ENV =
+ifneq ($(filter command line environment,$(origin SNAPSHOT_NAME)),)
+PUSH_SNAPSHOT_ENV += SNAPSHOT_NAME=$(SNAPSHOT_NAME)
+endif
 
 build: ## Build the binary
 	@echo "Building $(BINARY_NAME)..."
@@ -203,11 +208,13 @@ LOCAL_REGISTRY_HOST_PORT ?= localhost:6000
 LOCAL_REGISTRY_INTERNAL ?= registry:6000
 
 push-snapshot: ## Ensure the content-addressed Daytona sandbox snapshot exists
-	@which doppler > /dev/null 2>&1 || (echo "doppler CLI not found. Install: https://docs.doppler.com/docs/install-cli" && exit 1)
-	@SNAPSHOT_NAME=$(SNAPSHOT_NAME) SNAPSHOT_TAG=$(SNAPSHOT_TAG) \
+	@env $(PUSH_SNAPSHOT_ENV) SNAPSHOT_TAG=$(SNAPSHOT_TAG) \
 	  LOCAL_REGISTRY_HOST_PORT=$(LOCAL_REGISTRY_HOST_PORT) \
 	  LOCAL_REGISTRY_INTERNAL=$(LOCAL_REGISTRY_INTERNAL) \
-	  doppler run -- ./scripts/push-snapshot.sh
+	  ./scripts/push-snapshot.sh
+
+oss-check: ## Check self-host env, Docker, Compose, Daytona auth, and snapshot
+	@./scripts/oss-check.sh
 
 # Slack app provisioning ------------------------------------------------------
 # Each developer gets a personal Slack app for local Socket Mode dev work, so

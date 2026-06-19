@@ -31,8 +31,22 @@ The token is encrypted at rest with `SECRETS_ENCRYPTION_KEY`.
 ## PAT Mode Behavior
 
 PAT mode does not receive GitHub App webhooks. Hetchy refreshes repository and
-pull request state during normal actions, but self-hosted operators can run a
-periodic backfill if stale PR status is noticeable:
+pull request state during normal actions, and the main process periodically
+polls stale open/unknown PR state for PAT-backed repos.
+
+If the same repository is available through both a PAT and an active GitHub App
+installation for the organization, the webhook-driven App path wins and the PAT
+poller skips that repository.
+
+The polling loop uses:
+
+```dotenv
+HETCHY_PR_STATE_POLL_INTERVAL_SECONDS=
+HETCHY_PR_STATE_POLL_LIMIT=
+```
+
+Leave these empty for defaults. Set `HETCHY_PR_STATE_POLL_INTERVAL_SECONDS=0`
+to disable polling. The one-shot backfill remains available for manual repair:
 
 ```bash
 docker compose run --rm hetchy --backfill-pr-states
