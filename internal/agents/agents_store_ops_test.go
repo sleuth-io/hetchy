@@ -74,6 +74,24 @@ func TestGetCustomEmptyOrgIDReturnsNotFound(t *testing.T) {
 	}
 }
 
+func TestGetCustomEmptySlugReturnsNotFound(t *testing.T) {
+	seeded := false
+	q := &fakeQuerier{
+		countFn: func(_ context.Context, _ string) (int64, error) {
+			seeded = true
+			return 1, nil
+		},
+	}
+	s := newFakeStore(q)
+	_, err := s.GetCustom(t.Context(), "org1", "")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("GetCustom(empty slug) error = %v, want ErrNotFound", err)
+	}
+	if seeded {
+		t.Error("EnsureSeeded should not be called when slug is empty")
+	}
+}
+
 func TestGetCustomWithDBError(t *testing.T) {
 	wantErr := errors.New("db error")
 	q := &fakeQuerier{
@@ -287,6 +305,14 @@ func TestUpdateVaultSyncNilQuerierReturnsError(t *testing.T) {
 	_, err := s.UpdateVaultSync(t.Context(), "org1", "bob", "", "", "", "", "")
 	if err == nil {
 		t.Fatal("UpdateVaultSync with nil querier expected error, got nil")
+	}
+}
+
+func TestUpdateVaultSyncEmptyOrgIDReturnsError(t *testing.T) {
+	s := newFakeStore(&fakeQuerier{})
+	_, err := s.UpdateVaultSync(t.Context(), "", "bob", "", "", "", "", "")
+	if err == nil {
+		t.Fatal("UpdateVaultSync(empty orgID) expected error, got nil")
 	}
 }
 

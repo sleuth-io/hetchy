@@ -266,12 +266,16 @@ func (s *Store) GetCustom(ctx context.Context, orgID, slug string) (Profile, err
 	if s == nil || s.q == nil || orgID == "" {
 		return Profile{}, ErrNotFound
 	}
+	slug = NormalizeSlug(slug)
+	if slug == "" {
+		return Profile{}, ErrNotFound
+	}
 	if err := s.EnsureSeeded(ctx, orgID); err != nil {
 		return Profile{}, err
 	}
 	row, err := s.q.GetAgentProfileBySlug(ctx, sqlc.GetAgentProfileBySlugParams{
 		OrgID: orgID,
-		Slug:  NormalizeSlug(slug),
+		Slug:  slug,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -354,6 +358,9 @@ func (s *Store) GetTemplate(ctx context.Context, slug string) (Profile, error) {
 func (s *Store) UpdateVaultSync(ctx context.Context, orgID, slug, backend, botKey, templateSlug, status, syncErr string) (Profile, error) {
 	if s == nil || s.q == nil {
 		return Profile{}, errors.New("agents: store disabled")
+	}
+	if orgID == "" {
+		return Profile{}, errors.New("agents: org id required")
 	}
 	encrypted, err := s.encryptBotKey(botKey)
 	if err != nil {
