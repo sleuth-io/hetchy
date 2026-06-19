@@ -21,11 +21,9 @@ import (
 // text; the fake row/rows types fill scan destinations in the exact order the
 // sqlc-generated query funcs scan them.
 //
-// Note: methods that go through db.Store.WithTx (ClaimDue, RunNow,
-// FinishExecution's transactional body) cannot be exercised here because
-// WithTx calls into the unexported *pgxpool.Pool, which a fake DBTX does not
-// provide. Those keep their ErrNotConfigured / pre-transaction validation
-// coverage from jobs_test.go.
+// Store methods that call db.Store.WithTx still need integration coverage for
+// the real transaction boundary, but their helper bodies can be driven with
+// this fake to prove scheduling and state-transition intent.
 type fakeDBTX struct {
 	// queryRow maps a substring of the SQL to the row returned for QueryRow.
 	queryRow map[string]pgx.Row
@@ -36,6 +34,9 @@ type fakeDBTX struct {
 	// lastQueryRowArgs captures the args of the most recent QueryRow so a
 	// test can assert the Store forwarded org scoping into the query.
 	lastQueryRowArgs []any
+	queryRowCalls    []jobsDBCall
+	queryCalls       []jobsDBCall
+	execCalls        []jobsDBCall
 }
 
 type execResult struct {
@@ -43,7 +44,13 @@ type execResult struct {
 	err  error
 }
 
-func (f *fakeDBTX) Exec(_ context.Context, sql string, _ ...any) (pgconn.CommandTag, error) {
+type jobsDBCall struct {
+	sql  string
+	args []any
+}
+
+func (f *fakeDBTX) Exec(_ context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+	f.execCalls = append(f.execCalls, jobsDBCall{sql: sql, args: append([]any(nil), args...)})
 	for frag, res := range f.exec {
 		if strings.Contains(sql, frag) {
 			if res.err != nil {
@@ -55,7 +62,8 @@ func (f *fakeDBTX) Exec(_ context.Context, sql string, _ ...any) (pgconn.Command
 	return pgconn.CommandTag{}, fmt.Errorf("unexpected exec: %s", sql)
 }
 
-func (f *fakeDBTX) Query(_ context.Context, sql string, _ ...any) (pgx.Rows, error) {
+func (f *fakeDBTX) Query(_ context.Context, sql string, args ...any) (pgx.Rows, error) {
+	f.queryCalls = append(f.queryCalls, jobsDBCall{sql: sql, args: append([]any(nil), args...)})
 	for frag, rows := range f.query {
 		if strings.Contains(sql, frag) {
 			if er, ok := rows.(errRows); ok {
@@ -69,12 +77,75 @@ func (f *fakeDBTX) Query(_ context.Context, sql string, _ ...any) (pgx.Rows, err
 
 func (f *fakeDBTX) QueryRow(_ context.Context, sql string, args ...any) pgx.Row {
 	f.lastQueryRowArgs = args
+	f.queryRowCalls = append(f.queryRowCalls, jobsDBCall{sql: sql, args: append([]any(nil), args...)})
 	for frag, row := range f.queryRow {
 		if strings.Contains(sql, frag) {
 			return row
 		}
 	}
 	return errRow{err: fmt.Errorf("unexpected query row: %s", sql)}
+}
+
+func (f *fakeDBTX) queryRowCallCount(fragment string) int {
+	count := 0
+	for _, call := range f.queryRowCalls {
+		if strings.Contains(call.sql, fragment) {
+			count++
+		}
+	}
+	return count
+}
+
+func (f *fakeDBTX) execCallCount(fragment string) int {
+	count := 0
+	for _, call := range f.execCalls {
+		if strings.Contains(call.sql, fragment) {
+			count++
+		}
+	}
+	return count
+}
+
+func (f *fakeDBTX) onlyQueryCall(t *testing.T, fragment string) jobsDBCall {
+	t.Helper()
+	var matches []jobsDBCall
+	for _, call := range f.queryCalls {
+		if strings.Contains(call.sql, fragment) {
+			matches = append(matches, call)
+		}
+	}
+	if len(matches) != 1 {
+		t.Fatalf("query calls matching %q = %d, want 1", fragment, len(matches))
+	}
+	return matches[0]
+}
+
+func (f *fakeDBTX) onlyQueryRowCall(t *testing.T, fragment string) jobsDBCall {
+	t.Helper()
+	var matches []jobsDBCall
+	for _, call := range f.queryRowCalls {
+		if strings.Contains(call.sql, fragment) {
+			matches = append(matches, call)
+		}
+	}
+	if len(matches) != 1 {
+		t.Fatalf("query row calls matching %q = %d, want 1", fragment, len(matches))
+	}
+	return matches[0]
+}
+
+func (f *fakeDBTX) onlyExecCall(t *testing.T, fragment string) jobsDBCall {
+	t.Helper()
+	var matches []jobsDBCall
+	for _, call := range f.execCalls {
+		if strings.Contains(call.sql, fragment) {
+			matches = append(matches, call)
+		}
+	}
+	if len(matches) != 1 {
+		t.Fatalf("exec calls matching %q = %d, want 1", fragment, len(matches))
+	}
+	return matches[0]
 }
 
 func newFakeStore(f *fakeDBTX) *Store {
@@ -106,6 +177,27 @@ func (r agentJobRow) Scan(dest ...any) error {
 		r.job.UpdatedAt,
 	}
 	return assignScan(dest, values)
+}
+
+type agentJobExecRow struct {
+	exec sqlc.AgentJobExecution
+}
+
+func (r agentJobExecRow) Scan(dest ...any) error {
+	values := []any{
+		r.exec.ID, r.exec.JobID, r.exec.OrgID, r.exec.RunID, r.exec.ScheduledFor,
+		r.exec.Status, r.exec.ClaimedBy, r.exec.ClaimedAt, r.exec.FinishedAt,
+		r.exec.Error, r.exec.CreatedAt, r.exec.UpdatedAt,
+	}
+	return assignScan(dest, values)
+}
+
+type scalarRow struct {
+	values []any
+}
+
+func (r scalarRow) Scan(dest ...any) error {
+	return assignScan(dest, r.values)
 }
 
 // githubRepoRow fills the 7-column GithubRepo scan in sqlc order.
@@ -157,6 +249,27 @@ func assignScanValue(dest, value any) error {
 		return fmt.Errorf("unsupported scan destination %T", dest)
 	}
 	return nil
+}
+
+func assertJobArg(t *testing.T, args []any, idx int, want any) {
+	t.Helper()
+	if len(args) <= idx {
+		t.Fatalf("arg[%d] missing from %v", idx, args)
+	}
+	if got := args[idx]; got != want {
+		t.Fatalf("arg[%d] = %#v (%T), want %#v (%T)", idx, got, got, want, want)
+	}
+}
+
+func assertJobTimeArg(t *testing.T, args []any, idx int, want time.Time) {
+	t.Helper()
+	if len(args) <= idx {
+		t.Fatalf("arg[%d] missing from %v", idx, args)
+	}
+	got, ok := args[idx].(pgtype.Timestamptz)
+	if !ok || !got.Valid || !got.Time.Equal(want.UTC()) {
+		t.Fatalf("arg[%d] = %#v, want timestamptz %s", idx, args[idx], want.UTC())
+	}
 }
 
 // agentJobExecRows fills the AgentJobExecution :many scan for List's latest
@@ -239,6 +352,21 @@ func sampleJobRow(id, orgID string) sqlc.AgentJob {
 		CronSchedule:    "0 0 * * *",
 		Timezone:        "UTC",
 		Enabled:         true,
+	}
+}
+
+func sampleExecutionRow(id, jobID, orgID string) sqlc.AgentJobExecution {
+	now := time.Date(2026, 6, 1, 9, 0, 0, 0, time.UTC)
+	return sqlc.AgentJobExecution{
+		ID:           id,
+		JobID:        jobID,
+		OrgID:        orgID,
+		ScheduledFor: pgtype.Timestamptz{Time: now, Valid: true},
+		Status:       StatusClaimed,
+		ClaimedBy:    "worker-1",
+		ClaimedAt:    pgtype.Timestamptz{Time: now, Valid: true},
+		CreatedAt:    pgtype.Timestamptz{Time: now, Valid: true},
+		UpdatedAt:    pgtype.Timestamptz{Time: now, Valid: true},
 	}
 }
 
@@ -616,6 +744,170 @@ func TestMarkRunningError(t *testing.T) {
 	s := newFakeStore(f)
 	if err := s.MarkRunning(t.Context(), "org_1", "exec_1", nil); err == nil || !strings.Contains(err.Error(), "mark execution running") {
 		t.Fatalf("want mark execution running error, got %v", err)
+	}
+}
+
+func TestClaimDueTxCreatesExecutionAtScheduledTimeAndAdvancesNextRun(t *testing.T) {
+	now := time.Date(2026, 6, 1, 9, 1, 0, 0, time.UTC)
+	scheduled := time.Date(2026, 6, 1, 9, 0, 0, 0, time.UTC)
+	job := sampleJobRow("job_1", "org_1")
+	job.CronSchedule = "0 9 * * *"
+	job.NextRunAt = pgtype.Timestamptz{Time: scheduled, Valid: true}
+	exec := sampleExecutionRow("exec_1", "job_1", "org_1")
+	exec.ScheduledFor = pgtype.Timestamptz{Time: scheduled, Valid: true}
+	exec.ClaimedBy = "worker-1"
+	f := &fakeDBTX{
+		query: map[string]pgx.Rows{
+			"FROM agent_jobs j": &agentJobRows{jobs: []sqlc.AgentJob{job}},
+		},
+		queryRow: map[string]pgx.Row{
+			"INSERT INTO agent_job_executions": agentJobExecRow{exec: exec},
+		},
+		exec: map[string]execResult{
+			"UPDATE agent_jobs": {rows: 1},
+		},
+	}
+
+	claimed, err := claimDueTx(t.Context(), sqlc.New(f), "worker-1", 5, now)
+	if err != nil {
+		t.Fatalf("claimDueTx: %v", err)
+	}
+	if len(claimed) != 1 {
+		t.Fatalf("claimed count = %d, want 1", len(claimed))
+	}
+	if claimed[0].Execution.ScheduledFor != scheduled {
+		t.Fatalf("scheduled_for = %s, want original due time %s", claimed[0].Execution.ScheduledFor, scheduled)
+	}
+	if claimed[0].Execution.ClaimedBy != "worker-1" {
+		t.Fatalf("claimed_by = %q, want worker-1", claimed[0].Execution.ClaimedBy)
+	}
+	wantNext := time.Date(2026, 6, 2, 9, 0, 0, 0, time.UTC)
+	if !claimed[0].Job.NextRunAt.Equal(wantNext) {
+		t.Fatalf("job next run = %s, want %s", claimed[0].Job.NextRunAt, wantNext)
+	}
+	listCall := f.onlyQueryCall(t, "FROM agent_jobs j")
+	assertJobTimeArg(t, listCall.args, 0, now)
+	assertJobArg(t, listCall.args, 1, int32(5))
+	createCall := f.onlyQueryRowCall(t, "INSERT INTO agent_job_executions")
+	assertJobArg(t, createCall.args, 1, "job_1")
+	assertJobArg(t, createCall.args, 2, "org_1")
+	assertJobTimeArg(t, createCall.args, 3, scheduled)
+	assertJobArg(t, createCall.args, 4, "worker-1")
+	updateCall := f.onlyExecCall(t, "UPDATE agent_jobs")
+	assertJobArg(t, updateCall.args, 0, "job_1")
+	assertJobTimeArg(t, updateCall.args, 1, wantNext)
+}
+
+func TestClaimDueTxUsesNowWhenDueJobHasNoScheduledTime(t *testing.T) {
+	now := time.Date(2026, 6, 1, 9, 1, 0, 0, time.UTC)
+	job := sampleJobRow("job_1", "org_1")
+	job.CronSchedule = "0 9 * * *"
+	job.NextRunAt = pgtype.Timestamptz{}
+	f := &fakeDBTX{
+		query: map[string]pgx.Rows{
+			"FROM agent_jobs j": &agentJobRows{jobs: []sqlc.AgentJob{job}},
+		},
+		queryRow: map[string]pgx.Row{
+			"INSERT INTO agent_job_executions": agentJobExecRow{exec: sampleExecutionRow("exec_1", "job_1", "org_1")},
+		},
+		exec: map[string]execResult{
+			"UPDATE agent_jobs": {rows: 1},
+		},
+	}
+
+	if _, err := claimDueTx(t.Context(), sqlc.New(f), "worker-1", 1, now); err != nil {
+		t.Fatalf("claimDueTx: %v", err)
+	}
+	createCall := f.onlyQueryRowCall(t, "INSERT INTO agent_job_executions")
+	assertJobTimeArg(t, createCall.args, 3, now)
+}
+
+func TestRunNowTxRejectsActiveExecutionWithoutCreatingAnother(t *testing.T) {
+	f := &fakeDBTX{queryRow: map[string]pgx.Row{
+		"FROM agent_jobs": agentJobRow{job: sampleJobRow("job_1", "org_1")},
+		"SELECT EXISTS":   scalarRow{values: []any{true}},
+	}}
+
+	_, err := runNowTx(t.Context(), sqlc.New(f), "org_1", "job_1", "worker-1", time.Now())
+	if !errors.Is(err, ErrOverlap) {
+		t.Fatalf("runNowTx error = %v, want ErrOverlap", err)
+	}
+	if f.queryRowCallCount("INSERT INTO agent_job_executions") != 0 {
+		t.Fatal("active job execution must block creating another manual execution")
+	}
+}
+
+func TestRunNowTxCreatesManualExecutionAtNow(t *testing.T) {
+	now := time.Date(2026, 6, 1, 10, 30, 0, 0, time.UTC)
+	f := &fakeDBTX{queryRow: map[string]pgx.Row{
+		"FROM agent_jobs":                  agentJobRow{job: sampleJobRow("job_1", "org_1")},
+		"SELECT EXISTS":                    scalarRow{values: []any{false}},
+		"INSERT INTO agent_job_executions": agentJobExecRow{exec: sampleExecutionRow("exec_1", "job_1", "org_1")},
+	}}
+
+	claimed, err := runNowTx(t.Context(), sqlc.New(f), "org_1", "job_1", "worker-1", now)
+	if err != nil {
+		t.Fatalf("runNowTx: %v", err)
+	}
+	if claimed.Job.ID != "job_1" || claimed.Execution.ID != "exec_1" {
+		t.Fatalf("claimed execution = %+v", claimed)
+	}
+	createCall := f.onlyQueryRowCall(t, "INSERT INTO agent_job_executions")
+	assertJobArg(t, createCall.args, 1, "job_1")
+	assertJobArg(t, createCall.args, 2, "org_1")
+	assertJobTimeArg(t, createCall.args, 3, now)
+	assertJobArg(t, createCall.args, 4, "worker-1")
+}
+
+func TestFinishExecutionTxMarksTerminalAndUpdatesJobLastRun(t *testing.T) {
+	runID := "run_1"
+	scheduled := time.Date(2026, 6, 1, 9, 0, 0, 0, time.UTC)
+	exec := sampleExecutionRow("exec_1", "job_1", "org_1")
+	exec.RunID = &runID
+	exec.ScheduledFor = pgtype.Timestamptz{Time: scheduled, Valid: true}
+	f := &fakeDBTX{
+		queryRow: map[string]pgx.Row{
+			"FROM agent_job_executions": agentJobExecRow{exec: exec},
+		},
+		exec: map[string]execResult{
+			"UPDATE agent_job_executions": {rows: 1},
+			"UPDATE agent_jobs":           {rows: 1},
+		},
+	}
+
+	if err := finishExecutionTx(t.Context(), sqlc.New(f), "org_1", "exec_1", StatusFailed, "boom"); err != nil {
+		t.Fatalf("finishExecutionTx: %v", err)
+	}
+	finishCall := f.onlyExecCall(t, "UPDATE agent_job_executions")
+	assertJobArg(t, finishCall.args, 0, "org_1")
+	assertJobArg(t, finishCall.args, 1, "exec_1")
+	assertJobArg(t, finishCall.args, 2, StatusFailed)
+	assertJobArg(t, finishCall.args, 3, "boom")
+	lastRunCall := f.onlyExecCall(t, "UPDATE agent_jobs")
+	assertJobArg(t, lastRunCall.args, 0, "job_1")
+	assertJobTimeArg(t, lastRunCall.args, 1, scheduled)
+	if got, ok := lastRunCall.args[2].(*string); !ok || got == nil || *got != runID {
+		t.Fatalf("last_run_id arg = %#v, want %q", lastRunCall.args[2], runID)
+	}
+	assertJobArg(t, lastRunCall.args, 3, "boom")
+}
+
+func TestFinishExecutionTxNoRowsDoesNotUpdateJobLastRun(t *testing.T) {
+	f := &fakeDBTX{
+		queryRow: map[string]pgx.Row{
+			"FROM agent_job_executions": agentJobExecRow{exec: sampleExecutionRow("exec_1", "job_1", "org_1")},
+		},
+		exec: map[string]execResult{
+			"UPDATE agent_job_executions": {rows: 0},
+		},
+	}
+
+	err := finishExecutionTx(t.Context(), sqlc.New(f), "org_1", "exec_1", StatusSucceeded, "")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("finishExecutionTx error = %v, want ErrNotFound", err)
+	}
+	if f.execCallCount("UPDATE agent_jobs") != 0 {
+		t.Fatal("job last-run fields must not update when execution finish affects no rows")
 	}
 }
 

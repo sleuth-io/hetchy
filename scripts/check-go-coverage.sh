@@ -55,15 +55,19 @@ coverage_for_dir() {
   local dir="$1"
   local out_profile="$2"
   local out_report="$3"
-  # COVERAGE_COVERPKG sets which packages' statements are counted,
-  # enabling cross-package coverage (a test in internal/bot covering
-  # internal/billing counts). It defaults to $pkg, which itself defaults
-  # to ./... — so an argument-less run measures the whole repo. Pass a
-  # single package as $1 to scope both to that package (per-package gate).
-  local coverpkg="${COVERAGE_COVERPKG:-$pkg}"
+  # COVERAGE_COVERPKG is intentionally opt-in. For repo-wide ./... runs, a
+  # blanket -coverpkg=./... emits duplicate coverage blocks from every test
+  # binary and undercounts the actual repo total. The default path uses Go's
+  # standard package coverage aggregation; set COVERAGE_COVERPKG only for
+  # explicit cross-package experiments.
+  local coverpkg="${COVERAGE_COVERPKG:-}"
   (
     cd "$dir"
-    go test -coverpkg="$coverpkg" -coverprofile="$out_profile" "$pkg" >&2
+    if [[ -n "$coverpkg" ]]; then
+      go test -coverpkg="$coverpkg" -coverprofile="$out_profile" "$pkg" >&2
+    else
+      go test -coverprofile="$out_profile" "$pkg" >&2
+    fi
     go tool cover -func="$out_profile" > "$out_report"
   )
   awk '/^total:/ { sub(/%/, "", $3); print $3 }' "$out_report"

@@ -44,7 +44,7 @@ test: ## Run tests
 	@go test -race -cover ./...
 
 coverage: ## Check repo-wide coverage against the CI baseline
-	@COVERAGE_COVERPKG=./... bash scripts/check-go-coverage.sh ./... .github/coverage/repo-total.min
+	@bash scripts/check-go-coverage.sh ./... .github/coverage/repo-total.min
 
 ci: ## Run the same read-only checks CI does (gofmt, vet, lint, test -v, build)
 	@echo "Checking formatting..."
@@ -60,7 +60,7 @@ ci: ## Run the same read-only checks CI does (gofmt, vet, lint, test -v, build)
 	@echo "Running tests..."
 	@go test -v -race -cover ./...
 	@echo "Checking coverage..."
-	@COVERAGE_COVERPKG=./... bash scripts/check-go-coverage.sh ./... .github/coverage/repo-total.min
+	@bash scripts/check-go-coverage.sh ./... .github/coverage/repo-total.min
 	@echo "Building..."
 	@go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) $(MAIN_PATH)
 	@echo "✓ all CI checks passed"
