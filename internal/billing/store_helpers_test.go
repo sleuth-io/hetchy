@@ -101,6 +101,20 @@ func (f *billingFakeDB) execCallCount(fragment string) int {
 	return count
 }
 
+func (f *billingFakeDB) onlyExecCall(t *testing.T, fragment string) billingDBCall {
+	t.Helper()
+	var matches []billingDBCall
+	for _, call := range f.execCalls {
+		if strings.Contains(call.sql, fragment) {
+			matches = append(matches, call)
+		}
+	}
+	if len(matches) != 1 {
+		t.Fatalf("exec calls matching %q = %d, want 1", fragment, len(matches))
+	}
+	return matches[0]
+}
+
 func (f *billingFakeDB) onlyQueryRowCall(t *testing.T, fragment string) billingDBCall {
 	t.Helper()
 	var matches []billingDBCall
