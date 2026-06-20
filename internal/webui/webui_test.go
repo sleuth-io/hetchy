@@ -537,7 +537,7 @@ func TestTemplateFuncStatusExplain(t *testing.T) {
 		{"validated", "Bootstrap fully succeeded"},
 		{"partial", "Bootstrap finished but some capabilities are deferred"},
 		{"stale", "The repo has changed since this spec was last validated"},
-		{"failing", "The most recent bootstrap attempt couldn"},
+		{"failing", "couldn&#39;t reach even partial success"},
 		{"unknown-status", "unknown-status"},
 	}
 	for _, tc := range cases {
@@ -621,6 +621,7 @@ func TestRenderSettingsGeneralTab(t *testing.T) {
 	rec := httptest.NewRecorder()
 	Render(slog.New(slog.NewTextHandler(io.Discard, nil)), rec, Settings, map[string]any{
 		"Tab":       "general",
+		"Email":     "admin@example.com",
 		"OrgName":   "Test Org",
 		"IsAdmin":   true,
 		"LocalAuth": false,
@@ -631,12 +632,16 @@ func TestRenderSettingsGeneralTab(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "Test Org") {
 		t.Errorf("Settings/general template missing org name")
 	}
+	if !strings.Contains(rec.Body.String(), "admin@example.com") {
+		t.Errorf("Settings/general template missing signed-in email")
+	}
 }
 
 func TestRenderSettingsIntegrationsTabExercisesDict(t *testing.T) {
 	rec := httptest.NewRecorder()
 	Render(slog.New(slog.NewTextHandler(io.Discard, nil)), rec, Settings, map[string]any{
 		"Tab":                    "integrations",
+		"Email":                  "admin@example.com",
 		"OrgName":                "Test Org",
 		"IsAdmin":                true,
 		"AnthropicAPIKeyPreview": "",
@@ -650,37 +655,17 @@ func TestRenderSettingsIntegrationsTabExercisesDict(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "anthropic_api_key") {
 		t.Errorf("Settings/integrations template missing Anthropic field; dict-rendered secret fields expected")
 	}
+	if !strings.Contains(rec.Body.String(), "admin@example.com") {
+		t.Errorf("Settings/integrations template missing signed-in email")
+	}
 }
 
-// TestRenderExecuteErrorLogged verifies that when a template func returns an
-// error mid-execution the Render function logs it (if a logger is supplied)
-// and does not panic — the 200 header has already been sent so the status
-// code remains 200, but the error must be surfaced through logging.
-func TestRenderExecuteErrorLogged(t *testing.T) {
-	var logged bool
-	handler := slog.NewJSONHandler(io.Discard, &slog.HandlerOptions{
-		Level: slog.LevelError,
-		ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
-			if a.Key == "error" {
-				logged = true
-			}
-			return a
-		},
-	})
-	log := slog.New(handler)
-
+// TestRenderWithLoggerDoesNotPanic verifies that Render accepts a non-nil logger
+// and completes successfully without panicking (the nil-logger path is already
+// covered by TestRenderAppTemplate).
+func TestRenderWithLoggerDoesNotPanic(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	rec := httptest.NewRecorder()
-	// dict called with an odd number of arguments returns an error from inside
-	// the template, which causes Execute to fail. Because Render has already
-	// written the Content-Type header (200) at that point, the status stays
-	// 200 — but the error must be passed to the logger.
-	_, execErr := execTemplateFunc(t, `{{dict "key"}}`, nil)
-	if execErr == nil {
-		t.Fatal("expected dict with odd args to cause template execute error")
-	}
-	// Call Render with the App template and valid data to confirm the
-	// success path uses the logger without panicking (logger nil path already
-	// covered by TestRenderLandingTemplate).
 	Render(log, rec, App, map[string]any{
 		"Email":           "u@example.com",
 		"UserID":          "user_test",
@@ -689,5 +674,4 @@ func TestRenderExecuteErrorLogged(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("Render with logger status = %d, want 200", rec.Code)
 	}
-	_ = logged // logger invocation confirmed indirectly via non-panic Render
 }
