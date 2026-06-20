@@ -1,23 +1,39 @@
-# Hetchy
+<div align="center">
+<img src="docs/hetchy_logo.svg" alt="Hetchy" width="360">
 
-Hetchy turns natural-language requests into pull requests by running coding
-agents inside isolated [Daytona](https://daytona.io) sandboxes. It provides a
-web UI, optional Slack and Linear integrations, multi-organization auth, repo
-configuration, agent profiles, real-time run streaming, and follow-up turns on
-the same pull request.
+### Connect a repo. Get PRs tested, validated, and ready to merge.
+#### Hetchy runs coding agents in isolated sandboxes, streams their work, and opens reviewable PRs with attached evidence.
 
-## What It Does
+[![Stars](https://img.shields.io/github/stars/sleuth-io/hetchy?style=flat&color=F59E0B)](https://github.com/sleuth-io/hetchy/stargazers)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-10B981.svg)](https://github.com/sleuth-io/hetchy/pulls)
+[![License](https://img.shields.io/badge/license-Apache--2.0-3B82F6.svg)](LICENSE)
 
-1. Receives a request from the web UI, Slack, Linear, or a scheduled job.
-2. Starts or resumes a Daytona sandbox for the selected repository.
-3. Runs Claude Code or OpenAI Codex with the org's configured credentials.
-4. Commits the result on a branch and opens a pull request.
-5. Streams progress back to the user and supports follow-up instructions.
+[Documentation](#documentation) | [Contributing](CONTRIBUTING.md) | [License](LICENSE)
 
-## Self-Host Quick Start
+</div>
 
-The default self-host path uses local username/password auth, bundled Postgres,
-per-org GitHub personal access tokens, and Daytona Cloud.
+## Why Hetchy?
+
+AI coding agents are most useful when they can safely touch real repositories,
+show their work, and hand humans a pull request instead of a transcript. Hetchy
+wraps that workflow in a self-hostable web app:
+
+- **Run agents in isolated sandboxes** - every request starts or resumes a
+  Daytona sandbox for the selected repository.
+- **Keep the output reviewable** - Hetchy commits to a branch, opens a pull
+  request, and validates the PR before presenting the result.
+- **Work from the places teams already use** - send requests from the web UI,
+  Slack, Linear, or scheduled jobs.
+- **Bring your own credentials** - self-host with local auth, per-org GitHub
+  personal access tokens, and Anthropic, OpenAI, Claude Code, or Codex
+  credentials.
+- **Follow up on the same work** - continue a run against the same branch and
+  pull request instead of starting from scratch.
+
+## Quickstart
+
+The default self-host path uses Docker Compose, local username/password auth,
+bundled Postgres, per-org GitHub personal access tokens, and Daytona Cloud.
 
 ### 1. Clone
 
@@ -41,12 +57,12 @@ Edit `.env`:
 - Leave `DATABASE_URL=postgresql://postgres:postgres@postgres:5432/hetchy?sslmode=disable`
   when using Docker Compose.
 
-The quick-start URL is `http://localhost:8080`. If you publish Hetchy behind a
+The quickstart URL is `http://localhost:8080`. If you publish Hetchy behind a
 real hostname, set `HETCHY_PUBLIC_BASE_URL` to that origin. This URL must be
 reachable from Daytona sandboxes when using local filesystem proof artifacts,
 because the sandbox uploads screenshots and recordings back to the Hetchy web
 process. If a reverse proxy terminates traffic and overwrites
-`X-Forwarded-For`/`X-Real-IP`, set `HETCHY_TRUSTED_PROXY=true`.
+`X-Forwarded-For` or `X-Real-IP`, set `HETCHY_TRUSTED_PROXY=true`.
 
 ### 3. Prepare Daytona
 
@@ -62,6 +78,14 @@ make oss-check
 versioned Daytona snapshot to become active. `make oss-check` verifies the
 self-host config, Docker/Compose setup, Daytona auth, and active snapshot.
 
+Daytona's CLI loads `.env` from the current directory. If you need to run
+`daytona login`, run it before creating `.env`, run it outside this repo, or
+blank the Hetchy Daytona vars for that command:
+
+```bash
+DAYTONA_API_URL= DAYTONA_API_KEY= daytona login
+```
+
 ### 4. Start
 
 ```bash
@@ -72,35 +96,49 @@ Compose starts Postgres, runs migrations, and starts the Hetchy web process.
 Open `http://localhost:8080`, sign up with email/password, and create your first
 organization.
 
-## First Organization Setup
+### 5. Connect Your First Organization
 
 After signup, go to **Organization settings -> Integrations**.
 
-### Required
+Required:
 
-- **GitHub**: connect a personal access token. See
+- **GitHub** - connect a personal access token. See
   [GitHub PAT setup](docs/github-pat-setup.md).
-- **AI credentials**: add an Anthropic API key, Claude Code OAuth token, OpenAI
-  API key, or Codex auth JSON in the credentials settings.
-- **Daytona**: the server-side `DAYTONA_API_KEY` and `DAYTONA_SNAPSHOT` must
-  be valid. See [Daytona setup](docs/daytona-setup.md).
+- **AI credentials** - add an Anthropic API key, Claude Code OAuth token,
+  OpenAI API key, or Codex auth JSON in the credentials settings.
+- **Default repo** - choose the repository Hetchy should use for new runs.
 
-### Optional
+Optional:
 
-- **Slack**: connect a workspace manually or through OAuth. See
+- **Slack** - connect a workspace manually or through OAuth. See
   [Slack setup](docs/slack-setup.md).
-- **Linear**: configure OAuth and webhooks. See
+- **Linear** - configure OAuth and webhooks. See
   [Linear setup](docs/linear-setup.md).
-- **Proof artifacts**: local filesystem storage is enabled by default in
-  Compose and requires a public Hetchy origin for Daytona uploads; S3 is the
+- **Proof artifacts** - local filesystem storage is enabled by default in
+  Compose and requires a public Hetchy origin for Daytona uploads. S3 is the
   better option for private or local-only instances. See
   [artifact storage](docs/artifacts-storage.md).
-- **SX skills vault**: use the default public vault, a fork, or disable it. See
-  [SX setup](docs/sx-setup.md).
-- **Billing/Stripe**: optional and disabled when Stripe env vars are empty. See
-  [Stripe billing setup](docs/stripe-billing-setup.md).
+- **SX skills vault** - use the default public vault, a fork, or disable it.
+  See [SX setup](docs/sx-setup.md).
+- **Billing/Stripe** - optional and disabled when Stripe env vars are empty.
+  See [Stripe billing setup](docs/stripe-billing-setup.md).
 
-## Common Configuration
+## How It Works
+
+1. Hetchy receives a request from the web UI, Slack, Linear, or a scheduled job.
+2. It resolves the selected organization, agent, repository, model, and
+   credentials.
+3. It starts or resumes a Daytona sandbox for the repository.
+4. It runs Claude Code or OpenAI Codex with the configured agent profile and
+   skills.
+5. It streams progress back to the user, commits the result, opens a pull
+   request, and supports follow-up instructions on the same PR.
+
+## Configuration
+
+Most integrations are configured per organization in the Hetchy UI. Process
+environment variables cover the web process, database, auth mode, Daytona, and
+optional hosted integrations.
 
 | Variable | Required | Description |
 |---|---:|---|
@@ -126,7 +164,7 @@ See [.env.example](.env.example) for the full list.
 
 Self-hosted installs can run without a GitHub App. Organization admins paste a
 GitHub personal access token in Hetchy's settings UI; Hetchy validates it,
-stores it encrypted, syncs writable repositories, and uses it for branch/PR
+stores it encrypted, syncs writable repositories, and uses it for branch and PR
 work.
 
 A GitHub App is still supported for webhook-driven hosted deployments. PAT mode
@@ -173,6 +211,13 @@ make prepush
 go test ./...
 ```
 
+For docs-only changes, run:
+
+```bash
+git diff --check
+docker compose --env-file .env.example config
+```
+
 ## Documentation
 
 - [Deployment guide](docs/deployment.md)
@@ -185,6 +230,12 @@ go test ./...
 - [SX setup](docs/sx-setup.md)
 - [Architecture](docs/architecture.md)
 - [Troubleshooting](docs/troubleshooting.md)
+
+## Contributing
+
+Pull requests are welcome. Keep changes focused, add or update tests for
+runtime behavior, and update docs when setup or deployment behavior changes.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full contributor guide.
 
 ## License
 
