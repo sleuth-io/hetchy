@@ -1,6 +1,8 @@
 package webui
 
 import (
+	"bytes"
+	"html/template"
 	"io"
 	"log/slog"
 	"net/http"
@@ -440,5 +442,236 @@ func TestNewTaskFocusesAgentGroupWiring(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("/assets/app_controls.js missing %q", want)
 		}
+	}
+}
+
+// execTemplateFunc compiles a one-off template that uses the shared
+// templateFuncs map and executes it against data, returning the rendered
+// string and any execution error.
+func execTemplateFunc(t *testing.T, src string, data any) (string, error) {
+	t.Helper()
+	tpl, err := template.New("t").Funcs(templateFuncs).Parse(src)
+	if err != nil {
+		t.Fatalf("template parse error: %v", err)
+	}
+	var buf bytes.Buffer
+	execErr := tpl.Execute(&buf, data)
+	return buf.String(), execErr
+}
+
+func TestTemplateFuncMinus(t *testing.T) {
+	got, err := execTemplateFunc(t, `{{minus 10 3}}`, nil)
+	if err != nil {
+		t.Fatalf("minus execute error: %v", err)
+	}
+	if got != "7" {
+		t.Fatalf("minus(10, 3) = %q, want 7", got)
+	}
+}
+
+func TestTemplateFuncOrStringEmpty(t *testing.T) {
+	got, err := execTemplateFunc(t, `{{orString "" "fallback"}}`, nil)
+	if err != nil {
+		t.Fatalf("orString execute error: %v", err)
+	}
+	if got != "fallback" {
+		t.Fatalf("orString(\"\", \"fallback\") = %q, want \"fallback\"", got)
+	}
+}
+
+func TestTemplateFuncOrStringWhitespace(t *testing.T) {
+	got, err := execTemplateFunc(t, `{{orString "   " "fallback"}}`, nil)
+	if err != nil {
+		t.Fatalf("orString execute error: %v", err)
+	}
+	if got != "fallback" {
+		t.Fatalf("orString(whitespace-only, fallback) = %q, want fallback", got)
+	}
+}
+
+func TestTemplateFuncOrStringNonEmpty(t *testing.T) {
+	got, err := execTemplateFunc(t, `{{orString "actual" "fallback"}}`, nil)
+	if err != nil {
+		t.Fatalf("orString execute error: %v", err)
+	}
+	if got != "actual" {
+		t.Fatalf("orString(\"actual\", \"fallback\") = %q, want \"actual\"", got)
+	}
+}
+
+func TestTemplateFuncDictBuildsMap(t *testing.T) {
+	got, err := execTemplateFunc(t, `{{$m := dict "Key" "Value"}}{{$m.Key}}`, nil)
+	if err != nil {
+		t.Fatalf("dict execute error: %v", err)
+	}
+	if got != "Value" {
+		t.Fatalf("dict map = %q, want \"Value\"", got)
+	}
+}
+
+func TestTemplateFuncDictOddArgsError(t *testing.T) {
+	_, err := execTemplateFunc(t, `{{dict "Key"}}`, nil)
+	if err == nil {
+		t.Fatal("dict with odd number of arguments should return an error")
+	}
+	if !strings.Contains(err.Error(), "odd number of arguments") {
+		t.Fatalf("dict odd-arg error = %q, want odd-arg message", err.Error())
+	}
+}
+
+func TestTemplateFuncDictNonStringKeyError(t *testing.T) {
+	_, err := execTemplateFunc(t, `{{dict true "Value"}}`, nil)
+	if err == nil {
+		t.Fatal("dict with non-string key should return an error")
+	}
+	if !strings.Contains(err.Error(), "not a string") {
+		t.Fatalf("dict non-string-key error = %q, want 'not a string' message", err.Error())
+	}
+}
+
+func TestTemplateFuncStatusExplain(t *testing.T) {
+	cases := []struct {
+		input string
+		want  string
+	}{
+		{"validated", "Bootstrap fully succeeded"},
+		{"partial", "Bootstrap finished but some capabilities are deferred"},
+		{"stale", "The repo has changed since this spec was last validated"},
+		{"failing", "couldn&#39;t reach even partial success"},
+		{"unknown-status", "unknown-status"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.input, func(t *testing.T) {
+			got, err := execTemplateFunc(t, `{{statusExplain .}}`, tc.input)
+			if err != nil {
+				t.Fatalf("statusExplain execute error: %v", err)
+			}
+			if !strings.Contains(got, tc.want) {
+				t.Fatalf("statusExplain(%q) = %q, want to contain %q", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRenderOnboardingTemplate(t *testing.T) {
+	rec := httptest.NewRecorder()
+	Render(slog.New(slog.NewTextHandler(io.Discard, nil)), rec, Onboarding, map[string]any{
+		"Email": "user@example.com",
+		"Error": "",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Onboarding status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Header().Get("Content-Type"), "text/html") {
+		t.Errorf("Content-Type = %q, want text/html", rec.Header().Get("Content-Type"))
+	}
+	if !strings.Contains(rec.Body.String(), "<html") {
+		t.Errorf("Onboarding template rendered empty or missing <html element")
+	}
+	if !strings.Contains(rec.Body.String(), "user@example.com") {
+		t.Errorf("Onboarding template missing signed-in email")
+	}
+}
+
+func TestRenderProfileTemplate(t *testing.T) {
+	rec := httptest.NewRecorder()
+	Render(slog.New(slog.NewTextHandler(io.Discard, nil)), rec, Profile, map[string]any{
+		"Email":       "user@example.com",
+		"DisplayName": "Test User",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Profile status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "user@example.com") {
+		t.Errorf("Profile template missing expected email")
+	}
+}
+
+func TestRenderSwitchOrgTemplate(t *testing.T) {
+	rec := httptest.NewRecorder()
+	Render(slog.New(slog.NewTextHandler(io.Discard, nil)), rec, SwitchOrg, map[string]any{
+		"Email": "user@example.com",
+		"Orgs":  []any{},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("SwitchOrg status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "user@example.com") {
+		t.Errorf("SwitchOrg template missing expected email")
+	}
+}
+
+func TestRenderWelcomeTemplate(t *testing.T) {
+	rec := httptest.NewRecorder()
+	Render(slog.New(slog.NewTextHandler(io.Discard, nil)), rec, Welcome, map[string]any{
+		"Email": "user@example.com",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Welcome status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "<html") {
+		t.Errorf("Welcome template rendered empty or missing <html element")
+	}
+	if !strings.Contains(rec.Body.String(), "user@example.com") {
+		t.Errorf("Welcome template missing signed-in email")
+	}
+}
+
+func TestRenderSettingsGeneralTab(t *testing.T) {
+	rec := httptest.NewRecorder()
+	Render(slog.New(slog.NewTextHandler(io.Discard, nil)), rec, Settings, map[string]any{
+		"Tab":       "general",
+		"Email":     "admin@example.com",
+		"OrgName":   "Test Org",
+		"IsAdmin":   true,
+		"LocalAuth": false,
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Settings/general status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Test Org") {
+		t.Errorf("Settings/general template missing org name")
+	}
+	if !strings.Contains(rec.Body.String(), "admin@example.com") {
+		t.Errorf("Settings/general template missing signed-in email")
+	}
+}
+
+func TestRenderSettingsIntegrationsTabExercisesDict(t *testing.T) {
+	rec := httptest.NewRecorder()
+	Render(slog.New(slog.NewTextHandler(io.Discard, nil)), rec, Settings, map[string]any{
+		"Tab":                    "integrations",
+		"Email":                  "admin@example.com",
+		"OrgName":                "Test Org",
+		"IsAdmin":                true,
+		"AnthropicAPIKeyPreview": "",
+		"GitHubAppEnabled":       false,
+		"GitHubInstallations":    []any{},
+		"GitHubRepos":            []any{},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Settings/integrations status = %d body=%q", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "anthropic_api_key") {
+		t.Errorf("Settings/integrations template missing Anthropic field; dict-rendered secret fields expected")
+	}
+	if !strings.Contains(rec.Body.String(), "admin@example.com") {
+		t.Errorf("Settings/integrations template missing signed-in email")
+	}
+}
+
+// TestRenderWithLoggerDoesNotPanic verifies that Render accepts a non-nil logger
+// and completes successfully without panicking (the nil-logger path is already
+// covered by TestRenderAppTemplate).
+func TestRenderWithLoggerDoesNotPanic(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	rec := httptest.NewRecorder()
+	Render(log, rec, App, map[string]any{
+		"Email":           "u@example.com",
+		"UserID":          "user_test",
+		"DefaultRepoSlug": "sleuth-io/hetchy",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Render with logger status = %d, want 200", rec.Code)
 	}
 }
