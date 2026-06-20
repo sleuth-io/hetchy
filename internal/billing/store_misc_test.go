@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
+
 	"github.com/sleuth-io/hetchy/internal/db/sqlc"
 )
 
@@ -201,6 +203,9 @@ func TestStoreSetPendingPlanChangeSetsValues(t *testing.T) {
 	call := fake.onlyQueryRowCall(t, "SetBillingPendingPlanChange")
 	assertArg(t, call.args, 0, "org1")
 	assertArg(t, call.args, 1, PlanBusiness)
+	if ts, ok := call.args[2].(pgtype.Timestamptz); !ok || !ts.Valid {
+		t.Fatalf("SetBillingPendingPlanChange arg[2] = %v, want valid timestamptz", call.args[2])
+	}
 }
 
 func TestStoreSetPendingPlanChangePropagatesError(t *testing.T) {
@@ -261,9 +266,9 @@ func TestStoreSetLastPaymentErrorWritesError(t *testing.T) {
 	if fake.queryRowCallCount("EnsureBillingAccount") != 1 {
 		t.Fatal("SetLastPaymentError should ensure the account exists first")
 	}
-	if fake.execCallCount("SetBillingLastPaymentError") != 1 {
-		t.Fatal("SetLastPaymentError should execute the update query")
-	}
+	call := fake.onlyExecCall(t, "SetBillingLastPaymentError")
+	assertArg(t, call.args, 0, "org1")
+	assertArg(t, call.args, 1, "card declined")
 }
 
 // --- Store.GrantTopupCreditsOnce ---
@@ -317,6 +322,6 @@ func TestStoreGrantTopupCreditsOnceWithNonPositiveCreditsReturnsCurrentAccount(t
 func TestStoreFinalizeRunWithEnabledStoreAndEmptyRunIDReturnsNil(t *testing.T) {
 	store := newBillingStoreForFake(newBillingFakeDB())
 	if err := store.FinalizeRun(context.Background(), "", "success", time.Now()); err != nil {
-		t.Errorf("FinalizeRun with empty runID on enabled store: %v", err)
+		t.Fatalf("FinalizeRun with empty runID on enabled store: %v", err)
 	}
 }

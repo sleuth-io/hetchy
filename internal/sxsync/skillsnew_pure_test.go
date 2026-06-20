@@ -19,8 +19,9 @@ func TestSkillsNewGraphQLErrorsJoinsMessages(t *testing.T) {
 	if !strings.Contains(got, "first error") || !strings.Contains(got, "second error") {
 		t.Errorf("skillsNewGraphQLErrors = %q, want both non-blank messages", got)
 	}
-	if strings.Contains(got, ";;") {
-		t.Error("skillsNewGraphQLErrors should not produce double separators for blank messages")
+	// blank message must not contribute a part — exactly 2 messages means exactly one "; "
+	if strings.Count(got, "; ") != 1 {
+		t.Errorf("skillsNewGraphQLErrors = %q, want exactly one separator (blank message must be dropped)", got)
 	}
 }
 
