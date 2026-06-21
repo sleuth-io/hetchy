@@ -255,6 +255,62 @@ func TestGetTemplateNilStore(t *testing.T) {
 	}
 }
 
+func TestMaterializeCatalogProfileNilStore(t *testing.T) {
+	s := NewStore(nil)
+
+	got, err := s.MaterializeCatalogProfile(t.Context(), "org", "code-reviewer")
+	if err != nil {
+		t.Fatalf("MaterializeCatalogProfile(code-reviewer): %v", err)
+	}
+	if got.Slug != "code-reviewer" || !got.BuiltIn || got.VaultBackend != CatalogBackendECC {
+		t.Fatalf("materialized catalog profile = %+v", got)
+	}
+
+	_, err = s.MaterializeCatalogProfile(t.Context(), "org", "unknown-agent")
+	if err == nil {
+		t.Fatal("MaterializeCatalogProfile(unknown) expected error, got nil")
+	}
+}
+
+func TestMergeCatalogProfilesKeepsExistingProfiles(t *testing.T) {
+	existingReviewer := Profile{
+		Slug:        "code-reviewer",
+		DisplayName: "Team Reviewer",
+		Enabled:     true,
+		BuiltIn:     true,
+	}
+	custom := Profile{
+		Slug:        "team-agent",
+		DisplayName: "Team Agent",
+		Enabled:     true,
+	}
+
+	got := MergeCatalogProfiles([]Profile{custom, existingReviewer, {Slug: "   "}})
+	wantLen := len(CatalogEntries()) + 1
+	if len(got) != wantLen {
+		t.Fatalf("MergeCatalogProfiles length = %d, want %d", len(got), wantLen)
+	}
+	if !slices.IsSortedFunc(got, func(a, b Profile) int { return strings.Compare(a.Slug, b.Slug) }) {
+		t.Fatalf("MergeCatalogProfiles should sort by slug: %+v", got[:min(len(got), 5)])
+	}
+
+	var foundReviewer, foundCustom bool
+	for _, profile := range got {
+		switch profile.Slug {
+		case "code-reviewer":
+			foundReviewer = true
+			if profile.DisplayName != "Team Reviewer" {
+				t.Fatalf("existing reviewer was overwritten: %+v", profile)
+			}
+		case "team-agent":
+			foundCustom = true
+		}
+	}
+	if !foundReviewer || !foundCustom {
+		t.Fatalf("merged profiles missing reviewer=%v custom=%v", foundReviewer, foundCustom)
+	}
+}
+
 func TestListNilStore(t *testing.T) {
 	// Visible built-ins are not loaded until they are materialized on use.
 	s := NewStore(nil)
