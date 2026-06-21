@@ -4,6 +4,9 @@ package agents
 // The ECC built-in catalog is generated from an external public GitHub repo.
 // Runtime installs use the commit-pinned archive URL below; catalog updates
 // should review the upstream diff before regenerating this file.
+// Current source is a personal upstream; fork or transfer it to sleuth-io
+// before the next governance-sensitive refresh. Changing upstream requires
+// updating tools/gen_ecc_catalog/main.go and regenerating this file.
 const ECCCatalogRepo = "https://github.com/affaan-m/ECC.git"
 const ECCCatalogRef = "71d22d0a77b7e0684f4e51cba03749b788993cdb"
 const ECCCatalogArchiveURL = "https://github.com/affaan-m/ECC/archive/71d22d0a77b7e0684f4e51cba03749b788993cdb.tar.gz"

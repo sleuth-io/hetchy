@@ -37,6 +37,12 @@ type agentEntry struct {
 	prompt      string
 }
 
+// eccCatalogRepo currently points at a personal upstream. Before the next
+// governance-sensitive catalog refresh, fork or transfer ECC to the sleuth-io
+// org. Changing upstream requires updating this tool and regenerating
+// internal/agents/ecc_catalog_generated.go; do not edit only one place.
+const eccCatalogRepo = "https://github.com/affaan-m/ECC.git"
+
 func main() {
 	log.SetFlags(0)
 	if len(os.Args) != 2 {
@@ -44,7 +50,7 @@ func main() {
 	}
 	root := os.Args[1]
 	ref := gitRef(root)
-	archiveURL := "https://github.com/affaan-m/ECC/archive/" + ref + ".tar.gz"
+	archiveURL := strings.TrimSuffix(eccCatalogRepo, ".git") + "/archive/" + ref + ".tar.gz"
 	archiveHash := ""
 	if ref != "unknown" {
 		archiveHash = archiveSHA256(archiveURL)
@@ -59,7 +65,10 @@ func main() {
 	fmt.Fprintln(&b, "// The ECC built-in catalog is generated from an external public GitHub repo.")
 	fmt.Fprintln(&b, "// Runtime installs use the commit-pinned archive URL below; catalog updates")
 	fmt.Fprintln(&b, "// should review the upstream diff before regenerating this file.")
-	fmt.Fprintf(&b, "const ECCCatalogRepo = %q\n", "https://github.com/affaan-m/ECC.git")
+	fmt.Fprintln(&b, "// Current source is a personal upstream; fork or transfer it to sleuth-io")
+	fmt.Fprintln(&b, "// before the next governance-sensitive refresh. Changing upstream requires")
+	fmt.Fprintln(&b, "// updating tools/gen_ecc_catalog/main.go and regenerating this file.")
+	fmt.Fprintf(&b, "const ECCCatalogRepo = %q\n", eccCatalogRepo)
 	fmt.Fprintf(&b, "const ECCCatalogRef = %q\n", ref)
 	fmt.Fprintf(&b, "const ECCCatalogArchiveURL = %q\n", archiveURL)
 	fmt.Fprintf(&b, "const ECCCatalogArchiveSHA256 = %q\n", archiveHash)

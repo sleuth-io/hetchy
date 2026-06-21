@@ -104,6 +104,9 @@ func addAgentEnv(env map[string]string, cfg Config, agent agents.Profile) {
 			env["HETCHY_AGENT_SOURCE_SKILLS"] = strings.Join(entry.RecommendedSkills, ",")
 		}
 	}
+	// ECC built-ins install their agent and recommended skills from the pinned
+	// ECC archive above. Do not also inject the SX public vault, which would mix
+	// two built-in sources and make runtime skill versions harder to reason about.
 	if cfg.SXPublicVaultURL != "" && !eccBuiltIn {
 		env["HETCHY_SX_PUBLIC_VAULT_URL"] = cfg.SXPublicVaultURL
 	}
