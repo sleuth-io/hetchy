@@ -564,7 +564,7 @@ func (mf *managerWithFakeVault) listSkills(ctx context.Context, orgID string, ac
 		return nil, err
 	}
 	skills = append(skills, skillSummariesFromAssets(activeAssets, sourceLabelForBackend(handle.Backend))...)
-	publicAssets, err := mf.Manager.publicVaultSkills(ctx, actor)
+	publicAssets, err := mf.publicVaultSkills(ctx, actor)
 	if err != nil {
 		return nil, err
 	}
