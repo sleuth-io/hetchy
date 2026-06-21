@@ -379,6 +379,15 @@
   padding: 16px 14px;
   overflow: auto;
 }
+.scary-ascii {
+  font-family: monospace;
+  font-size: .72rem;
+  line-height: 1.3;
+  color: var(--muted);
+  margin: 0 0 12px;
+  white-space: pre;
+  user-select: none;
+}
 .pr-head {
   display: flex;
   align-items: center;
