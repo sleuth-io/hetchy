@@ -31,8 +31,6 @@ type querier interface {
 	GetAgentProfileBySlug(ctx context.Context, arg sqlc.GetAgentProfileBySlugParams) (sqlc.GetAgentProfileBySlugRow, error)
 	UpsertAgentProfile(ctx context.Context, arg sqlc.UpsertAgentProfileParams) (sqlc.UpsertAgentProfileRow, error)
 	UpdateAgentProfileName(ctx context.Context, arg sqlc.UpdateAgentProfileNameParams) (sqlc.UpdateAgentProfileNameRow, error)
-	ListAgentProfileTemplates(ctx context.Context) ([]sqlc.AgentProfileTemplate, error)
-	GetAgentProfileTemplate(ctx context.Context, slug string) (sqlc.AgentProfileTemplate, error)
 	UpdateAgentProfileVaultSync(ctx context.Context, arg sqlc.UpdateAgentProfileVaultSyncParams) (sqlc.UpdateAgentProfileVaultSyncRow, error)
 	DisableAgentProfile(ctx context.Context, arg sqlc.DisableAgentProfileParams) (int64, error)
 }
@@ -455,22 +453,6 @@ func profileFromUpdateNameRow(row sqlc.UpdateAgentProfileNameRow) Profile {
 		SyncError:     row.SyncError,
 		Enabled:       row.Enabled,
 		BuiltIn:       row.BuiltIn,
-	}
-}
-
-func profileFromTemplateRow(row sqlc.AgentProfileTemplate) Profile {
-	return Profile{
-		Slug:          row.Slug,
-		DisplayName:   row.DisplayName,
-		Description:   row.Description,
-		SXBot:         row.SxBot,
-		PersonaAsset:  row.PersonaAsset,
-		PersonaPrompt: row.PersonaPrompt,
-		SlackAliases:  cleanAliases(row.SlackAliases),
-		Skills:        cleanSkills(row.Skills),
-		Enabled:       row.Enabled,
-		BuiltIn:       true,
-		TemplateSlug:  row.Slug,
 	}
 }
 

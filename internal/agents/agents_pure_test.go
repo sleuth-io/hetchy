@@ -516,43 +516,6 @@ func TestProfileFromUpdateNameRow(t *testing.T) {
 	}
 }
 
-func TestProfileFromTemplateRow(t *testing.T) {
-	row := sqlc.AgentProfileTemplate{
-		Slug:          "archy",
-		DisplayName:   "Architect",
-		Description:   "Architecture specialist",
-		SxBot:         "sx-archy",
-		PersonaAsset:  "archy.png",
-		PersonaPrompt: "You are Archy.",
-		SlackAliases:  []string{"architect", "@arch"},
-		Skills:        []string{"system-design"},
-		Enabled:       true,
-	}
-	p := profileFromTemplateRow(row)
-	if p.Slug != "archy" {
-		t.Errorf("Slug = %q, want archy", p.Slug)
-	}
-	if p.DisplayName != "Architect" {
-		t.Errorf("DisplayName = %q, want Architect", p.DisplayName)
-	}
-	// BuiltIn must always be true for templates.
-	if !p.BuiltIn {
-		t.Error("BuiltIn should be true for template rows")
-	}
-	// TemplateSlug is set to the row's Slug field.
-	if p.TemplateSlug != "archy" {
-		t.Errorf("TemplateSlug = %q, want archy", p.TemplateSlug)
-	}
-	// Aliases cleaned.
-	wantAliases := []string{"architect", "arch"}
-	if !slices.Equal(p.SlackAliases, wantAliases) {
-		t.Errorf("SlackAliases = %v, want %v", p.SlackAliases, wantAliases)
-	}
-	if !p.Enabled {
-		t.Error("Enabled should be true")
-	}
-}
-
 func TestStoreProfileFromListRow(t *testing.T) {
 	row := sqlc.ListAgentProfilesByOrgRow{
 		Slug:         "sally",

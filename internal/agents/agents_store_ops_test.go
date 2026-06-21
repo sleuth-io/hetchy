@@ -183,16 +183,8 @@ func TestUpdateNameWithDBError(t *testing.T) {
 
 // ---- ListTemplates ----------------------------------------------------------
 
-func TestListTemplatesWithDB(t *testing.T) {
-	q := &fakeQuerier{
-		listTmplFn: func(_ context.Context) ([]sqlc.AgentProfileTemplate, error) {
-			return []sqlc.AgentProfileTemplate{
-				{Slug: "bob", DisplayName: "Bob", Enabled: true},
-				{Slug: "alice", DisplayName: "Alice", Enabled: true},
-			}, nil
-		},
-	}
-	s := newFakeStore(q)
+func TestListTemplatesUsesCatalog(t *testing.T) {
+	s := newFakeStore(&fakeQuerier{})
 	templates, err := s.ListTemplates(t.Context())
 	if err != nil {
 		t.Fatalf("ListTemplates: %v", err)
@@ -205,24 +197,9 @@ func TestListTemplatesWithDB(t *testing.T) {
 	}
 }
 
-func TestListTemplatesIgnoresLegacyTemplateDBError(t *testing.T) {
-	wantErr := errors.New("list error")
-	q := &fakeQuerier{
-		listTmplFn: func(_ context.Context) ([]sqlc.AgentProfileTemplate, error) { return nil, wantErr },
-	}
-	s := newFakeStore(q)
-	templates, err := s.ListTemplates(t.Context())
-	if err != nil {
-		t.Fatalf("ListTemplates catalog error = %v", err)
-	}
-	if len(templates) != len(CatalogProfiles()) {
-		t.Fatalf("ListTemplates returned %d, want catalog len %d", len(templates), len(CatalogProfiles()))
-	}
-}
-
 // ---- GetTemplate ------------------------------------------------------------
 
-func TestGetTemplateWithDB(t *testing.T) {
+func TestGetTemplateUsesCatalog(t *testing.T) {
 	s := newFakeStore(&fakeQuerier{})
 	p, err := s.GetTemplate(t.Context(), "code-reviewer")
 	if err != nil {
@@ -239,29 +216,11 @@ func TestGetTemplateWithDB(t *testing.T) {
 	}
 }
 
-func TestGetTemplateWithDBNotFound(t *testing.T) {
-	q := &fakeQuerier{getTmplFn: nil}
-	s := newFakeStore(q)
+func TestGetTemplateNotFound(t *testing.T) {
+	s := newFakeStore(&fakeQuerier{})
 	_, err := s.GetTemplate(t.Context(), "unknown")
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("GetTemplate(unknown) error = %v, want ErrNotFound", err)
-	}
-}
-
-func TestGetTemplateIgnoresLegacyTemplateDB(t *testing.T) {
-	wantErr := errors.New("get error")
-	q := &fakeQuerier{
-		getTmplFn: func(_ context.Context, _ string) (sqlc.AgentProfileTemplate, error) {
-			return sqlc.AgentProfileTemplate{}, wantErr
-		},
-	}
-	s := newFakeStore(q)
-	p, err := s.GetTemplate(t.Context(), "code-reviewer")
-	if err != nil {
-		t.Fatalf("GetTemplate catalog error = %v", err)
-	}
-	if p.Slug != "code-reviewer" {
-		t.Fatalf("GetTemplate slug = %q, want code-reviewer", p.Slug)
 	}
 }
 

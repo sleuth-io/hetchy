@@ -1,3 +1,5 @@
+BEGIN;
+
 DELETE FROM agent_profile_templates
 WHERE slug IN ('bob', 'alice', 'archy', 'neckbeard', 'scriptkiddy');
 
@@ -14,3 +16,5 @@ WHERE agent_slug IN ('bob', 'alice', 'archy', 'neckbeard', 'scriptkiddy');
 UPDATE agent_jobs
 SET agent_slug = ''
 WHERE agent_slug IN ('bob', 'alice', 'archy', 'neckbeard', 'scriptkiddy');
+
+COMMIT;
