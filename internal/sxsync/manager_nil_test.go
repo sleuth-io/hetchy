@@ -65,13 +65,13 @@ func TestManagerConfigureExistingGitVaultNilDBReturnsError(t *testing.T) {
 	}
 }
 
-func TestManagerConfigureExistingGitVaultInvalidSlugReturnsError(t *testing.T) {
-	// Note: ErrNotConfigured is still returned first (nil db check) but this
-	// verifies we correctly call through for the slug validation path.
+func TestManagerConfigureExistingGitVaultNilDBIgnoresSlug(t *testing.T) {
+	// The nil-db guard fires before slug validation, so any slug value returns
+	// ErrNotConfigured. This confirms the nil-db guard takes precedence.
 	m := &Manager{}
 	_, err := m.ConfigureExistingGitVault(context.Background(), "org1", "no-slash")
-	if err == nil {
-		t.Fatal("expected error for invalid repo slug, got nil")
+	if !errors.Is(err, ErrNotConfigured) {
+		t.Fatalf("ConfigureExistingGitVault(nil db, bad slug) = %v, want ErrNotConfigured", err)
 	}
 }
 
