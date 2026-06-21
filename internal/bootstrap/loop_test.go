@@ -173,6 +173,19 @@ func TestBootstrapScriptEnforcesStartReturnAndPlaywrightRuntime(t *testing.T) {
 	}
 }
 
+func TestBootstrapScriptInstallsAgentPersonaBeforeClaude(t *testing.T) {
+	for _, want := range []string{
+		"hetchy_install_agent_source_assets",
+		"HETCHY_AGENT_PROMPT_B64",
+		"HETCHY BOOTSTRAP TASK:",
+		"run_claude_with_watchdog \"${bootstrap_prompt_file}\"",
+	} {
+		if !strings.Contains(BootstrapScript, want) {
+			t.Errorf("BootstrapScript missing %q\n%s", want, BootstrapScript)
+		}
+	}
+}
+
 func TestFingerprintStableAcrossRuns(t *testing.T) {
 	tmp := t.TempDir()
 	if err := writeFile(tmp+"/Makefile", "all:\n\techo hi\n"); err != nil {

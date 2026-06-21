@@ -13,6 +13,7 @@ import (
 
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
 
+	"github.com/sleuth-io/hetchy/internal/agents"
 	"github.com/sleuth-io/hetchy/internal/blocks"
 	"github.com/sleuth-io/hetchy/internal/bootstrap"
 	"github.com/sleuth-io/hetchy/internal/orgcfg"
@@ -64,8 +65,13 @@ func TestEnsureBootstrapSpecRunsFirstTimeBootstrapWithFakes(t *testing.T) {
 			return &bootstrap.Hints{Path: hintsRoot, GoMod: &bootstrap.GoMod{Path: "go.mod", Module: "example.com/app"}}, hintsRoot, nil
 		},
 		bootstrapRunFn: func(_ context.Context, runner bootstrap.Runner, in bootstrap.LoopInput) (*bootstrap.LoopResult, error) {
-			if runner == nil {
+			bootRunner, ok := runner.(*botRunner)
+			if !ok || bootRunner == nil {
 				t.Fatal("bootstrap runner is nil")
+			}
+			if bootRunner.baseEnv["HETCHY_AGENT_SLUG"] != "go-build-resolver" ||
+				bootRunner.baseEnv["HETCHY_AGENT_SOURCE_SKILLS"] != "golang-patterns" {
+				t.Fatalf("bootstrap agent env = %+v", bootRunner.baseEnv)
 			}
 			runInput = in
 			return &bootstrap.LoopResult{
@@ -95,11 +101,26 @@ func TestEnsureBootstrapSpecRunsFirstTimeBootstrapWithFakes(t *testing.T) {
 		RepoID:      22,
 	}
 	emit := newCaptureEmitter()
+	agent := agents.Profile{
+		Slug:          "go-build-resolver",
+		DisplayName:   "Go Build Resolver",
+		PersonaAsset:  "go-build-resolver",
+		PersonaPrompt: "You fix Go builds.",
+		BuiltIn:       true,
+	}
 
-	spec, err := b.ensureBootstrapSpec(ctx, &daytona.Sandbox{ID: "sandbox-1"}, repo, orgcfg.Config{ClaudeCodeOAuthToken: "oauth-token"}, "req-1", emit)
+	spec, err := b.ensureBootstrapSpec(ctx, &daytona.Sandbox{ID: "sandbox-1"}, repo, orgcfg.Config{ClaudeCodeOAuthToken: "oauth-token"}, agent, "req-1", emit)
 	if err != nil {
 		t.Fatalf("ensureBootstrapSpec: %v", err)
 	}
+	assertFirstTimeBootstrapResult(t, spec, boot, inlineCalls, runInput, createdSession, deletedSession, emit)
+	if _, err := os.Stat(hintsRoot); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("detect temp root should be removed, stat err=%v", err)
+	}
+}
+
+func assertFirstTimeBootstrapResult(t *testing.T, spec *bootstrap.Spec, boot *fakeBootstrapStore, inlineCalls []bootstrapInlineCall, runInput bootstrap.LoopInput, createdSession, deletedSession string, emit *captureEmitter) {
+	t.Helper()
 	if spec.Kind != "go" || spec.InstallationID != 11 || spec.RepoID != 22 || spec.BootstrapLog != "bootstrap ok" {
 		t.Fatalf("saved spec identity/log = %+v", spec)
 	}
@@ -126,9 +147,6 @@ func TestEnsureBootstrapSpecRunsFirstTimeBootstrapWithFakes(t *testing.T) {
 	}
 	if !emit.hasCall("notify", "First-time bootstrap") || !emit.hasCall("notify", "Bootstrap complete") {
 		t.Fatalf("bootstrap notifications = %+v", emit.Calls)
-	}
-	if _, err := os.Stat(hintsRoot); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("detect temp root should be removed, stat err=%v", err)
 	}
 }
 
@@ -179,7 +197,7 @@ func TestEnsureBootstrapSpecPersistsFailingBootstrapForLoopFailure(t *testing.T)
 		Slug:      "hetchyhq/web",
 		InstallID: 33,
 		RepoID:    44,
-	}, orgcfg.Config{AnthropicAPIKey: "sk-ant"}, "req-fail", newCaptureEmitter())
+	}, orgcfg.Config{AnthropicAPIKey: "sk-ant"}, agents.Profile{}, "req-fail", newCaptureEmitter())
 	if err == nil || !strings.Contains(err.Error(), "bootstrap.Run") {
 		t.Fatalf("ensureBootstrapSpec err = %v, want bootstrap.Run wrapper", err)
 	}
@@ -261,7 +279,7 @@ func TestEnsureBootstrapSpecReturnsExistingFreshSpecWithoutSandboxCheck(t *testi
 		Slug:      "sleuth-io/hetchy",
 		InstallID: 11,
 		RepoID:    22,
-	}, orgcfg.Config{}, "req-1", newCaptureEmitter())
+	}, orgcfg.Config{}, agents.Profile{}, "req-1", newCaptureEmitter())
 	if err != nil {
 		t.Fatalf("ensureBootstrapSpec: %v", err)
 	}
@@ -334,7 +352,7 @@ func TestEnsureBootstrapSpecAutoHealsStaleExistingSpec(t *testing.T) {
 		GitHubToken: "ghs_test",
 		InstallID:   11,
 		RepoID:      22,
-	}, orgcfg.Config{AnthropicAPIKey: "sk-ant"}, "req-heal", newCaptureEmitter())
+	}, orgcfg.Config{AnthropicAPIKey: "sk-ant"}, agents.Profile{}, "req-heal", newCaptureEmitter())
 	if err != nil {
 		t.Fatalf("ensureBootstrapSpec: %v", err)
 	}
@@ -407,7 +425,7 @@ func TestEnsureBootstrapSpecAutoHealsOldBootstrapGeneration(t *testing.T) {
 		GitHubToken: "ghs_test",
 		InstallID:   11,
 		RepoID:      22,
-	}, orgcfg.Config{AnthropicAPIKey: "sk-ant"}, "req-generation", newCaptureEmitter())
+	}, orgcfg.Config{AnthropicAPIKey: "sk-ant"}, agents.Profile{}, "req-generation", newCaptureEmitter())
 	if err != nil {
 		t.Fatalf("ensureBootstrapSpec: %v", err)
 	}
@@ -478,7 +496,7 @@ func TestRefreshBootstrapSpecGenerationUpgradeFailurePersistsFailingSpec(t *test
 		GitHubToken: "ghs_test",
 		InstallID:   11,
 		RepoID:      22,
-	}, orgcfg.Config{AnthropicAPIKey: "sk-ant"}, "req-generation-fail", boot.spec, newCaptureEmitter())
+	}, orgcfg.Config{AnthropicAPIKey: "sk-ant"}, agents.Profile{}, "req-generation-fail", boot.spec, newCaptureEmitter())
 	if err == nil || !errors.Is(err, bootstrap.ErrLoopFailed) {
 		t.Fatalf("refreshExistingBootstrapSpec error = %v, want ErrLoopFailed", err)
 	}
@@ -555,7 +573,7 @@ func TestEnsureBootstrapSpecSkipsFailingAutoHealAfterCap(t *testing.T) {
 		GitHubToken: "ghs_test",
 		InstallID:   11,
 		RepoID:      22,
-	}, orgcfg.Config{AnthropicAPIKey: "sk-ant"}, "req-heal", emit)
+	}, orgcfg.Config{AnthropicAPIKey: "sk-ant"}, agents.Profile{}, "req-heal", emit)
 	if err != nil {
 		t.Fatalf("ensureBootstrapSpec: %v", err)
 	}

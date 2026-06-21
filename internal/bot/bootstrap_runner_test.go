@@ -72,7 +72,9 @@ func TestBotRunnerRunUsesShLinesAndMergesEnv(t *testing.T) {
 	if write.step != "bootstrap-write-unit" || write.timeout != 30*time.Second || !write.suppressInputEcho {
 		t.Fatalf("write call = %+v", write)
 	}
-	if !strings.Contains(write.cmd, "run_claude_with_watchdog") || !strings.Contains(write.cmd, "echo hello") {
+	if !strings.Contains(write.cmd, "run_claude_with_watchdog") ||
+		!strings.Contains(write.cmd, "hetchy_install_agent_source_assets") ||
+		!strings.Contains(write.cmd, "echo hello") {
 		t.Fatalf("write command missing script body/watchdog:\n%s", write.cmd)
 	}
 	run := calls[1]

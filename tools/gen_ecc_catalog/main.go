@@ -79,8 +79,8 @@ func gitRef(root string) string {
 	head, err := os.ReadFile(filepath.Join(root, ".git", "HEAD"))
 	if err == nil {
 		headText := strings.TrimSpace(string(head))
-		if strings.HasPrefix(headText, "ref: ") {
-			refPath := filepath.Join(root, ".git", strings.TrimSpace(strings.TrimPrefix(headText, "ref: ")))
+		if refName, ok := strings.CutPrefix(headText, "ref: "); ok {
+			refPath := filepath.Join(root, ".git", strings.TrimSpace(refName))
 			if data, err := os.ReadFile(refPath); err == nil {
 				return strings.TrimSpace(string(data))
 			}
