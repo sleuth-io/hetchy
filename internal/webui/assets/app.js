@@ -50,10 +50,15 @@
     workSearchTimer: null,
     data: { runs: [], pull_requests: [], counts: {} },
     agents: [],
+    agentCatalog: [],
+    agentCatalogLoaded: false,
+    agentCatalogLoading: null,
+    agentCatalogExpanded: false,
     members: [],
     repos: [],
     reposLoaded: false,
     repoSearch: '',
+    agentSearch: '',
     repoLoadToken: 0,
     selectedRunLimit: initialVisibleRuns,
     fetchInFlight: false,
@@ -138,7 +143,9 @@
   function agentForSlug(slug) {
     slug = compact(slug, '');
     if (!slug) return null;
-    return state.agents.find(agent => agent.slug === slug) || null;
+    return state.agents.find(agent => agent.slug === slug)
+      || state.agentCatalog.find(agent => agent.slug === slug)
+      || null;
   }
   function agentName(slug) {
     slug = compact(slug, '');

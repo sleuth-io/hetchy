@@ -85,6 +85,7 @@ func (b *Bot) populateAgentSettingsTabData(ctx context.Context, orgID string, da
 	if err != nil {
 		return fmt.Errorf("load agents: %w", err)
 	}
+	profiles = mergeRemoteAgentProfiles(profiles, remoteProfiles)
 	jobsByAgent, err := b.settingsJobsByAgent(ctx, orgID)
 	if err != nil {
 		return err
@@ -101,6 +102,7 @@ func (b *Bot) populateAgentSettingsTabData(ctx context.Context, orgID string, da
 	out := make([]agentSettingsView, 0, len(profiles))
 	custom := make([]agentSettingsView, 0, len(profiles))
 	builtIns := make([]agentSettingsView, 0, len(profiles))
+	visibleSlugs := make(map[string]struct{}, len(profiles))
 	for _, a := range profiles {
 		if !a.Enabled {
 			continue
@@ -176,6 +178,7 @@ func (b *Bot) populateAgentSettingsTabData(ctx context.Context, orgID string, da
 			Jobs:          jobsByAgent[a.Slug],
 		}
 		out = append(out, view)
+		visibleSlugs[view.Slug] = struct{}{}
 		if view.BuiltIn {
 			builtIns = append(builtIns, view)
 		} else {
@@ -200,6 +203,21 @@ func (b *Bot) populateAgentSettingsTabData(ctx context.Context, orgID string, da
 		})
 	}
 	data["AgentTemplates"] = templateViews
+	catalogViews := make([]agentTemplateView, 0, len(templates))
+	for _, t := range templates {
+		if _, ok := visibleSlugs[t.Slug]; ok {
+			continue
+		}
+		catalogViews = append(catalogViews, agentTemplateView{
+			Slug:          t.Slug,
+			DisplayName:   t.DisplayName,
+			Description:   t.Description,
+			Skills:        t.Skills,
+			PersonaPrompt: t.PersonaPrompt,
+		})
+	}
+	data["CatalogAgents"] = catalogViews
+	data["CatalogAgentCount"] = len(catalogViews)
 	return nil
 }
 

@@ -347,6 +347,79 @@ hetchy_github_curl() {
   fi
 }
 
+hetchy_install_agent_source_assets() {
+  if [[ -z "${HETCHY_AGENT_SOURCE_ARCHIVE_URL:-}" || -z "${HETCHY_AGENT_SOURCE_AGENT_PATH:-}" ]]; then
+    return 0
+  fi
+
+  local archive_url="$HETCHY_AGENT_SOURCE_ARCHIVE_URL"
+  local source_ref="${HETCHY_AGENT_SOURCE_REF:-unknown}"
+  local agent_path="$HETCHY_AGENT_SOURCE_AGENT_PATH"
+  local persona_asset="${HETCHY_AGENT_PERSONA_ASSET:-${HETCHY_AGENT_SLUG:-agent}}"
+  local key root archive repo_dir agent_src skill_list skill skill_src skill_dst
+
+  case "$agent_path" in
+    ""|/*|*..*|*\\*) echo "[hetchy] WARNING: invalid agent source path ${agent_path}; skipping external agent install"; return 0 ;;
+  esac
+  case "$persona_asset" in
+    ""|*/*|*..*|*\\*) echo "[hetchy] WARNING: invalid agent asset ${persona_asset}; skipping external agent install"; return 0 ;;
+  esac
+
+  key="$(printf '%s\n%s\n' "$archive_url" "$source_ref" | hetchy_stdin_sha256 2>/dev/null || true)"
+  if [[ -z "$key" ]]; then
+    key="default"
+  fi
+  root="/tmp/hetchy-agent-sources/${key}"
+  archive="${root}/source.tar.gz"
+  repo_dir="${root}/repo"
+
+  if [[ ! -d "$repo_dir" ]]; then
+    echo "[hetchy] fetching built-in agent source ${source_ref}"
+    rm -rf "$root"
+    mkdir -p "$repo_dir"
+    if ! hetchy_github_curl -o "$archive" "$archive_url"; then
+      echo "[hetchy] WARNING: failed to fetch built-in agent source; using embedded prompt fallback"
+      rm -rf "$root"
+      return 0
+    fi
+    if ! tar -xzf "$archive" -C "$repo_dir" --strip-components=1; then
+      echo "[hetchy] WARNING: failed to unpack built-in agent source; using embedded prompt fallback"
+      rm -rf "$root"
+      return 0
+    fi
+  fi
+
+  agent_src="${repo_dir}/${agent_path}"
+  if [[ -f "$agent_src" ]]; then
+    mkdir -p "$HOME/.claude/agents"
+    cp "$agent_src" "$HOME/.claude/agents/${persona_asset}.md"
+    echo "[hetchy] installed built-in agent ${persona_asset}"
+  else
+    echo "[hetchy] WARNING: built-in agent source file not found: ${agent_path}"
+  fi
+
+  skill_list="${HETCHY_AGENT_SOURCE_SKILLS:-}"
+  if [[ -z "$skill_list" ]]; then
+    return 0
+  fi
+  mkdir -p "$HOME/.claude/skills"
+  IFS=',' read -r -a _hetchy_agent_skills <<< "$skill_list"
+  for skill in "${_hetchy_agent_skills[@]}"; do
+    skill="$(printf '%s' "$skill" | xargs)"
+    case "$skill" in
+      ""|*/*|*..*|*\\*) echo "[hetchy] WARNING: invalid built-in skill ${skill}; skipping"; continue ;;
+    esac
+    skill_src="${repo_dir}/skills/${skill}"
+    skill_dst="$HOME/.claude/skills/${skill}"
+    if [[ ! -d "$skill_src" ]]; then
+      echo "[hetchy] WARNING: built-in skill source not found: ${skill}"
+      continue
+    fi
+    rm -rf "$skill_dst"
+    cp -R "$skill_src" "$skill_dst"
+  done
+}
+
 hetchy_install_sx() {
   local os arch ext version release_json binary_name url install_dir temp_dir rc
 

@@ -12,73 +12,20 @@ import (
 
 // ---- EnsureSeeded -----------------------------------------------------------
 
-func TestEnsureSeededSkipsWhenProfilesExist(t *testing.T) {
-	seeded := false
+func TestEnsureSeededIsNoop(t *testing.T) {
 	q := &fakeQuerier{
 		countFn: func(_ context.Context, orgID string) (int64, error) {
-			return 3, nil
-		},
-		seedFn: func(_ context.Context, _ string) error {
-			seeded = true
-			return nil
-		},
-	}
-	s := newFakeStore(q)
-	if err := s.EnsureSeeded(t.Context(), "org1"); err != nil {
-		t.Fatalf("EnsureSeeded: %v", err)
-	}
-	if seeded {
-		t.Error("SeedDefaultAgentProfilesForOrg should not have been called when count > 0")
-	}
-}
-
-func TestEnsureSeededSeedsWhenEmpty(t *testing.T) {
-	seeded := false
-	q := &fakeQuerier{
-		countFn: func(_ context.Context, _ string) (int64, error) {
+			t.Fatalf("CountAgentProfilesByOrg should not be called")
 			return 0, nil
 		},
-		seedFn: func(_ context.Context, orgID string) error {
-			seeded = true
-			if orgID != "org1" {
-				return errors.New("unexpected orgID: " + orgID)
-			}
+		seedFn: func(_ context.Context, _ string) error {
+			t.Fatalf("SeedDefaultAgentProfilesForOrg should not be called")
 			return nil
 		},
 	}
 	s := newFakeStore(q)
 	if err := s.EnsureSeeded(t.Context(), "org1"); err != nil {
 		t.Fatalf("EnsureSeeded: %v", err)
-	}
-	if !seeded {
-		t.Error("SeedDefaultAgentProfilesForOrg should have been called when count == 0")
-	}
-}
-
-func TestEnsureSeededCountError(t *testing.T) {
-	wantErr := errors.New("db error")
-	q := &fakeQuerier{
-		countFn: func(_ context.Context, _ string) (int64, error) {
-			return 0, wantErr
-		},
-	}
-	s := newFakeStore(q)
-	err := s.EnsureSeeded(t.Context(), "org1")
-	if !errors.Is(err, wantErr) {
-		t.Fatalf("EnsureSeeded error = %v, want %v", err, wantErr)
-	}
-}
-
-func TestEnsureSeededSeedError(t *testing.T) {
-	wantErr := errors.New("seed error")
-	q := &fakeQuerier{
-		countFn: func(_ context.Context, _ string) (int64, error) { return 0, nil },
-		seedFn:  func(_ context.Context, _ string) error { return wantErr },
-	}
-	s := newFakeStore(q)
-	err := s.EnsureSeeded(t.Context(), "org1")
-	if !errors.Is(err, wantErr) {
-		t.Fatalf("EnsureSeeded error = %v, want %v", err, wantErr)
 	}
 }
 

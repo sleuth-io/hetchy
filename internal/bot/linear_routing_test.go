@@ -509,8 +509,8 @@ func TestExtractLinearAgent(t *testing.T) {
 		text string
 		want string
 	}{
-		{"please fix this in https://github.com/a/b with the Frontend Bot.", "alice"},
-		{"please fix this using Alice. Thanks a lot", "alice"},
+		{"please fix this in https://github.com/a/b with the Code Reviewer.", "code-reviewer"},
+		{"please fix this using Code Reviewer. Thanks a lot", "code-reviewer"},
 		{"please fix this with the new login flow", ""},
 		{"", ""},
 	}

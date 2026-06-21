@@ -1,5 +1,7 @@
-.repo-search-wrap input:focus { border-color: var(--accent); }
-#task-repo-options {
+.repo-search-wrap input:focus,
+.agent-search-wrap input:focus { border-color: var(--accent); }
+#task-repo-options,
+#task-agent-options {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
@@ -27,6 +29,22 @@
   flex-direction: column;
   gap: .18rem;
 }
+.agent-choice-section {
+  display: flex;
+  align-items: center;
+  gap: .55rem;
+  padding: .55rem .65rem .25rem;
+  color: var(--muted);
+  font-size: .68rem;
+  font-weight: 650;
+  text-transform: uppercase;
+}
+.agent-choice-section::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
 .repo-choice:hover,
 .repo-choice.is-selected,
 .agent-choice:hover,
@@ -51,12 +69,14 @@
 }
 .agent-choice-desc,
 .model-choice-desc,
-.repo-empty {
+.repo-empty,
+.agent-empty {
   color: var(--muted);
   font-size: .76rem;
   line-height: 1.3;
 }
-.repo-empty {
+.repo-empty,
+.agent-empty {
   padding: .6rem .7rem;
 }
 .model-popover-title,

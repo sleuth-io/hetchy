@@ -137,22 +137,27 @@ html.is-dark dialog {
 html.is-dark .search-wrap input,
 html.is-dark .work-search-wrap input,
 html.is-dark .composer textarea,
-html.is-dark .repo-search-wrap input {
+html.is-dark .repo-search-wrap input,
+html.is-dark .agent-search-wrap input {
   color: var(--ink);
 }
 html.is-dark .search-wrap input::placeholder,
 html.is-dark .work-search-wrap input::placeholder,
 html.is-dark .composer textarea::placeholder,
-html.is-dark .repo-search-wrap input::placeholder {
+html.is-dark .repo-search-wrap input::placeholder,
+html.is-dark .agent-search-wrap input::placeholder {
   color: #6e6e72;
 }
 html.is-dark .group-item:hover,
+html.is-dark .group-catalog-toggle:hover,
 html.is-dark .user-menu-trigger:hover,
 html.is-dark .user-menu-trigger[aria-expanded="true"],
 html.is-dark .floating-menu a:hover,
 html.is-dark .user-menu-dropdown .item:hover {
   background: var(--hover);
 }
+html.is-dark .group-catalog-toggle { background: var(--surface); border-color: var(--line); }
+html.is-dark .group-catalog-chevron { background: #303036; color: #c4c4c8; }
 html.is-dark .group-count { background: #303036; color: #c4c4c8; }
 html.is-dark .group-count.has-ready-prs { background: #1a2f48; color: var(--accent); }
 html.is-dark .topbar {
@@ -246,7 +251,8 @@ html.is-dark .user-menu-dropdown {
   border-color: var(--line-strong);
   box-shadow: var(--menu-shadow);
 }
-html.is-dark .repo-search-wrap {
+html.is-dark .repo-search-wrap,
+html.is-dark .agent-search-wrap {
   background: var(--surface);
   border-bottom-color: var(--line);
 }

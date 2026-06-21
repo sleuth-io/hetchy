@@ -34,6 +34,21 @@
     btn.addEventListener('click', () => btn.closest('dialog').close());
   });
 
+  document.querySelectorAll('[data-agent-catalog-search]').forEach(input => {
+    const root = input.closest('.agent-catalog-browser');
+    if (!root) return;
+    const items = Array.from(root.querySelectorAll('[data-agent-catalog-item]'));
+    const apply = () => {
+      const needle = (input.value || '').trim().toLowerCase();
+      items.forEach(item => {
+        const text = (item.dataset.agentCatalogText || '').toLowerCase();
+        item.hidden = !!needle && !text.includes(needle);
+      });
+    };
+    input.addEventListener('input', apply);
+    apply();
+  });
+
   // Agent templates carry default prompts and skill names; mirror those
   // defaults into the create modal when a template is selected.
   (function () {
@@ -61,6 +76,7 @@
     const byNormalizedName = new Map(skills.map(skill => [skill.normalizedName, skill]));
     const selectedSkills = new Set();
     let suppressSearchFocusOpen = false;
+    let templatePromptRequest = 0;
 
     function normalizeSkillName(value) {
       return (value || '').trim().toLowerCase();
@@ -160,9 +176,39 @@
       focusSearchWithoutOpening();
     }
 
+    async function loadTemplatePrompt(slug) {
+      if (!prompt) return;
+      const requestID = ++templatePromptRequest;
+      if (!slug) {
+        prompt.value = '';
+        return;
+      }
+      prompt.disabled = true;
+      try {
+        const res = await fetch('/settings/org/agent-doc?slug=' + encodeURIComponent(slug), {
+          credentials: 'same-origin',
+          headers: { 'Accept': 'application/json' }
+        });
+        if (!res.ok) throw new Error('template prompt unavailable');
+        const payload = await res.json();
+        if (requestID === templatePromptRequest) {
+          prompt.value = payload && payload.content_md ? payload.content_md : '';
+        }
+      } catch (err) {
+        if (requestID === templatePromptRequest) {
+          prompt.value = '';
+        }
+      } finally {
+        if (requestID === templatePromptRequest) {
+          prompt.disabled = false;
+        }
+      }
+    }
+
     function applyTemplate() {
       const selected = template.selectedOptions && template.selectedOptions[0];
-      if (prompt) prompt.value = selected ? selected.dataset.prompt || '' : '';
+      const templateSlug = selected ? selected.dataset.templateSlug || selected.value || '' : '';
+      loadTemplatePrompt(templateSlug);
 
       selectedSkills.clear();
       splitSkills(selected ? selected.dataset.skills : '').forEach(name => {
@@ -209,47 +255,47 @@
     });
     template.addEventListener('change', applyTemplate);
     renderSelected();
-	  })();
+  })();
 
-	  // SX-backed agent actions can take several seconds. Keep the posted
-	  // controls enabled, but lock the buttons and replace the submit label
-	  // with a spinner so the modal shows progress before navigation.
-	  (function () {
-	    const forms = [
-	      '#agent-create-form',
-	      '.agent-command-form',
-	      '.agent-upload-form',
-	      'dialog[id^="modal-agent-team-"] form'
-	    ].join(', ');
+  // SX-backed agent actions can take several seconds. Keep the posted
+  // controls enabled, but lock the buttons and replace the submit label
+  // with a spinner so the modal shows progress before navigation.
+  (function () {
+    const forms = [
+      '#agent-create-form',
+      '.agent-command-form',
+      '.agent-upload-form',
+      'dialog[id^="modal-agent-team-"] form'
+    ].join(', ');
 
-	    function setSubmitting(form, submitter) {
-	      if (form.dataset.submitting === '1') return;
-	      form.dataset.submitting = '1';
-	      form.setAttribute('aria-busy', 'true');
+    function setSubmitting(form, submitter) {
+      if (form.dataset.submitting === '1') return;
+      form.dataset.submitting = '1';
+      form.setAttribute('aria-busy', 'true');
 
-	      const button = submitter && submitter.matches('button[type="submit"], button:not([type])')
-	        ? submitter
-	        : form.querySelector('button[type="submit"], button:not([type])');
-	      form.querySelectorAll('button').forEach(btn => {
-	        btn.disabled = true;
-	      });
-	      if (!button) return;
-	      button.dataset.originalLabel = button.textContent;
-	      button.classList.add('is-submitting');
-	      button.setAttribute('aria-label', button.dataset.submittingLabel || 'Working');
-	      button.innerHTML = '<span class="button-spinner" aria-hidden="true"></span>';
-	    }
+      const button = submitter && submitter.matches('button[type="submit"], button:not([type])')
+        ? submitter
+        : form.querySelector('button[type="submit"], button:not([type])');
+      form.querySelectorAll('button').forEach(btn => {
+        btn.disabled = true;
+      });
+      if (!button) return;
+      button.dataset.originalLabel = button.textContent;
+      button.classList.add('is-submitting');
+      button.setAttribute('aria-label', button.dataset.submittingLabel || 'Working');
+      button.innerHTML = '<span class="button-spinner" aria-hidden="true"></span>';
+    }
 
-	    document.querySelectorAll(forms).forEach(form => {
-	      form.addEventListener('submit', e => {
-	        setSubmitting(form, e.submitter);
-	      });
-	    });
-	  })();
+    document.querySelectorAll(forms).forEach(form => {
+      form.addEventListener('submit', e => {
+        setSubmitting(form, e.submitter);
+      });
+    });
+  })();
 
-	  // Destructive settings actions use the shared app-dialog styling
-	  // instead of native browser confirm() prompts.
-	  (function () {
+  // Destructive settings actions use the shared app-dialog styling
+  // instead of native browser confirm() prompts.
+  (function () {
     const dlg = document.getElementById('integration-disconnect-dialog');
     if (!dlg) return;
     const title = document.getElementById('integration-disconnect-title');

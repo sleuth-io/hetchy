@@ -13,6 +13,11 @@ func (b *Bot) addOrgSXVaultEnv(ctx context.Context, orgID string, agent agents.P
 	if b == nil || b.sx == nil {
 		return
 	}
+	if agent.BuiltIn {
+		if _, ok := agents.GetCatalogEntry(agent.Slug); ok {
+			return
+		}
+	}
 	if agent.VaultBackend != sxsync.BackendGitHubGit {
 		values, err := b.sx.RuntimeSkillsNewEnv(ctx, orgID, agent)
 		if err != nil {

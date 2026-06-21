@@ -93,7 +93,17 @@ func addAgentEnv(env map[string]string, cfg Config, agent agents.Profile) {
 	env["HETCHY_AGENT_SX_BOT"] = agent.SXBot
 	env["HETCHY_AGENT_PERSONA_ASSET"] = agent.PersonaAsset
 	env["HETCHY_AGENT_PROMPT_B64"] = base64.StdEncoding.EncodeToString([]byte(agent.PersonaPrompt))
-	if cfg.SXPublicVaultURL != "" {
+	eccBuiltIn := false
+	if agent.BuiltIn {
+		if entry, ok := agents.GetCatalogEntry(agent.Slug); ok {
+			eccBuiltIn = true
+			env["HETCHY_AGENT_SOURCE_ARCHIVE_URL"] = agents.ECCCatalogArchiveURL
+			env["HETCHY_AGENT_SOURCE_REF"] = agents.ECCCatalogRef
+			env["HETCHY_AGENT_SOURCE_AGENT_PATH"] = entry.AgentPath
+			env["HETCHY_AGENT_SOURCE_SKILLS"] = strings.Join(entry.RecommendedSkills, ",")
+		}
+	}
+	if cfg.SXPublicVaultURL != "" && !eccBuiltIn {
 		env["HETCHY_SX_PUBLIC_VAULT_URL"] = cfg.SXPublicVaultURL
 	}
 }

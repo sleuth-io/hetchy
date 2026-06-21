@@ -208,6 +208,20 @@
   .agent-section-title { margin: 0 0 .65rem; color: #888; font-size: .72rem;
                          text-transform: uppercase; letter-spacing: .03em; font-weight: 700; }
   .agent-list { display: flex; flex-direction: column; gap: .85rem; }
+  .agent-catalog-browser { border: 1px solid #e6e6e6; border-radius: .5rem;
+                           background: #fff; padding: .9rem; }
+  .agent-catalog-browser > summary { cursor: pointer; list-style-position: inside; margin-bottom: 0; }
+  .agent-catalog-browser[open] > summary { margin-bottom: .75rem; }
+  .agent-catalog-tools { margin-bottom: .75rem; }
+  .agent-catalog-tools input { width: 100%; max-width: 28rem; }
+  .agent-catalog-list { display: grid; gap: .65rem; }
+  .agent-catalog-item { display: flex; align-items: flex-start; justify-content: space-between;
+                        gap: 1rem; padding: .8rem; border: 1px solid #ececec;
+                        border-radius: .5rem; background: #fafafa; }
+  .agent-catalog-item h3 { margin: 0 0 .2rem; font-size: .95rem; }
+  .agent-catalog-item code { font-size: .76rem; color: #777; }
+  .agent-catalog-item p { margin: .45rem 0 .55rem; color: #666; font-size: .84rem; line-height: 1.4; }
+  .agent-catalog-item[hidden] { display: none; }
   .agent-card { background: #fff; border: 1px solid #e6e6e6;
                 border-radius: .5rem; padding: 1rem 1.25rem; overflow: hidden; }
   .agent-card-head { display: flex; justify-content: space-between;
@@ -976,6 +990,10 @@
   html.is-dark .sx-enable-callout-body p { color: #a098c8; }
   html.is-dark .sx-enable-callout-cta { color: #b5a7ff; }
   html.is-dark .agent-card { background: #232327; border-color: #2e2e33; }
+  html.is-dark .agent-catalog-browser { background: #232327; border-color: #2e2e33; }
+  html.is-dark .agent-catalog-item { background: #1f1f23; border-color: #2e2e33; }
+  html.is-dark .agent-catalog-item code { color: #8a8a90; }
+  html.is-dark .agent-catalog-item p { color: #9a9aa0; }
   html.is-dark .agent-section-title { color: #8a8a90; }
   html.is-dark .agent-title h3 { color: #f5f5f7; }
   html.is-dark .agent-title code,

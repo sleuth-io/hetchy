@@ -20,7 +20,7 @@ func TestAgentDocHandlerReturnsRenderedPersona(t *testing.T) {
 	b.orgs = &fakeOrgStore{getConfig: orgcfg.Config{OrgID: "org_test"}}
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/settings/org/agent-doc?slug=alice", nil)
+	req := httptest.NewRequest(http.MethodGet, "/settings/org/agent-doc?slug=code-reviewer", nil)
 	b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.agentDocHandler))).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -30,7 +30,7 @@ func TestAgentDocHandlerReturnsRenderedPersona(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if got.Slug != "alice" {
+	if got.Slug != "code-reviewer" {
 		t.Fatalf("slug = %q", got.Slug)
 	}
 	if got.FileName != "AGENTS.md" {

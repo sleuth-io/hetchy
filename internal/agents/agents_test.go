@@ -11,10 +11,10 @@ func TestResolveBuiltInAgents(t *testing.T) {
 		in   string
 		want string
 	}{
-		{"backend", "bob"},
-		{"@frontend", "alice"},
-		{"Architect", "archy"},
-		{"alice", "alice"},
+		{"code-reviewer", "code-reviewer"},
+		{"Code Reviewer", "code-reviewer"},
+		{"@python-reviewer", "python-reviewer"},
+		{"Architect", "architect"},
 	}
 	for _, tc := range cases {
 		got, err := store.Resolve(t.Context(), "org", tc.in)
@@ -24,8 +24,11 @@ func TestResolveBuiltInAgents(t *testing.T) {
 		if got.Slug != tc.want {
 			t.Errorf("Resolve(%q) = %q, want %q", tc.in, got.Slug, tc.want)
 		}
-		if len(got.Skills) == 0 {
-			t.Errorf("Resolve(%q) returned no skills", tc.in)
+		if !got.BuiltIn || got.VaultBackend != CatalogBackendECC {
+			t.Errorf("Resolve(%q) = built_in:%v backend:%q, want ECC built-in", tc.in, got.BuiltIn, got.VaultBackend)
+		}
+		if got.PersonaPrompt == "" {
+			t.Errorf("Resolve(%q) returned no persona prompt", tc.in)
 		}
 	}
 }
@@ -39,14 +42,14 @@ func TestResolveEmptyAgent(t *testing.T) {
 
 func TestGetBySlugUsesCanonicalSlugOnly(t *testing.T) {
 	store := NewStore(nil)
-	got, err := store.GetBySlug(t.Context(), "org", "bob")
+	got, err := store.GetBySlug(t.Context(), "org", "code-reviewer")
 	if err != nil {
-		t.Fatalf("GetBySlug(bob): %v", err)
+		t.Fatalf("GetBySlug(code-reviewer): %v", err)
 	}
-	if got.Slug != "bob" {
-		t.Errorf("GetBySlug(bob) = %q, want bob", got.Slug)
+	if got.Slug != "code-reviewer" {
+		t.Errorf("GetBySlug(code-reviewer) = %q, want code-reviewer", got.Slug)
 	}
-	if _, err := store.GetBySlug(t.Context(), "org", "backend"); !errors.Is(err, ErrNotFound) {
+	if _, err := store.GetBySlug(t.Context(), "org", "reviewer"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("GetBySlug(alias) error = %v, want ErrNotFound", err)
 	}
 }

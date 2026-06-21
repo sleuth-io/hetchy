@@ -59,15 +59,55 @@
   function renderAgentPicker() {
     const label = byID('task-agent-label');
     if (label) label.textContent = state.selectedTaskAgent ? agentName(state.selectedTaskAgent) : 'No agent';
+    const search = byID('task-agent-search');
+    if (search && search.value !== state.agentSearch) search.value = state.agentSearch;
     const options = byID('task-agent-options');
     if (!options) return;
-    const choices = [{ slug: '', display_name: 'No agent', description: 'Use Hetchy without a specialized persona.' }].concat(state.agents);
-    options.innerHTML = choices.map(agent =>
+    const usedAgents = [];
+    const catalogAgents = [];
+    const seen = new Set();
+    const needle = compact(state.agentSearch, '').trim().toLowerCase();
+    const matchesAgentSearch = agent => {
+      if (!needle) return true;
+      const haystack = [
+        agent && agent.slug,
+        agent && agent.display_name,
+        agent && agent.description
+      ].map(value => compact(value, '').toLowerCase()).join(' ');
+      return haystack.includes(needle);
+    };
+    const addAgent = (agent, target) => {
+      const slug = compact(agent && agent.slug, '');
+      if (!slug || seen.has(slug)) return;
+      seen.add(slug);
+      if (matchesAgentSearch(agent)) target.push(agent);
+    };
+    for (const agent of state.agents || []) {
+      addAgent(agent, usedAgents);
+    }
+    if (Array.isArray(state.agentCatalog) && state.agentCatalog.length) {
+      for (const agent of state.agentCatalog) {
+        if (agent && agent.catalog_only) addAgent(agent, catalogAgents);
+        else addAgent(agent, usedAgents);
+      }
+    }
+    const renderChoice = agent =>
       '<button class="agent-choice' + ((agent.slug || '') === state.selectedTaskAgent ? ' is-selected' : '') + '" type="button" data-agent-slug="' + esc(agent.slug || '') + '">'
       + '<span class="agent-choice-name">' + esc(agent.display_name || agent.slug || 'No agent') + '</span>'
       + (agent.description ? '<span class="agent-choice-desc">' + esc(agent.description) + '</span>' : '')
-      + '</button>'
-    ).join('');
+      + '</button>';
+    const html = [
+      renderChoice({ slug: '', display_name: 'No agent', description: 'Use Hetchy without a specialized persona.' })
+    ];
+    html.push.apply(html, usedAgents.map(renderChoice));
+    if (catalogAgents.length) {
+      html.push('<div class="agent-choice-section" role="separator"><span>Built-in catalog</span></div>');
+      html.push.apply(html, catalogAgents.map(renderChoice));
+    }
+    if (needle && usedAgents.length === 0 && catalogAgents.length === 0) {
+      html.push('<div class="agent-empty">No agents match "' + esc(state.agentSearch.trim()) + '".</div>');
+    }
+    options.innerHTML = html.join('');
   }
   const modelProviderHeadings = { anthropic: 'Claude', openai: 'GPT' };
   function renderModelPicker() {
@@ -402,7 +442,9 @@
       state.selectedTaskAgent = state.selectedID;
     }
     state.repoSearch = '';
+    state.agentSearch = '';
     if (byID('task-repo-search')) byID('task-repo-search').value = '';
+    if (byID('task-agent-search')) byID('task-agent-search').value = '';
     renderAgentSelects();
     openDialog('new-task-dialog');
     byID('task-input').focus();

@@ -196,17 +196,17 @@ func TestHandleSlackEvent_NaturalAgentPhrasePersistsPendingRepoPrompt(t *testing
 		channel: "C123",
 		user:    "U1",
 		ts:      "111.000",
-		text:    "<@B123> use the frontend to make the page responsive",
+		text:    "<@B123> use the code reviewer to review the API",
 	}, cli)
 
 	rec := convs.lastUpsert(t)
 	if rec.ThreadID != "111.000" || rec.CreatorID != "user-1" {
 		t.Fatalf("unexpected pending conversation identity: %+v", rec)
 	}
-	if rec.AgentSlug != "alice" {
-		t.Fatalf("agent slug = %q, want alice", rec.AgentSlug)
+	if rec.AgentSlug != "code-reviewer" {
+		t.Fatalf("agent slug = %q, want code-reviewer", rec.AgentSlug)
 	}
-	if got := rec.History; len(got) != 1 || got[0] != "make the page responsive" {
+	if got := rec.History; len(got) != 1 || got[0] != "review the API" {
 		t.Fatalf("history = %#v, want cleaned request", got)
 	}
 	if rec.GitHubOwner != "" || rec.GitHubRepo != "" || rec.SandboxID != "" {
@@ -243,15 +243,15 @@ func TestHandleSlackEvent_NaturalAgentPhraseUsesInlineRepo(t *testing.T) {
 		channel: "C123",
 		user:    "U1",
 		ts:      "111.000",
-		text:    "<@B123> use the frontend to add ascii art in the sleuth-io/hetchy repository",
+		text:    "<@B123> use the code reviewer to add ascii art in the sleuth-io/hetchy repository",
 	}, cli)
 
 	if gotOwner != "sleuth-io" || gotName != "hetchy" {
 		t.Fatalf("repo resolver got %s/%s, want sleuth-io/hetchy", gotOwner, gotName)
 	}
 	first := convs.upserts[0]
-	if first.AgentSlug != "alice" {
-		t.Fatalf("agent slug = %q, want alice", first.AgentSlug)
+	if first.AgentSlug != "code-reviewer" {
+		t.Fatalf("agent slug = %q, want code-reviewer", first.AgentSlug)
 	}
 	if first.GitHubOwner != "sleuth-io" || first.GitHubRepo != "hetchy" {
 		t.Fatalf("initial conversation repo = %s/%s, want sleuth-io/hetchy", first.GitHubOwner, first.GitHubRepo)
@@ -273,8 +273,8 @@ func TestHandleSlackEvent_RepoOnlyReplyFallsBackToPendingConversation(t *testing
 	pending := convstore.Record{
 		OrgID:        "org_test",
 		ThreadID:     "111.000",
-		History:      []string{"make the page responsive"},
-		AgentSlug:    "alice",
+		History:      []string{"review the API"},
+		AgentSlug:    "code-reviewer",
 		AwaitingRepo: true,
 		CreatedAt:    time.Now(),
 	}
@@ -372,7 +372,7 @@ func TestHandleSlackEvent_FollowUpRepoMentionDoesNotOverrideConversationRepo(t *
 			History:     []string{"original request"},
 			GitHubOwner: "acme",
 			GitHubRepo:  "repo",
-			AgentSlug:   "alice",
+			AgentSlug:   "code-reviewer",
 		},
 	}
 	convs := &threadCheckingConversationStore{
