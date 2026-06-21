@@ -8,9 +8,13 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"go/format"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -40,6 +44,11 @@ func main() {
 	}
 	root := os.Args[1]
 	ref := gitRef(root)
+	archiveURL := "https://github.com/affaan-m/ECC/archive/" + ref + ".tar.gz"
+	archiveHash := ""
+	if ref != "unknown" {
+		archiveHash = archiveSHA256(archiveURL)
+	}
 	skills := skillNames(filepath.Join(root, "skills"))
 	agents := agentEntries(filepath.Join(root, "agents"), skills)
 
@@ -52,7 +61,8 @@ func main() {
 	fmt.Fprintln(&b, "// should review the upstream diff before regenerating this file.")
 	fmt.Fprintf(&b, "const ECCCatalogRepo = %q\n", "https://github.com/affaan-m/ECC.git")
 	fmt.Fprintf(&b, "const ECCCatalogRef = %q\n", ref)
-	fmt.Fprintf(&b, "const ECCCatalogArchiveURL = %q\n", "https://github.com/affaan-m/ECC/archive/"+ref+".tar.gz")
+	fmt.Fprintf(&b, "const ECCCatalogArchiveURL = %q\n", archiveURL)
+	fmt.Fprintf(&b, "const ECCCatalogArchiveSHA256 = %q\n", archiveHash)
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "var eccCatalogEntries = []CatalogEntry{")
 	for _, entry := range agents {
@@ -93,6 +103,22 @@ func gitRef(root string) string {
 		}
 	}
 	return "unknown"
+}
+
+func archiveSHA256(url string) string {
+	resp, err := http.Get(url)
+	if err != nil {
+		log.Fatalf("download archive for sha256: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		log.Fatalf("download archive for sha256: %s", resp.Status)
+	}
+	hash := sha256.New()
+	if _, err := io.Copy(hash, resp.Body); err != nil {
+		log.Fatalf("hash archive: %v", err)
+	}
+	return hex.EncodeToString(hash.Sum(nil))
 }
 
 func skillNames(dir string) map[string]struct{} {

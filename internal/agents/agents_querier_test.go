@@ -13,17 +13,7 @@ import (
 // ---- EnsureSeeded -----------------------------------------------------------
 
 func TestEnsureSeededIsNoop(t *testing.T) {
-	q := &fakeQuerier{
-		countFn: func(_ context.Context, orgID string) (int64, error) {
-			t.Fatalf("CountAgentProfilesByOrg should not be called")
-			return 0, nil
-		},
-		seedFn: func(_ context.Context, _ string) error {
-			t.Fatalf("SeedDefaultAgentProfilesForOrg should not be called")
-			return nil
-		},
-	}
-	s := newFakeStore(q)
+	s := newFakeStore(&fakeQuerier{})
 	if err := s.EnsureSeeded(t.Context(), "org1"); err != nil {
 		t.Fatalf("EnsureSeeded: %v", err)
 	}
@@ -40,7 +30,6 @@ func TestEnsureSeededNilQuerier(t *testing.T) {
 
 func TestListWithDB(t *testing.T) {
 	q := &fakeQuerier{
-		countFn: func(_ context.Context, _ string) (int64, error) { return 1, nil },
 		listFn: func(_ context.Context, orgID string) ([]sqlc.ListAgentProfilesByOrgRow, error) {
 			return []sqlc.ListAgentProfilesByOrgRow{
 				{Slug: "bob", DisplayName: "Bob", Enabled: true},
@@ -64,7 +53,6 @@ func TestListWithDB(t *testing.T) {
 func TestListWithDBError(t *testing.T) {
 	wantErr := errors.New("list error")
 	q := &fakeQuerier{
-		countFn: func(_ context.Context, _ string) (int64, error) { return 1, nil },
 		listFn: func(_ context.Context, _ string) ([]sqlc.ListAgentProfilesByOrgRow, error) {
 			return nil, wantErr
 		},
@@ -80,7 +68,6 @@ func TestListWithDBError(t *testing.T) {
 
 func TestGetBySlugWithDB(t *testing.T) {
 	q := &fakeQuerier{
-		countFn: func(_ context.Context, _ string) (int64, error) { return 1, nil },
 		getBySlugFn: func(_ context.Context, arg sqlc.GetAgentProfileBySlugParams) (sqlc.GetAgentProfileBySlugRow, error) {
 			if arg.Slug == "bob" && arg.OrgID == "org1" {
 				return sqlc.GetAgentProfileBySlugRow{Slug: "bob", DisplayName: "Bob", Enabled: true}, nil
@@ -100,7 +87,6 @@ func TestGetBySlugWithDB(t *testing.T) {
 
 func TestGetBySlugWithDBDisabledReturnsNotFound(t *testing.T) {
 	q := &fakeQuerier{
-		countFn: func(_ context.Context, _ string) (int64, error) { return 1, nil },
 		getBySlugFn: func(_ context.Context, _ sqlc.GetAgentProfileBySlugParams) (sqlc.GetAgentProfileBySlugRow, error) {
 			return sqlc.GetAgentProfileBySlugRow{Slug: "bob", Enabled: false}, nil
 		},
@@ -114,7 +100,6 @@ func TestGetBySlugWithDBDisabledReturnsNotFound(t *testing.T) {
 
 func TestGetBySlugWithDBNotFound(t *testing.T) {
 	q := &fakeQuerier{
-		countFn:     func(_ context.Context, _ string) (int64, error) { return 1, nil },
 		getBySlugFn: nil,
 	}
 	s := newFakeStore(q)
@@ -127,7 +112,6 @@ func TestGetBySlugWithDBNotFound(t *testing.T) {
 func TestGetBySlugWithDBError(t *testing.T) {
 	wantErr := errors.New("db error")
 	q := &fakeQuerier{
-		countFn: func(_ context.Context, _ string) (int64, error) { return 1, nil },
 		getBySlugFn: func(_ context.Context, _ sqlc.GetAgentProfileBySlugParams) (sqlc.GetAgentProfileBySlugRow, error) {
 			return sqlc.GetAgentProfileBySlugRow{}, wantErr
 		},
@@ -143,7 +127,6 @@ func TestGetBySlugWithDBError(t *testing.T) {
 
 func TestUpsertWithDB(t *testing.T) {
 	q := &fakeQuerier{
-		countFn: func(_ context.Context, _ string) (int64, error) { return 1, nil },
 		upsertFn: func(_ context.Context, arg sqlc.UpsertAgentProfileParams) (sqlc.UpsertAgentProfileRow, error) {
 			return sqlc.UpsertAgentProfileRow{
 				Slug:        arg.Slug,
@@ -169,7 +152,6 @@ func TestUpsertWithDB(t *testing.T) {
 func TestUpsertFallsBackToSlugWhenDisplayNameEmpty(t *testing.T) {
 	var gotDisplayName string
 	q := &fakeQuerier{
-		countFn: func(_ context.Context, _ string) (int64, error) { return 1, nil },
 		upsertFn: func(_ context.Context, arg sqlc.UpsertAgentProfileParams) (sqlc.UpsertAgentProfileRow, error) {
 			gotDisplayName = arg.DisplayName
 			return sqlc.UpsertAgentProfileRow{Slug: arg.Slug, DisplayName: arg.DisplayName}, nil
@@ -186,9 +168,7 @@ func TestUpsertFallsBackToSlugWhenDisplayNameEmpty(t *testing.T) {
 }
 
 func TestUpsertEmptySlugReturnsError(t *testing.T) {
-	q := &fakeQuerier{
-		countFn: func(_ context.Context, _ string) (int64, error) { return 1, nil },
-	}
+	q := &fakeQuerier{}
 	s := newFakeStore(q)
 	_, err := s.Upsert(t.Context(), "org1", Profile{Slug: ""})
 	if err == nil {
@@ -215,7 +195,6 @@ func TestUpsertNilQuerierReturnsError(t *testing.T) {
 func TestUpsertWithDBError(t *testing.T) {
 	wantErr := errors.New("upsert error")
 	q := &fakeQuerier{
-		countFn: func(_ context.Context, _ string) (int64, error) { return 1, nil },
 		upsertFn: func(_ context.Context, _ sqlc.UpsertAgentProfileParams) (sqlc.UpsertAgentProfileRow, error) {
 			return sqlc.UpsertAgentProfileRow{}, wantErr
 		},

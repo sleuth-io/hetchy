@@ -98,6 +98,7 @@ func addAgentEnv(env map[string]string, cfg Config, agent agents.Profile) {
 		if entry, ok := agents.GetCatalogEntry(agent.Slug); ok {
 			eccBuiltIn = true
 			env["HETCHY_AGENT_SOURCE_ARCHIVE_URL"] = agents.ECCCatalogArchiveURL
+			env["HETCHY_AGENT_SOURCE_ARCHIVE_SHA256"] = agents.ECCCatalogArchiveSHA256
 			env["HETCHY_AGENT_SOURCE_REF"] = agents.ECCCatalogRef
 			env["HETCHY_AGENT_SOURCE_AGENT_PATH"] = entry.AgentPath
 			env["HETCHY_AGENT_SOURCE_SKILLS"] = strings.Join(entry.RecommendedSkills, ",")

@@ -70,6 +70,7 @@ func TestEnsureBootstrapSpecRunsFirstTimeBootstrapWithFakes(t *testing.T) {
 				t.Fatal("bootstrap runner is nil")
 			}
 			if bootRunner.baseEnv["HETCHY_AGENT_SLUG"] != "go-build-resolver" ||
+				bootRunner.baseEnv["HETCHY_AGENT_SOURCE_ARCHIVE_SHA256"] != agents.ECCCatalogArchiveSHA256 ||
 				bootRunner.baseEnv["HETCHY_AGENT_SOURCE_SKILLS"] != "golang-patterns" {
 				t.Fatalf("bootstrap agent env = %+v", bootRunner.baseEnv)
 			}

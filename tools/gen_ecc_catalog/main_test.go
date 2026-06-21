@@ -1,6 +1,10 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -26,6 +30,20 @@ func TestGitRef(t *testing.T) {
 
 	if got := gitRef(t.TempDir()); got != "unknown" {
 		t.Fatalf("gitRef(missing) = %q, want unknown", got)
+	}
+}
+
+func TestArchiveSHA256(t *testing.T) {
+	const payload = "archive payload"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(payload))
+	}))
+	defer server.Close()
+
+	hash := sha256.Sum256([]byte(payload))
+	want := hex.EncodeToString(hash[:])
+	if got := archiveSHA256(server.URL); got != want {
+		t.Fatalf("archiveSHA256 = %q, want %q", got, want)
 	}
 }
 

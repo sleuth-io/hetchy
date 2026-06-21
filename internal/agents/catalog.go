@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 )
 
 const CatalogBackendECC = "ecc"
@@ -19,6 +20,12 @@ type CatalogEntry struct {
 	AgentPath         string
 	Prompt            string
 }
+
+var (
+	catalogIndexOnce     sync.Once
+	catalogEntriesBySlug map[string]CatalogEntry
+	catalogEntriesByName map[string]CatalogEntry
+)
 
 func CatalogEntries() []CatalogEntry {
 	out := make([]CatalogEntry, len(eccCatalogEntries))
@@ -40,12 +47,9 @@ func GetCatalogEntry(slug string) (CatalogEntry, bool) {
 	if slug == "" {
 		return CatalogEntry{}, false
 	}
-	for _, entry := range eccCatalogEntries {
-		if entry.Slug == slug {
-			return entry, true
-		}
-	}
-	return CatalogEntry{}, false
+	ensureCatalogIndexes()
+	entry, ok := catalogEntriesBySlug[slug]
+	return entry, ok
 }
 
 func GetCatalogProfile(slug string) (Profile, bool) {
@@ -61,13 +65,44 @@ func FindCatalogProfile(requested string) (Profile, bool) {
 	if token == "" {
 		return Profile{}, false
 	}
-	for _, entry := range eccCatalogEntries {
-		profile := entry.Profile()
-		if profile.Matches(token) {
-			return profile, true
-		}
+	ensureCatalogIndexes()
+	if entry, ok := catalogEntriesByName[token]; ok {
+		return entry.Profile(), true
 	}
 	return Profile{}, false
+}
+
+func ensureCatalogIndexes() {
+	catalogIndexOnce.Do(func() {
+		bySlug := make(map[string]CatalogEntry, len(eccCatalogEntries))
+		byName := make(map[string]CatalogEntry, len(eccCatalogEntries)*2)
+		for _, entry := range eccCatalogEntries {
+			profile := entry.Profile()
+			if profile.Slug == "" {
+				continue
+			}
+			bySlug[profile.Slug] = entry
+			addCatalogLookup(byName, entry, profile.Slug)
+			addCatalogLookup(byName, entry, profile.DisplayName)
+			addCatalogLookup(byName, entry, profile.SXBot)
+			for _, alias := range profile.SlackAliases {
+				addCatalogLookup(byName, entry, alias)
+			}
+		}
+		catalogEntriesBySlug = bySlug
+		catalogEntriesByName = byName
+	})
+}
+
+func addCatalogLookup(index map[string]CatalogEntry, entry CatalogEntry, value string) {
+	token := NormalizeLookup(value)
+	if token == "" {
+		return
+	}
+	if _, exists := index[token]; exists {
+		return
+	}
+	index[token] = entry
 }
 
 func (entry CatalogEntry) Profile() Profile {

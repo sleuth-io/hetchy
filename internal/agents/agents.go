@@ -25,8 +25,6 @@ import (
 // Using an interface here allows unit tests to inject a fake without a real
 // Postgres connection.
 type querier interface {
-	CountAgentProfilesByOrg(ctx context.Context, orgID string) (int64, error)
-	SeedDefaultAgentProfilesForOrg(ctx context.Context, orgID string) error
 	ListAgentProfilesByOrg(ctx context.Context, orgID string) ([]sqlc.ListAgentProfilesByOrgRow, error)
 	GetAgentProfileBySlug(ctx context.Context, arg sqlc.GetAgentProfileBySlugParams) (sqlc.GetAgentProfileBySlugRow, error)
 	UpsertAgentProfile(ctx context.Context, arg sqlc.UpsertAgentProfileParams) (sqlc.UpsertAgentProfileRow, error)

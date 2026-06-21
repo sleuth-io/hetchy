@@ -7,6 +7,7 @@ package agents
 const ECCCatalogRepo = "https://github.com/affaan-m/ECC.git"
 const ECCCatalogRef = "71d22d0a77b7e0684f4e51cba03749b788993cdb"
 const ECCCatalogArchiveURL = "https://github.com/affaan-m/ECC/archive/71d22d0a77b7e0684f4e51cba03749b788993cdb.tar.gz"
+const ECCCatalogArchiveSHA256 = "c72facfa3be4c7a47f6489b858207c7372568a8f82b358225af42d67500e6138"
 
 var eccCatalogEntries = []CatalogEntry{
 	{

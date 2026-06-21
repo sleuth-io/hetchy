@@ -10,28 +10,12 @@ import (
 
 // fakeQuerier is a test double for the querier interface.
 type fakeQuerier struct {
-	countFn      func(ctx context.Context, orgID string) (int64, error)
-	seedFn       func(ctx context.Context, orgID string) error
 	listFn       func(ctx context.Context, orgID string) ([]sqlc.ListAgentProfilesByOrgRow, error)
 	getBySlugFn  func(ctx context.Context, arg sqlc.GetAgentProfileBySlugParams) (sqlc.GetAgentProfileBySlugRow, error)
 	upsertFn     func(ctx context.Context, arg sqlc.UpsertAgentProfileParams) (sqlc.UpsertAgentProfileRow, error)
 	updateNameFn func(ctx context.Context, arg sqlc.UpdateAgentProfileNameParams) (sqlc.UpdateAgentProfileNameRow, error)
 	vaultSyncFn  func(ctx context.Context, arg sqlc.UpdateAgentProfileVaultSyncParams) (sqlc.UpdateAgentProfileVaultSyncRow, error)
 	disableFn    func(ctx context.Context, arg sqlc.DisableAgentProfileParams) (int64, error)
-}
-
-func (f *fakeQuerier) CountAgentProfilesByOrg(ctx context.Context, orgID string) (int64, error) {
-	if f.countFn == nil {
-		return 0, nil
-	}
-	return f.countFn(ctx, orgID)
-}
-
-func (f *fakeQuerier) SeedDefaultAgentProfilesForOrg(ctx context.Context, orgID string) error {
-	if f.seedFn == nil {
-		return nil
-	}
-	return f.seedFn(ctx, orgID)
 }
 
 func (f *fakeQuerier) ListAgentProfilesByOrg(ctx context.Context, orgID string) ([]sqlc.ListAgentProfilesByOrgRow, error) {

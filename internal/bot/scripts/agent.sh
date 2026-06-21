@@ -23,6 +23,7 @@
 #   HETCHY_AGENT_PERSONA_ASSET   Claude Code agent asset name to prepend, when installed
 #   HETCHY_AGENT_PROMPT_B64      fallback persona prompt when the sx asset is unavailable
 #   HETCHY_AGENT_SOURCE_ARCHIVE_URL pinned public source archive for built-in agent assets
+#   HETCHY_AGENT_SOURCE_ARCHIVE_SHA256 expected sha256 for the source archive
 #   HETCHY_AGENT_SOURCE_REF      source ref label for the built-in agent archive
 #   HETCHY_AGENT_SOURCE_AGENT_PATH path to the selected agent markdown inside the source archive
 #   HETCHY_AGENT_SOURCE_SKILLS   comma-separated skill directories to install from the source archive
