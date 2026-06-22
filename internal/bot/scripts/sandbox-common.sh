@@ -357,7 +357,7 @@ hetchy_install_agent_source_assets() {
   local source_ref="${HETCHY_AGENT_SOURCE_REF:-unknown}"
   local agent_path="$HETCHY_AGENT_SOURCE_AGENT_PATH"
   local persona_asset="${HETCHY_AGENT_PERSONA_ASSET:-${HETCHY_AGENT_SLUG:-agent}}"
-  local key root archive repo_dir actual_sha256 agent_src skill_list skill skill_src skill_dst
+  local key root archive repo_dir actual_sha256 agent_src skill_list skill skill_src skill_dst _hetchy_agent_skills
 
   case "$agent_path" in
     ""|/*|*..*|*\\*) echo "[hetchy] WARNING: invalid agent source path ${agent_path}; skipping external agent install"; return 0 ;;
@@ -391,11 +391,14 @@ hetchy_install_agent_source_assets() {
         return 0
       fi
     fi
-    if ! tar -tzf "$archive" | while IFS= read -r member; do
-      case "$member" in
-        ""|/*|../*|*/../*|*"/.."|*\\*) exit 1 ;;
-      esac
-    done; then
+    if ! (
+      set -o pipefail
+      tar -tzf "$archive" | while IFS= read -r member; do
+        case "$member" in
+          ""|/*|../*|*/../*|*"/.."|*\\*) exit 1 ;;
+        esac
+      done
+    ); then
       echo "[hetchy] WARNING: built-in agent source archive contains unsafe paths; using embedded prompt fallback"
       rm -rf "$root"
       return 0

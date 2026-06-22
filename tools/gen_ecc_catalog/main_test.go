@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -113,6 +114,45 @@ func TestParseToolsAndInferSkills(t *testing.T) {
 	}
 	if got := inferSkills("skills/missing Skill: golang-patterns.", map[string]struct{}{"golang-patterns": {}}); !slices.Equal(got, []string{"golang-patterns"}) {
 		t.Fatalf("inferSkills = %v", got)
+	}
+}
+
+func TestGeneratedCatalogFilesSplitEntryChunks(t *testing.T) {
+	entries := []agentEntry{
+		{slug: "first", displayName: "First", prompt: "one"},
+		{slug: "second", displayName: "Second", prompt: "two"},
+		{slug: "third", displayName: "Third", prompt: "three"},
+	}
+	files, err := generatedCatalogFiles(entries, "ref", "https://example.test/archive.tar.gz", "abc123", 2)
+	if err != nil {
+		t.Fatalf("generatedCatalogFiles error = %v", err)
+	}
+	gotPaths := make([]string, 0, len(files))
+	sources := map[string]string{}
+	for _, file := range files {
+		gotPaths = append(gotPaths, file.path)
+		sources[file.path] = string(file.source)
+	}
+	wantPaths := []string{
+		filepath.Join(generatedAgentsDir, "ecc_catalog_generated.go"),
+		filepath.Join(generatedAgentsDir, "ecc_catalog_entries_generated.go"),
+		filepath.Join(generatedAgentsDir, "ecc_catalog_entries_part1_generated.go"),
+		filepath.Join(generatedAgentsDir, "ecc_catalog_entries_part2_generated.go"),
+	}
+	if !slices.Equal(gotPaths, wantPaths) {
+		t.Fatalf("generated paths = %v, want %v", gotPaths, wantPaths)
+	}
+	index := sources[filepath.Join(generatedAgentsDir, "ecc_catalog_entries_generated.go")]
+	if !strings.Contains(index, "eccCatalogEntriesPart1") || !strings.Contains(index, "eccCatalogEntriesPart2") {
+		t.Fatalf("index file missing generated chunks:\n%s", index)
+	}
+	part1 := sources[filepath.Join(generatedAgentsDir, "ecc_catalog_entries_part1_generated.go")]
+	part2 := sources[filepath.Join(generatedAgentsDir, "ecc_catalog_entries_part2_generated.go")]
+	if !strings.Contains(part1, `"agents/first.md"`) || !strings.Contains(part1, `"agents/second.md"`) || strings.Contains(part1, `"agents/third.md"`) {
+		t.Fatalf("part1 source split is wrong:\n%s", part1)
+	}
+	if !strings.Contains(part2, `"agents/third.md"`) || strings.Contains(part2, `"agents/first.md"`) {
+		t.Fatalf("part2 source split is wrong:\n%s", part2)
 	}
 }
 
