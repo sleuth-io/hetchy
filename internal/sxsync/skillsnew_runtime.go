@@ -33,7 +33,8 @@ func (m *Manager) RuntimeSkillsNewEnv(ctx context.Context, orgID string, agent a
 	if botName == "" {
 		return nil, errors.New("sxsync: agent sx bot is required")
 	}
-	token, err := createSkillsNewBotRuntimeToken(ctx, sxlib.DefaultSkillsNewURL, authToken, botName, runtimeTokenLabel(agent), skillsNewBotRuntimeTokenTTLSeconds)
+	serverURL, _ := m.skillsNewHTTPConfig()
+	token, err := createSkillsNewBotRuntimeToken(ctx, serverURL, authToken, botName, runtimeTokenLabel(agent), skillsNewBotRuntimeTokenTTLSeconds)
 	if err != nil {
 		return nil, err
 	}
