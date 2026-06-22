@@ -32,9 +32,17 @@ type Actor struct {
 	Email string
 }
 
+// orgConfigStore is the subset of orgcfg.Store used by Manager. Using an
+// interface here lets unit tests inject a fake without a real Postgres
+// connection.
+type orgConfigStore interface {
+	Get(ctx context.Context, orgID string) (orgcfg.Config, error)
+	Upsert(ctx context.Context, cfg orgcfg.Config) (orgcfg.Config, error)
+}
+
 type Manager struct {
 	db     *db.Store
-	orgs   *orgcfg.Store
+	orgs   orgConfigStore
 	agents *agents.Store
 	app    githubapp.TokenSource
 
@@ -53,6 +61,12 @@ type Manager struct {
 	// tests override these to point at an httptest server.
 	skillsNewServerURL  string
 	skillsNewHTTPClient *http.Client
+
+	// openVaultFn, when non-nil, is called by openOrgVault instead of the
+	// normal vault-discovery logic. Tests set this to inject a pre-opened
+	// sxlib.Client (e.g. a file-based path vault) without needing a real
+	// database or network connection.
+	openVaultFn func(ctx context.Context, orgID string, actor Actor) (VaultHandle, error)
 }
 
 func NewManager(d *db.Store, orgs *orgcfg.Store, agents *agents.Store, app githubapp.TokenSource) *Manager {
@@ -261,12 +275,19 @@ func (m *Manager) openOrgVault(ctx context.Context, orgID string, actor Actor, k
 	if m == nil {
 		return VaultHandle{}, ErrNotConfigured
 	}
+	if m.openVaultFn != nil {
+		return m.openVaultFn(ctx, orgID, actor)
+	}
 	sxKey, err := m.skillsNewKey(ctx, orgID)
 	if err != nil {
 		return VaultHandle{}, err
 	}
 	if sxKey != "" {
-		client, err := sxlib.OpenSkillsNewWithOptions(sxlib.DefaultSkillsNewURL, sxlib.SkillsNewOptions{
+		serverURL := strings.TrimSpace(m.skillsNewServerURL)
+		if serverURL == "" {
+			serverURL = sxlib.DefaultSkillsNewURL
+		}
+		client, err := sxlib.OpenSkillsNewWithOptions(serverURL, sxlib.SkillsNewOptions{
 			AuthToken: sxKey,
 			Actor:     sxlib.Actor{Name: actor.Name, Email: actor.Email},
 		})
