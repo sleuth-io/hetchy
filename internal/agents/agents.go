@@ -1,8 +1,8 @@
 // Package agents defines Hetchy persona profile resolution rules.
 //
-// In normal operation profiles are org-scoped database records. Hetchy's
-// starter agents are seeded from database templates, then users can rename or
-// disable their org's copy without changing global defaults.
+// In normal operation visible profiles are org-scoped database records.
+// Hetchy's built-in agent catalog is global and profiles are materialized into
+// an org only after use.
 package agents
 
 import (
@@ -25,14 +25,10 @@ import (
 // Using an interface here allows unit tests to inject a fake without a real
 // Postgres connection.
 type querier interface {
-	CountAgentProfilesByOrg(ctx context.Context, orgID string) (int64, error)
-	SeedDefaultAgentProfilesForOrg(ctx context.Context, orgID string) error
 	ListAgentProfilesByOrg(ctx context.Context, orgID string) ([]sqlc.ListAgentProfilesByOrgRow, error)
 	GetAgentProfileBySlug(ctx context.Context, arg sqlc.GetAgentProfileBySlugParams) (sqlc.GetAgentProfileBySlugRow, error)
 	UpsertAgentProfile(ctx context.Context, arg sqlc.UpsertAgentProfileParams) (sqlc.UpsertAgentProfileRow, error)
 	UpdateAgentProfileName(ctx context.Context, arg sqlc.UpdateAgentProfileNameParams) (sqlc.UpdateAgentProfileNameRow, error)
-	ListAgentProfileTemplates(ctx context.Context) ([]sqlc.AgentProfileTemplate, error)
-	GetAgentProfileTemplate(ctx context.Context, slug string) (sqlc.AgentProfileTemplate, error)
 	UpdateAgentProfileVaultSync(ctx context.Context, arg sqlc.UpdateAgentProfileVaultSyncParams) (sqlc.UpdateAgentProfileVaultSyncRow, error)
 	DisableAgentProfile(ctx context.Context, arg sqlc.DisableAgentProfileParams) (int64, error)
 }
@@ -82,56 +78,10 @@ func NewStoreWithCipher(d *db.Store, cipher *secrets.Cipher) *Store {
 	return &Store{q: d.Queries, cipher: cipher}
 }
 
-// FallbackProfiles mirrors the database seed templates for DB-less unit tests
-// and degraded local wiring. Real org traffic goes through agent_profiles.
+// FallbackProfiles is intentionally empty: Hetchy's built-ins now live in the
+// catalog and are materialized on use instead of seeded into every org.
 func FallbackProfiles() []Profile {
-	return []Profile{
-		{
-			Slug:         "bob",
-			DisplayName:  "Bob",
-			Description:  "Backend developer for APIs, data models, services, auth, infra, migrations, and tests.",
-			SXBot:        "bob",
-			PersonaAsset: "bob",
-			SlackAliases: []string{"backend", "api", "server"},
-			Skills:       []string{"golang-pro", "golang-testing", "neon-postgres", "database-migrations"},
-			Enabled:      true,
-			BuiltIn:      true,
-			PersonaPrompt: strings.TrimSpace(`
-You are Bob, Hetchy's backend developer agent.
-
-Bias toward boring, durable backend changes: clear APIs, explicit data contracts, safe migrations, strong tests, and observable failure modes. Before changing code, identify existing service boundaries and reuse local patterns. Prefer small, reviewable patches over speculative rewrites. When the request touches persistence, auth, queues, integrations, or deployment behavior, call out compatibility risks in the PR body and validate the affected server-side path.`),
-		},
-		{
-			Slug:         "alice",
-			DisplayName:  "Alice",
-			Description:  "Frontend developer for UI implementation, client behavior, accessibility, and browser validation.",
-			SXBot:        "alice",
-			PersonaAsset: "alice",
-			SlackAliases: []string{"frontend", "front-end", "ui", "ux", "web"},
-			Skills:       []string{"frontend-design", "react-best-practices", "webapp-testing", "extract-design-system"},
-			Enabled:      true,
-			BuiltIn:      true,
-			PersonaPrompt: strings.TrimSpace(`
-You are Alice, Hetchy's frontend developer agent.
-
-Build the actual user-facing experience, not scaffolding. Follow the existing design system and interaction patterns before inventing new UI. Prioritize responsive layout, readable states, accessibility, and browser-tested behavior. When the task changes visible UI, inspect it in a real browser where possible and include validation evidence in the PR body. Keep markup, styling, and client logic cohesive and avoid decorative complexity that does not serve the workflow.`),
-		},
-		{
-			Slug:         "archy",
-			DisplayName:  "Archy",
-			Description:  "Software architect for system design, decomposition, migrations, and cross-cutting changes.",
-			SXBot:        "archy",
-			PersonaAsset: "archy",
-			SlackAliases: []string{"architect", "architecture", "design"},
-			Skills:       []string{"improve-codebase-architecture", "architecture-blueprint-generator", "documentation-and-adrs", "software-architecture"},
-			Enabled:      true,
-			BuiltIn:      true,
-			PersonaPrompt: strings.TrimSpace(`
-You are Archy, Hetchy's software architect agent.
-
-Take a systems view first: clarify boundaries, data flow, migration paths, operational risks, and how the change will age. Prefer incremental designs that fit the repository's current shape. For large or ambiguous work, create a small foundation that can be extended safely instead of a broad rewrite. Make tradeoffs explicit in the PR body, especially where the implementation chooses compatibility, sequencing, or reduced scope.`),
-		},
-	}
+	return []Profile{}
 }
 
 func (s *Store) List(ctx context.Context, orgID string) ([]Profile, error) {
@@ -155,23 +105,7 @@ func (s *Store) List(ctx context.Context, orgID string) ([]Profile, error) {
 	return out, nil
 }
 
-// EnsureSeeded copies default agent templates into an org the first time agent
-// data is requested. It intentionally counts disabled rows too: when an admin
-// deletes every starter agent we must not resurrect them on the next page load.
 func (s *Store) EnsureSeeded(ctx context.Context, orgID string) error {
-	if s == nil || s.q == nil || orgID == "" {
-		return nil
-	}
-	n, err := s.q.CountAgentProfilesByOrg(ctx, orgID)
-	if err != nil {
-		return fmt.Errorf("count agent profiles: %w", err)
-	}
-	if n > 0 {
-		return nil
-	}
-	if err := s.q.SeedDefaultAgentProfilesForOrg(ctx, orgID); err != nil {
-		return fmt.Errorf("seed default agent profiles: %w", err)
-	}
 	return nil
 }
 
@@ -190,6 +124,12 @@ func (s *Store) Resolve(ctx context.Context, orgID, requested string) (Profile, 
 			return p, nil
 		}
 	}
+	if profile, ok := FindCatalogProfile(requested); ok {
+		if s != nil && s.q != nil && orgID != "" {
+			return s.MaterializeCatalogProfile(ctx, orgID, profile.Slug)
+		}
+		return profile, nil
+	}
 	return Profile{}, fmt.Errorf("%w: %s", ErrNotFound, requested)
 }
 
@@ -199,10 +139,8 @@ func (s *Store) GetBySlug(ctx context.Context, orgID, slug string) (Profile, err
 		return Profile{}, fmt.Errorf("%w: empty agent", ErrNotFound)
 	}
 	if s == nil || s.q == nil || orgID == "" {
-		for _, p := range FallbackProfiles() {
-			if p.Enabled && p.Slug == slug {
-				return p, nil
-			}
+		if profile, ok := GetCatalogProfile(slug); ok {
+			return profile, nil
 		}
 		return Profile{}, fmt.Errorf("%w: %s", ErrNotFound, slug)
 	}
@@ -215,6 +153,9 @@ func (s *Store) GetBySlug(ctx context.Context, orgID, slug string) (Profile, err
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
+			if profile, ok := GetCatalogProfile(slug); ok {
+				return profile, nil
+			}
 			return Profile{}, fmt.Errorf("%w: %s", ErrNotFound, slug)
 		}
 		return Profile{}, fmt.Errorf("get agent profile: %w", err)
@@ -318,18 +259,7 @@ func (s *Store) UpdateName(ctx context.Context, orgID, slug, displayName string)
 }
 
 func (s *Store) ListTemplates(ctx context.Context) ([]Profile, error) {
-	if s == nil || s.q == nil {
-		return FallbackProfiles(), nil
-	}
-	rows, err := s.q.ListAgentProfileTemplates(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("list agent templates: %w", err)
-	}
-	out := make([]Profile, 0, len(rows))
-	for _, row := range rows {
-		out = append(out, profileFromTemplateRow(row))
-	}
-	return out, nil
+	return CatalogProfiles(), nil
 }
 
 func (s *Store) GetTemplate(ctx context.Context, slug string) (Profile, error) {
@@ -337,22 +267,10 @@ func (s *Store) GetTemplate(ctx context.Context, slug string) (Profile, error) {
 	if slug == "" {
 		return Profile{}, ErrNotFound
 	}
-	if s == nil || s.q == nil {
-		for _, p := range FallbackProfiles() {
-			if p.Slug == slug {
-				return p, nil
-			}
-		}
-		return Profile{}, ErrNotFound
+	if profile, ok := GetCatalogProfile(slug); ok {
+		return profile, nil
 	}
-	row, err := s.q.GetAgentProfileTemplate(ctx, slug)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return Profile{}, ErrNotFound
-		}
-		return Profile{}, fmt.Errorf("get agent template: %w", err)
-	}
-	return profileFromTemplateRow(row), nil
+	return Profile{}, ErrNotFound
 }
 
 func (s *Store) UpdateVaultSync(ctx context.Context, orgID, slug, backend, botKey, templateSlug, status, syncErr string) (Profile, error) {
@@ -533,22 +451,6 @@ func profileFromUpdateNameRow(row sqlc.UpdateAgentProfileNameRow) Profile {
 		SyncError:     row.SyncError,
 		Enabled:       row.Enabled,
 		BuiltIn:       row.BuiltIn,
-	}
-}
-
-func profileFromTemplateRow(row sqlc.AgentProfileTemplate) Profile {
-	return Profile{
-		Slug:          row.Slug,
-		DisplayName:   row.DisplayName,
-		Description:   row.Description,
-		SXBot:         row.SxBot,
-		PersonaAsset:  row.PersonaAsset,
-		PersonaPrompt: row.PersonaPrompt,
-		SlackAliases:  cleanAliases(row.SlackAliases),
-		Skills:        cleanSkills(row.Skills),
-		Enabled:       row.Enabled,
-		BuiltIn:       true,
-		TemplateSlug:  row.Slug,
 	}
 }
 

@@ -991,6 +991,36 @@
 </article>
 {{end}}
 
+{{define "agent_catalog_browser"}}
+{{if .CatalogAgents}}
+<section class="agent-section">
+  <details class="agent-catalog-browser">
+    <summary class="agent-section-title">Browse built-in agents ({{.CatalogAgentCount}})</summary>
+    <div class="agent-catalog-tools">
+      <input type="search" data-agent-catalog-search placeholder="Search built-in agents" aria-label="Search built-in agents">
+    </div>
+    <div class="agent-catalog-list">
+      {{range .CatalogAgents}}
+      <article class="agent-catalog-item" data-agent-catalog-item data-agent-catalog-text="{{.DisplayName}} {{.Slug}} {{.Description}}">
+        <div>
+          <h3>{{.DisplayName}}</h3>
+          <code>{{.Slug}}</code>
+          <p>{{.Description}}</p>
+          {{if .Skills}}
+          <div class="skill-chip-list">
+            {{range .Skills}}<span class="skill-chip">{{.}}</span>{{end}}
+          </div>
+          {{end}}
+        </div>
+        <button type="button" class="secondary" data-open-agent-doc="{{.Slug}}" data-agent-display-name="{{.DisplayName}}">Details</button>
+      </article>
+      {{end}}
+    </div>
+  </details>
+</section>
+{{end}}
+{{end}}
+
 {{define "agents"}}
   <h1>Agents</h1>
   <p/>
@@ -1031,7 +1061,7 @@
       {{end}}
       {{if .BuiltInAgents}}
       <section class="agent-section">
-        <h2 class="agent-section-title">Built-in agents</h2>
+        <h2 class="agent-section-title">Used built-in agents</h2>
         <div class="agent-list">
           {{range .BuiltInAgents}}
             {{template "agent_card" dict "Root" $ "Agent" .}}
@@ -1039,9 +1069,11 @@
         </div>
       </section>
       {{end}}
+      {{template "agent_catalog_browser" .}}
     </div>
   {{else}}
     <p class="empty">No enabled agents.</p>
+    {{template "agent_catalog_browser" .}}
   {{end}}
   {{template "settings_confirm_dialog" .}}
   {{template "modal_agent_create" .}}
@@ -1082,7 +1114,7 @@
       <select id="agent-template" name="template_slug">
         <option value="">Blank agent</option>
         {{range .AgentTemplates}}
-          <option value="{{.Slug}}" data-skills="{{range $i, $s := .Skills}}{{if gt $i 0}},{{end}}{{$s}}{{end}}" data-prompt="{{.PersonaPrompt}}">{{.DisplayName}}</option>
+          <option value="{{.Slug}}" data-template-slug="{{.Slug}}" data-skills="{{range $i, $s := .Skills}}{{if gt $i 0}},{{end}}{{$s}}{{end}}">{{.DisplayName}}</option>
         {{end}}
       </select>
       <label for="agent-create-name">Name</label>

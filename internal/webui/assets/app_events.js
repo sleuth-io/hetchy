@@ -145,6 +145,11 @@
     byID('nav-search').addEventListener('input', e => {
       state.navQuery = e.target.value.trim();
       renderGroups();
+      if (state.mode === 'agent' && state.navQuery && !state.agentCatalogLoaded) {
+        loadAgentCatalog().then(() => {
+          if (state.mode === 'agent' && state.navQuery) renderGroups();
+        });
+      }
       syncRouteURL({ replace: true });
     });
     byID('work-search').addEventListener('input', e => {
@@ -250,6 +255,15 @@
     byID('task-agent-btn').addEventListener('click', e => {
       e.stopPropagation();
       togglePopover('task-agent-popover', 'task-agent-btn');
+      if (!byID('task-agent-popover').hidden) {
+        requestAnimationFrame(() => {
+          byID('task-agent-search').focus();
+          byID('task-agent-search').select();
+        });
+      }
+      if (!byID('task-agent-popover').hidden && !state.agentCatalogLoaded) {
+        loadAgentCatalog().then(renderAgentPicker);
+      }
     });
     byID('task-model-btn').addEventListener('click', e => {
       e.stopPropagation();
@@ -270,6 +284,13 @@
       renderRepoPicker();
       clearTimeout(byID('task-repo-search')._debounce);
       byID('task-repo-search')._debounce = setTimeout(() => loadRepos(state.repoSearch.trim()), 180);
+    });
+    byID('task-agent-search').addEventListener('input', e => {
+      state.agentSearch = e.target.value;
+      renderAgentPicker();
+      if (state.agentSearch.trim() && !state.agentCatalogLoaded) {
+        loadAgentCatalog().then(renderAgentPicker);
+      }
     });
     byID('task-repo-search').addEventListener('keydown', e => {
       if (e.key === 'Enter') {
@@ -308,6 +329,16 @@
         return;
       }
       if (!e.target.closest('#run-action-menu')) closeRunActionMenu();
+      const catalogToggle = e.target.closest('[data-agent-catalog-toggle]');
+      if (catalogToggle) {
+        e.preventDefault();
+        state.agentCatalogExpanded = !state.agentCatalogExpanded;
+        renderGroups();
+        if (state.agentCatalogExpanded && !state.agentCatalogLoaded) {
+          loadAgentCatalog().then(renderAll);
+        }
+        return;
+      }
       const repoChoice = e.target.closest('[data-repo-slug]');
       if (repoChoice && repoChoice.closest('#task-repo-options')) {
         chooseTaskRepo(repoChoice.dataset.repoSlug);

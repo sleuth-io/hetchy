@@ -22,6 +22,11 @@
 #   HETCHY_AGENT_SX_BOT_KEY      short-lived bot runtime token for Skills.new
 #   HETCHY_AGENT_PERSONA_ASSET   Claude Code agent asset name to prepend, when installed
 #   HETCHY_AGENT_PROMPT_B64      fallback persona prompt when the sx asset is unavailable
+#   HETCHY_AGENT_SOURCE_ARCHIVE_URL pinned public source archive for built-in agent assets
+#   HETCHY_AGENT_SOURCE_ARCHIVE_SHA256 expected sha256 for the source archive
+#   HETCHY_AGENT_SOURCE_REF      source ref label for the built-in agent archive
+#   HETCHY_AGENT_SOURCE_AGENT_PATH path to the selected agent markdown inside the source archive
+#   HETCHY_AGENT_SOURCE_SKILLS   comma-separated skill directories to install from the source archive
 #   HETCHY_SX_PUBLIC_VAULT_URL   git sx vault for Hetchy-managed agent assets
 #   HETCHY_SX_GIT_VAULT_URL      org Git Vault containing custom agents/skills
 #   HETCHY_SX_GIT_VAULT_TOKEN    short-lived GitHub App token for the org Git Vault
@@ -352,6 +357,8 @@ if [[ -n "${HETCHY_AGENT_SX_BOT_KEY:-}" ]]; then
   write_sx_config "$org_config" "$org_profile" "sleuth" "https://app.skills.new" "$HETCHY_AGENT_SX_BOT_KEY"
   run_sx_install "org-skills" "$org_config" "$org_cache" "$org_profile" "${HETCHY_AGENT_SX_BOT:-}" "$HETCHY_AGENT_SX_BOT_KEY"
 fi
+
+hetchy_install_agent_source_assets
 
 # Emit the marker unconditionally — even when neither sx vault was
 # configured this turn — so the chat metadata reflects the live state

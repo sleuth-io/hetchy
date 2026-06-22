@@ -450,6 +450,30 @@ fi
 mkdir -p "$HOME/.claude"
 printf '{"hasCompletedOnboarding":true}\n' > "$HOME/.claude.json"
 
+hetchy_install_agent_source_assets
+
+bootstrap_prompt_file="${HETCHY_BOOTSTRAP_PROMPT_FILE}"
+agent_persona_file=""
+if [[ -n "${HETCHY_AGENT_PERSONA_ASSET:-}" && -f "$HOME/.claude/agents/${HETCHY_AGENT_PERSONA_ASSET}.md" ]]; then
+  agent_persona_file="$HOME/.claude/agents/${HETCHY_AGENT_PERSONA_ASSET}.md"
+elif [[ -n "${HETCHY_AGENT_PROMPT_B64:-}" ]]; then
+  if printf '%s' "$HETCHY_AGENT_PROMPT_B64" | base64 -d > /tmp/hetchy-bootstrap-agent-persona.md 2>/dev/null && [[ -s /tmp/hetchy-bootstrap-agent-persona.md ]]; then
+    agent_persona_file="/tmp/hetchy-bootstrap-agent-persona.md"
+  fi
+fi
+if [[ -n "$agent_persona_file" ]]; then
+  {
+    echo "You are ${HETCHY_AGENT_NAME:-Hetchy}, a specialized Hetchy agent."
+    echo
+    echo "AGENT PERSONA:"
+    cat "$agent_persona_file"
+    echo
+    echo "HETCHY BOOTSTRAP TASK:"
+    cat "$HETCHY_BOOTSTRAP_PROMPT_FILE"
+  } > /tmp/hetchy-bootstrap-prompt-with-agent.txt
+  bootstrap_prompt_file="/tmp/hetchy-bootstrap-prompt-with-agent.txt"
+fi
+
 echo "[hetchy-bootstrap] invoking claude" >&2
 # stream-json + verbose mirrors agent.sh — gives the bot typed Block
 # updates in real time. The agent is told (in the prompt) to write
@@ -459,7 +483,7 @@ echo "[hetchy-bootstrap] invoking claude" >&2
 # the sandbox; see internal/bot/scripts/claude-watchdog.sh. The bot
 # forces bootstrap to opus/high effort through HETCHY_CLAUDE_MODEL and
 # HETCHY_CLAUDE_EFFORT because this step determines future repo runs.
-run_claude_with_watchdog "${HETCHY_BOOTSTRAP_PROMPT_FILE}"
+run_claude_with_watchdog "${bootstrap_prompt_file}"
 
 echo "[hetchy-bootstrap] verifying artifacts" >&2
 for f in setup.sh start.sh stop.sh health.sh lessons.md manifest.json; do

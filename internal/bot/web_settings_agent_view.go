@@ -85,97 +85,26 @@ func (b *Bot) populateAgentSettingsTabData(ctx context.Context, orgID string, da
 	if err != nil {
 		return fmt.Errorf("load agents: %w", err)
 	}
+	profiles = mergeRemoteAgentProfiles(profiles, remoteProfiles)
 	jobsByAgent, err := b.settingsJobsByAgent(ctx, orgID)
 	if err != nil {
 		return err
 	}
 	skillOptions, _ := data["AgentSkillOptions"].([]agentSkillOptionView)
 	teamOptions, _ := data["AgentTeamOptions"].([]agentTeamOptionView)
-	remoteBySlug := make(map[string]agents.Profile, len(remoteProfiles))
-	for _, remote := range remoteProfiles {
-		slug := agents.NormalizeSlug(remote.Slug)
-		if slug != "" {
-			remoteBySlug[slug] = remote
-		}
-	}
+	remoteBySlug := agentProfilesBySlug(remoteProfiles)
 	out := make([]agentSettingsView, 0, len(profiles))
 	custom := make([]agentSettingsView, 0, len(profiles))
 	builtIns := make([]agentSettingsView, 0, len(profiles))
+	visibleSlugs := make(map[string]struct{}, len(profiles))
 	for _, a := range profiles {
-		if !a.Enabled {
-			continue
-		}
-		if !agentAvailableForActiveSXBackend(a, activeBackend) {
-			continue
-		}
 		remote, hasRemote := remoteBySlug[a.Slug]
-		displayName := a.DisplayName
-		description := a.Description
-		sxBot := a.SXBot
-		personaAsset := a.PersonaAsset
-		vaultBackend := a.VaultBackend
-		if hasRemote && !a.BuiltIn {
-			if strings.TrimSpace(remote.DisplayName) != "" {
-				displayName = remote.DisplayName
-			}
-			description = remote.Description
-			if strings.TrimSpace(remote.SXBot) != "" {
-				sxBot = remote.SXBot
-			}
-			if strings.TrimSpace(remote.PersonaAsset) != "" {
-				personaAsset = remote.PersonaAsset
-			}
-			if strings.TrimSpace(remote.VaultBackend) != "" {
-				vaultBackend = remote.VaultBackend
-			}
-		}
-		sxTeams := a.SXTeams
-		if hasRemote {
-			sxTeams = remote.SXTeams
-		}
-		directSkillNames := a.Skills
-		if hasRemote {
-			directSkillNames = remote.Skills
-		}
-		sxSkills := a.SXSkills
-		if hasRemote {
-			sxSkills = remote.SXSkills
-		}
-		directSkills := displaySkillNames(directSkillNames)
-		agentSkillOptions, canAddSkill := agentSkillOptionsForAgent(skillOptions, directSkillNames, sxSkills)
-		agentTeamOptions, canAddTeam := agentTeamOptionsForAgent(teamOptions, sxTeams)
-		remoteBacked := strings.TrimSpace(vaultBackend) != "" || hasRemote
-		imported := a.SyncStatus == "imported"
-		if !imported && remote.Slug != "" && remoteBacked && strings.TrimSpace(a.PersonaPrompt) == strings.TrimSpace(remote.PersonaPrompt) {
-			imported = true
-		}
-		view := agentSettingsView{
-			Slug:          a.Slug,
-			DisplayName:   displayName,
-			Description:   description,
-			PersonaPrompt: a.PersonaPrompt,
-			SXBot:         sxBot,
-			PersonaAsset:  personaAsset,
-			SlackAliases:  a.SlackAliases,
-			Skills:        directSkills,
-			SkillChips:    agentSkillChips(directSkillNames),
-			SkillOptions:  agentSkillOptions,
-			CanAddSkill:   canAddSkill,
-			SXTeams:       sxTeams,
-			TeamOptions:   agentTeamOptions,
-			CanAddTeam:    canAddTeam,
-			SXSkills:      displaySkillNames(inheritedSkillNames(sxSkills, directSkillNames)),
-			SXSkillChips:  agentSkillChips(inheritedSkillNames(sxSkills, directSkillNames)),
-			VaultBackend:  vaultBackend,
-			SyncStatus:    a.SyncStatus,
-			SyncError:     a.SyncError,
-			BuiltIn:       a.BuiltIn,
-			Default:       a.Slug == agents.DefaultSlug,
-			Imported:      imported,
-			RemoteBacked:  remoteBacked,
-			Jobs:          jobsByAgent[a.Slug],
+		view, ok := agentSettingsViewForProfile(a, remote, hasRemote, activeBackend, skillOptions, teamOptions, jobsByAgent)
+		if !ok {
+			continue
 		}
 		out = append(out, view)
+		visibleSlugs[view.Slug] = struct{}{}
 		if view.BuiltIn {
 			builtIns = append(builtIns, view)
 		} else {
@@ -189,18 +118,131 @@ func (b *Bot) populateAgentSettingsTabData(ctx context.Context, orgID string, da
 	if err != nil {
 		return fmt.Errorf("load agent templates: %w", err)
 	}
-	templateViews := make([]agentTemplateView, 0, len(templates))
-	for _, t := range templates {
-		templateViews = append(templateViews, agentTemplateView{
-			Slug:          t.Slug,
-			DisplayName:   t.DisplayName,
-			Description:   t.Description,
-			Skills:        t.Skills,
-			PersonaPrompt: t.PersonaPrompt,
-		})
-	}
-	data["AgentTemplates"] = templateViews
+	data["AgentTemplates"] = agentTemplateViews(templates)
+	catalogViews := catalogTemplateViews(templates, visibleSlugs)
+	data["CatalogAgents"] = catalogViews
+	data["CatalogAgentCount"] = len(catalogViews)
 	return nil
+}
+
+func agentProfilesBySlug(profiles []agents.Profile) map[string]agents.Profile {
+	out := make(map[string]agents.Profile, len(profiles))
+	for _, profile := range profiles {
+		slug := agents.NormalizeSlug(profile.Slug)
+		if slug != "" {
+			out[slug] = profile
+		}
+	}
+	return out
+}
+
+func agentSettingsViewForProfile(a, remote agents.Profile, hasRemote bool, activeBackend string, skillOptions []agentSkillOptionView, teamOptions []agentTeamOptionView, jobsByAgent map[string][]settingsJobView) (agentSettingsView, bool) {
+	if !a.Enabled || !agentAvailableForActiveSXBackend(a, activeBackend) {
+		return agentSettingsView{}, false
+	}
+	displayName, description, sxBot, personaAsset, vaultBackend := agentDisplayFields(a, remote, hasRemote)
+	sxTeams := a.SXTeams
+	if hasRemote {
+		sxTeams = remote.SXTeams
+	}
+	directSkillNames := a.Skills
+	if hasRemote {
+		directSkillNames = remote.Skills
+	}
+	sxSkills := a.SXSkills
+	if hasRemote {
+		sxSkills = remote.SXSkills
+	}
+	agentSkillOptions, canAddSkill := agentSkillOptionsForAgent(skillOptions, directSkillNames, sxSkills)
+	agentTeamOptions, canAddTeam := agentTeamOptionsForAgent(teamOptions, sxTeams)
+	inheritedSkills := inheritedSkillNames(sxSkills, directSkillNames)
+	remoteBacked := strings.TrimSpace(vaultBackend) != "" || hasRemote
+	return agentSettingsView{
+		Slug:          a.Slug,
+		DisplayName:   displayName,
+		Description:   description,
+		PersonaPrompt: a.PersonaPrompt,
+		SXBot:         sxBot,
+		PersonaAsset:  personaAsset,
+		SlackAliases:  a.SlackAliases,
+		Skills:        displaySkillNames(directSkillNames),
+		SkillChips:    agentSkillChips(directSkillNames),
+		SkillOptions:  agentSkillOptions,
+		CanAddSkill:   canAddSkill,
+		SXTeams:       sxTeams,
+		TeamOptions:   agentTeamOptions,
+		CanAddTeam:    canAddTeam,
+		SXSkills:      displaySkillNames(inheritedSkills),
+		SXSkillChips:  agentSkillChips(inheritedSkills),
+		VaultBackend:  vaultBackend,
+		SyncStatus:    a.SyncStatus,
+		SyncError:     a.SyncError,
+		BuiltIn:       a.BuiltIn,
+		Default:       a.Slug == agents.DefaultSlug,
+		Imported:      agentImportedFromRemote(a, remote, remoteBacked),
+		RemoteBacked:  remoteBacked,
+		Jobs:          jobsByAgent[a.Slug],
+	}, true
+}
+
+func agentDisplayFields(a, remote agents.Profile, hasRemote bool) (displayName, description, sxBot, personaAsset, vaultBackend string) {
+	displayName = a.DisplayName
+	description = a.Description
+	sxBot = a.SXBot
+	personaAsset = a.PersonaAsset
+	vaultBackend = a.VaultBackend
+	if hasRemote && !a.BuiltIn {
+		if strings.TrimSpace(remote.DisplayName) != "" {
+			displayName = remote.DisplayName
+		}
+		description = remote.Description
+		if strings.TrimSpace(remote.SXBot) != "" {
+			sxBot = remote.SXBot
+		}
+		if strings.TrimSpace(remote.PersonaAsset) != "" {
+			personaAsset = remote.PersonaAsset
+		}
+		if strings.TrimSpace(remote.VaultBackend) != "" {
+			vaultBackend = remote.VaultBackend
+		}
+	}
+	return displayName, description, sxBot, personaAsset, vaultBackend
+}
+
+func agentImportedFromRemote(a, remote agents.Profile, remoteBacked bool) bool {
+	if a.SyncStatus == "imported" {
+		return true
+	}
+	return remote.Slug != "" && remoteBacked && strings.TrimSpace(a.PersonaPrompt) == strings.TrimSpace(remote.PersonaPrompt)
+}
+
+func agentTemplateViews(profiles []agents.Profile) []agentTemplateView {
+	out := make([]agentTemplateView, 0, len(profiles))
+	for _, profile := range profiles {
+		out = append(out, agentTemplateViewForProfile(profile))
+	}
+	return out
+}
+
+func catalogTemplateViews(profiles []agents.Profile, visibleSlugs map[string]struct{}) []agentTemplateView {
+	out := make([]agentTemplateView, 0, len(profiles))
+	for _, profile := range profiles {
+		if _, ok := visibleSlugs[profile.Slug]; ok {
+			continue
+		}
+		out = append(out, agentTemplateViewForProfile(profile))
+	}
+	return out
+}
+
+func agentTemplateViewForProfile(profile agents.Profile) agentTemplateView {
+	return agentTemplateView{
+		Slug:          profile.Slug,
+		DisplayName:   profile.DisplayName,
+		Description:   profile.Description,
+		Skills:        profile.Skills,
+		PersonaPrompt: profile.PersonaPrompt,
+	}
 }
 
 // remoteAgentDisplayNames returns vault display names keyed by slug; empty map when SX is disabled or the sync fails.

@@ -10,9 +10,28 @@
       fetchJSON('/api/v1/members').catch(() => []),
     ]);
     state.agents = Array.isArray(agents) ? agents : [];
+    state.agentCatalog = state.agents.slice();
+    state.agentCatalogLoaded = false;
+    state.agentCatalogLoading = null;
     state.members = Array.isArray(members) ? members : [];
     renderAgentSelects();
     loadRepos('');
+  }
+
+  async function loadAgentCatalog() {
+    if (state.agentCatalogLoaded) return state.agentCatalog;
+    if (state.agentCatalogLoading) return state.agentCatalogLoading;
+    state.agentCatalogLoading = fetchJSON('/api/v1/agents?scope=all')
+      .then(agents => {
+        state.agentCatalog = Array.isArray(agents) ? agents : state.agents.slice();
+        state.agentCatalogLoaded = true;
+        return state.agentCatalog;
+      })
+      .catch(() => state.agentCatalog)
+      .finally(() => {
+        state.agentCatalogLoading = null;
+      });
+    return state.agentCatalogLoading;
   }
 
   async function loadRepos(query) {
@@ -253,10 +272,24 @@
       if (!id) continue;
       if (!groups.has(id)) groups.set(id, makeEmptyGroup(id));
     }
+    const visible = new Set(Array.from(groups.keys()));
+    const query = state.navQuery.trim().toLowerCase();
+    if (state.agentCatalogLoaded || query) {
+      for (const agent of state.agentCatalog || []) {
+        const id = compact(agent.slug, '');
+        if (!id || visible.has(id)) continue;
+        const name = compact(agent.display_name, id);
+        const selected = state.mode === 'agent' && state.selectedID === id;
+        const matches = query && (name.toLowerCase().includes(query) || id.toLowerCase().includes(query));
+        if (!selected && !matches && !state.agentCatalogExpanded) continue;
+        groups.set(id, makeEmptyGroup(id));
+      }
+    }
     if (!groups.has(noAgentID)) groups.set(noAgentID, makeEmptyGroup(noAgentID));
 
     const custom = [];
     const builtIn = [];
+    const catalog = [];
     let noAgent = null;
     for (const group of groups.values()) {
       if (group.id === noAgentID) {
@@ -265,7 +298,10 @@
         continue;
       }
       const agent = agentForSlug(group.id);
-      if (agent && agent.built_in) {
+      if (agent && agent.catalog_only) {
+        group.section = 'catalog';
+        catalog.push(group);
+      } else if (agent && agent.built_in) {
         group.section = 'builtin';
         builtIn.push(group);
       } else {
@@ -276,6 +312,7 @@
     const out = custom.sort(compareGroupsByName);
     if (noAgent) out.push(noAgent);
     out.push.apply(out, builtIn.sort(compareGroupsByName));
+    out.push.apply(out, catalog.sort(compareGroupsByName));
     return out;
   }
   function buildGroups() {
@@ -396,6 +433,8 @@
     const html = [];
     let previousSection = '';
     let builtInLabelRendered = false;
+    let catalogLabelRendered = false;
+    const showCatalogToggle = state.mode === 'agent' && !state.navQuery.trim();
     for (const group of groups) {
       if (group.section && previousSection && group.section !== previousSection) {
         html.push('<div class="group-separator" role="separator"></div>');
@@ -403,6 +442,11 @@
       if (group.section === 'builtin' && !builtInLabelRendered) {
         html.push('<div class="group-section-label">built in agents</div>');
         builtInLabelRendered = true;
+      }
+      if (group.section === 'catalog' && !catalogLabelRendered) {
+        if (showCatalogToggle) html.push(agentCatalogToggleHTML());
+        html.push('<div class="group-section-label">catalog agents</div>');
+        catalogLabelRendered = true;
       }
       if (group.section) previousSection = group.section;
       const activeClass = group.id === state.selectedID ? ' is-active' : '';
@@ -413,7 +457,21 @@
         + '<span class="group-count' + countClass + '">' + esc(group.readyPRs) + '</span>'
         + '</button>');
     }
+    if (showCatalogToggle && !catalogLabelRendered) {
+      html.push('<div class="group-separator" role="separator"></div>');
+      html.push(agentCatalogToggleHTML());
+    }
     list.innerHTML = html.join('');
+  }
+
+  function agentCatalogToggleHTML() {
+    const expanded = !!state.agentCatalogExpanded;
+    const label = expanded ? 'Hide built-in agents' : 'Browse built-in agents';
+    const sub = expanded ? 'Showing all unused built-ins' : 'Search or expand to find more';
+    return '<button class="group-catalog-toggle" type="button" data-agent-catalog-toggle aria-expanded="' + (expanded ? 'true' : 'false') + '">'
+      + '<span><span class="group-name">' + esc(label) + '</span><span class="group-sub">' + esc(sub) + '</span></span>'
+      + '<span class="group-catalog-chevron">' + (expanded ? '-' : '+') + '</span>'
+      + '</button>';
   }
 
   function selectedRuns() {

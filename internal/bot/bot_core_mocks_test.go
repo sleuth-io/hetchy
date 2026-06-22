@@ -26,7 +26,7 @@ func TestHandleRequestPersistsRepoPromptWithFakeStore(t *testing.T) {
 		t.Fatal("sandbox should not be created before repo is selected")
 		return nil, errors.New("unreachable")
 	}
-	agentSlug := "bob"
+	agentSlug := "code-reviewer"
 	emit := newCaptureEmitter()
 
 	b.HandleRequest(context.Background(),
@@ -47,8 +47,8 @@ func TestHandleRequestPersistsRepoPromptWithFakeStore(t *testing.T) {
 	if rec.GitHubOwner != "" || rec.GitHubRepo != "" || rec.SandboxID != "" {
 		t.Fatalf("repo/sandbox should still be empty: %+v", rec)
 	}
-	if rec.AgentSlug != "bob" {
-		t.Fatalf("agent slug = %q, want bob", rec.AgentSlug)
+	if rec.AgentSlug != "code-reviewer" {
+		t.Fatalf("agent slug = %q, want code-reviewer", rec.AgentSlug)
 	}
 	if rec.Model != string(ClaudeModelSonnet) {
 		t.Fatalf("model = %q, want sonnet", rec.Model)

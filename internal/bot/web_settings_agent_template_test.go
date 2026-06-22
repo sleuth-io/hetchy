@@ -77,11 +77,10 @@ func TestSettingsTemplate_RendersAgentsTab(t *testing.T) {
 		},
 		"BuiltInAgents": []agentSettingsView{
 			{
-				Slug:         "alice",
-				DisplayName:  "Alice",
-				Description:  "Handles frontend work.",
-				SXBot:        "bob",
-				PersonaAsset: "bob",
+				Slug:         "code-reviewer",
+				DisplayName:  "Code Reviewer",
+				Description:  "Reviews code changes.",
+				PersonaAsset: "code-reviewer",
 				SlackAliases: []string{"backend", "api"},
 				Skills:       []string{"golang-pro", "database-migrations"},
 				SkillChips: []agentSkillChipView{
@@ -91,6 +90,14 @@ func TestSettingsTemplate_RendersAgentsTab(t *testing.T) {
 				BuiltIn: true,
 			},
 		},
+		"CatalogAgents": []agentTemplateView{
+			{
+				Slug:        "python-reviewer",
+				DisplayName: "Python Reviewer",
+				Description: "Reviews Python code.",
+			},
+		},
+		"CatalogAgentCount": 1,
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
@@ -101,14 +108,18 @@ func TestSettingsTemplate_RendersAgentsTab(t *testing.T) {
 		`data-open-modal="modal-agent-create"`,
 		`id="modal-agent-create"`,
 		`data-skills="golang-pro,database-migrations"`,
-		`data-prompt="Use backend rules."`,
+		`data-template-slug="backend"`,
 		`data-agent-skill-picker`,
 		`data-skill-name="golang-pro"`,
 		`data-skill-source="Skills.new"`,
 		`data-agent-skill-hidden`,
 		`Skills.new`,
 		`Custom agents`,
-		`Built-in agents`,
+		`Used built-in agents`,
+		`Browse built-in agents (1)`,
+		`data-agent-catalog-search`,
+		`data-agent-catalog-item`,
+		`Python Reviewer`,
 		`Built-in`,
 		`<span class="agent-badge">skills_new</span>`,
 		`action="/settings/org/agents/reviewer"`,
@@ -158,8 +169,8 @@ func TestSettingsTemplate_RendersAgentsTab(t *testing.T) {
 	for _, n := range []string{
 		`name="slug"`,
 		`comma-separated skill names`,
-		`action="/settings/org/agents/alice"`,
-		`action="/settings/org/agents/alice/delete"`,
+		`action="/settings/org/agents/code-reviewer"`,
+		`action="/settings/org/agents/code-reviewer/delete"`,
 		`action="/settings/org/agents/hetchy-bot"`,
 		`agent-name-hetchy-bot`,
 		`agent-prompt-hetchy-bot`,

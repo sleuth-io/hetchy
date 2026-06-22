@@ -49,7 +49,7 @@ type botRunner struct {
 // would otherwise pin claude alive after the agent's turn ends.
 func (r *botRunner) Run(ctx context.Context, label, scriptBody string, env map[string]string) (string, error) {
 	scriptPath := "/tmp/sf-" + label + ".sh"
-	body := claudeWatchdogScript + "\n" + strings.TrimRight(scriptBody, "\n")
+	body := claudeWatchdogScript + "\n" + sandboxCommonScript + "\n" + strings.TrimRight(scriptBody, "\n")
 	writeCmd := heredocWriteCmd(scriptPath, body, true)
 	if _, err := r.b.shLines(ctx, r.sb.ID, r.sb.Process, r.sessionID, "bootstrap-write-"+label, writeCmd, 30*time.Second, 0, true, func(string) {}); err != nil {
 		return "", fmt.Errorf("bootstrap: write script: %w", err)

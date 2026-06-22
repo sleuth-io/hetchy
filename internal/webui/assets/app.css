@@ -187,6 +187,32 @@ a { color: inherit; }
 }
 .group-item:hover { background: #f0f0f1; }
 .group-item.is-active { background: var(--active-bg); }
+.group-catalog-toggle {
+  width: calc(100% - 4px);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  margin: 0 2px 4px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: .55rem;
+  background: var(--surface);
+  color: var(--ink);
+  text-align: left;
+}
+.group-catalog-toggle:hover { background: #f0f0f1; }
+.group-catalog-chevron {
+  width: 1.4rem;
+  height: 1.4rem;
+  display: inline-grid;
+  place-items: center;
+  border-radius: .4rem;
+  background: #eeeef1;
+  color: #555;
+  font-size: .95rem;
+  font-weight: 650;
+}
 .group-name {
   min-width: 0;
   display: block;

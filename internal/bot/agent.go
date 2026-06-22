@@ -26,7 +26,7 @@ const maxFailingBootstrapAutoHealAttempts int32 = 3
 func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, agent agents.Profile, userRequest, requestID, branch string, opts chatTaskOptions, model ClaudeModel, emit blocks.Emitter) (string, error) {
 	model = normalizeClaudeModel(model)
 	provider := modelProvider(model)
-	bootstrapResult, err := b.agentBootstrapSpec(ctx, sb, repo, oc, requestID, opts, provider, emit)
+	bootstrapResult, err := b.agentBootstrapSpec(ctx, sb, repo, oc, agent, requestID, opts, provider, emit)
 	if err != nil {
 		return "", err
 	}
@@ -130,7 +130,7 @@ type agentBootstrapResult struct {
 	spec *bootstrap.Spec
 }
 
-func (b *Bot) agentBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, requestID string, opts chatTaskOptions, provider modelProviderKind, emit blocks.Emitter) (agentBootstrapResult, error) {
+func (b *Bot) agentBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, agent agents.Profile, requestID string, opts chatTaskOptions, provider modelProviderKind, emit blocks.Emitter) (agentBootstrapResult, error) {
 	// ValidateChanges=false is the user's explicit "skip end-to-end
 	// testing" opt-out from the new-chat UI. We honour it by not
 	// running bootstrap (which can take minutes on a fresh repo) and
@@ -146,7 +146,7 @@ func (b *Bot) agentBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo 
 		}
 		return out, nil
 	}
-	spec, err := b.ensureBootstrapSpec(ctx, sb, repo, oc, requestID, emit)
+	spec, err := b.ensureBootstrapSpec(ctx, sb, repo, oc, agent, requestID, emit)
 	if err == nil {
 		return agentBootstrapResult{spec: spec}, nil
 	}
@@ -169,7 +169,7 @@ func (b *Bot) agentBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo 
 // Caller is expected to gate on whether bootstrap is appropriate (a
 // GitHub App-resolved repo with a stable install + repo id); this method
 // assumes those preconditions hold.
-func (b *Bot) ensureBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, requestID string, emit blocks.Emitter) (*bootstrap.Spec, error) {
+func (b *Bot) ensureBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, agent agents.Profile, requestID string, emit blocks.Emitter) (*bootstrap.Spec, error) {
 	spec, err := b.bootstrap.GetSpec(ctx, repo.InstallID, repo.RepoID, "")
 	switch {
 	case err == nil:
@@ -179,7 +179,7 @@ func (b *Bot) ensureBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo
 			}
 			return spec, nil
 		}
-		refreshed, refreshErr := b.refreshExistingBootstrapSpec(ctx, sb, repo, oc, requestID, spec, emit)
+		refreshed, refreshErr := b.refreshExistingBootstrapSpec(ctx, sb, repo, oc, agent, requestID, spec, emit)
 		if refreshErr != nil {
 			b.log.Warn("bootstrap drift check failed; using saved spec",
 				"request_id", requestID, "repo", repo.Slug, "error", refreshErr)
@@ -240,6 +240,7 @@ func (b *Bot) ensureBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo
 		"HETCHY_CLAUDE_MODEL":  string(ClaudeModelOpus),
 		"HETCHY_CLAUDE_EFFORT": "high",
 	}
+	addAgentEnv(baseEnv, b.cfg, agent)
 	addDaytonaCacheEnv(baseEnv, b.cfg, oc, repo, repo.CacheMounted)
 	runner := &botRunner{
 		b:         b,
@@ -281,7 +282,7 @@ func (b *Bot) ensureBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo
 	return spec, nil
 }
 
-func (b *Bot) refreshExistingBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, requestID string, spec *bootstrap.Spec, emit blocks.Emitter) (*bootstrap.Spec, error) {
+func (b *Bot) refreshExistingBootstrapSpec(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, agent agents.Profile, requestID string, spec *bootstrap.Spec, emit blocks.Emitter) (*bootstrap.Spec, error) {
 	sessionID := "bootstrap-check-" + requestID
 	if err := b.createBootstrapSession(ctx, sb, sessionID); err != nil {
 		return nil, fmt.Errorf("create bootstrap check session: %w", err)
@@ -323,7 +324,7 @@ func (b *Bot) refreshExistingBootstrapSpec(ctx context.Context, sb *daytona.Sand
 	if err != nil {
 		return nil, fmt.Errorf("get secrets: %w", err)
 	}
-	runner, err := b.newBootstrapRunner(ctx, sb, sessionID, repo, oc, emit)
+	runner, err := b.newBootstrapRunner(ctx, sb, sessionID, repo, oc, agent, emit)
 	if err != nil {
 		return nil, err
 	}
@@ -449,7 +450,7 @@ func (b *Bot) prepareBootstrapCheckout(ctx context.Context, sb *daytona.Sandbox,
 	return nil
 }
 
-func (b *Bot) newBootstrapRunner(ctx context.Context, sb *daytona.Sandbox, sessionID string, repo repoCtx, oc orgcfg.Config, emit blocks.Emitter) (bootstrap.Runner, error) {
+func (b *Bot) newBootstrapRunner(ctx context.Context, sb *daytona.Sandbox, sessionID string, repo repoCtx, oc orgcfg.Config, agent agents.Profile, emit blocks.Emitter) (bootstrap.Runner, error) {
 	authKey, authVal := claudeAuthEnv(oc)
 	b.log.Info("claude auth", "method", authKey, "token", maskToken(authVal), "request_id", sessionID)
 	baseEnv := map[string]string{
@@ -458,6 +459,7 @@ func (b *Bot) newBootstrapRunner(ctx context.Context, sb *daytona.Sandbox, sessi
 		"HETCHY_CLAUDE_MODEL":  string(ClaudeModelOpus),
 		"HETCHY_CLAUDE_EFFORT": "high",
 	}
+	addAgentEnv(baseEnv, b.cfg, agent)
 	addDaytonaCacheEnv(baseEnv, b.cfg, oc, repo, repo.CacheMounted)
 	return &botRunner{
 		b:         b,

@@ -251,8 +251,8 @@ func TestManagerDeleteAgentNilAgentsReturnsErrNotConfigured(t *testing.T) {
 }
 
 func TestManagerDeleteAgentBuiltInReturnsError(t *testing.T) {
-	m := &Manager{agents: agents.NewStore(nil)} // falls back to FallbackProfiles
-	err := m.DeleteAgent(context.Background(), "org1", Actor{}, "bob")
+	m := &Manager{agents: agents.NewStore(nil)}
+	err := m.DeleteAgent(context.Background(), "org1", Actor{}, "code-reviewer")
 	if err == nil || !strings.Contains(err.Error(), "built-in agents cannot be deleted") {
 		t.Fatalf("DeleteAgent(built-in) = %v, want built-in error", err)
 	}
@@ -286,7 +286,7 @@ func TestManagerAttachSkillAgentNotFoundReturnsError(t *testing.T) {
 
 func TestManagerAttachSkillNoVaultReturnsErrNotConfigured(t *testing.T) {
 	m := &Manager{agents: agents.NewStore(nil)}
-	_, err := m.AttachSkill(context.Background(), "org1", Actor{}, "bob", "fix-pr")
+	_, err := m.AttachSkill(context.Background(), "org1", Actor{}, "code-reviewer", "fix-pr")
 	if !errors.Is(err, ErrNotConfigured) {
 		t.Fatalf("AttachSkill(no vault) = %v, want ErrNotConfigured", err)
 	}
@@ -312,7 +312,7 @@ func TestManagerDetachSkillAgentNotFoundReturnsError(t *testing.T) {
 
 func TestManagerDetachSkillNoVaultReturnsErrNotConfigured(t *testing.T) {
 	m := &Manager{agents: agents.NewStore(nil)}
-	_, err := m.DetachSkill(context.Background(), "org1", Actor{}, "bob", "fix-pr")
+	_, err := m.DetachSkill(context.Background(), "org1", Actor{}, "code-reviewer", "fix-pr")
 	if !errors.Is(err, ErrNotConfigured) {
 		t.Fatalf("DetachSkill(no vault) = %v, want ErrNotConfigured", err)
 	}
@@ -330,7 +330,7 @@ func TestManagerUploadSkillZipAgentNotFoundReturnsError(t *testing.T) {
 
 func TestManagerUploadSkillZipNoVaultReturnsErrNotConfigured(t *testing.T) {
 	m := &Manager{agents: agents.NewStore(nil)}
-	_, err := m.UploadSkillZip(context.Background(), "org1", Actor{}, "bob", sxlib.SkillZipSpec{Name: "test-skill"})
+	_, err := m.UploadSkillZip(context.Background(), "org1", Actor{}, "code-reviewer", sxlib.SkillZipSpec{Name: "test-skill"})
 	if !errors.Is(err, ErrNotConfigured) {
 		t.Fatalf("UploadSkillZip(no vault) = %v, want ErrNotConfigured", err)
 	}
@@ -356,7 +356,7 @@ func TestManagerAddAgentTeamAgentNotFoundReturnsError(t *testing.T) {
 
 func TestManagerAddAgentTeamNoVaultReturnsErrNotConfigured(t *testing.T) {
 	m := &Manager{agents: agents.NewStore(nil)}
-	_, err := m.AddAgentTeam(context.Background(), "org1", Actor{}, "bob", "backend")
+	_, err := m.AddAgentTeam(context.Background(), "org1", Actor{}, "code-reviewer", "backend")
 	if !errors.Is(err, ErrNotConfigured) {
 		t.Fatalf("AddAgentTeam(no vault) = %v, want ErrNotConfigured", err)
 	}
@@ -382,7 +382,7 @@ func TestManagerRemoveAgentTeamAgentNotFoundReturnsError(t *testing.T) {
 
 func TestManagerRemoveAgentTeamNoVaultReturnsErrNotConfigured(t *testing.T) {
 	m := &Manager{agents: agents.NewStore(nil)}
-	_, err := m.RemoveAgentTeam(context.Background(), "org1", Actor{}, "bob", "backend")
+	_, err := m.RemoveAgentTeam(context.Background(), "org1", Actor{}, "code-reviewer", "backend")
 	if !errors.Is(err, ErrNotConfigured) {
 		t.Fatalf("RemoveAgentTeam(no vault) = %v, want ErrNotConfigured", err)
 	}

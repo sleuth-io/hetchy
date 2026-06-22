@@ -93,7 +93,21 @@ func addAgentEnv(env map[string]string, cfg Config, agent agents.Profile) {
 	env["HETCHY_AGENT_SX_BOT"] = agent.SXBot
 	env["HETCHY_AGENT_PERSONA_ASSET"] = agent.PersonaAsset
 	env["HETCHY_AGENT_PROMPT_B64"] = base64.StdEncoding.EncodeToString([]byte(agent.PersonaPrompt))
-	if cfg.SXPublicVaultURL != "" {
+	eccBuiltIn := false
+	if agent.BuiltIn {
+		if entry, ok := agents.GetCatalogEntry(agent.Slug); ok {
+			eccBuiltIn = true
+			env["HETCHY_AGENT_SOURCE_ARCHIVE_URL"] = agents.ECCCatalogArchiveURL
+			env["HETCHY_AGENT_SOURCE_ARCHIVE_SHA256"] = agents.ECCCatalogArchiveSHA256
+			env["HETCHY_AGENT_SOURCE_REF"] = agents.ECCCatalogRef
+			env["HETCHY_AGENT_SOURCE_AGENT_PATH"] = entry.AgentPath
+			env["HETCHY_AGENT_SOURCE_SKILLS"] = strings.Join(entry.RecommendedSkills, ",")
+		}
+	}
+	// ECC built-ins install their agent and recommended skills from the pinned
+	// ECC archive above. Do not also inject the SX public vault, which would mix
+	// two built-in sources and make runtime skill versions harder to reason about.
+	if cfg.SXPublicVaultURL != "" && !eccBuiltIn {
 		env["HETCHY_SX_PUBLIC_VAULT_URL"] = cfg.SXPublicVaultURL
 	}
 }

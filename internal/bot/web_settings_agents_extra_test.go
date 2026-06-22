@@ -23,7 +23,7 @@ func TestCreateAgentFromSettingsUsesTemplateAndSelectedSkills(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := settingsFormRequest(http.MethodPost, "/settings/org/agents", strings.Join([]string{
-		"template_slug=alice",
+		"template_slug=code-reviewer",
 		"display_name=Reviewer",
 		"skills_submitted=1",
 		"skills=frontend-design",
@@ -46,7 +46,7 @@ func TestCreateAgentFromSettingsUsesTemplateAndSelectedSkills(t *testing.T) {
 	if saved.Slug != "reviewer" || saved.DisplayName != "Reviewer" || saved.BuiltIn {
 		t.Fatalf("saved profile identity = %+v", saved)
 	}
-	if saved.PersonaPrompt == "" || !strings.Contains(saved.PersonaPrompt, "Alice") {
+	if saved.PersonaPrompt == "" || !strings.Contains(saved.PersonaPrompt, "code-reviewer") {
 		t.Fatalf("template prompt was not preserved: %q", saved.PersonaPrompt)
 	}
 	if !reflect.DeepEqual(saved.Skills, []string{"frontend-design", "webapp-testing"}) {
@@ -118,13 +118,13 @@ func TestAgentSettingsActionHandlerLocksBuiltInsForMutations(t *testing.T) {
 		path string
 		body string
 	}{
-		{name: "update", path: "/settings/org/agents/alice", body: "display_name=Alice"},
-		{name: "attach skill", path: "/settings/org/agents/alice/skills", body: "skill=fix-pr"},
-		{name: "detach skill", path: "/settings/org/agents/alice/skills/delete", body: "skill=fix-pr"},
-		{name: "upload skill", path: "/settings/org/agents/alice/skills/upload", body: ""},
-		{name: "add team", path: "/settings/org/agents/alice/teams", body: "team=Dev"},
-		{name: "remove team", path: "/settings/org/agents/alice/teams/remove", body: "team=Dev"},
-		{name: "delete", path: "/settings/org/agents/alice/delete", body: ""},
+		{name: "update", path: "/settings/org/agents/code-reviewer", body: "display_name=Code+Reviewer"},
+		{name: "attach skill", path: "/settings/org/agents/code-reviewer/skills", body: "skill=fix-pr"},
+		{name: "detach skill", path: "/settings/org/agents/code-reviewer/skills/delete", body: "skill=fix-pr"},
+		{name: "upload skill", path: "/settings/org/agents/code-reviewer/skills/upload", body: ""},
+		{name: "add team", path: "/settings/org/agents/code-reviewer/teams", body: "team=Dev"},
+		{name: "remove team", path: "/settings/org/agents/code-reviewer/teams/remove", body: "team=Dev"},
+		{name: "delete", path: "/settings/org/agents/code-reviewer/delete", body: ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()

@@ -220,10 +220,9 @@ func TestListTemplatesNilStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTemplates: %v", err)
 	}
-	// must match the canonical fallback set exactly
-	want := FallbackProfiles()
+	want := CatalogProfiles()
 	if len(profiles) != len(want) {
-		t.Fatalf("ListTemplates returned %d profiles, want %d (FallbackProfiles)", len(profiles), len(want))
+		t.Fatalf("ListTemplates returned %d profiles, want %d (CatalogProfiles)", len(profiles), len(want))
 	}
 	for i, w := range want {
 		if profiles[i].Slug != w.Slug {
@@ -235,12 +234,12 @@ func TestListTemplatesNilStore(t *testing.T) {
 func TestGetTemplateNilStore(t *testing.T) {
 	s := NewStore(nil)
 
-	got, err := s.GetTemplate(t.Context(), "bob")
+	got, err := s.GetTemplate(t.Context(), "code-reviewer")
 	if err != nil {
-		t.Fatalf("GetTemplate(bob): %v", err)
+		t.Fatalf("GetTemplate(code-reviewer): %v", err)
 	}
-	if got.Slug != "bob" {
-		t.Errorf("GetTemplate(bob).Slug = %q, want bob", got.Slug)
+	if got.Slug != "code-reviewer" {
+		t.Errorf("GetTemplate(code-reviewer).Slug = %q, want code-reviewer", got.Slug)
 	}
 
 	// not found
@@ -256,58 +255,107 @@ func TestGetTemplateNilStore(t *testing.T) {
 	}
 }
 
+func TestMaterializeCatalogProfileNilStore(t *testing.T) {
+	s := NewStore(nil)
+
+	got, err := s.MaterializeCatalogProfile(t.Context(), "org", "code-reviewer")
+	if err != nil {
+		t.Fatalf("MaterializeCatalogProfile(code-reviewer): %v", err)
+	}
+	if got.Slug != "code-reviewer" || !got.BuiltIn || got.VaultBackend != CatalogBackendECC {
+		t.Fatalf("materialized catalog profile = %+v", got)
+	}
+
+	_, err = s.MaterializeCatalogProfile(t.Context(), "org", "unknown-agent")
+	if err == nil {
+		t.Fatal("MaterializeCatalogProfile(unknown) expected error, got nil")
+	}
+}
+
+func TestMergeCatalogProfilesKeepsExistingProfiles(t *testing.T) {
+	existingReviewer := Profile{
+		Slug:        "code-reviewer",
+		DisplayName: "Team Reviewer",
+		Enabled:     true,
+		BuiltIn:     true,
+	}
+	custom := Profile{
+		Slug:        "team-agent",
+		DisplayName: "Team Agent",
+		Enabled:     true,
+	}
+
+	got := MergeCatalogProfiles([]Profile{custom, existingReviewer, {Slug: "   "}})
+	wantLen := len(CatalogEntries()) + 1
+	if len(got) != wantLen {
+		t.Fatalf("MergeCatalogProfiles length = %d, want %d", len(got), wantLen)
+	}
+	if !slices.IsSortedFunc(got, func(a, b Profile) int { return strings.Compare(a.Slug, b.Slug) }) {
+		t.Fatalf("MergeCatalogProfiles should sort by slug: %+v", got[:min(len(got), 5)])
+	}
+
+	var foundReviewer, foundCustom bool
+	for _, profile := range got {
+		switch profile.Slug {
+		case "code-reviewer":
+			foundReviewer = true
+			if profile.DisplayName != "Team Reviewer" {
+				t.Fatalf("existing reviewer was overwritten: %+v", profile)
+			}
+		case "team-agent":
+			foundCustom = true
+		}
+	}
+	if !foundReviewer || !foundCustom {
+		t.Fatalf("merged profiles missing reviewer=%v custom=%v", foundReviewer, foundCustom)
+	}
+}
+
 func TestListNilStore(t *testing.T) {
-	// List with nil db returns the same set as FallbackProfiles.
+	// Visible built-ins are not loaded until they are materialized on use.
 	s := NewStore(nil)
 	profiles, err := s.List(t.Context(), "org123")
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
-	want := FallbackProfiles()
-	if len(profiles) != len(want) {
-		t.Fatalf("List returned %d profiles, want %d (FallbackProfiles)", len(profiles), len(want))
+	if len(profiles) != 0 {
+		t.Fatalf("List returned %d profiles, want none before materialization", len(profiles))
 	}
 }
 
 func TestListFallbackOnEmptyOrgID(t *testing.T) {
-	// Both nil-db and empty-orgID cause List to return FallbackProfiles.
-	// This exercises the observable behaviour; the orgID=="" guard is in the
-	// same condition as s.db==nil so we confirm the result is identical.
+	// Empty orgID also avoids loading the full catalog into visible lists.
 	s := NewStore(nil)
 	profiles, err := s.List(t.Context(), "")
 	if err != nil {
 		t.Fatalf("List(empty orgID): %v", err)
 	}
-	want := FallbackProfiles()
-	if len(profiles) != len(want) {
-		t.Fatalf("List(empty orgID) returned %d profiles, want %d (FallbackProfiles)", len(profiles), len(want))
+	if len(profiles) != 0 {
+		t.Fatalf("List(empty orgID) returned %d profiles, want none before materialization", len(profiles))
 	}
 }
 
 func TestNilReceiverFallback(t *testing.T) {
-	// Methods guard against nil *Store (s == nil) in the same condition as
-	// nil db. Verify the observable fallback behaviour is identical.
 	var s *Store
-	want := FallbackProfiles()
 
 	profiles, err := s.List(t.Context(), "org")
-	if err != nil || len(profiles) != len(want) {
-		t.Fatalf("nil receiver List: err=%v got %d profiles, want %d", err, len(profiles), len(want))
+	if err != nil || len(profiles) != 0 {
+		t.Fatalf("nil receiver List: err=%v got %d profiles, want 0", err, len(profiles))
 	}
 
 	templates, err := s.ListTemplates(t.Context())
-	if err != nil || len(templates) != len(want) {
-		t.Fatalf("nil receiver ListTemplates: err=%v got %d templates, want %d", err, len(templates), len(want))
+	if err != nil || len(templates) != len(CatalogProfiles()) {
+		t.Fatalf("nil receiver ListTemplates: err=%v got %d templates, want %d", err, len(templates), len(CatalogProfiles()))
 	}
 
-	got, err := s.GetTemplate(t.Context(), "bob")
-	if err != nil || got.Slug != "bob" {
-		t.Fatalf("nil receiver GetTemplate(bob): err=%v slug=%q", err, got.Slug)
+	got, err := s.GetTemplate(t.Context(), "code-reviewer")
+	if err != nil || got.Slug != "code-reviewer" {
+		t.Fatalf("nil receiver GetTemplate(code-reviewer): err=%v slug=%q", err, got.Slug)
 	}
 
-	bySlug, err := s.GetBySlug(t.Context(), "org", "bob")
-	if err != nil || bySlug.Slug != "bob" {
-		t.Fatalf("nil receiver GetBySlug(bob): err=%v slug=%q", err, bySlug.Slug)
+	bySlug, err := s.GetBySlug(t.Context(), "org", "code-reviewer")
+	if err != nil || bySlug.Slug != "code-reviewer" {
+		t.Fatalf("nil receiver GetBySlug(code-reviewer): err=%v slug=%q", err, bySlug.Slug)
 	}
 }
 
@@ -315,7 +363,7 @@ func TestGetBySlugNilDBNotFound(t *testing.T) {
 	s := NewStore(nil)
 
 	// alias does not work via GetBySlug
-	_, err := s.GetBySlug(t.Context(), "org", "backend")
+	_, err := s.GetBySlug(t.Context(), "org", "reviewer")
 	if err == nil {
 		t.Fatal("GetBySlug(alias) expected ErrNotFound, got nil")
 	}
@@ -462,43 +510,6 @@ func TestProfileFromUpdateNameRow(t *testing.T) {
 	}
 	if p.VaultBackend != "git@github.com:org/vault.git" {
 		t.Errorf("VaultBackend = %q", p.VaultBackend)
-	}
-	if !p.Enabled {
-		t.Error("Enabled should be true")
-	}
-}
-
-func TestProfileFromTemplateRow(t *testing.T) {
-	row := sqlc.AgentProfileTemplate{
-		Slug:          "archy",
-		DisplayName:   "Architect",
-		Description:   "Architecture specialist",
-		SxBot:         "sx-archy",
-		PersonaAsset:  "archy.png",
-		PersonaPrompt: "You are Archy.",
-		SlackAliases:  []string{"architect", "@arch"},
-		Skills:        []string{"system-design"},
-		Enabled:       true,
-	}
-	p := profileFromTemplateRow(row)
-	if p.Slug != "archy" {
-		t.Errorf("Slug = %q, want archy", p.Slug)
-	}
-	if p.DisplayName != "Architect" {
-		t.Errorf("DisplayName = %q, want Architect", p.DisplayName)
-	}
-	// BuiltIn must always be true for templates.
-	if !p.BuiltIn {
-		t.Error("BuiltIn should be true for template rows")
-	}
-	// TemplateSlug is set to the row's Slug field.
-	if p.TemplateSlug != "archy" {
-		t.Errorf("TemplateSlug = %q, want archy", p.TemplateSlug)
-	}
-	// Aliases cleaned.
-	wantAliases := []string{"architect", "arch"}
-	if !slices.Equal(p.SlackAliases, wantAliases) {
-		t.Errorf("SlackAliases = %v, want %v", p.SlackAliases, wantAliases)
 	}
 	if !p.Enabled {
 		t.Error("Enabled should be true")

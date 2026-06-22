@@ -7,8 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jackc/pgx/v5"
-
 	"github.com/sleuth-io/hetchy/internal/db/sqlc"
 	"github.com/sleuth-io/hetchy/internal/secrets"
 )
@@ -17,7 +15,6 @@ import (
 
 func TestGetCustomWithDB(t *testing.T) {
 	q := &fakeQuerier{
-		countFn: func(_ context.Context, _ string) (int64, error) { return 1, nil },
 		getBySlugFn: func(_ context.Context, arg sqlc.GetAgentProfileBySlugParams) (sqlc.GetAgentProfileBySlugRow, error) {
 			return sqlc.GetAgentProfileBySlugRow{Slug: arg.Slug, Enabled: true}, nil
 		},
@@ -34,7 +31,6 @@ func TestGetCustomWithDB(t *testing.T) {
 
 func TestGetCustomWithDBDisabledReturnsNotFound(t *testing.T) {
 	q := &fakeQuerier{
-		countFn: func(_ context.Context, _ string) (int64, error) { return 1, nil },
 		getBySlugFn: func(_ context.Context, _ sqlc.GetAgentProfileBySlugParams) (sqlc.GetAgentProfileBySlugRow, error) {
 			return sqlc.GetAgentProfileBySlugRow{Slug: "sally", Enabled: false}, nil
 		},
@@ -48,7 +44,6 @@ func TestGetCustomWithDBDisabledReturnsNotFound(t *testing.T) {
 
 func TestGetCustomWithDBNotFound(t *testing.T) {
 	q := &fakeQuerier{
-		countFn:     func(_ context.Context, _ string) (int64, error) { return 1, nil },
 		getBySlugFn: nil,
 	}
 	s := newFakeStore(q)
@@ -75,27 +70,16 @@ func TestGetCustomEmptyOrgIDReturnsNotFound(t *testing.T) {
 }
 
 func TestGetCustomEmptySlugReturnsNotFound(t *testing.T) {
-	seeded := false
-	q := &fakeQuerier{
-		countFn: func(_ context.Context, _ string) (int64, error) {
-			seeded = true
-			return 1, nil
-		},
-	}
-	s := newFakeStore(q)
+	s := newFakeStore(&fakeQuerier{})
 	_, err := s.GetCustom(t.Context(), "org1", "")
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("GetCustom(empty slug) error = %v, want ErrNotFound", err)
-	}
-	if seeded {
-		t.Error("EnsureSeeded should not be called when slug is empty")
 	}
 }
 
 func TestGetCustomWithDBError(t *testing.T) {
 	wantErr := errors.New("db error")
 	q := &fakeQuerier{
-		countFn: func(_ context.Context, _ string) (int64, error) { return 1, nil },
 		getBySlugFn: func(_ context.Context, _ sqlc.GetAgentProfileBySlugParams) (sqlc.GetAgentProfileBySlugRow, error) {
 			return sqlc.GetAgentProfileBySlugRow{}, wantErr
 		},
@@ -111,7 +95,6 @@ func TestGetCustomWithDBError(t *testing.T) {
 
 func TestUpdateNameWithDB(t *testing.T) {
 	q := &fakeQuerier{
-		countFn: func(_ context.Context, _ string) (int64, error) { return 1, nil },
 		updateNameFn: func(_ context.Context, arg sqlc.UpdateAgentProfileNameParams) (sqlc.UpdateAgentProfileNameRow, error) {
 			return sqlc.UpdateAgentProfileNameRow{
 				Slug:        arg.Slug,
@@ -131,7 +114,6 @@ func TestUpdateNameWithDB(t *testing.T) {
 
 func TestUpdateNameNotFound(t *testing.T) {
 	q := &fakeQuerier{
-		countFn:      func(_ context.Context, _ string) (int64, error) { return 1, nil },
 		updateNameFn: nil,
 	}
 	s := newFakeStore(q)
@@ -142,10 +124,7 @@ func TestUpdateNameNotFound(t *testing.T) {
 }
 
 func TestUpdateNameEmptyDisplayName(t *testing.T) {
-	q := &fakeQuerier{
-		countFn: func(_ context.Context, _ string) (int64, error) { return 1, nil },
-	}
-	s := newFakeStore(q)
+	s := newFakeStore(&fakeQuerier{})
 	_, err := s.UpdateName(t.Context(), "org1", "bob", "   ")
 	if err == nil {
 		t.Fatal("UpdateName(empty display) expected error, got nil")
@@ -171,7 +150,6 @@ func TestUpdateNameNilQuerierReturnsError(t *testing.T) {
 func TestUpdateNameWithDBError(t *testing.T) {
 	wantErr := errors.New("update error")
 	q := &fakeQuerier{
-		countFn: func(_ context.Context, _ string) (int64, error) { return 1, nil },
 		updateNameFn: func(_ context.Context, _ sqlc.UpdateAgentProfileNameParams) (sqlc.UpdateAgentProfileNameRow, error) {
 			return sqlc.UpdateAgentProfileNameRow{}, wantErr
 		},
@@ -185,84 +163,44 @@ func TestUpdateNameWithDBError(t *testing.T) {
 
 // ---- ListTemplates ----------------------------------------------------------
 
-func TestListTemplatesWithDB(t *testing.T) {
-	q := &fakeQuerier{
-		listTmplFn: func(_ context.Context) ([]sqlc.AgentProfileTemplate, error) {
-			return []sqlc.AgentProfileTemplate{
-				{Slug: "bob", DisplayName: "Bob", Enabled: true},
-				{Slug: "alice", DisplayName: "Alice", Enabled: true},
-			}, nil
-		},
-	}
-	s := newFakeStore(q)
+func TestListTemplatesUsesCatalog(t *testing.T) {
+	s := newFakeStore(&fakeQuerier{})
 	templates, err := s.ListTemplates(t.Context())
 	if err != nil {
 		t.Fatalf("ListTemplates: %v", err)
 	}
-	if len(templates) != 2 {
-		t.Fatalf("ListTemplates returned %d, want 2", len(templates))
+	if len(templates) != len(CatalogProfiles()) {
+		t.Fatalf("ListTemplates returned %d, want catalog len %d", len(templates), len(CatalogProfiles()))
 	}
-}
-
-func TestListTemplatesWithDBError(t *testing.T) {
-	wantErr := errors.New("list error")
-	q := &fakeQuerier{
-		listTmplFn: func(_ context.Context) ([]sqlc.AgentProfileTemplate, error) { return nil, wantErr },
-	}
-	s := newFakeStore(q)
-	_, err := s.ListTemplates(t.Context())
-	if !errors.Is(err, wantErr) {
-		t.Fatalf("ListTemplates error = %v, want %v", err, wantErr)
+	if templates[0].Slug != CatalogProfiles()[0].Slug || !templates[0].BuiltIn {
+		t.Fatalf("ListTemplates[0] = %+v, want first catalog built-in", templates[0])
 	}
 }
 
 // ---- GetTemplate ------------------------------------------------------------
 
-func TestGetTemplateWithDB(t *testing.T) {
-	q := &fakeQuerier{
-		getTmplFn: func(_ context.Context, slug string) (sqlc.AgentProfileTemplate, error) {
-			if slug == "bob" {
-				return sqlc.AgentProfileTemplate{Slug: "bob", DisplayName: "Bob", Enabled: true}, nil
-			}
-			return sqlc.AgentProfileTemplate{}, pgx.ErrNoRows
-		},
-	}
-	s := newFakeStore(q)
-	p, err := s.GetTemplate(t.Context(), "bob")
+func TestGetTemplateUsesCatalog(t *testing.T) {
+	s := newFakeStore(&fakeQuerier{})
+	p, err := s.GetTemplate(t.Context(), "code-reviewer")
 	if err != nil {
 		t.Fatalf("GetTemplate: %v", err)
 	}
-	if p.Slug != "bob" {
-		t.Errorf("GetTemplate slug = %q, want bob", p.Slug)
+	if p.Slug != "code-reviewer" {
+		t.Errorf("GetTemplate slug = %q, want code-reviewer", p.Slug)
 	}
 	if !p.BuiltIn {
 		t.Error("GetTemplate: BuiltIn should be true for template rows")
 	}
-	if p.TemplateSlug != "bob" {
-		t.Errorf("GetTemplate TemplateSlug = %q, want bob", p.TemplateSlug)
+	if p.TemplateSlug != "code-reviewer" {
+		t.Errorf("GetTemplate TemplateSlug = %q, want code-reviewer", p.TemplateSlug)
 	}
 }
 
-func TestGetTemplateWithDBNotFound(t *testing.T) {
-	q := &fakeQuerier{getTmplFn: nil}
-	s := newFakeStore(q)
+func TestGetTemplateNotFound(t *testing.T) {
+	s := newFakeStore(&fakeQuerier{})
 	_, err := s.GetTemplate(t.Context(), "unknown")
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("GetTemplate(unknown) error = %v, want ErrNotFound", err)
-	}
-}
-
-func TestGetTemplateWithDBError(t *testing.T) {
-	wantErr := errors.New("get error")
-	q := &fakeQuerier{
-		getTmplFn: func(_ context.Context, _ string) (sqlc.AgentProfileTemplate, error) {
-			return sqlc.AgentProfileTemplate{}, wantErr
-		},
-	}
-	s := newFakeStore(q)
-	_, err := s.GetTemplate(t.Context(), "bob")
-	if !errors.Is(err, wantErr) {
-		t.Fatalf("GetTemplate error = %v, want %v", err, wantErr)
 	}
 }
 
@@ -374,7 +312,6 @@ func TestUpdateVaultSyncNonEmptyBotKeyRequiresCipher(t *testing.T) {
 
 func TestDeleteWithDB(t *testing.T) {
 	q := &fakeQuerier{
-		countFn: func(_ context.Context, _ string) (int64, error) { return 1, nil },
 		disableFn: func(_ context.Context, arg sqlc.DisableAgentProfileParams) (int64, error) {
 			if arg.OrgID == "org1" && arg.Slug == "bob" {
 				return 1, nil
@@ -390,7 +327,6 @@ func TestDeleteWithDB(t *testing.T) {
 
 func TestDeleteNotFound(t *testing.T) {
 	q := &fakeQuerier{
-		countFn:   func(_ context.Context, _ string) (int64, error) { return 1, nil },
 		disableFn: nil,
 	}
 	s := newFakeStore(q)
@@ -419,7 +355,6 @@ func TestDeleteNilQuerierReturnsError(t *testing.T) {
 func TestDeleteWithDBError(t *testing.T) {
 	wantErr := errors.New("disable error")
 	q := &fakeQuerier{
-		countFn: func(_ context.Context, _ string) (int64, error) { return 1, nil },
 		disableFn: func(_ context.Context, _ sqlc.DisableAgentProfileParams) (int64, error) {
 			return 0, wantErr
 		},
@@ -434,7 +369,6 @@ func TestDeleteWithDBError(t *testing.T) {
 func TestDeleteNormalizesSlug(t *testing.T) {
 	var gotSlug string
 	q := &fakeQuerier{
-		countFn: func(_ context.Context, _ string) (int64, error) { return 1, nil },
 		disableFn: func(_ context.Context, arg sqlc.DisableAgentProfileParams) (int64, error) {
 			gotSlug = arg.Slug
 			return 1, nil

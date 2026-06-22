@@ -28,6 +28,7 @@ type agentSummary struct {
 	SyncStatus   string            `json:"sync_status,omitempty"`
 	SyncError    string            `json:"sync_error,omitempty"`
 	BuiltIn      bool              `json:"built_in"`
+	CatalogOnly  bool              `json:"catalog_only,omitempty"`
 	Default      bool              `json:"default"`
 }
 
@@ -155,6 +156,7 @@ func (b *Bot) agentsHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
+	profiles = mergeRemoteAgentProfiles(profiles, remoteProfiles)
 	jobsByAgent, err := b.agentJobSummariesByAgent(r.Context(), p.OrgID)
 	if err != nil {
 		b.log.Error("list agent jobs", "error", err, "org", p.OrgID)
@@ -168,7 +170,9 @@ func (b *Bot) agentsHandler(w http.ResponseWriter, r *http.Request) {
 			remoteBySlug[slug] = remote
 		}
 	}
+	includeCatalog := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("scope")), "all")
 	out := make([]agentSummary, 0, len(profiles))
+	seen := make(map[string]struct{}, len(profiles))
 	for _, a := range profiles {
 		if !a.Enabled {
 			continue
@@ -179,25 +183,72 @@ func (b *Bot) agentsHandler(w http.ResponseWriter, r *http.Request) {
 		if !agentAvailableForActiveSXBackend(a, activeBackend) {
 			continue
 		}
-		out = append(out, agentSummary{
-			Slug:         a.Slug,
-			DisplayName:  a.DisplayName,
-			Description:  a.Description,
-			SXBot:        a.SXBot,
-			PersonaAsset: a.PersonaAsset,
-			SlackAliases: a.SlackAliases,
-			Skills:       a.Skills,
-			SXTeams:      a.SXTeams,
-			SXSkills:     a.SXSkills,
-			Jobs:         jobsByAgent[a.Slug],
-			VaultBackend: a.VaultBackend,
-			SyncStatus:   a.SyncStatus,
-			SyncError:    a.SyncError,
-			BuiltIn:      a.BuiltIn,
-			Default:      a.Slug == agents.DefaultSlug,
-		})
+		seen[a.Slug] = struct{}{}
+		out = append(out, agentSummaryFromProfile(a, jobsByAgent[a.Slug], false))
+	}
+	if includeCatalog {
+		for _, a := range agents.CatalogProfiles() {
+			if _, ok := seen[a.Slug]; ok {
+				continue
+			}
+			out = append(out, agentSummaryFromProfile(a, nil, true))
+		}
 	}
 	writeJSON(w, out)
+}
+
+func mergeRemoteAgentProfiles(local, remote []agents.Profile) []agents.Profile {
+	if len(remote) == 0 {
+		return local
+	}
+	out := make([]agents.Profile, 0, len(local)+len(remote))
+	seen := make(map[string]struct{}, len(local)+len(remote))
+	for _, profile := range local {
+		slug := agents.NormalizeSlug(profile.Slug)
+		if slug == "" {
+			continue
+		}
+		seen[slug] = struct{}{}
+		out = append(out, profile)
+	}
+	for _, profile := range remote {
+		slug := agents.NormalizeSlug(profile.Slug)
+		if slug == "" {
+			continue
+		}
+		if _, ok := seen[slug]; ok {
+			continue
+		}
+		profile.Slug = slug
+		if strings.TrimSpace(profile.DisplayName) == "" {
+			profile.DisplayName = slug
+		}
+		profile.Enabled = true
+		seen[slug] = struct{}{}
+		out = append(out, profile)
+	}
+	return out
+}
+
+func agentSummaryFromProfile(a agents.Profile, jobs []agentJobSummary, catalogOnly bool) agentSummary {
+	return agentSummary{
+		Slug:         a.Slug,
+		DisplayName:  a.DisplayName,
+		Description:  a.Description,
+		SXBot:        a.SXBot,
+		PersonaAsset: a.PersonaAsset,
+		SlackAliases: a.SlackAliases,
+		Skills:       a.Skills,
+		SXTeams:      a.SXTeams,
+		SXSkills:     a.SXSkills,
+		Jobs:         jobs,
+		VaultBackend: a.VaultBackend,
+		SyncStatus:   a.SyncStatus,
+		SyncError:    a.SyncError,
+		BuiltIn:      a.BuiltIn,
+		CatalogOnly:  catalogOnly,
+		Default:      a.Slug == agents.DefaultSlug,
+	}
 }
 
 func (b *Bot) agentJobSummariesByAgent(ctx context.Context, orgID string) (map[string][]agentJobSummary, error) {

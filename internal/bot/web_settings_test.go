@@ -88,7 +88,7 @@ func TestLoadBootstrapStatusUsesRepoAndBootstrapFakes(t *testing.T) {
 	}
 }
 
-func TestPopulateSettingsTabDataAgentsUsesFallbackProfiles(t *testing.T) {
+func TestPopulateSettingsTabDataAgentsUsesCatalogBrowser(t *testing.T) {
 	b := newBypassOrgBot(t, "admin")
 	data := map[string]any{}
 
@@ -100,34 +100,32 @@ func TestPopulateSettingsTabDataAgentsUsesFallbackProfiles(t *testing.T) {
 	if !ok {
 		t.Fatalf("Agents type = %T, want []agentSettingsView", data["Agents"])
 	}
-	if len(agents) < 3 {
-		t.Fatalf("agents count = %d, want fallback profiles: %#v", len(agents), agents)
+	if len(agents) != 0 {
+		t.Fatalf("agents count = %d, want no visible profiles before materialization: %#v", len(agents), agents)
 	}
 	builtIns, ok := data["BuiltInAgents"].([]agentSettingsView)
 	if !ok {
 		t.Fatalf("BuiltInAgents type = %T, want []agentSettingsView", data["BuiltInAgents"])
 	}
-	if len(builtIns) < 3 {
-		t.Fatalf("built-in agents count = %d, want fallback profiles: %#v", len(builtIns), builtIns)
+	if len(builtIns) != 0 {
+		t.Fatalf("built-in agents count = %d, want no used built-ins before materialization: %#v", len(builtIns), builtIns)
 	}
 	custom, ok := data["CustomAgents"].([]agentSettingsView)
 	if !ok {
 		t.Fatalf("CustomAgents type = %T, want []agentSettingsView", data["CustomAgents"])
 	}
 	if len(custom) != 0 {
-		t.Fatalf("custom agents = %#v, want none for fallback built-ins", custom)
+		t.Fatalf("custom agents = %#v, want none", custom)
 	}
-	for _, want := range []string{"bob", "alice", "archy"} {
-		found := false
-		for _, got := range agents {
-			if got.Slug == want && got.BuiltIn {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Fatalf("fallback agent %q not found in %#v", want, agents)
-		}
+	catalog, ok := data["CatalogAgents"].([]agentTemplateView)
+	if !ok {
+		t.Fatalf("CatalogAgents type = %T, want []agentTemplateView", data["CatalogAgents"])
+	}
+	if len(catalog) != data["CatalogAgentCount"].(int) || len(catalog) == 0 {
+		t.Fatalf("catalog agents = %d count=%v", len(catalog), data["CatalogAgentCount"])
+	}
+	if catalog[0].Slug == "" || catalog[0].Description == "" {
+		t.Fatalf("catalog first entry incomplete: %+v", catalog[0])
 	}
 }
 
@@ -599,9 +597,9 @@ func TestAgentSettingsActionHandlerBuiltInsReadOnly(t *testing.T) {
 		path string
 		body string
 	}{
-		{name: "save", path: "/settings/org/agents/alice", body: "display_name=Alicia"},
-		{name: "install skill", path: "/settings/org/agents/alice/skills", body: "skill=golang-pro"},
-		{name: "delete", path: "/settings/org/agents/alice/delete", body: ""},
+		{name: "save", path: "/settings/org/agents/code-reviewer", body: "display_name=Code+Reviewer"},
+		{name: "install skill", path: "/settings/org/agents/code-reviewer/skills", body: "skill=golang-pro"},
+		{name: "delete", path: "/settings/org/agents/code-reviewer/delete", body: ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()

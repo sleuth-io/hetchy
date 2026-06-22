@@ -449,7 +449,7 @@ func TestIsSafeAttachmentID(t *testing.T) {
 	}
 }
 
-func TestAgentsHandlerListsFallbackProfiles(t *testing.T) {
+func TestAgentsHandlerListsVisibleAndCatalogProfiles(t *testing.T) {
 	b := newBypassOrgBot(t, "member")
 	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.agentsHandler)))
 
@@ -460,11 +460,23 @@ func TestAgentsHandlerListsFallbackProfiles(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
 	}
+	if strings.TrimSpace(rec.Body.String()) != "[]" {
+		t.Fatalf("default agents response = %s, want no visible agents before materialization", rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/agents?scope=all", nil)
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("catalog status = %d body=%q", rec.Code, rec.Body.String())
+	}
 	body := rec.Body.String()
 	for _, want := range []string{
-		`"slug":"bob"`,
-		`"display_name":"Alice"`,
+		`"slug":"code-reviewer"`,
+		`"display_name":"Code Reviewer"`,
 		`"built_in":true`,
+		`"catalog_only":true`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("agents response missing %q: %s", want, body)
@@ -479,15 +491,15 @@ func TestAgentsHandlerListsFallbackProfiles(t *testing.T) {
 	}
 }
 
-func TestAgentsHandlerOverlaysRemoteTeamsAndSkills(t *testing.T) {
+func TestAgentsHandlerIncludesRemoteAgentsFromSync(t *testing.T) {
 	b := newBypassOrgBot(t, "member")
 	b.sx = &fakeSXManager{remoteAgents: []agents.Profile{{
-		Slug:        "bob",
-		DisplayName: "Bob",
-		Description: "Remote backend agent.",
-		Skills:      []string{"database-migrations"},
+		Slug:        "code-reviewer",
+		DisplayName: "Code Reviewer",
+		Description: "Remote reviewer agent.",
+		Skills:      []string{"code-review"},
 		SXTeams:     []string{"Platform", "Infra"},
-		SXSkills:    []string{"database-migrations", "golang-patterns"},
+		SXSkills:    []string{"code-review", "golang-patterns"},
 	}}}
 	handler := b.auth.Middleware(b.auth.RequireOrg(http.HandlerFunc(b.agentsHandler)))
 
@@ -502,21 +514,24 @@ func TestAgentsHandlerOverlaysRemoteTeamsAndSkills(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("unmarshal: %v body=%q", err, rec.Body.String())
 	}
-	var bob agentSummary
+	var reviewer agentSummary
 	for _, item := range got {
-		if item.Slug == "bob" {
-			bob = item
+		if item.Slug == "code-reviewer" {
+			reviewer = item
 			break
 		}
 	}
-	if bob.Slug == "" {
-		t.Fatalf("bob not found in agents response: %+v", got)
+	if reviewer.Slug == "" {
+		t.Fatalf("code-reviewer not found in agents response: %+v", got)
 	}
-	if strings.Join(bob.SXTeams, ",") != "Platform,Infra" {
-		t.Fatalf("bob sx teams = %+v", bob.SXTeams)
+	if reviewer.CatalogOnly {
+		t.Fatalf("code-reviewer catalog_only = true, want visible remote profile")
 	}
-	if strings.Join(bob.SXSkills, ",") != "database-migrations,golang-patterns" {
-		t.Fatalf("bob sx skills = %+v", bob.SXSkills)
+	if strings.Join(reviewer.SXTeams, ",") != "Platform,Infra" {
+		t.Fatalf("code-reviewer sx teams = %+v", reviewer.SXTeams)
+	}
+	if strings.Join(reviewer.SXSkills, ",") != "code-review,golang-patterns" {
+		t.Fatalf("code-reviewer sx skills = %+v", reviewer.SXSkills)
 	}
 }
 
@@ -565,7 +580,7 @@ func TestAgentJobSummaryFromJob(t *testing.T) {
 	}
 }
 
-func TestAgentsHandlerFallsBackWhenSXSyncFails(t *testing.T) {
+func TestAgentsHandlerReturnsVisibleOnlyWhenSXSyncFails(t *testing.T) {
 	cases := []struct {
 		name string
 		err  error
@@ -587,8 +602,8 @@ func TestAgentsHandlerFallsBackWhenSXSyncFails(t *testing.T) {
 				t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
 			}
 			body := rec.Body.String()
-			if !strings.Contains(body, `"slug":"bob"`) || strings.Contains(body, `"sx_teams"`) {
-				t.Fatalf("agents response did not use local fallback profiles: %s", body)
+			if strings.TrimSpace(body) != "[]" {
+				t.Fatalf("agents response should remain visible-only after sx sync failure: %s", body)
 			}
 		})
 	}
