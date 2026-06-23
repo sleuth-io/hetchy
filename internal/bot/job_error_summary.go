@@ -9,11 +9,7 @@ func jobLastErrorView(raw string) (summary, detail string) {
 	if raw == "" {
 		return "", ""
 	}
-	summary = summarizeJobLastError(raw)
-	if summary == "" {
-		summary = truncate(compactJobErrorLine(raw), jobLastErrorSummaryMaxRunes)
-	}
-	summary = truncate(summary, jobLastErrorSummaryMaxRunes)
+	summary = truncate(summarizeJobLastError(raw), jobLastErrorSummaryMaxRunes)
 	if jobErrorNeedsDetail(raw, summary) {
 		detail = raw
 	}
@@ -37,16 +33,16 @@ func summarizeJobLastError(raw string) string {
 		return "Agent setup failed before the run started."
 	}
 	if rest, ok := cutJobErrorPrefix(raw, "load org config:"); ok {
-		return "Could not load organization settings: " + ensureJobErrorSentence(truncate(compactJobErrorLine(rest), 110))
+		return "Could not load organization settings: " + ensureJobErrorSentence(upperFirstASCII(truncate(compactJobErrorLine(rest), 110)))
 	}
 	if rest, ok := cutJobErrorPrefix(raw, "load durable run:"); ok {
-		return "Could not read the completed run status: " + ensureJobErrorSentence(truncate(compactJobErrorLine(rest), 110))
+		return "Could not read the completed run status: " + ensureJobErrorSentence(upperFirstASCII(truncate(compactJobErrorLine(rest), 110)))
 	}
 	if strings.Contains(lower, "durable run was not created") {
 		return "The scheduled job did not create an agent run."
 	}
 	if rest, ok := cutJobErrorPrefix(raw, "job run ended in state "); ok {
-		return "Job run ended in state " + ensureJobErrorSentence(truncate(compactJobErrorLine(rest), 80))
+		return "Job run ended in state " + ensureJobErrorSentence(upperFirstASCII(truncate(compactJobErrorLine(rest), 80)))
 	}
 	return truncate(compactJobErrorLine(raw), jobLastErrorSummaryMaxRunes)
 }
@@ -57,7 +53,6 @@ func jobErrorNeedsDetail(raw, summary string) bool {
 		return false
 	}
 	return strings.ContainsAny(raw, "\n|") ||
-		strings.Contains(compact, ": ") ||
 		len([]rune(compact)) > jobLastErrorSummaryMaxRunes
 }
 
