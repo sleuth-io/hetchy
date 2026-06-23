@@ -439,7 +439,22 @@
   .job-foot .pill { display: inline-block; padding: .14rem .5rem; border-radius: 1rem;
                     background: #f0f2f5; color: #666; font-size: .7rem;
                     text-transform: uppercase; letter-spacing: .03em; }
-  .job-error { color: #a02020; overflow-wrap: anywhere; }
+  .job-error { display: grid; gap: .45rem; margin-top: .75rem; padding: .65rem .75rem;
+               border: 1px solid #f0c4c4; border-radius: .45rem; background: #fff7f7;
+               color: #7d2020; font-size: .82rem; line-height: 1.4; }
+  .job-error-main { display: grid; gap: .15rem; min-width: 0; }
+  .job-error-label { color: #a64a4a; font-size: .68rem; font-weight: 700;
+                     letter-spacing: .04em; text-transform: uppercase; }
+  .job-error strong { color: #6f1818; font-size: .86rem; line-height: 1.35;
+                      overflow-wrap: anywhere; }
+  .job-error details { min-width: 0; }
+  .job-error summary { width: max-content; max-width: 100%; color: #8d2a2a;
+                       cursor: pointer; font-weight: 700; }
+  .job-error pre { margin: .4rem 0 0; max-height: 7rem; overflow: auto;
+                   white-space: pre-wrap; overflow-wrap: anywhere;
+                   padding: .5rem .6rem; border: 1px solid rgba(160,32,32,.18);
+                   border-radius: .35rem; background: rgba(255,255,255,.72);
+                   color: #7d2020; font: .74rem/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; }
   .job-form-grid { display: grid; grid-template-columns: minmax(12rem, .9fr) minmax(18rem, 1.35fr); gap: .65rem; }
   .job-form-grid > div,
   .job-schedule-advanced { display: grid; gap: .35rem; min-width: 0; }
@@ -1042,7 +1057,11 @@
   html.is-dark .job-meta-grid small { color: #a8a8ad; }
   html.is-dark .job-foot { color: #9a9aa0; }
   html.is-dark .job-foot .pill { background: #2e2e33; color: #b8b8bc; }
-  html.is-dark .job-error { color: #f0a0a0; }
+  html.is-dark .job-error { background: #321d20; border-color: #5f3033; color: #f1b0b0; }
+  html.is-dark .job-error-label { color: #de8d8d; }
+  html.is-dark .job-error strong { color: #ffd0d0; }
+  html.is-dark .job-error summary { color: #f0a0a0; }
+  html.is-dark .job-error pre { background: #24181a; border-color: #5f3033; color: #f1b0b0; }
   html.is-dark .job-repo-chip { background: #172638; border-color: #295b83; color: #9dccff; }
   html.is-dark .job-repo-chip button:hover { background: rgba(157,204,255,.14); }
   html.is-dark .job-form-error { background: #3b1717; color: #ff8888; }

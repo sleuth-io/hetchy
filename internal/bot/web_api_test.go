@@ -551,8 +551,8 @@ func TestAgentJobSummaryFromJob(t *testing.T) {
 		NextRunAt:       next,
 		LastRunAt:       last,
 
-		LastExecutionStatus: jobs.StatusSucceeded,
-		LastError:           "",
+		LastExecutionStatus: jobs.StatusFailed,
+		LastError:           "failed once",
 	})
 	if got.ID != "job_123" || got.Name != "Dependency sweep" {
 		t.Fatalf("basic summary fields = %+v", got)
@@ -575,8 +575,11 @@ func TestAgentJobSummaryFromJob(t *testing.T) {
 	if got.NextRunLabel != "Jun 4 at 9:00 AM" || got.LastRunLabel != "Jun 3 at 9:00 AM" {
 		t.Fatalf("time labels = next %q last %q", got.NextRunLabel, got.LastRunLabel)
 	}
-	if got.LastExecutionStatus != jobs.StatusSucceeded {
+	if got.LastExecutionStatus != jobs.StatusFailed {
 		t.Fatalf("last status = %q", got.LastExecutionStatus)
+	}
+	if got.LastError != "failed once" || got.LastErrorSummary != "failed once" {
+		t.Fatalf("last error = %q summary=%q", got.LastError, got.LastErrorSummary)
 	}
 }
 

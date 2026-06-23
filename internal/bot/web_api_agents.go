@@ -49,6 +49,7 @@ type agentJobSummary struct {
 	LastRunLabel        string   `json:"last_run_label,omitempty"`
 	LastExecutionStatus string   `json:"last_execution_status,omitempty"`
 	LastError           string   `json:"last_error,omitempty"`
+	LastErrorSummary    string   `json:"last_error_summary,omitempty"`
 }
 
 func (b *Bot) agentsHandler(w http.ResponseWriter, r *http.Request) {
@@ -273,6 +274,7 @@ func agentJobSummaryFromJob(job jobs.Job) agentJobSummary {
 			additional = append(additional, slug)
 		}
 	}
+	lastErrorSummary, _ := jobLastErrorView(job.LastError)
 	return agentJobSummary{
 		ID:                  job.ID,
 		Name:                job.Name,
@@ -290,6 +292,7 @@ func agentJobSummaryFromJob(job jobs.Job) agentJobSummary {
 		LastRunLabel:        jobDisplayTime(job.LastRunAt, job.Timezone),
 		LastExecutionStatus: job.LastExecutionStatus,
 		LastError:           job.LastError,
+		LastErrorSummary:    lastErrorSummary,
 	}
 }
 

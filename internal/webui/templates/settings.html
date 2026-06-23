@@ -1212,8 +1212,21 @@
         <div class="job-foot">
           {{if .LastExecutionStatus}}<span class="pill">{{.LastExecutionStatus}}</span>{{end}}
           {{if .LastRunLabel}}<span>last run: {{.LastRunLabel}}</span>{{end}}
-          {{if .LastError}}<span class="job-error">{{.LastError}}</span>{{end}}
         </div>
+        {{if .LastError}}
+        <div class="job-error" role="status">
+          <div class="job-error-main">
+            <span class="job-error-label">Last failure</span>
+            <strong>{{orString .LastErrorSummary "Job failed"}}</strong>
+          </div>
+          {{if .LastErrorDetail}}
+          <details>
+            <summary>Details</summary>
+            <pre>{{.LastErrorDetail}}</pre>
+          </details>
+          {{end}}
+        </div>
+        {{end}}
         <div data-job-additional hidden>{{.AdditionalReposText}}</div>
       </article>
       {{end}}

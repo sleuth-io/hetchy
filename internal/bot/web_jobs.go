@@ -34,6 +34,7 @@ type jobAPIResponse struct {
 	LastRunLabel        string   `json:"last_run_label,omitempty"`
 	LastRunID           string   `json:"last_run_id,omitempty"`
 	LastError           string   `json:"last_error,omitempty"`
+	LastErrorSummary    string   `json:"last_error_summary,omitempty"`
 	LastExecutionID     string   `json:"last_execution_id,omitempty"`
 	LastExecutionStatus string   `json:"last_execution_status,omitempty"`
 	CreatedAt           string   `json:"created_at,omitempty"`
@@ -338,6 +339,7 @@ func jobAPIFromJob(job jobs.Job) jobAPIResponse {
 			additional = append(additional, slug)
 		}
 	}
+	lastErrorSummary, _ := jobLastErrorView(job.LastError)
 	return jobAPIResponse{
 		ID:                  job.ID,
 		Name:                job.Name,
@@ -358,6 +360,7 @@ func jobAPIFromJob(job jobs.Job) jobAPIResponse {
 		LastRunLabel:        jobDisplayTime(job.LastRunAt, job.Timezone),
 		LastRunID:           job.LastRunID,
 		LastError:           job.LastError,
+		LastErrorSummary:    lastErrorSummary,
 		LastExecutionID:     job.LastExecutionID,
 		LastExecutionStatus: job.LastExecutionStatus,
 		CreatedAt:           formatJobTime(job.CreatedAt),

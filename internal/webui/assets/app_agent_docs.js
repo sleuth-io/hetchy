@@ -202,9 +202,16 @@
     const status = compact(job && job.last_execution_status, '');
     const lastRun = compact(job && job.last_run_label, fullDate(job && job.last_run_at));
     const error = compact(job && job.last_error, '');
-    if (error) return error;
+    const summary = compact(job && job.last_error_summary, '');
+    if (error) return summary || truncateJobStatusDetail(error, 180);
     if (status && lastRun) return lastRun;
     return '';
+  }
+
+  function truncateJobStatusDetail(text, max) {
+    text = compact(text, '');
+    if (!text || text.length <= max) return text;
+    return text.slice(0, Math.max(0, max - 3)).trimEnd() + '...';
   }
 
   function agentJobLastStatusHTML(job) {
