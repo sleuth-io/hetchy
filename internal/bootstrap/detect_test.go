@@ -175,7 +175,7 @@ wheels = [
 	if strings.Join(py.Tooling, ",") != "pyproject,uv" {
 		t.Fatalf("tooling = %#v", py.Tooling)
 	}
-	if strings.Join(py.TargetVersions, ",") != "3.12,py312" {
+	if strings.Join(py.TargetVersions, ",") != "3.12" {
 		t.Fatalf("target versions = %#v", py.TargetVersions)
 	}
 	dep := findNativeDependency(py.NativeDependencies, "xmlsec")

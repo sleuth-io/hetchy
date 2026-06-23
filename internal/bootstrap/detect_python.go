@@ -145,10 +145,24 @@ type uvLockWheel struct {
 
 func appendPythonTargetVersions(out *[]string, raw pyprojectTOML) {
 	for _, version := range raw.Tool.Black.TargetVersion {
-		appendUniqueString(out, version)
+		appendUniqueString(out, normalizePy425Tag(version))
 	}
-	appendUniqueString(out, raw.Tool.Ruff.TargetVersion)
+	appendUniqueString(out, normalizePy425Tag(raw.Tool.Ruff.TargetVersion))
 	appendUniqueString(out, raw.Tool.Mypy.PythonVersion)
+}
+
+func normalizePy425Tag(version string) string {
+	version = strings.TrimSpace(version)
+	digits, ok := strings.CutPrefix(version, "py")
+	if !ok || len(digits) < 2 {
+		return version
+	}
+	for _, r := range digits {
+		if r < '0' || r > '9' {
+			return version
+		}
+	}
+	return digits[:1] + "." + digits[1:]
 }
 
 func detectPythonVersionFile(root string) (string, string) {

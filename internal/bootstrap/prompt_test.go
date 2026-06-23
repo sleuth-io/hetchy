@@ -40,7 +40,7 @@ func TestBuildPromptContent(t *testing.T) {
 			RequiresPython:     ">=3.12",
 			LockRequiresPython: ">=3.12",
 			Tooling:            []string{"pyproject", "uv"},
-			TargetVersions:     []string{"py312"},
+			TargetVersions:     []string{"3.12"},
 			NativeDependencies: []PythonNativeDependency{
 				{
 					Name:                  "xmlsec",
