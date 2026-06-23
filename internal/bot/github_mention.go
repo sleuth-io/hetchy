@@ -134,7 +134,7 @@ func githubMentionBoundary(s string, idx int, before bool) bool {
 }
 
 func githubMentionNameRune(r rune) bool {
-	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '-' || r == '_' || r == '[' || r == ']'
+	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '-' || r == '_'
 }
 
 func githubMentionAuthorized(authorAssociation string) bool {

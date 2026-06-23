@@ -372,6 +372,35 @@ func TestPullRequestReviewSubmittedMentionUsesInstallationOnce(t *testing.T) {
 	assertWebhookArg(t, call.args, 0, int64(-42))
 }
 
+func TestPullRequestReviewSubmittedMentionContinuesAfterInstallationLookupFailure(t *testing.T) {
+	fake := newWebhookFakeDB()
+	fake.queryRow["GetGithubInstallation"] = webhookRow{err: errors.New("not found")}
+	b := &Bot{
+		log:   discardLogger(),
+		cfg:   Config{GitHubAppSlug: "hetchy-test"},
+		store: &db.Store{Queries: sqlc.New(fake)},
+		live:  newLiveRegistry(),
+	}
+
+	b.handlePullRequestReviewEvent(context.Background(), []byte(`{
+		"action": "submitted",
+		"installation": {"id": -42},
+		"repository": {"full_name": "acme/repo"},
+		"pull_request": {"number": 7, "title": "Fix bug", "body": "Body", "html_url": "https://github.com/acme/repo/pull/7"},
+		"review": {"id": 123, "body": "@hetchy-test fix this", "html_url": "https://github.com/acme/repo/pull/7#pullrequestreview-123", "author_association": "MEMBER", "user": {"login": "alice"}}
+	}`), "delivery-1")
+
+	var lookups int
+	for _, call := range fake.queryRowCalls {
+		if strings.Contains(call.sql, "GetGithubInstallation") {
+			lookups++
+		}
+	}
+	if lookups != 2 {
+		t.Fatalf("installation lookups = %d, want 2", lookups)
+	}
+}
+
 func TestPullRequestReviewMentionRequestIDDedupesReviewEdits(t *testing.T) {
 	run := func(action, delivery string) webhookDBCall {
 		t.Helper()

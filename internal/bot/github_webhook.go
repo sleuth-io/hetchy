@@ -269,14 +269,14 @@ func (b *Bot) handlePullRequestReviewEvent(ctx context.Context, body []byte, del
 		installation, err := b.store.Queries.GetGithubInstallation(ctx, p.Installation.ID)
 		if err != nil {
 			b.log.Warn("github webhook: pull_request_review installation not recorded", "installation", p.Installation.ID, "action", p.Action, "error", err)
-			return
+		} else {
+			orgID = installation.OrgID
+			prURL := p.PullRequest.GetHTMLURL()
+			if prURL == "" {
+				prURL = canonicalGitHubPRURL(owner, repo, p.PullRequest.GetNumber())
+			}
+			b.recheckAutoMergeForPR(ctx, installation.OrgID, owner, repo, p.PullRequest.GetNumber(), prURL)
 		}
-		orgID = installation.OrgID
-		prURL := p.PullRequest.GetHTMLURL()
-		if prURL == "" {
-			prURL = canonicalGitHubPRURL(owner, repo, p.PullRequest.GetNumber())
-		}
-		b.recheckAutoMergeForPR(ctx, installation.OrgID, owner, repo, p.PullRequest.GetNumber(), prURL)
 	}
 	if directive, ok := githubMentionDirective(p.Review.Body, githubMentionAliases(b.cfg.GitHubAppSlug)); ok {
 		prURL := p.PullRequest.GetHTMLURL()

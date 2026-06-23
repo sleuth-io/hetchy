@@ -31,6 +31,12 @@ func TestGithubMentionDirective(t *testing.T) {
 			ok:   true,
 		},
 		{
+			name: "bracketed mention",
+			body: "[@hetchy fix this]",
+			want: "[ fix this]",
+			ok:   true,
+		},
+		{
 			name: "app slug",
 			body: "@hetchy-test fix the flaky check",
 			want: "fix the flaky check",
