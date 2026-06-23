@@ -26,6 +26,7 @@ type Hints struct {
 	Dockerfile    *Dockerfile    `json:"dockerfile,omitempty"`
 	Makefile      *Makefile      `json:"makefile,omitempty"`
 	PackageJSON   *PackageJSON   `json:"package_json,omitempty"`
+	Python        *PythonProject `json:"python,omitempty"`
 	GoMod         *GoMod         `json:"go_mod,omitempty"`
 	EnvExample    *EnvExample    `json:"env_example,omitempty"`
 	ReadmeExcerpt string         `json:"readme_excerpt,omitempty"`
@@ -109,6 +110,7 @@ func Detect(root string) (*Hints, error) {
 	h.Dockerfile = detectDockerfile(root)
 	h.Makefile = detectMakefile(root)
 	h.PackageJSON = detectPackageJSON(root)
+	h.Python = detectPythonProject(root, &h.Notes)
 	h.GoMod = detectGoMod(root)
 	h.EnvExample = detectEnvExample(root)
 	h.ReadmeExcerpt = readmeExcerpt(root, 200)

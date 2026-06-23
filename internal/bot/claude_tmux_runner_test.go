@@ -76,6 +76,8 @@ func TestClaudeTmuxRunnerScript_Embedded(t *testing.T) {
 		// disallowed or agents that "wait" via wakeup get silently
 		// truncated mid-task.
 		`--disallowedTools ScheduleWakeup`,
+		`HETCHY_CLAUDE_TUI_SETTLE_S:-5`,
+		`HETCHY_CLAUDE_STARTUP_TIMEOUT_S:-180`,
 		`HETCHY_CLAUDE_WALL_TIMEOUT_S`,
 		`HETCHY_CLAUDE_IDLE_TIMEOUT_S`,
 		`HETCHY_CLAUDE_END_GRACE_S`,

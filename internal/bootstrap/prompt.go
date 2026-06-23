@@ -171,6 +171,24 @@ Process:
      watchers). Look for AUTH_BYPASS / CI / TEST flags that elide
      external dependencies; for bootstrap purposes, prefer those paths.
 
+     Python/uv version discipline: if the detection hints include
+     .python-version, runtime.txt, pyproject.toml, or uv.lock, treat the
+     interpreter version as load-bearing before dependency installation.
+     Do not run a bare 'uv sync' and let uv choose the newest CPython
+     satisfying a broad 'requires-python' range. Prefer the repo-pinned
+     interpreter exactly:
+
+       uv python install <version>
+       uv sync --python <version> --frozen
+
+     or create .venv with that interpreter and then sync into it. This
+     matters for native Python packages: if uv.lock lists wheels only for
+     cp312, using cp313 will force a source build and can fail even when
+     the repo itself supports ">=3.12". When native packages such as
+     xmlsec, lxml, psycopg2, gevent, numpy, pandas, or scikit-learn are
+     present, verify the wheel tags and prefer the interpreter they
+     target before trying compiler/system-package workarounds.
+
      CRITICAL — landing-page reachability: a SECOND agent will later use
      Playwright CLI against the running app to screenshot UI changes. That
      agent has no credentials and will get stuck on any login wall,
@@ -354,6 +372,12 @@ func renderHints(b *strings.Builder, h *Hints) {
 		b.WriteString("\n")
 	}
 
+	if h.Python != nil {
+		fmt.Fprintln(b, "## Python project")
+		renderPythonProject(b, h.Python)
+		b.WriteString("\n")
+	}
+
 	if h.GoMod != nil {
 		fmt.Fprintln(b, "## go.mod")
 		fmt.Fprintf(b, "module %s, go %s\n\n", h.GoMod.Module, h.GoMod.GoVer)
@@ -436,6 +460,47 @@ func renderDevContainerValue(v any) string {
 		return fmt.Sprint(v)
 	}
 	return string(data)
+}
+
+func renderPythonProject(b *strings.Builder, py *PythonProject) {
+	if py.PyprojectPath != "" {
+		fmt.Fprintf(b, "pyproject: %s\n", py.PyprojectPath)
+	}
+	if py.UVLockPath != "" {
+		fmt.Fprintf(b, "uv lock: %s\n", py.UVLockPath)
+	}
+	if py.PythonVersion != "" {
+		fmt.Fprintf(b, "%s: %s\n", py.PythonVersionFile, py.PythonVersion)
+	}
+	if py.RequiresPython != "" {
+		fmt.Fprintf(b, "requires-python: %s\n", py.RequiresPython)
+	}
+	if py.LockRequiresPython != "" {
+		fmt.Fprintf(b, "uv.lock requires-python: %s\n", py.LockRequiresPython)
+	}
+	if len(py.TargetVersions) > 0 {
+		fmt.Fprintf(b, "tool target versions: %s\n", strings.Join(py.TargetVersions, ", "))
+	}
+	if len(py.Tooling) > 0 {
+		fmt.Fprintf(b, "tooling: %s\n", strings.Join(py.Tooling, ", "))
+	}
+	if len(py.NativeDependencies) == 0 {
+		return
+	}
+	fmt.Fprintln(b, "native dependency signals:")
+	for _, dep := range py.NativeDependencies {
+		parts := []string{dep.Name}
+		if dep.Version != "" {
+			parts = append(parts, "version "+dep.Version)
+		}
+		if len(dep.WheelPythonTags) > 0 {
+			parts = append(parts, "wheels "+strings.Join(dep.WheelPythonTags, ", "))
+		}
+		if dep.HasSourceDistribution {
+			parts = append(parts, "sdist available")
+		}
+		fmt.Fprintf(b, "- %s\n", strings.Join(parts, "; "))
+	}
 }
 
 func sortedKeys[V any](m map[string]V) []string {

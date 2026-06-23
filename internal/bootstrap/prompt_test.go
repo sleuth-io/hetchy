@@ -32,6 +32,24 @@ func TestBuildPromptContent(t *testing.T) {
 				"dev": "Bring up everything",
 			},
 		},
+		Python: &PythonProject{
+			PyprojectPath:      "pyproject.toml",
+			UVLockPath:         "uv.lock",
+			PythonVersionFile:  ".python-version",
+			PythonVersion:      "3.12.2",
+			RequiresPython:     ">=3.12",
+			LockRequiresPython: ">=3.12",
+			Tooling:            []string{"pyproject", "uv"},
+			TargetVersions:     []string{"3.12"},
+			NativeDependencies: []PythonNativeDependency{
+				{
+					Name:                  "xmlsec",
+					Version:               "1.3.14",
+					WheelPythonTags:       []string{"cp312"},
+					HasSourceDistribution: true,
+				},
+			},
+		},
 		EnvExample: &EnvExample{
 			Path: ".env.example",
 			Keys: []string{"DATABASE_URL", "STRIPE_SECRET_KEY"},
@@ -71,6 +89,13 @@ func TestBuildPromptContent(t *testing.T) {
 		// gets stuck on a login wall.
 		"landing-page reachability",
 		"BYPASS_*",
+		// Python/uv version discipline. This avoids a real failure mode
+		// where uv chose CPython 3.13 for a repo whose native wheels were
+		// locked for CPython 3.12.
+		"Python/uv version discipline",
+		"uv sync --python <version> --frozen",
+		"native Python packages",
+		"cp312",
 		// Step 2 — name the grep pattern
 		"os.Getenv",
 		// Step 8 — the explicit "do not fabricate" line
@@ -99,6 +124,10 @@ func TestBuildPromptContent(t *testing.T) {
 		".env.example",
 		"DATABASE_URL",
 		"STRIPE_SECRET_KEY",
+		"Python project",
+		".python-version: 3.12.2",
+		"native dependency signals",
+		"xmlsec; version 1.3.14; wheels cp312; sdist available",
 	}
 	for _, want := range mustContain {
 		if !strings.Contains(prompt, want) {
