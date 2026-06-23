@@ -40,10 +40,22 @@ type orgConfigStore interface {
 	Upsert(ctx context.Context, cfg orgcfg.Config) (orgcfg.Config, error)
 }
 
+// agentStore is the subset of agents.Store used by Manager. Using an
+// interface here lets unit tests inject a fake without a real Postgres
+// connection.
+type agentStore interface {
+	EnsureSeeded(ctx context.Context, orgID string) error
+	GetBySlug(ctx context.Context, orgID, slug string) (agents.Profile, error)
+	Upsert(ctx context.Context, orgID string, p agents.Profile) (agents.Profile, error)
+	UpdateVaultSync(ctx context.Context, orgID, slug, backend, botKey, templateSlug, status, syncErr string) (agents.Profile, error)
+	List(ctx context.Context, orgID string) ([]agents.Profile, error)
+	Delete(ctx context.Context, orgID, slug string) error
+}
+
 type Manager struct {
 	db     *db.Store
 	orgs   orgConfigStore
-	agents *agents.Store
+	agents agentStore
 	app    githubapp.TokenSource
 
 	publicVaultURL      string

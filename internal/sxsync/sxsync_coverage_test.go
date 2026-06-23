@@ -31,12 +31,44 @@ func (f *fakeOrgConfigStore) Upsert(_ context.Context, cfg orgcfg.Config) (orgcf
 	return cfg, nil
 }
 
+// fakeAgentStore is a test double for agentStore. It returns a pre-configured
+// profile for GetBySlug and simulates a disabled DB by returning "store
+// disabled" from Upsert — callers treat that error as evidence the vault
+// operations preceding Upsert completed successfully.
+type fakeAgentStore struct {
+	profile agents.Profile
+}
+
+func (f *fakeAgentStore) EnsureSeeded(_ context.Context, _ string) error { return nil }
+
+func (f *fakeAgentStore) GetBySlug(_ context.Context, _, slug string) (agents.Profile, error) {
+	if agents.NormalizeSlug(slug) == agents.NormalizeSlug(f.profile.Slug) {
+		return f.profile, nil
+	}
+	return agents.Profile{}, agents.ErrNotFound
+}
+
+func (f *fakeAgentStore) Upsert(_ context.Context, _ string, _ agents.Profile) (agents.Profile, error) {
+	return agents.Profile{}, errors.New("agents: store disabled")
+}
+
+func (f *fakeAgentStore) UpdateVaultSync(_ context.Context, _, _, _, _, _, _, _ string) (agents.Profile, error) {
+	return agents.Profile{}, errors.New("agents: store disabled")
+}
+
+func (f *fakeAgentStore) List(_ context.Context, _ string) ([]agents.Profile, error) {
+	return nil, nil
+}
+
+func (f *fakeAgentStore) Delete(_ context.Context, _, _ string) error { return nil }
+
 // pathVaultManager creates a test Manager whose openVaultFn returns the given
 // path vault client as a BackendGitHubGit handle. It skips the normal
-// orgcfg / db lookup so tests do not need a Postgres connection.
-func pathVaultManager(client *sxlib.Client) *Manager {
+// orgcfg / db lookup so tests do not need a Postgres connection. The supplied
+// profile is returned by the manager's agent store for GetBySlug lookups.
+func pathVaultManager(client *sxlib.Client, profile agents.Profile) *Manager {
 	return &Manager{
-		agents: agents.NewStore(nil),
+		agents: &fakeAgentStore{profile: profile},
 		openVaultFn: func(_ context.Context, _ string, _ Actor) (VaultHandle, error) {
 			return VaultHandle{Backend: BackendGitHubGit, Client: client}, nil
 		},
@@ -176,10 +208,10 @@ func TestRuntimeSkillsNewEnvUsesSlugFallbackForLabel(t *testing.T) {
 
 // TestManagerRefreshExistingRemoteAgentMergesState confirms that the
 // mergeRemoteAgentState call is reached when the agent exists locally. The
-// test uses agents.NewStore(nil) so Upsert fails with "store disabled"; we
-// treat that error as evidence the merge was attempted.
+// fakeAgentStore's Upsert returns "store disabled"; we treat that error as
+// evidence the merge was attempted.
 func TestManagerRefreshExistingRemoteAgentMergesState(t *testing.T) {
-	m := &Manager{agents: agents.NewStore(nil)}
+	m := &Manager{agents: &fakeAgentStore{profile: agents.Profile{Slug: "bob", SXBot: "bob"}}}
 	remote := agents.Profile{Slug: "bob", SXBot: "updated-bob-bot"}
 	err := m.refreshExistingRemoteAgent(context.Background(), "org1", remote)
 	if err == nil || !strings.Contains(err.Error(), "store disabled") {
@@ -203,7 +235,7 @@ func TestManagerListSkillsWithPathVaultReturnsSkills(t *testing.T) {
 		t.Fatalf("PutSkillZip: %v", err)
 	}
 
-	m := pathVaultManager(vaultClient)
+	m := pathVaultManager(vaultClient, agents.Profile{})
 	skills, err := m.ListSkills(ctx, "org1", Actor{Name: "Admin"})
 	if err != nil {
 		t.Fatalf("ListSkills: %v", err)
@@ -230,7 +262,7 @@ func TestManagerListTeamsWithPathVaultReturnsNonNilSlice(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	m := pathVaultManager(vaultClient)
+	m := pathVaultManager(vaultClient, agents.Profile{})
 	teams, err := m.ListTeams(ctx, "org1", Actor{Name: "Admin"})
 	if err != nil {
 		t.Fatalf("ListTeams: %v", err)
@@ -264,7 +296,7 @@ func TestManagerAttachSkillWithPathVaultInstallsSkillOnBot(t *testing.T) {
 		t.Fatalf("PutSkillZip setup: %v", err)
 	}
 
-	m := pathVaultManager(vaultClient)
+	m := pathVaultManager(vaultClient, agents.Profile{Slug: "bob", SXBot: "bob"})
 	_, err = m.AttachSkill(ctx, "org1", Actor{Name: "Admin"}, "bob", "fix-pr")
 	if err == nil || !strings.Contains(err.Error(), "store disabled") {
 		t.Fatalf("AttachSkill: %v, want store disabled after vault operations", err)
@@ -300,7 +332,7 @@ func TestManagerDetachSkillWithPathVaultUninstallsSkillFromBot(t *testing.T) {
 		t.Fatalf("InstallAssetToBot setup: %v", err)
 	}
 
-	m := pathVaultManager(vaultClient)
+	m := pathVaultManager(vaultClient, agents.Profile{Slug: "bob", SXBot: "bob"})
 	_, err = m.DetachSkill(ctx, "org1", Actor{Name: "Admin"}, "bob", "fix-pr")
 	if err == nil || !strings.Contains(err.Error(), "store disabled") {
 		t.Fatalf("DetachSkill: %v, want store disabled after vault operations", err)
@@ -327,7 +359,7 @@ func TestManagerUploadSkillZipWithPathVaultPutsSkillOnBot(t *testing.T) {
 		t.Fatalf("EnsureBot setup: %v", err)
 	}
 
-	m := pathVaultManager(vaultClient)
+	m := pathVaultManager(vaultClient, agents.Profile{Slug: "bob", SXBot: "bob"})
 	_, err = m.UploadSkillZip(ctx, "org1", Actor{Name: "Admin"}, "bob", sxlib.SkillZipSpec{
 		Name: "custom-skill", Version: "1", Description: "Custom skill.",
 		ZipData: testSkillZip(t, "custom-skill"),
@@ -348,6 +380,79 @@ func TestManagerUploadSkillZipWithPathVaultPutsSkillOnBot(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("custom-skill not found in vault after UploadSkillZip: %+v", assets)
+	}
+}
+
+// --- DeleteAgent success path ---
+
+// TestManagerDeleteAgentWithPathVaultRemovesBotFromVault verifies that
+// DeleteAgent routes through the vault delete logic. The fakeAgentStore
+// returns a non-built-in profile for "bob"; the path vault has "bob" bot
+// pre-created. After deleteAgentFromVault runs, fakeAgentStore.Delete returns
+// nil, so the whole operation succeeds.
+func TestManagerDeleteAgentWithPathVaultRemovesBotFromVault(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	vaultClient, err := sxlib.OpenPath(root, sxlib.PathOptions{Actor: sxlib.Actor{Email: "admin@example.com"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := vaultClient.EnsureBot(ctx, sxlib.Bot{Name: "bob", Description: "Bob agent"}); err != nil {
+		t.Fatalf("EnsureBot setup: %v", err)
+	}
+
+	m := pathVaultManager(vaultClient, agents.Profile{Slug: "bob", SXBot: "bob", Enabled: true})
+	if err := m.DeleteAgent(ctx, "org1", Actor{Name: "Admin"}, "bob"); err != nil {
+		t.Fatalf("DeleteAgent: %v", err)
+	}
+	bots, lerr := vaultClient.ListBots(ctx)
+	if lerr != nil {
+		t.Fatalf("ListBots: %v", lerr)
+	}
+	for _, b := range bots {
+		if b.Name == "bob" {
+			t.Fatalf("bot 'bob' still exists in vault after DeleteAgent: %+v", bots)
+		}
+	}
+}
+
+// --- SaveAgent success path ---
+
+// TestManagerSaveAgentWithPathVaultCreatesAgentInVault verifies that
+// SaveAgent writes the bot and agent asset to the vault before attempting
+// the DB write. The fakeAgentStore.Upsert returns "store disabled"; we treat
+// that error as evidence that PutAgent completed successfully.
+func TestManagerSaveAgentWithPathVaultCreatesAgentInVault(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	vaultClient, err := sxlib.OpenPath(root, sxlib.PathOptions{Actor: sxlib.Actor{Email: "admin@example.com"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m := pathVaultManager(vaultClient, agents.Profile{})
+	_, err = m.SaveAgent(ctx, "org1", Actor{Name: "Admin"}, agents.Profile{
+		Slug:        "bob",
+		DisplayName: "Bob",
+		SXBot:       "bob",
+		Description: "Bob agent",
+	}, "")
+	if err == nil || !strings.Contains(err.Error(), "store disabled") {
+		t.Fatalf("SaveAgent: %v, want store disabled after vault operations", err)
+	}
+	bots, lerr := vaultClient.ListBots(ctx)
+	if lerr != nil {
+		t.Fatalf("ListBots: %v", lerr)
+	}
+	found := false
+	for _, b := range bots {
+		if b.Name == "bob" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("bot 'bob' not found in vault after SaveAgent: %+v", bots)
 	}
 }
 
