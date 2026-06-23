@@ -82,6 +82,11 @@ func TestSummarizeJobLastError(t *testing.T) {
 			want: "Agent setup failed before the run started.",
 		},
 		{
+			name: "setup failure with step and no exit code",
+			raw:  `agent setup exited before runtime: step "write-env" completed normally`,
+			want: "Agent startup failed while preparing the sandbox command.",
+		},
+		{
 			name: "org config load failure",
 			raw:  "load org config: no such file",
 			want: "Could not load organization settings: No such file.",
