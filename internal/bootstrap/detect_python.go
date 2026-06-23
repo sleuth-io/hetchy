@@ -230,7 +230,11 @@ func appendPythonWheelTags(existing []string, wheels []uvLockWheel) []string {
 		seen[tag] = struct{}{}
 	}
 	for _, wheel := range wheels {
-		for _, m := range pythonWheelTagRe.FindAllStringSubmatch(wheel.URL, -1) {
+		filename := wheel.URL
+		if i := strings.LastIndex(wheel.URL, "/"); i >= 0 {
+			filename = wheel.URL[i+1:]
+		}
+		for _, m := range pythonWheelTagRe.FindAllStringSubmatch(filename, -1) {
 			if len(m) < 2 {
 				continue
 			}

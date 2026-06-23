@@ -180,6 +180,8 @@ run_claude_interactive_with_watchdog() {
   rm -f "$trimmed_prompt"
 
   local waited=0
+  # First-run OAuth/TUI startup can take over a minute before the first
+  # transcript file appears; wall and idle watchdogs still bound total runtime.
   local max_startup=${HETCHY_CLAUDE_STARTUP_TIMEOUT_S:-180}
   while (( waited < max_startup )); do
     while IFS= read -r path; do

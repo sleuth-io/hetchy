@@ -197,6 +197,16 @@ func TestDetectPythonVersionFileRejectsNonPythonRuntime(t *testing.T) {
 	}
 }
 
+func TestAppendPythonWheelTagsReadsFilenameOnly(t *testing.T) {
+	tags := appendPythonWheelTags(nil, []uvLockWheel{{
+		URL: "https://cdn.example/simple/foo-cp399-bar/xmlsec-1.3.14-cp312-cp312-manylinux.whl",
+	}})
+
+	if strings.Join(tags, ",") != "cp312" {
+		t.Fatalf("wheel tags = %#v, want cp312", tags)
+	}
+}
+
 func TestDetectDevContainerNestedFallback(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, ".devcontainer", "go", "devcontainer.json"), `{"image":"golang:1.25"}`)
