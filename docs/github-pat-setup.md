@@ -34,6 +34,12 @@ PAT mode does not receive GitHub App webhooks. Hetchy refreshes repository and
 pull request state during normal actions, and the main process periodically
 polls stale open/unknown PR state for PAT-backed repos.
 
+Mention-triggered GitHub issue and pull request runs require the GitHub App
+webhook delivery path. The run execution side is PAT-aware, so a future external
+delivery source that maps to the synthetic PAT installation can update the
+target branch, but PAT mode alone does not receive `@hetchy` comments from
+GitHub.
+
 If the same repository is available through both a PAT and an active GitHub App
 installation for the organization, the webhook-driven App path wins and the PAT
 poller skips that repository.

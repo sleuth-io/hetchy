@@ -92,6 +92,7 @@ type Querier interface {
 	GetConversation(ctx context.Context, arg GetConversationParams) (GetConversationRow, error)
 	GetConversationAttachment(ctx context.Context, arg GetConversationAttachmentParams) (ConversationAttachment, error)
 	GetGithubInstallation(ctx context.Context, installationID int64) (GithubAppInstallation, error)
+	GetGithubMentionThread(ctx context.Context, arg GetGithubMentionThreadParams) (GithubMentionThread, error)
 	// Resolves an (owner, name) the user typed in chat to a concrete
 	// (installation_id, repo_id, default_branch) for this org. If the same
 	// repo is exposed via two installations we prefer the unsuspended one
@@ -125,6 +126,7 @@ type Querier interface {
 	IncrementBillingTopupMonthlyUsage(ctx context.Context, arg IncrementBillingTopupMonthlyUsageParams) (BillingTopupSetting, error)
 	InsertBillingCreditReservation(ctx context.Context, arg InsertBillingCreditReservationParams) (BillingCreditReservation, error)
 	InsertBillingStripeEvent(ctx context.Context, arg InsertBillingStripeEventParams) (bool, error)
+	InsertGithubMentionDelivery(ctx context.Context, arg InsertGithubMentionDeliveryParams) (int64, error)
 	// A webhook redelivery may re-insert the same session; keep the first
 	// row's thread mapping so a duplicate `created` event can't re-point
 	// an in-flight conversation at a different thread.
@@ -318,6 +320,7 @@ type Querier interface {
 	// pre-check. On a cross-org conflict the UPDATE doesn't fire and
 	// RETURNING yields zero rows — callers must handle pgx.ErrNoRows.
 	UpsertGithubInstallation(ctx context.Context, arg UpsertGithubInstallationParams) (GithubAppInstallation, error)
+	UpsertGithubMentionThread(ctx context.Context, arg UpsertGithubMentionThreadParams) (GithubMentionThread, error)
 	UpsertGithubRepo(ctx context.Context, arg UpsertGithubRepoParams) error
 	UpsertGithubTeam(ctx context.Context, arg UpsertGithubTeamParams) error
 	UpsertGithubTeamMember(ctx context.Context, arg UpsertGithubTeamMemberParams) error

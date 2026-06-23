@@ -19,6 +19,7 @@ import (
 
 type conversationStore interface {
 	Get(context.Context, string, string) (convstore.Record, error)
+	ListByPRURL(context.Context, string, string, string, int, string) ([]convstore.Record, error)
 	Search(context.Context, string, convstore.SearchOptions) ([]convstore.Record, error)
 	SaveProgress(context.Context, convstore.Record) error
 	SaveRunMetadata(context.Context, convstore.Record) error

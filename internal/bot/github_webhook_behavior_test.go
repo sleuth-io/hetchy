@@ -86,7 +86,7 @@ func TestWebhookEventActionGuardsSkipDB(t *testing.T) {
 					"installation": {"id": 42},
 					"repository": {"full_name": "sleuth-io/hetchy"},
 					"pull_request": {"number": 12}
-				}`))
+				}`), "")
 			},
 		},
 		{
@@ -148,7 +148,7 @@ func TestHandleCheckAndStatusEventsResolveInstallation(t *testing.T) {
 					"installation": {"id": 42},
 					"repository": {"full_name": "sleuth-io/hetchy"},
 					"pull_request": {"number": 12}
-				}`))
+				}`), "")
 			},
 		},
 		{

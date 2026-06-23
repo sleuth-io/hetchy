@@ -16,6 +16,7 @@ import (
 // fakeQuerier is a test double that implements the querier interface.
 type fakeQuerier struct {
 	getConversation                      func(ctx context.Context, arg sqlc.GetConversationParams) (sqlc.GetConversationRow, error)
+	listConversationsByPRURL             func(ctx context.Context, arg sqlc.ListConversationsByPRURLParams) ([]sqlc.ListConversationsByPRURLRow, error)
 	searchConversations                  func(ctx context.Context, arg sqlc.SearchConversationsParams) ([]sqlc.SearchConversationsRow, error)
 	saveConversationProgress             func(ctx context.Context, arg sqlc.SaveConversationProgressParams) error
 	saveConversationRunMetadata          func(ctx context.Context, arg sqlc.SaveConversationRunMetadataParams) error
@@ -35,6 +36,12 @@ func (f *fakeQuerier) GetConversation(ctx context.Context, arg sqlc.GetConversat
 		panic("fakeQuerier.getConversation not set")
 	}
 	return f.getConversation(ctx, arg)
+}
+func (f *fakeQuerier) ListConversationsByPRURL(ctx context.Context, arg sqlc.ListConversationsByPRURLParams) ([]sqlc.ListConversationsByPRURLRow, error) {
+	if f.listConversationsByPRURL == nil {
+		panic("fakeQuerier.listConversationsByPRURL not set")
+	}
+	return f.listConversationsByPRURL(ctx, arg)
 }
 func (f *fakeQuerier) SearchConversations(ctx context.Context, arg sqlc.SearchConversationsParams) ([]sqlc.SearchConversationsRow, error) {
 	if f.searchConversations == nil {

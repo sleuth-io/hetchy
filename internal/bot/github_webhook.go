@@ -121,7 +121,7 @@ func (b *Bot) githubWebhookHandler(w http.ResponseWriter, r *http.Request) {
 		}()
 		ctx, cancel := context.WithTimeout(context.Background(), webhookDispatchTimeout)
 		defer cancel()
-		b.dispatchGithubEvent(ctx, event, body)
+		b.dispatchGithubEvent(ctx, event, body, delivery)
 	}()
 }
 
@@ -129,7 +129,7 @@ func (b *Bot) githubWebhookHandler(w http.ResponseWriter, r *http.Request) {
 // Unknown event types are silently ignored — we subscribe to a small
 // set on the App side, but GitHub may deliver a few extras (like
 // ping) that we don't care about.
-func (b *Bot) dispatchGithubEvent(ctx context.Context, event string, body []byte) {
+func (b *Bot) dispatchGithubEvent(ctx context.Context, event string, body []byte, delivery string) {
 	// Defensive: the HTTP entrypoint already nil-checks b.app, but a
 	// future refactor that calls dispatchGithubEvent from a different
 	// path shouldn't nil-deref a goroutine into oblivion.
@@ -147,7 +147,11 @@ func (b *Bot) dispatchGithubEvent(ctx context.Context, event string, body []byte
 	case "pull_request":
 		b.handlePullRequestEvent(ctx, body)
 	case "pull_request_review":
-		b.handlePullRequestReviewEvent(ctx, body)
+		b.handlePullRequestReviewEvent(ctx, body, delivery)
+	case "issue_comment":
+		b.handleIssueCommentEvent(ctx, body, delivery)
+	case "pull_request_review_comment":
+		b.handlePullRequestReviewCommentEvent(ctx, body, delivery)
 	case "check_run":
 		b.handleCheckRunEvent(ctx, body)
 	case "check_suite":
@@ -223,7 +227,7 @@ func (b *Bot) handlePullRequestEvent(ctx context.Context, body []byte) {
 	b.recheckAutoMergeForPR(ctx, installation.OrgID, owner, repo, p.PullRequest.GetNumber(), prURL)
 }
 
-func (b *Bot) handlePullRequestReviewEvent(ctx context.Context, body []byte) {
+func (b *Bot) handlePullRequestReviewEvent(ctx context.Context, body []byte, delivery string) {
 	var p struct {
 		Action       string `json:"action"`
 		Installation struct {
@@ -237,6 +241,15 @@ func (b *Bot) handlePullRequestReviewEvent(ctx context.Context, body []byte) {
 			} `json:"owner"`
 		} `json:"repository"`
 		PullRequest *github.PullRequest `json:"pull_request"`
+		Review      struct {
+			ID                int64  `json:"id"`
+			Body              string `json:"body"`
+			HTMLURL           string `json:"html_url"`
+			AuthorAssociation string `json:"author_association"`
+			User              struct {
+				Login string `json:"login"`
+			} `json:"user"`
+		} `json:"review"`
 	}
 	if err := json.Unmarshal(body, &p); err != nil {
 		if b.githubWebhookErrLog.allow("pull_request_review") {
@@ -244,23 +257,51 @@ func (b *Bot) handlePullRequestReviewEvent(ctx context.Context, body []byte) {
 		}
 		return
 	}
-	if p.Action != "submitted" {
+	if p.Action != "submitted" && p.Action != "edited" {
 		return
 	}
 	owner, repo := webhookRepoSlug(p.Repository.Owner.Login, p.Repository.Name, p.Repository.FullName)
 	if b.store == nil || p.Installation.ID == 0 || owner == "" || repo == "" || p.PullRequest == nil || p.PullRequest.GetNumber() <= 0 {
 		return
 	}
-	installation, err := b.store.Queries.GetGithubInstallation(ctx, p.Installation.ID)
-	if err != nil {
-		b.log.Warn("github webhook: pull_request_review installation not recorded", "installation", p.Installation.ID, "action", p.Action, "error", err)
-		return
+	if p.Action == "submitted" {
+		installation, err := b.store.Queries.GetGithubInstallation(ctx, p.Installation.ID)
+		if err != nil {
+			b.log.Warn("github webhook: pull_request_review installation not recorded", "installation", p.Installation.ID, "action", p.Action, "error", err)
+			return
+		}
+		prURL := p.PullRequest.GetHTMLURL()
+		if prURL == "" {
+			prURL = canonicalGitHubPRURL(owner, repo, p.PullRequest.GetNumber())
+		}
+		b.recheckAutoMergeForPR(ctx, installation.OrgID, owner, repo, p.PullRequest.GetNumber(), prURL)
 	}
-	prURL := p.PullRequest.GetHTMLURL()
-	if prURL == "" {
-		prURL = canonicalGitHubPRURL(owner, repo, p.PullRequest.GetNumber())
+	if directive, ok := githubMentionDirective(p.Review.Body, githubMentionAliases(b.cfg.GitHubAppSlug)); ok {
+		prURL := p.PullRequest.GetHTMLURL()
+		if prURL == "" {
+			prURL = canonicalGitHubPRURL(owner, repo, p.PullRequest.GetNumber())
+		}
+		b.handleGithubMention(ctx, githubMentionEvent{
+			DeliveryID:        delivery,
+			RequestID:         githubMentionRequestID("github-review", p.Review.ID, delivery),
+			InstallationID:    p.Installation.ID,
+			Owner:             owner,
+			Repo:              repo,
+			SubjectType:       githubMentionSubjectPullRequest,
+			SubjectNumber:     p.PullRequest.GetNumber(),
+			SubjectURL:        prURL,
+			SubjectTitle:      p.PullRequest.GetTitle(),
+			SubjectBody:       p.PullRequest.GetBody(),
+			PullRequest:       p.PullRequest,
+			CommentID:         p.Review.ID,
+			CommentURL:        p.Review.HTMLURL,
+			CommentBody:       p.Review.Body,
+			AuthorLogin:       p.Review.User.Login,
+			AuthorAssociation: p.Review.AuthorAssociation,
+			Directive:         directive,
+			Source:            "pull_request_review",
+		})
 	}
-	b.recheckAutoMergeForPR(ctx, installation.OrgID, owner, repo, p.PullRequest.GetNumber(), prURL)
 }
 
 func (b *Bot) handleCheckRunEvent(ctx context.Context, body []byte) {
