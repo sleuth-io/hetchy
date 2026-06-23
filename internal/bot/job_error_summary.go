@@ -9,7 +9,7 @@ func jobLastErrorView(raw string) (summary, detail string) {
 	if raw == "" {
 		return "", ""
 	}
-	summary = truncate(summarizeJobLastError(raw), jobLastErrorSummaryMaxRunes)
+	summary = truncateJobErrorSummary(summarizeJobLastError(raw), jobLastErrorSummaryMaxRunes)
 	if jobErrorNeedsDetail(raw, summary) {
 		detail = raw
 	}
@@ -44,7 +44,18 @@ func summarizeJobLastError(raw string) string {
 	if rest, ok := cutJobErrorPrefix(raw, "job run ended in state "); ok {
 		return "Job run ended in state " + ensureJobErrorSentence(upperFirstASCII(truncate(compactJobErrorLine(rest), 80)))
 	}
-	return truncate(compactJobErrorLine(raw), jobLastErrorSummaryMaxRunes)
+	return compactJobErrorLine(raw)
+}
+
+func truncateJobErrorSummary(s string, n int) string {
+	runes := []rune(s)
+	if len(runes) <= n {
+		return s
+	}
+	if n <= 3 {
+		return string(runes[:n])
+	}
+	return string(runes[:n-3]) + "..."
 }
 
 func jobErrorNeedsDetail(raw, summary string) bool {

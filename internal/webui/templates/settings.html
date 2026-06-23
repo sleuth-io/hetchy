@@ -1217,7 +1217,7 @@
         <div class="job-error">
           <div class="job-error-main">
             <span class="job-error-label">Last failure</span>
-            <strong>{{orString .LastErrorSummary "Job failed"}}</strong>
+            <strong>{{.LastErrorSummary}}</strong>
           </div>
           {{if .LastErrorDetail}}
           <details>

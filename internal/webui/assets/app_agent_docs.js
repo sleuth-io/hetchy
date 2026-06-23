@@ -209,7 +209,6 @@
   }
 
   function truncateJobStatusDetail(text, max) {
-    text = compact(text, '');
     if (!text || text.length <= max) return text;
     return text.slice(0, Math.max(0, max - 3)).trimEnd() + '...';
   }

@@ -47,6 +47,19 @@ func TestJobLastErrorViewKeepsShortErrorsSimple(t *testing.T) {
 	}
 }
 
+func TestJobLastErrorViewShowsDetailForLongSingleLineError(t *testing.T) {
+	raw := strings.Repeat("x", 200)
+
+	summary, detail := jobLastErrorView(raw)
+
+	if got := len([]rune(summary)); got > jobLastErrorSummaryMaxRunes {
+		t.Fatalf("summary length = %d runes, want <= %d", got, jobLastErrorSummaryMaxRunes)
+	}
+	if detail != raw {
+		t.Fatalf("detail = %q, want raw error", detail)
+	}
+}
+
 func TestSummarizeJobLastError(t *testing.T) {
 	cases := []struct {
 		name string
