@@ -7,7 +7,24 @@ package sqlc
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const deleteGithubMentionDeliveriesBefore = `-- name: DeleteGithubMentionDeliveriesBefore :execrows
+DELETE FROM github_mention_deliveries WHERE created_at < $1
+`
+
+// TTL cleanup, run periodically by the bot. Delivery IDs only need to
+// survive realistic GitHub webhook redelivery windows; keeping a
+// longer retention window prevents unbounded table growth.
+func (q *Queries) DeleteGithubMentionDeliveriesBefore(ctx context.Context, createdAt pgtype.Timestamptz) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteGithubMentionDeliveriesBefore, createdAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
 
 const insertGithubMentionDelivery = `-- name: InsertGithubMentionDelivery :execrows
 INSERT INTO github_mention_deliveries (org_id, delivery_id, request_id)

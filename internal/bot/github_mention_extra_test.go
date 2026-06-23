@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
 	"github.com/google/go-github/v66/github"
@@ -86,6 +87,36 @@ func TestClaimGithubMentionDelivery(t *testing.T) {
 			t.Fatal("dedup insert failure should fail open")
 		}
 	})
+}
+
+func TestCleanupGithubMentionDeliveriesDeletesExpiredRows(t *testing.T) {
+	fake := newWebhookFakeDB()
+	fake.exec["DELETE FROM github_mention_deliveries"] = webhookExecResult{rows: 2}
+	b := &Bot{log: discardLogger(), store: &db.Store{Queries: sqlc.New(fake)}}
+
+	before := time.Now().Add(-githubMentionDeliveryRetention)
+	b.cleanupGithubMentionDeliveries(context.Background())
+	after := time.Now().Add(-githubMentionDeliveryRetention)
+
+	call := fake.onlyExecCall(t, "DELETE FROM github_mention_deliveries")
+	if len(call.args) != 1 {
+		t.Fatalf("args = %#v, want cutoff", call.args)
+	}
+	cutoff, ok := call.args[0].(pgtype.Timestamptz)
+	if !ok || !cutoff.Valid {
+		t.Fatalf("cutoff arg = %#v (%T), want valid pgtype.Timestamptz", call.args[0], call.args[0])
+	}
+	if cutoff.Time.Before(before.Add(-time.Second)) || cutoff.Time.After(after.Add(time.Second)) {
+		t.Fatalf("cutoff = %s, want around %s..%s", cutoff.Time, before, after)
+	}
+}
+
+func TestCleanupGithubMentionDeliveriesToleratesDeleteError(t *testing.T) {
+	fake := newWebhookFakeDB()
+	fake.exec["DELETE FROM github_mention_deliveries"] = webhookExecResult{err: errors.New("db down")}
+	b := &Bot{log: discardLogger(), store: &db.Store{Queries: sqlc.New(fake)}}
+
+	b.cleanupGithubMentionDeliveries(context.Background())
 }
 
 func TestUpsertGithubMentionThread(t *testing.T) {
@@ -169,6 +200,10 @@ func TestGithubMentionHelpersFormatURLsIDsAndText(t *testing.T) {
 	}
 	if got := truncateGitHubComment(strings.Repeat("a", 60001)); !strings.HasSuffix(got, "\n\n[truncated]") || len(got) <= 60001 {
 		t.Fatalf("truncated comment length/suffix wrong: len=%d", len(got))
+	}
+	utf8Body := strings.Repeat("a", 59999) + "😀tail"
+	if got := truncateGitHubComment(utf8Body); !utf8.ValidString(got) || strings.Contains(got, "😀") {
+		t.Fatalf("truncated unicode comment invalid or split incorrectly: valid=%v len=%d", utf8.ValidString(got), len(got))
 	}
 
 	pr := &github.PullRequest{

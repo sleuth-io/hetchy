@@ -1,3 +1,5 @@
+BEGIN;
+
 CREATE TABLE github_mention_threads (
     org_id TEXT NOT NULL,
     owner TEXT NOT NULL,
@@ -25,3 +27,5 @@ CREATE TABLE github_mention_deliveries (
 
 CREATE UNIQUE INDEX github_mention_deliveries_request_idx
     ON github_mention_deliveries (org_id, request_id);
+
+COMMIT;

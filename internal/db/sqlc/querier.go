@@ -43,6 +43,10 @@ type Querier interface {
 	DeleteGithubInstallation(ctx context.Context, installationID int64) error
 	// github_repos / github_teams / github_team_members cascade via FK.
 	DeleteGithubInstallationsByOrg(ctx context.Context, orgID string) error
+	// TTL cleanup, run periodically by the bot. Delivery IDs only need to
+	// survive realistic GitHub webhook redelivery windows; keeping a
+	// longer retention window prevents unbounded table growth.
+	DeleteGithubMentionDeliveriesBefore(ctx context.Context, createdAt pgtype.Timestamptz) (int64, error)
 	DeleteGithubReposByInstallation(ctx context.Context, installationID int64) error
 	// Used by the sync routine: after upserting the current set of repos,
 	// delete anything that wasn't in the list (revoked access).

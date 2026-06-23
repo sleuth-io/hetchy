@@ -482,7 +482,11 @@ func truncateGitHubComment(body string) string {
 	if len(body) <= max {
 		return body
 	}
-	return body[:max] + "\n\n[truncated]"
+	i := max
+	for i > 0 && !utf8.RuneStart(body[i]) {
+		i--
+	}
+	return body[:i] + "\n\n[truncated]"
 }
 
 func githubIssueMentionText(ev githubMentionEvent) string {

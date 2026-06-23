@@ -517,6 +517,7 @@ func (b *Bot) Run(ctx context.Context) error {
 	errCh := make(chan error, 2)
 	go b.runRecoveryLoop(ctx)
 	go b.runLinearSessionCleanupLoop(ctx)
+	go b.runGithubMentionDeliveryCleanupLoop(ctx)
 	go b.runJobDispatchLoop(ctx)
 	go b.runPRStatePollLoop(ctx)
 	go b.runLocalAuthSessionCleanupLoop(ctx)
