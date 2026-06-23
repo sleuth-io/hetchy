@@ -264,12 +264,7 @@ func (b *Bot) handleGithubMention(ctx context.Context, ev githubMentionEvent) {
 	}()
 
 	ackCtx, cancelAck := context.WithTimeout(context.Background(), githubMentionAckDeadline)
-	ack := "On it - starting a Hetchy run."
-	if !route.fresh {
-		ack = "On it - continuing the existing Hetchy conversation for this pull request."
-	} else if route.externalPR {
-		ack = "On it - updating this pull request."
-	}
+	ack := githubMentionAck(route)
 	if err := b.postGithubMentionComment(ackCtx, client, ev.Owner, ev.Repo, ev.SubjectNumber, ack+"\n\nProgress: "+runURL); err != nil {
 		b.log.Warn("github mention: ack comment failed", "org", oc.OrgID, "repo", ev.Owner+"/"+ev.Repo, "subject", ev.SubjectNumber, "error", err)
 	}
@@ -292,6 +287,17 @@ func (b *Bot) handleGithubMention(ctx context.Context, ev githubMentionEvent) {
 		}
 		b.HandleRequest(runCtx, oc, route.text, route.requestID, route.threadID, "", chatTaskOptionPatch{}, nil, route.requestedRepo, ClaudeModelOpus, emit)
 	}()
+}
+
+func githubMentionAck(route githubMentionRoute) string {
+	switch {
+	case !route.fresh && !route.externalPR:
+		return "On it - continuing the existing Hetchy conversation for this pull request."
+	case route.externalPR:
+		return "On it - updating this pull request."
+	default:
+		return "On it - starting a Hetchy run."
+	}
 }
 
 func (b *Bot) githubMentionClient(ctx context.Context, installationID int64) (*github.Client, error) {

@@ -79,6 +79,42 @@ func TestGithubMentionAuthorized(t *testing.T) {
 	}
 }
 
+func TestGithubMentionAck(t *testing.T) {
+	tests := []struct {
+		name  string
+		route githubMentionRoute
+		want  string
+	}{
+		{
+			name:  "fresh issue",
+			route: githubMentionRoute{fresh: true},
+			want:  "On it - starting a Hetchy run.",
+		},
+		{
+			name:  "fresh external pr",
+			route: githubMentionRoute{fresh: true, externalPR: true},
+			want:  "On it - updating this pull request.",
+		},
+		{
+			name:  "tracked external pr",
+			route: githubMentionRoute{fresh: false, externalPR: true},
+			want:  "On it - updating this pull request.",
+		},
+		{
+			name:  "existing hetchy pr conversation",
+			route: githubMentionRoute{fresh: false, externalPR: false},
+			want:  "On it - continuing the existing Hetchy conversation for this pull request.",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := githubMentionAck(tt.route); got != tt.want {
+				t.Fatalf("ack = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestResolveGithubMentionRouteResumesExistingPRConversation(t *testing.T) {
 	convs := &fakeConversationStore{prURLResult: []convstore.Record{{
 		OrgID:       "org_1",

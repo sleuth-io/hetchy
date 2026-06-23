@@ -14,9 +14,6 @@ CREATE TABLE github_mention_threads (
     PRIMARY KEY (org_id, owner, repo, subject_type, subject_number)
 );
 
-CREATE INDEX github_mention_threads_thread_idx
-    ON github_mention_threads (org_id, thread_id);
-
 CREATE TABLE github_mention_deliveries (
     org_id TEXT NOT NULL,
     delivery_id TEXT NOT NULL,
