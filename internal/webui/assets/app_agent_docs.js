@@ -202,7 +202,8 @@
     const status = compact(job && job.last_execution_status, '');
     const lastRun = compact(job && job.last_run_label, fullDate(job && job.last_run_at));
     const error = compact(job && job.last_error, '');
-    if (error) return error;
+    const summary = compact(job && job.last_error_summary, '');
+    if (error) return summary;
     if (status && lastRun) return lastRun;
     return '';
   }

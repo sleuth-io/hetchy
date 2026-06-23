@@ -368,7 +368,7 @@ func TestJobAPIFromJobFormatsResponse(t *testing.T) {
 	if got.LastRunAt != "2026-06-01T15:00:00Z" || got.LastRunLabel != "Jun 1 at 8:00 AM" {
 		t.Fatalf("last run = %q / %q", got.LastRunAt, got.LastRunLabel)
 	}
-	if got.LastRunID != "run_123" || got.LastError != "failed once" {
+	if got.LastRunID != "run_123" || got.LastError != "failed once" || got.LastErrorSummary != "failed once" {
 		t.Fatalf("last result = %#v", got)
 	}
 	if got.LastExecutionID != "exec_123" || got.LastExecutionStatus != jobs.StatusFailed {

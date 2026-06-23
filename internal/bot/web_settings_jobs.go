@@ -29,6 +29,8 @@ type settingsJobView struct {
 	LastRunLabel        string
 	LastRunID           string
 	LastError           string
+	LastErrorSummary    string
+	LastErrorDetail     string
 	LastExecutionStatus string
 }
 
@@ -125,6 +127,7 @@ func settingsJobFromJob(job jobs.Job, agentLabels map[string]string) settingsJob
 	if label == "" {
 		label = "Default"
 	}
+	lastErrorSummary, lastErrorDetail := jobLastErrorView(job.LastError)
 	return settingsJobView{
 		ID:                  job.ID,
 		Name:                job.Name,
@@ -145,6 +148,8 @@ func settingsJobFromJob(job jobs.Job, agentLabels map[string]string) settingsJob
 		LastRunLabel:        jobDisplayTime(job.LastRunAt, job.Timezone),
 		LastRunID:           job.LastRunID,
 		LastError:           job.LastError,
+		LastErrorSummary:    lastErrorSummary,
+		LastErrorDetail:     lastErrorDetail,
 		LastExecutionStatus: job.LastExecutionStatus,
 	}
 }

@@ -37,7 +37,11 @@ func TestSettingsTemplate_RendersJobsTabForAdmin(t *testing.T) {
 				Enabled:             true,
 				NextRunAt:           "2026-06-08T16:00:00Z",
 				NextRunLabel:        "Jun 8 at 9:00 AM",
-				LastExecutionStatus: "succeeded",
+				LastRunLabel:        "Jun 1 at 8:00 AM",
+				LastError:           `agent setup exited before runtime: step "run-script" exit 1`,
+				LastErrorSummary:    "Agent startup failed while running the agent (exit code 1).",
+				LastErrorDetail:     `agent setup exited before runtime: step "run-script" exit 1`,
+				LastExecutionStatus: "failed",
 			},
 		},
 		"JobAgentOptions": []settingsJobAgentOption{
@@ -70,6 +74,11 @@ func TestSettingsTemplate_RendersJobsTabForAdmin(t *testing.T) {
 		`<strong>Weekly</strong>`,
 		`<small>Los Angeles time</small>`,
 		`Jun 8 at 9:00 AM`,
+		`last run: Jun 1 at 8:00 AM`,
+		`<span class="job-error-label">Last failure</span>`,
+		`Agent startup failed while running the agent (exit code 1).`,
+		`<summary>Details</summary>`,
+		`agent setup exited before runtime: step &#34;run-script&#34; exit 1`,
 		`<option value="maintainer">Maintainer</option>`,
 		`id="job-primary-repo"`,
 		`<option value="acme/api">acme/api</option>`,
@@ -206,7 +215,7 @@ func TestSettingsJobFromJobFormatsView(t *testing.T) {
 	if got.LastRunAt != "2026-06-01T15:00:00Z" || got.LastRunLabel != "Jun 1 at 8:00 AM" {
 		t.Fatalf("last run = %q / %q", got.LastRunAt, got.LastRunLabel)
 	}
-	if got.LastRunID != "run_123" || got.LastError != "failed once" || got.LastExecutionStatus != jobs.StatusFailed {
+	if got.LastRunID != "run_123" || got.LastError != "failed once" || got.LastErrorSummary != "failed once" || got.LastErrorDetail != "" || got.LastExecutionStatus != jobs.StatusFailed {
 		t.Fatalf("last result = %#v", got)
 	}
 
