@@ -441,14 +441,12 @@ func (b *Bot) upsertGithubMentionThread(ctx context.Context, orgID string, ev gi
 		return fallback
 	}
 	row, err := b.store.Queries.UpsertGithubMentionThread(ctx, sqlc.UpsertGithubMentionThreadParams{
-		OrgID:          orgID,
-		Owner:          ev.Owner,
-		Repo:           ev.Repo,
-		SubjectType:    ev.SubjectType,
-		SubjectNumber:  int32(ev.SubjectNumber),
-		ThreadID:       fallback,
-		LastCommentID:  ev.CommentID,
-		LastDeliveryID: ev.DeliveryID,
+		OrgID:         orgID,
+		Owner:         ev.Owner,
+		Repo:          ev.Repo,
+		SubjectType:   ev.SubjectType,
+		SubjectNumber: int32(ev.SubjectNumber),
+		ThreadID:      fallback,
 	})
 	if err != nil {
 		b.log.Warn("github mention: thread upsert failed",

@@ -79,7 +79,7 @@ func TestWebhookEventActionGuardsSkipDB(t *testing.T) {
 		handle func(*Bot)
 	}{
 		{
-			name: "pull request review only reacts to submitted",
+			name: "pull request review edited without mention skips DB",
 			handle: func(b *Bot) {
 				b.handlePullRequestReviewEvent(context.Background(), []byte(`{
 					"action": "edited",

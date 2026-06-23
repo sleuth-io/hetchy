@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -144,8 +145,6 @@ func TestUpsertGithubMentionThread(t *testing.T) {
 		assertWebhookArg(t, call.args, 3, githubMentionSubjectIssue)
 		assertWebhookArg(t, call.args, 4, int32(7))
 		assertWebhookArg(t, call.args, 5, "fallback-thread")
-		assertWebhookArg(t, call.args, 6, int64(99))
-		assertWebhookArg(t, call.args, 7, "delivery-1")
 	})
 
 	t.Run("falls back on blank row thread", func(t *testing.T) {
@@ -371,6 +370,48 @@ func TestPullRequestReviewSubmittedMentionUsesInstallationOnce(t *testing.T) {
 
 	call := fake.onlyQueryRowCall(t, "GetGithubInstallation")
 	assertWebhookArg(t, call.args, 0, int64(-42))
+}
+
+func TestPullRequestReviewMentionRequestIDDedupesReviewEdits(t *testing.T) {
+	run := func(action, delivery string) webhookDBCall {
+		t.Helper()
+		httpClient := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			t.Fatalf("unexpected GitHub request: %s %s", r.Method, r.URL.Path)
+			return nil, errors.New("unexpected GitHub request")
+		})}
+		fake := newWebhookFakeDB()
+		fake.queryRow["GetGithubInstallation"] = webhookInstallationRow(-42, "org1")
+		fake.exec["INSERT INTO github_mention_deliveries"] = webhookExecResult{rows: 0}
+		b := &Bot{
+			log:   discardLogger(),
+			cfg:   Config{GitHubAppSlug: "hetchy-test"},
+			store: &db.Store{Queries: sqlc.New(fake)},
+			orgs:  &fakeOrgStore{getConfig: orgcfg.Config{OrgID: "org1", AnthropicAPIKey: "sk-ant"}},
+			live:  newLiveRegistry(),
+			github: &githubapp.Source{
+				LookupPAT: func(context.Context, int64) (string, error) { return "ghp_test", nil },
+				HTTP:      httpClient,
+			},
+		}
+
+		body := fmt.Sprintf(`{
+			"action": %q,
+			"installation": {"id": -42},
+			"repository": {"full_name": "acme/repo"},
+			"pull_request": {"number": 7, "title": "Fix bug", "body": "Body", "html_url": "https://github.com/acme/repo/pull/7"},
+			"review": {"id": 123, "body": "@hetchy-test fix this", "html_url": "https://github.com/acme/repo/pull/7#pullrequestreview-123", "author_association": "MEMBER", "user": {"login": "alice"}}
+		}`, action)
+		b.handlePullRequestReviewEvent(context.Background(), []byte(body), delivery)
+		return fake.onlyExecCall(t, "INSERT INTO github_mention_deliveries")
+	}
+
+	submitted := run("submitted", "delivery-submitted")
+	edited := run("edited", "delivery-edited")
+
+	assertWebhookArg(t, submitted.args, 1, "delivery-submitted")
+	assertWebhookArg(t, submitted.args, 2, "github-review-123")
+	assertWebhookArg(t, edited.args, 1, "delivery-edited")
+	assertWebhookArg(t, edited.args, 2, "github-review-123")
 }
 
 func TestEnsureGithubMentionPullRequestFetchesMissingPayload(t *testing.T) {
@@ -705,8 +746,6 @@ func webhookMentionThreadRow(threadID string) webhookRow {
 		githubMentionSubjectIssue,
 		int32(7),
 		threadID,
-		int64(99),
-		"delivery-1",
 		ts,
 		ts,
 	}}

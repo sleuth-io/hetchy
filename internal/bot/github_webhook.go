@@ -285,7 +285,7 @@ func (b *Bot) handlePullRequestReviewEvent(ctx context.Context, body []byte, del
 		}
 		b.handleGithubMention(ctx, githubMentionEvent{
 			DeliveryID:        delivery,
-			RequestID:         githubMentionRequestID("github-review", p.Review.ID, delivery),
+			RequestID:         githubMentionRequestID("github-review", p.Review.ID, ""),
 			OrgID:             orgID,
 			InstallationID:    p.Installation.ID,
 			Owner:             owner,

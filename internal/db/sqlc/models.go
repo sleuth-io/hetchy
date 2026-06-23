@@ -247,16 +247,14 @@ type GithubMentionDelivery struct {
 }
 
 type GithubMentionThread struct {
-	OrgID          string             `json:"org_id"`
-	Owner          string             `json:"owner"`
-	Repo           string             `json:"repo"`
-	SubjectType    string             `json:"subject_type"`
-	SubjectNumber  int32              `json:"subject_number"`
-	ThreadID       string             `json:"thread_id"`
-	LastCommentID  int64              `json:"last_comment_id"`
-	LastDeliveryID string             `json:"last_delivery_id"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	OrgID         string             `json:"org_id"`
+	Owner         string             `json:"owner"`
+	Repo          string             `json:"repo"`
+	SubjectType   string             `json:"subject_type"`
+	SubjectNumber int32              `json:"subject_number"`
+	ThreadID      string             `json:"thread_id"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
 }
 
 type GithubRepo struct {

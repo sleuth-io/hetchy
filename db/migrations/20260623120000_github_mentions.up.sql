@@ -7,8 +7,6 @@ CREATE TABLE github_mention_threads (
     subject_type TEXT NOT NULL CHECK (subject_type IN ('issue', 'pull_request')),
     subject_number INTEGER NOT NULL CHECK (subject_number > 0),
     thread_id TEXT NOT NULL,
-    last_comment_id BIGINT NOT NULL DEFAULT 0,
-    last_delivery_id TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (org_id, owner, repo, subject_type, subject_number)

@@ -49,33 +49,25 @@ func (q *Queries) InsertGithubMentionDelivery(ctx context.Context, arg InsertGit
 const upsertGithubMentionThread = `-- name: UpsertGithubMentionThread :one
 INSERT INTO github_mention_threads (
     org_id, owner, repo, subject_type, subject_number,
-    thread_id, last_comment_id, last_delivery_id
+    thread_id
 ) VALUES (
     $1, $2, $3, $4,
-    $5, $6, $7,
-    $8
+    $5, $6
 )
 ON CONFLICT (org_id, owner, repo, subject_type, subject_number) DO UPDATE SET
-    thread_id         = github_mention_threads.thread_id,
-    last_comment_id  = GREATEST(github_mention_threads.last_comment_id, EXCLUDED.last_comment_id),
-    last_delivery_id = CASE
-                           WHEN EXCLUDED.last_delivery_id <> '' THEN EXCLUDED.last_delivery_id
-                           ELSE github_mention_threads.last_delivery_id
-                       END,
-    updated_at       = NOW()
+    thread_id  = github_mention_threads.thread_id,
+    updated_at = NOW()
 RETURNING org_id, owner, repo, subject_type, subject_number,
-          thread_id, last_comment_id, last_delivery_id, created_at, updated_at
+          thread_id, created_at, updated_at
 `
 
 type UpsertGithubMentionThreadParams struct {
-	OrgID          string `json:"org_id"`
-	Owner          string `json:"owner"`
-	Repo           string `json:"repo"`
-	SubjectType    string `json:"subject_type"`
-	SubjectNumber  int32  `json:"subject_number"`
-	ThreadID       string `json:"thread_id"`
-	LastCommentID  int64  `json:"last_comment_id"`
-	LastDeliveryID string `json:"last_delivery_id"`
+	OrgID         string `json:"org_id"`
+	Owner         string `json:"owner"`
+	Repo          string `json:"repo"`
+	SubjectType   string `json:"subject_type"`
+	SubjectNumber int32  `json:"subject_number"`
+	ThreadID      string `json:"thread_id"`
 }
 
 func (q *Queries) UpsertGithubMentionThread(ctx context.Context, arg UpsertGithubMentionThreadParams) (GithubMentionThread, error) {
@@ -86,8 +78,6 @@ func (q *Queries) UpsertGithubMentionThread(ctx context.Context, arg UpsertGithu
 		arg.SubjectType,
 		arg.SubjectNumber,
 		arg.ThreadID,
-		arg.LastCommentID,
-		arg.LastDeliveryID,
 	)
 	var i GithubMentionThread
 	err := row.Scan(
@@ -97,8 +87,6 @@ func (q *Queries) UpsertGithubMentionThread(ctx context.Context, arg UpsertGithu
 		&i.SubjectType,
 		&i.SubjectNumber,
 		&i.ThreadID,
-		&i.LastCommentID,
-		&i.LastDeliveryID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
