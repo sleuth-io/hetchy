@@ -72,6 +72,11 @@ func TestSummarizeJobLastError(t *testing.T) {
 			want: "Agent startup failed: Codex did not produce a transcript within 60s.",
 		},
 		{
+			name: "transcript failure with wrapper prefix",
+			raw:  `agent setup exited before runtime | tool wrapper: claude did not produce a transcript within 60s`,
+			want: "Agent startup failed: Tool wrapper: claude did not produce a transcript within 60s.",
+		},
+		{
 			name: "setup failure without step",
 			raw:  "agent setup exited before runtime: missing command wrapper",
 			want: "Agent setup failed before the run started.",

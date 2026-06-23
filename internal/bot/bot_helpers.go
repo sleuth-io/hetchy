@@ -476,7 +476,7 @@ func heredocWriteCmd(path, body string, chmodExec bool) string {
 	return cmd
 }
 
-// truncate caps s to at most n runes, appending "..." when it cuts.
+// truncate keeps the first n runes of s, appending "..." when it cuts.
 // Rune-aware (not byte-aware) so multi-byte characters (emoji, CJK,
 // non-ASCII filenames in Bash command titles) don't get split mid-
 // codepoint and surface as mojibake in the UI.

@@ -47,17 +47,6 @@ func summarizeJobLastError(raw string) string {
 	return compactJobErrorLine(raw)
 }
 
-func truncateJobErrorSummary(s string, n int) string {
-	runes := []rune(s)
-	if len(runes) <= n {
-		return s
-	}
-	if n <= 3 {
-		return string(runes[:n])
-	}
-	return string(runes[:n-3]) + "..."
-}
-
 func jobErrorNeedsDetail(raw, summary string) bool {
 	compact := compactJobErrorLine(raw)
 	if compact == summary || strings.EqualFold(compact, summary) {
@@ -69,6 +58,19 @@ func jobErrorNeedsDetail(raw, summary string) bool {
 
 func compactJobErrorLine(s string) string {
 	return strings.Join(strings.Fields(s), " ")
+}
+
+// truncateJobErrorSummary shortens s to at most n runes total, including
+// the trailing ellipsis.
+func truncateJobErrorSummary(s string, n int) string {
+	runes := []rune(s)
+	if len(runes) <= n {
+		return s
+	}
+	if n <= 3 {
+		return string(runes[:n])
+	}
+	return string(runes[:n-3]) + "..."
 }
 
 func jobErrorFragmentContaining(raw, needle string) string {
