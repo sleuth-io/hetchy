@@ -9,49 +9,6 @@ import (
 	"context"
 )
 
-const getGithubMentionThread = `-- name: GetGithubMentionThread :one
-SELECT org_id, owner, repo, subject_type, subject_number,
-       thread_id, last_comment_id, last_delivery_id, created_at, updated_at
-FROM github_mention_threads
-WHERE org_id = $1
-  AND owner = $2
-  AND repo = $3
-  AND subject_type = $4
-  AND subject_number = $5
-`
-
-type GetGithubMentionThreadParams struct {
-	OrgID         string `json:"org_id"`
-	Owner         string `json:"owner"`
-	Repo          string `json:"repo"`
-	SubjectType   string `json:"subject_type"`
-	SubjectNumber int32  `json:"subject_number"`
-}
-
-func (q *Queries) GetGithubMentionThread(ctx context.Context, arg GetGithubMentionThreadParams) (GithubMentionThread, error) {
-	row := q.db.QueryRow(ctx, getGithubMentionThread,
-		arg.OrgID,
-		arg.Owner,
-		arg.Repo,
-		arg.SubjectType,
-		arg.SubjectNumber,
-	)
-	var i GithubMentionThread
-	err := row.Scan(
-		&i.OrgID,
-		&i.Owner,
-		&i.Repo,
-		&i.SubjectType,
-		&i.SubjectNumber,
-		&i.ThreadID,
-		&i.LastCommentID,
-		&i.LastDeliveryID,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
 const insertGithubMentionDelivery = `-- name: InsertGithubMentionDelivery :execrows
 INSERT INTO github_mention_deliveries (org_id, delivery_id, request_id)
 VALUES ($1, $2, $3)

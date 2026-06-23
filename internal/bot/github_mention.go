@@ -26,6 +26,7 @@ const (
 type githubMentionEvent struct {
 	DeliveryID        string
 	RequestID         string
+	OrgID             string
 	InstallationID    int64
 	Owner             string
 	Repo              string
@@ -196,18 +197,26 @@ func (b *Bot) handleGithubMention(ctx context.Context, ev githubMentionEvent) {
 	if ev.InstallationID == 0 || ev.Owner == "" || ev.Repo == "" || ev.SubjectNumber <= 0 || strings.TrimSpace(ev.Directive) == "" {
 		return
 	}
-	lookupCtx, cancelLookup := context.WithTimeout(ctx, slackLookupTimeout)
-	installation, err := b.store.Queries.GetGithubInstallation(lookupCtx, ev.InstallationID)
-	cancelLookup()
-	if err != nil {
-		b.log.Warn("github mention: installation not recorded", "installation", ev.InstallationID, "source", ev.Source, "error", err)
+	if b.live == nil {
+		b.log.Error("github mention: live registry not configured", "installation", ev.InstallationID, "repo", ev.Owner+"/"+ev.Repo, "subject", ev.SubjectNumber)
 		return
 	}
+	orgID := strings.TrimSpace(ev.OrgID)
+	if orgID == "" {
+		lookupCtx, cancelLookup := context.WithTimeout(ctx, slackLookupTimeout)
+		installation, err := b.store.Queries.GetGithubInstallation(lookupCtx, ev.InstallationID)
+		cancelLookup()
+		if err != nil {
+			b.log.Warn("github mention: installation not recorded", "installation", ev.InstallationID, "source", ev.Source, "error", err)
+			return
+		}
+		orgID = installation.OrgID
+	}
 	ocCtx, cancelOC := context.WithTimeout(ctx, slackLookupTimeout)
-	oc, err := b.orgs.Get(ocCtx, installation.OrgID)
+	oc, err := b.orgs.Get(ocCtx, orgID)
 	cancelOC()
 	if err != nil {
-		b.log.Warn("github mention: org config lookup failed", "org", installation.OrgID, "source", ev.Source, "error", err)
+		b.log.Warn("github mention: org config lookup failed", "org", orgID, "source", ev.Source, "error", err)
 		return
 	}
 	client, err := b.githubMentionClient(ctx, ev.InstallationID)
@@ -241,10 +250,6 @@ func (b *Bot) handleGithubMention(ctx context.Context, ev githubMentionEvent) {
 		return
 	}
 	runURL := b.githubMentionRunURL(route.threadID)
-	if b.live == nil {
-		b.log.Error("github mention: live registry not configured", "org", oc.OrgID, "thread", route.threadID)
-		return
-	}
 	run, registered := b.live.RegisterIfAbsent(context.Background(), oc.OrgID, route.threadID)
 	if !registered {
 		b.postGithubMentionComment(ctx, client, ev.Owner, ev.Repo, ev.SubjectNumber,

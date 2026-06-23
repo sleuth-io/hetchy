@@ -332,6 +332,12 @@ func assignWebhookScanValue(dest, value any) error {
 			return fmt.Errorf("got %T, want int64", value)
 		}
 		*d = v
+	case *int32:
+		v, ok := value.(int32)
+		if !ok {
+			return fmt.Errorf("got %T, want int32", value)
+		}
+		*d = v
 	case *string:
 		v, ok := value.(string)
 		if !ok {

@@ -92,7 +92,6 @@ type Querier interface {
 	GetConversation(ctx context.Context, arg GetConversationParams) (GetConversationRow, error)
 	GetConversationAttachment(ctx context.Context, arg GetConversationAttachmentParams) (ConversationAttachment, error)
 	GetGithubInstallation(ctx context.Context, installationID int64) (GithubAppInstallation, error)
-	GetGithubMentionThread(ctx context.Context, arg GetGithubMentionThreadParams) (GithubMentionThread, error)
 	// Resolves an (owner, name) the user typed in chat to a concrete
 	// (installation_id, repo_id, default_branch) for this org. If the same
 	// repo is exposed via two installations we prefer the unsuspended one

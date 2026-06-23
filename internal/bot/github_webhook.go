@@ -264,12 +264,14 @@ func (b *Bot) handlePullRequestReviewEvent(ctx context.Context, body []byte, del
 	if b.store == nil || p.Installation.ID == 0 || owner == "" || repo == "" || p.PullRequest == nil || p.PullRequest.GetNumber() <= 0 {
 		return
 	}
+	orgID := ""
 	if p.Action == "submitted" {
 		installation, err := b.store.Queries.GetGithubInstallation(ctx, p.Installation.ID)
 		if err != nil {
 			b.log.Warn("github webhook: pull_request_review installation not recorded", "installation", p.Installation.ID, "action", p.Action, "error", err)
 			return
 		}
+		orgID = installation.OrgID
 		prURL := p.PullRequest.GetHTMLURL()
 		if prURL == "" {
 			prURL = canonicalGitHubPRURL(owner, repo, p.PullRequest.GetNumber())
@@ -284,6 +286,7 @@ func (b *Bot) handlePullRequestReviewEvent(ctx context.Context, body []byte, del
 		b.handleGithubMention(ctx, githubMentionEvent{
 			DeliveryID:        delivery,
 			RequestID:         githubMentionRequestID("github-review", p.Review.ID, delivery),
+			OrgID:             orgID,
 			InstallationID:    p.Installation.ID,
 			Owner:             owner,
 			Repo:              repo,

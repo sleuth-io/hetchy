@@ -20,11 +20,11 @@ import (
 
 func (b *Bot) runGithubExternalPRUpdate(ctx context.Context, oc orgcfg.Config, ev githubMentionEvent, route githubMentionRoute, out blocks.Emitter) {
 	model := normalizeClaudeModel(ClaudeModelOpus)
-	if ctx, _, ok := b.prepareGithubMentionRun(ctx, oc.OrgID, route.threadID, route.requestID, route.text, out); !ok {
+	ctx, _, ok := b.prepareGithubMentionRun(ctx, oc.OrgID, route.threadID, route.requestID, route.text, out)
+	if !ok {
 		return
-	} else {
-		b.runGithubExternalPRUpdatePrepared(ctx, oc, ev, route, model, out)
 	}
+	b.runGithubExternalPRUpdatePrepared(ctx, oc, ev, route, model, out)
 }
 
 func (b *Bot) prepareGithubMentionRun(ctx context.Context, orgID, threadID, requestID, text string, out blocks.Emitter) (context.Context, runstore.Run, bool) {
