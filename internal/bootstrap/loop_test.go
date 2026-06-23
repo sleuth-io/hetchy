@@ -149,6 +149,38 @@ func TestLoopRunFailureWrapsError(t *testing.T) {
 	}
 }
 
+func TestLoopArtifactReadFailureReturnsPartialResult(t *testing.T) {
+	runner := newFakeRunner()
+	runner.scriptLog = "bootstrap transcript"
+	runner.files["/tmp/hetchy-spec/setup.sh"] = []byte("#!/bin/bash\nmake setup\n")
+	runner.files["/tmp/hetchy-spec/start.sh"] = []byte("#!/bin/bash\nmake start\n")
+	runner.files["/tmp/hetchy-spec/health.sh"] = []byte("#!/bin/bash\nmake health\n")
+
+	res, err := Run(context.Background(), runner, LoopInput{
+		OwnerRepo: "x/y",
+		Hints:     &Hints{Path: "/repo"},
+		RepoDir:   "/repo",
+	})
+	if err == nil {
+		t.Fatal("expected loop to fail")
+	}
+	if !errors.Is(err, ErrLoopFailed) {
+		t.Fatalf("expected ErrLoopFailed, got %v", err)
+	}
+	if res == nil {
+		t.Fatal("expected partial result")
+	}
+	if res.Spec != nil {
+		t.Fatalf("partial artifact failure should not produce a spec: %+v", res.Spec)
+	}
+	if res.Log != "bootstrap transcript" {
+		t.Fatalf("partial result log = %q", res.Log)
+	}
+	if !strings.Contains(res.PartialScripts.Setup, "make setup") {
+		t.Fatalf("partial setup not preserved: %+v", res.PartialScripts)
+	}
+}
+
 func TestBootstrapScriptEnforcesStartReturnAndPlaywrightRuntime(t *testing.T) {
 	for _, want := range []string{
 		"PLAYWRIGHT_BROWSERS_PATH",
@@ -203,6 +235,33 @@ func TestFingerprintStableAcrossRuns(t *testing.T) {
 	c := Fingerprint(h)
 	if a == c {
 		t.Error("fingerprint should change when a hashed file changes")
+	}
+}
+
+func TestFingerprintIncludesPythonMetadata(t *testing.T) {
+	tmp := t.TempDir()
+	if err := writeFile(tmp+"/pyproject.toml", "[project]\nname = \"app\"\nrequires-python = \">=3.12\"\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFile(tmp+"/uv.lock", "version = 1\nrequires-python = \">=3.12\"\n"); err != nil {
+		t.Fatal(err)
+	}
+	hints, err := Detect(tmp)
+	if err != nil {
+		t.Fatalf("detect: %v", err)
+	}
+	a := Fingerprint(hints)
+
+	if err := writeFile(tmp+"/uv.lock", "version = 1\nrequires-python = \">=3.13\"\n"); err != nil {
+		t.Fatal(err)
+	}
+	hints, err = Detect(tmp)
+	if err != nil {
+		t.Fatalf("detect after mutation: %v", err)
+	}
+	b := Fingerprint(hints)
+	if a == b {
+		t.Fatal("fingerprint should change when uv.lock changes")
 	}
 }
 

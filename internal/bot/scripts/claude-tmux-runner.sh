@@ -128,7 +128,7 @@ run_claude_interactive_with_watchdog() {
   # Give the TUI a moment to fully attach before we paste. Without
   # this the first paste keystrokes can land before claude has mounted
   # its input box and get dropped.
-  sleep "${HETCHY_CLAUDE_TUI_SETTLE_S:-2}"
+  sleep "${HETCHY_CLAUDE_TUI_SETTLE_S:-5}"
   startup_pane="$(mktemp "${TMPDIR:-/tmp}/sf-claude-pane.XXXXXX")"
   if tmux capture-pane -p -t "$tmux_session" -S -120 > "$startup_pane" 2>>"$diag_log"; then
     {
@@ -139,7 +139,7 @@ run_claude_interactive_with_watchdog() {
     if grep -Eq 'Quick safety check|project you created|trust this folder' "$startup_pane"; then
       echo "$(date -Is) accepting workspace trust prompt" >>"$diag_log"
       tmux send-keys -t "$tmux_session" Enter >>"$diag_log" 2>&1 || true
-      sleep "${HETCHY_CLAUDE_TUI_SETTLE_S:-2}"
+      sleep "${HETCHY_CLAUDE_TUI_SETTLE_S:-5}"
       if tmux capture-pane -p -t "$tmux_session" -S -120 > "$startup_pane" 2>>"$diag_log"; then
         {
           echo "$(date -Is) startup pane after workspace trust"
@@ -153,7 +153,7 @@ run_claude_interactive_with_watchdog() {
       tmux send-keys -t "$tmux_session" Down >>"$diag_log" 2>&1 || true
       sleep "${HETCHY_CLAUDE_PROMPT_KEY_DELAY_S:-1}"
       tmux send-keys -t "$tmux_session" Enter >>"$diag_log" 2>&1 || true
-      sleep "${HETCHY_CLAUDE_TUI_SETTLE_S:-2}"
+      sleep "${HETCHY_CLAUDE_TUI_SETTLE_S:-5}"
       if tmux capture-pane -p -t "$tmux_session" -S -120 > "$startup_pane" 2>>"$diag_log"; then
         {
           echo "$(date -Is) startup pane after bypass prompt"
@@ -180,7 +180,7 @@ run_claude_interactive_with_watchdog() {
   rm -f "$trimmed_prompt"
 
   local waited=0
-  local max_startup=${HETCHY_CLAUDE_STARTUP_TIMEOUT_S:-60}
+  local max_startup=${HETCHY_CLAUDE_STARTUP_TIMEOUT_S:-180}
   while (( waited < max_startup )); do
     while IFS= read -r path; do
       [[ -z "$path" ]] && continue

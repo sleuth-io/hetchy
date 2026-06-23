@@ -144,7 +144,13 @@ func Run(ctx context.Context, runner Runner, in LoopInput) (*LoopResult, error) 
 			fmt.Errorf("%w: %w", ErrLoopFailed, err)
 	}
 
-	return ResultFromArtifacts(ctx, runner, in, log)
+	res, err := ResultFromArtifacts(ctx, runner, in, log)
+	if err != nil {
+		partial, scripts := readArtifactsBestEffort(ctx, runner, bootstrapOutDir)
+		return &LoopResult{Spec: nil, Manifest: partial, PartialScripts: scripts, Log: log},
+			fmt.Errorf("%w: %w", ErrLoopFailed, err)
+	}
+	return res, nil
 }
 
 // ResultFromArtifacts reads the files BootstrapScript leaves in the sandbox
@@ -282,7 +288,8 @@ func Fingerprint(h *Hints) string {
 	for _, candidate := range []string{
 		"AGENTS.md", "agents.md",
 		"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml",
-		"Dockerfile", "Makefile", "package.json", "go.mod",
+		"Dockerfile", "Makefile", "package.json", "pyproject.toml", "uv.lock",
+		".python-version", "runtime.txt", "Pipfile", "requirements.txt", "setup.cfg", "setup.py", "go.mod",
 		".env.example", ".env.sample", ".env.template",
 	} {
 		addPath(candidate)

@@ -120,6 +120,67 @@ func TestDetectDevContainerDefaultAndAlternates(t *testing.T) {
 	}
 }
 
+func TestDetectPythonProjectCapturesPinnedInterpreterAndNativeWheels(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, ".python-version"), "3.12.2\n")
+	mustWrite(t, filepath.Join(root, "pyproject.toml"), strings.TrimLeft(`
+[project]
+name = "app"
+requires-python = ">=3.12"
+dependencies = [
+  "Django<6.0",
+  "lxml==5.2.1",
+  "xmlsec==1.3.14",
+]
+
+[tool.uv]
+package = false
+
+[tool.black]
+target-version = ["py312"]
+`, "\n"))
+	mustWrite(t, filepath.Join(root, "uv.lock"), strings.TrimLeft(`
+version = 1
+requires-python = ">=3.12"
+
+[[package]]
+name = "xmlsec"
+version = "1.3.14"
+sdist = { url = "https://files.pythonhosted.org/xmlsec-1.3.14.tar.gz" }
+wheels = [
+  { url = "https://files.pythonhosted.org/xmlsec-1.3.14-cp312-cp312-manylinux_2_17_x86_64.whl" },
+]
+`, "\n"))
+
+	hints, err := Detect(root)
+	if err != nil {
+		t.Fatalf("detect: %v", err)
+	}
+	if hints.Python == nil {
+		t.Fatal("expected python hint")
+	}
+	py := hints.Python
+	if py.PythonVersion != "3.12.2" || py.PythonVersionFile != ".python-version" {
+		t.Fatalf("python version hint = %q from %q", py.PythonVersion, py.PythonVersionFile)
+	}
+	if py.RequiresPython != ">=3.12" || py.LockRequiresPython != ">=3.12" {
+		t.Fatalf("requires-python hints = %q / %q", py.RequiresPython, py.LockRequiresPython)
+	}
+	if strings.Join(py.Tooling, ",") != "pyproject,uv" {
+		t.Fatalf("tooling = %#v", py.Tooling)
+	}
+	if strings.Join(py.TargetVersions, ",") != "py312" {
+		t.Fatalf("target versions = %#v", py.TargetVersions)
+	}
+	dep := findNativeDependency(py.NativeDependencies, "xmlsec")
+	if dep == nil {
+		t.Fatalf("native deps missing xmlsec: %#v", py.NativeDependencies)
+	}
+	if dep.Version != "1.3.14" || !dep.HasSourceDistribution || strings.Join(dep.WheelPythonTags, ",") != "cp312" {
+		t.Fatalf("xmlsec dependency hint = %+v", *dep)
+	}
+}
+
 func TestDetectDevContainerNestedFallback(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, ".devcontainer", "go", "devcontainer.json"), `{"image":"golang:1.25"}`)
@@ -176,6 +237,15 @@ func TestDevContainerAlternatePathsUsesSelectedIndex(t *testing.T) {
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("alternate paths = %#v, want %#v", got, want)
 	}
+}
+
+func findNativeDependency(deps []PythonNativeDependency, name string) *PythonNativeDependency {
+	for i := range deps {
+		if deps[i].Name == name {
+			return &deps[i]
+		}
+	}
+	return nil
 }
 
 // TestDetectMissingRoot makes sure Detect doesn't silently succeed on
