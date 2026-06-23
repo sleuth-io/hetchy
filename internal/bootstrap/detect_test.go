@@ -138,6 +138,12 @@ package = false
 
 [tool.black]
 target-version = ["py312"]
+
+[tool.ruff]
+target-version = "py312"
+
+[tool.mypy]
+python_version = "3.12"
 `, "\n"))
 	mustWrite(t, filepath.Join(root, "uv.lock"), strings.TrimLeft(`
 version = 1
@@ -169,7 +175,7 @@ wheels = [
 	if strings.Join(py.Tooling, ",") != "pyproject,uv" {
 		t.Fatalf("tooling = %#v", py.Tooling)
 	}
-	if strings.Join(py.TargetVersions, ",") != "py312" {
+	if strings.Join(py.TargetVersions, ",") != "3.12,py312" {
 		t.Fatalf("target versions = %#v", py.TargetVersions)
 	}
 	dep := findNativeDependency(py.NativeDependencies, "xmlsec")
@@ -178,6 +184,16 @@ wheels = [
 	}
 	if dep.Version != "1.3.14" || !dep.HasSourceDistribution || strings.Join(dep.WheelPythonTags, ",") != "cp312" {
 		t.Fatalf("xmlsec dependency hint = %+v", *dep)
+	}
+}
+
+func TestDetectPythonVersionFileRejectsNonPythonRuntime(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "runtime.txt"), "ruby-3.2.0\n")
+
+	path, version := detectPythonVersionFile(root)
+	if path != "" || version != "" {
+		t.Fatalf("python version hint = %q from %q, want empty", version, path)
 	}
 }
 
