@@ -125,8 +125,21 @@ run_claude_interactive_with_watchdog() {
         break
       fi
       echo "$(date -Is) accepting subscription login method prompt" >>"$diag_log"
-      tmux send-keys -t "$tmux_session" Up Up Up >>"$diag_log" 2>&1 || true
-      sleep "${HETCHY_CLAUDE_PROMPT_KEY_DELAY_S:-1}"
+      local -a login_keys=()
+      if grep -Eq '^[[:space:]]*[^[:space:][:digit:]][[:space:]]*1\.[[:space:]]*Claude account with subscription' "$startup_pane"; then
+        echo "$(date -Is) subscription login method is already selected" >>"$diag_log"
+      elif grep -Eq '^[[:space:]]*[^[:space:][:digit:]][[:space:]]*2\.' "$startup_pane"; then
+        login_keys=(Up)
+      elif grep -Eq '^[[:space:]]*[^[:space:][:digit:]][[:space:]]*3\.' "$startup_pane"; then
+        login_keys=(Up Up)
+      else
+        echo "$(date -Is) warning: login method selected row not visible; accepting observed default" >>"$diag_log"
+      fi
+      if (( ${#login_keys[@]} > 0 )); then
+        echo "$(date -Is) moving login method selection toward subscription with ${login_keys[*]}" >>"$diag_log"
+        tmux send-keys -t "$tmux_session" "${login_keys[@]}" >>"$diag_log" 2>&1 || true
+        sleep "${HETCHY_CLAUDE_PROMPT_KEY_DELAY_S:-1}"
+      fi
       tmux send-keys -t "$tmux_session" Enter >>"$diag_log" 2>&1 || true
       sleep "${HETCHY_CLAUDE_TUI_SETTLE_S:-5}"
       ((++startup_round))

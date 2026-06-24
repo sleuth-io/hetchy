@@ -92,6 +92,8 @@ func TestClaudeTmuxRunnerScript_Embedded(t *testing.T) {
 	for _, line := range []string{
 		`skipDangerousModePermissionPrompt`,
 		`.theme = (.theme // "dark")`,
+		`warning: could not merge hasCompletedOnboarding`,
+		`warning: could not merge Claude settings`,
 		`[[ -s "$config_file" ]] || printf '{"hasCompletedOnboarding":true}\n' > "$config_file"`,
 		`printf '{"skipDangerousModePermissionPrompt":true,"theme":"dark"}\n' > "$settings_file"`,
 	} {
@@ -148,8 +150,8 @@ func TestClaudeTmuxRunner_ClearsStartupPromptsBeforeSubmittingPrompt(t *testing.
 	oauthGuardIdx := strings.Index(claudeTmuxRunnerScript, `[[ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]`)
 	themeIdx := strings.Index(claudeTmuxRunnerScript, `accepting theme prompt`)
 	loginIdx := strings.Index(claudeTmuxRunnerScript, `accepting subscription login method prompt`)
-	loginUpCommand := strings.Join([]string{`tmux send-keys -t "$tmux_session"`, "Up", "Up", "Up"}, " ")
-	loginUpIdx := strings.Index(claudeTmuxRunnerScript, loginUpCommand)
+	loginSelectedIdx := strings.Index(claudeTmuxRunnerScript, `subscription login method is already selected`)
+	loginNavigateIdx := strings.Index(claudeTmuxRunnerScript, `"${login_keys[@]}"`)
 	trustIdx := strings.Index(claudeTmuxRunnerScript, `accepting workspace trust prompt`)
 	bypassIdx := strings.Index(claudeTmuxRunnerScript, `accepting bypass permissions prompt`)
 	bypassDownIdx := strings.Index(claudeTmuxRunnerScript, `tmux send-keys -t "$tmux_session" Down`)
@@ -161,7 +163,8 @@ func TestClaudeTmuxRunner_ClearsStartupPromptsBeforeSubmittingPrompt(t *testing.
 		"oauth login guard":      oauthGuardIdx,
 		"theme prompt":           themeIdx,
 		"login method prompt":    loginIdx,
-		"login up keys":          loginUpIdx,
+		"login selected marker":  loginSelectedIdx,
+		"login navigation keys":  loginNavigateIdx,
 		"workspace trust prompt": trustIdx,
 		"bypass prompt":          bypassIdx,
 		"bypass down key":        bypassDownIdx,
@@ -181,9 +184,16 @@ func TestClaudeTmuxRunner_ClearsStartupPromptsBeforeSubmittingPrompt(t *testing.
 	if oauthGuardIdx >= loginIdx {
 		t.Fatalf("login method prompt must be guarded by OAuth-token check; guard idx=%d login idx=%d", oauthGuardIdx, loginIdx)
 	}
-	if loginUpIdx <= loginIdx || loginUpIdx >= pasteIdx {
-		t.Fatalf("login method prompt should select the first option before prompt paste; login idx=%d up idx=%d paste idx=%d",
-			loginIdx, loginUpIdx, pasteIdx)
+	if loginSelectedIdx <= loginIdx || loginSelectedIdx >= pasteIdx {
+		t.Fatalf("login method prompt should inspect the selected row before prompt paste; login idx=%d selected idx=%d paste idx=%d",
+			loginIdx, loginSelectedIdx, pasteIdx)
+	}
+	if loginNavigateIdx <= loginIdx || loginNavigateIdx >= pasteIdx {
+		t.Fatalf("login method prompt should navigate by detected selected row before prompt paste; login idx=%d navigate idx=%d paste idx=%d",
+			loginIdx, loginNavigateIdx, pasteIdx)
+	}
+	if strings.Contains(claudeTmuxRunnerScript, `Home`) || strings.Contains(claudeTmuxRunnerScript, strings.Join([]string{"Up", "Up", "Up"}, " ")) {
+		t.Fatalf("login method prompt must not rely on blind Home or repeated Up navigation")
 	}
 	if loginIdx >= pasteIdx {
 		t.Fatalf("login method prompt must be handled before prompt paste; login idx=%d paste idx=%d", loginIdx, pasteIdx)
