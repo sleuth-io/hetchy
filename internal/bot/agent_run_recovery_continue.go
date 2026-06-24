@@ -374,6 +374,7 @@ func (b *Bot) continueRecoveredRun(ctx context.Context, sb *daytona.Sandbox, run
 	outcomePRURL := b.recoveredOutcomePRURL(ctx, run, prURL)
 	b.recordRecoveredRunOutcome(context.Background(), run, outcomePRURL, blocksFromRunEvents(events), nil)
 	b.runs.UpdateState(context.Background(), run.ID, runstore.StateSucceeded, "", b.workerID)
+	b.finishBillingRun(context.Background(), run.ID, runstore.StateSucceeded)
 	b.log.Info("agent run recovery continued to success",
 		"run_id", run.ID,
 		"org", run.OrgID,

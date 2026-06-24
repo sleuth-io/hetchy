@@ -62,10 +62,11 @@ USER REQUEST:
 
 When you are done:
   1. Run ` + "`make format`" + ` to format the code.
-  2. Stage and commit any new changes with a clear message. If the requested work is already committed locally, do not create an empty commit.
-  3. Push the branch to origin.
-  4. Open a pull request against the repository's base branch with ` + "`gh pr create`" + `, giving it a clear title and a markdown body describing what changed and why. Write each paragraph or bullet of the PR body as one long line — do NOT insert hard line breaks; let GitHub reflow the text for the reader's viewport.
-  5. The very last line of your output MUST be just the PR URL — no other text on that line.`
+  2. If the branch has no relevant commits or changes, reconstruct the requested work from "Conversation so far" before opening the PR.
+  3. Stage and commit any new changes with a clear message. If the requested work is already committed locally, do not create an empty commit.
+  4. Push the branch to origin.
+  5. Open a pull request against the repository's base branch with ` + "`gh pr create`" + `, giving it a clear title and a markdown body describing what changed and why. Write each paragraph or bullet of the PR body as one long line — do NOT insert hard line breaks; let GitHub reflow the text for the reader's viewport.
+  6. The very last line of your output MUST be just the PR URL — no other text on that line.`
 
 const agentFollowUpInspectPromptTemplate = `You are continuing context in %s on branch %s.
 The existing pull request is at %s.

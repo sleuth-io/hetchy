@@ -664,10 +664,11 @@ func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx
 
 	wd := repoWorkdir(repo.Slug)
 	env := map[string]string{
-		"SF_REPO":      repo.Slug,
-		"SF_WORKDIR":   wd,
-		"SF_BRANCH":    rec.Branch,
-		"GITHUB_TOKEN": repo.GitHubToken,
+		"SF_REPO":        repo.Slug,
+		"SF_WORKDIR":     wd,
+		"SF_BRANCH":      rec.Branch,
+		"SF_BASE_BRANCH": repo.BaseBranch,
+		"GITHUB_TOKEN":   repo.GitHubToken,
 	}
 	addAgentEnv(env, b.cfg, agent)
 	addJobRunEnv(ctx, env)

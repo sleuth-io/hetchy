@@ -134,6 +134,24 @@ func TestBuildFollowUpPromptWithoutSpecAddsProofInstructionsWhenSlotsPresent(t *
 	}
 }
 
+func TestBuildFollowUpPromptUnpublishedBranchReconstructsMissingWork(t *testing.T) {
+	rec := convstore.Record{
+		Branch:  "feature/sf-1",
+		History: []string{"first turn"},
+	}
+	prompt := buildFollowUpPrompt("owner/repo", rec, "please finish the change", nil, 0, chatTaskOptions{}, followUpModeChange)
+
+	for _, want := range []string{
+		"No pull request has been created for this branch yet.",
+		"If the branch has no relevant commits or changes, reconstruct the requested work from \"Conversation so far\" before opening the PR.",
+		"Push the branch to origin.",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("unpublished branch prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
 func assertPromptHasFinalCompletionContract(t *testing.T, prompt string) {
 	t.Helper()
 	validationIdx := strings.Index(prompt, "POST-CHANGE VALIDATION")
@@ -308,13 +326,19 @@ func TestFollowupScript_EmbeddedAndWellFormed(t *testing.T) {
 	requiredLines := []string{
 		`: "${SF_WORKDIR:?required}"`,
 		`: "${SF_BRANCH:?required}"`,
+		`: "${SF_BASE_BRANCH:?required}"`,
 		"require_b64_input SF_PROMPT_B64",
+		"followup_checkout_has_local_work()",
+		"checkout_followup_branch()",
 		"hetchy_configure_git_auth",
 		"hetchy_install_sx",
 		"initialize_claude_config",
 		"hetchy_github_curl",
 		"Authorization: Bearer",
 		"git fetch --prune origin",
+		`git checkout -B "${SF_BRANCH}" "origin/${SF_BRANCH}"`,
+		`git checkout -B "${SF_BRANCH}"`,
+		`git checkout -B "${SF_BRANCH}" "origin/${SF_BASE_BRANCH}"`,
 		"git pull --rebase --autostash origin",
 		"local -a claude_args=(",
 		"--dangerously-skip-permissions",
@@ -375,9 +399,8 @@ func TestFollowupScript_EmbeddedAndWellFormed(t *testing.T) {
 func TestFollowupScript_SyncsBranchBeforeClaude(t *testing.T) {
 	wantOrder := []string{
 		`hetchy_configure_git_auth`,
-		`git fetch --prune origin`,
-		`git checkout "${SF_BRANCH}"`,
-		`git pull --rebase --autostash origin "${SF_BRANCH}"`,
+		`cd "${SF_WORKDIR}"`,
+		"\ncheckout_followup_branch\n",
 		`echo "[hetchy] running claude"`,
 		`run_claude_with_watchdog /tmp/sf-prompt.txt`,
 	}
@@ -392,6 +415,100 @@ func TestFollowupScript_SyncsBranchBeforeClaude(t *testing.T) {
 		}
 		last = idx
 	}
+}
+
+func TestFollowupScript_CheckoutBranchHandlesLocalRemoteAndMissingBranches(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skipf("bash not available: %v", err)
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skipf("git not available: %v", err)
+	}
+
+	home := t.TempDir()
+	env := isolatedGitEnv(home)
+	root := t.TempDir()
+	origin := filepath.Join(root, "origin.git")
+	seed := filepath.Join(root, "seed")
+	gitForTest(t, env, "", "init", "--bare", origin)
+	gitForTest(t, env, "", "init", seed)
+	gitForTest(t, env, seed, "checkout", "-b", "main")
+	mustWriteFile(t, filepath.Join(seed, "README.md"), "base\n")
+	gitForTest(t, env, seed, "add", ".")
+	gitForTest(t, env, seed, "commit", "-m", "base")
+	gitForTest(t, env, seed, "remote", "add", "origin", origin)
+	gitForTest(t, env, seed, "push", "-u", "origin", "main")
+	gitForTest(t, env, "", "--git-dir", origin, "symbolic-ref", "HEAD", "refs/heads/main")
+	baseCommit := strings.TrimSpace(gitForTest(t, env, seed, "rev-parse", "main"))
+
+	gitForTest(t, env, seed, "checkout", "-b", "feature/remote-only")
+	mustWriteFile(t, filepath.Join(seed, "remote.txt"), "remote\n")
+	gitForTest(t, env, seed, "add", ".")
+	gitForTest(t, env, seed, "commit", "-m", "remote branch")
+	gitForTest(t, env, seed, "push", "-u", "origin", "feature/remote-only")
+	remoteCommit := strings.TrimSpace(gitForTest(t, env, seed, "rev-parse", "feature/remote-only"))
+
+	harness := "#!/bin/bash\nset -euo pipefail\n" +
+		extractShellFunction(t, followupScriptBody, "followup_checkout_has_local_work") + "\n" +
+		extractShellFunction(t, followupScriptBody, "checkout_followup_branch") + "\ncheckout_followup_branch\n"
+	runCheckout := func(workdir, branch string) string {
+		t.Helper()
+		cmd := exec.Command("bash", "-c", harness)
+		cmd.Dir = workdir
+		cmd.Env = append(env, "SF_BRANCH="+branch, "SF_BASE_BRANCH=main")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("checkout_followup_branch(%s): %v\n%s", branch, err, out)
+		}
+		return string(out)
+	}
+	assertBranchAt := func(workdir, branch, wantCommit string) {
+		t.Helper()
+		if got := strings.TrimSpace(gitForTest(t, env, workdir, "branch", "--show-current")); got != branch {
+			t.Fatalf("current branch = %q, want %q", got, branch)
+		}
+		if got := strings.TrimSpace(gitForTest(t, env, workdir, "rev-parse", "HEAD")); got != wantCommit {
+			t.Fatalf("%s HEAD = %q, want %q", branch, got, wantCommit)
+		}
+	}
+
+	localClone := filepath.Join(root, "local-clone")
+	gitForTest(t, env, "", "clone", origin, localClone)
+	gitForTest(t, env, localClone, "checkout", "-b", "feature/local-only", "origin/main")
+	mustWriteFile(t, filepath.Join(localClone, "local.txt"), "local\n")
+	gitForTest(t, env, localClone, "add", ".")
+	gitForTest(t, env, localClone, "commit", "-m", "local branch")
+	localCommit := strings.TrimSpace(gitForTest(t, env, localClone, "rev-parse", "feature/local-only"))
+	runCheckout(localClone, "feature/local-only")
+	assertBranchAt(localClone, "feature/local-only", localCommit)
+
+	localWorkClone := filepath.Join(root, "local-work-clone")
+	gitForTest(t, env, "", "clone", origin, localWorkClone)
+	mustWriteFile(t, filepath.Join(localWorkClone, "main-work.txt"), "main work\n")
+	gitForTest(t, env, localWorkClone, "add", ".")
+	gitForTest(t, env, localWorkClone, "commit", "-m", "work on main")
+	localWorkCommit := strings.TrimSpace(gitForTest(t, env, localWorkClone, "rev-parse", "HEAD"))
+	out := runCheckout(localWorkClone, "feature/missing-local-work")
+	if !strings.Contains(out, "creating it from current checkout to preserve local work") {
+		t.Fatalf("local work checkout output missing expected message:\n%s", out)
+	}
+	assertBranchAt(localWorkClone, "feature/missing-local-work", localWorkCommit)
+
+	remoteClone := filepath.Join(root, "remote-clone")
+	gitForTest(t, env, "", "clone", origin, remoteClone)
+	out = runCheckout(remoteClone, "feature/remote-only")
+	if !strings.Contains(out, "checking out origin/feature/remote-only") {
+		t.Fatalf("remote branch checkout output missing expected message:\n%s", out)
+	}
+	assertBranchAt(remoteClone, "feature/remote-only", remoteCommit)
+
+	missingClone := filepath.Join(root, "missing-clone")
+	gitForTest(t, env, "", "clone", origin, missingClone)
+	out = runCheckout(missingClone, "feature/missing")
+	if !strings.Contains(out, "recreating from origin/main") {
+		t.Fatalf("missing branch checkout output missing expected message:\n%s", out)
+	}
+	assertBranchAt(missingClone, "feature/missing", baseCommit)
 }
 
 func TestSandboxCommon_RewriteLegacySavedSpecWorkdir(t *testing.T) {
@@ -1003,6 +1120,55 @@ func mustReadFile(t *testing.T, path string) string {
 	return string(body)
 }
 
+func isolatedGitEnv(home string) []string {
+	env := make([]string, 0, len(os.Environ())+6)
+	for _, kv := range os.Environ() {
+		if strings.HasPrefix(kv, "HOME=") ||
+			strings.HasPrefix(kv, "GIT_CONFIG_GLOBAL=") ||
+			strings.HasPrefix(kv, "GIT_AUTHOR_") ||
+			strings.HasPrefix(kv, "GIT_COMMITTER_") {
+			continue
+		}
+		env = append(env, kv)
+	}
+	return append(env,
+		"HOME="+home,
+		"GIT_CONFIG_GLOBAL="+filepath.Join(home, ".gitconfig"),
+		"GIT_AUTHOR_NAME=Hetchy Test",
+		"GIT_AUTHOR_EMAIL=hetchy-test@example.com",
+		"GIT_COMMITTER_NAME=Hetchy Test",
+		"GIT_COMMITTER_EMAIL=hetchy-test@example.com",
+	)
+}
+
+func gitForTest(t *testing.T, env []string, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	cmd.Env = env
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+	return string(out)
+}
+
+func extractShellFunction(t *testing.T, src, name string) string {
+	t.Helper()
+	startAnchor := name + "() {"
+	startIdx := strings.Index(src, startAnchor)
+	if startIdx < 0 {
+		t.Fatalf("%s not found", name)
+	}
+	endIdx := strings.Index(src[startIdx:], "\n}")
+	if endIdx < 0 {
+		t.Fatalf("%s end-brace not found", name)
+	}
+	return src[startIdx : startIdx+endIdx+len("\n}")]
+}
+
 func assertBashSyntax(t *testing.T, name, script string) {
 	t.Helper()
 	if _, err := exec.LookPath("bash"); err != nil {
@@ -1331,7 +1497,7 @@ func TestRunFollowUpBuildsScriptEnvironmentWithFakeRunner(t *testing.T) {
 		PRURL:    "https://github.com/acme/repo/pull/7",
 		History:  []string{"first request"},
 	}
-	repo := repoCtx{Slug: "acme/repo", GitHubToken: "ghs_token"}
+	repo := repoCtx{Slug: "acme/repo", BaseBranch: "main", GitHubToken: "ghs_token"}
 	oc := orgcfg.Config{OrgID: "org_1", ClaudeCodeOAuthToken: "oauth-token"}
 
 	prURL, err := b.runFollowUp(context.Background(), &daytona.Sandbox{ID: "sandbox-1"}, repo, oc, rec, agents.Profile{Slug: "helper", DisplayName: "Helper"}, "tighten it", "req-2", chatTaskOptions{}, ClaudeModelSonnet, followUpModeChange, newCaptureEmitter())
@@ -1349,6 +1515,9 @@ func TestRunFollowUpBuildsScriptEnvironmentWithFakeRunner(t *testing.T) {
 	}
 	if captured.env["SF_REPO"] != "acme/repo" {
 		t.Fatalf("SF_REPO = %q, want acme/repo", captured.env["SF_REPO"])
+	}
+	if captured.env["SF_BASE_BRANCH"] != "main" {
+		t.Fatalf("SF_BASE_BRANCH = %q, want main", captured.env["SF_BASE_BRANCH"])
 	}
 	if captured.env["CLAUDE_CODE_OAUTH_TOKEN"] != "oauth-token" {
 		t.Fatalf("oauth token env = %q", captured.env["CLAUDE_CODE_OAUTH_TOKEN"])
@@ -1390,7 +1559,7 @@ func TestRunFollowUpAddsCompletionContractWhenSpecPresent(t *testing.T) {
 		PRURL:    "https://github.com/acme/repo/pull/7",
 		History:  []string{"first request"},
 	}
-	repo := repoCtx{Slug: "acme/repo", GitHubToken: "ghs_token", InstallID: 11, RepoID: 22}
+	repo := repoCtx{Slug: "acme/repo", BaseBranch: "main", GitHubToken: "ghs_token", InstallID: 11, RepoID: 22}
 	oc := orgcfg.Config{OrgID: "org_1", ClaudeCodeOAuthToken: "oauth-token"}
 
 	if _, err := b.runFollowUp(context.Background(), &daytona.Sandbox{ID: "sandbox-1"}, repo, oc, rec, agents.Profile{}, "tighten it", "req-2", defaultChatTaskOptions(), ClaudeModelSonnet, followUpModeChange, newCaptureEmitter()); err != nil {
@@ -1432,7 +1601,7 @@ func TestRunFollowUpAnswerOnlySkipsSpecAndPRValidation(t *testing.T) {
 		PRURL:    "https://github.com/acme/repo/pull/7",
 		History:  []string{"first request"},
 	}
-	repo := repoCtx{Slug: "acme/repo", GitHubToken: "ghs_token", InstallID: 11, RepoID: 22}
+	repo := repoCtx{Slug: "acme/repo", BaseBranch: "main", GitHubToken: "ghs_token", InstallID: 11, RepoID: 22}
 
 	prURL, err := b.runFollowUp(context.Background(), &daytona.Sandbox{ID: "sandbox-1"}, repo, orgcfg.Config{OrgID: "org_1", ClaudeCodeOAuthToken: "oauth-token"}, rec, agents.Profile{}, "just say hi", "req-2", defaultChatTaskOptions(), ClaudeModelSonnet, followUpModeAnswerOnly, newCaptureEmitter())
 	if err != nil {

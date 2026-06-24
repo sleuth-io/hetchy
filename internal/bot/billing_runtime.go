@@ -66,6 +66,10 @@ func plural(n int) string {
 }
 
 func (b *Bot) finishBillingRun(ctx context.Context, runID, state string) {
+	if b.finishBillingRunFn != nil {
+		b.finishBillingRunFn(ctx, runID, state)
+		return
+	}
 	if b.billing == nil || !b.billing.Enabled() || runID == "" || !isTerminalRunState(state) {
 		return
 	}

@@ -71,6 +71,7 @@ func TestRecoverAgentRunReadyBootstrapCommandSavesSpecAndContinues(t *testing.T)
 	var ranAgent bool
 	var cleanupCall string
 	var deletedSessions []string
+	var billingFinalized string
 	b := &Bot{
 		log:       discardLogger(),
 		runs:      store,
@@ -130,6 +131,9 @@ func TestRecoverAgentRunReadyBootstrapCommandSavesSpecAndContinues(t *testing.T)
 		stopAndArchiveFn: func(_ context.Context, sb *daytona.Sandbox) {
 			cleanupCall = sb.ID + "|stopped"
 		},
+		finishBillingRunFn: func(_ context.Context, runID, state string) {
+			billingFinalized = runID + "|" + state
+		},
 	}
 
 	b.recoverAgentRunReady(context.Background(), run, nil)
@@ -152,6 +156,9 @@ func TestRecoverAgentRunReadyBootstrapCommandSavesSpecAndContinues(t *testing.T)
 	}
 	if len(deletedSessions) == 0 || deletedSessions[0] != "bootstrap-req-1" {
 		t.Fatalf("deleted sessions = %+v", deletedSessions)
+	}
+	if billingFinalized != "run_bootstrap|succeeded" {
+		t.Fatalf("billing finalized = %q", billingFinalized)
 	}
 }
 
