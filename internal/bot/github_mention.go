@@ -225,19 +225,19 @@ func (b *Bot) handleGithubMention(ctx context.Context, ev githubMentionEvent) {
 		b.log.Warn("github mention: client unavailable", "org", oc.OrgID, "installation", ev.InstallationID, "error", err)
 		return
 	}
-	if ev.SubjectType == githubMentionSubjectPullRequest {
-		pr, ok := b.ensureGithubMentionPullRequest(ctx, client, &ev)
-		if !ok {
-			return
-		}
-		ev.PullRequest = pr
-	}
 	if !githubMentionAuthorized(ev.AuthorAssociation) {
 		b.postGithubMentionComment(ctx, client, ev.Owner, ev.Repo, ev.SubjectNumber, "I can only take requests from repository owners, members, or collaborators.")
 		b.log.Info("github mention: unauthorized author ignored",
 			"org", oc.OrgID, "repo", ev.Owner+"/"+ev.Repo, "subject", ev.SubjectNumber,
 			"author", ev.AuthorLogin, "association", ev.AuthorAssociation)
 		return
+	}
+	if ev.SubjectType == githubMentionSubjectPullRequest {
+		pr, ok := b.ensureGithubMentionPullRequest(ctx, client, &ev)
+		if !ok {
+			return
+		}
+		ev.PullRequest = pr
 	}
 	if ev.RequestID == "" {
 		ev.RequestID = githubMentionRequestID("github-comment", ev.CommentID, ev.DeliveryID)
@@ -335,10 +335,12 @@ func (b *Bot) ensureGithubMentionPullRequest(ctx context.Context, client *github
 	if err != nil {
 		b.log.Warn("github mention: pull request lookup failed",
 			"repo", ev.Owner+"/"+ev.Repo, "pr", ev.SubjectNumber, "error", err)
+		b.postGithubMentionPullRequestLookupFailure(ctx, client, ev)
 		return nil, false
 	}
 	if pr == nil {
 		b.log.Warn("github mention: pull request lookup returned nil", "repo", ev.Owner+"/"+ev.Repo, "pr", ev.SubjectNumber)
+		b.postGithubMentionPullRequestLookupFailure(ctx, client, ev)
 		return nil, false
 	}
 	if ev.SubjectURL == "" {
@@ -351,6 +353,13 @@ func (b *Bot) ensureGithubMentionPullRequest(ctx context.Context, client *github
 		ev.SubjectBody = pr.GetBody()
 	}
 	return pr, true
+}
+
+func (b *Bot) postGithubMentionPullRequestLookupFailure(ctx context.Context, client *github.Client, ev *githubMentionEvent) {
+	if err := b.postGithubMentionComment(ctx, client, ev.Owner, ev.Repo, ev.SubjectNumber, "Could not load this pull request from GitHub. Please try mentioning me again."); err != nil {
+		b.log.Warn("github mention: pull request lookup failure comment failed",
+			"repo", ev.Owner+"/"+ev.Repo, "pr", ev.SubjectNumber, "error", err)
+	}
 }
 
 func (b *Bot) claimGithubMentionDelivery(ctx context.Context, orgID, deliveryID, requestID string) bool {

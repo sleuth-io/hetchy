@@ -323,6 +323,47 @@ func TestGithubMentionEventHandlersPostUnauthorizedComment(t *testing.T) {
 	}
 }
 
+func TestHandleGithubMentionUnauthorizedPRSkipsPullRequestFetch(t *testing.T) {
+	httpClient, bodies := captureGitHubIssueComments(t)
+	fake := newWebhookFakeDB()
+	fake.queryRow["GetGithubInstallation"] = webhookInstallationRow(-42, "org1")
+	b := &Bot{
+		log:   discardLogger(),
+		store: &db.Store{Queries: sqlc.New(fake)},
+		orgs:  &fakeOrgStore{getConfig: orgcfg.Config{OrgID: "org1", AnthropicAPIKey: "sk-ant"}},
+		live:  newLiveRegistry(),
+		github: &githubapp.Source{
+			LookupPAT: func(context.Context, int64) (string, error) { return "ghp_test", nil },
+			HTTP:      httpClient,
+		},
+	}
+
+	b.handleGithubMention(context.Background(), githubMentionEvent{
+		DeliveryID:        "delivery-1",
+		InstallationID:    -42,
+		Owner:             "acme",
+		Repo:              "repo",
+		SubjectType:       githubMentionSubjectPullRequest,
+		SubjectNumber:     7,
+		CommentID:         99,
+		CommentBody:       "@hetchy fix this",
+		AuthorLogin:       "alice",
+		AuthorAssociation: "CONTRIBUTOR",
+		Directive:         "fix this",
+		Source:            "issue_comment",
+	})
+
+	if len(*bodies) != 1 {
+		t.Fatalf("posted comments = %d, want 1", len(*bodies))
+	}
+	if !strings.Contains((*bodies)[0], "repository owners, members, or collaborators") {
+		t.Fatalf("posted body = %q", (*bodies)[0])
+	}
+	if len(fake.execCalls) != 0 {
+		t.Fatalf("exec calls = %d, want no delivery claim", len(fake.execCalls))
+	}
+}
+
 func TestHandleGithubMentionAuthorizedInFlightRunPostsComment(t *testing.T) {
 	httpClient, bodies := captureGitHubIssueComments(t)
 	fake := newWebhookFakeDB()
@@ -607,6 +648,54 @@ func TestEnsureGithubMentionPullRequestFetchesMissingPayload(t *testing.T) {
 	}
 	if ev.SubjectURL != "https://github.com/acme/repo/pull/7" || ev.SubjectTitle != "Fix bug" || ev.SubjectBody != "Body" {
 		t.Fatalf("event not enriched: %+v", ev)
+	}
+}
+
+func TestEnsureGithubMentionPullRequestPostsLookupFailure(t *testing.T) {
+	var bodies []string
+	httpClient := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/repo/pulls/7":
+			return &http.Response{
+				StatusCode: http.StatusInternalServerError,
+				Body:       io.NopCloser(strings.NewReader(`{"message":"down"}`)),
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Request:    r,
+			}, nil
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/repo/issues/7/comments":
+			raw, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatalf("read body: %v", err)
+			}
+			var payload struct {
+				Body string `json:"body"`
+			}
+			if err := json.Unmarshal(raw, &payload); err != nil {
+				t.Fatalf("decode comment payload: %v", err)
+			}
+			bodies = append(bodies, payload.Body)
+			return &http.Response{
+				StatusCode: http.StatusCreated,
+				Body:       io.NopCloser(strings.NewReader(`{"id":1}`)),
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Request:    r,
+			}, nil
+		default:
+			t.Fatalf("unexpected GitHub request: %s %s", r.Method, r.URL.Path)
+			return nil, errors.New("unexpected GitHub request")
+		}
+	})}
+	b := &Bot{log: discardLogger()}
+	ev := githubMentionEvent{Owner: "acme", Repo: "repo", SubjectNumber: 7}
+
+	if pr, ok := b.ensureGithubMentionPullRequest(context.Background(), github.NewClient(httpClient), &ev); ok || pr != nil {
+		t.Fatalf("pr = %+v, ok=%v; want failure", pr, ok)
+	}
+	if len(bodies) != 1 {
+		t.Fatalf("posted comments = %d, want 1", len(bodies))
+	}
+	if !strings.Contains(bodies[0], "Could not load this pull request") {
+		t.Fatalf("posted body = %q", bodies[0])
 	}
 }
 
