@@ -46,8 +46,8 @@ func main() {
 	backfillPRStatesLimit := flag.Int("backfill-pr-states-limit", 1000, "Maximum conversations to scan when backfilling PR state")
 	backfillPRStatesForce := flag.Bool("backfill-pr-states-force", false, "Refresh PR state even for conversations checked before")
 	dispatchDueJobs := flag.Bool("dispatch-due-jobs", false, "Claim due scheduled jobs, run them, and exit")
-	jobDispatchLimit := flag.Int("job-dispatch-limit", 5, "Maximum due jobs to claim in one dispatcher invocation")
-	jobDispatchConcurrency := flag.Int("job-dispatch-concurrency", 1, "Maximum scheduled jobs to run concurrently")
+	jobDispatchLimit := flag.Int("job-dispatch-limit", 100, "Maximum due jobs to claim in one dispatcher invocation")
+	jobDispatchConcurrency := flag.Int("job-dispatch-concurrency", 100, "Maximum scheduled jobs to run concurrently")
 	flag.Parse()
 
 	_ = godotenv.Load()
@@ -144,10 +144,7 @@ func runDispatchDueJobs(log *slog.Logger, limit, concurrency int) {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	result, err := b.DispatchDueJobs(ctx, bot.JobDispatchOptions{
-		Limit:       int32(limit),
-		Concurrency: concurrency,
-	})
+	result, err := b.DispatchDueJobs(ctx, bot.JobDispatchOptions{Limit: int32(limit)}, concurrency)
 	if err != nil {
 		log.Error("job dispatch failed", "error", err)
 		os.Exit(1)

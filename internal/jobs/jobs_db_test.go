@@ -786,8 +786,8 @@ func TestClaimDueTxCreatesExecutionAtScheduledTimeAndAdvancesNextRun(t *testing.
 		t.Fatalf("job next run = %s, want %s", claimed[0].Job.NextRunAt, wantNext)
 	}
 	listCall := f.onlyQueryCall(t, "FROM agent_jobs j")
-	assertJobTimeArg(t, listCall.args, 0, now)
-	assertJobArg(t, listCall.args, 1, int32(5))
+	assertJobArg(t, listCall.args, 0, int32(5))
+	assertJobTimeArg(t, listCall.args, 1, now)
 	createCall := f.onlyQueryRowCall(t, "INSERT INTO agent_job_executions")
 	assertJobArg(t, createCall.args, 1, "job_1")
 	assertJobArg(t, createCall.args, 2, "org_1")

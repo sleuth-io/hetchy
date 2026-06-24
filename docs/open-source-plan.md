@@ -93,8 +93,8 @@ Status: **done**
 Scheduled jobs now run from the main web process. The loop is controlled by:
 
 - `HETCHY_JOB_DISPATCH_INTERVAL_SECONDS` (default 300, `0` disables)
-- `HETCHY_JOB_DISPATCH_LIMIT` (default 5)
-- `HETCHY_JOB_DISPATCH_CONCURRENCY` (default 1)
+- `HETCHY_JOB_DISPATCH_LIMIT` (default 100)
+- `HETCHY_JOB_DISPATCH_CONCURRENCY` (default 100)
 
 The external one-shot command still exists:
 
@@ -105,7 +105,9 @@ hetchy --dispatch-due-jobs
 That keeps external cron/systemd schedulers viable, but they are no longer
 required for a self-hosted deployment. Job claiming uses `FOR UPDATE SKIP LOCKED`,
 so multiple replicas or mixed in-process/external dispatchers do not double-run a
-job.
+job. The in-process loop only claims jobs when local execution capacity is
+available, starts claimed executions immediately, and wakes as jobs finish so
+large due batches drain without waiting for the next interval.
 
 ### Local Multi-Org Auth
 

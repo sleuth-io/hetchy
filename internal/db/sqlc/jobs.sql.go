@@ -400,32 +400,39 @@ func (q *Queries) ListAgentJobsByOrg(ctx context.Context, orgID string) ([]Agent
 }
 
 const listClaimableDueAgentJobs = `-- name: ListClaimableDueAgentJobs :many
-SELECT id, org_id, name, definition, agent_slug,
-       primary_owner, primary_repo, additional_repos,
-       cron_schedule, timezone, enabled, next_run_at,
-       last_run_at, last_run_id, last_error, created_at, updated_at
+WITH ranked AS (
+  SELECT j.id,
+         j.next_run_at,
+         ROW_NUMBER() OVER (PARTITION BY j.org_id ORDER BY j.next_run_at ASC, j.id ASC) AS org_rank
+  FROM agent_jobs j
+  WHERE j.enabled = TRUE
+    AND j.next_run_at IS NOT NULL
+    AND j.next_run_at <= $2
+)
+SELECT j.id, j.org_id, j.name, j.definition, j.agent_slug,
+       j.primary_owner, j.primary_repo, j.additional_repos,
+       j.cron_schedule, j.timezone, j.enabled, j.next_run_at,
+       j.last_run_at, j.last_run_id, j.last_error, j.created_at, j.updated_at
 FROM agent_jobs j
-WHERE enabled = TRUE
-  AND next_run_at IS NOT NULL
-  AND next_run_at <= $1
-  AND NOT EXISTS (
-    SELECT 1
-    FROM agent_job_executions e
-    WHERE e.job_id = j.id
-      AND e.status IN ('claimed', 'running')
-  )
-ORDER BY next_run_at ASC, id ASC
-LIMIT $2
-FOR UPDATE SKIP LOCKED
+JOIN ranked r ON r.id = j.id
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM agent_job_executions e
+  WHERE e.job_id = j.id
+    AND e.status IN ('claimed', 'running')
+)
+ORDER BY r.org_rank ASC, r.next_run_at ASC, j.id ASC
+LIMIT $1
+FOR UPDATE OF j SKIP LOCKED
 `
 
 type ListClaimableDueAgentJobsParams struct {
-	NowAt      pgtype.Timestamptz `json:"now_at"`
 	LimitCount int32              `json:"limit_count"`
+	NowAt      pgtype.Timestamptz `json:"now_at"`
 }
 
 func (q *Queries) ListClaimableDueAgentJobs(ctx context.Context, arg ListClaimableDueAgentJobsParams) ([]AgentJob, error) {
-	rows, err := q.db.Query(ctx, listClaimableDueAgentJobs, arg.NowAt, arg.LimitCount)
+	rows, err := q.db.Query(ctx, listClaimableDueAgentJobs, arg.LimitCount, arg.NowAt)
 	if err != nil {
 		return nil, err
 	}

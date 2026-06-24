@@ -148,6 +148,12 @@ func TestLoadConfig_JobDispatchSettings(t *testing.T) {
 	if defaultJobDispatchIntervalSeconds != 300 {
 		t.Fatalf("defaultJobDispatchIntervalSeconds = %d, want 300", defaultJobDispatchIntervalSeconds)
 	}
+	if defaultJobDispatchLimit != 100 {
+		t.Fatalf("defaultJobDispatchLimit = %d, want 100", defaultJobDispatchLimit)
+	}
+	if defaultJobDispatchConcurrency != 100 {
+		t.Fatalf("defaultJobDispatchConcurrency = %d, want 100", defaultJobDispatchConcurrency)
+	}
 	if cfg.JobDispatchIntervalSeconds != defaultJobDispatchIntervalSeconds ||
 		cfg.JobDispatchLimit != defaultJobDispatchLimit ||
 		cfg.JobDispatchConcurrency != defaultJobDispatchConcurrency {
