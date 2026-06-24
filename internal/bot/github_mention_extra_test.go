@@ -696,17 +696,6 @@ func TestRunGithubExternalPRUpdatePreparedSetupFailures(t *testing.T) {
 			wantErr:    "Pull request branch unavailable",
 			wantUpsert: true,
 		},
-		{
-			name: "fork pull request",
-			oc:   orgcfg.Config{OrgID: "org1", AnthropicAPIKey: "sk-ant"},
-			pr: &github.PullRequest{
-				Number: github.Int(7),
-				Head:   &github.PullRequestBranch{Ref: github.String("feature/x"), Repo: &github.Repository{FullName: github.String("fork/repo")}},
-				Base:   &github.PullRequestBranch{Repo: &github.Repository{FullName: github.String("acme/repo")}},
-			},
-			wantErr:    "Fork pull request unsupported",
-			wantUpsert: true,
-		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

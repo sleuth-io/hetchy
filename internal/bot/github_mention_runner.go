@@ -88,15 +88,6 @@ func (b *Bot) runGithubExternalPRUpdatePrepared(ctx context.Context, oc orgcfg.C
 		return
 	}
 	rec.Branch = headBranch
-	baseRepo, headRepo, fork := githubMentionForkPullRequest(ev)
-	if fork {
-		emit.Error("Fork pull request unsupported", "Hetchy can only update pull requests whose head branch is in the same repository. Fork-based pull request updates need a separate permission model.")
-		appendBlocksAsNewTurn(&rec, route.text, recorder.Snapshot())
-		_ = b.convs.Upsert(context.Background(), rec)
-		b.markRunOutcome(ctx, runstore.OutcomeFailedSetup, map[string]any{"phase": "fork_pr", "pr_url": rec.PRURL, "head_repo": headRepo, "base_repo": baseRepo})
-		b.markRunState(ctx, runstore.StateFailed, errors.New("fork pull request unsupported"))
-		return
-	}
 
 	agent, ok := b.selectAgentForConversation(ctx, oc.OrgID, rec.AgentSlug, emit)
 	if !ok {
@@ -184,7 +175,6 @@ func (b *Bot) runGithubExternalPRUpdateWithAgent(ctx context.Context, oc orgcfg.
 		return
 	}
 	rec.SandboxID = sb.ID
-	rec.Branch = githubPRHeadRef(ev.PullRequest)
 	b.markRunBranch(ctx, rec.Branch)
 	b.markRunSandbox(ctx, sb.ID)
 	setLiveRunSandboxID(ctx, sb.ID, true)
