@@ -56,9 +56,7 @@ run_claude_interactive_with_watchdog() {
   : > "$diag_log" 2>/dev/null || true
 
   cwd="$(pwd)"
-  if declare -F initialize_claude_config >/dev/null 2>&1; then
-    initialize_claude_config
-  fi
+  initialize_claude_config
   # Claude Code encodes the project transcript directory by replacing
   # every `/` in the absolute cwd with `-`. Matching that scheme lets
   # us locate the JSONL file the TUI writes once it boots.

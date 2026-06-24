@@ -200,13 +200,14 @@ func TestConditionalTasksPromptRespectsOptions(t *testing.T) {
 }
 
 func TestRunScriptTimeoutBudgetCoversInteractiveClaudeRunner(t *testing.T) {
-	if runScriptWallTimeout != 3*time.Hour {
-		t.Fatalf("runScriptWallTimeout = %s, want 3h", runScriptWallTimeout)
+	if !strings.Contains(claudeTmuxRunnerScript, `local max_wall=${HETCHY_CLAUDE_WALL_TIMEOUT_S:-7200}`) {
+		t.Fatalf("claude tmux runner default wall budget changed; revisit runScriptWallTimeout")
 	}
+	claudeTmuxDefaultWallTimeout := 2 * time.Hour
 	if runScriptIdleTimeout != 15*time.Minute {
 		t.Fatalf("runScriptIdleTimeout = %s, want 15m", runScriptIdleTimeout)
 	}
-	if runScriptWallTimeout <= 2*time.Hour {
+	if runScriptWallTimeout <= claudeTmuxDefaultWallTimeout {
 		t.Fatalf("runScriptWallTimeout must exceed the tmux runner's 2h wall budget, got %s", runScriptWallTimeout)
 	}
 }

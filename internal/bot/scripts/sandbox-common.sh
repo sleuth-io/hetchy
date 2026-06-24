@@ -191,7 +191,7 @@ hetchy_container_preflight() {
 }
 
 initialize_claude_config() {
-  mkdir -p "$HOME/.claude" || return 0
+  mkdir -p "$HOME/.claude" || return 1
 
   local config_file="$HOME/.claude.json"
   local settings_file="$HOME/.claude/settings.json"
