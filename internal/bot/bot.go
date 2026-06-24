@@ -185,6 +185,7 @@ type Bot struct {
 	bootstrapAutoHealFn      bootstrapAutoHealFunc
 	recoverRunFn             recoveryLaunchFunc
 	validateRecoveredPRFn    recoveredPRValidationFunc
+	finishBillingRunFn       func(context.Context, string, string)
 	getSandboxFn             func(context.Context, string) (*daytona.Sandbox, error)
 	resumeSandboxFn          func(context.Context, *daytona.Sandbox, blocks.Emitter) error
 	deleteSandboxSessionFn   func(*daytona.Sandbox, string)

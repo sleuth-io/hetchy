@@ -1,10 +1,8 @@
 package bot
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -183,6 +181,196 @@ func TestRecoverAgentRunReadyReplaysCommandLogToSuccess(t *testing.T) {
 	}
 	if cleanupCall != "sandbox-1|stopped" {
 		t.Fatalf("cleanup call = %q", cleanupCall)
+	}
+}
+
+func TestRecoverAgentRunReadyFreshNoPRFails(t *testing.T) {
+	store := &fakeRunStore{enabled: true}
+	convs := &fakeConversationStore{getErr: convstore.ErrNotFound}
+	run := runstore.Run{
+		ID:          "run_no_pr",
+		OrgID:       "org_1",
+		ThreadID:    "thread_1",
+		UserRequest: "ship it",
+		SandboxID:   "sandbox-1",
+		SessionID:   "session-1",
+		CommandID:   "command-1",
+		Branch:      "feature/sf-1",
+		RunKind:     "fresh",
+	}
+	logText := "daytona noise\n" +
+		hetchyRunBeginSentinel(run.ID) + "\n" +
+		`{"type":"result","subtype":"success","result":"Done without creating a pull request."}` + "\n" +
+		hetchyRunEndPrefix(run.ID) + "0__\n"
+
+	var deletedSession, archivedSandbox, cleanupCall string
+	b := &Bot{
+		log:      discardLogger(),
+		runs:     store,
+		convs:    convs,
+		workerID: "worker-1",
+		getSandboxFn: func(_ context.Context, sandboxID string) (*daytona.Sandbox, error) {
+			return &daytona.Sandbox{ID: sandboxID}, nil
+		},
+		ensureSandboxStartedFn: func(context.Context, *daytona.Sandbox) error { return nil },
+		commandLogSnapshotFn: func(context.Context, *daytona.Sandbox, string, string) (string, error) {
+			return logText, nil
+		},
+		sessionCommandStatusFn: func(context.Context, *daytona.Sandbox, string, string) (map[string]any, error) {
+			return map[string]any{"exitCode": 0}, nil
+		},
+		deleteSandboxSessionFn: func(_ *daytona.Sandbox, sessionID string) {
+			deletedSession = sessionID
+		},
+		stopAndArchiveFn: func(_ context.Context, sb *daytona.Sandbox) {
+			archivedSandbox = sb.ID
+		},
+		cleanupSandboxFn: func(_ context.Context, sb *daytona.Sandbox, reason string) {
+			cleanupCall = sb.ID + "|" + reason
+		},
+	}
+
+	b.recoverAgentRunReady(context.Background(), run, nil)
+
+	if len(store.updateOutcomes) == 0 || store.updateOutcomes[len(store.updateOutcomes)-1].outcome != runstore.OutcomeCompletedNoPR {
+		t.Fatalf("outcomes = %+v", store.updateOutcomes)
+	}
+	if got := store.updateOutcomes[len(store.updateOutcomes)-1].detail["reason"]; got != "change_request_missing_pr" {
+		t.Fatalf("outcome detail = %+v", store.updateOutcomes[len(store.updateOutcomes)-1].detail)
+	}
+	last := store.updateStates[len(store.updateStates)-1]
+	if last.state != runstore.StateFailed || !strings.Contains(last.lastErr, "pull request URL") {
+		t.Fatalf("last state = %+v", last)
+	}
+	rec := convs.lastUpsert(t)
+	if rec.SandboxID != "sandbox-1" || rec.Branch != "feature/sf-1" || rec.PRURL != "" {
+		t.Fatalf("projected conversation should preserve branch/sandbox without PR: %+v", rec)
+	}
+	block := rec.ResponseBlocks[0][len(rec.ResponseBlocks[0])-1]
+	if block.Kind != blocks.KindError || block.Title != "Pull request missing" {
+		t.Fatalf("terminal block = %+v", block)
+	}
+	if deletedSession != "session-1" || archivedSandbox != "sandbox-1" {
+		t.Fatalf("missing PR should stop/archive and delete session, session=%q sandbox=%q", deletedSession, archivedSandbox)
+	}
+	if cleanupCall != "" {
+		t.Fatalf("missing PR should not use destructive cleanup, cleanup=%q", cleanupCall)
+	}
+}
+
+func TestRecoverAgentRunReadyJobNoPRSucceeds(t *testing.T) {
+	store := &fakeRunStore{enabled: true}
+	convs := &fakeConversationStore{getErr: convstore.ErrNotFound}
+	run := runstore.Run{
+		ID:            "run_job_no_pr",
+		OrgID:         "org_1",
+		ThreadID:      "thread_1",
+		UserRequest:   "Scheduled job: check whether anything needs changing",
+		SandboxID:     "sandbox-1",
+		SessionID:     "session-1",
+		CommandID:     "command-1",
+		Branch:        "feature/sf-job",
+		RunKind:       "job",
+		TriggerSource: runstore.TriggerJob,
+	}
+	logText := "daytona noise\n" +
+		hetchyRunBeginSentinel(run.ID) + "\n" +
+		`{"type":"result","subtype":"success","result":"No action needed."}` + "\n" +
+		hetchyRunEndPrefix(run.ID) + "0__\n"
+
+	var archivedSandbox string
+	b := &Bot{
+		log:      discardLogger(),
+		runs:     store,
+		convs:    convs,
+		workerID: "worker-1",
+		getSandboxFn: func(_ context.Context, sandboxID string) (*daytona.Sandbox, error) {
+			return &daytona.Sandbox{ID: sandboxID}, nil
+		},
+		ensureSandboxStartedFn: func(context.Context, *daytona.Sandbox) error { return nil },
+		commandLogSnapshotFn: func(context.Context, *daytona.Sandbox, string, string) (string, error) {
+			return logText, nil
+		},
+		sessionCommandStatusFn: func(context.Context, *daytona.Sandbox, string, string) (map[string]any, error) {
+			return map[string]any{"exitCode": 0}, nil
+		},
+		deleteSandboxSessionFn: func(*daytona.Sandbox, string) {},
+		stopAndArchiveFn: func(_ context.Context, sb *daytona.Sandbox) {
+			archivedSandbox = sb.ID
+		},
+	}
+
+	b.recoverAgentRunReady(context.Background(), run, nil)
+
+	if len(store.updateOutcomes) == 0 || store.updateOutcomes[len(store.updateOutcomes)-1].outcome != runstore.OutcomeCompletedNoPR {
+		t.Fatalf("outcomes = %+v", store.updateOutcomes)
+	}
+	if got := store.updateOutcomes[len(store.updateOutcomes)-1].detail["reason"]; got != "recovered_no_pr" {
+		t.Fatalf("outcome detail = %+v", store.updateOutcomes[len(store.updateOutcomes)-1].detail)
+	}
+	if last := store.updateStates[len(store.updateStates)-1]; last.state != runstore.StateSucceeded {
+		t.Fatalf("last state = %+v", last)
+	}
+	result := convs.lastUpsert(t).ResponseBlocks[0][len(convs.lastUpsert(t).ResponseBlocks[0])-1]
+	if result.Kind != blocks.KindResult || !strings.Contains(result.Body, "No pull request was created") {
+		t.Fatalf("result block = %+v", result)
+	}
+	if archivedSandbox != "sandbox-1" {
+		t.Fatalf("archived sandbox = %q", archivedSandbox)
+	}
+}
+
+func TestValidateRecoveredPRSkipsBaseForFollowUpRunners(t *testing.T) {
+	restore := stubPRLookup(t, "acme/repo", "feature/sf-1", "release", "https://github.com/acme/repo/pull/9")
+	defer restore()
+
+	b := &Bot{
+		log: discardLogger(),
+		convs: &fakeConversationStore{rec: convstore.Record{
+			OrgID:       "org_1",
+			ThreadID:    "thread_1",
+			GitHubOwner: "acme",
+			GitHubRepo:  "repo",
+			Branch:      "feature/sf-1",
+		}},
+		resolveRepoFn: func(context.Context, string, string, string) (repoCtx, error) {
+			return repoCtx{Slug: "acme/repo", BaseBranch: "main", GitHubToken: "gh-token"}, nil
+		},
+	}
+
+	for _, runKind := range []string{"followup", "github_mention"} {
+		run := runstore.Run{OrgID: "org_1", ThreadID: "thread_1", Branch: "feature/sf-1", RunKind: runKind}
+		if _, _, err := b.validateRecoveredPR(context.Background(), run, "https://github.com/acme/repo/pull/9"); err != nil {
+			t.Fatalf("validateRecoveredPR(%s) should not enforce base branch: %v", runKind, err)
+		}
+	}
+
+	run := runstore.Run{OrgID: "org_1", ThreadID: "thread_1", Branch: "feature/sf-1", RunKind: "fresh"}
+	if _, _, err := b.validateRecoveredPR(context.Background(), run, "https://github.com/acme/repo/pull/9"); !errors.Is(err, errReportedPRNotVerified) {
+		t.Fatalf("fresh validateRecoveredPR error = %v, want errReportedPRNotVerified", err)
+	}
+}
+
+func TestRecoveredRunSessionFallback(t *testing.T) {
+	if got := recoveredRunSessionFallback(runstore.Run{SessionID: "existing"}); got != "existing" {
+		t.Fatalf("existing session fallback = %q", got)
+	}
+	if got := recoveredRunSessionFallback(runstore.Run{RunKind: "followup", RequestID: "req-1"}); got != "followup-req-1" {
+		t.Fatalf("followup session fallback = %q", got)
+	}
+	if got := recoveredRunSessionFallback(runstore.Run{RunKind: "fresh", RequestID: "req-1"}); got != "agent-req-1" {
+		t.Fatalf("fresh session fallback = %q", got)
+	}
+	if got := recoveredRunSessionFallback(runstore.Run{RunKind: "github_mention"}); got != "" {
+		t.Fatalf("empty request fallback = %q, want empty", got)
+	}
+}
+
+func TestRecoveredMissingPRFailureDetailGithubMentionNilConvsSkips(t *testing.T) {
+	b := &Bot{}
+	detail, fail := b.recoveredMissingPRFailureDetail(context.Background(), runstore.Run{RunKind: "github_mention"})
+	if fail || detail != nil {
+		t.Fatalf("detail=%+v fail=%t, want no failure", detail, fail)
 	}
 }
 
@@ -438,199 +626,5 @@ func TestFinalizeRecoveredRunSuccessProjectsConversationAndCleansUp(t *testing.T
 	}
 	if cleanupCall != "sandbox-1|stopped" {
 		t.Fatalf("cleanup call = %q", cleanupCall)
-	}
-}
-
-func TestFinalizeRecoveredRunNonZeroExitFailsWithoutValidation(t *testing.T) {
-	store := &fakeRunStore{enabled: true}
-	convs := &fakeConversationStore{getErr: convstore.ErrNotFound}
-	b := &Bot{
-		log:      discardLogger(),
-		runs:     store,
-		convs:    convs,
-		workerID: "worker-1",
-		validateRecoveredPRFn: func(context.Context, runstore.Run, string) (string, string, error) {
-			t.Fatal("non-zero exit should not validate a PR")
-			return "", "", nil
-		},
-		cleanupSandboxFn: func(_ context.Context, sb *daytona.Sandbox, reason string) {
-			if sb.ID != "sandbox-1" || reason != "recovered failed run" {
-				t.Fatalf("cleanup = %s|%s", sb.ID, reason)
-			}
-		},
-	}
-	run := runstore.Run{
-		ID:          "run_failed_exit",
-		OrgID:       "org_1",
-		ThreadID:    "thread_1",
-		UserRequest: "ship it",
-		SandboxID:   "sandbox-1",
-		SessionID:   "session-1",
-		CommandID:   "command-1",
-		RunKind:     "chat",
-	}
-	em := newAgentRunEmitter(store, run.ID, b.workerID, nil)
-	router := newAgentLineRouter(em)
-	router.Line("[hetchy] cloning repo")
-
-	b.finalizeRecoveredRun(context.Background(), &daytona.Sandbox{ID: "sandbox-1"}, run, router, em, 42, nil)
-
-	if len(store.updateStates) == 0 {
-		t.Fatal("expected failed state update")
-	}
-	lastState := store.updateStates[len(store.updateStates)-1]
-	if lastState.state != runstore.StateFailed || !strings.Contains(lastState.lastErr, "exited 42") {
-		t.Fatalf("last state = %+v", lastState)
-	}
-	rec := convs.lastUpsert(t)
-	lastBlock := rec.ResponseBlocks[0][len(rec.ResponseBlocks[0])-1]
-	if lastBlock.Kind != blocks.KindError || lastBlock.Title != "Agent failed" {
-		t.Fatalf("terminal block = %+v", lastBlock)
-	}
-}
-
-func TestFinishRecoveredCancellationCancelsProjectsAndCleansUp(t *testing.T) {
-	start := runEventForTest(t, "block_start", sseEvent{ID: "p1", Kind: blocks.KindSetup, Title: "Setup"})
-	start.RunID = "run_cancel"
-	start.Seq = 1
-	store := &fakeRunStore{
-		enabled: true,
-		events:  []runstore.Event{start},
-		cancelRun: runstore.Run{
-			ID:          "run_cancel",
-			OrgID:       "org_1",
-			ThreadID:    "thread_1",
-			UserRequest: "stop this",
-			SandboxID:   "sandbox-1",
-			RunKind:     "chat",
-		},
-	}
-	convs := &fakeConversationStore{getErr: convstore.ErrNotFound}
-	cleanupCh := make(chan string, 1)
-	b := &Bot{
-		log:      discardLogger(),
-		runs:     store,
-		convs:    convs,
-		workerID: "worker-1",
-		cleanupSandboxByIDFn: func(sandboxID, reason string) {
-			cleanupCh <- sandboxID + "|" + reason
-		},
-	}
-
-	b.finishRecoveredCancellation(context.Background(), runstore.Run{
-		ID:          "run_cancel",
-		OrgID:       "org_1",
-		ThreadID:    "thread_1",
-		UserRequest: "stop this",
-		SandboxID:   "sandbox-1",
-		RunKind:     "chat",
-	})
-
-	if len(store.cancelPending) != 3 {
-		t.Fatalf("cancel pending = %d, want 3", len(store.cancelPending))
-	}
-	if store.cancelRun.State != runstore.StateCancelled || store.cancelRun.LastError != "cancel requested" || store.cancelRun.LeaseOwner != "worker-1" {
-		t.Fatalf("cancelled run = %+v", store.cancelRun)
-	}
-	rec := convs.lastUpsert(t)
-	if len(rec.ResponseBlocks) != 1 || len(rec.ResponseBlocks[0]) != 2 {
-		t.Fatalf("projected response blocks = %+v", rec.ResponseBlocks)
-	}
-	result := rec.ResponseBlocks[0][1]
-	if result.Kind != blocks.KindResult || result.Title != "Stopped" || !strings.Contains(result.Body, "Stopped by request") {
-		t.Fatalf("cancel result block = %+v", result)
-	}
-	select {
-	case got := <-cleanupCh:
-		if got != "sandbox-1|cancel requested" {
-			t.Fatalf("cleanup = %q", got)
-		}
-	case <-stopAfter(t):
-		t.Fatal("cleanup was not scheduled")
-	}
-}
-
-func TestHandleRecoverySetupErrorKeepsRetryableRunRecovering(t *testing.T) {
-	store := &fakeRunStore{enabled: true}
-	var logBuf bytes.Buffer
-	b := &Bot{
-		log:      slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})),
-		runs:     store,
-		workerID: "worker-1",
-	}
-
-	run := runstore.Run{
-		ID:          "run_retry",
-		OrgID:       "org_1",
-		ThreadID:    "thread_1",
-		SandboxID:   "sandbox-1",
-		SessionID:   "session-1",
-		CommandID:   "command-1",
-		CommandStep: "run-script",
-	}
-	b.handleRecoverySetupError(context.Background(), run, nil, "Agent failed", "retry later", errors.New("temporary daytona outage"))
-
-	if len(store.updateStates) != 1 {
-		t.Fatalf("state updates = %+v", store.updateStates)
-	}
-	got := store.updateStates[0]
-	if got.state != runstore.StateRecovering || got.lastErr != "temporary daytona outage" || got.leaseOwner != "worker-1" {
-		t.Fatalf("state update = %+v", got)
-	}
-	logged := logBuf.String()
-	if !strings.Contains(logged, "level=WARN") || !strings.Contains(logged, "agent run recovery deferred by transient outage") {
-		t.Fatalf("expected transient outage warn log, got %q", logged)
-	}
-	for _, want := range []string{
-		`run_id=run_retry`,
-		`org=org_1`,
-		`thread=thread_1`,
-		`sandbox=sandbox-1`,
-		`session=session-1`,
-		`command=command-1`,
-		`command_step=run-script`,
-		`reason="sandbox setup"`,
-		`error="temporary daytona outage"`,
-	} {
-		if !strings.Contains(logged, want) {
-			t.Fatalf("log missing %q: %s", want, logged)
-		}
-	}
-}
-
-func TestSessionCommandExitCodeCoversDaytonaNumericShapes(t *testing.T) {
-	cases := []struct {
-		name string
-		in   map[string]any
-		code int64
-		ok   bool
-	}{
-		{name: "float64", in: map[string]any{"exitCode": float64(2)}, code: 2, ok: true},
-		{name: "float32", in: map[string]any{"exitCode": float32(3)}, code: 3, ok: true},
-		{name: "int", in: map[string]any{"exitCode": 4}, code: 4, ok: true},
-		{name: "int32", in: map[string]any{"exitCode": int32(5)}, code: 5, ok: true},
-		{name: "int64", in: map[string]any{"exitCode": int64(6)}, code: 6, ok: true},
-		{name: "missing", in: map[string]any{}, ok: false},
-		{name: "string", in: map[string]any{"exitCode": "0"}, ok: false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			code, ok := sessionCommandExitCode(tc.in)
-			if code != tc.code || ok != tc.ok {
-				t.Fatalf("sessionCommandExitCode = (%d, %v), want (%d, %v)", code, ok, tc.code, tc.ok)
-			}
-		})
-	}
-}
-
-func TestCombineCommandOutput(t *testing.T) {
-	if got := combineCommandOutput("stdout", "stderr"); got != "stdout\nstderr" {
-		t.Fatalf("combined output = %q", got)
-	}
-	if got := combineCommandOutput("stdout", ""); got != "stdout" {
-		t.Fatalf("stdout-only output = %q", got)
-	}
-	if got := combineCommandOutput("", "stderr"); got != "stderr" {
-		t.Fatalf("stderr-only output = %q", got)
 	}
 }

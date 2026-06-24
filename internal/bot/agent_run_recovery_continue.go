@@ -318,14 +318,17 @@ func (b *Bot) continueRecoveredRun(ctx context.Context, sb *daytona.Sandbox, run
 	if skipBootstrap {
 		runCtx = contextWithBootstrapSkipped(runCtx)
 	}
-	setLiveRunSandboxID(runCtx, sb.ID, run.RunKind != "followup")
+	setLiveRunSandboxID(runCtx, sb.ID, !agentRunPreservesSandbox(run))
 
 	// Defer spec reflection until after the Result block — see the
 	// fresh-run path in conversation_run.go for the rationale.
 	runCtx, housekeeping := contextWithPostPRHousekeeping(runCtx)
 	var prURL string
-	if run.RunKind == "followup" {
-		mode := b.decideFollowUpMode(runCtx, inputs.oc, inputs.rec, run.UserRequest).Mode
+	if recoveredRunUsesFollowUpRunner(run) {
+		mode := followUpModeChange
+		if run.RunKind == "followup" && strings.TrimSpace(inputs.rec.PRURL) != "" {
+			mode = b.decideFollowUpMode(runCtx, inputs.oc, inputs.rec, run.UserRequest).Mode
+		}
 		prURL, err = b.runFollowUpForRequest(runCtx, sb, inputs.repo, inputs.oc, inputs.rec, inputs.agent, run.UserRequest, run.RequestID, inputs.opts, inputs.model, mode, em)
 	} else {
 		prURL, err = b.runAgentForRequest(runCtx, sb, inputs.repo, inputs.oc, inputs.agent, run.UserRequest, run.RequestID, inputs.branch, inputs.opts, inputs.model, em)
@@ -334,11 +337,17 @@ func (b *Bot) continueRecoveredRun(ctx context.Context, sb *daytona.Sandbox, run
 		b.finishContinuedRecoveredError(runCtx, run, live, err)
 		return
 	}
+	if prURL == "" {
+		if detail, fail := b.recoveredMissingPRFailureDetail(runCtx, run); fail {
+			b.finishRecoveredMissingPR(runCtx, sb, run, live, detail)
+			return
+		}
+	}
 
 	body := prURL
 	if body == "" {
-		body = noPullRequestResultBody(run.RunKind == "followup")
-	} else if run.RunKind != "followup" {
+		body = noPullRequestResultBody(recoveredRunUsesFollowUpRunner(run))
+	} else if !recoveredRunUsesFollowUpRunner(run) {
 		body += "\n\nReply here to make further changes to this PR."
 	}
 	em.Result("Done!", body)
@@ -362,7 +371,10 @@ func (b *Bot) continueRecoveredRun(ctx context.Context, sb *daytona.Sandbox, run
 		b.deferRecoveryForRetry(run, "project conversation: continue", err)
 		return
 	}
+	outcomePRURL := b.recoveredOutcomePRURL(ctx, run, prURL)
+	b.recordRecoveredRunOutcome(context.Background(), run, outcomePRURL, blocksFromRunEvents(events), nil)
 	b.runs.UpdateState(context.Background(), run.ID, runstore.StateSucceeded, "", b.workerID)
+	b.finishBillingRun(context.Background(), run.ID, runstore.StateSucceeded)
 	b.log.Info("agent run recovery continued to success",
 		"run_id", run.ID,
 		"org", run.OrgID,
@@ -370,7 +382,7 @@ func (b *Bot) continueRecoveredRun(ctx context.Context, sb *daytona.Sandbox, run
 		"sandbox", run.SandboxID,
 		"pr_url", prURL,
 	)
-	b.deleteSandboxSession(sb, b.currentAgentRunSessionID(runCtx, "agent-"+run.RequestID))
+	b.deleteSandboxSession(sb, b.currentAgentRunSessionID(runCtx, recoveredRunSessionFallback(run)))
 	b.stopAndArchiveSandbox(ctx, sb)
 }
 
@@ -385,18 +397,27 @@ func (b *Bot) finishContinuedRecoveredError(ctx context.Context, run runstore.Ru
 	}
 	title := "Agent failed"
 	body := fmt.Sprintf("Something went wrong while running the recovered agent. Sandbox `%s` will be archived.", run.SandboxID)
+	if agentRunPreservesSandbox(run) {
+		body = fmt.Sprintf("Something went wrong while running the recovered agent. Sandbox `%s` is preserved for retry.", run.SandboxID)
+	}
 	if isAgentTimeout(err) {
 		title = "Agent timed out"
 		body = fmt.Sprintf("The recovered agent exceeded its time limit on sandbox `%s`. The sandbox will be archived.", run.SandboxID)
+		if agentRunPreservesSandbox(run) {
+			body = fmt.Sprintf("The recovered agent exceeded its time limit on sandbox `%s`. The sandbox is preserved for retry.", run.SandboxID)
+		}
 	} else if errors.Is(err, errReportedPRNotVerified) {
 		title = "PR not verified"
 		body = fmt.Sprintf("The recovered agent reported a PR URL, but GitHub did not verify it for branch `%s`. Sandbox `%s` will be archived.", run.Branch, run.SandboxID)
+		if agentRunPreservesSandbox(run) {
+			body = fmt.Sprintf("The recovered agent reported a PR URL, but GitHub did not verify it for branch `%s`. Sandbox `%s` is preserved for retry.", run.Branch, run.SandboxID)
+		}
 	}
 	b.finishRecoveredFailure(context.Background(), run, live, title, body, err)
 }
 
 func (b *Bot) cleanupRecoveredFailedRun(ctx context.Context, run runstore.Run) {
-	if run.RunKind == "followup" || strings.TrimSpace(run.SandboxID) == "" {
+	if agentRunPreservesSandbox(run) || strings.TrimSpace(run.SandboxID) == "" {
 		return
 	}
 	reason := "recovered failed run"

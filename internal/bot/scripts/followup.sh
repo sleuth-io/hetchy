@@ -39,6 +39,7 @@
 #   HETCHY_ARTIFACT_SLOT_TOKEN   bearer token for that endpoint
 #   HETCHY_CACHE_DIR             mounted dependency cache archive subpath
 #   HETCHY_CACHE_PRUNE_DAYS      best-effort local cache file pruning threshold
+#   SF_BASE_BRANCH               base branch fallback when an unpublished branch was not preserved
 
 set -euo pipefail
 
@@ -98,6 +99,72 @@ b64_input_size() {
 
 require_b64_input SF_PROMPT_B64
 
+followup_base_branch() {
+  local base_branch="${SF_BASE_BRANCH:-}"
+  if [[ -z "$base_branch" ]]; then
+    base_branch="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)"
+    base_branch="${base_branch#origin/}"
+  fi
+  if [[ -z "$base_branch" ]]; then
+    base_branch="$(git remote show origin 2>/dev/null | sed -n 's/.*HEAD branch: //p' | head -n 1 || true)"
+  fi
+  printf '%s' "$base_branch"
+}
+
+followup_checkout_has_local_work() {
+  local base_branch="${1:-}"
+  local current_head=""
+  local base_head=""
+  current_head="$(git rev-parse HEAD 2>/dev/null || true)"
+  if [[ -n "$base_branch" ]]; then
+    base_head="$(git rev-parse "origin/${base_branch}" 2>/dev/null || true)"
+  fi
+  if [[ -n "$current_head" && -n "$base_head" && "$current_head" != "$base_head" ]]; then
+    return 0
+  fi
+  if ! git diff --quiet --ignore-submodules --; then
+    return 0
+  fi
+  if ! git diff --cached --quiet --ignore-submodules --; then
+    return 0
+  fi
+  if [[ -n "$(git ls-files --others --exclude-standard)" ]]; then
+    return 0
+  fi
+  return 1
+}
+
+checkout_followup_branch() {
+  local base_branch=""
+  git fetch --prune origin
+  if git show-ref --verify --quiet "refs/heads/${SF_BRANCH}"; then
+    git checkout "${SF_BRANCH}"
+  elif git show-ref --verify --quiet "refs/remotes/origin/${SF_BRANCH}"; then
+    echo "[hetchy] local branch ${SF_BRANCH} missing; checking out origin/${SF_BRANCH}"
+    git checkout -B "${SF_BRANCH}" "origin/${SF_BRANCH}"
+  else
+    base_branch="$(followup_base_branch)"
+    if followup_checkout_has_local_work "$base_branch"; then
+      echo "[hetchy] branch ${SF_BRANCH} missing locally and on origin; creating it from current checkout to preserve local work"
+      git checkout -B "${SF_BRANCH}"
+    else
+      if [[ -z "$base_branch" ]]; then
+        echo "[hetchy] base branch is required when ${SF_BRANCH} is missing locally and on origin" >&2
+        exit 1
+      fi
+      echo "[hetchy] branch ${SF_BRANCH} missing locally and on origin; recreating from origin/${base_branch}"
+      git checkout -B "${SF_BRANCH}" "origin/${base_branch}"
+    fi
+  fi
+
+  if git rev-parse --verify "refs/remotes/origin/${SF_BRANCH}" >/dev/null 2>&1; then
+    echo "[hetchy] syncing ${SF_BRANCH} with origin/${SF_BRANCH}"
+    git pull --rebase --autostash origin "${SF_BRANCH}"
+  else
+    echo "[hetchy] remote branch ${SF_BRANCH} does not exist yet; continuing with local branch"
+  fi
+}
+
 # Same isolation as agent.sh — unset every other runtime auth var so
 # the precedence stack only contains the credential the bot picked.
 if [[ -n "${HETCHY_CODEX_MODEL:-}" ]]; then
@@ -141,14 +208,7 @@ fi
 
 echo "[hetchy] checking out branch"
 cd "${SF_WORKDIR}"
-git fetch --prune origin
-git checkout "${SF_BRANCH}"
-if git rev-parse --verify "refs/remotes/origin/${SF_BRANCH}" >/dev/null 2>&1; then
-  echo "[hetchy] syncing ${SF_BRANCH} with origin/${SF_BRANCH}"
-  git pull --rebase --autostash origin "${SF_BRANCH}"
-else
-  echo "[hetchy] remote branch ${SF_BRANCH} does not exist yet; continuing with local branch"
-fi
+checkout_followup_branch
 
 echo "[hetchy] initializing claude config"
 initialize_claude_config

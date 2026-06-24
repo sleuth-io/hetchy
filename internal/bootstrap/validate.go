@@ -323,5 +323,58 @@ func MergeIntoAgentPrompt(originalAgentPrompt string, spec *Spec, args Validatio
 	b.WriteString(originalAgentPrompt)
 	b.WriteString("\n\n--- POST-CHANGE VALIDATION ---\n\n")
 	b.WriteString(BuildValidationPrompt(spec, args))
+	b.WriteString(buildFinalCompletionContract(args))
 	return b.String()
+}
+
+func buildFinalCompletionContract(args ValidationArgs) string {
+	var b strings.Builder
+	b.WriteString(`
+
+--- FINAL COMPLETION CONTRACT ---
+
+Validation evidence is not completion. After the validation work above,
+return to the original Hetchy completion instructions and finish the
+repository change.
+
+For repository changes, do not end your turn until:
+
+  1. Generated proof and runtime files are kept out of git unless they
+     are intentional source or docs changes.
+  2. Required formatting/tests from the original instructions have run.
+  3. Source changes are staged and committed.
+`)
+	if branch := promptContractValue(args.Branch); branch != "" {
+		fmt.Fprintf(&b, "  4. Branch %s is pushed to origin.\n", branch)
+	} else {
+		b.WriteString("  4. The working branch is pushed to origin.\n")
+	}
+	if ownerRepo := promptContractValue(args.OwnerRepo); ownerRepo != "" {
+		fmt.Fprintf(&b, "  5. The required pull request for %s is opened or updated and its URL is known.\n", ownerRepo)
+	} else {
+		b.WriteString("  5. The required pull request is opened or updated and its URL is known.\n")
+	}
+	b.WriteString(`  6. Any enabled PR-check, review, or auto-merge tasks that depend
+     on that PR have finished, or you explicitly report the blocker.
+
+The proof-artifact instruction to avoid staging generated files does not
+cancel the requirement to commit, push, and open or update the PR for source
+changes. If the task requires no source or docs changes, report that clearly
+instead of creating an empty PR. Otherwise, when the PR exists, the very last
+line of your output MUST be just the pull request URL - no other text on that
+line.
+`)
+	return b.String()
+}
+
+func promptContractValue(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.NewReplacer("\r", " ", "\n", " ", "\t", " ").Replace(value)
+	value = strings.Join(strings.Fields(value), " ")
+	const maxRunes = 160
+	runes := []rune(value)
+	if len(runes) > maxRunes {
+		return string(runes[:maxRunes]) + "..."
+	}
+	return value
 }

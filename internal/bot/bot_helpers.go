@@ -599,7 +599,7 @@ func (b *Bot) cancelDurableRun(ctx context.Context, run runstore.Run, actor stri
 			"error", err,
 		)
 	}
-	cleanupOnCancel := cancelled.RunKind != "followup"
+	cleanupOnCancel := !agentRunPreservesSandbox(cancelled)
 	b.log.Info("durable chat cancel requested",
 		"org", cancelled.OrgID,
 		"thread", cancelled.ThreadID,
@@ -646,7 +646,7 @@ func (b *Bot) cleanupCancelledDurableRun(run runstore.Run) {
 	if sandboxID == "" {
 		return
 	}
-	cleanupOnCancel := run.RunKind != "followup"
+	cleanupOnCancel := !agentRunPreservesSandbox(run)
 	if b.daytona == nil {
 		if cleanupOnCancel {
 			cleanup := b.cleanupSandboxByID
