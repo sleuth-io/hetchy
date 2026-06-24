@@ -270,7 +270,7 @@ func TestDispatchDueJobsAsyncClaimsOnlyFreeSlotsAndWakes(t *testing.T) {
 	}
 
 	got, err := dispatchDueJobsAsync(context.Background(), store, "worker_1",
-		JobDispatchOptions{Limit: 5}, now, dispatch, slots, wake, discardLogger())
+		5, 0, now, dispatch, slots, wake, discardLogger())
 	if err != nil {
 		t.Fatalf("dispatchDueJobsAsync: %v", err)
 	}

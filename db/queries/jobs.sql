@@ -71,12 +71,6 @@ WITH ranked AS (
   WHERE j.enabled = TRUE
     AND j.next_run_at IS NOT NULL
     AND j.next_run_at <= sqlc.arg(now_at)
-    AND NOT EXISTS (
-      SELECT 1
-      FROM agent_job_executions e
-      WHERE e.job_id = j.id
-        AND e.status IN ('claimed', 'running')
-    )
 )
 SELECT j.id, j.org_id, j.name, j.definition, j.agent_slug,
        j.primary_owner, j.primary_repo, j.additional_repos,
@@ -84,6 +78,12 @@ SELECT j.id, j.org_id, j.name, j.definition, j.agent_slug,
        j.last_run_at, j.last_run_id, j.last_error, j.created_at, j.updated_at
 FROM agent_jobs j
 JOIN ranked r ON r.id = j.id
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM agent_job_executions e
+  WHERE e.job_id = j.id
+    AND e.status IN ('claimed', 'running')
+)
 ORDER BY r.org_rank ASC, r.next_run_at ASC, j.id ASC
 LIMIT sqlc.arg(limit_count)
 FOR UPDATE OF j SKIP LOCKED;

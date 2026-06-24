@@ -48,6 +48,9 @@ func (b *Bot) runJobDispatchLoop(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
+			if inFlight := len(slots); inFlight > 0 {
+				b.log.Info("job dispatch loop shutting down with jobs in flight", "in_flight", inFlight)
+			}
 			return
 		case <-ticker.C:
 			b.dispatchDueJobsTick(ctx, slots, wake)
@@ -80,7 +83,7 @@ func (b *Bot) dispatchDueJobsTick(ctx context.Context, slots chan struct{}, wake
 	if b.dispatchDueJobsFn != nil {
 		result, err = b.dispatchDueJobsFn(ctx, opts)
 	} else {
-		result, err = dispatchDueJobsAsync(ctx, b.jobs, b.workerID, opts, time.Now(), b.dispatchClaimedJob, slots, wake, b.log)
+		result, err = dispatchDueJobsAsync(ctx, b.jobs, b.workerID, opts.Limit, opts.StaleAfter, time.Now(), b.dispatchClaimedJob, slots, wake, b.log)
 	}
 	logJobDispatchResult(b.log, "scheduled job dispatch", result)
 	logJobDispatchError(ctx, b.log, "scheduled job dispatch failed", err)
@@ -91,12 +94,17 @@ func logJobDispatchResult(log *slog.Logger, msg string, result JobDispatchResult
 		return
 	}
 	if result.Claimed > 0 {
-		log.Info(msg,
+		args := []any{
 			"claimed", result.Claimed,
 			"started", result.Started,
-			"succeeded", result.Succeeded,
-			"failed", result.Failed,
-		)
+		}
+		if result.Succeeded+result.Failed > 0 {
+			args = append(args,
+				"succeeded", result.Succeeded,
+				"failed", result.Failed,
+			)
+		}
+		log.Info(msg, args...)
 	}
 }
 
@@ -136,24 +144,24 @@ func signalJobDispatchWake(wake chan<- struct{}) {
 	}
 }
 
-func dispatchDueJobsAsync(ctx context.Context, store dueJobClaimer, workerID string, opts JobDispatchOptions, now time.Time, dispatch claimedJobDispatcher, slots chan struct{}, wake chan<- struct{}, log *slog.Logger) (JobDispatchResult, error) {
+func dispatchDueJobsAsync(ctx context.Context, store dueJobClaimer, workerID string, limit int32, staleAfter time.Duration, now time.Time, dispatch claimedJobDispatcher, slots chan struct{}, wake chan<- struct{}, log *slog.Logger) (JobDispatchResult, error) {
 	if store == nil || !store.Enabled() {
 		return JobDispatchResult{}, jobs.ErrNotConfigured
 	}
-	if opts.Limit <= 0 {
+	if limit <= 0 {
 		return JobDispatchResult{}, nil
 	}
-	if opts.StaleAfter <= 0 {
-		opts.StaleAfter = defaultJobClaimStaleAfter
+	if staleAfter <= 0 {
+		staleAfter = defaultJobClaimStaleAfter
 	}
 	free := jobDispatchFreeSlots(slots)
 	if free <= 0 {
 		return JobDispatchResult{}, nil
 	}
-	if int32(free) < opts.Limit {
-		opts.Limit = int32(free)
+	if int32(free) < limit {
+		limit = int32(free)
 	}
-	claimed, err := store.ClaimDue(ctx, workerID, opts.Limit, now, opts.StaleAfter)
+	claimed, err := store.ClaimDue(ctx, workerID, limit, now, staleAfter)
 	if err != nil {
 		return JobDispatchResult{}, err
 	}
