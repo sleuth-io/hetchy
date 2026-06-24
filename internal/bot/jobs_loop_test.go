@@ -68,8 +68,8 @@ func TestRunJobDispatchLoop_TicksAndStopsOnCancel(t *testing.T) {
 	}
 
 	opts, _ := gotOpts.Load().(JobDispatchOptions)
-	if opts.Limit != 3 || opts.Concurrency != 3 {
-		t.Errorf("dispatch opts = %+v, want Limit 3 Concurrency 3", opts)
+	if opts.Limit != 3 {
+		t.Errorf("dispatch opts = %+v, want Limit 3", opts)
 	}
 }
 

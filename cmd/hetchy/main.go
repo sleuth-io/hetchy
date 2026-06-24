@@ -144,10 +144,7 @@ func runDispatchDueJobs(log *slog.Logger, limit, concurrency int) {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	result, err := b.DispatchDueJobs(ctx, bot.JobDispatchOptions{
-		Limit:       int32(limit),
-		Concurrency: concurrency,
-	})
+	result, err := b.DispatchDueJobs(ctx, bot.JobDispatchOptions{Limit: int32(limit)}, concurrency)
 	if err != nil {
 		log.Error("job dispatch failed", "error", err)
 		os.Exit(1)

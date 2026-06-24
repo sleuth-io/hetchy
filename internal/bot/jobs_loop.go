@@ -90,7 +90,6 @@ func (b *Bot) dispatchDueJobsTick(ctx context.Context, slots chan struct{}, wake
 		err    error
 	)
 	if b.dispatchDueJobsFn != nil {
-		opts.Concurrency = cap(slots)
 		result, err = b.dispatchDueJobsFn(ctx, opts)
 	} else {
 		result, err = dispatchDueJobsAsync(ctx, b.jobs, b.workerID, opts.Limit, opts.StaleAfter, time.Now(), b.dispatchClaimedJob, slots, wake, b.log)

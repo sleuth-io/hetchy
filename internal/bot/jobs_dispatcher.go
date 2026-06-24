@@ -22,9 +22,8 @@ import (
 const defaultJobClaimStaleAfter = 30 * time.Minute
 
 type JobDispatchOptions struct {
-	Limit       int32
-	Concurrency int
-	StaleAfter  time.Duration
+	Limit      int32
+	StaleAfter time.Duration
 }
 
 type JobDispatchResult struct {
@@ -62,22 +61,22 @@ func dispatchClaimRecovered(ctx context.Context, dispatch claimedJobDispatcher, 
 	return dispatch(ctx, claim)
 }
 
-func (b *Bot) DispatchDueJobs(ctx context.Context, opts JobDispatchOptions) (JobDispatchResult, error) {
+func (b *Bot) DispatchDueJobs(ctx context.Context, opts JobDispatchOptions, concurrency int) (JobDispatchResult, error) {
 	if b.jobs == nil {
 		return JobDispatchResult{}, jobs.ErrNotConfigured
 	}
-	return dispatchDueJobs(ctx, b.jobs, b.workerID, opts, time.Now(), b.dispatchClaimedJob)
+	return dispatchDueJobs(ctx, b.jobs, b.workerID, opts, concurrency, time.Now(), b.dispatchClaimedJob)
 }
 
-func dispatchDueJobs(ctx context.Context, store dueJobClaimer, workerID string, opts JobDispatchOptions, now time.Time, dispatch claimedJobDispatcher) (JobDispatchResult, error) {
+func dispatchDueJobs(ctx context.Context, store dueJobClaimer, workerID string, opts JobDispatchOptions, concurrency int, now time.Time, dispatch claimedJobDispatcher) (JobDispatchResult, error) {
 	if store == nil || !store.Enabled() {
 		return JobDispatchResult{}, jobs.ErrNotConfigured
 	}
 	if opts.Limit <= 0 {
 		return JobDispatchResult{}, nil
 	}
-	if opts.Concurrency <= 0 {
-		opts.Concurrency = 1
+	if concurrency <= 0 {
+		concurrency = 1
 	}
 	if opts.StaleAfter <= 0 {
 		opts.StaleAfter = defaultJobClaimStaleAfter
@@ -91,7 +90,7 @@ func dispatchDueJobs(ctx context.Context, store dueJobClaimer, workerID string, 
 		return result, nil
 	}
 
-	sem := make(chan struct{}, opts.Concurrency)
+	sem := make(chan struct{}, concurrency)
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	var firstErr error

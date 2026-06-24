@@ -116,7 +116,7 @@ func TestJobDispatchModelUsesAvailableCredentialFamily(t *testing.T) {
 
 func TestBotJobDispatchRequiresConfiguredStore(t *testing.T) {
 	b := &Bot{}
-	if _, err := b.DispatchDueJobs(context.Background(), JobDispatchOptions{Limit: 1}); !errors.Is(err, jobs.ErrNotConfigured) {
+	if _, err := b.DispatchDueJobs(context.Background(), JobDispatchOptions{Limit: 1}, 1); !errors.Is(err, jobs.ErrNotConfigured) {
 		t.Fatalf("DispatchDueJobs error = %v, want %v", err, jobs.ErrNotConfigured)
 	}
 	if _, err := b.DispatchJobNow(context.Background(), "org_1", "job_1"); !errors.Is(err, jobs.ErrNotConfigured) {
@@ -125,16 +125,16 @@ func TestBotJobDispatchRequiresConfiguredStore(t *testing.T) {
 }
 
 func TestDispatchDueJobsReturnsNotConfiguredAndClaimError(t *testing.T) {
-	if _, err := dispatchDueJobs(context.Background(), nil, "worker_1", JobDispatchOptions{Limit: 1}, time.Now(), nil); !errors.Is(err, jobs.ErrNotConfigured) {
+	if _, err := dispatchDueJobs(context.Background(), nil, "worker_1", JobDispatchOptions{Limit: 1}, 1, time.Now(), nil); !errors.Is(err, jobs.ErrNotConfigured) {
 		t.Fatalf("nil store error = %v, want %v", err, jobs.ErrNotConfigured)
 	}
 	disabled := &fakeJobDispatchStore{}
-	if _, err := dispatchDueJobs(context.Background(), disabled, "worker_1", JobDispatchOptions{Limit: 1}, time.Now(), nil); !errors.Is(err, jobs.ErrNotConfigured) {
+	if _, err := dispatchDueJobs(context.Background(), disabled, "worker_1", JobDispatchOptions{Limit: 1}, 1, time.Now(), nil); !errors.Is(err, jobs.ErrNotConfigured) {
 		t.Fatalf("disabled store error = %v, want %v", err, jobs.ErrNotConfigured)
 	}
 
 	store := &fakeJobDispatchStore{enabled: true}
-	result, err := dispatchDueJobs(context.Background(), store, "worker_1", JobDispatchOptions{}, time.Now(), nil)
+	result, err := dispatchDueJobs(context.Background(), store, "worker_1", JobDispatchOptions{}, 1, time.Now(), nil)
 	if err != nil {
 		t.Fatalf("zero limit dispatchDueJobs: %v", err)
 	}
@@ -144,7 +144,7 @@ func TestDispatchDueJobsReturnsNotConfiguredAndClaimError(t *testing.T) {
 
 	errBoom := errors.New("claim failed")
 	store = &fakeJobDispatchStore{enabled: true, claimErr: errBoom}
-	if _, err := dispatchDueJobs(context.Background(), store, "worker_1", JobDispatchOptions{Limit: 1}, time.Now(), nil); !errors.Is(err, errBoom) {
+	if _, err := dispatchDueJobs(context.Background(), store, "worker_1", JobDispatchOptions{Limit: 1}, 1, time.Now(), nil); !errors.Is(err, errBoom) {
 		t.Fatalf("claim error = %v, want %v", err, errBoom)
 	}
 }
@@ -154,7 +154,7 @@ func TestDispatchDueJobsDefaultsAndSkipsEmptyClaims(t *testing.T) {
 	store := &fakeJobDispatchStore{enabled: true}
 	var dispatchCalled atomic.Bool
 
-	got, err := dispatchDueJobs(context.Background(), store, "worker_1", JobDispatchOptions{Limit: 5}, now, func(context.Context, jobs.ClaimedExecution) (string, error) {
+	got, err := dispatchDueJobs(context.Background(), store, "worker_1", JobDispatchOptions{Limit: 5}, 1, now, func(context.Context, jobs.ClaimedExecution) (string, error) {
 		dispatchCalled.Store(true)
 		return jobs.StatusSucceeded, nil
 	})
@@ -212,7 +212,7 @@ func TestDispatchDueJobsLimitsConcurrencyAndReturnsFirstError(t *testing.T) {
 	}
 	done := make(chan dispatchOutcome, 1)
 	go func() {
-		result, err := dispatchDueJobs(context.Background(), store, "worker_1", JobDispatchOptions{Limit: 3, Concurrency: 2}, time.Now(), dispatch)
+		result, err := dispatchDueJobs(context.Background(), store, "worker_1", JobDispatchOptions{Limit: 3}, 2, time.Now(), dispatch)
 		done <- dispatchOutcome{result: result, err: err}
 	}()
 
