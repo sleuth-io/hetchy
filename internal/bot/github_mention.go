@@ -250,6 +250,22 @@ func (b *Bot) handleGithubMention(ctx context.Context, ev githubMentionEvent) {
 	if !ok {
 		return
 	}
+	if route.externalPR {
+		baseRepo, headRepo, fork := githubMentionForkPullRequest(ev)
+		if fork {
+			forkCtx, cancelFork := context.WithTimeout(context.Background(), githubMentionAckDeadline)
+			err := b.postGithubMentionComment(forkCtx, client, ev.Owner, ev.Repo, ev.SubjectNumber,
+				"Fork pull request unsupported.\n\nHetchy can only update pull requests whose head branch is in the same repository. Fork-based pull request updates need a separate permission model.")
+			cancelFork()
+			if err != nil {
+				b.log.Warn("github mention: fork rejection comment failed", "org", oc.OrgID, "repo", ev.Owner+"/"+ev.Repo, "subject", ev.SubjectNumber, "error", err)
+			}
+			b.log.Info("github mention: fork pull request ignored",
+				"org", oc.OrgID, "repo", ev.Owner+"/"+ev.Repo, "pr", ev.SubjectNumber,
+				"base_repo", baseRepo, "head_repo", headRepo)
+			return
+		}
+	}
 	runURL := b.githubMentionRunURL(route.threadID)
 	run, registered := b.live.RegisterIfAbsent(context.Background(), oc.OrgID, route.threadID)
 	if !registered {
@@ -474,16 +490,21 @@ func githubMentionThreadFresh(row sqlc.GithubMentionThread) bool {
 	return row.CreatedAt.Time.Equal(row.UpdatedAt.Time)
 }
 
+func githubMentionForkPullRequest(ev githubMentionEvent) (string, string, bool) {
+	if ev.PullRequest == nil {
+		return "", "", false
+	}
+	baseRepo := firstNonEmpty(githubPRBaseRepo(ev.PullRequest), ev.Owner+"/"+ev.Repo)
+	headRepo := firstNonEmpty(githubPRHeadRepo(ev.PullRequest), baseRepo)
+	return baseRepo, headRepo, !sameGitHubSlug(baseRepo, headRepo)
+}
+
 func (b *Bot) githubMentionRunURL(threadID string) string {
 	base := strings.TrimRight(b.cfg.PublicBaseURL(), "/")
 	if base == "" {
 		base = "/"
 	}
-	sep := "?"
-	if strings.Contains(base, "?") {
-		sep = "&"
-	}
-	return base + sep + "session=" + url.QueryEscape(threadID)
+	return base + "?session=" + url.QueryEscape(threadID)
 }
 
 func (b *Bot) postGithubMentionComment(ctx context.Context, client *github.Client, owner, repo string, number int, body string) error {

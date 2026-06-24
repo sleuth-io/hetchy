@@ -88,9 +88,8 @@ func (b *Bot) runGithubExternalPRUpdatePrepared(ctx context.Context, oc orgcfg.C
 		return
 	}
 	rec.Branch = headBranch
-	baseRepo := firstNonEmpty(githubPRBaseRepo(ev.PullRequest), ev.Owner+"/"+ev.Repo)
-	headRepo := firstNonEmpty(githubPRHeadRepo(ev.PullRequest), baseRepo)
-	if !sameGitHubSlug(baseRepo, headRepo) {
+	baseRepo, headRepo, fork := githubMentionForkPullRequest(ev)
+	if fork {
 		emit.Error("Fork pull request unsupported", "Hetchy can only update pull requests whose head branch is in the same repository. Fork-based pull request updates need a separate permission model.")
 		appendBlocksAsNewTurn(&rec, route.text, recorder.Snapshot())
 		_ = b.convs.Upsert(context.Background(), rec)

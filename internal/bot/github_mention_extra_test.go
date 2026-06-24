@@ -367,6 +367,54 @@ func TestHandleGithubMentionAuthorizedInFlightRunPostsComment(t *testing.T) {
 	}
 }
 
+func TestHandleGithubMentionForkPRRejectsBeforeAck(t *testing.T) {
+	httpClient, bodies := captureGitHubIssueComments(t)
+	fake := newWebhookFakeDB()
+	fake.queryRow["GetGithubInstallation"] = webhookInstallationRow(-42, "org1")
+	fake.exec["INSERT INTO github_mention_deliveries"] = webhookExecResult{rows: 1}
+	fake.queryRow["INSERT INTO github_mention_threads"] = webhookMentionThreadRow("github-pull-request-acme-repo-7")
+	b := &Bot{
+		log:   discardLogger(),
+		cfg:   Config{PublicBaseURLOverride: "https://app.example.test"},
+		store: &db.Store{Queries: sqlc.New(fake)},
+		orgs:  &fakeOrgStore{getConfig: orgcfg.Config{OrgID: "org1", AnthropicAPIKey: "sk-ant"}},
+		convs: &fakeConversationStore{},
+		live:  newLiveRegistry(),
+		github: &githubapp.Source{
+			LookupPAT: func(context.Context, int64) (string, error) { return "ghp_test", nil },
+			HTTP:      httpClient,
+		},
+	}
+
+	b.handleGithubMention(context.Background(), githubMentionEvent{
+		DeliveryID:        "delivery-1",
+		InstallationID:    -42,
+		Owner:             "acme",
+		Repo:              "repo",
+		SubjectType:       githubMentionSubjectPullRequest,
+		SubjectNumber:     7,
+		SubjectURL:        "https://github.com/acme/repo/pull/7",
+		CommentID:         99,
+		CommentBody:       "@hetchy fix this",
+		AuthorLogin:       "alice",
+		AuthorAssociation: "MEMBER",
+		Directive:         "fix this",
+		Source:            "issue_comment",
+		PullRequest: &github.PullRequest{
+			Number: github.Int(7),
+			Head:   &github.PullRequestBranch{Ref: github.String("feature/x"), Repo: &github.Repository{FullName: github.String("fork/repo")}},
+			Base:   &github.PullRequestBranch{Repo: &github.Repository{FullName: github.String("acme/repo")}},
+		},
+	})
+
+	if len(*bodies) != 1 {
+		t.Fatalf("posted comments = %d, want 1", len(*bodies))
+	}
+	if body := (*bodies)[0]; !strings.Contains(body, "Fork pull request unsupported") || strings.Contains(body, "On it - updating this pull request") {
+		t.Fatalf("posted body = %q", body)
+	}
+}
+
 func TestPullRequestReviewSubmittedMentionUsesInstallationOnce(t *testing.T) {
 	httpClient, _ := captureGitHubIssueComments(t)
 	fake := newWebhookFakeDB()
