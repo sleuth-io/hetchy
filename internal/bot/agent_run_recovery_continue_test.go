@@ -155,6 +155,208 @@ func TestRecoverAgentRunReadyBootstrapCommandSavesSpecAndContinues(t *testing.T)
 	}
 }
 
+func TestContinueRecoveredFreshNoPRFails(t *testing.T) {
+	store := &fakeRunStore{enabled: true}
+	store.getRun = runstore.Run{SessionID: "agent-req-1"}
+	convs := &fakeConversationStore{rec: convstore.Record{
+		OrgID:       "org_1",
+		ThreadID:    "thread_1",
+		History:     []string{"ship it"},
+		GitHubOwner: "acme",
+		GitHubRepo:  "repo",
+	}}
+	repo := repoCtx{Slug: "acme/repo", BaseBranch: "main", GitHubToken: "gh-token", InstallID: 11, RepoID: 22}
+	run := runstore.Run{
+		ID:          "run_continue_no_pr",
+		OrgID:       "org_1",
+		ThreadID:    "thread_1",
+		RequestID:   "req-1",
+		UserRequest: "ship it",
+		SandboxID:   "sandbox-1",
+		Branch:      "feature/sf-req-1",
+		RunKind:     "fresh",
+	}
+	var ranAgent bool
+	var deletedSession, archivedSandbox, cleanupCall string
+	b := &Bot{
+		log:      discardLogger(),
+		runs:     store,
+		convs:    convs,
+		orgs:     &fakeOrgStore{getConfig: orgcfg.Config{OrgID: "org_1", AnthropicAPIKey: "sk-ant"}},
+		workerID: "worker-1",
+		resolveRepoFn: func(context.Context, string, string, string) (repoCtx, error) {
+			return repo, nil
+		},
+		runAgentFn: func(_ context.Context, _ *daytona.Sandbox, _ repoCtx, _ orgcfg.Config, _ agents.Profile, _ string, _ string, _ string, _ chatTaskOptions, _ ClaudeModel, _ blocks.Emitter) (string, error) {
+			ranAgent = true
+			return "", nil
+		},
+		deleteSandboxSessionFn: func(_ *daytona.Sandbox, sessionID string) {
+			deletedSession = sessionID
+		},
+		stopAndArchiveFn: func(_ context.Context, sb *daytona.Sandbox) {
+			archivedSandbox = sb.ID
+		},
+		cleanupSandboxFn: func(_ context.Context, sb *daytona.Sandbox, reason string) {
+			cleanupCall = sb.ID + "|" + reason
+		},
+	}
+
+	b.continueRecoveredRun(context.Background(), &daytona.Sandbox{ID: "sandbox-1"}, run, nil, false)
+
+	if !ranAgent {
+		t.Fatal("expected recovered fresh run to call runAgent")
+	}
+	if len(store.updateOutcomes) == 0 || store.updateOutcomes[len(store.updateOutcomes)-1].outcome != runstore.OutcomeCompletedNoPR {
+		t.Fatalf("outcomes = %+v", store.updateOutcomes)
+	}
+	if got := store.updateOutcomes[len(store.updateOutcomes)-1].detail["reason"]; got != "change_request_missing_pr" {
+		t.Fatalf("outcome detail = %+v", store.updateOutcomes[len(store.updateOutcomes)-1].detail)
+	}
+	if last := store.updateStates[len(store.updateStates)-1]; last.state != runstore.StateFailed {
+		t.Fatalf("last state = %+v", last)
+	}
+	rec := convs.lastUpsert(t)
+	if rec.SandboxID != "sandbox-1" || rec.Branch != "feature/sf-req-1" || rec.PRURL != "" {
+		t.Fatalf("projected conversation = %+v", rec)
+	}
+	block := rec.ResponseBlocks[0][len(rec.ResponseBlocks[0])-1]
+	if block.Kind != blocks.KindError || block.Title != "Pull request missing" {
+		t.Fatalf("terminal block = %+v", block)
+	}
+	if deletedSession != "agent-req-1" {
+		t.Fatalf("deleted session = %q, want agent-req-1", deletedSession)
+	}
+	if archivedSandbox != "sandbox-1" || cleanupCall != "" {
+		t.Fatalf("archive=%q cleanup=%q", archivedSandbox, cleanupCall)
+	}
+}
+
+func TestContinueRecoveredJobNoPRSucceeds(t *testing.T) {
+	store := &fakeRunStore{enabled: true}
+	convs := &fakeConversationStore{rec: convstore.Record{
+		OrgID:       "org_1",
+		ThreadID:    "thread_1",
+		History:     []string{"Scheduled job"},
+		GitHubOwner: "acme",
+		GitHubRepo:  "repo",
+	}}
+	repo := repoCtx{Slug: "acme/repo", BaseBranch: "main", GitHubToken: "gh-token", InstallID: 11, RepoID: 22}
+	run := runstore.Run{
+		ID:            "run_continue_job_no_pr",
+		OrgID:         "org_1",
+		ThreadID:      "thread_1",
+		RequestID:     "req-1",
+		UserRequest:   "Scheduled job: check whether anything needs changing",
+		SandboxID:     "sandbox-1",
+		Branch:        "feature/sf-job",
+		RunKind:       "job",
+		TriggerSource: runstore.TriggerJob,
+	}
+	var archivedSandbox string
+	b := &Bot{
+		log:      discardLogger(),
+		runs:     store,
+		convs:    convs,
+		orgs:     &fakeOrgStore{getConfig: orgcfg.Config{OrgID: "org_1", AnthropicAPIKey: "sk-ant"}},
+		workerID: "worker-1",
+		resolveRepoFn: func(context.Context, string, string, string) (repoCtx, error) {
+			return repo, nil
+		},
+		runAgentFn: func(context.Context, *daytona.Sandbox, repoCtx, orgcfg.Config, agents.Profile, string, string, string, chatTaskOptions, ClaudeModel, blocks.Emitter) (string, error) {
+			return "", nil
+		},
+		deleteSandboxSessionFn: func(*daytona.Sandbox, string) {},
+		stopAndArchiveFn: func(_ context.Context, sb *daytona.Sandbox) {
+			archivedSandbox = sb.ID
+		},
+	}
+
+	b.continueRecoveredRun(context.Background(), &daytona.Sandbox{ID: "sandbox-1"}, run, nil, false)
+
+	if len(store.updateOutcomes) == 0 || store.updateOutcomes[len(store.updateOutcomes)-1].outcome != runstore.OutcomeCompletedNoPR {
+		t.Fatalf("outcomes = %+v", store.updateOutcomes)
+	}
+	if last := store.updateStates[len(store.updateStates)-1]; last.state != runstore.StateSucceeded {
+		t.Fatalf("last state = %+v", last)
+	}
+	result := convs.lastUpsert(t).ResponseBlocks[0][len(convs.lastUpsert(t).ResponseBlocks[0])-1]
+	if result.Kind != blocks.KindResult || !strings.Contains(result.Body, "No pull request was created") {
+		t.Fatalf("result block = %+v", result)
+	}
+	if archivedSandbox != "sandbox-1" {
+		t.Fatalf("archived sandbox = %q", archivedSandbox)
+	}
+}
+
+func TestContinueRecoveredGithubMentionUsesFollowUpRunner(t *testing.T) {
+	store := &fakeRunStore{enabled: true}
+	convs := &fakeConversationStore{rec: convstore.Record{
+		OrgID:          "org_1",
+		ThreadID:       "thread_1",
+		History:        []string{"existing PR context"},
+		ResponseBlocks: [][]blocks.Block{{{Kind: blocks.KindResult, Title: "Done!", Body: "https://github.com/acme/repo/pull/7"}}},
+		GitHubOwner:    "acme",
+		GitHubRepo:     "repo",
+		Branch:         "feature/external",
+		PRURL:          "https://github.com/acme/repo/pull/7",
+	}}
+	repo := repoCtx{Slug: "acme/repo", BaseBranch: "main", GitHubToken: "gh-token", InstallID: 11, RepoID: 22}
+	run := runstore.Run{
+		ID:          "run_continue_github",
+		OrgID:       "org_1",
+		ThreadID:    "thread_1",
+		RequestID:   "req-2",
+		UserRequest: "please update this PR",
+		SandboxID:   "sandbox-1",
+		Branch:      "feature/external",
+		RunKind:     "github_mention",
+	}
+	var ranFollowUp bool
+	b := &Bot{
+		log:      discardLogger(),
+		runs:     store,
+		convs:    convs,
+		orgs:     &fakeOrgStore{getConfig: orgcfg.Config{OrgID: "org_1", AnthropicAPIKey: "sk-ant"}},
+		workerID: "worker-1",
+		resolveRepoFn: func(context.Context, string, string, string) (repoCtx, error) {
+			return repo, nil
+		},
+		runAgentFn: func(context.Context, *daytona.Sandbox, repoCtx, orgcfg.Config, agents.Profile, string, string, string, chatTaskOptions, ClaudeModel, blocks.Emitter) (string, error) {
+			t.Fatal("github mention recovery should not re-enter as fresh")
+			return "", nil
+		},
+		runFollowUpFn: func(_ context.Context, _ *daytona.Sandbox, _ repoCtx, _ orgcfg.Config, rec convstore.Record, _ agents.Profile, _ string, _ string, _ chatTaskOptions, _ ClaudeModel, mode followUpMode, _ blocks.Emitter) (string, error) {
+			ranFollowUp = true
+			if mode != followUpModeChange || rec.PRURL == "" || rec.Branch != "feature/external" {
+				t.Fatalf("follow-up args mode=%s rec=%+v", mode, rec)
+			}
+			return "", nil
+		},
+		deleteSandboxSessionFn: func(*daytona.Sandbox, string) {},
+		stopAndArchiveFn:       func(context.Context, *daytona.Sandbox) {},
+	}
+
+	b.continueRecoveredRun(context.Background(), &daytona.Sandbox{ID: "sandbox-1"}, run, nil, false)
+
+	if !ranFollowUp {
+		t.Fatal("expected github mention recovery to use follow-up runner")
+	}
+	if len(store.updateOutcomes) == 0 || store.updateOutcomes[len(store.updateOutcomes)-1].outcome != runstore.OutcomeCompletedWithVerifiedPR {
+		t.Fatalf("outcomes = %+v", store.updateOutcomes)
+	}
+	rec := convs.lastUpsert(t)
+	if rec.PRURL != "https://github.com/acme/repo/pull/7" {
+		t.Fatalf("projected PRURL = %q", rec.PRURL)
+	}
+	if len(rec.History) != 2 || rec.History[1] != "please update this PR" {
+		t.Fatalf("github mention recovery should append a follow-up turn, history=%#v", rec.History)
+	}
+	if last := store.updateStates[len(store.updateStates)-1]; last.state != runstore.StateSucceeded {
+		t.Fatalf("last state = %+v", last)
+	}
+}
+
 func TestRecoverUnframedAgentRunTimesOutStuckCommand(t *testing.T) {
 	oldPollInterval := recoveryCommandPollInterval
 	oldPollTimeout := recoveryCommandPollTimeout

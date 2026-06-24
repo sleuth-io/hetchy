@@ -17,9 +17,6 @@ func appDataStatus(state, outcome string) string {
 	case runstore.StatePreparing, runstore.StateRunning, runstore.StateRecovering, runstore.StateFinalizing:
 		return "running"
 	case runstore.StateFailed:
-		if outcome == runstore.OutcomeCompletedNoPR {
-			return "needs_input"
-		}
 		return "failed"
 	case runstore.StateCancelled:
 		return "cancelled"
@@ -31,6 +28,9 @@ func appDataStatus(state, outcome string) string {
 }
 
 func appDataStateLabel(state, outcome string) string {
+	if state == runstore.StateFailed && outcome == runstore.OutcomeCompletedNoPR {
+		return "Pull request missing. Reply to retry from the preserved branch."
+	}
 	switch appDataStatus(state, outcome) {
 	case "running":
 		return "Waiting for latest activity."
@@ -54,6 +54,9 @@ func appDataStateLabel(state, outcome string) string {
 // as closed without merging shows "PR closed". Other statuses keep their
 // existing short labels.
 func appDataResultLabel(state, outcome, runKind, prURL, prState string, prMerged bool) string {
+	if state == runstore.StateFailed && outcome == runstore.OutcomeCompletedNoPR {
+		return "PR missing"
+	}
 	switch appDataStatus(state, outcome) {
 	case "running":
 		return "Running"

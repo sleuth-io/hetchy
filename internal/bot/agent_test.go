@@ -106,6 +106,7 @@ func TestBuildFollowUpPromptAddsValidationWhenSpecPresent(t *testing.T) {
 			t.Errorf("validated follow-up prompt missing %q\n%s", w, prompt)
 		}
 	}
+	assertPromptHasFinalCompletionContract(t, prompt)
 }
 
 func TestBuildFollowUpPromptWithoutSpecAddsProofInstructionsWhenSlotsPresent(t *testing.T) {
@@ -130,6 +131,28 @@ func TestBuildFollowUpPromptWithoutSpecAddsProofInstructionsWhenSlotsPresent(t *
 	}
 	if !strings.Contains(prompt, "Review code before push") || !strings.Contains(prompt, "Action PR checks for done") {
 		t.Fatalf("follow-up prompt without spec should still include enabled conditional tasks\n%s", prompt)
+	}
+}
+
+func assertPromptHasFinalCompletionContract(t *testing.T, prompt string) {
+	t.Helper()
+	validationIdx := strings.Index(prompt, "POST-CHANGE VALIDATION")
+	contractIdx := strings.Index(prompt, "FINAL COMPLETION CONTRACT")
+	if validationIdx < 0 || contractIdx < 0 {
+		t.Fatalf("prompt missing validation or completion contract:\n%s", prompt)
+	}
+	if contractIdx < validationIdx {
+		t.Fatalf("completion contract must come after validation block:\n%s", prompt)
+	}
+	for _, want := range []string{
+		"Validation evidence is not completion",
+		"For repository changes, do not end your turn until",
+		"If the task requires no source or docs changes",
+		"line of your output MUST be just",
+	} {
+		if !strings.Contains(prompt[contractIdx:], want) {
+			t.Fatalf("completion contract missing %q:\n%s", want, prompt[contractIdx:])
+		}
 	}
 }
 
@@ -1143,6 +1166,44 @@ func TestRunAgentBuildsScriptEnvironmentWithFakeRunner(t *testing.T) {
 	}
 }
 
+func TestRunAgentAddsCompletionContractWhenSpecPresent(t *testing.T) {
+	var captured capturedScriptRun
+	boot := &fakeBootstrapStore{
+		spec: &bootstrap.Spec{
+			Kind:                "go",
+			SetupScript:         "setup",
+			StartScript:         "start",
+			StopScript:          "stop",
+			HealthCheck:         "health",
+			LessonsMD:           "lessons",
+			Services:            []bootstrap.Service{{Name: "web", URL: "http://localhost:3000", Kind: "ui"}},
+			ValidationStatus:    bootstrap.StatusValidated,
+			BootstrapGeneration: bootstrap.CurrentBootstrapGeneration,
+		},
+	}
+	b := &Bot{
+		log:       discardLogger(),
+		bootstrap: boot,
+		runScriptFn: func(_ context.Context, sb *daytona.Sandbox, sessionID, label, scriptBody string, env map[string]string, _ blocks.Emitter) (string, error) {
+			captured = captureScriptRun(sb, sessionID, label, scriptBody, env)
+			return "", nil
+		},
+	}
+	repo := repoCtx{Slug: "acme/repo", BaseBranch: "main", GitHubToken: "ghs_token", InstallID: 11, RepoID: 22}
+	oc := orgcfg.Config{OrgID: "org_1", AnthropicAPIKey: "sk-ant"}
+
+	if _, err := b.runAgent(context.Background(), &daytona.Sandbox{ID: "sandbox-1"}, repo, oc, agents.Profile{}, "ship feature", "req-1", "feature/sf-req-1", defaultChatTaskOptions(), ClaudeModelSonnet, newCaptureEmitter()); err != nil {
+		t.Fatalf("runAgent: %v", err)
+	}
+	prompt := mustDecodeBase64Env(t, captured.env, "SF_PROMPT_B64")
+	assertPromptHasFinalCompletionContract(t, prompt)
+	for _, key := range []string{"SF_SPEC_SETUP_B64", "SF_SPEC_START_B64", "SF_SPEC_STOP_B64", "SF_SPEC_HEALTH_B64", "SF_SPEC_LESSONS_B64"} {
+		if captured.env[key] == "" {
+			t.Fatalf("spec env[%s] is empty; env=%#v", key, captured.env)
+		}
+	}
+}
+
 func TestRunAgentAllowsAnswerOnlyNoPR(t *testing.T) {
 	var captured capturedScriptRun
 	b := &Bot{
@@ -1296,6 +1357,50 @@ func TestRunFollowUpBuildsScriptEnvironmentWithFakeRunner(t *testing.T) {
 	for _, want := range []string{"first request", "tighten it", "https://github.com/acme/repo/pull/7"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("follow-up prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
+func TestRunFollowUpAddsCompletionContractWhenSpecPresent(t *testing.T) {
+	var captured capturedScriptRun
+	boot := &fakeBootstrapStore{
+		spec: &bootstrap.Spec{
+			Kind:                "go",
+			SetupScript:         "setup",
+			StartScript:         "start",
+			StopScript:          "stop",
+			HealthCheck:         "health",
+			LessonsMD:           "lessons",
+			Services:            []bootstrap.Service{{Name: "web", URL: "http://localhost:3000", Kind: "ui"}},
+			ValidationStatus:    bootstrap.StatusValidated,
+			BootstrapGeneration: bootstrap.CurrentBootstrapGeneration,
+		},
+	}
+	b := &Bot{
+		log:       discardLogger(),
+		bootstrap: boot,
+		runScriptFn: func(_ context.Context, sb *daytona.Sandbox, sessionID, label, scriptBody string, env map[string]string, _ blocks.Emitter) (string, error) {
+			captured = captureScriptRun(sb, sessionID, label, scriptBody, env)
+			return "", nil
+		},
+	}
+	rec := convstore.Record{
+		ThreadID: "thread-1",
+		Branch:   "feature/sf-req-1",
+		PRURL:    "https://github.com/acme/repo/pull/7",
+		History:  []string{"first request"},
+	}
+	repo := repoCtx{Slug: "acme/repo", GitHubToken: "ghs_token", InstallID: 11, RepoID: 22}
+	oc := orgcfg.Config{OrgID: "org_1", ClaudeCodeOAuthToken: "oauth-token"}
+
+	if _, err := b.runFollowUp(context.Background(), &daytona.Sandbox{ID: "sandbox-1"}, repo, oc, rec, agents.Profile{}, "tighten it", "req-2", defaultChatTaskOptions(), ClaudeModelSonnet, followUpModeChange, newCaptureEmitter()); err != nil {
+		t.Fatalf("runFollowUp: %v", err)
+	}
+	prompt := mustDecodeBase64Env(t, captured.env, "SF_PROMPT_B64")
+	assertPromptHasFinalCompletionContract(t, prompt)
+	for _, key := range []string{"SF_SPEC_SETUP_B64", "SF_SPEC_START_B64", "SF_SPEC_STOP_B64", "SF_SPEC_HEALTH_B64", "SF_SPEC_LESSONS_B64"} {
+		if captured.env[key] == "" {
+			t.Fatalf("spec env[%s] is empty; env=%#v", key, captured.env)
 		}
 	}
 }

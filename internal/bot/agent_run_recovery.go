@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
@@ -270,7 +271,7 @@ func (b *Bot) finalizeRecoveredRun(ctx context.Context, sb *daytona.Sandbox, run
 	}
 
 	b.runs.UpdateState(context.Background(), run.ID, runstore.StateFinalizing, "", b.workerID)
-	body := noPullRequestResultBody(run.RunKind == "followup")
+	body := noPullRequestResultBody(recoveredRunUsesFollowUpRunner(run))
 	if prURL != "" {
 		validatedPR, branch, err := b.validateRecoveredPR(ctx, run, prURL)
 		if err != nil {
@@ -287,10 +288,14 @@ func (b *Bot) finalizeRecoveredRun(ctx context.Context, sb *daytona.Sandbox, run
 			body = validatedPR
 			prURL = validatedPR
 		}
-		if run.RunKind != "followup" {
+		if !recoveredRunUsesFollowUpRunner(run) {
 			body += "\n\nReply here to make further changes to this PR."
 		}
+	} else if detail, fail := b.recoveredMissingPRFailureDetail(ctx, run); fail {
+		b.finishRecoveredMissingPR(ctx, sb, run, live, detail)
+		return
 	}
+	outcomePRURL := b.recoveredOutcomePRURL(ctx, run, prURL)
 	events, err := b.runs.EventsAfter(ctx, run.ID, 0)
 	if err != nil {
 		b.deferRecoveryForRetry(run, "load events: finalize success", err)
@@ -327,11 +332,11 @@ func (b *Bot) finalizeRecoveredRun(ctx context.Context, sb *daytona.Sandbox, run
 			return
 		}
 	}
-	if err := b.projectRecoveredConversation(ctx, run, prURL, events); err != nil {
+	if err := b.projectRecoveredConversation(ctx, run, outcomePRURL, events); err != nil {
 		b.deferRecoveryForRetry(run, "project conversation: success", err)
 		return
 	}
-	b.recordRecoveredRunOutcome(context.Background(), run, prURL, blocksFromRunEvents(events), autoMergeDetail)
+	b.recordRecoveredRunOutcome(context.Background(), run, outcomePRURL, blocksFromRunEvents(events), autoMergeDetail)
 	b.runs.UpdateState(context.Background(), run.ID, runstore.StateSucceeded, "", b.workerID)
 	b.finishBillingRun(context.Background(), run.ID, runstore.StateSucceeded)
 	b.log.Info("agent run recovery succeeded",
@@ -345,6 +350,115 @@ func (b *Bot) finalizeRecoveredRun(ctx context.Context, sb *daytona.Sandbox, run
 	)
 	b.deleteSandboxSession(sb, run.SessionID)
 	b.stopAndArchiveSandbox(ctx, sb)
+}
+
+func recoveredRunIsScheduledJob(run runstore.Run) bool {
+	return run.TriggerSource == runstore.TriggerJob || run.RunKind == "job"
+}
+
+func recoveredRunUsesFollowUpRunner(run runstore.Run) bool {
+	switch run.RunKind {
+	case "followup", "github_mention":
+		return true
+	default:
+		return false
+	}
+}
+
+func recoveredRunProjectsAsFollowUp(run runstore.Run) bool {
+	return recoveredRunUsesFollowUpRunner(run)
+}
+
+func (b *Bot) recoveredMissingPRFailureDetail(ctx context.Context, run runstore.Run) (map[string]any, bool) {
+	if recoveredRunIsScheduledJob(run) || run.RunKind == "github_mention" {
+		return nil, false
+	}
+	branch := strings.TrimSpace(run.Branch)
+	if run.RunKind == "followup" {
+		if b.convs == nil {
+			return nil, false
+		}
+		rec, err := b.convs.Get(ctx, run.OrgID, run.ThreadID)
+		if err != nil || strings.TrimSpace(rec.PRURL) != "" {
+			return nil, false
+		}
+		if branch == "" {
+			branch = strings.TrimSpace(rec.Branch)
+		}
+		return map[string]any{"reason": "followup_unpublished_branch_missing_pr", "branch": branch, "recovered": true}, true
+	}
+	if freshRequestAllowsNoPR(run.UserRequest) {
+		return nil, false
+	}
+	return map[string]any{"reason": "change_request_missing_pr", "branch": branch, "recovered": true}, true
+}
+
+func (b *Bot) recoveredOutcomePRURL(ctx context.Context, run runstore.Run, prURL string) string {
+	if strings.TrimSpace(prURL) != "" || run.RunKind != "github_mention" {
+		return prURL
+	}
+	if b.convs == nil {
+		return ""
+	}
+	rec, err := b.convs.Get(ctx, run.OrgID, run.ThreadID)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(rec.PRURL)
+}
+
+func (b *Bot) finishRecoveredMissingPR(ctx context.Context, sb *daytona.Sandbox, run runstore.Run, live *liveRun, detail map[string]any) {
+	events, err := b.runs.EventsAfter(ctx, run.ID, 0)
+	if err != nil {
+		b.deferRecoveryForRetry(run, "load events: missing pr", err)
+		return
+	}
+	if !recoveredRunHasTerminalBlock(events, blocks.KindError) {
+		em := b.recoveredTerminalEmitter(run, live, events)
+		em.Error("Pull request missing", "The recovered agent finished without reporting a pull request URL for a change-like request. Reply here to retry from the preserved branch.")
+		if err := em.Err(); err != nil {
+			b.deferRecoveryForRetry(run, "emit missing pr error", err)
+			return
+		}
+		events, err = b.runs.EventsAfter(ctx, run.ID, 0)
+		if err != nil {
+			b.deferRecoveryForRetry(run, "reload events: missing pr", err)
+			return
+		}
+	}
+	if err := b.projectRecoveredConversation(ctx, run, "", events); err != nil {
+		b.deferRecoveryForRetry(run, "project conversation: missing pr", err)
+		return
+	}
+	if detail == nil {
+		detail = map[string]any{"reason": "change_request_missing_pr", "branch": run.Branch, "recovered": true}
+	}
+	b.runs.UpdateOutcome(context.Background(), run.ID, runstore.OutcomeCompletedNoPR, detail, run.QualityScore, b.workerID)
+	lastErr := errFreshChangeNoPR
+	if detail["reason"] == "followup_unpublished_branch_missing_pr" {
+		lastErr = errFollowUpChangeNoPR
+	}
+	b.runs.UpdateState(context.Background(), run.ID, runstore.StateFailed, lastErr.Error(), b.workerID)
+	b.finishBillingRun(context.Background(), run.ID, runstore.StateFailed)
+	b.log.Warn("agent run recovery completed without required PR",
+		"run_id", run.ID,
+		"org", run.OrgID,
+		"thread", run.ThreadID,
+		"sandbox", run.SandboxID,
+		"session", run.SessionID,
+	)
+	b.deleteSandboxSession(sb, b.currentAgentRunSessionID(contextWithAgentRun(ctx, run), recoveredRunSessionFallback(run)))
+	b.stopAndArchiveSandbox(ctx, sb)
+}
+
+func recoveredRunSessionFallback(run runstore.Run) string {
+	if strings.TrimSpace(run.SessionID) != "" {
+		return run.SessionID
+	}
+	if recoveredRunUsesFollowUpRunner(run) {
+		return "followup-" + run.RequestID
+	}
+	return "agent-" + run.RequestID
 }
 
 func (b *Bot) finishRecoveredFailure(ctx context.Context, run runstore.Run, live *liveRun, title, body string, cause error) {
@@ -456,7 +570,11 @@ func (b *Bot) validateRecoveredPR(ctx context.Context, run runstore.Run, prURL s
 	if branch == "" && run.RequestID != "" {
 		branch = "feature/sf-" + run.RequestID
 	}
-	validated, err := b.validateReportedPR(ctx, repo, branch, repo.BaseBranch, prURL)
+	expectedBase := repo.BaseBranch
+	if recoveredRunUsesFollowUpRunner(run) {
+		expectedBase = ""
+	}
+	validated, err := b.validateReportedPR(ctx, repo, branch, expectedBase, prURL)
 	return validated, branch, err
 }
 

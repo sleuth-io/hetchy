@@ -324,8 +324,11 @@ func (b *Bot) continueRecoveredRun(ctx context.Context, sb *daytona.Sandbox, run
 	// fresh-run path in conversation_run.go for the rationale.
 	runCtx, housekeeping := contextWithPostPRHousekeeping(runCtx)
 	var prURL string
-	if run.RunKind == "followup" {
-		mode := b.decideFollowUpMode(runCtx, inputs.oc, inputs.rec, run.UserRequest).Mode
+	if recoveredRunUsesFollowUpRunner(run) {
+		mode := followUpModeChange
+		if run.RunKind == "followup" && strings.TrimSpace(inputs.rec.PRURL) != "" {
+			mode = b.decideFollowUpMode(runCtx, inputs.oc, inputs.rec, run.UserRequest).Mode
+		}
 		prURL, err = b.runFollowUpForRequest(runCtx, sb, inputs.repo, inputs.oc, inputs.rec, inputs.agent, run.UserRequest, run.RequestID, inputs.opts, inputs.model, mode, em)
 	} else {
 		prURL, err = b.runAgentForRequest(runCtx, sb, inputs.repo, inputs.oc, inputs.agent, run.UserRequest, run.RequestID, inputs.branch, inputs.opts, inputs.model, em)
@@ -334,11 +337,17 @@ func (b *Bot) continueRecoveredRun(ctx context.Context, sb *daytona.Sandbox, run
 		b.finishContinuedRecoveredError(runCtx, run, live, err)
 		return
 	}
+	if prURL == "" {
+		if detail, fail := b.recoveredMissingPRFailureDetail(runCtx, run); fail {
+			b.finishRecoveredMissingPR(runCtx, sb, run, live, detail)
+			return
+		}
+	}
 
 	body := prURL
 	if body == "" {
-		body = noPullRequestResultBody(run.RunKind == "followup")
-	} else if run.RunKind != "followup" {
+		body = noPullRequestResultBody(recoveredRunUsesFollowUpRunner(run))
+	} else if !recoveredRunUsesFollowUpRunner(run) {
 		body += "\n\nReply here to make further changes to this PR."
 	}
 	em.Result("Done!", body)
@@ -362,6 +371,8 @@ func (b *Bot) continueRecoveredRun(ctx context.Context, sb *daytona.Sandbox, run
 		b.deferRecoveryForRetry(run, "project conversation: continue", err)
 		return
 	}
+	outcomePRURL := b.recoveredOutcomePRURL(ctx, run, prURL)
+	b.recordRecoveredRunOutcome(context.Background(), run, outcomePRURL, blocksFromRunEvents(events), nil)
 	b.runs.UpdateState(context.Background(), run.ID, runstore.StateSucceeded, "", b.workerID)
 	b.log.Info("agent run recovery continued to success",
 		"run_id", run.ID,

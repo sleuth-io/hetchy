@@ -371,6 +371,22 @@ func (b *Bot) handleFollowUp(ctx context.Context, oc orgcfg.Config, rec convstor
 		b.handleFollowUpRunError(ctx, sb, &rec, text, recorder, requestID, err, runEmit)
 		return
 	}
+	if prURL == "" && unpublishedBranchFollowUpRequiresPR(mode, rec) {
+		err := errFollowUpChangeNoPR
+		emit.Error("Pull request missing", "The agent finished without reporting a pull request URL for this unpublished branch. Reply here to retry from the preserved branch.")
+		appendBlocksAsNewTurn(&rec, text, recorder.Snapshot())
+		if uerr := b.convs.Upsert(ctx, rec); uerr != nil {
+			b.log.Error("convstore upsert (follow-up missing PR)", "error", uerr)
+			b.markRunOutcome(ctx, runstore.OutcomeFailedRuntime, map[string]any{"reason": "persist_followup_missing_pr", "branch": rec.Branch})
+			b.markRunState(ctx, runstore.StateFailed, uerr)
+			return
+		}
+		b.markRunOutcome(ctx, runstore.OutcomeCompletedNoPR, map[string]any{"reason": "followup_unpublished_branch_missing_pr", "branch": rec.Branch})
+		b.markRunState(ctx, runstore.StateFailed, err)
+		b.deleteSandboxSession(sb, b.currentAgentRunSessionID(ctx, "followup-"+requestID))
+		b.stopAndArchiveSandbox(ctx, sb)
+		return
+	}
 
 	autoMergeDetail := map[string]any{}
 	if prURL != "" {
@@ -637,6 +653,11 @@ func noPullRequestResultBody(followup bool) string {
 }
 
 var errFreshChangeNoPR = errors.New("fresh change run completed without a pull request URL")
+var errFollowUpChangeNoPR = errors.New("follow-up change run completed without a pull request URL")
+
+func unpublishedBranchFollowUpRequiresPR(mode followUpMode, rec convstore.Record) bool {
+	return mode == followUpModeChange && strings.TrimSpace(rec.PRURL) == ""
+}
 
 func freshRequestAllowsNoPR(userRequest string) bool {
 	s := strings.ToLower(strings.TrimSpace(userRequest))

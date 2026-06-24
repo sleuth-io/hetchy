@@ -1293,7 +1293,7 @@ func TestAppDataStatusAndStateLabels(t *testing.T) {
 		{state: runstore.StateRunning, status: "running", label: "Waiting for latest activity."},
 		{state: runstore.StateRecovering, status: "running", label: "Waiting for latest activity."},
 		{state: runstore.StateFinalizing, status: "running", label: "Waiting for latest activity."},
-		{state: runstore.StateFailed, outcome: runstore.OutcomeCompletedNoPR, status: "needs_input", label: "Run finished without a pull request."},
+		{state: runstore.StateFailed, outcome: runstore.OutcomeCompletedNoPR, status: "failed", label: "Pull request missing. Reply to retry from the preserved branch."},
 		{state: runstore.StateFailed, status: "failed", label: "Run failed."},
 		{state: runstore.StateCancelled, status: "cancelled", label: "Run was stopped."},
 		{state: runstore.StateSucceeded, status: "done", label: "Run is complete."},
@@ -1327,7 +1327,7 @@ func TestAppDataResultLabel(t *testing.T) {
 		{name: "preparing", state: runstore.StatePreparing, want: "Running"},
 		{name: "recovering", state: runstore.StateRecovering, want: "Running"},
 		{name: "finalizing", state: runstore.StateFinalizing, want: "Running"},
-		{name: "failed-no-pr maps to needs_input", state: runstore.StateFailed, outcome: runstore.OutcomeCompletedNoPR, want: "Needs input"},
+		{name: "failed no pr", state: runstore.StateFailed, outcome: runstore.OutcomeCompletedNoPR, want: "PR missing"},
 		{name: "failed", state: runstore.StateFailed, want: "Failed"},
 		{name: "cancelled", state: runstore.StateCancelled, want: "Canceled"},
 		{

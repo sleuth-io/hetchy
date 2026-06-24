@@ -17,6 +17,7 @@ import (
 	"github.com/sleuth-io/hetchy/internal/blocks"
 	"github.com/sleuth-io/hetchy/internal/convstore"
 	"github.com/sleuth-io/hetchy/internal/orgcfg"
+	"github.com/sleuth-io/hetchy/internal/runstore"
 )
 
 func TestHandleRequestPersistsRepoPromptWithFakeStore(t *testing.T) {
@@ -388,6 +389,92 @@ func TestHandleRequestNoPRRetryUsesExistingSandboxAndOriginalHistory(t *testing.
 	}
 	if rec.PRURL != "https://github.com/sleuth-io/hetchy/pull/9" {
 		t.Fatalf("PRURL = %q", rec.PRURL)
+	}
+}
+
+func TestHandleRequestNoPRRetryMissingPRFails(t *testing.T) {
+	convs := &fakeConversationStore{
+		rec: convstore.Record{
+			OrgID:       "org_test",
+			ThreadID:    "thread-1",
+			SandboxID:   "sandbox-1",
+			Branch:      "feature/sf-req-1",
+			GitHubOwner: "sleuth-io",
+			GitHubRepo:  "hetchy",
+			History:     []string{"original implementation request"},
+		},
+	}
+	store := &fakeRunStore{
+		enabled: true,
+		createRun: runstore.Run{
+			ID:          "run-1",
+			OrgID:       "org_test",
+			ThreadID:    "thread-1",
+			RequestID:   "req-2",
+			UserRequest: "Try to create the pull request again",
+			RunKind:     "chat",
+		},
+		createInserted: true,
+	}
+	b := testCoreBot(convs)
+	b.runs = store
+	b.workerID = "worker-1"
+	b.resolveRepoFn = func(context.Context, string, string, string) (repoCtx, error) {
+		return repoCtx{Slug: "sleuth-io/hetchy", GitHubToken: "token"}, nil
+	}
+	b.getSandboxFn = func(_ context.Context, sandboxID string) (*daytona.Sandbox, error) {
+		return &daytona.Sandbox{ID: sandboxID}, nil
+	}
+	b.resumeSandboxFn = func(context.Context, *daytona.Sandbox, blocks.Emitter) error { return nil }
+	var deletedSession, archivedSandbox string
+	b.deleteSandboxSessionFn = func(sb *daytona.Sandbox, sessionID string) {
+		deletedSession = sessionID
+		archivedSandbox = sb.ID
+	}
+	b.stopAndArchiveFn = func(_ context.Context, sb *daytona.Sandbox) {
+		archivedSandbox = sb.ID
+	}
+	b.followUpModeFn = func(context.Context, orgcfg.Config, convstore.Record, string) followUpModeDecision {
+		t.Fatal("follow-up mode classifier should not run before a PR exists")
+		return followUpModeDecision{}
+	}
+	b.runFollowUpFn = func(_ context.Context, _ *daytona.Sandbox, _ repoCtx, _ orgcfg.Config, rec convstore.Record, _ agents.Profile, _ string, _ string, _ chatTaskOptions, _ ClaudeModel, mode followUpMode, _ blocks.Emitter) (string, error) {
+		if mode != followUpModeChange || rec.PRURL != "" {
+			t.Fatalf("retry should run unpublished branch in change mode, mode=%s rec=%+v", mode, rec)
+		}
+		return "", nil
+	}
+	emit := newCaptureEmitter()
+
+	b.HandleRequest(context.Background(),
+		orgcfg.Config{OrgID: "org_test", AnthropicAPIKey: "sk-ant"},
+		"Try to create the pull request again", "req-2", "thread-1", "user-1",
+		chatTaskOptionPatch{}, nil, nil, ClaudeModelOpus, emit)
+
+	if !emit.hasCall("error", "Pull request missing") {
+		t.Fatalf("expected missing PR error, got calls=%v", emit.Calls)
+	}
+	if emit.hasCall("result", "Done!") {
+		t.Fatalf("missing PR retry should not emit success, got calls=%v", emit.Calls)
+	}
+	if deletedSession != "followup-req-2" || archivedSandbox != "sandbox-1" {
+		t.Fatalf("cleanup session=%q sandbox=%q", deletedSession, archivedSandbox)
+	}
+	rec := convs.lastUpsert(t)
+	if rec.PRURL != "" || rec.Branch != "feature/sf-req-1" || rec.SandboxID != "sandbox-1" {
+		t.Fatalf("retry record should preserve branch/sandbox without PR: %+v", rec)
+	}
+	if got := rec.History; len(got) != 2 || got[1] != "Try to create the pull request again" {
+		t.Fatalf("persisted history = %#v", got)
+	}
+	if len(store.updateOutcomes) == 0 || store.updateOutcomes[len(store.updateOutcomes)-1].outcome != runstore.OutcomeCompletedNoPR {
+		t.Fatalf("outcomes = %+v", store.updateOutcomes)
+	}
+	if got := store.updateOutcomes[len(store.updateOutcomes)-1].detail["reason"]; got != "followup_unpublished_branch_missing_pr" {
+		t.Fatalf("outcome detail = %+v", store.updateOutcomes[len(store.updateOutcomes)-1].detail)
+	}
+	if len(store.updateStates) == 0 || store.updateStates[len(store.updateStates)-1].state != runstore.StateFailed {
+		t.Fatalf("states = %+v", store.updateStates)
 	}
 }
 
