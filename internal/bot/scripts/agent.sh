@@ -160,8 +160,7 @@ echo "[hetchy] verifying claude"
 which claude
 
 echo "[hetchy] initializing claude config"
-mkdir -p "$HOME/.claude"
-printf '{"hasCompletedOnboarding":true}\n' > "$HOME/.claude.json"
+initialize_claude_config
 
 # playwright-cli writes snapshots, screenshots, and traces under its
 # output dir (defaults to $WORKDIR/.playwright-cli) and uses a separate

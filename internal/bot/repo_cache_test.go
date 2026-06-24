@@ -568,6 +568,32 @@ save_hetchy_cache_archive "$LOCAL_CACHE" "$ARCHIVE"
 	}
 }
 
+func TestSaveHetchyCacheArchive_DoesNotMkdirExistingVolumeDir(t *testing.T) {
+	localCache := filepath.Join(t.TempDir(), "local-cache")
+	mustMkdir(t, localCache)
+	mustWriteFile(t, filepath.Join(localCache, "gomod.txt"), "cached\n")
+	archive := filepath.Join(t.TempDir(), "cache.tar.gz")
+
+	script := "set -euo pipefail\n" + sandboxRepoCacheHelpersScript + `
+mkdir() {
+  echo "mkdir should not be called for an existing volume dir: $*" >&2
+  return 99
+}
+export -f mkdir
+save_hetchy_cache_archive "$LOCAL_CACHE" "$ARCHIVE"
+`
+	out, err := runBashScript(t, script, map[string]string{
+		"LOCAL_CACHE": localCache,
+		"ARCHIVE":     archive,
+	})
+	if err != nil {
+		t.Fatalf("save dependency cache with existing volume dir: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(archive); err != nil {
+		t.Fatalf("archive was not written: %v\noutput:\n%s", err, out)
+	}
+}
+
 func TestConfigureHetchyCache_SkipSaveOnExit(t *testing.T) {
 	localCache := filepath.Join(t.TempDir(), "local-cache")
 	cacheMount := t.TempDir()

@@ -190,6 +190,52 @@ hetchy_container_preflight() {
   fi
 }
 
+initialize_claude_config() {
+  mkdir -p "$HOME/.claude" || return 0
+
+  local config_file="$HOME/.claude.json"
+  local settings_file="$HOME/.claude/settings.json"
+  local tmp=""
+
+  if command -v jq >/dev/null 2>&1; then
+    tmp="$(mktemp "${TMPDIR:-/tmp}/sf-claude-config.XXXXXX")" || tmp=""
+    if [[ -n "$tmp" ]]; then
+      if [[ -s "$config_file" ]]; then
+        if jq '.hasCompletedOnboarding = true' "$config_file" > "$tmp" 2>/dev/null; then
+          mv "$tmp" "$config_file"
+          tmp=""
+        fi
+      elif jq -n '{hasCompletedOnboarding:true}' > "$tmp" 2>/dev/null; then
+        mv "$tmp" "$config_file"
+        tmp=""
+      fi
+      rm -f "$tmp" 2>/dev/null || true
+    fi
+
+    tmp="$(mktemp "${TMPDIR:-/tmp}/sf-claude-settings.XXXXXX")" || tmp=""
+    if [[ -n "$tmp" ]]; then
+      if [[ -s "$settings_file" ]]; then
+        if jq '.skipDangerousModePermissionPrompt = true | .theme = (.theme // "dark")' "$settings_file" > "$tmp" 2>/dev/null; then
+          mv "$tmp" "$settings_file"
+          tmp=""
+        fi
+      elif jq -n '{skipDangerousModePermissionPrompt:true, theme:"dark"}' > "$tmp" 2>/dev/null; then
+        mv "$tmp" "$settings_file"
+        tmp=""
+      fi
+      rm -f "$tmp" 2>/dev/null || true
+    fi
+    return 0
+  fi
+
+  if [[ ! -s "$config_file" ]]; then
+    printf '{"hasCompletedOnboarding":true}\n' > "$config_file" 2>/dev/null || true
+  fi
+  if [[ ! -s "$settings_file" ]]; then
+    printf '{"skipDangerousModePermissionPrompt":true,"theme":"dark"}\n' > "$settings_file" 2>/dev/null || true
+  fi
+}
+
 restore_hetchy_cache_archive() {
   local archive="$1"
   local local_cache_dir="$2"
@@ -531,7 +577,9 @@ save_hetchy_cache_archive() {
 
   [[ -d "$local_cache_dir" ]] || return 0
   hetchy_cache_has_entries "$local_cache_dir" || return 0
-  mkdir -p "$volume_cache_dir" || return 1
+  if [[ ! -d "$volume_cache_dir" ]]; then
+    mkdir -p "$volume_cache_dir" 2>/dev/null || return 1
+  fi
 
   local compress_program
   case "$archive" in

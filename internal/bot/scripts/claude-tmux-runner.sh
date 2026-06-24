@@ -56,6 +56,9 @@ run_claude_interactive_with_watchdog() {
   : > "$diag_log" 2>/dev/null || true
 
   cwd="$(pwd)"
+  if declare -F initialize_claude_config >/dev/null 2>&1; then
+    initialize_claude_config
+  fi
   # Claude Code encodes the project transcript directory by replacing
   # every `/` in the absolute cwd with `-`. Matching that scheme lets
   # us locate the JSONL file the TUI writes once it boots.
@@ -81,14 +84,14 @@ run_claude_interactive_with_watchdog() {
   claude_settings_tmp="$(mktemp "${TMPDIR:-/tmp}/sf-claude-settings.XXXXXX")"
   if command -v jq >/dev/null 2>&1; then
     if [[ -s "$claude_settings_file" ]]; then
-      if jq '.skipDangerousModePermissionPrompt = true' "$claude_settings_file" > "$claude_settings_tmp" 2>>"$diag_log"; then
+      if jq '.skipDangerousModePermissionPrompt = true | .theme = (.theme // "dark")' "$claude_settings_file" > "$claude_settings_tmp" 2>>"$diag_log"; then
         mv "$claude_settings_tmp" "$claude_settings_file"
         claude_settings_tmp=""
       else
         echo "$(date -Is) failed to merge skipDangerousModePermissionPrompt into ${claude_settings_file}" >>"$diag_log"
       fi
     else
-      if jq -n '{skipDangerousModePermissionPrompt:true}' > "$claude_settings_tmp" 2>>"$diag_log"; then
+      if jq -n '{skipDangerousModePermissionPrompt:true, theme:"dark"}' > "$claude_settings_tmp" 2>>"$diag_log"; then
         mv "$claude_settings_tmp" "$claude_settings_file"
         claude_settings_tmp=""
       else
@@ -96,7 +99,7 @@ run_claude_interactive_with_watchdog() {
       fi
     fi
   elif [[ ! -s "$claude_settings_file" ]]; then
-    if printf '{"skipDangerousModePermissionPrompt":true}\n' > "$claude_settings_tmp" 2>>"$diag_log"; then
+    if printf '{"skipDangerousModePermissionPrompt":true,"theme":"dark"}\n' > "$claude_settings_tmp" 2>>"$diag_log"; then
       mv "$claude_settings_tmp" "$claude_settings_file"
       claude_settings_tmp=""
     fi
@@ -132,22 +135,38 @@ run_claude_interactive_with_watchdog() {
   # the TUI redraws before its input box is ready.
   sleep "${HETCHY_CLAUDE_TUI_SETTLE_S:-5}"
   startup_pane="$(mktemp "${TMPDIR:-/tmp}/sf-claude-pane.XXXXXX")"
-  if tmux capture-pane -p -t "$tmux_session" -S -120 > "$startup_pane" 2>>"$diag_log"; then
+  local startup_round=0
+  while (( startup_round < 6 )); do
+    if ! tmux capture-pane -p -t "$tmux_session" -S -120 > "$startup_pane" 2>>"$diag_log"; then
+      break
+    fi
     {
-      echo "$(date -Is) startup pane before prompt"
+      echo "$(date -Is) startup pane before prompt round ${startup_round}"
       cat "$startup_pane"
     } >>"$diag_log" 2>&1 || true
+
+    if grep -Eq 'Choose the text style|To change this later, run /theme|Syntax theme:' "$startup_pane"; then
+      echo "$(date -Is) accepting theme prompt" >>"$diag_log"
+      tmux send-keys -t "$tmux_session" Enter >>"$diag_log" 2>&1 || true
+      sleep "${HETCHY_CLAUDE_TUI_SETTLE_S:-5}"
+      ((++startup_round))
+      continue
+    fi
+
+    if grep -Eq 'Select login method|Claude account with subscription|API usage billing' "$startup_pane"; then
+      echo "$(date -Is) accepting subscription login method prompt" >>"$diag_log"
+      tmux send-keys -t "$tmux_session" Enter >>"$diag_log" 2>&1 || true
+      sleep "${HETCHY_CLAUDE_TUI_SETTLE_S:-5}"
+      ((++startup_round))
+      continue
+    fi
 
     if grep -Eq 'Quick safety check|project you created|trust this folder' "$startup_pane"; then
       echo "$(date -Is) accepting workspace trust prompt" >>"$diag_log"
       tmux send-keys -t "$tmux_session" Enter >>"$diag_log" 2>&1 || true
       sleep "${HETCHY_CLAUDE_TUI_SETTLE_S:-5}"
-      if tmux capture-pane -p -t "$tmux_session" -S -120 > "$startup_pane" 2>>"$diag_log"; then
-        {
-          echo "$(date -Is) startup pane after workspace trust"
-          cat "$startup_pane"
-        } >>"$diag_log" 2>&1 || true
-      fi
+      ((++startup_round))
+      continue
     fi
 
     if grep -Eq 'Bypass Permissions mode|By proceeding, you accept|Yes, I accept' "$startup_pane"; then
@@ -156,14 +175,12 @@ run_claude_interactive_with_watchdog() {
       sleep "${HETCHY_CLAUDE_PROMPT_KEY_DELAY_S:-1}"
       tmux send-keys -t "$tmux_session" Enter >>"$diag_log" 2>&1 || true
       sleep "${HETCHY_CLAUDE_TUI_SETTLE_S:-5}"
-      if tmux capture-pane -p -t "$tmux_session" -S -120 > "$startup_pane" 2>>"$diag_log"; then
-        {
-          echo "$(date -Is) startup pane after bypass prompt"
-          cat "$startup_pane"
-        } >>"$diag_log" 2>&1 || true
-      fi
+      ((++startup_round))
+      continue
     fi
-  fi
+
+    break
+  done
   rm -f "$startup_pane"
 
   if ! {

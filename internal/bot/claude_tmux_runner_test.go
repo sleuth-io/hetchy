@@ -63,10 +63,14 @@ func TestClaudeTmuxRunnerScript_Embedded(t *testing.T) {
 		`"$HOME/.claude/projects/$(printf '%s' "$cwd" | sed 's|/|-|g')"`,
 		`tail -n +1 -F "$transcript"`,
 		`'"stop_reason":"end_turn"'`,
+		`initialize_claude_config`,
 		`tmux load-buffer -b sf-prompt`,
 		`tmux paste-buffer -t "$tmux_session" -b sf-prompt`,
 		`tmux send-keys -t "$tmux_session" Enter`,
 		`skipDangerousModePermissionPrompt`,
+		`.theme = (.theme // "dark")`,
+		`accepting theme prompt`,
+		`accepting subscription login method prompt`,
 		`accepting workspace trust prompt`,
 		`accepting bypass permissions prompt`,
 		`tmux send-keys -t "$tmux_session" Down`,
@@ -125,6 +129,8 @@ func TestClaudeTmuxRunner_SubmitsPromptBeforeWaitingForTranscript(t *testing.T) 
 
 func TestClaudeTmuxRunner_ClearsStartupPromptsBeforeSubmittingPrompt(t *testing.T) {
 	settingsIdx := strings.Index(claudeTmuxRunnerScript, `skipDangerousModePermissionPrompt`)
+	themeIdx := strings.Index(claudeTmuxRunnerScript, `accepting theme prompt`)
+	loginIdx := strings.Index(claudeTmuxRunnerScript, `accepting subscription login method prompt`)
 	trustIdx := strings.Index(claudeTmuxRunnerScript, `accepting workspace trust prompt`)
 	bypassIdx := strings.Index(claudeTmuxRunnerScript, `accepting bypass permissions prompt`)
 	bypassDownIdx := strings.Index(claudeTmuxRunnerScript, `tmux send-keys -t "$tmux_session" Down`)
@@ -133,6 +139,8 @@ func TestClaudeTmuxRunner_ClearsStartupPromptsBeforeSubmittingPrompt(t *testing.
 
 	for name, idx := range map[string]int{
 		"settings preseed":       settingsIdx,
+		"theme prompt":           themeIdx,
+		"login method prompt":    loginIdx,
 		"workspace trust prompt": trustIdx,
 		"bypass prompt":          bypassIdx,
 		"bypass down key":        bypassDownIdx,
@@ -145,6 +153,12 @@ func TestClaudeTmuxRunner_ClearsStartupPromptsBeforeSubmittingPrompt(t *testing.
 	}
 	if settingsIdx >= pasteIdx {
 		t.Fatalf("dangerous-mode setting must be seeded before prompt paste; settings idx=%d paste idx=%d", settingsIdx, pasteIdx)
+	}
+	if themeIdx >= pasteIdx {
+		t.Fatalf("theme prompt must be handled before prompt paste; theme idx=%d paste idx=%d", themeIdx, pasteIdx)
+	}
+	if loginIdx >= pasteIdx {
+		t.Fatalf("login method prompt must be handled before prompt paste; login idx=%d paste idx=%d", loginIdx, pasteIdx)
 	}
 	if trustIdx >= pasteIdx {
 		t.Fatalf("workspace trust prompt must be handled before prompt paste; trust idx=%d paste idx=%d", trustIdx, pasteIdx)
