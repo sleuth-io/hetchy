@@ -228,12 +228,8 @@ initialize_claude_config() {
     return 0
   fi
 
-  if [[ ! -s "$config_file" ]]; then
-    printf '{"hasCompletedOnboarding":true}\n' > "$config_file" 2>/dev/null || true
-  fi
-  if [[ ! -s "$settings_file" ]]; then
-    printf '{"skipDangerousModePermissionPrompt":true,"theme":"dark"}\n' > "$settings_file" 2>/dev/null || true
-  fi
+  printf '{"hasCompletedOnboarding":true}\n' > "$config_file" 2>/dev/null || true
+  printf '{"skipDangerousModePermissionPrompt":true,"theme":"dark"}\n' > "$settings_file" 2>/dev/null || true
 }
 
 restore_hetchy_cache_archive() {
