@@ -120,6 +120,10 @@ run_claude_interactive_with_watchdog() {
     fi
 
     if grep -Eq 'Select login method|Claude account with subscription|API usage billing' "$startup_pane"; then
+      if [[ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
+        echo "$(date -Is) login method prompt visible without CLAUDE_CODE_OAUTH_TOKEN; leaving startup loop" >>"$diag_log"
+        break
+      fi
       echo "$(date -Is) accepting subscription login method prompt" >>"$diag_log"
       tmux send-keys -t "$tmux_session" Enter >>"$diag_log" 2>&1 || true
       sleep "${HETCHY_CLAUDE_TUI_SETTLE_S:-5}"
@@ -147,6 +151,7 @@ run_claude_interactive_with_watchdog() {
 
     break
   done
+  echo "$(date -Is) startup loop exited at round ${startup_round}" >>"$diag_log" 2>&1 || true
   rm -f "$startup_pane"
 
   if ! {

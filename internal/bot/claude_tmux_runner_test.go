@@ -97,6 +97,14 @@ func TestClaudeTmuxRunnerScript_Embedded(t *testing.T) {
 			t.Errorf("sandboxCommonScript missing Claude config initializer line %q", line)
 		}
 	}
+	for _, line := range []string{
+		`login method prompt visible without CLAUDE_CODE_OAUTH_TOKEN`,
+		`startup loop exited at round ${startup_round}`,
+	} {
+		if !strings.Contains(claudeTmuxRunnerScript, line) {
+			t.Errorf("claudeTmuxRunnerScript missing startup diagnostic line %q", line)
+		}
+	}
 	if !strings.Contains(agentScript, "run_claude_interactive_with_watchdog") {
 		t.Error("agentScript should compose in claude-tmux-runner.sh so the OAuth branch can call run_claude_interactive_with_watchdog")
 	}
@@ -135,6 +143,7 @@ func TestClaudeTmuxRunner_SubmitsPromptBeforeWaitingForTranscript(t *testing.T) 
 
 func TestClaudeTmuxRunner_ClearsStartupPromptsBeforeSubmittingPrompt(t *testing.T) {
 	initIdx := strings.Index(claudeTmuxRunnerScript, `initialize_claude_config`)
+	oauthGuardIdx := strings.Index(claudeTmuxRunnerScript, `[[ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]`)
 	themeIdx := strings.Index(claudeTmuxRunnerScript, `accepting theme prompt`)
 	loginIdx := strings.Index(claudeTmuxRunnerScript, `accepting subscription login method prompt`)
 	trustIdx := strings.Index(claudeTmuxRunnerScript, `accepting workspace trust prompt`)
@@ -145,6 +154,7 @@ func TestClaudeTmuxRunner_ClearsStartupPromptsBeforeSubmittingPrompt(t *testing.
 
 	for name, idx := range map[string]int{
 		"config initializer":     initIdx,
+		"oauth login guard":      oauthGuardIdx,
 		"theme prompt":           themeIdx,
 		"login method prompt":    loginIdx,
 		"workspace trust prompt": trustIdx,
@@ -162,6 +172,9 @@ func TestClaudeTmuxRunner_ClearsStartupPromptsBeforeSubmittingPrompt(t *testing.
 	}
 	if themeIdx >= pasteIdx {
 		t.Fatalf("theme prompt must be handled before prompt paste; theme idx=%d paste idx=%d", themeIdx, pasteIdx)
+	}
+	if oauthGuardIdx >= loginIdx {
+		t.Fatalf("login method prompt must be guarded by OAuth-token check; guard idx=%d login idx=%d", oauthGuardIdx, loginIdx)
 	}
 	if loginIdx >= pasteIdx {
 		t.Fatalf("login method prompt must be handled before prompt paste; login idx=%d paste idx=%d", loginIdx, pasteIdx)
