@@ -544,7 +544,7 @@ func githubIssueMentionText(ev githubMentionEvent) string {
 		fmt.Fprintf(&b, "\nComment: %s\n", ev.CommentURL)
 	}
 	if ev.CommentBody != "" {
-		fmt.Fprintf(&b, "Comment body:\n%s\n", ev.CommentBody)
+		fmt.Fprintf(&b, "Comment body:\n%s\n", truncate(ev.CommentBody, 4000))
 	}
 	fmt.Fprintf(&b, "\nRequest:\n%s", ev.Directive)
 	return b.String()
@@ -575,7 +575,7 @@ func githubPullRequestMentionText(ev githubMentionEvent) string {
 		fmt.Fprintf(&b, "Comment context:\n%s\n", ev.CommentContext)
 	}
 	if ev.CommentBody != "" {
-		fmt.Fprintf(&b, "Comment body:\n%s\n", ev.CommentBody)
+		fmt.Fprintf(&b, "Comment body:\n%s\n", truncate(ev.CommentBody, 4000))
 	}
 	fmt.Fprintf(&b, "\nRequest:\n%s", ev.Directive)
 	return b.String()

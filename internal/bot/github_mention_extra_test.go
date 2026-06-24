@@ -244,9 +244,17 @@ func TestGithubMentionHelpersFormatURLsIDsAndText(t *testing.T) {
 	if text := githubPullRequestMentionText(ev); !strings.Contains(text, "Base: main") || !strings.Contains(text, "Path: main.go") {
 		t.Fatalf("pull request mention text missing context:\n%s", text)
 	}
+	longComment := strings.Repeat("x", 4100)
+	ev.CommentBody = longComment
+	if text := githubPullRequestMentionText(ev); strings.Contains(text, longComment) || !strings.Contains(text, strings.Repeat("x", 4000)+"...") {
+		t.Fatalf("pull request mention text did not truncate comment body: len=%d", len(text))
+	}
 	ev.SubjectURL = "https://github.com/acme/repo/issues/7"
 	if text := githubIssueMentionText(ev); !strings.Contains(text, "Issue: https://github.com/acme/repo/issues/7") || !strings.Contains(text, "Request:\nfix") {
 		t.Fatalf("issue mention text missing context:\n%s", text)
+	}
+	if text := githubIssueMentionText(ev); strings.Contains(text, longComment) || !strings.Contains(text, strings.Repeat("x", 4000)+"...") {
+		t.Fatalf("issue mention text did not truncate comment body: len=%d", len(text))
 	}
 	if got := githubPRBaseRepo(pr); got != "acme/repo" {
 		t.Fatalf("base repo = %q", got)
