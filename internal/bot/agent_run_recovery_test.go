@@ -353,6 +353,21 @@ func TestValidateRecoveredPRSkipsBaseForFollowUpRunners(t *testing.T) {
 	}
 }
 
+func TestRecoveredRunSessionFallback(t *testing.T) {
+	if got := recoveredRunSessionFallback(runstore.Run{SessionID: "existing"}); got != "existing" {
+		t.Fatalf("existing session fallback = %q", got)
+	}
+	if got := recoveredRunSessionFallback(runstore.Run{RunKind: "followup", RequestID: "req-1"}); got != "followup-req-1" {
+		t.Fatalf("followup session fallback = %q", got)
+	}
+	if got := recoveredRunSessionFallback(runstore.Run{RunKind: "fresh", RequestID: "req-1"}); got != "agent-req-1" {
+		t.Fatalf("fresh session fallback = %q", got)
+	}
+	if got := recoveredRunSessionFallback(runstore.Run{RunKind: "github_mention"}); got != "" {
+		t.Fatalf("empty request fallback = %q, want empty", got)
+	}
+}
+
 func TestRecoverAgentRunReadyTimesOutStuckFramedCommand(t *testing.T) {
 	oldPollInterval := recoveryCommandPollInterval
 	oldPollTimeout := recoveryCommandPollTimeout
@@ -714,6 +729,62 @@ func TestFinishRecoveredCancellationCancelsProjectsAndCleansUp(t *testing.T) {
 		}
 	case <-stopAfter(t):
 		t.Fatal("cleanup was not scheduled")
+	}
+}
+
+func TestCancelDurableRunCleanupPolicy(t *testing.T) {
+	cases := []struct {
+		name        string
+		runKind     string
+		wantCleanup bool
+	}{
+		{name: "github mention replacement sandbox cleans up", runKind: "github_mention", wantCleanup: true},
+		{name: "followup conversation sandbox is preserved", runKind: "followup", wantCleanup: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &fakeRunStore{
+				enabled: true,
+				cancelRun: runstore.Run{
+					ID:        "run_cancel",
+					OrgID:     "org_1",
+					ThreadID:  "thread_1",
+					SandboxID: "sandbox-1",
+					RunKind:   tc.runKind,
+				},
+			}
+			cleanupCh := make(chan string, 1)
+			b := &Bot{
+				log:      discardLogger(),
+				runs:     store,
+				workerID: "worker-1",
+				cleanupSandboxByIDFn: func(sandboxID, reason string) {
+					cleanupCh <- sandboxID + "|" + reason
+				},
+			}
+
+			if err := b.cancelDurableRun(context.Background(), runstore.Run{ID: "run_cancel"}, "user-1"); err != nil {
+				t.Fatalf("cancelDurableRun: %v", err)
+			}
+
+			if tc.wantCleanup {
+				select {
+				case got := <-cleanupCh:
+					if got != "sandbox-1|cancel requested" {
+						t.Fatalf("cleanup = %q", got)
+					}
+				case <-stopAfter(t):
+					t.Fatal("cleanup was not scheduled")
+				}
+			} else {
+				select {
+				case got := <-cleanupCh:
+					t.Fatalf("unexpected cleanup = %q", got)
+				case <-time.After(100 * time.Millisecond):
+				}
+			}
+		})
 	}
 }
 

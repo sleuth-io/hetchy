@@ -320,6 +320,11 @@ func TestContinueRecoveredGithubMentionUsesFollowUpRunner(t *testing.T) {
 		RunKind:     "github_mention",
 	}
 	var ranFollowUp bool
+	var deletedSession string
+	liveCtx, liveCancel := context.WithCancel(context.Background())
+	defer liveCancel()
+	live := newLiveRun(liveCtx, liveCancel)
+	defer live.Close()
 	b := &Bot{
 		log:      discardLogger(),
 		runs:     store,
@@ -340,11 +345,13 @@ func TestContinueRecoveredGithubMentionUsesFollowUpRunner(t *testing.T) {
 			}
 			return "", nil
 		},
-		deleteSandboxSessionFn: func(*daytona.Sandbox, string) {},
-		stopAndArchiveFn:       func(context.Context, *daytona.Sandbox) {},
+		deleteSandboxSessionFn: func(_ *daytona.Sandbox, sessionID string) {
+			deletedSession = sessionID
+		},
+		stopAndArchiveFn: func(context.Context, *daytona.Sandbox) {},
 	}
 
-	b.continueRecoveredRun(context.Background(), &daytona.Sandbox{ID: "sandbox-1"}, run, nil, false)
+	b.continueRecoveredRun(context.Background(), &daytona.Sandbox{ID: "sandbox-1"}, run, live, false)
 
 	if !ranFollowUp {
 		t.Fatal("expected github mention recovery to use follow-up runner")
@@ -361,6 +368,112 @@ func TestContinueRecoveredGithubMentionUsesFollowUpRunner(t *testing.T) {
 	}
 	if last := store.updateStates[len(store.updateStates)-1]; last.state != runstore.StateSucceeded {
 		t.Fatalf("last state = %+v", last)
+	}
+	if sandboxID, cleanup := live.CancelCleanupSandboxID(); sandboxID != "sandbox-1" || !cleanup {
+		t.Fatalf("live cancel cleanup = %q/%t, want sandbox-1/true", sandboxID, cleanup)
+	}
+	if deletedSession != "followup-req-2" {
+		t.Fatalf("deleted session = %q, want followup-req-2", deletedSession)
+	}
+}
+
+func TestContinueRecoveredGithubMentionNoPRFails(t *testing.T) {
+	store := &fakeRunStore{enabled: true}
+	store.getRun = runstore.Run{SessionID: "followup-req-2"}
+	convs := &fakeConversationStore{rec: convstore.Record{
+		OrgID:       "org_1",
+		ThreadID:    "thread_1",
+		History:     []string{"existing mention context"},
+		GitHubOwner: "acme",
+		GitHubRepo:  "repo",
+		Branch:      "feature/external",
+	}}
+	repo := repoCtx{Slug: "acme/repo", BaseBranch: "main", GitHubToken: "gh-token", InstallID: 11, RepoID: 22}
+	run := runstore.Run{
+		ID:          "run_continue_github_no_pr",
+		OrgID:       "org_1",
+		ThreadID:    "thread_1",
+		RequestID:   "req-2",
+		UserRequest: "please update this PR",
+		SandboxID:   "sandbox-1",
+		Branch:      "feature/external",
+		RunKind:     "github_mention",
+	}
+	var archivedSandbox string
+	var deletedSession string
+	b := &Bot{
+		log:      discardLogger(),
+		runs:     store,
+		convs:    convs,
+		orgs:     &fakeOrgStore{getConfig: orgcfg.Config{OrgID: "org_1", AnthropicAPIKey: "sk-ant"}},
+		workerID: "worker-1",
+		resolveRepoFn: func(context.Context, string, string, string) (repoCtx, error) {
+			return repo, nil
+		},
+		runFollowUpFn: func(context.Context, *daytona.Sandbox, repoCtx, orgcfg.Config, convstore.Record, agents.Profile, string, string, chatTaskOptions, ClaudeModel, followUpMode, blocks.Emitter) (string, error) {
+			return "", nil
+		},
+		deleteSandboxSessionFn: func(_ *daytona.Sandbox, sessionID string) {
+			deletedSession = sessionID
+		},
+		stopAndArchiveFn: func(_ context.Context, sb *daytona.Sandbox) {
+			archivedSandbox = sb.ID
+		},
+	}
+
+	b.continueRecoveredRun(context.Background(), &daytona.Sandbox{ID: "sandbox-1"}, run, nil, false)
+
+	if len(store.updateOutcomes) == 0 || store.updateOutcomes[len(store.updateOutcomes)-1].outcome != runstore.OutcomeCompletedNoPR {
+		t.Fatalf("outcomes = %+v", store.updateOutcomes)
+	}
+	if got := store.updateOutcomes[len(store.updateOutcomes)-1].detail["reason"]; got != "github_mention_missing_pr" {
+		t.Fatalf("outcome detail = %+v", store.updateOutcomes[len(store.updateOutcomes)-1].detail)
+	}
+	if last := store.updateStates[len(store.updateStates)-1]; last.state != runstore.StateFailed {
+		t.Fatalf("last state = %+v", last)
+	}
+	rec := convs.lastUpsert(t)
+	block := rec.ResponseBlocks[0][len(rec.ResponseBlocks[0])-1]
+	if block.Kind != blocks.KindError || block.Title != "Pull request missing" {
+		t.Fatalf("terminal block = %+v", block)
+	}
+	if deletedSession != "followup-req-2" || archivedSandbox != "sandbox-1" {
+		t.Fatalf("deleted=%q archived=%q", deletedSession, archivedSandbox)
+	}
+}
+
+func TestCleanupRecoveredFailedRunCleanupPolicy(t *testing.T) {
+	cases := []struct {
+		name        string
+		runKind     string
+		wantCleanup bool
+	}{
+		{name: "github mention replacement sandbox cleans up", runKind: "github_mention", wantCleanup: true},
+		{name: "followup conversation sandbox is preserved", runKind: "followup", wantCleanup: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var cleanup string
+			b := &Bot{
+				cleanupSandboxByIDFn: func(sandboxID, reason string) {
+					cleanup = sandboxID + "|" + reason
+				},
+			}
+
+			b.cleanupRecoveredFailedRun(context.Background(), runstore.Run{
+				SandboxID: "sandbox-1",
+				RunKind:   tc.runKind,
+			})
+
+			if tc.wantCleanup {
+				if cleanup != "sandbox-1|recovered failed run" {
+					t.Fatalf("cleanup = %q", cleanup)
+				}
+			} else if cleanup != "" {
+				t.Fatalf("unexpected cleanup = %q", cleanup)
+			}
+		})
 	}
 }
 

@@ -216,7 +216,7 @@ func (b *Bot) projectRecoveredConversation(ctx context.Context, run runstore.Run
 	if prURL != "" {
 		rec.PRURL = prURL
 	}
-	if recoveredRunProjectsAsFollowUp(run) {
+	if recoveredRunUsesFollowUpRunner(run) {
 		if len(rec.History) > 0 && rec.History[len(rec.History)-1] == run.UserRequest && len(rec.ResponseBlocks) == len(rec.History) {
 			rec.ResponseBlocks[len(rec.ResponseBlocks)-1] = turnBlocks
 		} else {

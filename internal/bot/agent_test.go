@@ -326,8 +326,8 @@ func TestFollowupScript_EmbeddedAndWellFormed(t *testing.T) {
 	requiredLines := []string{
 		`: "${SF_WORKDIR:?required}"`,
 		`: "${SF_BRANCH:?required}"`,
-		`: "${SF_BASE_BRANCH:?required}"`,
 		"require_b64_input SF_PROMPT_B64",
+		"followup_base_branch()",
 		"followup_checkout_has_local_work()",
 		"checkout_followup_branch()",
 		"hetchy_configure_git_auth",
@@ -338,7 +338,8 @@ func TestFollowupScript_EmbeddedAndWellFormed(t *testing.T) {
 		"git fetch --prune origin",
 		`git checkout -B "${SF_BRANCH}" "origin/${SF_BRANCH}"`,
 		`git checkout -B "${SF_BRANCH}"`,
-		`git checkout -B "${SF_BRANCH}" "origin/${SF_BASE_BRANCH}"`,
+		`base_branch="$(followup_base_branch)"`,
+		`git checkout -B "${SF_BRANCH}" "origin/${base_branch}"`,
 		"git pull --rebase --autostash origin",
 		"local -a claude_args=(",
 		"--dangerously-skip-permissions",
@@ -449,18 +450,23 @@ func TestFollowupScript_CheckoutBranchHandlesLocalRemoteAndMissingBranches(t *te
 	remoteCommit := strings.TrimSpace(gitForTest(t, env, seed, "rev-parse", "feature/remote-only"))
 
 	harness := "#!/bin/bash\nset -euo pipefail\n" +
+		extractShellFunction(t, followupScriptBody, "followup_base_branch") + "\n" +
 		extractShellFunction(t, followupScriptBody, "followup_checkout_has_local_work") + "\n" +
 		extractShellFunction(t, followupScriptBody, "checkout_followup_branch") + "\ncheckout_followup_branch\n"
-	runCheckout := func(workdir, branch string) string {
+	runCheckoutWithEnv := func(workdir, branch string, extraEnv ...string) string {
 		t.Helper()
 		cmd := exec.Command("bash", "-c", harness)
 		cmd.Dir = workdir
-		cmd.Env = append(env, "SF_BRANCH="+branch, "SF_BASE_BRANCH=main")
+		cmd.Env = append(append(env, "SF_BRANCH="+branch), extraEnv...)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("checkout_followup_branch(%s): %v\n%s", branch, err, out)
 		}
 		return string(out)
+	}
+	runCheckout := func(workdir, branch string) string {
+		t.Helper()
+		return runCheckoutWithEnv(workdir, branch, "SF_BASE_BRANCH=main")
 	}
 	assertBranchAt := func(workdir, branch, wantCommit string) {
 		t.Helper()
@@ -509,6 +515,14 @@ func TestFollowupScript_CheckoutBranchHandlesLocalRemoteAndMissingBranches(t *te
 		t.Fatalf("missing branch checkout output missing expected message:\n%s", out)
 	}
 	assertBranchAt(missingClone, "feature/missing", baseCommit)
+
+	missingDerivedClone := filepath.Join(root, "missing-derived-clone")
+	gitForTest(t, env, "", "clone", origin, missingDerivedClone)
+	out = runCheckoutWithEnv(missingDerivedClone, "feature/missing-derived")
+	if !strings.Contains(out, "recreating from origin/main") {
+		t.Fatalf("derived missing branch checkout output missing expected message:\n%s", out)
+	}
+	assertBranchAt(missingDerivedClone, "feature/missing-derived", baseCommit)
 }
 
 func TestSandboxCommon_RewriteLegacySavedSpecWorkdir(t *testing.T) {

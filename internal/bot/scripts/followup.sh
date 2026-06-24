@@ -5,7 +5,6 @@
 #   SF_REPO          e.g. "owner/repo"
 #   SF_WORKDIR       repo path inside the sandbox (already cloned)
 #   SF_BRANCH        existing PR branch to update
-#   SF_BASE_BRANCH   repository base branch to fall back to when an unpublished branch was not preserved
 #   SF_PROMPT_B64 or SF_PROMPT_B64_FILE    base64-encoded prompt with conversation history, inline or file
 #
 # Plus exactly one runtime credential family — the bot picks which to inject:
@@ -40,13 +39,13 @@
 #   HETCHY_ARTIFACT_SLOT_TOKEN   bearer token for that endpoint
 #   HETCHY_CACHE_DIR             mounted dependency cache archive subpath
 #   HETCHY_CACHE_PRUNE_DAYS      best-effort local cache file pruning threshold
+#   SF_BASE_BRANCH               base branch fallback when an unpublished branch was not preserved
 
 set -euo pipefail
 
 : "${SF_REPO:?required}"
 : "${SF_WORKDIR:?required}"
 : "${SF_BRANCH:?required}"
-: "${SF_BASE_BRANCH:?required}"
 : "${GITHUB_TOKEN:?required}"
 if [[ -n "${HETCHY_CODEX_MODEL:-}" ]]; then
   if [[ -z "${HETCHY_CODEX_AUTH_KIND:-}" || -z "${HETCHY_CODEX_AUTH_VALUE:-}" ]]; then
@@ -100,11 +99,26 @@ b64_input_size() {
 
 require_b64_input SF_PROMPT_B64
 
+followup_base_branch() {
+  local base_branch="${SF_BASE_BRANCH:-}"
+  if [[ -z "$base_branch" ]]; then
+    base_branch="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)"
+    base_branch="${base_branch#origin/}"
+  fi
+  if [[ -z "$base_branch" ]]; then
+    base_branch="$(git remote show origin 2>/dev/null | sed -n 's/.*HEAD branch: //p' | head -n 1 || true)"
+  fi
+  printf '%s' "$base_branch"
+}
+
 followup_checkout_has_local_work() {
+  local base_branch="${1:-}"
   local current_head=""
   local base_head=""
   current_head="$(git rev-parse HEAD 2>/dev/null || true)"
-  base_head="$(git rev-parse "origin/${SF_BASE_BRANCH}" 2>/dev/null || true)"
+  if [[ -n "$base_branch" ]]; then
+    base_head="$(git rev-parse "origin/${base_branch}" 2>/dev/null || true)"
+  fi
   if [[ -n "$current_head" && -n "$base_head" && "$current_head" != "$base_head" ]]; then
     return 0
   fi
@@ -121,18 +135,26 @@ followup_checkout_has_local_work() {
 }
 
 checkout_followup_branch() {
+  local base_branch=""
   git fetch --prune origin
   if git show-ref --verify --quiet "refs/heads/${SF_BRANCH}"; then
     git checkout "${SF_BRANCH}"
   elif git show-ref --verify --quiet "refs/remotes/origin/${SF_BRANCH}"; then
     echo "[hetchy] local branch ${SF_BRANCH} missing; checking out origin/${SF_BRANCH}"
     git checkout -B "${SF_BRANCH}" "origin/${SF_BRANCH}"
-  elif followup_checkout_has_local_work; then
-    echo "[hetchy] branch ${SF_BRANCH} missing locally and on origin; creating it from current checkout to preserve local work"
-    git checkout -B "${SF_BRANCH}"
   else
-    echo "[hetchy] branch ${SF_BRANCH} missing locally and on origin; recreating from origin/${SF_BASE_BRANCH}"
-    git checkout -B "${SF_BRANCH}" "origin/${SF_BASE_BRANCH}"
+    base_branch="$(followup_base_branch)"
+    if followup_checkout_has_local_work "$base_branch"; then
+      echo "[hetchy] branch ${SF_BRANCH} missing locally and on origin; creating it from current checkout to preserve local work"
+      git checkout -B "${SF_BRANCH}"
+    else
+      if [[ -z "$base_branch" ]]; then
+        echo "[hetchy] base branch is required when ${SF_BRANCH} is missing locally and on origin" >&2
+        exit 1
+      fi
+      echo "[hetchy] branch ${SF_BRANCH} missing locally and on origin; recreating from origin/${base_branch}"
+      git checkout -B "${SF_BRANCH}" "origin/${base_branch}"
+    fi
   fi
 
   if git rev-parse --verify "refs/remotes/origin/${SF_BRANCH}" >/dev/null 2>&1; then

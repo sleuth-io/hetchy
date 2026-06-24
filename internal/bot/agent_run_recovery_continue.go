@@ -318,7 +318,7 @@ func (b *Bot) continueRecoveredRun(ctx context.Context, sb *daytona.Sandbox, run
 	if skipBootstrap {
 		runCtx = contextWithBootstrapSkipped(runCtx)
 	}
-	setLiveRunSandboxID(runCtx, sb.ID, run.RunKind != "followup")
+	setLiveRunSandboxID(runCtx, sb.ID, !agentRunPreservesSandbox(run))
 
 	// Defer spec reflection until after the Result block — see the
 	// fresh-run path in conversation_run.go for the rationale.
@@ -382,7 +382,7 @@ func (b *Bot) continueRecoveredRun(ctx context.Context, sb *daytona.Sandbox, run
 		"sandbox", run.SandboxID,
 		"pr_url", prURL,
 	)
-	b.deleteSandboxSession(sb, b.currentAgentRunSessionID(runCtx, "agent-"+run.RequestID))
+	b.deleteSandboxSession(sb, b.currentAgentRunSessionID(runCtx, recoveredRunSessionFallback(run)))
 	b.stopAndArchiveSandbox(ctx, sb)
 }
 
@@ -397,18 +397,27 @@ func (b *Bot) finishContinuedRecoveredError(ctx context.Context, run runstore.Ru
 	}
 	title := "Agent failed"
 	body := fmt.Sprintf("Something went wrong while running the recovered agent. Sandbox `%s` will be archived.", run.SandboxID)
+	if agentRunPreservesSandbox(run) {
+		body = fmt.Sprintf("Something went wrong while running the recovered agent. Sandbox `%s` is preserved for retry.", run.SandboxID)
+	}
 	if isAgentTimeout(err) {
 		title = "Agent timed out"
 		body = fmt.Sprintf("The recovered agent exceeded its time limit on sandbox `%s`. The sandbox will be archived.", run.SandboxID)
+		if agentRunPreservesSandbox(run) {
+			body = fmt.Sprintf("The recovered agent exceeded its time limit on sandbox `%s`. The sandbox is preserved for retry.", run.SandboxID)
+		}
 	} else if errors.Is(err, errReportedPRNotVerified) {
 		title = "PR not verified"
 		body = fmt.Sprintf("The recovered agent reported a PR URL, but GitHub did not verify it for branch `%s`. Sandbox `%s` will be archived.", run.Branch, run.SandboxID)
+		if agentRunPreservesSandbox(run) {
+			body = fmt.Sprintf("The recovered agent reported a PR URL, but GitHub did not verify it for branch `%s`. Sandbox `%s` is preserved for retry.", run.Branch, run.SandboxID)
+		}
 	}
 	b.finishRecoveredFailure(context.Background(), run, live, title, body, err)
 }
 
 func (b *Bot) cleanupRecoveredFailedRun(ctx context.Context, run runstore.Run) {
-	if run.RunKind == "followup" || strings.TrimSpace(run.SandboxID) == "" {
+	if agentRunPreservesSandbox(run) || strings.TrimSpace(run.SandboxID) == "" {
 		return
 	}
 	reason := "recovered failed run"

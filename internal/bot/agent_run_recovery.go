@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/sleuth-io/hetchy/internal/blocks"
+	"github.com/sleuth-io/hetchy/internal/convstore"
 	"github.com/sleuth-io/hetchy/internal/runstore"
 )
 
@@ -37,7 +38,7 @@ func (b *Bot) recoverAgentRunReady(ctx context.Context, run runstore.Run, ready 
 	if b.live != nil {
 		live, registeredLive = b.live.RegisterIfAbsent(ctx, run.OrgID, run.ThreadID)
 		if live != nil && run.SandboxID != "" {
-			live.SetSandboxID(run.SandboxID, run.RunKind != "followup")
+			live.SetSandboxID(run.SandboxID, !agentRunPreservesSandbox(run))
 		}
 		if registeredLive {
 			defer b.live.Done(run.OrgID, run.ThreadID, live)
@@ -365,15 +366,31 @@ func recoveredRunUsesFollowUpRunner(run runstore.Run) bool {
 	}
 }
 
-func recoveredRunProjectsAsFollowUp(run runstore.Run) bool {
-	return recoveredRunUsesFollowUpRunner(run)
+func agentRunPreservesSandbox(run runstore.Run) bool {
+	return run.RunKind == "followup"
 }
 
 func (b *Bot) recoveredMissingPRFailureDetail(ctx context.Context, run runstore.Run) (map[string]any, bool) {
-	if recoveredRunIsScheduledJob(run) || run.RunKind == "github_mention" {
+	if recoveredRunIsScheduledJob(run) {
 		return nil, false
 	}
 	branch := strings.TrimSpace(run.Branch)
+	if run.RunKind == "github_mention" {
+		if b.convs != nil {
+			rec, err := b.convs.Get(ctx, run.OrgID, run.ThreadID)
+			if err == nil {
+				if strings.TrimSpace(rec.PRURL) != "" {
+					return nil, false
+				}
+				if branch == "" {
+					branch = strings.TrimSpace(rec.Branch)
+				}
+			} else if !errors.Is(err, convstore.ErrNotFound) {
+				return nil, false
+			}
+		}
+		return map[string]any{"reason": "github_mention_missing_pr", "branch": branch, "recovered": true}, true
+	}
 	if run.RunKind == "followup" {
 		if b.convs == nil {
 			return nil, false
@@ -435,7 +452,7 @@ func (b *Bot) finishRecoveredMissingPR(ctx context.Context, sb *daytona.Sandbox,
 	}
 	b.runs.UpdateOutcome(context.Background(), run.ID, runstore.OutcomeCompletedNoPR, detail, run.QualityScore, b.workerID)
 	lastErr := errFreshChangeNoPR
-	if detail["reason"] == "followup_unpublished_branch_missing_pr" {
+	if detail["reason"] == "followup_unpublished_branch_missing_pr" || detail["reason"] == "github_mention_missing_pr" {
 		lastErr = errFollowUpChangeNoPR
 	}
 	b.runs.UpdateState(context.Background(), run.ID, runstore.StateFailed, lastErr.Error(), b.workerID)
@@ -454,6 +471,9 @@ func (b *Bot) finishRecoveredMissingPR(ctx context.Context, sb *daytona.Sandbox,
 func recoveredRunSessionFallback(run runstore.Run) string {
 	if strings.TrimSpace(run.SessionID) != "" {
 		return run.SessionID
+	}
+	if strings.TrimSpace(run.RequestID) == "" {
+		return ""
 	}
 	if recoveredRunUsesFollowUpRunner(run) {
 		return "followup-" + run.RequestID

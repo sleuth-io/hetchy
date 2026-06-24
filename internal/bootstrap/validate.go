@@ -344,12 +344,12 @@ For repository changes, do not end your turn until:
   2. Required formatting/tests from the original instructions have run.
   3. Source changes are staged and committed.
 `)
-	if branch := strings.TrimSpace(args.Branch); branch != "" {
+	if branch := promptContractValue(args.Branch); branch != "" {
 		fmt.Fprintf(&b, "  4. Branch %s is pushed to origin.\n", branch)
 	} else {
 		b.WriteString("  4. The working branch is pushed to origin.\n")
 	}
-	if ownerRepo := strings.TrimSpace(args.OwnerRepo); ownerRepo != "" {
+	if ownerRepo := promptContractValue(args.OwnerRepo); ownerRepo != "" {
 		fmt.Fprintf(&b, "  5. The required pull request for %s is opened or updated and its URL is known.\n", ownerRepo)
 	} else {
 		b.WriteString("  5. The required pull request is opened or updated and its URL is known.\n")
@@ -365,4 +365,16 @@ line of your output MUST be just the pull request URL - no other text on that
 line.
 `)
 	return b.String()
+}
+
+func promptContractValue(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.NewReplacer("\r", " ", "\n", " ", "\t", " ").Replace(value)
+	value = strings.Join(strings.Fields(value), " ")
+	const maxRunes = 160
+	runes := []rune(value)
+	if len(runes) > maxRunes {
+		return string(runes[:maxRunes]) + "..."
+	}
+	return value
 }

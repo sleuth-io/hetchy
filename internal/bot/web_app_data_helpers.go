@@ -17,6 +17,9 @@ func appDataStatus(state, outcome string) string {
 	case runstore.StatePreparing, runstore.StateRunning, runstore.StateRecovering, runstore.StateFinalizing:
 		return "running"
 	case runstore.StateFailed:
+		// completed_no_pr is terminal when the task looked change-like but
+		// produced no PR. Surface it as failed, not needs_input, so dashboards
+		// and automations do not treat retry guidance as a blocking prompt.
 		return "failed"
 	case runstore.StateCancelled:
 		return "cancelled"
