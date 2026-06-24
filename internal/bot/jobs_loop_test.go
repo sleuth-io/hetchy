@@ -92,3 +92,18 @@ func TestDispatchDueJobsTick_LogsOnlyRealErrors(t *testing.T) {
 	cancel()
 	b.dispatchDueJobsTick(cancelled, slots, wake)
 }
+
+func TestWaitForJobDispatchDrainReportsFinishedAndRemaining(t *testing.T) {
+	slots := make(chan struct{}, 2)
+	slots <- struct{}{}
+	slots <- struct{}{}
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		<-slots
+	}()
+
+	finished, remaining := waitForJobDispatchDrain(slots, 250*time.Millisecond)
+	if finished != 1 || remaining != 1 {
+		t.Fatalf("finished=%d remaining=%d, want 1 and 1", finished, remaining)
+	}
+}

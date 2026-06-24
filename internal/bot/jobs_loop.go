@@ -9,6 +9,8 @@ import (
 	"github.com/sleuth-io/hetchy/internal/jobs"
 )
 
+const defaultJobDispatchShutdownDrain = 30 * time.Second
+
 // runJobDispatchLoop claims and runs due scheduled jobs on a fixed
 // interval — the in-process replacement for the external cron that
 // invoked `hetchy --dispatch-due-jobs` every five minutes. The one-shot
@@ -49,7 +51,15 @@ func (b *Bot) runJobDispatchLoop(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			if inFlight := len(slots); inFlight > 0 {
-				b.log.Info("job dispatch loop shutting down with jobs in flight", "in_flight", inFlight)
+				b.log.Info("job dispatch loop draining jobs before shutdown",
+					"in_flight", inFlight,
+					"timeout", defaultJobDispatchShutdownDrain,
+				)
+				finished, remaining := waitForJobDispatchDrain(slots, defaultJobDispatchShutdownDrain)
+				b.log.Info("job dispatch loop shutdown drain finished",
+					"finished", finished,
+					"remaining", remaining,
+				)
 			}
 			return
 		case <-ticker.C:
@@ -73,14 +83,14 @@ func (b *Bot) dispatchDueJobsTick(ctx context.Context, slots chan struct{}, wake
 		limit = free
 	}
 	opts := JobDispatchOptions{
-		Limit:       int32(limit),
-		Concurrency: cap(slots),
+		Limit: int32(limit),
 	}
 	var (
 		result JobDispatchResult
 		err    error
 	)
 	if b.dispatchDueJobsFn != nil {
+		opts.Concurrency = cap(slots)
 		result, err = b.dispatchDueJobsFn(ctx, opts)
 	} else {
 		result, err = dispatchDueJobsAsync(ctx, b.jobs, b.workerID, opts.Limit, opts.StaleAfter, time.Now(), b.dispatchClaimedJob, slots, wake, b.log)
@@ -141,6 +151,28 @@ func signalJobDispatchWake(wake chan<- struct{}) {
 	select {
 	case wake <- struct{}{}:
 	default:
+	}
+}
+
+func waitForJobDispatchDrain(slots chan struct{}, timeout time.Duration) (int, int) {
+	initial := len(slots)
+	if initial == 0 || timeout <= 0 {
+		return 0, initial
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		remaining := len(slots)
+		if remaining == 0 {
+			return initial, 0
+		}
+		select {
+		case <-timer.C:
+			return initial - remaining, remaining
+		case <-ticker.C:
+		}
 	}
 }
 
