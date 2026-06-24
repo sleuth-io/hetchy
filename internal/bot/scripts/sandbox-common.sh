@@ -215,6 +215,8 @@ initialize_claude_config() {
         tmp=""
       fi
       rm -f "$tmp" 2>/dev/null || true
+    else
+      echo "$(date -Is) warning: mktemp failed; skipping Claude config init" >&2
     fi
 
     tmp="$(mktemp "${TMPDIR:-/tmp}/sf-claude-settings.XXXXXX")" || tmp=""
@@ -234,12 +236,16 @@ initialize_claude_config() {
         tmp=""
       fi
       rm -f "$tmp" 2>/dev/null || true
+    else
+      echo "$(date -Is) warning: mktemp failed; skipping Claude settings init" >&2
     fi
     return 0
   fi
 
   [[ -s "$config_file" ]] || printf '{"hasCompletedOnboarding":true}\n' > "$config_file" 2>/dev/null || true
-  [[ -s "$settings_file" ]] || printf '{"skipDangerousModePermissionPrompt":true,"theme":"dark"}\n' > "$settings_file" 2>/dev/null || true
+  # settings.json does not carry auth material, so the jq-less fallback
+  # overwrites it to keep first-run prompts suppressed even if it is corrupt.
+  printf '{"skipDangerousModePermissionPrompt":true,"theme":"dark"}\n' > "$settings_file" 2>/dev/null || true
 }
 
 restore_hetchy_cache_archive() {

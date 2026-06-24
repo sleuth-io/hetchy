@@ -95,8 +95,10 @@ func TestClaudeTmuxRunnerScript_Embedded(t *testing.T) {
 		`.theme = (.theme // "dark")`,
 		`warning: could not merge hasCompletedOnboarding`,
 		`warning: could not merge Claude settings`,
+		`warning: mktemp failed; skipping Claude config init`,
+		`warning: mktemp failed; skipping Claude settings init`,
 		`[[ -s "$config_file" ]] || printf '{"hasCompletedOnboarding":true}\n' > "$config_file"`,
-		`[[ -s "$settings_file" ]] || printf '{"skipDangerousModePermissionPrompt":true,"theme":"dark"}\n' > "$settings_file"`,
+		`printf '{"skipDangerousModePermissionPrompt":true,"theme":"dark"}\n' > "$settings_file"`,
 	} {
 		if !strings.Contains(sandboxCommonScript, line) {
 			t.Errorf("sandboxCommonScript missing Claude config initializer line %q", line)
