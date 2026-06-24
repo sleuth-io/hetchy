@@ -366,6 +366,11 @@ func recoveredRunUsesFollowUpRunner(run runstore.Run) bool {
 	}
 }
 
+// agentRunPreservesSandbox is intentionally narrower than
+// recoveredRunUsesFollowUpRunner. GitHub mentions use the follow-up runner and
+// session names to update an external PR, but they run in a disposable
+// replacement sandbox that should be cleaned up on cancel or unrecoverable
+// failure.
 func agentRunPreservesSandbox(run runstore.Run) bool {
 	return run.RunKind == "followup"
 }
@@ -376,18 +381,19 @@ func (b *Bot) recoveredMissingPRFailureDetail(ctx context.Context, run runstore.
 	}
 	branch := strings.TrimSpace(run.Branch)
 	if run.RunKind == "github_mention" {
-		if b.convs != nil {
-			rec, err := b.convs.Get(ctx, run.OrgID, run.ThreadID)
-			if err == nil {
-				if strings.TrimSpace(rec.PRURL) != "" {
-					return nil, false
-				}
-				if branch == "" {
-					branch = strings.TrimSpace(rec.Branch)
-				}
-			} else if !errors.Is(err, convstore.ErrNotFound) {
+		if b.convs == nil {
+			return nil, false
+		}
+		rec, err := b.convs.Get(ctx, run.OrgID, run.ThreadID)
+		if err == nil {
+			if strings.TrimSpace(rec.PRURL) != "" {
 				return nil, false
 			}
+			if branch == "" {
+				branch = strings.TrimSpace(rec.Branch)
+			}
+		} else if !errors.Is(err, convstore.ErrNotFound) {
+			return nil, false
 		}
 		return map[string]any{"reason": "github_mention_missing_pr", "branch": branch, "recovered": true}, true
 	}
