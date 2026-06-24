@@ -50,6 +50,7 @@ type githubMentionRoute struct {
 	threadID      string
 	requestID     string
 	text          string
+	subjectType   string
 	existing      *convstore.Record
 	externalPR    bool
 	requestedRepo *string
@@ -291,6 +292,8 @@ func (b *Bot) handleGithubMention(ctx context.Context, ev githubMentionEvent) {
 
 func githubMentionAck(route githubMentionRoute) string {
 	switch {
+	case !route.fresh && route.subjectType == githubMentionSubjectIssue:
+		return "On it - continuing this issue thread."
 	case !route.fresh && !route.externalPR:
 		return "On it - continuing the existing Hetchy conversation for this pull request."
 	case route.externalPR:
@@ -370,40 +373,44 @@ func (b *Bot) resolveGithubMentionRoute(ctx context.Context, orgID string, ev gi
 			text := githubPullRequestMentionText(ev)
 			if rec.SandboxID != "" && rec.Branch != "" {
 				return githubMentionRoute{
-					threadID:   rec.ThreadID,
-					requestID:  requestID,
-					text:       text,
-					existing:   &rec,
-					externalPR: false,
-					fresh:      false,
+					threadID:    rec.ThreadID,
+					requestID:   requestID,
+					text:        text,
+					subjectType: ev.SubjectType,
+					existing:    &rec,
+					externalPR:  false,
+					fresh:       false,
 				}, true
 			}
 			return githubMentionRoute{
-				threadID:   rec.ThreadID,
-				requestID:  requestID,
-				text:       text,
-				existing:   &rec,
-				externalPR: true,
-				fresh:      false,
+				threadID:    rec.ThreadID,
+				requestID:   requestID,
+				text:        text,
+				subjectType: ev.SubjectType,
+				existing:    &rec,
+				externalPR:  true,
+				fresh:       false,
 			}, true
 		}
-		threadID := b.upsertGithubMentionThread(ctx, orgID, ev, githubMentionThreadID(ev.SubjectType, ev.Owner, ev.Repo, ev.SubjectNumber))
+		threadID, fresh := b.upsertGithubMentionThread(ctx, orgID, ev, githubMentionThreadID(ev.SubjectType, ev.Owner, ev.Repo, ev.SubjectNumber))
 		return githubMentionRoute{
-			threadID:   threadID,
-			requestID:  requestID,
-			text:       githubPullRequestMentionText(ev),
-			externalPR: true,
-			fresh:      true,
+			threadID:    threadID,
+			requestID:   requestID,
+			text:        githubPullRequestMentionText(ev),
+			subjectType: ev.SubjectType,
+			externalPR:  true,
+			fresh:       fresh,
 		}, true
 	case githubMentionSubjectIssue:
-		threadID := b.upsertGithubMentionThread(ctx, orgID, ev, githubMentionThreadID(ev.SubjectType, ev.Owner, ev.Repo, ev.SubjectNumber))
+		threadID, fresh := b.upsertGithubMentionThread(ctx, orgID, ev, githubMentionThreadID(ev.SubjectType, ev.Owner, ev.Repo, ev.SubjectNumber))
 		requestedRepo := ev.Owner + "/" + ev.Repo
 		return githubMentionRoute{
 			threadID:      threadID,
 			requestID:     requestID,
 			text:          githubIssueMentionText(ev),
+			subjectType:   ev.SubjectType,
 			requestedRepo: &requestedRepo,
-			fresh:         true,
+			fresh:         fresh,
 		}, true
 	default:
 		return githubMentionRoute{}, false
@@ -436,9 +443,9 @@ func (b *Bot) findGithubConversationForPR(ctx context.Context, orgID, owner, rep
 	return convstore.Record{}, false
 }
 
-func (b *Bot) upsertGithubMentionThread(ctx context.Context, orgID string, ev githubMentionEvent, fallback string) string {
+func (b *Bot) upsertGithubMentionThread(ctx context.Context, orgID string, ev githubMentionEvent, fallback string) (string, bool) {
 	if b.store == nil {
-		return fallback
+		return fallback, true
 	}
 	row, err := b.store.Queries.UpsertGithubMentionThread(ctx, sqlc.UpsertGithubMentionThreadParams{
 		OrgID:         orgID,
@@ -452,12 +459,19 @@ func (b *Bot) upsertGithubMentionThread(ctx context.Context, orgID string, ev gi
 		b.log.Warn("github mention: thread upsert failed",
 			"org", orgID, "repo", ev.Owner+"/"+ev.Repo, "subject_type", ev.SubjectType,
 			"subject_number", ev.SubjectNumber, "error", err)
-		return fallback
+		return fallback, true
 	}
 	if strings.TrimSpace(row.ThreadID) == "" {
-		return fallback
+		return fallback, githubMentionThreadFresh(row)
 	}
-	return row.ThreadID
+	return row.ThreadID, githubMentionThreadFresh(row)
+}
+
+func githubMentionThreadFresh(row sqlc.GithubMentionThread) bool {
+	if !row.CreatedAt.Valid || !row.UpdatedAt.Valid {
+		return true
+	}
+	return row.CreatedAt.Time.Equal(row.UpdatedAt.Time)
 }
 
 func (b *Bot) githubMentionRunURL(threadID string) string {

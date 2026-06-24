@@ -134,9 +134,12 @@ func TestUpsertGithubMentionThread(t *testing.T) {
 		fake := newWebhookFakeDB()
 		fake.queryRow["INSERT INTO github_mention_threads"] = webhookMentionThreadRow("stored-thread")
 		b := &Bot{log: discardLogger(), store: &db.Store{Queries: sqlc.New(fake)}}
-		got := b.upsertGithubMentionThread(context.Background(), "org1", ev, "fallback-thread")
+		got, fresh := b.upsertGithubMentionThread(context.Background(), "org1", ev, "fallback-thread")
 		if got != "stored-thread" {
 			t.Fatalf("thread = %q, want stored-thread", got)
+		}
+		if !fresh {
+			t.Fatal("fresh = false, want true")
 		}
 		call := fake.onlyQueryRowCall(t, "INSERT INTO github_mention_threads")
 		assertWebhookArg(t, call.args, 0, "org1")
@@ -147,11 +150,26 @@ func TestUpsertGithubMentionThread(t *testing.T) {
 		assertWebhookArg(t, call.args, 5, "fallback-thread")
 	})
 
+	t.Run("reports existing row", func(t *testing.T) {
+		fake := newWebhookFakeDB()
+		created := time.Now().Add(-time.Hour)
+		updated := time.Now()
+		fake.queryRow["INSERT INTO github_mention_threads"] = webhookMentionThreadRowWithTimes("stored-thread", created, updated)
+		b := &Bot{log: discardLogger(), store: &db.Store{Queries: sqlc.New(fake)}}
+		got, fresh := b.upsertGithubMentionThread(context.Background(), "org1", ev, "fallback-thread")
+		if got != "stored-thread" {
+			t.Fatalf("thread = %q, want stored-thread", got)
+		}
+		if fresh {
+			t.Fatal("fresh = true, want false")
+		}
+	})
+
 	t.Run("falls back on blank row thread", func(t *testing.T) {
 		fake := newWebhookFakeDB()
 		fake.queryRow["INSERT INTO github_mention_threads"] = webhookMentionThreadRow(" ")
 		b := &Bot{log: discardLogger(), store: &db.Store{Queries: sqlc.New(fake)}}
-		if got := b.upsertGithubMentionThread(context.Background(), "org1", ev, "fallback-thread"); got != "fallback-thread" {
+		if got, _ := b.upsertGithubMentionThread(context.Background(), "org1", ev, "fallback-thread"); got != "fallback-thread" {
 			t.Fatalf("thread = %q, want fallback-thread", got)
 		}
 	})
@@ -160,7 +178,7 @@ func TestUpsertGithubMentionThread(t *testing.T) {
 		fake := newWebhookFakeDB()
 		fake.queryRow["INSERT INTO github_mention_threads"] = webhookRow{err: errors.New("db down")}
 		b := &Bot{log: discardLogger(), store: &db.Store{Queries: sqlc.New(fake)}}
-		if got := b.upsertGithubMentionThread(context.Background(), "org1", ev, "fallback-thread"); got != "fallback-thread" {
+		if got, _ := b.upsertGithubMentionThread(context.Background(), "org1", ev, "fallback-thread"); got != "fallback-thread" {
 			t.Fatalf("thread = %q, want fallback-thread", got)
 		}
 	})
@@ -239,6 +257,11 @@ func TestGithubReviewCommentContext(t *testing.T) {
 	got := githubReviewCommentContext("internal/bot/github_mention.go", 0, 44, "@@ hunk")
 	if !strings.Contains(got, "Original line: 44") || !strings.Contains(got, "@@ hunk") {
 		t.Fatalf("review context = %q", got)
+	}
+	longHunk := strings.Repeat("x", 2100)
+	got = githubReviewCommentContext("", 1, 0, longHunk)
+	if strings.Contains(got, longHunk) || !strings.Contains(got, strings.Repeat("x", 2000)+"...") {
+		t.Fatalf("review context did not truncate hunk: len=%d", len(got))
 	}
 	if got := githubReviewCommentContext("", 0, 0, "   "); got != "" {
 		t.Fatalf("empty review context = %q", got)
@@ -441,6 +464,64 @@ func TestPullRequestReviewMentionRequestIDDedupesReviewEdits(t *testing.T) {
 	assertWebhookArg(t, submitted.args, 2, "github-review-123")
 	assertWebhookArg(t, edited.args, 1, "delivery-edited")
 	assertWebhookArg(t, edited.args, 2, "github-review-123")
+}
+
+func TestCommentMentionRequestIDDedupesEdits(t *testing.T) {
+	run := func(action, delivery, event string) webhookDBCall {
+		t.Helper()
+		httpClient := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			t.Fatalf("unexpected GitHub request: %s %s", r.Method, r.URL.Path)
+			return nil, errors.New("unexpected GitHub request")
+		})}
+		fake := newWebhookFakeDB()
+		fake.queryRow["GetGithubInstallation"] = webhookInstallationRow(-42, "org1")
+		fake.exec["INSERT INTO github_mention_deliveries"] = webhookExecResult{rows: 0}
+		b := &Bot{
+			log:   discardLogger(),
+			cfg:   Config{GitHubAppSlug: "hetchy-test"},
+			store: &db.Store{Queries: sqlc.New(fake)},
+			orgs:  &fakeOrgStore{getConfig: orgcfg.Config{OrgID: "org1", AnthropicAPIKey: "sk-ant"}},
+			live:  newLiveRegistry(),
+			github: &githubapp.Source{
+				LookupPAT: func(context.Context, int64) (string, error) { return "ghp_test", nil },
+				HTTP:      httpClient,
+			},
+		}
+
+		switch event {
+		case "issue_comment":
+			body := fmt.Sprintf(`{
+				"action": %q,
+				"installation": {"id": -42},
+				"repository": {"full_name": "acme/repo"},
+				"issue": {"number": 7, "title": "Fix bug", "body": "Body", "html_url": "https://github.com/acme/repo/issues/7"},
+				"comment": {"id": 456, "body": "@hetchy-test fix this", "html_url": "https://github.com/acme/repo/issues/7#issuecomment-456", "author_association": "MEMBER", "user": {"login": "alice"}}
+			}`, action)
+			b.handleIssueCommentEvent(context.Background(), []byte(body), delivery)
+		case "pull_request_review_comment":
+			body := fmt.Sprintf(`{
+				"action": %q,
+				"installation": {"id": -42},
+				"repository": {"full_name": "acme/repo"},
+				"pull_request": {"number": 7, "title": "Fix bug", "body": "Body", "html_url": "https://github.com/acme/repo/pull/7"},
+				"comment": {"id": 789, "body": "@hetchy-test fix this", "html_url": "https://github.com/acme/repo/pull/7#discussion_r789", "author_association": "MEMBER", "user": {"login": "alice"}}
+			}`, action)
+			b.handlePullRequestReviewCommentEvent(context.Background(), []byte(body), delivery)
+		default:
+			t.Fatalf("unknown event %q", event)
+		}
+		return fake.onlyExecCall(t, "INSERT INTO github_mention_deliveries")
+	}
+
+	created := run("created", "delivery-created", "issue_comment")
+	edited := run("edited", "delivery-edited", "issue_comment")
+	assertWebhookArg(t, created.args, 2, "github-comment-456")
+	assertWebhookArg(t, edited.args, 2, "github-comment-456")
+
+	created = run("created", "delivery-created", "pull_request_review_comment")
+	edited = run("edited", "delivery-edited", "pull_request_review_comment")
+	assertWebhookArg(t, created.args, 2, "github-review-comment-789")
+	assertWebhookArg(t, edited.args, 2, "github-review-comment-789")
 }
 
 func TestEnsureGithubMentionPullRequestFetchesMissingPayload(t *testing.T) {
@@ -768,6 +849,10 @@ func TestCloneGithubMentionRecordDeepCopiesMutableFields(t *testing.T) {
 
 func webhookMentionThreadRow(threadID string) webhookRow {
 	ts := pgtype.Timestamptz{Time: time.Now(), Valid: true}
+	return webhookMentionThreadRowWithTimes(threadID, ts.Time, ts.Time)
+}
+
+func webhookMentionThreadRowWithTimes(threadID string, created, updated time.Time) webhookRow {
 	return webhookRow{values: []any{
 		"org1",
 		"acme",
@@ -775,8 +860,8 @@ func webhookMentionThreadRow(threadID string) webhookRow {
 		githubMentionSubjectIssue,
 		int32(7),
 		threadID,
-		ts,
-		ts,
+		pgtype.Timestamptz{Time: created, Valid: true},
+		pgtype.Timestamptz{Time: updated, Valid: true},
 	}}
 }
 

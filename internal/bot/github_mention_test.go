@@ -93,8 +93,13 @@ func TestGithubMentionAck(t *testing.T) {
 	}{
 		{
 			name:  "fresh issue",
-			route: githubMentionRoute{fresh: true},
+			route: githubMentionRoute{subjectType: githubMentionSubjectIssue, fresh: true},
 			want:  "On it - starting a Hetchy run.",
+		},
+		{
+			name:  "existing issue thread",
+			route: githubMentionRoute{subjectType: githubMentionSubjectIssue, fresh: false},
+			want:  "On it - continuing this issue thread.",
 		},
 		{
 			name:  "fresh external pr",

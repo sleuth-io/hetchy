@@ -69,7 +69,7 @@ func (b *Bot) handleIssueCommentEvent(ctx context.Context, body []byte, delivery
 	}
 	b.handleGithubMention(ctx, githubMentionEvent{
 		DeliveryID:        delivery,
-		RequestID:         githubMentionRequestID("github-comment", p.Comment.ID, delivery),
+		RequestID:         githubMentionRequestID("github-comment", p.Comment.ID, ""),
 		InstallationID:    p.Installation.ID,
 		Owner:             owner,
 		Repo:              repo,
@@ -139,7 +139,7 @@ func (b *Bot) handlePullRequestReviewCommentEvent(ctx context.Context, body []by
 	}
 	b.handleGithubMention(ctx, githubMentionEvent{
 		DeliveryID:        delivery,
-		RequestID:         githubMentionRequestID("github-review-comment", p.Comment.ID, delivery),
+		RequestID:         githubMentionRequestID("github-review-comment", p.Comment.ID, ""),
 		InstallationID:    p.Installation.ID,
 		Owner:             owner,
 		Repo:              repo,
@@ -176,9 +176,9 @@ func githubReviewCommentContext(path string, line, originalLine int, diffHunk st
 		b.WriteString(strconv.Itoa(originalLine))
 		b.WriteByte('\n')
 	}
-	if strings.TrimSpace(diffHunk) != "" {
+	if hunk := strings.TrimSpace(diffHunk); hunk != "" {
 		b.WriteString("Diff hunk:\n")
-		b.WriteString(diffHunk)
+		b.WriteString(truncate(hunk, 2000))
 		b.WriteByte('\n')
 	}
 	return strings.TrimSpace(b.String())
