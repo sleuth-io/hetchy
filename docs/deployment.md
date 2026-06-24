@@ -84,8 +84,13 @@ After signup, organization admins configure these in the UI:
 
 ## Scheduled Jobs
 
-The main process dispatches scheduled jobs every five minutes by default. To
-disable in-process dispatch and run an external scheduler instead:
+The main process checks for due scheduled jobs every five minutes by default.
+It claims only the jobs it can start immediately, then wakes as running jobs
+finish so large due batches continue draining without waiting for the next
+interval. The default claim and in-process concurrency limits are both 100;
+lower `HETCHY_JOB_DISPATCH_CONCURRENCY` for constrained deployments, or size
+Daytona/API quotas and `DATABASE_MAX_CONNS` for that many simultaneous agent
+runs. To disable in-process dispatch and run an external scheduler instead:
 
 ```dotenv
 HETCHY_JOB_DISPATCH_INTERVAL_SECONDS=0

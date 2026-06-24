@@ -45,6 +45,9 @@ func (f *fakeJobDispatchStore) ClaimDue(ctx context.Context, worker string, limi
 	f.claimLimit = limit
 	f.claimNow = now
 	f.claimStale = staleAfter
+	if limit >= 0 && int(limit) < len(f.claims) {
+		return f.claims[:limit], f.claimErr
+	}
 	return f.claims, f.claimErr
 }
 
@@ -242,6 +245,57 @@ func TestDispatchDueJobsLimitsConcurrencyAndReturnsFirstError(t *testing.T) {
 	}
 	if maxInflight.Load() != 2 {
 		t.Fatalf("max inflight = %d, want 2", maxInflight.Load())
+	}
+}
+
+func TestDispatchDueJobsAsyncClaimsOnlyFreeSlotsAndWakes(t *testing.T) {
+	now := time.Date(2026, 6, 24, 16, 0, 0, 0, time.UTC)
+	store := &fakeJobDispatchStore{
+		enabled: true,
+		claims: []jobs.ClaimedExecution{
+			{Execution: jobs.Execution{ID: "jobexec_1"}},
+			{Execution: jobs.Execution{ID: "jobexec_2"}},
+			{Execution: jobs.Execution{ID: "jobexec_3"}},
+		},
+	}
+	slots := make(chan struct{}, 2)
+	slots <- struct{}{} // one existing in-process job is already running
+	wake := make(chan struct{}, 1)
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	dispatch := func(context.Context, jobs.ClaimedExecution) (string, error) {
+		close(entered)
+		<-release
+		return jobs.StatusSucceeded, nil
+	}
+
+	got, err := dispatchDueJobsAsync(context.Background(), store, "worker_1",
+		JobDispatchOptions{Limit: 5}, now, dispatch, slots, wake, discardLogger())
+	if err != nil {
+		t.Fatalf("dispatchDueJobsAsync: %v", err)
+	}
+	if got != (JobDispatchResult{Claimed: 1, Started: 1}) {
+		t.Fatalf("result = %#v, want one claimed and started", got)
+	}
+	if store.claimLimit != 1 {
+		t.Fatalf("claim limit = %d, want free slot count 1", store.claimLimit)
+	}
+	if len(slots) != cap(slots) {
+		t.Fatalf("slots in use = %d, want capacity %d", len(slots), cap(slots))
+	}
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("claimed job was not started")
+	}
+	close(release)
+	select {
+	case <-wake:
+	case <-time.After(time.Second):
+		t.Fatal("job completion did not wake dispatcher")
+	}
+	if len(slots) != 1 {
+		t.Fatalf("slots in use after completion = %d, want original occupied slot", len(slots))
 	}
 }
 

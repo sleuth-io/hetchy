@@ -68,8 +68,8 @@ func TestRunJobDispatchLoop_TicksAndStopsOnCancel(t *testing.T) {
 	}
 
 	opts, _ := gotOpts.Load().(JobDispatchOptions)
-	if opts.Limit != 7 || opts.Concurrency != 3 {
-		t.Errorf("dispatch opts = %+v, want Limit 7 Concurrency 3", opts)
+	if opts.Limit != 3 || opts.Concurrency != 3 {
+		t.Errorf("dispatch opts = %+v, want Limit 3 Concurrency 3", opts)
 	}
 }
 
@@ -84,9 +84,11 @@ func TestDispatchDueJobsTick_LogsOnlyRealErrors(t *testing.T) {
 			return JobDispatchResult{}, errors.New("boom")
 		},
 	}
-	b.dispatchDueJobsTick(context.Background())
+	slots := make(chan struct{}, 1)
+	wake := make(chan struct{}, 1)
+	b.dispatchDueJobsTick(context.Background(), slots, wake)
 
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
-	b.dispatchDueJobsTick(cancelled)
+	b.dispatchDueJobsTick(cancelled, slots, wake)
 }

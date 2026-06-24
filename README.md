@@ -152,6 +152,8 @@ optional hosted integrations.
 | `COOKIE_INSECURE` | local HTTP | Set to `1` for plain HTTP. Leave empty behind HTTPS. |
 | `HETCHY_TRUSTED_PROXY` | proxy only | Trust `X-Forwarded-For`/`X-Real-IP` for local-auth rate limiting. |
 | `HETCHY_JOB_DISPATCH_INTERVAL_SECONDS` | no | Scheduled-job dispatch interval. Empty defaults to 300 seconds; `0` disables. |
+| `HETCHY_JOB_DISPATCH_LIMIT` | no | Maximum due jobs to claim when dispatcher capacity is available. Empty defaults to 100. |
+| `HETCHY_JOB_DISPATCH_CONCURRENCY` | no | Maximum scheduled jobs this process runs at once. Empty defaults to 100. |
 | `HETCHY_PR_STATE_POLL_INTERVAL_SECONDS` | no | PAT-backed PR-state polling interval. Empty defaults to 300 seconds; `0` disables. |
 | `GITHUB_APP_*` | no | Optional GitHub App path. PAT mode works without these. |
 | `WORKOS_*` | WorkOS only | Required only when `HETCHY_AUTH_MODE=workos`. |
