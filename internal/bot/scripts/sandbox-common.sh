@@ -202,17 +202,27 @@ initialize_claude_config() {
     if [[ -n "$tmp" ]]; then
       if [[ -s "$config_file" ]]; then
         if jq '.hasCompletedOnboarding = true' "$config_file" > "$tmp" 2>/dev/null; then
-          mv "$tmp" "$config_file"
-          tmp=""
+          if mv "$tmp" "$config_file" 2>/dev/null; then
+            tmp=""
+          else
+            echo "$(date -Is) warning: could not replace ${config_file} after jq merge" >&2
+          fi
         else
           echo "$(date -Is) warning: could not merge hasCompletedOnboarding into ${config_file} (invalid JSON?)" >&2
-          if printf '{"hasCompletedOnboarding":true}\n' > "$tmp" 2>/dev/null && mv "$tmp" "$config_file"; then
-            tmp=""
+          if printf '{"hasCompletedOnboarding":true}\n' > "$tmp" 2>/dev/null; then
+            if mv "$tmp" "$config_file" 2>/dev/null; then
+              tmp=""
+            else
+              echo "$(date -Is) warning: could not replace ${config_file} after fallback write" >&2
+            fi
           fi
         fi
       elif jq -n '{hasCompletedOnboarding:true}' > "$tmp" 2>/dev/null; then
-        mv "$tmp" "$config_file"
-        tmp=""
+        if mv "$tmp" "$config_file" 2>/dev/null; then
+          tmp=""
+        else
+          echo "$(date -Is) warning: could not create ${config_file} after jq init" >&2
+        fi
       fi
       rm -f "$tmp" 2>/dev/null || true
     else
@@ -223,17 +233,27 @@ initialize_claude_config() {
     if [[ -n "$tmp" ]]; then
       if [[ -s "$settings_file" ]]; then
         if jq '.skipDangerousModePermissionPrompt = true | .theme = (.theme // "dark")' "$settings_file" > "$tmp" 2>/dev/null; then
-          mv "$tmp" "$settings_file"
-          tmp=""
+          if mv "$tmp" "$settings_file" 2>/dev/null; then
+            tmp=""
+          else
+            echo "$(date -Is) warning: could not replace ${settings_file} after jq merge" >&2
+          fi
         else
           echo "$(date -Is) warning: could not merge Claude settings into ${settings_file} (invalid JSON?)" >&2
-          if printf '{"skipDangerousModePermissionPrompt":true,"theme":"dark"}\n' > "$tmp" 2>/dev/null && mv "$tmp" "$settings_file"; then
-            tmp=""
+          if printf '{"skipDangerousModePermissionPrompt":true,"theme":"dark"}\n' > "$tmp" 2>/dev/null; then
+            if mv "$tmp" "$settings_file" 2>/dev/null; then
+              tmp=""
+            else
+              echo "$(date -Is) warning: could not replace ${settings_file} after fallback write" >&2
+            fi
           fi
         fi
       elif jq -n '{skipDangerousModePermissionPrompt:true, theme:"dark"}' > "$tmp" 2>/dev/null; then
-        mv "$tmp" "$settings_file"
-        tmp=""
+        if mv "$tmp" "$settings_file" 2>/dev/null; then
+          tmp=""
+        else
+          echo "$(date -Is) warning: could not create ${settings_file} after jq init" >&2
+        fi
       fi
       rm -f "$tmp" 2>/dev/null || true
     else
