@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
 	"github.com/google/go-github/v66/github"
@@ -198,6 +199,19 @@ func TestConditionalTasksPromptRespectsOptions(t *testing.T) {
 	}
 }
 
+func TestRunScriptTimeoutBudgetCoversInteractiveClaudeRunner(t *testing.T) {
+	if !strings.Contains(claudeTmuxRunnerScript, `local max_wall=${HETCHY_CLAUDE_WALL_TIMEOUT_S:-7200}`) {
+		t.Fatalf("claude tmux runner default wall budget changed; revisit runScriptWallTimeout")
+	}
+	claudeTmuxDefaultWallTimeout := 2 * time.Hour
+	if runScriptIdleTimeout != 15*time.Minute {
+		t.Fatalf("runScriptIdleTimeout = %s, want 15m", runScriptIdleTimeout)
+	}
+	if runScriptWallTimeout <= claudeTmuxDefaultWallTimeout {
+		t.Fatalf("runScriptWallTimeout must exceed the tmux runner's 2h wall budget, got %s", runScriptWallTimeout)
+	}
+}
+
 func TestAgentScript_EmbeddedAndWellFormed(t *testing.T) {
 	if !strings.HasPrefix(agentScript, "#!/bin/bash") {
 		t.Errorf("agentScript should start with shebang, got: %q", agentScript[:min(40, len(agentScript))])
@@ -210,6 +224,7 @@ func TestAgentScript_EmbeddedAndWellFormed(t *testing.T) {
 		"git clone",
 		"hetchy_configure_git_auth",
 		"hetchy_install_sx",
+		"initialize_claude_config",
 		"hetchy_github_curl",
 		"Authorization: Bearer",
 		"local -a claude_args=(",
@@ -273,6 +288,7 @@ func TestFollowupScript_EmbeddedAndWellFormed(t *testing.T) {
 		"require_b64_input SF_PROMPT_B64",
 		"hetchy_configure_git_auth",
 		"hetchy_install_sx",
+		"initialize_claude_config",
 		"hetchy_github_curl",
 		"Authorization: Bearer",
 		"git fetch --prune origin",

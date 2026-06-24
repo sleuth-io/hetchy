@@ -21,7 +21,11 @@ import (
 	"github.com/sleuth-io/hetchy/internal/orgcfg"
 )
 
-const maxFailingBootstrapAutoHealAttempts int32 = 3
+const (
+	maxFailingBootstrapAutoHealAttempts int32 = 3
+	runScriptWallTimeout                      = 3 * time.Hour
+	runScriptIdleTimeout                      = 15 * time.Minute
+)
 
 func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, oc orgcfg.Config, agent agents.Profile, userRequest, requestID, branch string, opts chatTaskOptions, model ClaudeModel, emit blocks.Emitter) (string, error) {
 	model = normalizeClaudeModel(model)
@@ -811,7 +815,7 @@ func (b *Bot) runScript(ctx context.Context, sb *daytona.Sandbox, sessionID, lab
 			b.markRunCursor(ctx, cursor)
 		}
 	})
-	if _, err := b.shLines(ctx, sb.ID, sb.Process, sessionID, "run-script", runCmd, 60*time.Minute, 15*time.Minute, true, framed.Line); err != nil {
+	if _, err := b.shLines(ctx, sb.ID, sb.Process, sessionID, "run-script", runCmd, runScriptWallTimeout, runScriptIdleTimeout, true, framed.Line); err != nil {
 		reachedAgent := router.ReachedAgent()
 		router.Abort()
 		if !reachedAgent {

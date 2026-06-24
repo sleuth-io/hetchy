@@ -150,6 +150,9 @@ else
   echo "[hetchy] remote branch ${SF_BRANCH} does not exist yet; continuing with local branch"
 fi
 
+echo "[hetchy] initializing claude config"
+initialize_claude_config
+
 # Same pre-create as agent.sh — playwright-cli needs its output and
 # user-data dirs to exist before the first command, and follow-ups
 # typically include another round of UI validation.

@@ -56,6 +56,7 @@ run_claude_interactive_with_watchdog() {
   : > "$diag_log" 2>/dev/null || true
 
   cwd="$(pwd)"
+  initialize_claude_config
   # Claude Code encodes the project transcript directory by replacing
   # every `/` in the absolute cwd with `-`. Matching that scheme lets
   # us locate the JSONL file the TUI writes once it boots.
@@ -70,38 +71,6 @@ run_claude_interactive_with_watchdog() {
   if [[ -n "${HETCHY_CLAUDE_MODEL:-}" ]]; then
     claude_args+=(--model "$HETCHY_CLAUDE_MODEL")
   fi
-
-  # Claude Code's first interactive launch may ask for explicit
-  # confirmation before honoring --dangerously-skip-permissions. Seed
-  # the managed setting when possible so the TUI opens straight to the
-  # input prompt, while preserving any sx-installed hooks/settings.
-  local claude_settings_file="$HOME/.claude/settings.json"
-  local claude_settings_tmp=""
-  mkdir -p "$HOME/.claude"
-  claude_settings_tmp="$(mktemp "${TMPDIR:-/tmp}/sf-claude-settings.XXXXXX")"
-  if command -v jq >/dev/null 2>&1; then
-    if [[ -s "$claude_settings_file" ]]; then
-      if jq '.skipDangerousModePermissionPrompt = true' "$claude_settings_file" > "$claude_settings_tmp" 2>>"$diag_log"; then
-        mv "$claude_settings_tmp" "$claude_settings_file"
-        claude_settings_tmp=""
-      else
-        echo "$(date -Is) failed to merge skipDangerousModePermissionPrompt into ${claude_settings_file}" >>"$diag_log"
-      fi
-    else
-      if jq -n '{skipDangerousModePermissionPrompt:true}' > "$claude_settings_tmp" 2>>"$diag_log"; then
-        mv "$claude_settings_tmp" "$claude_settings_file"
-        claude_settings_tmp=""
-      else
-        echo "$(date -Is) failed to create ${claude_settings_file}" >>"$diag_log"
-      fi
-    fi
-  elif [[ ! -s "$claude_settings_file" ]]; then
-    if printf '{"skipDangerousModePermissionPrompt":true}\n' > "$claude_settings_tmp" 2>>"$diag_log"; then
-      mv "$claude_settings_tmp" "$claude_settings_file"
-      claude_settings_tmp=""
-    fi
-  fi
-  rm -f "$claude_settings_tmp"
 
   tmux_session="hetchy-claude-$$"
   local tmux_cmd
@@ -132,22 +101,62 @@ run_claude_interactive_with_watchdog() {
   # the TUI redraws before its input box is ready.
   sleep "${HETCHY_CLAUDE_TUI_SETTLE_S:-5}"
   startup_pane="$(mktemp "${TMPDIR:-/tmp}/sf-claude-pane.XXXXXX")"
-  if tmux capture-pane -p -t "$tmux_session" -S -120 > "$startup_pane" 2>>"$diag_log"; then
+  local startup_round=0
+  while (( startup_round < 6 )); do
+    if ! tmux capture-pane -p -t "$tmux_session" -S -120 > "$startup_pane" 2>>"$diag_log"; then
+      break
+    fi
     {
-      echo "$(date -Is) startup pane before prompt"
+      echo "$(date -Is) startup pane before prompt round ${startup_round}"
       cat "$startup_pane"
     } >>"$diag_log" 2>&1 || true
+
+    if grep -Eq 'Choose the text style|To change this later, run /theme|Syntax theme:' "$startup_pane"; then
+      echo "$(date -Is) accepting theme prompt" >>"$diag_log"
+      tmux send-keys -t "$tmux_session" Enter >>"$diag_log" 2>&1 || true
+      sleep "${HETCHY_CLAUDE_TUI_SETTLE_S:-5}"
+      ((++startup_round))
+      continue
+    fi
+
+    if grep -Eq 'Select login method|Claude account with subscription|API usage billing' "$startup_pane"; then
+      if [[ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
+        echo "$(date -Is) login method prompt visible without CLAUDE_CODE_OAUTH_TOKEN; leaving startup loop" >>"$diag_log"
+        break
+      fi
+      echo "$(date -Is) accepting subscription login method prompt" >>"$diag_log"
+      local -a login_keys=()
+      # Verified against Claude Code v2.1.170 under tmux capture-pane -p:
+      # the selected login row has a visible non-space marker before
+      # the option number, and the login prompt defaults to the
+      # subscription row. If a future TUI removes that marker, accept
+      # the observed default rather than using blind navigation.
+      if grep -Eq '^[[:space:]]*[>❯][[:space:]]*1\.[[:space:]]*Claude account with subscription' "$startup_pane"; then
+        echo "$(date -Is) subscription login method is already selected" >>"$diag_log"
+      elif grep -Eq '^[[:space:]]*[>❯][[:space:]]*2\.' "$startup_pane"; then
+        login_keys=(Up)
+      elif grep -Eq '^[[:space:]]*[>❯][[:space:]]*3\.' "$startup_pane"; then
+        login_keys=(Up Up)
+      else
+        echo "$(date -Is) warning: login method selected row not visible; accepting observed default" >>"$diag_log"
+      fi
+      if (( ${#login_keys[@]} > 0 )); then
+        echo "$(date -Is) moving login method selection toward subscription with ${login_keys[*]}" >>"$diag_log"
+        tmux send-keys -t "$tmux_session" "${login_keys[@]}" >>"$diag_log" 2>&1 || true
+        sleep "${HETCHY_CLAUDE_PROMPT_KEY_DELAY_S:-1}"
+      fi
+      tmux send-keys -t "$tmux_session" Enter >>"$diag_log" 2>&1 || true
+      sleep "${HETCHY_CLAUDE_TUI_SETTLE_S:-5}"
+      ((++startup_round))
+      continue
+    fi
 
     if grep -Eq 'Quick safety check|project you created|trust this folder' "$startup_pane"; then
       echo "$(date -Is) accepting workspace trust prompt" >>"$diag_log"
       tmux send-keys -t "$tmux_session" Enter >>"$diag_log" 2>&1 || true
       sleep "${HETCHY_CLAUDE_TUI_SETTLE_S:-5}"
-      if tmux capture-pane -p -t "$tmux_session" -S -120 > "$startup_pane" 2>>"$diag_log"; then
-        {
-          echo "$(date -Is) startup pane after workspace trust"
-          cat "$startup_pane"
-        } >>"$diag_log" 2>&1 || true
-      fi
+      ((++startup_round))
+      continue
     fi
 
     if grep -Eq 'Bypass Permissions mode|By proceeding, you accept|Yes, I accept' "$startup_pane"; then
@@ -156,14 +165,13 @@ run_claude_interactive_with_watchdog() {
       sleep "${HETCHY_CLAUDE_PROMPT_KEY_DELAY_S:-1}"
       tmux send-keys -t "$tmux_session" Enter >>"$diag_log" 2>&1 || true
       sleep "${HETCHY_CLAUDE_TUI_SETTLE_S:-5}"
-      if tmux capture-pane -p -t "$tmux_session" -S -120 > "$startup_pane" 2>>"$diag_log"; then
-        {
-          echo "$(date -Is) startup pane after bypass prompt"
-          cat "$startup_pane"
-        } >>"$diag_log" 2>&1 || true
-      fi
+      ((++startup_round))
+      continue
     fi
-  fi
+
+    break
+  done
+  echo "$(date -Is) startup loop exited at round ${startup_round}" >>"$diag_log" 2>&1 || true
   rm -f "$startup_pane"
 
   if ! {

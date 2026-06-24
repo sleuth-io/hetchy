@@ -63,13 +63,16 @@ func TestClaudeTmuxRunnerScript_Embedded(t *testing.T) {
 		`"$HOME/.claude/projects/$(printf '%s' "$cwd" | sed 's|/|-|g')"`,
 		`tail -n +1 -F "$transcript"`,
 		`'"stop_reason":"end_turn"'`,
+		`initialize_claude_config`,
 		`tmux load-buffer -b sf-prompt`,
 		`tmux paste-buffer -t "$tmux_session" -b sf-prompt`,
 		`tmux send-keys -t "$tmux_session" Enter`,
-		`skipDangerousModePermissionPrompt`,
+		`accepting theme prompt`,
+		`accepting subscription login method prompt`,
 		`accepting workspace trust prompt`,
 		`accepting bypass permissions prompt`,
 		`tmux send-keys -t "$tmux_session" Down`,
+		`Verified against Claude Code v2.1.170 under tmux capture-pane -p`,
 		`echo "[hetchy] running claude"`,
 		// The watchdog kills the session seconds after end_turn, so a
 		// scheduled wakeup can never fire — the tool must stay
@@ -85,6 +88,39 @@ func TestClaudeTmuxRunnerScript_Embedded(t *testing.T) {
 	for _, line := range requiredLines {
 		if !strings.Contains(claudeTmuxRunnerScript, line) {
 			t.Errorf("claudeTmuxRunnerScript missing %q", line)
+		}
+	}
+	for _, line := range []string{
+		`skipDangerousModePermissionPrompt`,
+		`.theme = (.theme // "dark")`,
+		`warning: could not merge hasCompletedOnboarding`,
+		`warning: could not merge Claude settings`,
+		`warning: mktemp failed; skipping Claude config init`,
+		`warning: mktemp failed; skipping Claude settings init`,
+		`warning: could not replace ${config_file} after jq merge`,
+		`warning: could not replace ${settings_file} after jq merge`,
+		`warning: jq -n failed for new ${config_file}; trying fallback write`,
+		`warning: jq -n failed for new ${settings_file}; trying fallback write`,
+		`[[ -n "$tmp" ]] && rm -f "$tmp"`,
+		`[[ -s "$config_file" ]] || printf '{"hasCompletedOnboarding":true}\n' > "$config_file"`,
+		`printf '{"skipDangerousModePermissionPrompt":true,"theme":"dark"}\n' > "$settings_file"`,
+	} {
+		if !strings.Contains(sandboxCommonScript, line) {
+			t.Errorf("sandboxCommonScript missing Claude config initializer line %q", line)
+		}
+	}
+	if strings.Count(sandboxCommonScript, `printf '{"hasCompletedOnboarding":true}\n' >`) < 2 {
+		t.Errorf("sandboxCommonScript should recover both missing and malformed Claude config files")
+	}
+	if strings.Count(sandboxCommonScript, `printf '{"skipDangerousModePermissionPrompt":true,"theme":"dark"}\n' >`) < 2 {
+		t.Errorf("sandboxCommonScript should recover both missing and malformed Claude settings files")
+	}
+	for _, line := range []string{
+		`login method prompt visible without CLAUDE_CODE_OAUTH_TOKEN`,
+		`startup loop exited at round ${startup_round}`,
+	} {
+		if !strings.Contains(claudeTmuxRunnerScript, line) {
+			t.Errorf("claudeTmuxRunnerScript missing startup diagnostic line %q", line)
 		}
 	}
 	if !strings.Contains(agentScript, "run_claude_interactive_with_watchdog") {
@@ -124,7 +160,12 @@ func TestClaudeTmuxRunner_SubmitsPromptBeforeWaitingForTranscript(t *testing.T) 
 }
 
 func TestClaudeTmuxRunner_ClearsStartupPromptsBeforeSubmittingPrompt(t *testing.T) {
-	settingsIdx := strings.Index(claudeTmuxRunnerScript, `skipDangerousModePermissionPrompt`)
+	initIdx := strings.Index(claudeTmuxRunnerScript, `initialize_claude_config`)
+	oauthGuardIdx := strings.Index(claudeTmuxRunnerScript, `[[ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]`)
+	themeIdx := strings.Index(claudeTmuxRunnerScript, `accepting theme prompt`)
+	loginIdx := strings.Index(claudeTmuxRunnerScript, `accepting subscription login method prompt`)
+	loginSelectedIdx := strings.Index(claudeTmuxRunnerScript, `subscription login method is already selected`)
+	loginNavigateIdx := strings.Index(claudeTmuxRunnerScript, `"${login_keys[@]}"`)
 	trustIdx := strings.Index(claudeTmuxRunnerScript, `accepting workspace trust prompt`)
 	bypassIdx := strings.Index(claudeTmuxRunnerScript, `accepting bypass permissions prompt`)
 	bypassDownIdx := strings.Index(claudeTmuxRunnerScript, `tmux send-keys -t "$tmux_session" Down`)
@@ -132,7 +173,12 @@ func TestClaudeTmuxRunner_ClearsStartupPromptsBeforeSubmittingPrompt(t *testing.
 	pasteIdx := strings.Index(claudeTmuxRunnerScript, `tmux paste-buffer -t "$tmux_session" -b sf-prompt`)
 
 	for name, idx := range map[string]int{
-		"settings preseed":       settingsIdx,
+		"config initializer":     initIdx,
+		"oauth login guard":      oauthGuardIdx,
+		"theme prompt":           themeIdx,
+		"login method prompt":    loginIdx,
+		"login selected marker":  loginSelectedIdx,
+		"login navigation keys":  loginNavigateIdx,
 		"workspace trust prompt": trustIdx,
 		"bypass prompt":          bypassIdx,
 		"bypass down key":        bypassDownIdx,
@@ -143,8 +189,31 @@ func TestClaudeTmuxRunner_ClearsStartupPromptsBeforeSubmittingPrompt(t *testing.
 			t.Fatalf("claude tmux runner missing %s anchor", name)
 		}
 	}
-	if settingsIdx >= pasteIdx {
-		t.Fatalf("dangerous-mode setting must be seeded before prompt paste; settings idx=%d paste idx=%d", settingsIdx, pasteIdx)
+	if initIdx >= pasteIdx {
+		t.Fatalf("claude config must be initialized before prompt paste; init idx=%d paste idx=%d", initIdx, pasteIdx)
+	}
+	if themeIdx >= pasteIdx {
+		t.Fatalf("theme prompt must be handled before prompt paste; theme idx=%d paste idx=%d", themeIdx, pasteIdx)
+	}
+	if oauthGuardIdx >= loginIdx {
+		t.Fatalf("login method prompt must be guarded by OAuth-token check; guard idx=%d login idx=%d", oauthGuardIdx, loginIdx)
+	}
+	if loginSelectedIdx <= loginIdx || loginSelectedIdx >= pasteIdx {
+		t.Fatalf("login method prompt should inspect the selected row before prompt paste; login idx=%d selected idx=%d paste idx=%d",
+			loginIdx, loginSelectedIdx, pasteIdx)
+	}
+	if loginNavigateIdx <= loginIdx || loginNavigateIdx >= pasteIdx {
+		t.Fatalf("login method prompt should navigate by detected selected row before prompt paste; login idx=%d navigate idx=%d paste idx=%d",
+			loginIdx, loginNavigateIdx, pasteIdx)
+	}
+	if strings.Contains(claudeTmuxRunnerScript, `Home`) || strings.Contains(claudeTmuxRunnerScript, strings.Join([]string{"Up", "Up", "Up"}, " ")) {
+		t.Fatalf("login method prompt must not rely on blind Home or repeated Up navigation")
+	}
+	if !strings.Contains(claudeTmuxRunnerScript, `[>❯][[:space:]]*1\.`) {
+		t.Fatalf("login method prompt should match only verified cursor markers")
+	}
+	if loginIdx >= pasteIdx {
+		t.Fatalf("login method prompt must be handled before prompt paste; login idx=%d paste idx=%d", loginIdx, pasteIdx)
 	}
 	if trustIdx >= pasteIdx {
 		t.Fatalf("workspace trust prompt must be handled before prompt paste; trust idx=%d paste idx=%d", trustIdx, pasteIdx)
