@@ -84,8 +84,8 @@ After signup, organization admins configure these in the UI:
 
 ## Scheduled Jobs
 
-The main process dispatches scheduled jobs by default. To disable in-process
-dispatch and run an external scheduler instead:
+The main process dispatches scheduled jobs every five minutes by default. To
+disable in-process dispatch and run an external scheduler instead:
 
 ```dotenv
 HETCHY_JOB_DISPATCH_INTERVAL_SECONDS=0
