@@ -206,7 +206,9 @@ initialize_claude_config() {
           tmp=""
         else
           echo "$(date -Is) warning: could not merge hasCompletedOnboarding into ${config_file} (invalid JSON?)" >&2
-          printf '{"hasCompletedOnboarding":true}\n' > "$config_file" 2>/dev/null || true
+          if printf '{"hasCompletedOnboarding":true}\n' > "$tmp" 2>/dev/null && mv "$tmp" "$config_file"; then
+            tmp=""
+          fi
         fi
       elif jq -n '{hasCompletedOnboarding:true}' > "$tmp" 2>/dev/null; then
         mv "$tmp" "$config_file"
@@ -223,7 +225,9 @@ initialize_claude_config() {
           tmp=""
         else
           echo "$(date -Is) warning: could not merge Claude settings into ${settings_file} (invalid JSON?)" >&2
-          printf '{"skipDangerousModePermissionPrompt":true,"theme":"dark"}\n' > "$settings_file" 2>/dev/null || true
+          if printf '{"skipDangerousModePermissionPrompt":true,"theme":"dark"}\n' > "$tmp" 2>/dev/null && mv "$tmp" "$settings_file"; then
+            tmp=""
+          fi
         fi
       elif jq -n '{skipDangerousModePermissionPrompt:true, theme:"dark"}' > "$tmp" 2>/dev/null; then
         mv "$tmp" "$settings_file"
@@ -235,7 +239,7 @@ initialize_claude_config() {
   fi
 
   [[ -s "$config_file" ]] || printf '{"hasCompletedOnboarding":true}\n' > "$config_file" 2>/dev/null || true
-  printf '{"skipDangerousModePermissionPrompt":true,"theme":"dark"}\n' > "$settings_file" 2>/dev/null || true
+  [[ -s "$settings_file" ]] || printf '{"skipDangerousModePermissionPrompt":true,"theme":"dark"}\n' > "$settings_file" 2>/dev/null || true
 }
 
 restore_hetchy_cache_archive() {

@@ -96,14 +96,17 @@ func TestClaudeTmuxRunnerScript_Embedded(t *testing.T) {
 		`warning: could not merge hasCompletedOnboarding`,
 		`warning: could not merge Claude settings`,
 		`[[ -s "$config_file" ]] || printf '{"hasCompletedOnboarding":true}\n' > "$config_file"`,
-		`printf '{"skipDangerousModePermissionPrompt":true,"theme":"dark"}\n' > "$settings_file"`,
+		`[[ -s "$settings_file" ]] || printf '{"skipDangerousModePermissionPrompt":true,"theme":"dark"}\n' > "$settings_file"`,
 	} {
 		if !strings.Contains(sandboxCommonScript, line) {
 			t.Errorf("sandboxCommonScript missing Claude config initializer line %q", line)
 		}
 	}
-	if strings.Count(sandboxCommonScript, `printf '{"hasCompletedOnboarding":true}\n' > "$config_file"`) < 2 {
+	if strings.Count(sandboxCommonScript, `printf '{"hasCompletedOnboarding":true}\n' >`) < 2 {
 		t.Errorf("sandboxCommonScript should recover both missing and malformed Claude config files")
+	}
+	if strings.Count(sandboxCommonScript, `printf '{"skipDangerousModePermissionPrompt":true,"theme":"dark"}\n' >`) < 2 {
+		t.Errorf("sandboxCommonScript should recover both missing and malformed Claude settings files")
 	}
 	for _, line := range []string{
 		`login method prompt visible without CLAUDE_CODE_OAUTH_TOKEN`,
