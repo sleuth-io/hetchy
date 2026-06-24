@@ -72,6 +72,7 @@ func TestClaudeTmuxRunnerScript_Embedded(t *testing.T) {
 		`accepting workspace trust prompt`,
 		`accepting bypass permissions prompt`,
 		`tmux send-keys -t "$tmux_session" Down`,
+		`Verified against Claude Code v2.1.170 under tmux capture-pane -p`,
 		`echo "[hetchy] running claude"`,
 		// The watchdog kills the session seconds after end_turn, so a
 		// scheduled wakeup can never fire — the tool must stay
@@ -100,6 +101,9 @@ func TestClaudeTmuxRunnerScript_Embedded(t *testing.T) {
 		if !strings.Contains(sandboxCommonScript, line) {
 			t.Errorf("sandboxCommonScript missing Claude config initializer line %q", line)
 		}
+	}
+	if strings.Count(sandboxCommonScript, `printf '{"hasCompletedOnboarding":true}\n' > "$config_file"`) < 2 {
+		t.Errorf("sandboxCommonScript should recover both missing and malformed Claude config files")
 	}
 	for _, line := range []string{
 		`login method prompt visible without CLAUDE_CODE_OAUTH_TOKEN`,

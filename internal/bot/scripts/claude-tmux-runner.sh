@@ -126,6 +126,11 @@ run_claude_interactive_with_watchdog() {
       fi
       echo "$(date -Is) accepting subscription login method prompt" >>"$diag_log"
       local -a login_keys=()
+      # Verified against Claude Code v2.1.170 under tmux capture-pane -p:
+      # the selected login row has a visible non-space marker before
+      # the option number, and the login prompt defaults to the
+      # subscription row. If a future TUI removes that marker, accept
+      # the observed default rather than using blind navigation.
       if grep -Eq '^[[:space:]]*[^[:space:][:digit:]][[:space:]]*1\.[[:space:]]*Claude account with subscription' "$startup_pane"; then
         echo "$(date -Is) subscription login method is already selected" >>"$diag_log"
       elif grep -Eq '^[[:space:]]*[^[:space:][:digit:]][[:space:]]*2\.' "$startup_pane"; then

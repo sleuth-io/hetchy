@@ -206,6 +206,7 @@ initialize_claude_config() {
           tmp=""
         else
           echo "$(date -Is) warning: could not merge hasCompletedOnboarding into ${config_file} (invalid JSON?)" >&2
+          printf '{"hasCompletedOnboarding":true}\n' > "$config_file" 2>/dev/null || true
         fi
       elif jq -n '{hasCompletedOnboarding:true}' > "$tmp" 2>/dev/null; then
         mv "$tmp" "$config_file"
