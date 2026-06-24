@@ -43,20 +43,7 @@ func (b *Bot) runGithubExternalPRUpdatePrepared(ctx context.Context, oc orgcfg.C
 	emit := blocks.Tee(emitters...)
 	b.markRunKind(ctx, "github_mention")
 
-	opts, taskOptions := resolveChatTaskOptions(nil, chatTaskOptionPatch{})
-	rec := convstore.Record{
-		OrgID:          oc.OrgID,
-		ThreadID:       route.threadID,
-		History:        []string{githubPullRequestSeedText(ev)},
-		ResponseBlocks: [][]blocks.Block{{}},
-		GitHubOwner:    ev.Owner,
-		GitHubRepo:     ev.Repo,
-		PRURL:          firstNonEmpty(ev.SubjectURL, canonicalGitHubPRURL(ev.Owner, ev.Repo, ev.SubjectNumber)),
-		Branch:         githubPRHeadRef(ev.PullRequest),
-		CreatorID:      "github:" + ev.AuthorLogin,
-		Model:          string(model),
-		TaskOptions:    taskOptions,
-	}
+	var rec convstore.Record
 	if route.existing != nil {
 		rec = cloneGithubMentionRecord(*route.existing)
 		if len(rec.History) == 0 {
@@ -68,10 +55,22 @@ func (b *Bot) runGithubExternalPRUpdatePrepared(ctx context.Context, oc orgcfg.C
 		rec.PRURL = firstNonEmpty(rec.PRURL, firstNonEmpty(ev.SubjectURL, canonicalGitHubPRURL(ev.Owner, ev.Repo, ev.SubjectNumber)))
 		rec.Branch = firstNonEmpty(rec.Branch, githubPRHeadRef(ev.PullRequest))
 		model = modelForConversation(rec, model)
-		opts, taskOptions = resolveChatTaskOptions(rec.TaskOptions, chatTaskOptionPatch{})
-		rec.TaskOptions = taskOptions
-		rec.Model = string(model)
+	} else {
+		rec = convstore.Record{
+			OrgID:          oc.OrgID,
+			ThreadID:       route.threadID,
+			History:        []string{githubPullRequestSeedText(ev)},
+			ResponseBlocks: [][]blocks.Block{{}},
+			GitHubOwner:    ev.Owner,
+			GitHubRepo:     ev.Repo,
+			PRURL:          firstNonEmpty(ev.SubjectURL, canonicalGitHubPRURL(ev.Owner, ev.Repo, ev.SubjectNumber)),
+			Branch:         githubPRHeadRef(ev.PullRequest),
+			CreatorID:      "github:" + ev.AuthorLogin,
+		}
 	}
+	opts, taskOptions := resolveChatTaskOptions(rec.TaskOptions, chatTaskOptionPatch{})
+	rec.TaskOptions = taskOptions
+	rec.Model = string(model)
 	if title, body, missing := missingCredentialError(model, oc); missing {
 		b.log.Warn("org missing agent credentials", "org", oc.OrgID, "model", model, "provider", modelProvider(model))
 		emit.Error(title, body)
