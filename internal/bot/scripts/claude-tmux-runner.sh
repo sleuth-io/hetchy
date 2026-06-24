@@ -72,38 +72,6 @@ run_claude_interactive_with_watchdog() {
     claude_args+=(--model "$HETCHY_CLAUDE_MODEL")
   fi
 
-  # Claude Code's first interactive launch may ask for explicit
-  # confirmation before honoring --dangerously-skip-permissions. Seed
-  # the managed setting when possible so the TUI opens straight to the
-  # input prompt, while preserving any sx-installed hooks/settings.
-  local claude_settings_file="$HOME/.claude/settings.json"
-  local claude_settings_tmp=""
-  mkdir -p "$HOME/.claude"
-  claude_settings_tmp="$(mktemp "${TMPDIR:-/tmp}/sf-claude-settings.XXXXXX")"
-  if command -v jq >/dev/null 2>&1; then
-    if [[ -s "$claude_settings_file" ]]; then
-      if jq '.skipDangerousModePermissionPrompt = true | .theme = (.theme // "dark")' "$claude_settings_file" > "$claude_settings_tmp" 2>>"$diag_log"; then
-        mv "$claude_settings_tmp" "$claude_settings_file"
-        claude_settings_tmp=""
-      else
-        echo "$(date -Is) failed to merge skipDangerousModePermissionPrompt into ${claude_settings_file}" >>"$diag_log"
-      fi
-    else
-      if jq -n '{skipDangerousModePermissionPrompt:true, theme:"dark"}' > "$claude_settings_tmp" 2>>"$diag_log"; then
-        mv "$claude_settings_tmp" "$claude_settings_file"
-        claude_settings_tmp=""
-      else
-        echo "$(date -Is) failed to create ${claude_settings_file}" >>"$diag_log"
-      fi
-    fi
-  elif [[ ! -s "$claude_settings_file" ]]; then
-    if printf '{"skipDangerousModePermissionPrompt":true,"theme":"dark"}\n' > "$claude_settings_tmp" 2>>"$diag_log"; then
-      mv "$claude_settings_tmp" "$claude_settings_file"
-      claude_settings_tmp=""
-    fi
-  fi
-  rm -f "$claude_settings_tmp"
-
   tmux_session="hetchy-claude-$$"
   local tmux_cmd
   tmux_cmd="$(printf '%q ' claude "${claude_args[@]}")"

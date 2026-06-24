@@ -67,8 +67,6 @@ func TestClaudeTmuxRunnerScript_Embedded(t *testing.T) {
 		`tmux load-buffer -b sf-prompt`,
 		`tmux paste-buffer -t "$tmux_session" -b sf-prompt`,
 		`tmux send-keys -t "$tmux_session" Enter`,
-		`skipDangerousModePermissionPrompt`,
-		`.theme = (.theme // "dark")`,
 		`accepting theme prompt`,
 		`accepting subscription login method prompt`,
 		`accepting workspace trust prompt`,
@@ -89,6 +87,14 @@ func TestClaudeTmuxRunnerScript_Embedded(t *testing.T) {
 	for _, line := range requiredLines {
 		if !strings.Contains(claudeTmuxRunnerScript, line) {
 			t.Errorf("claudeTmuxRunnerScript missing %q", line)
+		}
+	}
+	for _, line := range []string{
+		`skipDangerousModePermissionPrompt`,
+		`.theme = (.theme // "dark")`,
+	} {
+		if !strings.Contains(sandboxCommonScript, line) {
+			t.Errorf("sandboxCommonScript missing Claude config initializer line %q", line)
 		}
 	}
 	if !strings.Contains(agentScript, "run_claude_interactive_with_watchdog") {
@@ -128,7 +134,7 @@ func TestClaudeTmuxRunner_SubmitsPromptBeforeWaitingForTranscript(t *testing.T) 
 }
 
 func TestClaudeTmuxRunner_ClearsStartupPromptsBeforeSubmittingPrompt(t *testing.T) {
-	settingsIdx := strings.Index(claudeTmuxRunnerScript, `skipDangerousModePermissionPrompt`)
+	initIdx := strings.Index(claudeTmuxRunnerScript, `initialize_claude_config`)
 	themeIdx := strings.Index(claudeTmuxRunnerScript, `accepting theme prompt`)
 	loginIdx := strings.Index(claudeTmuxRunnerScript, `accepting subscription login method prompt`)
 	trustIdx := strings.Index(claudeTmuxRunnerScript, `accepting workspace trust prompt`)
@@ -138,7 +144,7 @@ func TestClaudeTmuxRunner_ClearsStartupPromptsBeforeSubmittingPrompt(t *testing.
 	pasteIdx := strings.Index(claudeTmuxRunnerScript, `tmux paste-buffer -t "$tmux_session" -b sf-prompt`)
 
 	for name, idx := range map[string]int{
-		"settings preseed":       settingsIdx,
+		"config initializer":     initIdx,
 		"theme prompt":           themeIdx,
 		"login method prompt":    loginIdx,
 		"workspace trust prompt": trustIdx,
@@ -151,8 +157,8 @@ func TestClaudeTmuxRunner_ClearsStartupPromptsBeforeSubmittingPrompt(t *testing.
 			t.Fatalf("claude tmux runner missing %s anchor", name)
 		}
 	}
-	if settingsIdx >= pasteIdx {
-		t.Fatalf("dangerous-mode setting must be seeded before prompt paste; settings idx=%d paste idx=%d", settingsIdx, pasteIdx)
+	if initIdx >= pasteIdx {
+		t.Fatalf("claude config must be initialized before prompt paste; init idx=%d paste idx=%d", initIdx, pasteIdx)
 	}
 	if themeIdx >= pasteIdx {
 		t.Fatalf("theme prompt must be handled before prompt paste; theme idx=%d paste idx=%d", themeIdx, pasteIdx)

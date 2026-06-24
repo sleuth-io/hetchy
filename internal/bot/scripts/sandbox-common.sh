@@ -578,7 +578,7 @@ save_hetchy_cache_archive() {
   [[ -d "$local_cache_dir" ]] || return 0
   hetchy_cache_has_entries "$local_cache_dir" || return 0
   if [[ ! -d "$volume_cache_dir" ]]; then
-    mkdir -p "$volume_cache_dir" 2>/dev/null || return 1
+    mkdir -p "$volume_cache_dir" || return 1
   fi
 
   local compress_program
