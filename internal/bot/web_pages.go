@@ -69,6 +69,10 @@ func (b *Bot) indexHandler(w http.ResponseWriter, r *http.Request) {
 			b.log.Warn("org config fetch for chat page failed", "error", err, "org", p.OrgID)
 		}
 	}
+	appTitle := "Hetchy"
+	if b.cfg.Env == "dev" {
+		appTitle = "Hetchy dev"
+	}
 	b.renderTemplate(w, webui.App, map[string]any{
 		"Email":           p.Email,
 		"DisplayName":     displayName,
@@ -78,6 +82,7 @@ func (b *Bot) indexHandler(w http.ResponseWriter, r *http.Request) {
 		"OpenAIEnabled":   openaiEnabled,
 		"DefaultRepoSlug": defaultRepoSlug,
 		"AppDataLimit":    appDataLimitDefault,
+		"AppTitle":        appTitle,
 	})
 }
 

@@ -192,7 +192,7 @@ const (
 )
 
 const (
-	defaultJobDispatchIntervalSeconds = 60
+	defaultJobDispatchIntervalSeconds = 300
 	defaultJobDispatchLimit           = 5
 	defaultJobDispatchConcurrency     = 1
 )

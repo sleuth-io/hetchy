@@ -16,6 +16,7 @@ import (
 // fakeQuerier is a test double that implements the querier interface.
 type fakeQuerier struct {
 	getConversation                      func(ctx context.Context, arg sqlc.GetConversationParams) (sqlc.GetConversationRow, error)
+	listConversationsByPRURL             func(ctx context.Context, arg sqlc.ListConversationsByPRURLParams) ([]sqlc.ListConversationsByPRURLRow, error)
 	searchConversations                  func(ctx context.Context, arg sqlc.SearchConversationsParams) ([]sqlc.SearchConversationsRow, error)
 	saveConversationProgress             func(ctx context.Context, arg sqlc.SaveConversationProgressParams) error
 	saveConversationRunMetadata          func(ctx context.Context, arg sqlc.SaveConversationRunMetadataParams) error
@@ -35,6 +36,12 @@ func (f *fakeQuerier) GetConversation(ctx context.Context, arg sqlc.GetConversat
 		panic("fakeQuerier.getConversation not set")
 	}
 	return f.getConversation(ctx, arg)
+}
+func (f *fakeQuerier) ListConversationsByPRURL(ctx context.Context, arg sqlc.ListConversationsByPRURLParams) ([]sqlc.ListConversationsByPRURLRow, error) {
+	if f.listConversationsByPRURL == nil {
+		panic("fakeQuerier.listConversationsByPRURL not set")
+	}
+	return f.listConversationsByPRURL(ctx, arg)
 }
 func (f *fakeQuerier) SearchConversations(ctx context.Context, arg sqlc.SearchConversationsParams) ([]sqlc.SearchConversationsRow, error) {
 	if f.searchConversations == nil {
@@ -121,6 +128,9 @@ func TestNewNilStoreDisablesPersistence(t *testing.T) {
 	if _, err := s.Get(ctx, "org", "thread"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("Get on nil store: want ErrNotFound, got %v", err)
 	}
+	if rs, err := s.ListByPRURL(ctx, "org", "owner", "repo", 1, "https://github.com/owner/repo/pull/1"); err != nil || rs != nil {
+		t.Errorf("ListByPRURL on nil store: want nil,nil got %v,%v", rs, err)
+	}
 	if rs, err := s.Search(ctx, "org", SearchOptions{Limit: 10}); err != nil || rs != nil {
 		t.Errorf("Search on nil store: want nil,nil got %v,%v", rs, err)
 	}
@@ -193,6 +203,79 @@ func TestEscapeILIKEWildcards(t *testing.T) {
 			t.Errorf("escapeILIKEWildcards(%q) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
+}
+
+// --- ListByPRURL ---
+
+func TestListByPRURLDecodesRowsAndPassesCanonicalParams(t *testing.T) {
+	now := time.Now().UTC()
+	var gotArg sqlc.ListConversationsByPRURLParams
+	s := newFakeStore(&fakeQuerier{
+		listConversationsByPRURL: func(_ context.Context, arg sqlc.ListConversationsByPRURLParams) ([]sqlc.ListConversationsByPRURLRow, error) {
+			gotArg = arg
+			return []sqlc.ListConversationsByPRURLRow{testPRURLRow(now)}, nil
+		},
+	})
+
+	rows, err := s.ListByPRURL(t.Context(), "org_1", "Acme", "Repo", 12, "https://github.com/Acme/Repo/pull/12")
+	if err != nil {
+		t.Fatalf("ListByPRURL: %v", err)
+	}
+	if gotArg.OrgID != "org_1" || gotArg.GithubOwner != "Acme" || gotArg.GithubRepo != "Repo" ||
+		gotArg.PrUrl != "https://github.com/Acme/Repo/pull/12" || gotArg.PrNumber != 12 {
+		t.Fatalf("params = %+v", gotArg)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(rows))
+	}
+	rec := rows[0]
+	if rec.ThreadID != "thread_1" || rec.PRURL != "https://github.com/acme/repo/pull/12" ||
+		rec.GitHubOwner != "acme" || rec.GitHubRepo != "repo" || rec.Branch != "feature/x" {
+		t.Fatalf("record = %+v", rec)
+	}
+	if len(rec.ResponseBlocks) != 1 || len(rec.ResponseBlocks[0]) != 1 || rec.ResponseBlocks[0][0].Title != "Done" {
+		t.Fatalf("response blocks = %+v", rec.ResponseBlocks)
+	}
+	if !rec.TaskOptions["validate"] || !rec.CreatedAt.Equal(now) || !rec.UpdatedAt.Equal(now) {
+		t.Fatalf("decoded fields = %+v", rec)
+	}
+}
+
+func TestListByPRURLDisabledAndInvalidNumberSkipQuery(t *testing.T) {
+	var nilStore *Store
+	if rows, err := nilStore.ListByPRURL(t.Context(), "org", "owner", "repo", 1, "url"); err != nil || rows != nil {
+		t.Fatalf("nil receiver ListByPRURL = %v, %v", rows, err)
+	}
+	s := newFakeStore(&fakeQuerier{})
+	if rows, err := s.ListByPRURL(t.Context(), "org", "owner", "repo", 0, "url"); err != nil || rows != nil {
+		t.Fatalf("invalid number ListByPRURL = %v, %v", rows, err)
+	}
+}
+
+func TestListByPRURLErrors(t *testing.T) {
+	t.Run("query error", func(t *testing.T) {
+		s := newFakeStore(&fakeQuerier{
+			listConversationsByPRURL: func(context.Context, sqlc.ListConversationsByPRURLParams) ([]sqlc.ListConversationsByPRURLRow, error) {
+				return nil, errors.New("db down")
+			},
+		})
+		if _, err := s.ListByPRURL(t.Context(), "org", "owner", "repo", 1, "url"); err == nil || !strings.Contains(err.Error(), "list conversations by PR URL") {
+			t.Fatalf("error = %v", err)
+		}
+	})
+
+	t.Run("bad response blocks", func(t *testing.T) {
+		row := testPRURLRow(time.Now().UTC())
+		row.ResponseBlocks = [][]byte{[]byte("bad json")}
+		s := newFakeStore(&fakeQuerier{
+			listConversationsByPRURL: func(context.Context, sqlc.ListConversationsByPRURLParams) ([]sqlc.ListConversationsByPRURLRow, error) {
+				return []sqlc.ListConversationsByPRURLRow{row}, nil
+			},
+		})
+		if _, err := s.ListByPRURL(t.Context(), "org", "owner", "repo", 1, "url"); err == nil || !strings.Contains(err.Error(), "decode response_blocks") {
+			t.Fatalf("error = %v", err)
+		}
+	})
 }
 
 // --- encodeBlocks / decodeBlocks ---
@@ -351,6 +434,34 @@ func TestRecordFromFieldsBadTaskOptionsDefaultsToEmpty(t *testing.T) {
 	}
 	if rec.TaskOptions == nil {
 		t.Error("bad task_options should default to empty map, got nil")
+	}
+}
+
+func testPRURLRow(now time.Time) sqlc.ListConversationsByPRURLRow {
+	ts := pgtype.Timestamptz{Time: now, Valid: true}
+	return sqlc.ListConversationsByPRURLRow{
+		OrgID:            "org_1",
+		ThreadID:         "thread_1",
+		SandboxID:        "sb_1",
+		Branch:           "feature/x",
+		PrUrl:            "https://github.com/acme/repo/pull/12",
+		PrState:          "open",
+		PrMerged:         false,
+		PrMergedAt:       pgtype.Timestamptz{},
+		PrClosedAt:       pgtype.Timestamptz{},
+		PrStateCheckedAt: ts,
+		History:          []string{"fix this"},
+		CreatedAt:        ts,
+		UpdatedAt:        ts,
+		ResponseBlocks:   [][]byte{[]byte(`[{"id":"b1","kind":"result","title":"Done"}]`)},
+		GithubOwner:      "acme",
+		GithubRepo:       "repo",
+		CustomTitle:      "PR work",
+		CreatorID:        "github:alice",
+		AgentSlug:        "reviewer",
+		Model:            "opus",
+		TaskOptions:      []byte(`{"validate":true}`),
+		AwaitingRepo:     false,
 	}
 }
 

@@ -105,6 +105,7 @@ type Attachment struct {
 // here lets unit tests inject a fake without a real Postgres connection.
 type querier interface {
 	GetConversation(ctx context.Context, arg sqlc.GetConversationParams) (sqlc.GetConversationRow, error)
+	ListConversationsByPRURL(ctx context.Context, arg sqlc.ListConversationsByPRURLParams) ([]sqlc.ListConversationsByPRURLRow, error)
 	SearchConversations(ctx context.Context, arg sqlc.SearchConversationsParams) ([]sqlc.SearchConversationsRow, error)
 	SaveConversationProgress(ctx context.Context, arg sqlc.SaveConversationProgressParams) error
 	SaveConversationRunMetadata(ctx context.Context, arg sqlc.SaveConversationRunMetadataParams) error
@@ -117,6 +118,33 @@ type querier interface {
 	ListConversationAttachmentsForTurn(ctx context.Context, arg sqlc.ListConversationAttachmentsForTurnParams) ([]sqlc.ConversationAttachment, error)
 	DeleteConversationAttachmentsForTurn(ctx context.Context, arg sqlc.DeleteConversationAttachmentsForTurnParams) error
 	GetConversationAttachment(ctx context.Context, arg sqlc.GetConversationAttachmentParams) (sqlc.ConversationAttachment, error)
+}
+
+// ListByPRURL returns conversations in this org already associated with a
+// specific GitHub pull request, newest first.
+func (s *Store) ListByPRURL(ctx context.Context, orgID, owner, repo string, number int, rawURL string) ([]Record, error) {
+	if s == nil || s.q == nil || number <= 0 {
+		return nil, nil
+	}
+	rows, err := s.q.ListConversationsByPRURL(ctx, sqlc.ListConversationsByPRURLParams{
+		OrgID:       orgID,
+		GithubOwner: owner,
+		GithubRepo:  repo,
+		PrUrl:       rawURL,
+		PrNumber:    int32(number),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list conversations by PR URL: %w", err)
+	}
+	out := make([]Record, 0, len(rows))
+	for _, row := range rows {
+		rec, err := recordFromPRURLRow(row)
+		if err != nil {
+			return nil, fmt.Errorf("decode response_blocks for %s/%s: %w", row.OrgID, row.ThreadID, err)
+		}
+		out = append(out, rec)
+	}
+	return out, nil
 }
 
 // Store wraps the sqlc queries with the loose Record shape used elsewhere.
@@ -602,6 +630,21 @@ func recordFromGetRow(row sqlc.GetConversationRow) (Record, error) {
 }
 
 func recordFromSearchRow(row sqlc.SearchConversationsRow) (Record, error) {
+	return recordFromFields(rowFields{
+		OrgID: row.OrgID, ThreadID: row.ThreadID, SandboxID: row.SandboxID,
+		Branch: row.Branch, PrUrl: row.PrUrl, History: row.History,
+		PrState: row.PrState, PrMerged: row.PrMerged,
+		PrMergedAt: row.PrMergedAt, PrClosedAt: row.PrClosedAt, PrStateCheckedAt: row.PrStateCheckedAt,
+		ResponseBlocks: row.ResponseBlocks,
+		GithubOwner:    row.GithubOwner, GithubRepo: row.GithubRepo,
+		CustomTitle: row.CustomTitle, CreatorID: row.CreatorID, AgentSlug: row.AgentSlug, Model: row.Model,
+		TaskOptions:  row.TaskOptions,
+		AwaitingRepo: row.AwaitingRepo,
+		CreatedAt:    row.CreatedAt, UpdatedAt: row.UpdatedAt,
+	})
+}
+
+func recordFromPRURLRow(row sqlc.ListConversationsByPRURLRow) (Record, error) {
 	return recordFromFields(rowFields{
 		OrgID: row.OrgID, ThreadID: row.ThreadID, SandboxID: row.SandboxID,
 		Branch: row.Branch, PrUrl: row.PrUrl, History: row.History,

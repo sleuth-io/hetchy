@@ -79,14 +79,14 @@ func TestWebhookEventActionGuardsSkipDB(t *testing.T) {
 		handle func(*Bot)
 	}{
 		{
-			name: "pull request review only reacts to submitted",
+			name: "pull request review edited without mention skips DB",
 			handle: func(b *Bot) {
 				b.handlePullRequestReviewEvent(context.Background(), []byte(`{
 					"action": "edited",
 					"installation": {"id": 42},
 					"repository": {"full_name": "sleuth-io/hetchy"},
 					"pull_request": {"number": 12}
-				}`))
+				}`), "")
 			},
 		},
 		{
@@ -148,7 +148,7 @@ func TestHandleCheckAndStatusEventsResolveInstallation(t *testing.T) {
 					"installation": {"id": 42},
 					"repository": {"full_name": "sleuth-io/hetchy"},
 					"pull_request": {"number": 12}
-				}`))
+				}`), "")
 			},
 		},
 		{
@@ -330,6 +330,12 @@ func assignWebhookScanValue(dest, value any) error {
 		v, ok := value.(int64)
 		if !ok {
 			return fmt.Errorf("got %T, want int64", value)
+		}
+		*d = v
+	case *int32:
+		v, ok := value.(int32)
+		if !ok {
+			return fmt.Errorf("got %T, want int32", value)
 		}
 		*d = v
 	case *string:

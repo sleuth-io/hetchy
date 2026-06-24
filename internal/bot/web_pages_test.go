@@ -122,6 +122,9 @@ func TestIndexHandler_RendersApp(t *testing.T) {
 		t.Fatalf("status = %d", rec.Code)
 	}
 	body := rec.Body.String()
+	if !strings.Contains(body, `<title>Hetchy</title>`) {
+		t.Fatalf("app template missing default title, body=%s", body)
+	}
 	if !strings.Contains(body, `src="/assets/app.js`) {
 		t.Fatalf("app template missing app.js, body=%s", body)
 	}
@@ -133,6 +136,23 @@ func TestIndexHandler_RendersApp(t *testing.T) {
 	}
 	if !strings.Contains(body, `href="/assets/app_responsive.css`) {
 		t.Fatalf("app template missing split app styles, body=%s", body)
+	}
+}
+
+func TestIndexHandler_RendersDevAppTitle(t *testing.T) {
+	b := newBypassOrgBot(t, "admin")
+	b.cfg.Env = "dev"
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	b.auth.Middleware(http.HandlerFunc(b.indexHandler)).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `<title>Hetchy dev</title>`) {
+		t.Fatalf("app template missing dev title, body=%s", body)
 	}
 }
 

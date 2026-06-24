@@ -15,6 +15,8 @@ type fakeConversationStore struct {
 	mu              sync.Mutex
 	rec             convstore.Record
 	getErr          error
+	prURLResult     []convstore.Record
+	prURLErr        error
 	searchResult    []convstore.Record
 	searchErr       error
 	searchOpts      []convstore.SearchOptions
@@ -36,6 +38,19 @@ func (f *fakeConversationStore) Get(context.Context, string, string) (convstore.
 		return convstore.Record{}, f.getErr
 	}
 	return cloneRecord(f.rec), nil
+}
+
+func (f *fakeConversationStore) ListByPRURL(context.Context, string, string, string, int, string) ([]convstore.Record, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.prURLErr != nil {
+		return nil, f.prURLErr
+	}
+	out := make([]convstore.Record, 0, len(f.prURLResult))
+	for _, rec := range f.prURLResult {
+		out = append(out, cloneRecord(rec))
+	}
+	return out, nil
 }
 
 func (f *fakeConversationStore) Search(_ context.Context, _ string, opts convstore.SearchOptions) ([]convstore.Record, error) {

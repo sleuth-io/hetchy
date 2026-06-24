@@ -92,7 +92,7 @@ Status: **done**
 
 Scheduled jobs now run from the main web process. The loop is controlled by:
 
-- `HETCHY_JOB_DISPATCH_INTERVAL_SECONDS` (default 60, `0` disables)
+- `HETCHY_JOB_DISPATCH_INTERVAL_SECONDS` (default 300, `0` disables)
 - `HETCHY_JOB_DISPATCH_LIMIT` (default 5)
 - `HETCHY_JOB_DISPATCH_CONCURRENCY` (default 1)
 

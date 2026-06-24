@@ -239,6 +239,24 @@ type GithubAppInstallation struct {
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 }
 
+type GithubMentionDelivery struct {
+	OrgID      string             `json:"org_id"`
+	DeliveryID string             `json:"delivery_id"`
+	RequestID  string             `json:"request_id"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+}
+
+type GithubMentionThread struct {
+	OrgID         string             `json:"org_id"`
+	Owner         string             `json:"owner"`
+	Repo          string             `json:"repo"`
+	SubjectType   string             `json:"subject_type"`
+	SubjectNumber int32              `json:"subject_number"`
+	ThreadID      string             `json:"thread_id"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+}
+
 type GithubRepo struct {
 	InstallationID int64              `json:"installation_id"`
 	RepoID         int64              `json:"repo_id"`

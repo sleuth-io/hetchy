@@ -223,11 +223,11 @@ func TestWebhookErrLoggerSuppressesRepeatedKeys(t *testing.T) {
 
 func TestDispatchGithubEventIgnoresNilPingAndUnknown(t *testing.T) {
 	b := &Bot{log: discardLogger()}
-	b.dispatchGithubEvent(context.Background(), "installation", []byte(`{`))
+	b.dispatchGithubEvent(context.Background(), "installation", []byte(`{`), "")
 
 	b.app = freshGithubAppForTest(t, "wh-secret")
-	b.dispatchGithubEvent(context.Background(), "ping", []byte(`{"zen":"ok"}`))
-	b.dispatchGithubEvent(context.Background(), "unknown", []byte(`{"ignored":true}`))
+	b.dispatchGithubEvent(context.Background(), "ping", []byte(`{"zen":"ok"}`), "")
+	b.dispatchGithubEvent(context.Background(), "unknown", []byte(`{"ignored":true}`), "")
 }
 
 func TestGithubSyncHandler_RejectsCrossOriginPost(t *testing.T) {
