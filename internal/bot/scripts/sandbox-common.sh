@@ -228,7 +228,7 @@ initialize_claude_config() {
     return 0
   fi
 
-  printf '{"hasCompletedOnboarding":true}\n' > "$config_file" 2>/dev/null || true
+  [[ -s "$config_file" ]] || printf '{"hasCompletedOnboarding":true}\n' > "$config_file" 2>/dev/null || true
   printf '{"skipDangerousModePermissionPrompt":true,"theme":"dark"}\n' > "$settings_file" 2>/dev/null || true
 }
 

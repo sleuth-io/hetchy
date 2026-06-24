@@ -125,7 +125,7 @@ run_claude_interactive_with_watchdog() {
         break
       fi
       echo "$(date -Is) accepting subscription login method prompt" >>"$diag_log"
-      tmux send-keys -t "$tmux_session" Home >>"$diag_log" 2>&1 || true
+      tmux send-keys -t "$tmux_session" Up Up Up >>"$diag_log" 2>&1 || true
       sleep "${HETCHY_CLAUDE_PROMPT_KEY_DELAY_S:-1}"
       tmux send-keys -t "$tmux_session" Enter >>"$diag_log" 2>&1 || true
       sleep "${HETCHY_CLAUDE_TUI_SETTLE_S:-5}"
