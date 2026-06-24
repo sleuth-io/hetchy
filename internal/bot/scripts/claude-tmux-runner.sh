@@ -131,11 +131,11 @@ run_claude_interactive_with_watchdog() {
       # the option number, and the login prompt defaults to the
       # subscription row. If a future TUI removes that marker, accept
       # the observed default rather than using blind navigation.
-      if grep -Eq '^[[:space:]]*[^[:space:][:digit:]][[:space:]]*1\.[[:space:]]*Claude account with subscription' "$startup_pane"; then
+      if grep -Eq '^[[:space:]]*[>❯][[:space:]]*1\.[[:space:]]*Claude account with subscription' "$startup_pane"; then
         echo "$(date -Is) subscription login method is already selected" >>"$diag_log"
-      elif grep -Eq '^[[:space:]]*[^[:space:][:digit:]][[:space:]]*2\.' "$startup_pane"; then
+      elif grep -Eq '^[[:space:]]*[>❯][[:space:]]*2\.' "$startup_pane"; then
         login_keys=(Up)
-      elif grep -Eq '^[[:space:]]*[^[:space:][:digit:]][[:space:]]*3\.' "$startup_pane"; then
+      elif grep -Eq '^[[:space:]]*[>❯][[:space:]]*3\.' "$startup_pane"; then
         login_keys=(Up Up)
       else
         echo "$(date -Is) warning: login method selected row not visible; accepting observed default" >>"$diag_log"

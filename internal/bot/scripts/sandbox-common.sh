@@ -233,7 +233,7 @@ initialize_claude_config() {
           fi
         fi
       fi
-      rm -f "$tmp" 2>/dev/null || true
+      [[ -n "$tmp" ]] && rm -f "$tmp" 2>/dev/null || true
     else
       echo "$(date -Is) warning: mktemp failed; skipping Claude config init" >&2
     fi
@@ -273,7 +273,7 @@ initialize_claude_config() {
           fi
         fi
       fi
-      rm -f "$tmp" 2>/dev/null || true
+      [[ -n "$tmp" ]] && rm -f "$tmp" 2>/dev/null || true
     else
       echo "$(date -Is) warning: mktemp failed; skipping Claude settings init" >&2
     fi

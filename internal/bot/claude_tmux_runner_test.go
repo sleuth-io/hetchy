@@ -101,6 +101,7 @@ func TestClaudeTmuxRunnerScript_Embedded(t *testing.T) {
 		`warning: could not replace ${settings_file} after jq merge`,
 		`warning: jq -n failed for new ${config_file}; trying fallback write`,
 		`warning: jq -n failed for new ${settings_file}; trying fallback write`,
+		`[[ -n "$tmp" ]] && rm -f "$tmp"`,
 		`[[ -s "$config_file" ]] || printf '{"hasCompletedOnboarding":true}\n' > "$config_file"`,
 		`printf '{"skipDangerousModePermissionPrompt":true,"theme":"dark"}\n' > "$settings_file"`,
 	} {
@@ -207,6 +208,9 @@ func TestClaudeTmuxRunner_ClearsStartupPromptsBeforeSubmittingPrompt(t *testing.
 	}
 	if strings.Contains(claudeTmuxRunnerScript, `Home`) || strings.Contains(claudeTmuxRunnerScript, strings.Join([]string{"Up", "Up", "Up"}, " ")) {
 		t.Fatalf("login method prompt must not rely on blind Home or repeated Up navigation")
+	}
+	if !strings.Contains(claudeTmuxRunnerScript, `[>❯][[:space:]]*1\.`) {
+		t.Fatalf("login method prompt should match only verified cursor markers")
 	}
 	if loginIdx >= pasteIdx {
 		t.Fatalf("login method prompt must be handled before prompt paste; login idx=%d paste idx=%d", loginIdx, pasteIdx)
