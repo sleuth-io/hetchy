@@ -99,6 +99,8 @@ func TestClaudeTmuxRunnerScript_Embedded(t *testing.T) {
 		`warning: mktemp failed; skipping Claude settings init`,
 		`warning: could not replace ${config_file} after jq merge`,
 		`warning: could not replace ${settings_file} after jq merge`,
+		`warning: jq -n failed for new ${config_file}; trying fallback write`,
+		`warning: jq -n failed for new ${settings_file}; trying fallback write`,
 		`[[ -s "$config_file" ]] || printf '{"hasCompletedOnboarding":true}\n' > "$config_file"`,
 		`printf '{"skipDangerousModePermissionPrompt":true,"theme":"dark"}\n' > "$settings_file"`,
 	} {

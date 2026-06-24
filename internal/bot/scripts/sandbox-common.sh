@@ -223,6 +223,15 @@ initialize_claude_config() {
         else
           echo "$(date -Is) warning: could not create ${config_file} after jq init" >&2
         fi
+      else
+        echo "$(date -Is) warning: jq -n failed for new ${config_file}; trying fallback write" >&2
+        if printf '{"hasCompletedOnboarding":true}\n' > "$tmp" 2>/dev/null; then
+          if mv "$tmp" "$config_file" 2>/dev/null; then
+            tmp=""
+          else
+            echo "$(date -Is) warning: could not create ${config_file} after fallback write" >&2
+          fi
+        fi
       fi
       rm -f "$tmp" 2>/dev/null || true
     else
@@ -253,6 +262,15 @@ initialize_claude_config() {
           tmp=""
         else
           echo "$(date -Is) warning: could not create ${settings_file} after jq init" >&2
+        fi
+      else
+        echo "$(date -Is) warning: jq -n failed for new ${settings_file}; trying fallback write" >&2
+        if printf '{"skipDangerousModePermissionPrompt":true,"theme":"dark"}\n' > "$tmp" 2>/dev/null; then
+          if mv "$tmp" "$settings_file" 2>/dev/null; then
+            tmp=""
+          else
+            echo "$(date -Is) warning: could not create ${settings_file} after fallback write" >&2
+          fi
         fi
       fi
       rm -f "$tmp" 2>/dev/null || true
