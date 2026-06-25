@@ -304,12 +304,21 @@ button.meta-attachment-link:hover { text-decoration: underline; }
   }
   .topbar {
     min-height: 64px;
+    /* The subtitle can wrap to multiple lines on narrow screens, making the
+       title block taller than the buttons. Top-align so the menu toggle and
+       actions line up with the title instead of floating in the middle. */
+    align-items: flex-start;
     gap: 10px;
     padding: 12px;
     padding-top: calc(12px + var(--safe-top));
   }
   .topbar-title {
     flex: 1;
+  }
+  /* Keep the icon/action buttons optically centered on the title's first line. */
+  .topbar > .mobile-panel-button,
+  .topbar-actions {
+    margin-top: 1px;
   }
   .selection-subtitle {
     max-width: 100%;
