@@ -148,6 +148,21 @@ dialog.job-modal .job-form-error {
   font-size: .82rem;
 }
 
+/* Mobile layout. The chat page does not load settings.css, so reproduce the
+   responsive collapse that settings.css applies at the same breakpoint.
+   Without this the Schedule/Timezone two-column grid keeps a ~30rem minimum
+   width (minmax(12rem,…) + minmax(18rem,…)) and overflows narrow phone
+   viewports, clipping every field on the right edge. */
+@media (max-width: 768px) {
+  dialog.job-modal {
+    width: calc(100vw - 1.5rem);
+    max-width: calc(100vw - 1.5rem);
+  }
+  dialog.job-modal .body { padding: 1.25rem 1rem .85rem; }
+  dialog.job-modal .actions { padding: 0 1rem 1.25rem; }
+  dialog.job-modal .job-form-grid { grid-template-columns: 1fr; }
+}
+
 /* Dark mode (chat page toggles html.is-dark) */
 html.is-dark dialog.job-modal {
   background: #1c1c1f;
