@@ -1,6 +1,10 @@
 package bot
 
-import "strings"
+import (
+	"context"
+	"fmt"
+	"strings"
+)
 
 // jobModelOption is one entry in the job modal's model picker. The list
 // mirrors the chat composer's model menu (internal/webui/assets/app.js)
@@ -34,6 +38,24 @@ func jobModelOptions(openaiEnabled bool) []jobModelOption {
 		out = append(out, openAIJobModelOptions...)
 	}
 	return out
+}
+
+// ensureJobModelAllowed rejects a job whose requested model belongs to a
+// credential family the org has not configured. jobs.validateInput already
+// rejects genuinely-unknown identifiers, but it cannot see org credentials,
+// so a direct API call could otherwise pin a GPT model on an Anthropic-only
+// org and only fail deep in dispatch. We gate it here the same way the chat
+// composer does. An empty/unknown model returns nil and is handled downstream
+// (defaulted to Opus / rejected by validateInput respectively).
+func (b *Bot) ensureJobModelAllowed(ctx context.Context, orgID, model string) error {
+	parsed, ok := parseClaudeModel(model)
+	if !ok {
+		return nil
+	}
+	if modelProvider(parsed) == modelProviderOpenAI && !b.orgHasOpenAICredentials(ctx, orgID) {
+		return fmt.Errorf("model %q requires OpenAI credentials, which are not configured for this org", model)
+	}
+	return nil
 }
 
 // jobModelLabel maps a stored model id to its display label, falling

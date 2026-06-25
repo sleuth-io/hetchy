@@ -163,6 +163,10 @@ func (b *Bot) createJobHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p, _ := auth.FromContext(r.Context())
+	if err := b.ensureJobModelAllowed(r.Context(), p.OrgID, input.Model); err != nil {
+		writeJobAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	job, err := b.jobs.Create(r.Context(), p.OrgID, input, time.Now())
 	if err != nil {
 		b.writeJobsStoreError(w, err)
@@ -191,6 +195,10 @@ func (b *Bot) updateJobHandler(w http.ResponseWriter, r *http.Request, jobID str
 	}
 	input, err := body.toInput(current)
 	if err != nil {
+		writeJobAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := b.ensureJobModelAllowed(r.Context(), p.OrgID, input.Model); err != nil {
 		writeJobAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}

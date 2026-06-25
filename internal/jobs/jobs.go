@@ -32,10 +32,14 @@ const minRunningExecutionStaleAfter = 2 * time.Hour
 // via the migration, and the modal pre-selects Opus to match.
 const DefaultModel = "opus"
 
-// validJobModels mirrors the chat composer's model identifiers (see
-// internal/bot/chat_model.go). It is kept here rather than imported so
-// the jobs package stays free of a dependency on the bot runtime; the
-// dispatcher maps these strings back onto its model enum.
+// validJobModels is the authoritative set of model identifiers a job may
+// store. It mirrors the chat composer's model identifiers but is kept here
+// rather than imported so the jobs package stays free of a dependency on the
+// bot runtime. When adding a model, keep these in sync:
+//   - internal/bot/chat_model.go parseClaudeModel (dispatch must recognise it)
+//   - internal/bot/job_model.go {anthropic,openAI}JobModelOptions (modal picker)
+//
+// The dispatcher maps these strings back onto its model enum.
 var validJobModels = map[string]struct{}{
 	"opus":         {},
 	"sonnet":       {},

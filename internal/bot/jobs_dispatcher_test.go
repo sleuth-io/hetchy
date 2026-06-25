@@ -130,6 +130,30 @@ func TestJobDispatchModelHonoursExplicitModel(t *testing.T) {
 	}
 }
 
+func TestEnsureJobModelAllowed(t *testing.T) {
+	anthropicOnly := &Bot{orgs: &fakeOrgStore{getConfig: orgcfg.Config{OrgID: "org_1", AnthropicAPIKey: "sk-ant"}}}
+	withOpenAI := &Bot{orgs: &fakeOrgStore{getConfig: orgcfg.Config{OrgID: "org_1", OpenAIAPIKey: "sk-openai"}}}
+
+	// Anthropic models and empty/unknown values are always allowed; the
+	// jobs layer handles defaulting/rejection for the latter.
+	for _, model := range []string{"", "opus", "sonnet", "haiku", "bogus"} {
+		if err := anthropicOnly.ensureJobModelAllowed(context.Background(), "org_1", model); err != nil {
+			t.Fatalf("anthropic-only org rejected model %q: %v", model, err)
+		}
+	}
+
+	// A GPT model on an Anthropic-only org is rejected before it can be
+	// stored and fail at dispatch.
+	if err := anthropicOnly.ensureJobModelAllowed(context.Background(), "org_1", "gpt-frontier"); err == nil {
+		t.Fatal("anthropic-only org accepted gpt-frontier, want rejection")
+	}
+
+	// The same model is accepted once OpenAI credentials are configured.
+	if err := withOpenAI.ensureJobModelAllowed(context.Background(), "org_1", "gpt-frontier"); err != nil {
+		t.Fatalf("openai org rejected gpt-frontier: %v", err)
+	}
+}
+
 func TestBotJobDispatchRequiresConfiguredStore(t *testing.T) {
 	b := &Bot{}
 	if _, err := b.DispatchDueJobs(context.Background(), JobDispatchOptions{Limit: 1}, 1); !errors.Is(err, jobs.ErrNotConfigured) {
