@@ -22,6 +22,7 @@ dialog.job-modal form { display: flex; flex-direction: column; max-height: inher
 dialog.job-modal .body {
   display: grid;
   gap: .55rem;
+  min-width: 0;
   overflow: auto;
   padding: 1.5rem 1.5rem .85rem;
 }
@@ -47,6 +48,8 @@ dialog.job-modal textarea {
   font-family: ui-monospace, monospace;
   background: #fff;
   color: #1a1a1a;
+  min-width: 0;
+  max-width: 100%;
 }
 dialog.job-modal textarea {
   resize: vertical;
@@ -146,6 +149,23 @@ dialog.job-modal .job-form-error {
   background: #fee;
   color: #a02020;
   font-size: .82rem;
+}
+
+@media (max-width: 768px) {
+  dialog.job-modal {
+    width: calc(100vw - 1rem);
+    max-width: calc(100vw - 1rem);
+    max-height: calc(100dvh - 1rem);
+  }
+  dialog.job-modal .body {
+    padding: 1rem 1rem .75rem;
+  }
+  dialog.job-modal .actions {
+    padding: 0 1rem 1rem;
+  }
+  dialog.job-modal .job-form-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* Dark mode (chat page toggles html.is-dark) */

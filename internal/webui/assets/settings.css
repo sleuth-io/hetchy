@@ -460,6 +460,9 @@
   .job-schedule-advanced { display: grid; gap: .35rem; min-width: 0; }
   .job-schedule-advanced[hidden] { display: none; }
   .job-repo-multiselect { display: grid; gap: .45rem; }
+  dialog.api-modal.agent-modal.job-modal input[type="text"],
+  dialog.api-modal.agent-modal.job-modal select,
+  dialog.api-modal.agent-modal.job-modal textarea { min-width: 0; max-width: 100%; }
   .job-repo-chip-list { display: flex; flex-wrap: wrap; gap: .35rem; min-height: 1.6rem; }
   .job-repo-chip-list:empty { display: none; }
   .job-repo-chip { display: inline-flex; align-items: center; gap: .4rem;

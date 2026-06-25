@@ -195,6 +195,12 @@ func TestRenderAppTemplate(t *testing.T) {
 	if headEnd < 0 || !strings.Contains(body[headStart:headStart+headEnd], `id="detail-meta-more-btn"`) {
 		t.Fatalf("chat actions menu is not rendered inside the chat header row")
 	}
+	topbarActions := substringAfter(t, body, `class="topbar-actions"`)
+	assertSubstringOrder(t, topbarActions,
+		`id="agent-menu-btn"`,
+		`id="pr-sidebar-toggle"`,
+		`id="new-task-btn"`,
+	)
 }
 
 func TestAssetHandlerServesEmbeddedAssets(t *testing.T) {
@@ -674,4 +680,25 @@ func TestRenderWithLoggerDoesNotPanic(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("Render with logger status = %d, want 200", rec.Code)
 	}
+}
+
+func assertSubstringOrder(t *testing.T, body string, wants ...string) {
+	t.Helper()
+	offset := 0
+	for _, want := range wants {
+		idx := strings.Index(body[offset:], want)
+		if idx < 0 {
+			t.Fatalf("missing %q after offset %d", want, offset)
+		}
+		offset += idx + len(want)
+	}
+}
+
+func substringAfter(t *testing.T, body, marker string) string {
+	t.Helper()
+	idx := strings.Index(body, marker)
+	if idx < 0 {
+		t.Fatalf("missing marker %q", marker)
+	}
+	return body[idx+len(marker):]
 }
