@@ -13,6 +13,13 @@
   }
   .topbar-actions {
     gap: 3px;
+    /* Pin the create split button (and its sibling icon actions) to the
+       bottom-right of the header on mobile rather than top-aligning it
+       against the two-line title. align-self overrides the .topbar
+       align-items: flex-start set at <=820px; margin-top: 0 drops the 1px
+       optical-centering nudge from that same rule so the bottom edge is flush. */
+    align-self: flex-end;
+    margin-top: 0;
   }
   .primary-button {
     padding: 0 9px;

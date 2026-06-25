@@ -20,11 +20,20 @@ dialog.job-modal {
 dialog.job-modal::backdrop { background: rgba(0, 0, 0, .4); }
 dialog.job-modal form { display: flex; flex-direction: column; max-height: inherit; }
 dialog.job-modal .body {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: .55rem;
   overflow: auto;
   padding: 1.5rem 1.5rem .85rem;
 }
+/* The body is a flex column rather than a grid on purpose. iOS Safari
+   mis-sizes auto grid rows inside this scrollable, height-constrained
+   container and vertically clips the native <select> controls that are its
+   direct children (Agent / Model / Primary repository). A flex column gives
+   each field its intrinsic height, so the controls render fully. Direct
+   children must not shrink, or a tall form would compress every field (and the
+   textarea) to fit instead of letting the body scroll. */
+dialog.job-modal .body > * { flex-shrink: 0; }
 dialog.job-modal h2 { margin: 0 0 .25rem; font-size: 1.05rem; }
 dialog.job-modal p,
 dialog.job-modal .hint { color: #999; font-size: .75rem; margin-top: .25rem; }
