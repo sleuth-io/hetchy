@@ -15,16 +15,16 @@ const createAgentJob = `-- name: CreateAgentJob :one
 INSERT INTO agent_jobs (
     id, org_id, name, definition, agent_slug,
     primary_owner, primary_repo, additional_repos,
-    cron_schedule, timezone, enabled, next_run_at
+    cron_schedule, timezone, enabled, next_run_at, model
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8,
-    $9, $10, $11, $12
+    $9, $10, $11, $12, $13
 )
 RETURNING id, org_id, name, definition, agent_slug,
           primary_owner, primary_repo, additional_repos,
           cron_schedule, timezone, enabled, next_run_at,
-          last_run_at, last_run_id, last_error, created_at, updated_at
+          last_run_at, last_run_id, last_error, created_at, updated_at, model
 `
 
 type CreateAgentJobParams struct {
@@ -40,6 +40,7 @@ type CreateAgentJobParams struct {
 	Timezone        string             `json:"timezone"`
 	Enabled         bool               `json:"enabled"`
 	NextRunAt       pgtype.Timestamptz `json:"next_run_at"`
+	Model           string             `json:"model"`
 }
 
 func (q *Queries) CreateAgentJob(ctx context.Context, arg CreateAgentJobParams) (AgentJob, error) {
@@ -56,6 +57,7 @@ func (q *Queries) CreateAgentJob(ctx context.Context, arg CreateAgentJobParams) 
 		arg.Timezone,
 		arg.Enabled,
 		arg.NextRunAt,
+		arg.Model,
 	)
 	var i AgentJob
 	err := row.Scan(
@@ -76,6 +78,7 @@ func (q *Queries) CreateAgentJob(ctx context.Context, arg CreateAgentJobParams) 
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Model,
 	)
 	return i, err
 }
@@ -146,7 +149,7 @@ const getAgentJob = `-- name: GetAgentJob :one
 SELECT id, org_id, name, definition, agent_slug,
        primary_owner, primary_repo, additional_repos,
        cron_schedule, timezone, enabled, next_run_at,
-       last_run_at, last_run_id, last_error, created_at, updated_at
+       last_run_at, last_run_id, last_error, created_at, updated_at, model
 FROM agent_jobs
 WHERE org_id = $1 AND id = $2
 `
@@ -177,6 +180,7 @@ func (q *Queries) GetAgentJob(ctx context.Context, arg GetAgentJobParams) (Agent
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Model,
 	)
 	return i, err
 }
@@ -217,7 +221,7 @@ const getAgentJobForUpdate = `-- name: GetAgentJobForUpdate :one
 SELECT id, org_id, name, definition, agent_slug,
        primary_owner, primary_repo, additional_repos,
        cron_schedule, timezone, enabled, next_run_at,
-       last_run_at, last_run_id, last_error, created_at, updated_at
+       last_run_at, last_run_id, last_error, created_at, updated_at, model
 FROM agent_jobs
 WHERE org_id = $1 AND id = $2
 FOR UPDATE
@@ -249,6 +253,7 @@ func (q *Queries) GetAgentJobForUpdate(ctx context.Context, arg GetAgentJobForUp
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Model,
 	)
 	return i, err
 }
@@ -355,7 +360,7 @@ const listAgentJobsByOrg = `-- name: ListAgentJobsByOrg :many
 SELECT id, org_id, name, definition, agent_slug,
        primary_owner, primary_repo, additional_repos,
        cron_schedule, timezone, enabled, next_run_at,
-       last_run_at, last_run_id, last_error, created_at, updated_at
+       last_run_at, last_run_id, last_error, created_at, updated_at, model
 FROM agent_jobs
 WHERE org_id = $1
 ORDER BY enabled DESC, next_run_at ASC NULLS LAST, created_at DESC
@@ -388,6 +393,7 @@ func (q *Queries) ListAgentJobsByOrg(ctx context.Context, orgID string) ([]Agent
 			&i.LastError,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Model,
 		); err != nil {
 			return nil, err
 		}
@@ -412,7 +418,7 @@ WITH ranked AS (
 SELECT j.id, j.org_id, j.name, j.definition, j.agent_slug,
        j.primary_owner, j.primary_repo, j.additional_repos,
        j.cron_schedule, j.timezone, j.enabled, j.next_run_at,
-       j.last_run_at, j.last_run_id, j.last_error, j.created_at, j.updated_at
+       j.last_run_at, j.last_run_id, j.last_error, j.created_at, j.updated_at, j.model
 FROM agent_jobs j
 JOIN ranked r ON r.id = j.id
 WHERE NOT EXISTS (
@@ -458,6 +464,7 @@ func (q *Queries) ListClaimableDueAgentJobs(ctx context.Context, arg ListClaimab
 			&i.LastError,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Model,
 		); err != nil {
 			return nil, err
 		}
@@ -616,12 +623,13 @@ SET name = $3,
     timezone = $10,
     enabled = $11,
     next_run_at = $12,
+    model = $13,
     updated_at = NOW()
 WHERE org_id = $1 AND id = $2
 RETURNING id, org_id, name, definition, agent_slug,
           primary_owner, primary_repo, additional_repos,
           cron_schedule, timezone, enabled, next_run_at,
-          last_run_at, last_run_id, last_error, created_at, updated_at
+          last_run_at, last_run_id, last_error, created_at, updated_at, model
 `
 
 type UpdateAgentJobParams struct {
@@ -637,6 +645,7 @@ type UpdateAgentJobParams struct {
 	Timezone        string             `json:"timezone"`
 	Enabled         bool               `json:"enabled"`
 	NextRunAt       pgtype.Timestamptz `json:"next_run_at"`
+	Model           string             `json:"model"`
 }
 
 func (q *Queries) UpdateAgentJob(ctx context.Context, arg UpdateAgentJobParams) (AgentJob, error) {
@@ -653,6 +662,7 @@ func (q *Queries) UpdateAgentJob(ctx context.Context, arg UpdateAgentJobParams) 
 		arg.Timezone,
 		arg.Enabled,
 		arg.NextRunAt,
+		arg.Model,
 	)
 	var i AgentJob
 	err := row.Scan(
@@ -673,6 +683,7 @@ func (q *Queries) UpdateAgentJob(ctx context.Context, arg UpdateAgentJobParams) 
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Model,
 	)
 	return i, err
 }

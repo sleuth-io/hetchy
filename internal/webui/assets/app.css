@@ -392,6 +392,74 @@ h1 {
   stroke-width: 2.2;
 }
 
+/* Split "New chat" button: the main action plus a caret that opens the
+   create menu (e.g. "New Job"). The two buttons sit flush with a thin
+   divider so they read as one control. */
+.split-button {
+  position: relative;
+  display: inline-flex;
+  align-items: stretch;
+}
+.split-button-main {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+/* Non-admins get no caret/menu, so the main button is the only child and
+   keeps its full rounded shape. */
+.split-button-main:last-child {
+  border-top-right-radius: .6rem;
+  border-bottom-right-radius: .6rem;
+}
+.split-button-toggle {
+  min-height: 2.3rem;
+  padding: 0 8px;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  border-left: 1px solid rgba(255, 255, 255, 0.28);
+}
+.split-button-toggle svg {
+  width: 1rem;
+  height: 1rem;
+  stroke-width: 2.2;
+}
+.split-button-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 12px;
+  background: none;
+  border: 0;
+  color: var(--ink);
+  font-size: .84rem;
+  cursor: pointer;
+}
+.split-button-menu button:hover { background: var(--hover); }
+
+/* Toast used by the shared job modal (settings_jobs.js) after creating a
+   job from the chat page. Mirrors the .repo-toast rule in settings.css so
+   the toast is styled on whichever page mounts the modal. */
+.repo-toast {
+  position: fixed;
+  bottom: 1.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #2a2a2e;
+  color: #fff;
+  padding: .65rem 1.25rem;
+  border-radius: .5rem;
+  font-size: .85rem;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, .18);
+  max-width: 32rem;
+  z-index: 100;
+}
+.repo-toast-err { background: #a02020; }
+html.is-dark .repo-toast {
+  background: #f5f5f7;
+  color: #1a1a1a;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, .5);
+}
+html.is-dark .repo-toast-err { background: #f0a0a0; color: #2c0000; }
+
 .summary-strip {
   width: min(100%, 980px);
   display: flex;

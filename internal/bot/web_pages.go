@@ -73,7 +73,7 @@ func (b *Bot) indexHandler(w http.ResponseWriter, r *http.Request) {
 	if b.cfg.Env == "dev" {
 		appTitle = "Hetchy dev"
 	}
-	b.renderTemplate(w, webui.App, map[string]any{
+	data := map[string]any{
 		"Email":           p.Email,
 		"DisplayName":     displayName,
 		"GravatarURL":     webui.GravatarURL(p.Email),
@@ -83,7 +83,18 @@ func (b *Bot) indexHandler(w http.ResponseWriter, r *http.Request) {
 		"DefaultRepoSlug": defaultRepoSlug,
 		"AppDataLimit":    appDataLimitDefault,
 		"AppTitle":        appTitle,
-	})
+		"IsAdmin":         isAdmin(p),
+	}
+	// The chat page mounts the same job-edit modal as the settings Jobs
+	// tab (split "New chat" → "New Job"). Only admins can create jobs, so
+	// only they get the modal + its select options. A failure here
+	// shouldn't break chat, so we log and fall through.
+	if isAdmin(p) {
+		if _, err := b.populateJobModalData(r.Context(), p.OrgID, data); err != nil {
+			b.log.Warn("populate job modal data for chat page failed", "error", err, "org", p.OrgID)
+		}
+	}
+	b.renderTemplate(w, webui.App, data)
 }
 
 // userHasMultipleOrgs reports whether the user belongs to more than one

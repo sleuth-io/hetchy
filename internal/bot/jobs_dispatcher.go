@@ -175,7 +175,7 @@ func (b *Bot) dispatchClaimedJob(ctx context.Context, claim jobs.ClaimedExecutio
 		log.Warn("mark job execution running before dispatch",
 			"org", job.OrgID, "job_id", job.ID, "execution_id", execution.ID, "error", err)
 	}
-	b.HandleRequest(runCtx, oc, prompt, requestID, threadID, "job:"+job.ID, nil, requestedAgent, &repo, jobDispatchModel(oc), noopEmitter{})
+	b.HandleRequest(runCtx, oc, prompt, requestID, threadID, "job:"+job.ID, nil, requestedAgent, &repo, jobDispatchModel(job, oc), noopEmitter{})
 
 	status, message := b.jobExecutionStatus(ctx, job.OrgID, threadID)
 	if err := b.jobs.FinishExecution(context.Background(), job.OrgID, execution.ID, status, message); err != nil {
@@ -214,7 +214,17 @@ func jobRequestID() string {
 	return strings.ToLower(strconv.FormatInt(time.Now().UnixNano(), 36) + "_" + hex.EncodeToString(random[:]))
 }
 
-func jobDispatchModel(oc orgcfg.Config) ClaudeModel {
+// jobDispatchModel resolves the model a job execution runs under. A job
+// now carries an explicit model (defaulting to Opus for jobs created
+// before the column existed), so we honour that when it parses to a
+// known model. Jobs with no/unknown model fall back to the original
+// credential-based default.
+func jobDispatchModel(job jobs.Job, oc orgcfg.Config) ClaudeModel {
+	if strings.TrimSpace(job.Model) != "" {
+		if model, ok := parseClaudeModel(job.Model); ok {
+			return model
+		}
+	}
 	if hasOpenAICredentials(oc) && !hasAnthropicCredentials(oc) {
 		return ModelGPTBalanced
 	}

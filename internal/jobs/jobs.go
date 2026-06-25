@@ -27,6 +27,24 @@ const (
 const defaultLocation = "UTC"
 const minRunningExecutionStaleAfter = 2 * time.Hour
 
+// DefaultModel is the model existing jobs fall back to when none was
+// chosen. Jobs created before the model column landed default to Opus
+// via the migration, and the modal pre-selects Opus to match.
+const DefaultModel = "opus"
+
+// validJobModels mirrors the chat composer's model identifiers (see
+// internal/bot/chat_model.go). It is kept here rather than imported so
+// the jobs package stays free of a dependency on the bot runtime; the
+// dispatcher maps these strings back onto its model enum.
+var validJobModels = map[string]struct{}{
+	"opus":         {},
+	"sonnet":       {},
+	"haiku":        {},
+	"gpt-frontier": {},
+	"gpt-balanced": {},
+	"gpt-fastest":  {},
+}
+
 var (
 	ErrNotConfigured = errors.New("jobs: store not configured")
 	ErrNotFound      = errors.New("jobs: not found")
@@ -59,6 +77,7 @@ type Job struct {
 	AdditionalRepos []RepoRef
 	CronSchedule    string
 	Timezone        string
+	Model           string
 	Enabled         bool
 	NextRunAt       time.Time
 	LastRunAt       time.Time
@@ -100,6 +119,7 @@ type JobInput struct {
 	AdditionalRepos []RepoRef
 	CronSchedule    string
 	Timezone        string
+	Model           string
 	Enabled         bool
 }
 
@@ -148,6 +168,7 @@ func (s *Store) Create(ctx context.Context, orgID string, input JobInput, now ti
 		Timezone:        clean.Timezone,
 		Enabled:         clean.Enabled,
 		NextRunAt:       timeParam(next),
+		Model:           clean.Model,
 	})
 	if err != nil {
 		return Job{}, fmt.Errorf("create job: %w", err)
@@ -187,6 +208,7 @@ func (s *Store) Update(ctx context.Context, orgID, jobID string, input JobInput,
 		Timezone:        clean.Timezone,
 		Enabled:         clean.Enabled,
 		NextRunAt:       timeParam(next),
+		Model:           clean.Model,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -481,11 +503,18 @@ func (s *Store) validateInput(ctx context.Context, orgID string, input JobInput)
 		PrimaryRepo:     strings.TrimSpace(input.PrimaryRepo),
 		CronSchedule:    strings.TrimSpace(input.CronSchedule),
 		Timezone:        strings.TrimSpace(input.Timezone),
+		Model:           strings.ToLower(strings.TrimSpace(input.Model)),
 		Enabled:         input.Enabled,
 		AdditionalRepos: cleanRepos(input.AdditionalRepos),
 	}
 	if out.Timezone == "" {
 		out.Timezone = defaultLocation
+	}
+	if out.Model == "" {
+		out.Model = DefaultModel
+	}
+	if _, ok := validJobModels[out.Model]; !ok {
+		return JobInput{}, invalidInput(fmt.Errorf("model %q is not supported", out.Model))
 	}
 	if out.Name == "" {
 		return JobInput{}, invalidInput(errors.New("job name is required"))
@@ -590,6 +619,7 @@ func jobFromRow(row sqlc.AgentJob) (Job, error) {
 		AdditionalRepos: additional,
 		CronSchedule:    row.CronSchedule,
 		Timezone:        row.Timezone,
+		Model:           row.Model,
 		Enabled:         row.Enabled,
 		NextRunAt:       row.NextRunAt.Time,
 		LastRunAt:       row.LastRunAt.Time,

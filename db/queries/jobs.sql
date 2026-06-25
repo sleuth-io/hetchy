@@ -2,16 +2,16 @@
 INSERT INTO agent_jobs (
     id, org_id, name, definition, agent_slug,
     primary_owner, primary_repo, additional_repos,
-    cron_schedule, timezone, enabled, next_run_at
+    cron_schedule, timezone, enabled, next_run_at, model
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8,
-    $9, $10, $11, $12
+    $9, $10, $11, $12, $13
 )
 RETURNING id, org_id, name, definition, agent_slug,
           primary_owner, primary_repo, additional_repos,
           cron_schedule, timezone, enabled, next_run_at,
-          last_run_at, last_run_id, last_error, created_at, updated_at;
+          last_run_at, last_run_id, last_error, created_at, updated_at, model;
 
 -- name: UpdateAgentJob :one
 UPDATE agent_jobs
@@ -25,18 +25,19 @@ SET name = $3,
     timezone = $10,
     enabled = $11,
     next_run_at = $12,
+    model = $13,
     updated_at = NOW()
 WHERE org_id = $1 AND id = $2
 RETURNING id, org_id, name, definition, agent_slug,
           primary_owner, primary_repo, additional_repos,
           cron_schedule, timezone, enabled, next_run_at,
-          last_run_at, last_run_id, last_error, created_at, updated_at;
+          last_run_at, last_run_id, last_error, created_at, updated_at, model;
 
 -- name: GetAgentJob :one
 SELECT id, org_id, name, definition, agent_slug,
        primary_owner, primary_repo, additional_repos,
        cron_schedule, timezone, enabled, next_run_at,
-       last_run_at, last_run_id, last_error, created_at, updated_at
+       last_run_at, last_run_id, last_error, created_at, updated_at, model
 FROM agent_jobs
 WHERE org_id = $1 AND id = $2;
 
@@ -44,7 +45,7 @@ WHERE org_id = $1 AND id = $2;
 SELECT id, org_id, name, definition, agent_slug,
        primary_owner, primary_repo, additional_repos,
        cron_schedule, timezone, enabled, next_run_at,
-       last_run_at, last_run_id, last_error, created_at, updated_at
+       last_run_at, last_run_id, last_error, created_at, updated_at, model
 FROM agent_jobs
 WHERE org_id = $1 AND id = $2
 FOR UPDATE;
@@ -53,7 +54,7 @@ FOR UPDATE;
 SELECT id, org_id, name, definition, agent_slug,
        primary_owner, primary_repo, additional_repos,
        cron_schedule, timezone, enabled, next_run_at,
-       last_run_at, last_run_id, last_error, created_at, updated_at
+       last_run_at, last_run_id, last_error, created_at, updated_at, model
 FROM agent_jobs
 WHERE org_id = $1
 ORDER BY enabled DESC, next_run_at ASC NULLS LAST, created_at DESC;
@@ -75,7 +76,7 @@ WITH ranked AS (
 SELECT j.id, j.org_id, j.name, j.definition, j.agent_slug,
        j.primary_owner, j.primary_repo, j.additional_repos,
        j.cron_schedule, j.timezone, j.enabled, j.next_run_at,
-       j.last_run_at, j.last_run_id, j.last_error, j.created_at, j.updated_at
+       j.last_run_at, j.last_run_id, j.last_error, j.created_at, j.updated_at, j.model
 FROM agent_jobs j
 JOIN ranked r ON r.id = j.id
 WHERE NOT EXISTS (

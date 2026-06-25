@@ -27,6 +27,8 @@ type jobAPIResponse struct {
 	ScheduleLabel       string   `json:"schedule_label"`
 	Timezone            string   `json:"timezone"`
 	TimezoneLabel       string   `json:"timezone_label"`
+	Model               string   `json:"model"`
+	ModelLabel          string   `json:"model_label"`
 	Enabled             bool     `json:"enabled"`
 	NextRunAt           string   `json:"next_run_at,omitempty"`
 	NextRunLabel        string   `json:"next_run_label,omitempty"`
@@ -61,6 +63,7 @@ type jobAPIRequest struct {
 	AdditionalRepositories []string       `json:"additional_repositories"`
 	CronSchedule           *string        `json:"cron_schedule"`
 	Timezone               *string        `json:"timezone"`
+	Model                  *string        `json:"model"`
 	Enabled                *bool          `json:"enabled"`
 }
 
@@ -276,6 +279,7 @@ func (r jobAPIRequest) toInput(current jobs.Job) (jobs.JobInput, error) {
 		AdditionalRepos: append([]jobs.RepoRef(nil), current.AdditionalRepos...),
 		CronSchedule:    current.CronSchedule,
 		Timezone:        current.Timezone,
+		Model:           current.Model,
 		Enabled:         enabled,
 	}
 	if r.Name != nil {
@@ -292,6 +296,9 @@ func (r jobAPIRequest) toInput(current jobs.Job) (jobs.JobInput, error) {
 	}
 	if r.Timezone != nil {
 		input.Timezone = *r.Timezone
+	}
+	if r.Model != nil {
+		input.Model = *r.Model
 	}
 	if r.PrimaryOwner != nil {
 		input.PrimaryOwner = *r.PrimaryOwner
@@ -353,6 +360,8 @@ func jobAPIFromJob(job jobs.Job) jobAPIResponse {
 		ScheduleLabel:       jobScheduleLabel(job.CronSchedule),
 		Timezone:            job.Timezone,
 		TimezoneLabel:       jobTimezoneLabel(job.Timezone),
+		Model:               job.Model,
+		ModelLabel:          jobModelLabel(job.Model),
 		Enabled:             job.Enabled,
 		NextRunAt:           formatJobTime(job.NextRunAt),
 		NextRunLabel:        jobDisplayTime(job.NextRunAt, job.Timezone),

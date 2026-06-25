@@ -240,6 +240,22 @@ func TestValidateInputRequiresValidCron(t *testing.T) {
 	}
 }
 
+func TestValidateInputRejectsUnknownModel(t *testing.T) {
+	_, err := (&Store{}).validateInput(t.Context(), "org1", JobInput{
+		Name:         "My Job",
+		Definition:   "do stuff",
+		PrimaryOwner: "owner",
+		PrimaryRepo:  "repo",
+		Model:        "definitely-not-a-model",
+	})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("want ErrInvalidInput, got %v", err)
+	}
+	if msg := InvalidInputMessage(err); !strings.Contains(msg, "not supported") {
+		t.Fatalf("unknown model message = %q, want 'not supported'", msg)
+	}
+}
+
 func TestTimeParam(t *testing.T) {
 	zero := timeParam(time.Time{})
 	if zero.Valid {

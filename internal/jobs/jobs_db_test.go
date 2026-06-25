@@ -163,7 +163,7 @@ type errRows struct {
 	err error
 }
 
-// agentJobRow fills the 17-column AgentJob scan in sqlc order.
+// agentJobRow fills the 18-column AgentJob scan in sqlc order.
 type agentJobRow struct {
 	job sqlc.AgentJob
 }
@@ -174,7 +174,7 @@ func (r agentJobRow) Scan(dest ...any) error {
 		r.job.PrimaryOwner, r.job.PrimaryRepo, r.job.AdditionalRepos,
 		r.job.CronSchedule, r.job.Timezone, r.job.Enabled, r.job.NextRunAt,
 		r.job.LastRunAt, r.job.LastRunID, r.job.LastError, r.job.CreatedAt,
-		r.job.UpdatedAt,
+		r.job.UpdatedAt, r.job.Model,
 	}
 	return assignScan(dest, values)
 }

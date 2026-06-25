@@ -103,14 +103,30 @@ func TestJobRequestIDIncludesRandomSuffix(t *testing.T) {
 }
 
 func TestJobDispatchModelUsesAvailableCredentialFamily(t *testing.T) {
-	if got := jobDispatchModel(orgcfg.Config{OpenAIAPIKey: "sk-openai"}); got != ModelGPTBalanced {
+	// Jobs with no explicit model fall back to the credential-based default.
+	if got := jobDispatchModel(jobs.Job{}, orgcfg.Config{OpenAIAPIKey: "sk-openai"}); got != ModelGPTBalanced {
 		t.Fatalf("OpenAI-only job model = %q, want %q", got, ModelGPTBalanced)
 	}
-	if got := jobDispatchModel(orgcfg.Config{AnthropicAPIKey: "sk-ant"}); got != ClaudeModelSonnet {
+	if got := jobDispatchModel(jobs.Job{}, orgcfg.Config{AnthropicAPIKey: "sk-ant"}); got != ClaudeModelSonnet {
 		t.Fatalf("Anthropic job model = %q, want %q", got, ClaudeModelSonnet)
 	}
-	if got := jobDispatchModel(orgcfg.Config{AnthropicAPIKey: "sk-ant", OpenAIAPIKey: "sk-openai"}); got != ClaudeModelSonnet {
+	if got := jobDispatchModel(jobs.Job{}, orgcfg.Config{AnthropicAPIKey: "sk-ant", OpenAIAPIKey: "sk-openai"}); got != ClaudeModelSonnet {
 		t.Fatalf("mixed credential job model = %q, want %q", got, ClaudeModelSonnet)
+	}
+}
+
+func TestJobDispatchModelHonoursExplicitModel(t *testing.T) {
+	// A job pinned to a model uses it regardless of which credential
+	// family the org has wired up.
+	if got := jobDispatchModel(jobs.Job{Model: "opus"}, orgcfg.Config{OpenAIAPIKey: "sk-openai"}); got != ClaudeModelOpus {
+		t.Fatalf("opus-pinned job model = %q, want %q", got, ClaudeModelOpus)
+	}
+	if got := jobDispatchModel(jobs.Job{Model: "haiku"}, orgcfg.Config{AnthropicAPIKey: "sk-ant"}); got != ClaudeModelHaiku {
+		t.Fatalf("haiku-pinned job model = %q, want %q", got, ClaudeModelHaiku)
+	}
+	// An unknown stored model falls back to the credential-based default.
+	if got := jobDispatchModel(jobs.Job{Model: "bogus"}, orgcfg.Config{AnthropicAPIKey: "sk-ant"}); got != ClaudeModelSonnet {
+		t.Fatalf("unknown-model job = %q, want %q", got, ClaudeModelSonnet)
 	}
 }
 

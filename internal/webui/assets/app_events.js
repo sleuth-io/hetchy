@@ -234,6 +234,13 @@
     });
     byID('new-task-btn').addEventListener('click', openNewTask);
     byID('new-task-form').addEventListener('submit', submitNewTask);
+    const newCreateToggle = byID('new-create-toggle');
+    if (newCreateToggle) {
+      newCreateToggle.addEventListener('click', e => {
+        e.stopPropagation();
+        togglePopover('new-create-menu', 'new-create-toggle');
+      });
+    }
     byID('agent-menu-btn').addEventListener('click', e => {
       e.stopPropagation();
       togglePopover('agent-menu', 'agent-menu-btn');
@@ -400,12 +407,19 @@
         return;
       }
       if (!e.target.closest('.meta-more-wrap')) closeDetailMetaDropdown();
+      // The "New Job" item lives inside the split-button menu; close the
+      // menu once chosen so it isn't left open behind the job modal.
+      if (e.target.closest('#new-create-menu [data-job-new]')) {
+        closePopover('new-create-menu', 'new-create-toggle');
+        return;
+      }
       if (!e.target.closest('.composer-popover') && !e.target.closest('.floating-menu')) {
         closePopover('task-tools-popover', 'task-tools-btn');
         closePopover('task-repo-popover', 'task-repo-btn');
         closePopover('task-agent-popover', 'task-agent-btn');
         closePopover('task-model-popover', 'task-model-btn');
         closePopover('agent-menu', 'agent-menu-btn');
+        closePopover('new-create-menu', 'new-create-toggle');
       }
     });
     byID('user-menu-btn').addEventListener('click', () => {

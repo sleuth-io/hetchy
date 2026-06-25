@@ -1180,6 +1180,7 @@
                data-job-primary="{{.PrimaryRepository}}"
                data-job-cron="{{.CronSchedule}}"
                data-job-timezone="{{.Timezone}}"
+               data-job-model="{{.Model}}"
                data-job-enabled="{{if .Enabled}}1{{else}}0{{end}}">
         <div class="job-card-head">
           <div class="job-title">
@@ -1189,6 +1190,7 @@
             </div>
             <dl class="job-submeta">
               <div><dt>Agent</dt><dd>{{.AgentLabel}}</dd></div>
+              <div><dt>Model</dt><dd>{{.ModelLabel}}</dd></div>
               <div><dt>Repo</dt><dd>{{.PrimaryRepository}}</dd></div>
             </dl>
           </div>
@@ -1236,67 +1238,7 @@
   {{end}}
 
   {{if .IsAdmin}}
-  <dialog class="api-modal agent-modal job-modal" id="modal-job-edit">
-    <form id="job-edit-form" autocomplete="off" data-form-type="other">
-      <div class="body">
-        <h2 data-job-modal-title>Create job</h2>
-        <input type="hidden" name="id" data-job-field="id">
-        <label for="job-name">Name</label>
-        <input id="job-name" type="text" name="name" data-job-field="name" required maxlength="120" placeholder="Weekly dependency check" autocomplete="off" autocapitalize="sentences" spellcheck="false" data-1p-ignore="true" data-lpignore="true" data-form-type="other">
-        <label for="job-definition">Definition</label>
-        <textarea id="job-definition" name="definition" data-job-field="definition" rows="7" required placeholder="Check for dependency updates and open a PR only when changes are needed."></textarea>
-        <label for="job-agent">Agent</label>
-        <select id="job-agent" name="agent_slug" data-job-field="agent_slug">
-          {{range .JobAgentOptions}}
-          <option value="{{.Slug}}">{{.DisplayName}}</option>
-          {{end}}
-        </select>
-        <label for="job-primary-repo">Primary repository</label>
-        <select id="job-primary-repo" name="primary_repository" data-job-field="primary_repository" required autocomplete="off" data-1p-ignore="true" data-lpignore="true" data-form-type="other">
-          <option value="">Choose repository</option>
-          {{range .JobRepoOptions}}<option value="{{.Slug}}">{{.Slug}}</option>{{end}}
-        </select>
-        <label for="job-additional-repo-picker">Additional repositories</label>
-        <div class="job-repo-multiselect" data-job-additional-picker>
-          <select id="job-additional-repo-picker" autocomplete="off" data-job-additional-select data-1p-ignore="true" data-lpignore="true" data-form-type="other">
-            <option value="">Add repository</option>
-            {{range .JobRepoOptions}}<option value="{{.Slug}}">{{.Slug}}</option>{{end}}
-          </select>
-          <div class="job-repo-chip-list" data-job-additional-chips></div>
-          <input type="hidden" name="additional_repositories" data-job-field="additional_repositories">
-        </div>
-        <p class="hint">Additional repositories must come from the same GitHub App installation as the primary repository.</p>
-        <div class="job-form-grid">
-          <div>
-            <label for="job-schedule-preset">Schedule</label>
-            <select id="job-schedule-preset" data-job-schedule-preset>
-              <option value="0 * * * *">Every hour</option>
-              <option value="0 */4 * * *">Every 4 hours</option>
-              <option value="0 */6 * * *">Every 6 hours</option>
-              <option value="0 */8 * * *">Every 8 hours</option>
-              <option value="0 */12 * * *">Every 12 hours</option>
-              <option value="0 9 * * *">Daily</option>
-              <option value="0 9 * * 1">Weekly</option>
-              <option value="advanced">Advanced</option>
-            </select>
-          </div>
-          <div>
-            <label for="job-timezone">Timezone</label>
-            <input id="job-timezone" type="text" name="timezone" data-job-field="timezone" value="UTC" required placeholder="UTC">
-          </div>
-        </div>
-        <div class="job-schedule-advanced" data-job-cron-row hidden>
-          <label for="job-cron">Cron schedule</label>
-          <input id="job-cron" type="text" name="cron_schedule" data-job-field="cron_schedule" required value="0 * * * *" placeholder="0 * * * *">
-        </div>
-        <p class="job-form-error" data-job-error hidden></p>
-      </div>
-      <div class="actions">
-        <button type="button" class="cancel" data-close-modal>Cancel</button>
-        <button class="save" type="submit">Save</button>
-      </div>
-    </form>
-  </dialog>
+  {{template "job_edit_modal" .}}
   {{template "settings_confirm_dialog" .}}
   {{end}}
 {{end}}
