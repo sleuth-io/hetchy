@@ -1,0 +1,170 @@
+/* Styling for the shared job-edit modal (templates/_job_modal.html) when it
+   is mounted on the chat page. The settings page styles the same modal via
+   settings.css, but the chat page does not load settings.css, so these rules
+   reproduce the modal's appearance there. Every selector is scoped to
+   dialog.job-modal so nothing leaks into the surrounding chat UI. Keep in
+   sync with the .api-modal / .agent-modal / .job-* rules in settings.css. */
+
+dialog.job-modal {
+  border: none;
+  border-radius: .5rem;
+  padding: 0;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, .35);
+  width: min(46rem, calc(100vw - 2rem));
+  max-width: min(46rem, calc(100vw - 2rem));
+  max-height: calc(100dvh - 2rem);
+  overflow: hidden;
+  background: #fff;
+  color: #1a1a1a;
+}
+dialog.job-modal::backdrop { background: rgba(0, 0, 0, .4); }
+dialog.job-modal form { display: flex; flex-direction: column; max-height: inherit; }
+dialog.job-modal .body {
+  display: grid;
+  gap: .55rem;
+  overflow: auto;
+  padding: 1.5rem 1.5rem .85rem;
+}
+dialog.job-modal h2 { margin: 0 0 .25rem; font-size: 1.05rem; }
+dialog.job-modal p,
+dialog.job-modal .hint { color: #999; font-size: .75rem; margin-top: .25rem; }
+dialog.job-modal label {
+  display: block;
+  margin: 0;
+  font-size: .85rem;
+  color: #555;
+}
+dialog.job-modal input[type="text"],
+dialog.job-modal input[type="password"],
+dialog.job-modal select,
+dialog.job-modal textarea {
+  width: 100%;
+  padding: .55rem .75rem;
+  border: 1px solid #ccc;
+  border-radius: .4rem;
+  font-size: .95rem;
+  box-sizing: border-box;
+  font-family: ui-monospace, monospace;
+  background: #fff;
+  color: #1a1a1a;
+}
+dialog.job-modal textarea {
+  resize: vertical;
+  min-height: 8.5rem;
+  max-height: 28dvh;
+  line-height: 1.45;
+  font-family: inherit;
+}
+dialog.job-modal input:focus,
+dialog.job-modal select:focus,
+dialog.job-modal textarea:focus { outline: none; border-color: #0b93f6; }
+dialog.job-modal .actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: .5rem;
+  padding: 0 1.5rem 1.25rem;
+}
+dialog.job-modal button {
+  padding: .5rem 1rem;
+  border-radius: .4rem;
+  font-size: .85rem;
+  cursor: pointer;
+  font-family: inherit;
+}
+dialog.job-modal .save { background: #0b93f6; color: #fff; border: 0; }
+dialog.job-modal .save:hover { background: #0a83d8; }
+dialog.job-modal .save:disabled { opacity: .55; cursor: default; }
+dialog.job-modal .cancel { background: #fff; color: #555; border: 1px solid #ddd; }
+dialog.job-modal .cancel:hover { background: #fafafa; }
+
+/* Job-specific layout bits */
+dialog.job-modal .job-form-grid {
+  display: grid;
+  grid-template-columns: minmax(12rem, .9fr) minmax(18rem, 1.35fr);
+  gap: .65rem;
+}
+dialog.job-modal .job-form-grid > div,
+dialog.job-modal .job-schedule-advanced { display: grid; gap: .35rem; min-width: 0; }
+dialog.job-modal .job-schedule-advanced[hidden] { display: none; }
+dialog.job-modal .job-repo-multiselect { display: grid; gap: .45rem; }
+dialog.job-modal .job-repo-chip-list { display: flex; flex-wrap: wrap; gap: .35rem; min-height: 1.6rem; }
+dialog.job-modal .job-repo-chip-list:empty { display: none; }
+dialog.job-modal .job-repo-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: .4rem;
+  max-width: 100%;
+  padding: .28rem .42rem .28rem .6rem;
+  border: 1px solid #d8e3ef;
+  border-radius: 1rem;
+  background: #f5f9fd;
+  color: #245a8f;
+  font-size: .78rem;
+  line-height: 1.2;
+}
+dialog.job-modal .job-repo-chip span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+dialog.job-modal .job-repo-chip button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 1.15rem;
+  min-width: 1.15rem;
+  max-width: 1.15rem;
+  height: 1.15rem;
+  box-sizing: border-box;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0;
+  line-height: 1;
+  margin: 0;
+  padding: 0;
+  appearance: none;
+}
+dialog.job-modal .job-repo-chip button::before,
+dialog.job-modal .job-repo-chip button::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: .52rem;
+  height: 1px;
+  background: currentColor;
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+dialog.job-modal .job-repo-chip button::after { transform: translate(-50%, -50%) rotate(-45deg); }
+dialog.job-modal .job-repo-chip button:hover { background: rgba(36, 90, 143, .12); }
+dialog.job-modal .job-form-error {
+  margin: .35rem 0 0;
+  padding: .5rem .65rem;
+  border-radius: .4rem;
+  background: #fee;
+  color: #a02020;
+  font-size: .82rem;
+}
+
+/* Dark mode (chat page toggles html.is-dark) */
+html.is-dark dialog.job-modal {
+  background: #1c1c1f;
+  color: #e7e7e9;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, .6);
+}
+html.is-dark dialog.job-modal::backdrop { background: rgba(0, 0, 0, .6); }
+html.is-dark dialog.job-modal h2 { color: #f5f5f7; }
+html.is-dark dialog.job-modal p,
+html.is-dark dialog.job-modal .hint { color: #6e6e72; }
+html.is-dark dialog.job-modal label { color: #b8b8bc; }
+html.is-dark dialog.job-modal input[type="text"],
+html.is-dark dialog.job-modal input[type="password"],
+html.is-dark dialog.job-modal select,
+html.is-dark dialog.job-modal textarea { background: #232327; color: #e7e7e9; border-color: #2e2e33; }
+html.is-dark dialog.job-modal .cancel { background: #232327; color: #c4c4c8; border-color: #2e2e33; }
+html.is-dark dialog.job-modal .cancel:hover { background: #2a2a2e; }
+html.is-dark dialog.job-modal .job-repo-chip { background: #172638; border-color: #295b83; color: #9dccff; }
+html.is-dark dialog.job-modal .job-repo-chip button:hover { background: rgba(157, 204, 255, .14); }
+html.is-dark dialog.job-modal .job-form-error { background: #3b1717; color: #ff8888; }

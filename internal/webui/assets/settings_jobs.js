@@ -145,11 +145,14 @@
     showAdvancedSchedule(false);
   }
 
+  const defaultModel = 'opus';
+
   function resetForm() {
     clearError();
     form.reset();
     setValue('id', '');
     setValue('timezone', defaultTimezone());
+    setValue('model', defaultModel);
     setScheduleValue(defaultCronSchedule);
     setAdditionalRepos([]);
     if (titleEl) titleEl.textContent = 'Create job';
@@ -162,6 +165,7 @@
     setValue('agent_slug', card.dataset.jobAgent || '');
     setValue('primary_repository', card.dataset.jobPrimary || '');
     setValue('timezone', card.dataset.jobTimezone || 'UTC');
+    setValue('model', card.dataset.jobModel || defaultModel);
     setScheduleValue(card.dataset.jobCron || defaultCronSchedule);
     const definition = card.querySelector('[data-job-definition]');
     setValue('definition', definition ? definition.textContent.trim() : '');
@@ -184,7 +188,8 @@
       primary_repository: field('primary_repository') ? field('primary_repository').value : '',
       additional_repositories: selectedAdditionalRepos.slice(),
       cron_schedule: field('cron_schedule') ? field('cron_schedule').value : '',
-      timezone: field('timezone') ? field('timezone').value : 'UTC'
+      timezone: field('timezone') ? field('timezone').value : 'UTC',
+      model: field('model') ? field('model').value : defaultModel
     };
   }
 
@@ -241,6 +246,17 @@
     });
   });
 
+  // The settings Jobs tab and the chat page share this modal. On the
+  // settings tab we reload so the freshly saved job appears in the list;
+  // on the chat page (no jobs list to refresh) we just close and toast.
+  function onSettingsPage() {
+    return window.location.pathname.indexOf('/settings') === 0;
+  }
+
+  function closeDialog() {
+    if (dlg.open && typeof dlg.close === 'function') dlg.close();
+  }
+
   form.addEventListener('submit', async e => {
     e.preventDefault();
     clearError();
@@ -251,12 +267,25 @@
       const url = id ? '/api/v1/jobs/' + encodeURIComponent(id) : '/api/v1/jobs';
       const method = id ? 'PATCH' : 'POST';
       await requestJSON(url, { method, body: JSON.stringify(payloadFromForm()) });
-      window.location.href = '/settings/org?tab=jobs&saved=job_saved';
+      if (onSettingsPage()) {
+        window.location.href = '/settings/org?tab=jobs&saved=job_saved';
+      } else {
+        closeDialog();
+        showToast(id ? 'Job updated.' : 'Job created.', false);
+      }
     } catch (err) {
       showError(err.message);
     } finally {
       if (save) save.disabled = false;
     }
+  });
+
+  // Bind the modal's Cancel/close affordance. settings.js wires a global
+  // [data-close-modal] handler on the settings page, but the chat page
+  // doesn't load it, so the shared modal binds its own (a redundant
+  // close() on the settings page is harmless).
+  dlg.querySelectorAll('[data-close-modal]').forEach(btn => {
+    btn.addEventListener('click', closeDialog);
   });
 
   document.querySelectorAll('[data-job-toggle]').forEach(btn => {

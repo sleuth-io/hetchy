@@ -22,6 +22,8 @@ type settingsJobView struct {
 	ScheduleLabel       string
 	Timezone            string
 	TimezoneLabel       string
+	Model               string
+	ModelLabel          string
 	Enabled             bool
 	NextRunAt           string
 	NextRunLabel        string
@@ -52,26 +54,59 @@ func (b *Bot) populateJobsSettingsTabData(ctx context.Context, orgID string, dat
 		}
 		jobRows = rows
 	}
-	agentLabels, agentOptions, err := b.jobAgentOptions(ctx, orgID)
+	agentLabels, err := b.populateJobModalData(ctx, orgID, data)
 	if err != nil {
 		return err
-	}
-	_, repos, err := b.loadIntegrationsView(ctx, orgID)
-	if err != nil {
-		return fmt.Errorf("load repositories: %w", err)
-	}
-	repoOptions := make([]settingsJobRepoOption, 0, len(repos))
-	for _, repo := range repos {
-		repoOptions = append(repoOptions, settingsJobRepoOption{Slug: repo.Owner + "/" + repo.Name})
 	}
 	out := make([]settingsJobView, 0, len(jobRows))
 	for _, job := range jobRows {
 		out = append(out, settingsJobFromJob(job, agentLabels))
 	}
 	data["Jobs"] = out
+	return nil
+}
+
+// populateJobModalData fills the shared job-edit modal's select options
+// (agents, repositories, models) into data. Both the settings Jobs tab
+// and the chat page mount the same modal, so both call this. It returns
+// the agent-label map so the settings tab can also render each job card.
+func (b *Bot) populateJobModalData(ctx context.Context, orgID string, data map[string]any) (map[string]string, error) {
+	agentLabels, agentOptions, err := b.jobAgentOptions(ctx, orgID)
+	if err != nil {
+		return nil, err
+	}
+	repoOptions := []settingsJobRepoOption{}
+	// The repository list comes from the GitHub installations store. It is
+	// absent in lightweight render paths/tests, so degrade to no repo
+	// options rather than panicking.
+	if b.store != nil && b.store.Queries != nil {
+		_, repos, err := b.loadIntegrationsView(ctx, orgID)
+		if err != nil {
+			return nil, fmt.Errorf("load repositories: %w", err)
+		}
+		for _, repo := range repos {
+			repoOptions = append(repoOptions, settingsJobRepoOption{Slug: repo.Owner + "/" + repo.Name})
+		}
+	}
 	data["JobAgentOptions"] = agentOptions
 	data["JobRepoOptions"] = repoOptions
-	return nil
+	data["JobModelOptions"] = jobModelOptions(b.orgHasOpenAICredentials(ctx, orgID))
+	return agentLabels, nil
+}
+
+// orgHasOpenAICredentials reports whether the org has wired up OpenAI
+// Codex, gating the GPT block in the job modal's model picker the same
+// way the chat composer gates it. Errors are treated as "not enabled"
+// so a transient orgcfg hiccup never drops the Anthropic options.
+func (b *Bot) orgHasOpenAICredentials(ctx context.Context, orgID string) bool {
+	if b.orgs == nil {
+		return false
+	}
+	cfg, err := b.orgs.Get(ctx, orgID)
+	if err != nil {
+		return false
+	}
+	return cfg.OpenAIAPIKey != "" || cfg.OpenAICodexOAuthToken != ""
 }
 
 func (b *Bot) jobAgentOptions(ctx context.Context, orgID string) (map[string]string, []settingsJobAgentOption, error) {
@@ -141,6 +176,8 @@ func settingsJobFromJob(job jobs.Job, agentLabels map[string]string) settingsJob
 		ScheduleLabel:       jobScheduleLabel(job.CronSchedule),
 		Timezone:            job.Timezone,
 		TimezoneLabel:       jobTimezoneLabel(job.Timezone),
+		Model:               job.Model,
+		ModelLabel:          jobModelLabel(job.Model),
 		Enabled:             job.Enabled,
 		NextRunAt:           formatSettingsTime(job.NextRunAt),
 		NextRunLabel:        jobDisplayTime(job.NextRunAt, job.Timezone),

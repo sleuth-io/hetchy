@@ -158,6 +158,7 @@
       ['task-agent-popover', 'task-agent-btn'],
       ['task-model-popover', 'task-model-btn'],
       ['agent-menu', 'agent-menu-btn'],
+      ['new-create-menu', 'new-create-toggle'],
       ['user-menu-dropdown', 'user-menu-btn'],
     ].forEach(pair => {
       if (pair[0] === id) return;
@@ -197,6 +198,7 @@
       ['task-agent-popover', 'task-agent-btn'],
       ['task-model-popover', 'task-model-btn'],
       ['agent-menu', 'agent-menu-btn'],
+      ['new-create-menu', 'new-create-toggle'],
       ['user-menu-dropdown', 'user-menu-btn'],
     ].forEach(pair => closePopover(pair[0], pair[1]));
     activeRunActionButton = btn;

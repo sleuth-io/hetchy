@@ -15,6 +15,7 @@
 <link rel="stylesheet" href="{{assetPath "app_chat.css"}}">
 <link rel="stylesheet" href="{{assetPath "app_agent_docs.css"}}">
 <link rel="stylesheet" href="{{assetPath "app_responsive.css"}}">
+{{if .IsAdmin}}<link rel="stylesheet" href="{{assetPath "job_modal.css"}}">{{end}}
 </head>
 <body data-current-user-id="{{.UserID}}" data-openai-enabled="{{if .OpenAIEnabled}}1{{else}}0{{end}}" data-default-repo-slug="{{.DefaultRepoSlug}}" data-app-data-limit="{{or .AppDataLimit 80}}">
 <div id="toast-stack" aria-live="polite" aria-atomic="true"></div>
@@ -90,13 +91,25 @@
             <a href="/settings/org?tab=agents" role="menuitem">Agent settings</a>
           </div>
         </div>
-        <button id="new-task-btn" class="primary-button" type="button">
-          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 5v14"/>
-            <path d="M5 12h14"/>
-          </svg>
-          <span>New chat</span>
-        </button>
+        <div class="split-button" id="new-create-split">
+          <button id="new-task-btn" class="primary-button split-button-main" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 5v14"/>
+              <path d="M5 12h14"/>
+            </svg>
+            <span>New chat</span>
+          </button>
+          {{if .IsAdmin}}
+          <button id="new-create-toggle" class="primary-button split-button-toggle" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="More create options">
+            <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m6 9 6 6 6-6"/>
+            </svg>
+          </button>
+          <div id="new-create-menu" class="floating-menu split-button-menu" role="menu" hidden>
+            <button type="button" role="menuitem" data-job-new>New Job</button>
+          </div>
+          {{end}}
+        </div>
         <button id="pr-sidebar-toggle" class="icon-button pr-panel-button" type="button" aria-label="Open ready pull requests" aria-controls="pr-sidebar" aria-expanded="false">
           <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
             <path d="M7 7h10"/>
@@ -422,6 +435,8 @@
   </div>
 </dialog>
 
+{{if .IsAdmin}}{{template "job_edit_modal" .}}{{end}}
+
 <script src="{{assetPath "chat_detail_blocks.js"}}"></script>
 <script src="{{assetPath "image_modal.js"}}"></script>
 <script src="{{assetPath "app.js"}}"></script>
@@ -430,5 +445,6 @@
 <script src="{{assetPath "app_controls.js"}}"></script>
 <script src="{{assetPath "app_detail.js"}}"></script>
 <script src="{{assetPath "app_events.js"}}"></script>
+<script src="{{assetPath "settings_jobs.js"}}"></script>
 </body>
 </html>

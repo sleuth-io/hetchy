@@ -103,14 +103,33 @@ type templateCache struct {
 }
 
 var parsedTemplates = sync.OnceValue(func() templateCache {
+	// Shared partials live in templates/_*.html and hold only {{define}}
+	// blocks (e.g. the job-edit modal reused by the settings Jobs tab and
+	// the chat page). They are parsed into every page's template set so any
+	// page can {{template "..."}} them. They are deliberately parsed before
+	// the page body so the final Parse of the actual page content is what
+	// sets the "page" template body.
+	partials, err := fs.Glob(files, "templates/_*.html")
+	if err != nil {
+		return templateCache{err: fmt.Errorf("glob partials: %w", err)}
+	}
 	out := make(map[Template]*template.Template, len(templateFiles))
 	for name, path := range templateFiles {
 		body, err := files.ReadFile(path)
 		if err != nil {
 			return templateCache{err: fmt.Errorf("%s: %w", name, err)}
 		}
-		tpl, err := template.New("page").Funcs(templateFuncs).Parse(string(body))
-		if err != nil {
+		tpl := template.New("page").Funcs(templateFuncs)
+		for _, partial := range partials {
+			pbody, err := files.ReadFile(partial)
+			if err != nil {
+				return templateCache{err: fmt.Errorf("%s: %w", partial, err)}
+			}
+			if tpl, err = tpl.Parse(string(pbody)); err != nil {
+				return templateCache{err: fmt.Errorf("%s: %w", partial, err)}
+			}
+		}
+		if tpl, err = tpl.Parse(string(body)); err != nil {
 			return templateCache{err: fmt.Errorf("%s: %w", name, err)}
 		}
 		out[name] = tpl

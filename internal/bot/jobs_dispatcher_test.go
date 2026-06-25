@@ -103,14 +103,54 @@ func TestJobRequestIDIncludesRandomSuffix(t *testing.T) {
 }
 
 func TestJobDispatchModelUsesAvailableCredentialFamily(t *testing.T) {
-	if got := jobDispatchModel(orgcfg.Config{OpenAIAPIKey: "sk-openai"}); got != ModelGPTBalanced {
+	// Jobs with no explicit model fall back to the credential-based default.
+	if got := jobDispatchModel(jobs.Job{}, orgcfg.Config{OpenAIAPIKey: "sk-openai"}); got != ModelGPTBalanced {
 		t.Fatalf("OpenAI-only job model = %q, want %q", got, ModelGPTBalanced)
 	}
-	if got := jobDispatchModel(orgcfg.Config{AnthropicAPIKey: "sk-ant"}); got != ClaudeModelSonnet {
+	if got := jobDispatchModel(jobs.Job{}, orgcfg.Config{AnthropicAPIKey: "sk-ant"}); got != ClaudeModelSonnet {
 		t.Fatalf("Anthropic job model = %q, want %q", got, ClaudeModelSonnet)
 	}
-	if got := jobDispatchModel(orgcfg.Config{AnthropicAPIKey: "sk-ant", OpenAIAPIKey: "sk-openai"}); got != ClaudeModelSonnet {
+	if got := jobDispatchModel(jobs.Job{}, orgcfg.Config{AnthropicAPIKey: "sk-ant", OpenAIAPIKey: "sk-openai"}); got != ClaudeModelSonnet {
 		t.Fatalf("mixed credential job model = %q, want %q", got, ClaudeModelSonnet)
+	}
+}
+
+func TestJobDispatchModelHonoursExplicitModel(t *testing.T) {
+	// A job pinned to a model uses it regardless of which credential
+	// family the org has wired up.
+	if got := jobDispatchModel(jobs.Job{Model: "opus"}, orgcfg.Config{OpenAIAPIKey: "sk-openai"}); got != ClaudeModelOpus {
+		t.Fatalf("opus-pinned job model = %q, want %q", got, ClaudeModelOpus)
+	}
+	if got := jobDispatchModel(jobs.Job{Model: "haiku"}, orgcfg.Config{AnthropicAPIKey: "sk-ant"}); got != ClaudeModelHaiku {
+		t.Fatalf("haiku-pinned job model = %q, want %q", got, ClaudeModelHaiku)
+	}
+	// An unknown stored model falls back to the credential-based default.
+	if got := jobDispatchModel(jobs.Job{Model: "bogus"}, orgcfg.Config{AnthropicAPIKey: "sk-ant"}); got != ClaudeModelSonnet {
+		t.Fatalf("unknown-model job = %q, want %q", got, ClaudeModelSonnet)
+	}
+}
+
+func TestEnsureJobModelAllowed(t *testing.T) {
+	anthropicOnly := &Bot{orgs: &fakeOrgStore{getConfig: orgcfg.Config{OrgID: "org_1", AnthropicAPIKey: "sk-ant"}}}
+	withOpenAI := &Bot{orgs: &fakeOrgStore{getConfig: orgcfg.Config{OrgID: "org_1", OpenAIAPIKey: "sk-openai"}}}
+
+	// Anthropic models and empty/unknown values are always allowed; the
+	// jobs layer handles defaulting/rejection for the latter.
+	for _, model := range []string{"", "opus", "sonnet", "haiku", "bogus"} {
+		if err := anthropicOnly.ensureJobModelAllowed(context.Background(), "org_1", model); err != nil {
+			t.Fatalf("anthropic-only org rejected model %q: %v", model, err)
+		}
+	}
+
+	// A GPT model on an Anthropic-only org is rejected before it can be
+	// stored and fail at dispatch.
+	if err := anthropicOnly.ensureJobModelAllowed(context.Background(), "org_1", "gpt-frontier"); err == nil {
+		t.Fatal("anthropic-only org accepted gpt-frontier, want rejection")
+	}
+
+	// The same model is accepted once OpenAI credentials are configured.
+	if err := withOpenAI.ensureJobModelAllowed(context.Background(), "org_1", "gpt-frontier"); err != nil {
+		t.Fatalf("openai org rejected gpt-frontier: %v", err)
 	}
 }
 
