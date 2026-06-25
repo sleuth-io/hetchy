@@ -371,6 +371,12 @@
                                  max-height: calc(100dvh - 2rem); overflow: hidden; }
   dialog.agent-modal form { display: flex; flex-direction: column; max-height: inherit; }
   dialog.agent-modal .body { display: grid; gap: .55rem; overflow: auto; padding-bottom: .85rem; }
+  /* The job modal stacks its fields as a flex column instead of a grid: iOS
+     Safari mis-sizes auto grid rows in this scrollable container and clips the
+     native <select> controls (Agent / Model / Primary repository). flex-shrink:0
+     keeps a tall form scrolling instead of compressing its fields. */
+  dialog.agent-modal.job-modal .body { display: flex; flex-direction: column; }
+  dialog.agent-modal.job-modal .body > * { flex-shrink: 0; }
   dialog.agent-modal label { margin: 0; }
   dialog.agent-modal textarea { min-height: 8.5rem; max-height: 28dvh; font-family: inherit; }
   dialog.agent-modal .agent-action-modal-body { gap: .95rem; padding-bottom: 1.25rem; }

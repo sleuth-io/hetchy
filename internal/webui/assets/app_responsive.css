@@ -13,6 +13,25 @@
   }
   .topbar-actions {
     gap: 3px;
+    /* Stretch the actions block to the full header height and top-align its
+       children so the ... menu and PR-toggle icons stay flush with the title's
+       first line. align-self: stretch overrides the .topbar align-items:
+       flex-start set at <=820px; align-items: flex-start keeps the icons up top
+       (the split button is dropped to the bottom edge separately below). The
+       margin-top: 1px optical-centering nudge from the <=820px rule still
+       applies and keeps the icons aligned with the title. */
+    align-self: stretch;
+    align-items: flex-start;
+  }
+  /* Drop only the create split button to the bottom-right of the header while
+     its sibling icon buttons stay top-aligned. align-self: flex-end pushes it to
+     the bottom of the stretched, top-aligned actions row. The actions row is as
+     tall as the header, which is the taller of the title block (title + the
+     possibly-wrapping agent subtitle) and the .topbar min-height: 64px floor
+     from the <=820px rule, so the button anchors to the bottom edge in both the
+     two-line and single-line header states. */
+  .topbar-actions .split-button {
+    align-self: flex-end;
   }
   .primary-button {
     padding: 0 9px;
