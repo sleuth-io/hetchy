@@ -78,7 +78,7 @@ func (s *Store) AutoTopup(ctx context.Context, orgID string, reserveCredits int,
 
 func (s *Store) prepareAutoTopupAttempt(ctx context.Context, orgID string, reserveCredits int, triggered bool, target int) (autoTopupAttempt, error) {
 	var attempt autoTopupAttempt
-	err := s.db.WithTx(ctx, func(q *sqlc.Queries) error {
+	err := s.tx.WithTx(ctx, func(q *sqlc.Queries) error {
 		row, err := q.LockBillingAccountForUpdate(ctx, orgID)
 		if err != nil {
 			return err
@@ -126,7 +126,7 @@ func (s *Store) prepareAutoTopupAttempt(ctx context.Context, orgID string, reser
 
 func (s *Store) completeAutoTopupAttempt(ctx context.Context, orgID, invoiceID string, topupUnitCents int) (Account, error) {
 	var account Account
-	err := s.db.WithTx(ctx, func(q *sqlc.Queries) error {
+	err := s.tx.WithTx(ctx, func(q *sqlc.Queries) error {
 		if _, err := q.LockBillingAccountForUpdate(ctx, orgID); err != nil {
 			return err
 		}
