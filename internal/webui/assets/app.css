@@ -339,6 +339,12 @@ a { color: inherit; }
   gap: 8px;
   flex-shrink: 0;
 }
+.topbar-icon-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
 .topbar-menu-wrap {
   position: relative;
   display: inline-flex;

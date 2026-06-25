@@ -79,17 +79,28 @@
         <p id="selection-subtitle" class="selection-subtitle">Recent work, active first.</p>
       </div>
       <div class="topbar-actions">
-        <div class="topbar-menu-wrap">
-          <button id="agent-menu-btn" class="icon-button" type="button" aria-label="Agent settings" aria-haspopup="menu" aria-expanded="false">
+        <div class="topbar-icon-actions">
+          <div class="topbar-menu-wrap">
+            <button id="agent-menu-btn" class="icon-button" type="button" aria-label="Agent settings" aria-haspopup="menu" aria-expanded="false">
+              <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="1"/>
+                <circle cx="19" cy="12" r="1"/>
+                <circle cx="5" cy="12" r="1"/>
+              </svg>
+            </button>
+            <div id="agent-menu" class="floating-menu" role="menu" hidden>
+              <a href="/settings/org?tab=agents" role="menuitem">Agent settings</a>
+            </div>
+          </div>
+          <button id="pr-sidebar-toggle" class="icon-button pr-panel-button" type="button" aria-label="Open ready pull requests" aria-controls="pr-sidebar" aria-expanded="false">
             <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="12" cy="12" r="1"/>
-              <circle cx="19" cy="12" r="1"/>
-              <circle cx="5" cy="12" r="1"/>
+              <path d="M7 7h10"/>
+              <path d="M7 12h10"/>
+              <path d="M7 17h6"/>
+              <path d="m3.5 7 .5.5 1.5-1.5"/>
+              <path d="m3.5 12 .5.5 1.5-1.5"/>
             </svg>
           </button>
-          <div id="agent-menu" class="floating-menu" role="menu" hidden>
-            <a href="/settings/org?tab=agents" role="menuitem">Agent settings</a>
-          </div>
         </div>
         <div class="split-button" id="new-create-split">
           <button id="new-task-btn" class="primary-button split-button-main" type="button">
@@ -110,15 +121,6 @@
           </div>
           {{end}}
         </div>
-        <button id="pr-sidebar-toggle" class="icon-button pr-panel-button" type="button" aria-label="Open ready pull requests" aria-controls="pr-sidebar" aria-expanded="false">
-          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M7 7h10"/>
-            <path d="M7 12h10"/>
-            <path d="M7 17h6"/>
-            <path d="m3.5 7 .5.5 1.5-1.5"/>
-            <path d="m3.5 12 .5.5 1.5-1.5"/>
-          </svg>
-        </button>
       </div>
     </header>
 

@@ -334,6 +334,9 @@ button.meta-attachment-link:hover { text-decoration: underline; }
   .topbar-actions {
     gap: 5px;
   }
+  .topbar-icon-actions {
+    gap: 5px;
+  }
   .primary-button {
     min-height: 2.05rem;
     gap: 6px;
