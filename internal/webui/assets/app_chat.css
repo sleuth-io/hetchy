@@ -308,6 +308,14 @@ button.meta-attachment-link:hover { text-decoration: underline; }
        title block taller than the buttons. Top-align so the menu toggle and
        actions line up with the title instead of floating in the middle. */
     align-items: flex-start;
+    /* The topbar is a flex item inside the .work-main column (height-capped at
+       100dvh, overflow: auto). An explicit min-height overrides a flex item's
+       implicit `min-height: auto` (min-content) floor, so WebKit/iOS Safari is
+       free to compress the topbar to 64px when the column's content exceeds the
+       viewport (Flexbug #1). The wrapped agent subtitle then spills past the
+       topbar onto the summary strip below. flex-shrink: 0 keeps the topbar at
+       its content height so it always contains the subtitle. */
+    flex-shrink: 0;
     gap: 10px;
     padding: 12px;
     padding-top: calc(12px + var(--safe-top));
