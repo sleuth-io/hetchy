@@ -23,7 +23,7 @@ func (s *Store) AdmitRun(ctx context.Context, orgID, runID string, credits int, 
 	}
 	var reservation Reservation
 	var account Account
-	err := s.db.WithTx(ctx, func(q *sqlc.Queries) error {
+	err := s.tx.WithTx(ctx, func(q *sqlc.Queries) error {
 		var err error
 		reservation, account, err = admitRunTx(ctx, q, orgID, runID, credits, flavor, startedAt)
 		return err
@@ -119,7 +119,7 @@ func (s *Store) FinalizeRun(ctx context.Context, runID, terminalState string, en
 	if endedAt.IsZero() {
 		endedAt = time.Now()
 	}
-	return s.db.WithTx(ctx, func(q *sqlc.Queries) error {
+	return s.tx.WithTx(ctx, func(q *sqlc.Queries) error {
 		return finalizeRunTx(ctx, q, runID, terminalState, endedAt)
 	})
 }

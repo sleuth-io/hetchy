@@ -13,11 +13,20 @@ import (
 	"github.com/sleuth-io/hetchy/internal/db/sqlc"
 )
 
-type Store struct {
-	db *db.Store
+// txRunner abstracts the transactional boundary so the WithTx-wrapped store
+// methods can be exercised without a live pgxpool. *db.Store satisfies it in
+// production; tests supply a fake that runs the callback against an in-memory
+// queries stub.
+type txRunner interface {
+	WithTx(ctx context.Context, fn func(*sqlc.Queries) error) error
 }
 
-func NewStore(d *db.Store) *Store { return &Store{db: d} }
+type Store struct {
+	db *db.Store
+	tx txRunner
+}
+
+func NewStore(d *db.Store) *Store { return &Store{db: d, tx: d} }
 
 func (s *Store) Enabled() bool { return s != nil && s.db != nil }
 
@@ -203,7 +212,7 @@ func (s *Store) GrantTopupCreditsOnce(ctx context.Context, eventID, eventType, o
 	}
 	var account Account
 	processed := false
-	err := s.db.WithTx(ctx, func(q *sqlc.Queries) error {
+	err := s.tx.WithTx(ctx, func(q *sqlc.Queries) error {
 		var err error
 		account, processed, err = grantTopupCreditsOnceTx(ctx, q, eventID, eventType, orgID, credits)
 		return err
