@@ -151,7 +151,7 @@ func TestIndexHandler_RendersDevAppTitle(t *testing.T) {
 		t.Fatalf("status = %d", rec.Code)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, `<title>Hetchy-dev</title>`) {
+	if !strings.Contains(body, `<title>Hetchy (dev)</title>`) {
 		t.Fatalf("app template missing dev title, body=%s", body)
 	}
 	if !strings.Contains(body, `data-dev-env="1"`) {
