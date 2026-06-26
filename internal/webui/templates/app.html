@@ -17,7 +17,7 @@
 <link rel="stylesheet" href="{{assetPath "app_responsive.css"}}">
 {{if .IsAdmin}}<link rel="stylesheet" href="{{assetPath "job_modal.css"}}">{{end}}
 </head>
-<body data-current-user-id="{{.UserID}}" data-openai-enabled="{{if .OpenAIEnabled}}1{{else}}0{{end}}" data-default-repo-slug="{{.DefaultRepoSlug}}" data-app-data-limit="{{or .AppDataLimit 80}}">
+<body data-current-user-id="{{.UserID}}" data-openai-enabled="{{if .OpenAIEnabled}}1{{else}}0{{end}}" data-default-repo-slug="{{.DefaultRepoSlug}}" data-app-data-limit="{{or .AppDataLimit 80}}" data-dev-env="{{if .DevEnv}}1{{else}}0{{end}}">
 <div id="toast-stack" aria-live="polite" aria-atomic="true"></div>
 
 <div class="agent-app">

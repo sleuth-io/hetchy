@@ -4,6 +4,9 @@
   var autoMergeStorageKey = 'hetchy.autoMerge.' + currentUserID;
   var openAIEnabled = document.body.dataset.openaiEnabled === '1';
   var appDataLimit = Math.max(1, parseInt(document.body.dataset.appDataLimit || '80', 10) || 80);
+  var devEnv = document.body.dataset.devEnv === '1';
+  var appTitleBase = 'Hetchy';
+  var appTitleSuffix = devEnv ? '-dev' : '';
   var pollMs = 4000;
   var detailPollMs = 1800;
   var hiddenPollMs = 15000;
@@ -209,6 +212,24 @@
     const found = agentForSlug(id);
     if (found && compact(found.description, '')) return found.description;
     return 'Recent work for this agent.';
+  }
+  // pageTitleScope describes what the user is currently browsing so the
+  // document title reflects it (e.g. "agent-Archy", "user-jane") rather
+  // than a static "Hetchy". It falls back to the plain app name when no
+  // specific agent/user group is selected.
+  function pageTitleScope() {
+    if (state.mode === 'user' && state.selectedID && state.selectedID !== unknownUserID) {
+      return 'user-' + userName(state.selectedID);
+    }
+    if (state.mode === 'agent' && state.selectedID && state.selectedID !== noAgentID) {
+      return 'agent-' + agentName(state.selectedID);
+    }
+    return appTitleBase;
+  }
+  // updateDocumentTitle rewrites the browser tab title to the current
+  // browsing scope, appending the "-dev" suffix in the dev environment.
+  function updateDocumentTitle() {
+    document.title = pageTitleScope() + appTitleSuffix;
   }
   function modelLabel(value) {
     const found = modelOptions.find(model => model.value === value);

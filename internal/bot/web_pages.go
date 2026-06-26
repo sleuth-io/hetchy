@@ -69,9 +69,15 @@ func (b *Bot) indexHandler(w http.ResponseWriter, r *http.Request) {
 			b.log.Warn("org config fetch for chat page failed", "error", err, "org", p.OrgID)
 		}
 	}
+	// devEnv drives both the initial server-rendered <title> and the
+	// "-dev" suffix the SPA appends as it rewrites the title to reflect
+	// the agent/user currently being browsed. Keep the suffix identical
+	// to the SPA's (app.js) so the dev tab doesn't flash "Hetchy dev"
+	// before settling on "Hetchy-dev".
+	devEnv := b.cfg.Env == "dev"
 	appTitle := "Hetchy"
-	if b.cfg.Env == "dev" {
-		appTitle = "Hetchy dev"
+	if devEnv {
+		appTitle = "Hetchy-dev"
 	}
 	data := map[string]any{
 		"Email":           p.Email,
@@ -83,6 +89,7 @@ func (b *Bot) indexHandler(w http.ResponseWriter, r *http.Request) {
 		"DefaultRepoSlug": defaultRepoSlug,
 		"AppDataLimit":    appDataLimitDefault,
 		"AppTitle":        appTitle,
+		"DevEnv":          devEnv,
 		"IsAdmin":         isAdmin(p),
 	}
 	// The chat page mounts the same job-edit modal as the settings Jobs
