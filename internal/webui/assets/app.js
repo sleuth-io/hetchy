@@ -219,10 +219,10 @@
   // specific agent/user group is selected.
   function pageTitleScope() {
     if (state.mode === 'user' && state.selectedID && state.selectedID !== unknownUserID) {
-      return 'user-' + userName(state.selectedID);
+      return 'User - ' + userName(state.selectedID);
     }
     if (state.mode === 'agent' && state.selectedID && state.selectedID !== noAgentID) {
-      return 'agent-' + agentName(state.selectedID);
+      return 'Agent - ' + agentName(state.selectedID);
     }
     return appTitleBase;
   }
