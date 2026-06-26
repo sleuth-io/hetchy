@@ -70,14 +70,14 @@ func (b *Bot) indexHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// devEnv drives both the initial server-rendered <title> and the
-	// "-dev" suffix the SPA appends as it rewrites the title to reflect
+	// " (dev)" suffix the SPA appends as it rewrites the title to reflect
 	// the agent/user currently being browsed. Keep the suffix identical
 	// to the SPA's (app.js) so the dev tab doesn't flash "Hetchy dev"
-	// before settling on "Hetchy-dev".
+	// before settling on "Hetchy (dev)".
 	devEnv := b.cfg.Env == "dev"
 	appTitle := "Hetchy"
 	if devEnv {
-		appTitle = "Hetchy-dev"
+		appTitle = "Hetchy (dev)"
 	}
 	data := map[string]any{
 		"Email":           p.Email,
