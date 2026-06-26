@@ -6,7 +6,7 @@
   var appDataLimit = Math.max(1, parseInt(document.body.dataset.appDataLimit || '80', 10) || 80);
   var devEnv = document.body.dataset.devEnv === '1';
   var appTitleBase = 'Hetchy';
-  var appTitleSuffix = devEnv ? '-dev' : '';
+  var appTitleSuffix = devEnv ? ' (dev)' : '';
   var pollMs = 4000;
   var detailPollMs = 1800;
   var hiddenPollMs = 15000;
