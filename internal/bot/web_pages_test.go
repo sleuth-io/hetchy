@@ -151,8 +151,28 @@ func TestIndexHandler_RendersDevAppTitle(t *testing.T) {
 		t.Fatalf("status = %d", rec.Code)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, `<title>Hetchy dev</title>`) {
+	if !strings.Contains(body, `<title>Hetchy (dev)</title>`) {
 		t.Fatalf("app template missing dev title, body=%s", body)
+	}
+	if !strings.Contains(body, `data-dev-env="1"`) {
+		t.Fatalf("app template missing dev-env flag for SPA title suffix, body=%s", body)
+	}
+}
+
+func TestIndexHandler_NonDevOmitsDevEnvFlag(t *testing.T) {
+	b := newBypassOrgBot(t, "admin")
+	b.cfg.Env = "prod"
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	b.auth.Middleware(http.HandlerFunc(b.indexHandler)).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `data-dev-env="0"`) {
+		t.Fatalf("app template should mark non-dev env with data-dev-env=\"0\", body=%s", body)
 	}
 }
 

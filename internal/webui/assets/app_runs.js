@@ -512,6 +512,7 @@
     else activeRunActionButton = null;
     const title = groupName(state.selectedID);
     byID('selection-title').textContent = title || 'Agent work';
+    updateDocumentTitle();
     renderAgentHeaderSubtitle(state.selectedID);
     const showAgentMenu = state.mode === 'agent' && state.selectedID && state.selectedID !== noAgentID;
     const agentMenuBtn = byID('agent-menu-btn');
