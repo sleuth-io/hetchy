@@ -1,8 +1,10 @@
 package bot
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -13,6 +15,29 @@ import (
 )
 
 const jobsAPIPrefix = "/api/v1/jobs"
+
+// jobAPIStore is the narrow slice of *jobs.Store that the JSON job API
+// handlers depend on. Extracting it (mirroring the dueJobClaimer /
+// manualJobRunner seams the dispatcher already uses) lets the handler
+// bodies be exercised with an in-memory fake instead of a live Postgres,
+// which is the only thing that kept their success paths uncovered.
+type jobAPIStore interface {
+	Enabled() bool
+	List(ctx context.Context, orgID string) ([]jobs.Job, error)
+	Get(ctx context.Context, orgID, jobID string) (jobs.Job, error)
+	Create(ctx context.Context, orgID string, input jobs.JobInput, now time.Time) (jobs.Job, error)
+	Update(ctx context.Context, orgID, jobID string, input jobs.JobInput, now time.Time) (jobs.Job, error)
+	Delete(ctx context.Context, orgID, jobID string) error
+}
+
+// jobModelChecker mirrors (*Bot).ensureJobModelAllowed so the create and
+// update handlers can be tested without a configured org-credential lookup.
+// A nil checker means "skip the model gate" — only the production wiring,
+// which always passes a non-nil checker, reaches the live handlers.
+type jobModelChecker func(ctx context.Context, orgID, model string) error
+
+// jobDispatcher mirrors (*Bot).DispatchJobNow for the run-now handler.
+type jobDispatcher func(ctx context.Context, orgID, jobID string) (jobs.Execution, error)
 
 type jobAPIResponse struct {
 	ID                  string   `json:"id"`
@@ -113,14 +138,19 @@ func (b *Bot) jobsResourceHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (b *Bot) listJobsHandler(w http.ResponseWriter, r *http.Request) {
-	if b.jobs == nil || !b.jobs.Enabled() {
-		writeJobAPIError(w, http.StatusServiceUnavailable, "jobs are not configured")
+	listJobsAPI(w, r, b.jobs, b.log)
+}
+
+func listJobsAPI(w http.ResponseWriter, r *http.Request, store jobAPIStore, log *slog.Logger) {
+	if !jobStoreReady(w, store) {
 		return
 	}
 	p, _ := auth.FromContext(r.Context())
-	rows, err := b.jobs.List(r.Context(), p.OrgID)
+	rows, err := store.List(r.Context(), p.OrgID)
 	if err != nil {
-		b.log.Error("list jobs", "org", p.OrgID, "error", err)
+		if log != nil {
+			log.Error("list jobs", "org", p.OrgID, "error", err)
+		}
 		writeJobAPIError(w, http.StatusInternalServerError, "could not list jobs")
 		return
 	}
@@ -132,25 +162,31 @@ func (b *Bot) listJobsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (b *Bot) getJobHandler(w http.ResponseWriter, r *http.Request, jobID string) {
-	if b.jobs == nil || !b.jobs.Enabled() {
-		writeJobAPIError(w, http.StatusServiceUnavailable, "jobs are not configured")
+	getJobAPI(w, r, jobID, b.jobs, b.log)
+}
+
+func getJobAPI(w http.ResponseWriter, r *http.Request, jobID string, store jobAPIStore, log *slog.Logger) {
+	if !jobStoreReady(w, store) {
 		return
 	}
 	p, _ := auth.FromContext(r.Context())
-	job, err := b.jobs.Get(r.Context(), p.OrgID, jobID)
+	job, err := store.Get(r.Context(), p.OrgID, jobID)
 	if err != nil {
-		b.writeJobsStoreError(w, err)
+		respondJobsStoreError(w, log, err)
 		return
 	}
 	writeJSON(w, jobAPIFromJob(job))
 }
 
 func (b *Bot) createJobHandler(w http.ResponseWriter, r *http.Request) {
+	createJobAPI(w, r, b.jobs, b.ensureJobModelAllowed, b.log, time.Now())
+}
+
+func createJobAPI(w http.ResponseWriter, r *http.Request, store jobAPIStore, modelAllowed jobModelChecker, log *slog.Logger, now time.Time) {
 	if !requireAdminJobMutation(w, r) {
 		return
 	}
-	if b.jobs == nil || !b.jobs.Enabled() {
-		writeJobAPIError(w, http.StatusServiceUnavailable, "jobs are not configured")
+	if !jobStoreReady(w, store) {
 		return
 	}
 	var body jobAPIRequest
@@ -163,30 +199,35 @@ func (b *Bot) createJobHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p, _ := auth.FromContext(r.Context())
-	if err := b.ensureJobModelAllowed(r.Context(), p.OrgID, input.Model); err != nil {
-		writeJobAPIError(w, http.StatusBadRequest, err.Error())
-		return
+	if modelAllowed != nil {
+		if err := modelAllowed(r.Context(), p.OrgID, input.Model); err != nil {
+			writeJobAPIError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
-	job, err := b.jobs.Create(r.Context(), p.OrgID, input, time.Now())
+	job, err := store.Create(r.Context(), p.OrgID, input, now)
 	if err != nil {
-		b.writeJobsStoreError(w, err)
+		respondJobsStoreError(w, log, err)
 		return
 	}
 	writeJSON(w, jobAPIFromJob(job))
 }
 
 func (b *Bot) updateJobHandler(w http.ResponseWriter, r *http.Request, jobID string) {
+	updateJobAPI(w, r, jobID, b.jobs, b.ensureJobModelAllowed, b.log, time.Now())
+}
+
+func updateJobAPI(w http.ResponseWriter, r *http.Request, jobID string, store jobAPIStore, modelAllowed jobModelChecker, log *slog.Logger, now time.Time) {
 	if !requireAdminJobMutation(w, r) {
 		return
 	}
-	if b.jobs == nil || !b.jobs.Enabled() {
-		writeJobAPIError(w, http.StatusServiceUnavailable, "jobs are not configured")
+	if !jobStoreReady(w, store) {
 		return
 	}
 	p, _ := auth.FromContext(r.Context())
-	current, err := b.jobs.Get(r.Context(), p.OrgID, jobID)
+	current, err := store.Get(r.Context(), p.OrgID, jobID)
 	if err != nil {
-		b.writeJobsStoreError(w, err)
+		respondJobsStoreError(w, log, err)
 		return
 	}
 	var body jobAPIRequest
@@ -198,35 +239,44 @@ func (b *Bot) updateJobHandler(w http.ResponseWriter, r *http.Request, jobID str
 		writeJobAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := b.ensureJobModelAllowed(r.Context(), p.OrgID, input.Model); err != nil {
-		writeJobAPIError(w, http.StatusBadRequest, err.Error())
-		return
+	if modelAllowed != nil {
+		if err := modelAllowed(r.Context(), p.OrgID, input.Model); err != nil {
+			writeJobAPIError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
-	job, err := b.jobs.Update(r.Context(), p.OrgID, jobID, input, time.Now())
+	job, err := store.Update(r.Context(), p.OrgID, jobID, input, now)
 	if err != nil {
-		b.writeJobsStoreError(w, err)
+		respondJobsStoreError(w, log, err)
 		return
 	}
 	writeJSON(w, jobAPIFromJob(job))
 }
 
 func (b *Bot) deleteJobHandler(w http.ResponseWriter, r *http.Request, jobID string) {
+	deleteJobAPI(w, r, jobID, b.jobs, b.log)
+}
+
+func deleteJobAPI(w http.ResponseWriter, r *http.Request, jobID string, store jobAPIStore, log *slog.Logger) {
 	if !requireAdminJobMutation(w, r) {
 		return
 	}
-	if b.jobs == nil || !b.jobs.Enabled() {
-		writeJobAPIError(w, http.StatusServiceUnavailable, "jobs are not configured")
+	if !jobStoreReady(w, store) {
 		return
 	}
 	p, _ := auth.FromContext(r.Context())
-	if err := b.jobs.Delete(r.Context(), p.OrgID, jobID); err != nil {
-		b.writeJobsStoreError(w, err)
+	if err := store.Delete(r.Context(), p.OrgID, jobID); err != nil {
+		respondJobsStoreError(w, log, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (b *Bot) runJobNowHandler(w http.ResponseWriter, r *http.Request, jobID string) {
+	runJobNowAPI(w, r, jobID, b.jobs, b.DispatchJobNow, b.log)
+}
+
+func runJobNowAPI(w http.ResponseWriter, r *http.Request, jobID string, store jobAPIStore, dispatch jobDispatcher, log *slog.Logger) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", "POST")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -235,17 +285,27 @@ func (b *Bot) runJobNowHandler(w http.ResponseWriter, r *http.Request, jobID str
 	if !requireAdminJobMutation(w, r) {
 		return
 	}
-	if b.jobs == nil || !b.jobs.Enabled() {
-		writeJobAPIError(w, http.StatusServiceUnavailable, "jobs are not configured")
+	if !jobStoreReady(w, store) {
 		return
 	}
 	p, _ := auth.FromContext(r.Context())
-	exec, err := b.DispatchJobNow(r.Context(), p.OrgID, jobID)
+	exec, err := dispatch(r.Context(), p.OrgID, jobID)
 	if err != nil {
-		b.writeJobsStoreError(w, err)
+		respondJobsStoreError(w, log, err)
 		return
 	}
 	writeJSON(w, jobExecutionAPIFromExecution(exec))
+}
+
+// jobStoreReady writes the standard 503 and returns false when the job
+// store is unset or its backing database is not configured. Store.Enabled
+// is nil-receiver safe, so a typed-nil *jobs.Store reaches here cleanly.
+func jobStoreReady(w http.ResponseWriter, store jobAPIStore) bool {
+	if store == nil || !store.Enabled() {
+		writeJobAPIError(w, http.StatusServiceUnavailable, "jobs are not configured")
+		return false
+	}
+	return true
 }
 
 func decodeJobAPIRequest(w http.ResponseWriter, r *http.Request, out *jobAPIRequest) bool {
@@ -404,6 +464,14 @@ func formatJobTime(t time.Time) string {
 }
 
 func (b *Bot) writeJobsStoreError(w http.ResponseWriter, err error) {
+	var log *slog.Logger
+	if b != nil {
+		log = b.log
+	}
+	respondJobsStoreError(w, log, err)
+}
+
+func respondJobsStoreError(w http.ResponseWriter, log *slog.Logger, err error) {
 	switch {
 	case errors.Is(err, jobs.ErrNotFound):
 		writeJobAPIError(w, http.StatusNotFound, "job not found")
@@ -412,8 +480,8 @@ func (b *Bot) writeJobsStoreError(w http.ResponseWriter, err error) {
 	case errors.Is(err, jobs.ErrInvalidInput):
 		writeJobAPIError(w, http.StatusBadRequest, jobs.InvalidInputMessage(err))
 	default:
-		if b != nil && b.log != nil {
-			b.log.Error("job store error", "error", err)
+		if log != nil {
+			log.Error("job store error", "error", err)
 		}
 		writeJobAPIError(w, http.StatusInternalServerError, "internal error")
 	}
