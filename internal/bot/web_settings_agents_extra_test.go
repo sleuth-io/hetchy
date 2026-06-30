@@ -31,7 +31,7 @@ func TestCreateAgentFromSettingsUsesTemplateAndSelectedSkills(t *testing.T) {
 		"skills=frontend-design",
 	}, "&"))
 
-	b.createAgentFromSettings(rec, req, "org_test", sxsync.Actor{Name: "Admin", Email: "admin@example.com"})
+	b.createAgentFromSettings(rec, req, "org_test", sxsync.Actor{Name: "Admin", Email: "admin@example.com"}, agents.NewStore(nil))
 
 	if rec.Code != http.StatusFound {
 		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
@@ -61,7 +61,7 @@ func TestCreateAgentFromSettingsRejectsWhenSXDisabled(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := settingsFormRequest(http.MethodPost, "/settings/org/agents", "display_name=Reviewer")
-	b.createAgentFromSettings(rec, req, "org_test", sxsync.Actor{})
+	b.createAgentFromSettings(rec, req, "org_test", sxsync.Actor{}, agents.NewStore(nil))
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d body=%q", rec.Code, rec.Body.String())
