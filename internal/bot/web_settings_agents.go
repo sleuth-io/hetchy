@@ -25,6 +25,15 @@ var (
 
 const uploadedSkillInitialVersion = "1"
 
+// agentSettingsStore is the slice of *agents.Store the settings handlers
+// consume. Narrowing it to an interface lets tests inject a fake instead of
+// standing up a real database-backed store.
+type agentSettingsStore interface {
+	GetBySlug(ctx context.Context, orgID, slug string) (agents.Profile, error)
+	GetTemplate(ctx context.Context, slug string) (agents.Profile, error)
+	Delete(ctx context.Context, orgID, slug string) error
+}
+
 func (b *Bot) agentSettingsActionHandler(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.FromContext(r.Context())
 	if r.Method != http.MethodPost {
@@ -48,18 +57,18 @@ func (b *Bot) agentSettingsActionHandler(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "bad form", http.StatusBadRequest)
 		return
 	}
+	store := b.agents
+	if store == nil {
+		store = agents.NewStore(nil)
+	}
 	if strings.TrimRight(r.URL.Path, "/") == "/settings/org/agents" {
-		b.createAgentFromSettings(w, r, p.OrgID, sxActor(p))
+		b.createAgentFromSettings(w, r, p.OrgID, sxActor(p), store)
 		return
 	}
 	slug, action, ok := splitAgentAction(r.URL.Path)
 	if !ok {
 		http.NotFound(w, r)
 		return
-	}
-	store := b.agents
-	if store == nil {
-		store = agents.NewStore(nil)
 	}
 	switch action {
 	case "":
@@ -81,7 +90,7 @@ func (b *Bot) agentSettingsActionHandler(w http.ResponseWriter, r *http.Request)
 	}
 }
 
-func (b *Bot) attachAgentSkillFromSettings(w http.ResponseWriter, r *http.Request, orgID string, actor sxsync.Actor, slug string, store *agents.Store) {
+func (b *Bot) attachAgentSkillFromSettings(w http.ResponseWriter, r *http.Request, orgID string, actor sxsync.Actor, slug string, store agentSettingsStore) {
 	skill := strings.TrimSpace(r.FormValue("skill"))
 	profile, err := editableAgentSkillsProfile(r.Context(), store, orgID, slug)
 	if err != nil {
@@ -104,7 +113,7 @@ func (b *Bot) attachAgentSkillFromSettings(w http.ResponseWriter, r *http.Reques
 	http.Redirect(w, r, "/settings/org?tab=agents&saved=agent_skill_saved", http.StatusFound)
 }
 
-func (b *Bot) detachAgentSkillFromSettings(w http.ResponseWriter, r *http.Request, orgID string, actor sxsync.Actor, slug string, store *agents.Store) {
+func (b *Bot) detachAgentSkillFromSettings(w http.ResponseWriter, r *http.Request, orgID string, actor sxsync.Actor, slug string, store agentSettingsStore) {
 	skill := strings.TrimSpace(r.FormValue("skill"))
 	profile, err := editableAgentSkillsProfile(r.Context(), store, orgID, slug)
 	if err != nil {
@@ -127,7 +136,7 @@ func (b *Bot) detachAgentSkillFromSettings(w http.ResponseWriter, r *http.Reques
 	http.Redirect(w, r, "/settings/org?tab=agents&saved=agent_skill_removed", http.StatusFound)
 }
 
-func (b *Bot) uploadAgentSkillFromSettings(w http.ResponseWriter, r *http.Request, orgID string, actor sxsync.Actor, slug string, store *agents.Store) {
+func (b *Bot) uploadAgentSkillFromSettings(w http.ResponseWriter, r *http.Request, orgID string, actor sxsync.Actor, slug string, store agentSettingsStore) {
 	profile, err := editableAgentSkillsProfile(r.Context(), store, orgID, slug)
 	if err != nil {
 		handleAgentEditError(w, r, err)
@@ -169,7 +178,7 @@ func (b *Bot) uploadAgentSkillFromSettings(w http.ResponseWriter, r *http.Reques
 	http.Redirect(w, r, "/settings/org?tab=agents&saved=agent_skill_uploaded", http.StatusFound)
 }
 
-func (b *Bot) addAgentTeamFromSettings(w http.ResponseWriter, r *http.Request, orgID string, actor sxsync.Actor, slug string, store *agents.Store) {
+func (b *Bot) addAgentTeamFromSettings(w http.ResponseWriter, r *http.Request, orgID string, actor sxsync.Actor, slug string, store agentSettingsStore) {
 	team := strings.TrimSpace(r.FormValue("team"))
 	profile, err := editableAgentSkillsProfile(r.Context(), store, orgID, slug)
 	if err != nil {
@@ -192,7 +201,7 @@ func (b *Bot) addAgentTeamFromSettings(w http.ResponseWriter, r *http.Request, o
 	http.Redirect(w, r, "/settings/org?tab=agents&saved=agent_team_added", http.StatusFound)
 }
 
-func (b *Bot) removeAgentTeamFromSettings(w http.ResponseWriter, r *http.Request, orgID string, actor sxsync.Actor, slug string, store *agents.Store) {
+func (b *Bot) removeAgentTeamFromSettings(w http.ResponseWriter, r *http.Request, orgID string, actor sxsync.Actor, slug string, store agentSettingsStore) {
 	team := strings.TrimSpace(r.FormValue("team"))
 	profile, err := editableAgentSkillsProfile(r.Context(), store, orgID, slug)
 	if err != nil {
@@ -215,7 +224,7 @@ func (b *Bot) removeAgentTeamFromSettings(w http.ResponseWriter, r *http.Request
 	http.Redirect(w, r, "/settings/org?tab=agents&saved=agent_team_removed", http.StatusFound)
 }
 
-func (b *Bot) deleteAgentFromSettings(w http.ResponseWriter, r *http.Request, orgID string, actor sxsync.Actor, slug string, store *agents.Store) {
+func (b *Bot) deleteAgentFromSettings(w http.ResponseWriter, r *http.Request, orgID string, actor sxsync.Actor, slug string, store agentSettingsStore) {
 	profile, err := editableAgentDeleteProfile(r.Context(), store, orgID, slug)
 	if err != nil {
 		handleAgentEditError(w, r, err)
@@ -258,7 +267,7 @@ func skillNameFromUploadFilename(filename string) string {
 	return agents.NormalizeSlug(base)
 }
 
-func (b *Bot) updateAgentFromSettings(w http.ResponseWriter, r *http.Request, orgID string, actor sxsync.Actor, slug string, store *agents.Store) {
+func (b *Bot) updateAgentFromSettings(w http.ResponseWriter, r *http.Request, orgID string, actor sxsync.Actor, slug string, store agentSettingsStore) {
 	current, err := editableAgentProfile(r.Context(), store, orgID, slug)
 	if err != nil {
 		handleAgentEditError(w, r, err)
@@ -288,7 +297,7 @@ func (b *Bot) updateAgentFromSettings(w http.ResponseWriter, r *http.Request, or
 	http.Redirect(w, r, "/settings/org?tab=agents&saved=agent_saved", http.StatusFound)
 }
 
-func (b *Bot) createAgentFromSettings(w http.ResponseWriter, r *http.Request, orgID string, actor sxsync.Actor) {
+func (b *Bot) createAgentFromSettings(w http.ResponseWriter, r *http.Request, orgID string, actor sxsync.Actor, store agentSettingsStore) {
 	sxEnabled, err := b.sxIntegrationEnabled(r.Context(), orgID)
 	if err != nil {
 		b.log.Error("check sx integration", "error", err, "org", orgID)
@@ -298,10 +307,6 @@ func (b *Bot) createAgentFromSettings(w http.ResponseWriter, r *http.Request, or
 	if !sxEnabled {
 		http.Error(w, "enable SX in Integrations before creating custom agents", http.StatusBadRequest)
 		return
-	}
-	store := b.agents
-	if store == nil {
-		store = agents.NewStore(nil)
 	}
 	templateSlug := agents.NormalizeSlug(r.FormValue("template_slug"))
 	profile := agents.Profile{}
@@ -401,7 +406,7 @@ func (b *Bot) requireActiveAgentBackend(ctx context.Context, orgID string, p age
 	return fmt.Errorf("%w: inactive sx backend", agents.ErrNotFound)
 }
 
-func editableAgentProfile(ctx context.Context, store *agents.Store, orgID, slug string) (agents.Profile, error) {
+func editableAgentProfile(ctx context.Context, store agentSettingsStore, orgID, slug string) (agents.Profile, error) {
 	p, err := store.GetBySlug(ctx, orgID, slug)
 	if err != nil {
 		return agents.Profile{}, err
@@ -415,7 +420,7 @@ func editableAgentProfile(ctx context.Context, store *agents.Store, orgID, slug 
 	return p, nil
 }
 
-func editableAgentSkillsProfile(ctx context.Context, store *agents.Store, orgID, slug string) (agents.Profile, error) {
+func editableAgentSkillsProfile(ctx context.Context, store agentSettingsStore, orgID, slug string) (agents.Profile, error) {
 	p, err := store.GetBySlug(ctx, orgID, slug)
 	if err != nil {
 		return agents.Profile{}, err
@@ -426,7 +431,7 @@ func editableAgentSkillsProfile(ctx context.Context, store *agents.Store, orgID,
 	return p, nil
 }
 
-func editableAgentDeleteProfile(ctx context.Context, store *agents.Store, orgID, slug string) (agents.Profile, error) {
+func editableAgentDeleteProfile(ctx context.Context, store agentSettingsStore, orgID, slug string) (agents.Profile, error) {
 	p, err := store.GetBySlug(ctx, orgID, slug)
 	if err != nil {
 		return agents.Profile{}, err
