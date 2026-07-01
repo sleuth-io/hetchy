@@ -74,11 +74,12 @@ type Config struct {
 	// PRStatePollLimit caps how many stale PAT-backed PRs one tick refreshes.
 	PRStatePollLimit int
 	// CheckpointIntervalSeconds controls the in-sandbox WIP checkpointer that
-	// periodically snapshots an active run's working tree to a remote
-	// `hetchy-wip/<run-id>` branch so the work survives sandbox loss. 0 (the
-	// default) disables it. Opt-in because it force-pushes a branch to the
-	// target repo on every tick, which fires push webhooks / branch-pattern
-	// CI on that repo.
+	// periodically snapshots an active run's working tree to a `.tar.gz`
+	// archive on the shared Daytona cache volume so the work survives sandbox
+	// loss. 0 (the default) disables it. Opt-in because each tick's snapshot
+	// has a small runtime cost and it only runs when the cache volume is
+	// mounted; snapshots never leave the sandbox/volume, so no repo CI is
+	// triggered.
 	CheckpointIntervalSeconds int
 	// MidTurnResumeEnabled turns on reconstruct-and-resume recovery: when an
 	// active run's sandbox is permanently gone, recovery creates a fresh
@@ -217,7 +218,8 @@ const (
 )
 
 // defaultCheckpointIntervalSeconds is 0 (disabled) — the WIP checkpointer is
-// opt-in because it force-pushes a branch to the target repo on every tick.
+// opt-in because each tick snapshots the working tree to the shared cache
+// volume, which has a small runtime cost and requires the volume to be mounted.
 const defaultCheckpointIntervalSeconds = 0
 
 // loadJobDispatchConfig reads the in-process scheduled-job dispatcher
