@@ -464,8 +464,8 @@ else
 fi
 
 # Start the background WIP checkpointer just before the agent runs so its
-# working-tree changes are periodically snapshotted to a remote branch that
-# survives sandbox loss. No-op unless HETCHY_CHECKPOINT_INTERVAL_SECONDS > 0.
+# working-tree changes are periodically snapshotted to the shared cache volume
+# that survives sandbox loss. No-op unless HETCHY_CHECKPOINT_INTERVAL_SECONDS > 0.
 hetchy_start_checkpoint_loop
 
 if [[ -n "${HETCHY_CODEX_MODEL:-}" ]]; then
