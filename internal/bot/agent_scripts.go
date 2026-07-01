@@ -29,6 +29,9 @@ var sandboxRepoCacheScript string
 //go:embed scripts/sandbox-spec.sh
 var sandboxSpecScript string
 
+//go:embed scripts/sandbox-checkpoint.sh
+var sandboxCheckpointScript string
+
 // agentScript, followupScript, and setupCloneScript are the
 // on-the-wire script bodies the bot writes to the sandbox. Shared
 // helper scripts are prepended so their functions live in the same
@@ -40,7 +43,7 @@ var sandboxSpecScript string
 // the volume-cached repo checkout to skip a full network clone.
 var sandboxRepoCacheHelpersScript = sandboxCommonScript + "\n" + sandboxRepoCacheScript
 
-var sandboxRuntimeHelpersScript = sandboxRepoCacheHelpersScript + "\n" + sandboxSpecScript
+var sandboxRuntimeHelpersScript = sandboxRepoCacheHelpersScript + "\n" + sandboxSpecScript + "\n" + sandboxCheckpointScript
 
 var agentScript = claudeWatchdogScript + "\n" + claudeTmuxRunnerScript + "\n" + codexRunnerScript + "\n" + sandboxRuntimeHelpersScript + "\n" + agentScriptBody
 

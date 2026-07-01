@@ -315,6 +315,12 @@ func (b *Bot) continueRecoveredRun(ctx context.Context, sb *daytona.Sandbox, run
 	}
 	runCtx = contextWithAgentRun(runCtx, run)
 	runCtx = contextWithAgentRunEmitter(runCtx, em)
+	// Carry a reconstruct-and-resume marker (set by reconstructRunAndResume)
+	// across the live.Context() rebase above so runAgent/runFollowUp inject the
+	// checkpoint-restore env into the fresh sandbox.
+	if resumeRef := resumeCheckpointFromContext(ctx); resumeRef != "" {
+		runCtx = contextWithResumeCheckpoint(runCtx, resumeRef)
+	}
 	if skipBootstrap {
 		runCtx = contextWithBootstrapSkipped(runCtx)
 	}

@@ -73,6 +73,20 @@ type Config struct {
 	PRStatePollIntervalSeconds int
 	// PRStatePollLimit caps how many stale PAT-backed PRs one tick refreshes.
 	PRStatePollLimit int
+	// CheckpointIntervalSeconds controls the in-sandbox WIP checkpointer that
+	// periodically snapshots an active run's working tree to a remote
+	// `hetchy-wip/<run-id>` branch so the work survives sandbox loss. 0 (the
+	// default) disables it. Opt-in because it force-pushes a branch to the
+	// target repo on every tick, which fires push webhooks / branch-pattern
+	// CI on that repo.
+	CheckpointIntervalSeconds int
+	// MidTurnResumeEnabled turns on reconstruct-and-resume recovery: when an
+	// active run's sandbox is permanently gone, recovery creates a fresh
+	// sandbox, restores the latest WIP checkpoint, and re-drives the agent
+	// instead of failing the run. Requires CheckpointIntervalSeconds > 0 to
+	// have anything to restore; harmless (re-runs from scratch) otherwise.
+	// Default false.
+	MidTurnResumeEnabled bool
 
 	WorkOSAPIKey          string
 	WorkOSClientID        string
@@ -202,6 +216,10 @@ const (
 	defaultPRStatePollLimit           = 100
 )
 
+// defaultCheckpointIntervalSeconds is 0 (disabled) — the WIP checkpointer is
+// opt-in because it force-pushes a branch to the target repo on every tick.
+const defaultCheckpointIntervalSeconds = 0
+
 // loadJobDispatchConfig reads the in-process scheduled-job dispatcher
 // settings. Interval 0 disables the loop (external-cron deployments);
 // limit and concurrency must stay positive.
@@ -254,6 +272,23 @@ func loadPRStatePollConfig() (interval, limit int, err error) {
 		limit = n
 	}
 	return interval, limit, nil
+}
+
+// loadCheckpointConfig reads the WIP-checkpoint / mid-turn-resume settings.
+// Interval 0 disables checkpointing; resume is a separate boolean so an
+// operator can enable reconstruct-and-resume independently (it degrades to a
+// from-scratch re-run when no checkpoint exists).
+func loadCheckpointConfig() (interval int, resumeEnabled bool, err error) {
+	interval = defaultCheckpointIntervalSeconds
+	if v := strings.TrimSpace(os.Getenv("HETCHY_CHECKPOINT_INTERVAL_SECONDS")); v != "" {
+		n, perr := strconv.Atoi(v)
+		if perr != nil || n < 0 {
+			return 0, false, fmt.Errorf("HETCHY_CHECKPOINT_INTERVAL_SECONDS must be a non-negative integer, 0 to disable (got %q)", v)
+		}
+		interval = n
+	}
+	resumeEnabled = truthyEnv("HETCHY_MIDTURN_RESUME_ENABLED")
+	return interval, resumeEnabled, nil
 }
 
 func loadAuthModeEnv() (string, error) {
@@ -431,6 +466,10 @@ func LoadConfig() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	checkpointInterval, midTurnResumeEnabled, err := loadCheckpointConfig()
+	if err != nil {
+		return Config{}, err
+	}
 	sxRuntime, err := loadSXRuntimeConfig(env)
 	if err != nil {
 		return Config{}, err
@@ -454,6 +493,8 @@ func LoadConfig() (Config, error) {
 		JobDispatchConcurrency:      jobConcurrency,
 		PRStatePollIntervalSeconds:  prStatePollInterval,
 		PRStatePollLimit:            prStatePollLimit,
+		CheckpointIntervalSeconds:   checkpointInterval,
+		MidTurnResumeEnabled:        midTurnResumeEnabled,
 		WorkOSAPIKey:                strings.TrimSpace(os.Getenv("WORKOS_API_KEY")),
 		WorkOSClientID:              strings.TrimSpace(os.Getenv("WORKOS_CLIENT_ID")),
 		WorkOSCookiePassword:        strings.TrimSpace(os.Getenv("WORKOS_COOKIE_PASSWORD")),

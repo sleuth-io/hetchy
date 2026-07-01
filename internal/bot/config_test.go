@@ -153,6 +153,50 @@ func TestLoadConfig_TrustedProxy(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_CheckpointDefaultsDisabled(t *testing.T) {
+	clearEnv(t, "AUTH_BYPASS", "HETCHY_CHECKPOINT_INTERVAL_SECONDS", "HETCHY_MIDTURN_RESUME_ENABLED")
+	setEnv(t, requiredEnv())
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.CheckpointIntervalSeconds != 0 {
+		t.Fatalf("CheckpointIntervalSeconds should default to 0, got %d", cfg.CheckpointIntervalSeconds)
+	}
+	if cfg.MidTurnResumeEnabled {
+		t.Fatal("MidTurnResumeEnabled should default to false")
+	}
+}
+
+func TestLoadConfig_CheckpointOverrides(t *testing.T) {
+	clearEnv(t, "AUTH_BYPASS")
+	setEnv(t, requiredEnv())
+	t.Setenv("HETCHY_CHECKPOINT_INTERVAL_SECONDS", "120")
+	t.Setenv("HETCHY_MIDTURN_RESUME_ENABLED", "true")
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.CheckpointIntervalSeconds != 120 {
+		t.Fatalf("CheckpointIntervalSeconds = %d", cfg.CheckpointIntervalSeconds)
+	}
+	if !cfg.MidTurnResumeEnabled {
+		t.Fatal("MidTurnResumeEnabled should be true")
+	}
+}
+
+func TestLoadConfig_CheckpointIntervalRejectsNegative(t *testing.T) {
+	clearEnv(t, "AUTH_BYPASS")
+	setEnv(t, requiredEnv())
+	t.Setenv("HETCHY_CHECKPOINT_INTERVAL_SECONDS", "-5")
+
+	if _, err := LoadConfig(); err == nil {
+		t.Fatal("negative checkpoint interval should be rejected")
+	}
+}
+
 func TestLoadConfig_ArtifactAndPRStatePollOverrides(t *testing.T) {
 	clearEnv(t, "AUTH_BYPASS")
 	setEnv(t, requiredEnv())

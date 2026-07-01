@@ -210,6 +210,10 @@ echo "[hetchy] checking out branch"
 cd "${SF_WORKDIR}"
 checkout_followup_branch
 
+# Reconstruct-and-resume: restore interrupted work from the WIP checkpoint
+# branch when this run recovers a lost sandbox. No-op for normal follow-ups.
+hetchy_maybe_restore_checkpoint
+
 echo "[hetchy] initializing claude config"
 initialize_claude_config
 
@@ -485,6 +489,11 @@ if [[ -n "$agent_persona_file" ]]; then
 else
   cp /tmp/sf-prompt-base.txt /tmp/sf-prompt.txt
 fi
+
+# Start the background WIP checkpointer before the agent runs. No-op unless
+# HETCHY_CHECKPOINT_INTERVAL_SECONDS > 0.
+hetchy_start_checkpoint_loop
+
 if [[ -n "${HETCHY_CODEX_MODEL:-}" ]]; then
   echo "[hetchy] verifying codex"
   which codex
@@ -509,3 +518,8 @@ else
     run_claude_with_watchdog /tmp/sf-prompt.txt
   fi
 fi
+
+# Stop the checkpointer and delete the superseded WIP branch on normal
+# completion (a non-zero agent exit aborts earlier under `set -e`, leaving the
+# branch for recovery). No-op when disabled.
+hetchy_stop_checkpoint_loop

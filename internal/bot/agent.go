@@ -93,6 +93,7 @@ func (b *Bot) runAgent(ctx context.Context, sb *daytona.Sandbox, repo repoCtx, o
 		}
 	}
 	b.addRuntimeEnv(env, oc, model, requestID)
+	b.addCheckpointRunEnv(ctx, env)
 	sessionID := "agent-" + requestID
 	prURL, err := b.runScriptForRequest(ctx, sb, sessionID, "agent", agentScript, env, emit)
 	b.writeBackOpenAICodexAuthJSON(ctx, sb, oc, requestID)
@@ -707,6 +708,7 @@ func (b *Bot) runFollowUp(ctx context.Context, sb *daytona.Sandbox, repo repoCtx
 			env["SF_SPEC_LESSONS_B64"] = base64.StdEncoding.EncodeToString([]byte(spec.LessonsMD))
 		}
 	}
+	b.addCheckpointRunEnv(ctx, env)
 	prURL, err := b.runScriptForRequest(ctx, sb, "followup-"+requestID, "followup", followupScript, env, emit)
 	b.writeBackOpenAICodexAuthJSON(ctx, sb, oc, requestID)
 	if err != nil {
