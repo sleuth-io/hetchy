@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -17,9 +18,29 @@ const (
 	localInviteFlashTTL        = 5 * time.Minute
 )
 
+// memberDirectory is the narrow slice of *auth.Service that the member and
+// invitation settings handlers depend on. Narrowing it to an interface lets
+// tests drive the success and error branches (send/revoke/remove/role) with
+// an in-memory fake instead of a live WorkOS or local auth backend -- the
+// unavailable backend is the only thing that kept those branches uncovered.
+type memberDirectory interface {
+	SendInvitation(ctx context.Context, email, orgID, roleSlug, inviterUserID string) (string, error)
+	RevokeInvitation(ctx context.Context, id, expectedOrgID string) error
+	RemoveMember(ctx context.Context, membershipID, expectedOrgID, callerUserID string) error
+	UpdateMemberRole(ctx context.Context, membershipID, expectedOrgID, callerUserID, roleSlug string) error
+}
+
 // inviteHandler creates a pending WorkOS invitation. WorkOS sends the
 // email; once accepted the recipient gets a session bound to this org.
 func (b *Bot) inviteHandler(w http.ResponseWriter, r *http.Request) {
+	inviteMemberFromSettings(w, r, b.auth, b.cfg.PublicBaseURL(), b.setLocalInviteURLFlash, b.log)
+}
+
+// inviteMemberFromSettings is the testable body of inviteHandler. It takes
+// the member directory, the public base URL, and the flash setter as seams
+// so the send-invite success (WorkOS vs local-token) and error paths can be
+// exercised without a live auth backend.
+func inviteMemberFromSettings(w http.ResponseWriter, r *http.Request, dir memberDirectory, publicBaseURL string, setFlash func(http.ResponseWriter, string) error, log *slog.Logger) {
 	p, _ := auth.FromContext(r.Context())
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -50,18 +71,18 @@ func (b *Bot) inviteHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unknown role", http.StatusBadRequest)
 		return
 	}
-	inviteToken, err := b.auth.SendInvitation(r.Context(), email, p.OrgID, role, p.UserID)
+	inviteToken, err := dir.SendInvitation(r.Context(), email, p.OrgID, role, p.UserID)
 	if err != nil {
-		b.log.Error("send invitation failed", "error", err, "org", p.OrgID, "email", email)
+		log.Error("send invitation failed", "error", err, "org", p.OrgID, "email", email)
 		http.Error(w, "send invite: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	b.log.Info("invitation sent", "org", p.OrgID, "email", email, "role", role, "inviter", p.UserID)
+	log.Info("invitation sent", "org", p.OrgID, "email", email, "role", role, "inviter", p.UserID)
 	dest := "/settings/org?tab=members&saved=invited"
 	if inviteToken != "" {
-		inviteURL := b.cfg.PublicBaseURL() + "/signup?invite=" + url.QueryEscape(inviteToken)
-		if err := b.setLocalInviteURLFlash(w, inviteURL); err != nil {
-			b.log.Error("set local invite flash failed", "error", err, "org", p.OrgID)
+		inviteURL := publicBaseURL + "/signup?invite=" + url.QueryEscape(inviteToken)
+		if err := setFlash(w, inviteURL); err != nil {
+			log.Error("set local invite flash failed", "error", err, "org", p.OrgID)
 			http.Error(w, "send invite: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -137,6 +158,14 @@ func (b *Bot) decodeLocalInviteFlash(value string) (string, error) {
 // The trailing slash on the route registration means we need to parse
 // the id and action out of the path ourselves.
 func (b *Bot) invitationActionHandler(w http.ResponseWriter, r *http.Request) {
+	revokeInvitationFromSettings(w, r, b.auth, b.log)
+}
+
+// revokeInvitationFromSettings is the testable body of
+// invitationActionHandler, taking the member directory as a seam so the
+// revoke success, cross-org, and generic-error branches can be exercised
+// with a fake.
+func revokeInvitationFromSettings(w http.ResponseWriter, r *http.Request, dir memberDirectory, log *slog.Logger) {
 	p, _ := auth.FromContext(r.Context())
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -155,21 +184,28 @@ func (b *Bot) invitationActionHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unknown action", http.StatusNotFound)
 		return
 	}
-	if err := b.auth.RevokeInvitation(r.Context(), id, p.OrgID); err != nil {
+	if err := dir.RevokeInvitation(r.Context(), id, p.OrgID); err != nil {
 		if errors.Is(err, auth.ErrCrossOrg) {
 			http.NotFound(w, r)
 			return
 		}
-		b.log.Error("revoke invitation failed", "error", err, "org", p.OrgID, "id", id)
+		log.Error("revoke invitation failed", "error", err, "org", p.OrgID, "id", id)
 		http.Error(w, "revoke: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	b.log.Info("invitation revoked", "org", p.OrgID, "id", id, "actor", p.UserID)
+	log.Info("invitation revoked", "org", p.OrgID, "id", id, "actor", p.UserID)
 	http.Redirect(w, r, "/settings/org?tab=members&saved=revoked", http.StatusFound)
 }
 
 // memberActionHandler handles /settings/org/members/{id}/{remove|role}.
 func (b *Bot) memberActionHandler(w http.ResponseWriter, r *http.Request) {
+	memberActionFromSettings(w, r, b.auth, b.log)
+}
+
+// memberActionFromSettings is the testable body of memberActionHandler,
+// taking the member directory as a seam so the remove/role success,
+// cross-org, and generic-error branches can be exercised with a fake.
+func memberActionFromSettings(w http.ResponseWriter, r *http.Request, dir memberDirectory, log *slog.Logger) {
 	p, _ := auth.FromContext(r.Context())
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -190,16 +226,16 @@ func (b *Bot) memberActionHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	switch action {
 	case "remove":
-		if err := b.auth.RemoveMember(r.Context(), id, p.OrgID, p.UserID); err != nil {
+		if err := dir.RemoveMember(r.Context(), id, p.OrgID, p.UserID); err != nil {
 			if errors.Is(err, auth.ErrCrossOrg) {
 				http.NotFound(w, r)
 				return
 			}
-			b.log.Warn("remove member rejected", "error", err, "org", p.OrgID, "id", id, "actor", p.UserID)
+			log.Warn("remove member rejected", "error", err, "org", p.OrgID, "id", id, "actor", p.UserID)
 			http.Error(w, "remove: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-		b.log.Info("member removed", "org", p.OrgID, "id", id, "actor", p.UserID)
+		log.Info("member removed", "org", p.OrgID, "id", id, "actor", p.UserID)
 		http.Redirect(w, r, "/settings/org?tab=members&saved=removed", http.StatusFound)
 	case "role":
 		if err := r.ParseForm(); err != nil {
@@ -215,16 +251,16 @@ func (b *Bot) memberActionHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "unknown role", http.StatusBadRequest)
 			return
 		}
-		if err := b.auth.UpdateMemberRole(r.Context(), id, p.OrgID, p.UserID, role); err != nil {
+		if err := dir.UpdateMemberRole(r.Context(), id, p.OrgID, p.UserID, role); err != nil {
 			if errors.Is(err, auth.ErrCrossOrg) {
 				http.NotFound(w, r)
 				return
 			}
-			b.log.Warn("update role rejected", "error", err, "org", p.OrgID, "id", id, "actor", p.UserID)
+			log.Warn("update role rejected", "error", err, "org", p.OrgID, "id", id, "actor", p.UserID)
 			http.Error(w, "update role: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-		b.log.Info("member role updated", "org", p.OrgID, "id", id, "role", role, "actor", p.UserID)
+		log.Info("member role updated", "org", p.OrgID, "id", id, "role", role, "actor", p.UserID)
 		http.Redirect(w, r, "/settings/org?tab=members&saved=role", http.StatusFound)
 	default:
 		http.Error(w, "unknown action", http.StatusNotFound)
