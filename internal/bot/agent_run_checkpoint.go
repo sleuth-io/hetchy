@@ -9,23 +9,27 @@ import (
 	"github.com/sleuth-io/hetchy/internal/runstore"
 )
 
-// checkpointBranchPrefix is the branch namespace the in-sandbox WIP
-// checkpointer force-pushes to. A real refs/heads/* branch is used (rather
-// than a custom refs/* namespace) because GitHub rejects pushes outside
-// refs/heads and refs/tags. Branches land under this prefix so they are easy
-// to identify and clean up, and never collide with agent feature branches.
-const checkpointBranchPrefix = "hetchy-wip/"
+// checkpointVolumeSubdir is the directory on the shared Daytona cache volume
+// under which per-run WIP snapshots are stored (as `<key>.tar.gz`). The volume
+// already holds the repo checkout and dependency caches; WIP snapshots live
+// alongside them and are re-mounted into a replacement sandbox on recovery.
+const checkpointVolumeSubdir = "hetchy-wip"
 
-// checkpointRefForRun returns the WIP branch name for a run. It is fully
-// derivable from the run ID, so recovery on any worker can locate the
-// checkpoint without persisting extra state: it fetches this same branch.
-// Returns "" for an empty run ID so callers can treat "no run" as "no
-// checkpointing".
-func checkpointRefForRun(runID string) string {
-	if runID == "" {
-		return ""
-	}
-	return checkpointBranchPrefix + runID
+// checkpointDirForVolume returns the absolute checkpoint directory inside a
+// sandbox that has the shared cache volume mounted. The mount path is a fixed
+// constant, so this is independent of whether the per-request cache env was
+// derived — which matters on the recovery/continue path where the repo's
+// CacheMounted flag is not carried through.
+func checkpointDirForVolume() string {
+	return daytonaCacheMountPath + "/" + checkpointVolumeSubdir
+}
+
+// checkpointKeyForRun returns the snapshot key for a run. It is fully derivable
+// from the run ID, so recovery on any worker can locate the snapshot without
+// persisting extra state. Returns "" for an empty run ID so callers can treat
+// "no run" as "no checkpointing".
+func checkpointKeyForRun(runID string) string {
+	return runID
 }
 
 type resumeCheckpointContextKey struct{}
@@ -49,11 +53,13 @@ func resumeCheckpointFromContext(ctx context.Context) string {
 
 // addCheckpointRunEnv injects the WIP-checkpoint and (when resuming) restore
 // env vars consumed by agent.sh / followup.sh. It is a no-op unless a durable
-// run is in scope, so runs without run tracking behave exactly as before.
+// run is in scope, so runs without run tracking behave exactly as before. The
+// script itself gates on whether the shared cache volume is actually mounted,
+// so these vars are safe to set unconditionally.
 //
-//   - HETCHY_CHECKPOINT_INTERVAL_SECONDS / HETCHY_CHECKPOINT_REF start the
-//     background checkpoint loop when checkpointing is enabled.
-//   - HETCHY_RESTORE_CHECKPOINT_REF makes the script restore prior in-progress
+//   - HETCHY_CHECKPOINT_INTERVAL_SECONDS / _DIR / _KEY start the background
+//     snapshot loop when checkpointing is enabled and the volume is mounted.
+//   - HETCHY_RESTORE_CHECKPOINT_KEY makes the script restore prior in-progress
 //     work first; it is set only on a reconstruct-and-resume launch.
 func (b *Bot) addCheckpointRunEnv(ctx context.Context, env map[string]string) {
 	if env == nil {
@@ -63,16 +69,19 @@ func (b *Bot) addCheckpointRunEnv(ctx context.Context, env map[string]string) {
 	if !ok {
 		return
 	}
-	ref := checkpointRefForRun(run.ID)
-	if ref == "" {
+	key := checkpointKeyForRun(run.ID)
+	if key == "" {
 		return
 	}
+	dir := checkpointDirForVolume()
 	if b.cfg.CheckpointIntervalSeconds > 0 {
 		env["HETCHY_CHECKPOINT_INTERVAL_SECONDS"] = strconv.Itoa(b.cfg.CheckpointIntervalSeconds)
-		env["HETCHY_CHECKPOINT_REF"] = ref
+		env["HETCHY_CHECKPOINT_DIR"] = dir
+		env["HETCHY_CHECKPOINT_KEY"] = key
 	}
-	if resumeRef := resumeCheckpointFromContext(ctx); resumeRef != "" {
-		env["HETCHY_RESTORE_CHECKPOINT_REF"] = resumeRef
+	if resumeKey := resumeCheckpointFromContext(ctx); resumeKey != "" {
+		env["HETCHY_CHECKPOINT_DIR"] = dir
+		env["HETCHY_RESTORE_CHECKPOINT_KEY"] = resumeKey
 	}
 }
 
@@ -107,7 +116,7 @@ func (b *Bot) handleRecoverySandboxGone(ctx context.Context, run runstore.Run, l
 			"org", run.OrgID,
 			"thread", run.ThreadID,
 			"sandbox", run.SandboxID,
-			"checkpoint_ref", checkpointRefForRun(run.ID),
+			"checkpoint_key", checkpointKeyForRun(run.ID),
 		)
 		b.reconstructRunAndResume(ctx, run, live)
 		return
@@ -168,6 +177,6 @@ func (b *Bot) reconstructRunAndResume(ctx context.Context, run runstore.Run, liv
 	run.CommandStartSeq = 0
 	run.LogCursor = 0
 
-	resumeCtx := contextWithResumeCheckpoint(ctx, checkpointRefForRun(run.ID))
+	resumeCtx := contextWithResumeCheckpoint(ctx, checkpointKeyForRun(run.ID))
 	b.continueRecoveredRun(resumeCtx, sb, run, live, false)
 }

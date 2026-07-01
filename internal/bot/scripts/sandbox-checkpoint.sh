@@ -1,100 +1,117 @@
 #!/bin/bash
 # sandbox-checkpoint.sh — background work-in-progress checkpointer.
 #
-# When HETCHY_CHECKPOINT_INTERVAL_SECONDS > 0 and HETCHY_CHECKPOINT_REF is set,
-# hetchy_start_checkpoint_loop launches a detached loop that periodically
-# snapshots the agent's working tree and force-pushes it to a
-# `hetchy-wip/<run-id>` branch on origin. If the sandbox is later lost, the
-# controller can create a fresh sandbox and restore that branch to resume the
-# run mid-turn (see hetchy_maybe_restore_checkpoint).
+# When HETCHY_CHECKPOINT_INTERVAL_SECONDS > 0, hetchy_start_checkpoint_loop
+# launches a detached loop that periodically snapshots the agent's working tree
+# into a compressed archive on the shared Daytona cache volume, at
+# ${HETCHY_CHECKPOINT_DIR}/${HETCHY_CHECKPOINT_KEY}.tar.gz. The volume outlives
+# the sandbox and is re-mounted into a replacement sandbox on recovery, so if
+# the run's sandbox is lost mid-turn the controller can rebuild a fresh sandbox,
+# restore that archive (hetchy_maybe_restore_checkpoint), and continue.
 #
-# Two hard rules:
+# Storing snapshots on the volume — rather than pushing a WIP git branch to the
+# target repo — avoids triggering that repo's push/branch CI on every tick and
+# keeps in-progress code (and any secrets in the tree) off any remote.
+#
+# Rules:
 #   1. NOTHING is written to stdout/stderr — the agent runtime stream must stay
-#      pristine (a stray line would desync the bot's line router). All output
-#      goes to ${HETCHY_CHECKPOINT_LOG}.
-#   2. The snapshot uses an isolated GIT_INDEX_FILE and only ever writes new
-#      objects + the WIP branch ref. It never touches the agent's HEAD, index,
-#      or working tree, so it is safe to run concurrently with the agent's own
-#      git operations. A torn/partial cycle simply retries next interval.
+#      pristine. All diagnostics go to ${HETCHY_CHECKPOINT_LOG}. (The restore
+#      helper is the exception: it runs during setup and emits `[hetchy] ` lines
+#      so the restore shows up in the sandbox setup block.)
+#   2. The snapshot excludes .git and the same secret-bearing paths the repo
+#      cache archive drops (.env, .npmrc, cargo credentials).
+#   3. Writes go through the shared cache lock + full-object cp used elsewhere,
+#      because Daytona Cloud volumes are mountpoint-s3 (no partial writes).
+#
+# Requires helpers from sandbox-common.sh / sandbox-repo-cache.sh
+# (hetchy_repo_cache_with_lock, cache_supports_basic_write, hetchy_file_size_bytes),
+# which are prepended ahead of this script.
 
 HETCHY_CHECKPOINT_LOG="${HETCHY_CHECKPOINT_LOG:-/tmp/hetchy-checkpoint.log}"
-HETCHY_CHECKPOINT_INDEX="${HETCHY_CHECKPOINT_INDEX:-/tmp/hetchy-checkpoint-index}"
 
-# hetchy_checkpoint_once creates one snapshot commit of the working tree at
-# $1 and force-pushes it to branch $2 on origin, using the temp index $3.
-# Returns non-zero (quietly) on any failure so the caller can keep looping.
-hetchy_checkpoint_once() {
-  local workdir="$1" ref="$2" idx="$3"
-  cd "$workdir" 2>/dev/null || return 1
-  git rev-parse --git-dir >/dev/null 2>&1 || return 1
+# hetchy_checkpoint_archive_path prints the archive path for a checkpoint key.
+hetchy_checkpoint_archive_path() {
+  printf '%s/%s.tar.gz\n' "$1" "$2"
+}
 
-  rm -f "$idx" 2>/dev/null || true
-  # Build a fresh index from the whole working tree (tracked + untracked,
-  # honoring .gitignore) into the isolated index file. This never touches
-  # .git/index, so it cannot race the agent's own staging.
-  #
-  # Exclude the same secret-bearing paths the internal cache-archival code
-  # drops (sandbox-common.sh / sandbox-repo-cache.sh): .env, .npmrc, and cargo
-  # credentials can hold live tokens written during setup/bootstrap and are not
-  # necessarily gitignored by the target repo. The WIP commit is force-pushed to
-  # a real branch on that repo, so these must never be captured. `**/` matches
-  # at any depth (including the repo root).
-  GIT_INDEX_FILE="$idx" git add -A -- . \
-    ':(exclude,glob)**/.env' \
-    ':(exclude,glob)**/.npmrc' \
-    ':(exclude,glob)**/cargo/credentials' \
-    ':(exclude,glob)**/cargo/credentials.toml' \
-    2>/dev/null || return 1
-  local tree
-  tree="$(GIT_INDEX_FILE="$idx" git write-tree 2>/dev/null)" || return 1
-  [ -n "$tree" ] || return 1
-
-  local parent
-  parent="$(git rev-parse HEAD 2>/dev/null || true)"
-
-  # Author/committer identity is fixed so checkpoints never depend on repo git
-  # config. Split on whether HEAD exists to avoid expanding an empty array under
-  # `set -u` (agent.sh runs with `set -euo pipefail`).
-  local commit
-  if [ -n "$parent" ]; then
-    commit="$(GIT_AUTHOR_NAME='Hetchy' GIT_AUTHOR_EMAIL='wip@hetchy.local' \
-      GIT_COMMITTER_NAME='Hetchy' GIT_COMMITTER_EMAIL='wip@hetchy.local' \
-      git commit-tree "$tree" -p "$parent" -m 'hetchy wip checkpoint' 2>/dev/null)" || return 1
-  else
-    commit="$(GIT_AUTHOR_NAME='Hetchy' GIT_AUTHOR_EMAIL='wip@hetchy.local' \
-      GIT_COMMITTER_NAME='Hetchy' GIT_COMMITTER_EMAIL='wip@hetchy.local' \
-      git commit-tree "$tree" -m 'hetchy wip checkpoint' 2>/dev/null)" || return 1
-  fi
-  [ -n "$commit" ] || return 1
-
-  git push -f origin "${commit}:refs/heads/${ref}" >/dev/null 2>&1 || return 1
-  echo "[checkpoint] pushed ${commit} -> ${ref}"
+# hetchy_checkpoint_volume_ready reports whether the shared cache volume backing
+# $1 (the checkpoint dir) is mounted and writable.
+hetchy_checkpoint_volume_ready() {
+  local dir="$1"
+  local mount_root
+  mount_root="$(dirname "$dir")"
+  [ -d "$mount_root" ] || return 1
+  mkdir -p "$dir" 2>/dev/null || return 1
+  cache_supports_basic_write "$dir" 2>/dev/null || return 1
   return 0
 }
 
-# hetchy_start_checkpoint_loop launches the background loop if configured.
-# Safe to call unconditionally; it returns immediately when disabled.
+# hetchy_checkpoint_once writes one snapshot of the working tree at $1 to the
+# checkpoint archive for dir $2 / key $3. Returns non-zero (quietly) on any
+# failure so the caller can keep looping.
+hetchy_checkpoint_once() {
+  local workdir="$1" dir="$2" key="$3"
+  [ -n "$workdir" ] && [ -n "$dir" ] && [ -n "$key" ] || return 1
+  [ -d "$workdir" ] || return 1
+  hetchy_checkpoint_volume_ready "$dir" || return 1
+
+  local archive tmp
+  archive="$(hetchy_checkpoint_archive_path "$dir" "$key")"
+  tmp="$(mktemp "${TMPDIR:-/tmp}/hetchy-wip.XXXXXX")" || return 1
+
+  # Snapshot the working tree (tracked + untracked), excluding VCS internals and
+  # secret-bearing files — matching sandbox-repo-cache.sh's checkout archive.
+  if ! tar -C "$workdir" \
+      --exclude=./.git \
+      --exclude=./.env \
+      --exclude=./.npmrc \
+      --exclude=./cargo/credentials \
+      --exclude=./cargo/credentials.toml \
+      -czf "$tmp" . >/dev/null 2>&1; then
+    rm -f "$tmp" 2>/dev/null || true
+    return 1
+  fi
+
+  # Publish the whole object under the shared cache lock. mountpoint-s3 makes an
+  # overwriting `cp` a full-object PUT, matching the repo-checkout save path.
+  _hetchy_checkpoint_publish() {
+    cp -f "$tmp" "$archive" >/dev/null 2>&1
+  }
+  hetchy_repo_cache_with_lock "$archive" _hetchy_checkpoint_publish
+  local rc=$?
+  rm -f "$tmp" 2>/dev/null || true
+  [ "$rc" -eq 0 ] || return 1
+  echo "[checkpoint] wrote $(hetchy_file_size_bytes "$archive" 2>/dev/null || echo '?')B -> ${archive}"
+  return 0
+}
+
+# hetchy_start_checkpoint_loop launches the background loop if configured and the
+# shared volume is available. Safe to call unconditionally.
 hetchy_start_checkpoint_loop() {
   local interval="${HETCHY_CHECKPOINT_INTERVAL_SECONDS:-0}"
-  local ref="${HETCHY_CHECKPOINT_REF:-}"
+  local dir="${HETCHY_CHECKPOINT_DIR:-}"
+  local key="${HETCHY_CHECKPOINT_KEY:-}"
   local workdir="${SF_WORKDIR:-}"
+  local log="$HETCHY_CHECKPOINT_LOG"
   case "$interval" in
     ''|*[!0-9]*) interval=0 ;;
   esac
-  if [ "$interval" -le 0 ] || [ -z "$ref" ] || [ -z "$workdir" ]; then
+  if [ "$interval" -le 0 ] || [ -z "$dir" ] || [ -z "$key" ] || [ -z "$workdir" ]; then
     return 0
   fi
-  local log="$HETCHY_CHECKPOINT_LOG"
-  local idx="$HETCHY_CHECKPOINT_INDEX"
   : > "$log" 2>/dev/null || true
-  echo "[checkpoint] starting: every ${interval}s -> ${ref}" >> "$log" 2>&1 || true
+  if ! hetchy_checkpoint_volume_ready "$dir"; then
+    echo "[checkpoint] shared cache volume not mounted/writable; checkpointing disabled" >> "$log" 2>&1 || true
+    return 0
+  fi
+  echo "[checkpoint] starting: every ${interval}s -> ${dir}/${key}.tar.gz" >> "$log" 2>&1 || true
   (
-    # Detached loop: survive the shell that launched us and never write to the
+    # Detached loop: survive the launching shell and never write to the
     # inherited stdout/stderr (they belong to the agent stream).
     trap '' HUP
     while true; do
       sleep "$interval"
-      hetchy_checkpoint_once "$workdir" "$ref" "$idx" >> "$log" 2>&1 || true
+      hetchy_checkpoint_once "$workdir" "$dir" "$key" >> "$log" 2>&1 || true
     done
   ) >> "$log" 2>&1 &
   HETCHY_CHECKPOINT_PID="$!"
@@ -102,51 +119,52 @@ hetchy_start_checkpoint_loop() {
   export HETCHY_CHECKPOINT_PID
 }
 
-# hetchy_stop_checkpoint_loop stops the background loop and best-effort deletes
-# the WIP branch. Called at the end of a normal run once the agent's real work
-# has been pushed, so completed runs don't leave stale hetchy-wip/* branches.
-# A run whose sandbox is lost skips this (the branch is intentionally kept for
-# recovery); the reconstructed run cleans it up on its own normal completion.
+# hetchy_stop_checkpoint_loop stops the background loop and deletes the snapshot
+# on normal completion, so finished runs don't leave stale archives on the
+# shared volume. A run whose sandbox is lost skips this (SIGKILL runs no traps),
+# intentionally keeping the snapshot for recovery; the reconstructed run deletes
+# it on its own normal completion.
 hetchy_stop_checkpoint_loop() {
-  local ref="${HETCHY_CHECKPOINT_REF:-}"
-  local workdir="${SF_WORKDIR:-}"
+  local dir="${HETCHY_CHECKPOINT_DIR:-}"
+  local key="${HETCHY_CHECKPOINT_KEY:-}"
   local log="$HETCHY_CHECKPOINT_LOG"
   if [ -n "${HETCHY_CHECKPOINT_PID:-}" ]; then
     kill "$HETCHY_CHECKPOINT_PID" >/dev/null 2>&1 || true
     unset HETCHY_CHECKPOINT_PID
   fi
-  [ -n "$ref" ] && [ -n "$workdir" ] || return 0
-  ( cd "$workdir" 2>/dev/null && git push origin --delete "refs/heads/${ref}" >/dev/null 2>&1 ) || true
-  echo "[checkpoint] stopped and cleaned ${ref}" >> "$log" 2>&1 || true
+  [ -n "$dir" ] && [ -n "$key" ] || return 0
+  local archive
+  archive="$(hetchy_checkpoint_archive_path "$dir" "$key")"
+  rm -f "$archive" "${archive}.lock" >/dev/null 2>&1 || true
+  echo "[checkpoint] stopped and cleaned ${archive}" >> "$log" 2>&1 || true
 }
 
 # hetchy_maybe_restore_checkpoint restores prior in-progress work into a freshly
-# reconstructed sandbox. It fetches HETCHY_RESTORE_CHECKPOINT_REF and materializes
-# its tree over the working directory. Best-effort: a missing ref (the run died
-# before its first checkpoint) or any git error just leaves the fresh checkout in
-# place so the agent starts from scratch. Emits a single "[hetchy] " status line
-# so the restore shows up in the sandbox setup block.
+# reconstructed sandbox by extracting the snapshot over the fresh checkout. It
+# reads HETCHY_RESTORE_CHECKPOINT_KEY from the shared volume; a missing archive
+# (the run died before its first checkpoint, or no volume) just leaves the fresh
+# checkout in place. Emits a single "[hetchy] " status line for the setup block.
 #
-# Restore fidelity note: this reapplies added/modified files from the checkpoint.
-# It does not replay deletions the agent made relative to the base tree — an
-# acceptable trade-off for a resume aid whose worst case is the agent re-deleting
-# a file it had already removed.
+# Restore fidelity note: this reapplies added/modified working-tree files from
+# the snapshot. It does not replay file deletions the agent made relative to the
+# base tree, nor local unpushed commits (.git is excluded from the snapshot) — an
+# acceptable trade-off for a resume aid.
 hetchy_maybe_restore_checkpoint() {
-  local ref="${HETCHY_RESTORE_CHECKPOINT_REF:-}"
+  local dir="${HETCHY_RESTORE_CHECKPOINT_DIR:-${HETCHY_CHECKPOINT_DIR:-}}"
+  local key="${HETCHY_RESTORE_CHECKPOINT_KEY:-}"
   local workdir="${SF_WORKDIR:-}"
-  local log="$HETCHY_CHECKPOINT_LOG"
-  [ -n "$ref" ] && [ -n "$workdir" ] || return 0
-  cd "$workdir" 2>/dev/null || return 0
-  git rev-parse --git-dir >/dev/null 2>&1 || return 0
-  if ! git fetch --no-tags origin "refs/heads/${ref}:refs/hetchy-restore" >> "$log" 2>&1; then
-    echo "[hetchy] no interrupted work to restore (checkpoint ${ref} not found); starting fresh"
+  [ -n "$dir" ] && [ -n "$key" ] && [ -n "$workdir" ] || return 0
+  [ -d "$workdir" ] || return 0
+  local archive
+  archive="$(hetchy_checkpoint_archive_path "$dir" "$key")"
+  if [ ! -f "$archive" ]; then
+    echo "[hetchy] no interrupted work to restore (checkpoint ${key} not found); starting fresh"
     return 0
   fi
-  if git checkout refs/hetchy-restore -- . >> "$log" 2>&1; then
-    echo "[hetchy] restored interrupted work from checkpoint ${ref}"
+  if tar -C "$workdir" -xzf "$archive" >/dev/null 2>&1; then
+    echo "[hetchy] restored interrupted work from checkpoint ${key}"
   else
-    echo "[hetchy] checkpoint ${ref} restore failed; starting fresh"
+    echo "[hetchy] checkpoint ${key} restore failed; starting fresh"
   fi
-  git update-ref -d refs/hetchy-restore >> "$log" 2>&1 || true
   return 0
 }

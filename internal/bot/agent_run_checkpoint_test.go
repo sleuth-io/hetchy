@@ -16,30 +16,41 @@ import (
 	"github.com/sleuth-io/hetchy/internal/runstore"
 )
 
-func TestCheckpointRefForRun(t *testing.T) {
-	if got := checkpointRefForRun(""); got != "" {
-		t.Fatalf("empty run id should yield empty ref, got %q", got)
-	}
-	if got := checkpointRefForRun("run_abc"); got != "hetchy-wip/run_abc" {
-		t.Fatalf("checkpointRefForRun = %q", got)
+func TestCheckpointKeyForRun(t *testing.T) {
+	if got := checkpointKeyForRun("run_abc"); got != "run_abc" {
+		t.Fatalf("checkpointKeyForRun = %q", got)
 	}
 }
 
-// TestCheckpointScriptExcludesSecrets guards the security-review fix: the WIP
-// snapshot is force-pushed to a real branch on the target repo, so it must
-// exclude the same secret-bearing paths the cache-archival code drops rather
-// than doing a bare `git add -A`.
-func TestCheckpointScriptExcludesSecrets(t *testing.T) {
-	for _, p := range []string{".env", ".npmrc", "cargo/credentials", "cargo/credentials.toml"} {
-		if !strings.Contains(sandboxCheckpointScript, "':(exclude,glob)**/"+p+"'") {
-			t.Fatalf("checkpoint script must exclude %q from the snapshot", p)
+func TestCheckpointDirForVolume(t *testing.T) {
+	// The checkpoint dir must live under the shared cache-volume mount so it
+	// survives sandbox loss and is re-mounted into a replacement sandbox.
+	if got := checkpointDirForVolume(); got != daytonaCacheMountPath+"/hetchy-wip" {
+		t.Fatalf("checkpointDirForVolume = %q", got)
+	}
+}
+
+// TestCheckpointScriptStoresToVolumeNotGit guards the transport: snapshots go to
+// the shared volume (no git branch push that would trigger the target repo's
+// CI), and exclude VCS internals + the same secret-bearing paths the cache
+// archive drops.
+func TestCheckpointScriptStoresToVolumeNotGit(t *testing.T) {
+	if strings.Contains(sandboxCheckpointScript, "git push") {
+		t.Fatal("checkpoint must not push to git (that triggers the target repo's CI)")
+	}
+	if !strings.Contains(sandboxCheckpointScript, "hetchy_repo_cache_with_lock") {
+		t.Fatal("checkpoint should publish under the shared cache lock")
+	}
+	for _, excl := range []string{
+		"--exclude=./.git",
+		"--exclude=./.env",
+		"--exclude=./.npmrc",
+		"--exclude=./cargo/credentials",
+		"--exclude=./cargo/credentials.toml",
+	} {
+		if !strings.Contains(sandboxCheckpointScript, excl) {
+			t.Fatalf("checkpoint snapshot must pass tar %q", excl)
 		}
-	}
-	if !strings.Contains(sandboxCheckpointScript, "git add -A -- .") {
-		t.Fatal("checkpoint snapshot should stage via a scoped pathspec")
-	}
-	if strings.Contains(sandboxCheckpointScript, "git add -A\n") {
-		t.Fatal("checkpoint must not use an unscoped `git add -A`")
 	}
 }
 
@@ -52,8 +63,8 @@ func TestResumeCheckpointContextRoundTrip(t *testing.T) {
 	if got := resumeCheckpointFromContext(contextWithResumeCheckpoint(ctx, "")); got != "" {
 		t.Fatalf("empty ref should not be stored, got %q", got)
 	}
-	ctx = contextWithResumeCheckpoint(ctx, "hetchy-wip/run_x")
-	if got := resumeCheckpointFromContext(ctx); got != "hetchy-wip/run_x" {
+	ctx = contextWithResumeCheckpoint(ctx, "run_x")
+	if got := resumeCheckpointFromContext(ctx); got != "run_x" {
 		t.Fatalf("resumeCheckpointFromContext = %q", got)
 	}
 }
@@ -88,21 +99,27 @@ func TestAddCheckpointRunEnv(t *testing.T) {
 		if env["HETCHY_CHECKPOINT_INTERVAL_SECONDS"] != "90" {
 			t.Fatalf("interval env = %q", env["HETCHY_CHECKPOINT_INTERVAL_SECONDS"])
 		}
-		if env["HETCHY_CHECKPOINT_REF"] != "hetchy-wip/run_x" {
-			t.Fatalf("ref env = %q", env["HETCHY_CHECKPOINT_REF"])
+		if env["HETCHY_CHECKPOINT_KEY"] != "run_x" {
+			t.Fatalf("key env = %q", env["HETCHY_CHECKPOINT_KEY"])
 		}
-		if _, ok := env["HETCHY_RESTORE_CHECKPOINT_REF"]; ok {
-			t.Fatalf("non-resume run should not set restore ref: %v", env)
+		if env["HETCHY_CHECKPOINT_DIR"] != checkpointDirForVolume() {
+			t.Fatalf("dir env = %q", env["HETCHY_CHECKPOINT_DIR"])
+		}
+		if _, ok := env["HETCHY_RESTORE_CHECKPOINT_KEY"]; ok {
+			t.Fatalf("non-resume run should not set restore key: %v", env)
 		}
 	})
 
 	t.Run("resume context sets restore env even when checkpointing disabled", func(t *testing.T) {
 		b := &Bot{cfg: Config{CheckpointIntervalSeconds: 0}}
-		ctx := contextWithResumeCheckpoint(runCtx(), "hetchy-wip/run_x")
+		ctx := contextWithResumeCheckpoint(runCtx(), "run_x")
 		env := map[string]string{}
 		b.addCheckpointRunEnv(ctx, env)
-		if env["HETCHY_RESTORE_CHECKPOINT_REF"] != "hetchy-wip/run_x" {
-			t.Fatalf("restore ref env = %q", env["HETCHY_RESTORE_CHECKPOINT_REF"])
+		if env["HETCHY_RESTORE_CHECKPOINT_KEY"] != "run_x" {
+			t.Fatalf("restore key env = %q", env["HETCHY_RESTORE_CHECKPOINT_KEY"])
+		}
+		if env["HETCHY_CHECKPOINT_DIR"] != checkpointDirForVolume() {
+			t.Fatalf("restore dir env = %q", env["HETCHY_CHECKPOINT_DIR"])
 		}
 	})
 }
@@ -190,8 +207,8 @@ func TestReconstructRunAndResume(t *testing.T) {
 			if sb.ID != "sandbox-new" {
 				t.Fatalf("agent should re-run in the reconstructed sandbox, got %q", sb.ID)
 			}
-			if got := resumeCheckpointFromContext(ctx); got != "hetchy-wip/run_resume" {
-				t.Fatalf("agent context missing resume ref, got %q", got)
+			if got := resumeCheckpointFromContext(ctx); got != "run_resume" {
+				t.Fatalf("agent context missing resume key, got %q", got)
 			}
 			return "https://github.com/acme/repo/pull/9", nil
 		},
