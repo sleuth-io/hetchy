@@ -32,7 +32,19 @@ hetchy_checkpoint_once() {
   # Build a fresh index from the whole working tree (tracked + untracked,
   # honoring .gitignore) into the isolated index file. This never touches
   # .git/index, so it cannot race the agent's own staging.
-  GIT_INDEX_FILE="$idx" git add -A 2>/dev/null || return 1
+  #
+  # Exclude the same secret-bearing paths the internal cache-archival code
+  # drops (sandbox-common.sh / sandbox-repo-cache.sh): .env, .npmrc, and cargo
+  # credentials can hold live tokens written during setup/bootstrap and are not
+  # necessarily gitignored by the target repo. The WIP commit is force-pushed to
+  # a real branch on that repo, so these must never be captured. `**/` matches
+  # at any depth (including the repo root).
+  GIT_INDEX_FILE="$idx" git add -A -- . \
+    ':(exclude,glob)**/.env' \
+    ':(exclude,glob)**/.npmrc' \
+    ':(exclude,glob)**/cargo/credentials' \
+    ':(exclude,glob)**/cargo/credentials.toml' \
+    2>/dev/null || return 1
   local tree
   tree="$(GIT_INDEX_FILE="$idx" git write-tree 2>/dev/null)" || return 1
   [ -n "$tree" ] || return 1

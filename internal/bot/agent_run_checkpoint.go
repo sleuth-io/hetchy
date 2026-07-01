@@ -86,11 +86,6 @@ func (b *Bot) resumeEligibleRun(run runstore.Run) bool {
 	return strings.TrimSpace(run.ID) != ""
 }
 
-// handleRecoverySandboxGone is the recovery decision point when an interrupted
-// run's sandbox cannot be fetched or restarted. When mid-turn resume is enabled
-// and the sandbox is genuinely gone (a permanent 404, not a transient outage),
-// it reconstructs a fresh sandbox and resumes; otherwise it preserves the
-// existing behavior (fail on permanent errors, defer + retry on transient ones).
 // shouldReconstructLostSandbox decides whether a sandbox-gone recovery should
 // rebuild-and-resume instead of failing/deferring. Reconstruct only when
 // mid-turn resume is enabled, the sandbox is genuinely gone (a permanent 404,
@@ -100,6 +95,11 @@ func (b *Bot) shouldReconstructLostSandbox(run runstore.Run, err error) bool {
 	return b.cfg.MidTurnResumeEnabled && isPermanentRecoverySandboxError(err) && b.resumeEligibleRun(run)
 }
 
+// handleRecoverySandboxGone is the recovery decision point when an interrupted
+// run's sandbox cannot be fetched or restarted. When mid-turn resume is enabled
+// and the sandbox is genuinely gone (a permanent 404, not a transient outage),
+// it reconstructs a fresh sandbox and resumes; otherwise it preserves the
+// existing behavior (fail on permanent errors, defer + retry on transient ones).
 func (b *Bot) handleRecoverySandboxGone(ctx context.Context, run runstore.Run, live *liveRun, title, body string, err error) {
 	if b.shouldReconstructLostSandbox(run, err) {
 		b.log.Info("agent run recovery reconstructing lost sandbox",

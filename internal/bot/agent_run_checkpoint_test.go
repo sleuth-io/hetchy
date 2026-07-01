@@ -3,6 +3,7 @@ package bot
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
@@ -21,6 +22,24 @@ func TestCheckpointRefForRun(t *testing.T) {
 	}
 	if got := checkpointRefForRun("run_abc"); got != "hetchy-wip/run_abc" {
 		t.Fatalf("checkpointRefForRun = %q", got)
+	}
+}
+
+// TestCheckpointScriptExcludesSecrets guards the security-review fix: the WIP
+// snapshot is force-pushed to a real branch on the target repo, so it must
+// exclude the same secret-bearing paths the cache-archival code drops rather
+// than doing a bare `git add -A`.
+func TestCheckpointScriptExcludesSecrets(t *testing.T) {
+	for _, p := range []string{".env", ".npmrc", "cargo/credentials", "cargo/credentials.toml"} {
+		if !strings.Contains(sandboxCheckpointScript, "':(exclude,glob)**/"+p+"'") {
+			t.Fatalf("checkpoint script must exclude %q from the snapshot", p)
+		}
+	}
+	if !strings.Contains(sandboxCheckpointScript, "git add -A -- .") {
+		t.Fatal("checkpoint snapshot should stage via a scoped pathspec")
+	}
+	if strings.Contains(sandboxCheckpointScript, "git add -A\n") {
+		t.Fatal("checkpoint must not use an unscoped `git add -A`")
 	}
 }
 
