@@ -157,8 +157,9 @@ hetchy_prepare_repo_workdir
 cd "${SF_WORKDIR}"
 
 # Reconstruct-and-resume: when this run is a recovery of a lost sandbox,
-# restore the interrupted work from its WIP checkpoint branch before anything
-# else runs. No-op for normal runs (HETCHY_RESTORE_CHECKPOINT_REF unset).
+# restore the interrupted work from its WIP checkpoint snapshot on the shared
+# volume before anything else runs. No-op for normal runs
+# (HETCHY_RESTORE_CHECKPOINT_KEY unset).
 hetchy_maybe_restore_checkpoint
 
 echo "[hetchy] verifying claude"
@@ -510,6 +511,6 @@ else
 fi
 
 # Agent finished normally (a non-zero exit above aborts under `set -e` before
-# reaching here, intentionally leaving the WIP branch for recovery). Stop the
-# checkpointer and delete the now-superseded WIP branch. No-op when disabled.
+# reaching here, intentionally leaving the WIP snapshot for recovery). Stop the
+# checkpointer and delete the now-superseded WIP snapshot. No-op when disabled.
 hetchy_stop_checkpoint_loop

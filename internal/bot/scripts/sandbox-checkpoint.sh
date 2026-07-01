@@ -157,14 +157,20 @@ hetchy_maybe_restore_checkpoint() {
   [ -d "$workdir" ] || return 0
   local archive
   archive="$(hetchy_checkpoint_archive_path "$dir" "$key")"
-  if [ ! -f "$archive" ]; then
-    echo "[hetchy] no interrupted work to restore (checkpoint ${key} not found); starting fresh"
-    return 0
-  fi
-  if tar -C "$workdir" -xzf "$archive" >/dev/null 2>&1; then
-    echo "[hetchy] restored interrupted work from checkpoint ${key}"
-  else
-    echo "[hetchy] checkpoint ${key} restore failed; starting fresh"
-  fi
+  # Read + extract under the same shared cache lock the write path
+  # (hetchy_checkpoint_once) and the repo-checkout restore use, so a concurrent
+  # publisher can never be observed mid-write on the mountpoint-s3 archive.
+  _hetchy_checkpoint_restore() {
+    if [ ! -f "$archive" ]; then
+      echo "[hetchy] no interrupted work to restore (checkpoint ${key} not found); starting fresh"
+      return 0
+    fi
+    if tar -C "$workdir" -xzf "$archive" >/dev/null 2>&1; then
+      echo "[hetchy] restored interrupted work from checkpoint ${key}"
+    else
+      echo "[hetchy] checkpoint ${key} restore failed; starting fresh"
+    fi
+  }
+  hetchy_repo_cache_with_lock "$archive" _hetchy_checkpoint_restore
   return 0
 }

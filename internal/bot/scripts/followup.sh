@@ -211,7 +211,8 @@ cd "${SF_WORKDIR}"
 checkout_followup_branch
 
 # Reconstruct-and-resume: restore interrupted work from the WIP checkpoint
-# branch when this run recovers a lost sandbox. No-op for normal follow-ups.
+# snapshot on the shared volume when this run recovers a lost sandbox. No-op
+# for normal follow-ups.
 hetchy_maybe_restore_checkpoint
 
 echo "[hetchy] initializing claude config"
@@ -519,7 +520,7 @@ else
   fi
 fi
 
-# Stop the checkpointer and delete the superseded WIP branch on normal
+# Stop the checkpointer and delete the superseded WIP snapshot on normal
 # completion (a non-zero agent exit aborts earlier under `set -e`, leaving the
-# branch for recovery). No-op when disabled.
+# snapshot for recovery). No-op when disabled.
 hetchy_stop_checkpoint_loop

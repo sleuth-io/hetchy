@@ -35,8 +35,8 @@ func checkpointKeyForRun(runID string) string {
 type resumeCheckpointContextKey struct{}
 
 // contextWithResumeCheckpoint marks a run context as a reconstruct-and-resume
-// launch, carrying the WIP branch whose contents the agent script should
-// restore into the fresh sandbox before the agent runs.
+// launch, carrying the checkpoint key whose volume snapshot the agent script
+// should restore into the fresh sandbox before the agent runs.
 func contextWithResumeCheckpoint(ctx context.Context, ref string) context.Context {
 	if ref == "" {
 		return ctx
@@ -44,7 +44,7 @@ func contextWithResumeCheckpoint(ctx context.Context, ref string) context.Contex
 	return context.WithValue(ctx, resumeCheckpointContextKey{}, ref)
 }
 
-// resumeCheckpointFromContext returns the WIP branch a reconstructed run
+// resumeCheckpointFromContext returns the checkpoint key a reconstructed run
 // should restore, or "" when this is a normal (non-resume) launch.
 func resumeCheckpointFromContext(ctx context.Context) string {
 	ref, _ := ctx.Value(resumeCheckpointContextKey{}).(string)
