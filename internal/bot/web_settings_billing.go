@@ -13,6 +13,31 @@ import (
 	"github.com/sleuth-io/hetchy/internal/billing"
 )
 
+// billingService is the narrow slice of *billing.Service that the billing
+// settings handlers and view builders depend on. Narrowing it to an interface
+// lets tests drive the success and error branches with an in-memory fake
+// instead of a database-backed billing store -- the unavailable store is the
+// only thing that kept those branches uncovered.
+type billingService interface {
+	Enabled() bool
+	Overview(ctx context.Context, orgID string) (billing.Overview, error)
+	ListRepoSettings(ctx context.Context, orgID string) (map[string]billing.RepoSetting, error)
+	SetRepoFlavor(ctx context.Context, orgID, owner, repo, flavor string) (billing.RepoSetting, error)
+	UpdateTopupSettings(ctx context.Context, orgID string, settings billing.TopupSettings) (billing.TopupSettings, error)
+}
+
+var _ billingService = (*billing.Service)(nil)
+
+// billingSvc returns b.billing as a billingService, or an explicit nil when
+// billing is unconfigured. Returning nil rather than a typed-nil *Service keeps
+// the `svc == nil` guards in the handlers and view builders correct.
+func (b *Bot) billingSvc() billingService {
+	if b.billing == nil {
+		return nil
+	}
+	return b.billing
+}
+
 type billingOverviewView struct {
 	PlanCode          string
 	CurrentPlanLabel  string
@@ -72,8 +97,8 @@ type billingMeterView struct {
 	StartedAt       string
 }
 
-func (b *Bot) loadBillingOverview(ctx context.Context, orgID string) (billingOverviewView, error) {
-	if b.billing == nil || !b.billing.Enabled() {
+func (b *Bot) loadBillingOverview(ctx context.Context, svc billingService, orgID string) (billingOverviewView, error) {
+	if svc == nil || !svc.Enabled() {
 		plan := billing.DefaultPaidPlan()
 		return billingOverviewView{
 			PlanCode: "free", CurrentPlanLabel: "Free", Status: "free", MaxFlavor: billing.FlavorStandard,
@@ -84,7 +109,7 @@ func (b *Bot) loadBillingOverview(ctx context.Context, orgID string) (billingOve
 			MonthlyMaxSpend: "0", MonthlySpendUsed: "$0",
 		}, nil
 	}
-	overview, err := b.billing.Overview(ctx, orgID)
+	overview, err := svc.Overview(ctx, orgID)
 	if err != nil {
 		return billingOverviewView{}, err
 	}
@@ -285,19 +310,19 @@ func formatUSDDollarInput(cents int) string {
 	return fmt.Sprintf("%d.%02d", cents/100, cents%100)
 }
 
-func (b *Bot) repoBillingViewData(ctx context.Context, orgID string) (map[string]billing.RepoSetting, []billing.Flavor) {
+func (b *Bot) repoBillingViewData(ctx context.Context, svc billingService, orgID string) (map[string]billing.RepoSetting, []billing.Flavor) {
 	settings := map[string]billing.RepoSetting{}
 	allowed := []billing.Flavor{billing.MustFlavor(billing.FlavorStandard)}
-	if b.billing == nil || !b.billing.Enabled() {
+	if svc == nil || !svc.Enabled() {
 		return settings, allowed
 	}
-	if overview, err := b.billing.Overview(ctx, orgID); err == nil {
+	if overview, err := svc.Overview(ctx, orgID); err == nil {
 		allowed = overview.AllowedFlavors
 		if overview.Account.BillingExempt {
 			allowed = billing.AllowedFlavors(billing.FlavorEnterprise)
 		}
 	}
-	if rows, err := b.billing.ListRepoSettings(ctx, orgID); err == nil {
+	if rows, err := svc.ListRepoSettings(ctx, orgID); err == nil {
 		settings = rows
 	}
 	return settings, allowed
@@ -311,6 +336,14 @@ func formatBillingTime(t time.Time) string {
 }
 
 func (b *Bot) repoFlavorSettingsHandler(w http.ResponseWriter, r *http.Request) {
+	b.repoFlavorSettings(w, r, b.billingSvc())
+}
+
+// repoFlavorSettings is the testable body of repoFlavorSettingsHandler. It
+// takes the billing service as a seam so the flavor-save success and the
+// unknown/not-allowed error branches can be exercised with a fake instead of a
+// database-backed store.
+func (b *Bot) repoFlavorSettings(w http.ResponseWriter, r *http.Request, svc billingService) {
 	p, _ := auth.FromContext(r.Context())
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -339,11 +372,11 @@ func (b *Bot) repoFlavorSettingsHandler(w http.ResponseWriter, r *http.Request) 
 		writeRepoErr(w, err)
 		return
 	}
-	if b.billing == nil || !b.billing.Enabled() {
+	if svc == nil || !svc.Enabled() {
 		http.Error(w, "billing is not configured", http.StatusInternalServerError)
 		return
 	}
-	if _, err := b.billing.SetRepoFlavor(r.Context(), p.OrgID, owner, name, flavor); err != nil {
+	if _, err := svc.SetRepoFlavor(r.Context(), p.OrgID, owner, name, flavor); err != nil {
 		var flavorErr billing.FlavorNotAllowedError
 		if errors.Is(err, billing.ErrUnknownFlavor) || errors.As(err, &flavorErr) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -358,6 +391,14 @@ func (b *Bot) repoFlavorSettingsHandler(w http.ResponseWriter, r *http.Request) 
 }
 
 func (b *Bot) billingTopupSettingsHandler(w http.ResponseWriter, r *http.Request) {
+	b.billingTopupSettings(w, r, b.billingSvc())
+}
+
+// billingTopupSettings is the testable body of billingTopupSettingsHandler. It
+// takes the billing service as a seam so the save success, paid-plan gate, and
+// error branches can be exercised with a fake instead of a database-backed
+// store.
+func (b *Bot) billingTopupSettings(w http.ResponseWriter, r *http.Request, svc billingService) {
 	p, _ := auth.FromContext(r.Context())
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -375,11 +416,11 @@ func (b *Bot) billingTopupSettingsHandler(w http.ResponseWriter, r *http.Request
 		http.Error(w, "bad form", http.StatusBadRequest)
 		return
 	}
-	if b.billing == nil || !b.billing.Enabled() {
+	if svc == nil || !svc.Enabled() {
 		http.Error(w, "billing is not configured", http.StatusInternalServerError)
 		return
 	}
-	overview, err := b.billing.Overview(r.Context(), p.OrgID)
+	overview, err := svc.Overview(r.Context(), p.OrgID)
 	if err != nil {
 		b.log.Error("load billing account for top-up settings", "error", err, "org", p.OrgID)
 		http.Error(w, "load billing settings: "+err.Error(), http.StatusInternalServerError)
@@ -394,7 +435,7 @@ func (b *Bot) billingTopupSettingsHandler(w http.ResponseWriter, r *http.Request
 		r.FormValue("auto_topup_enabled") == "1",
 		parseBillingCents(r.FormValue("monthly_max_spend"), 0),
 	)
-	if _, err := b.billing.UpdateTopupSettings(r.Context(), p.OrgID, settings); err != nil {
+	if _, err := svc.UpdateTopupSettings(r.Context(), p.OrgID, settings); err != nil {
 		b.log.Error("update billing top-up settings", "error", err, "org", p.OrgID)
 		http.Error(w, "save billing settings: "+err.Error(), http.StatusInternalServerError)
 		return
