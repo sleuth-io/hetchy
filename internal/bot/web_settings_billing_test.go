@@ -21,7 +21,7 @@ import (
 
 func TestLoadBillingOverviewDisabledDefaults(t *testing.T) {
 	b := &Bot{}
-	overview, err := b.loadBillingOverview(t.Context(), "org_1")
+	overview, err := b.loadBillingOverview(t.Context(), b.billingSvc(), "org_1")
 	if err != nil {
 		t.Fatalf("loadBillingOverview returned error: %v", err)
 	}
@@ -302,7 +302,8 @@ func TestParseBillingCents(t *testing.T) {
 }
 
 func TestRepoBillingViewDataDisabled(t *testing.T) {
-	settings, allowed := (&Bot{}).repoBillingViewData(t.Context(), "org_1")
+	b := &Bot{}
+	settings, allowed := b.repoBillingViewData(t.Context(), b.billingSvc(), "org_1")
 	if len(settings) != 0 {
 		t.Fatalf("settings len = %d, want 0", len(settings))
 	}

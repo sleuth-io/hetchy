@@ -337,7 +337,7 @@ func (b *Bot) populateSettingsTabData(ctx context.Context, orgID, tab string, da
 		// fails we render it as "not bootstrapped" rather than 500
 		// the whole page. Errors are already logged inside.
 		bootstrapStatus, _ := b.loadBootstrapStatus(ctx, repos)
-		repoBillingSettings, allowedFlavors := b.repoBillingViewData(ctx, orgID)
+		repoBillingSettings, allowedFlavors := b.repoBillingViewData(ctx, b.billingSvc(), orgID)
 		data["GitHubRepos"] = repos
 		data["BootstrapStatus"] = bootstrapStatus
 		data["RepoBillingSettings"] = repoBillingSettings
@@ -394,7 +394,7 @@ func (b *Bot) populateSettingsTabData(ctx context.Context, orgID, tab string, da
 		if _, err := b.syncWorkOSCompedBillingForOrg(ctx, orgID); err != nil {
 			b.log.Warn("workos comped billing sync failed", "org", orgID, "error", err)
 		}
-		overview, err := b.loadBillingOverview(ctx, orgID)
+		overview, err := b.loadBillingOverview(ctx, b.billingSvc(), orgID)
 		if err != nil {
 			return fmt.Errorf("load billing: %w", err)
 		}
