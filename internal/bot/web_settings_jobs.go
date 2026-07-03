@@ -45,16 +45,34 @@ type settingsJobRepoOption struct {
 	Slug string
 }
 
+// jobListerStore is the narrow slice of *jobs.Store the settings Jobs tab
+// depends on. Extracting it (mirroring the jobAPIStore seam the JSON API
+// handlers use) lets the tab-data and by-agent helpers be exercised with an
+// in-memory fake instead of a live Postgres, which is the only thing that
+// kept their success paths uncovered.
+type jobListerStore interface {
+	Enabled() bool
+	List(ctx context.Context, orgID string) ([]jobs.Job, error)
+}
+
+// jobModalPopulator mirrors (*Bot).populateJobModalData so the tab-data
+// builder can be tested without a configured agent/repository/model lookup.
+type jobModalPopulator func(ctx context.Context, orgID string, data map[string]any) (map[string]string, error)
+
 func (b *Bot) populateJobsSettingsTabData(ctx context.Context, orgID string, data map[string]any) error {
+	return populateJobsSettingsTabData(ctx, orgID, data, b.jobs, b.populateJobModalData)
+}
+
+func populateJobsSettingsTabData(ctx context.Context, orgID string, data map[string]any, store jobListerStore, populateModal jobModalPopulator) error {
 	jobRows := []jobs.Job{}
-	if b.jobs != nil && b.jobs.Enabled() {
-		rows, err := b.jobs.List(ctx, orgID)
+	if store != nil && store.Enabled() {
+		rows, err := store.List(ctx, orgID)
 		if err != nil {
 			return fmt.Errorf("load jobs: %w", err)
 		}
 		jobRows = rows
 	}
-	agentLabels, err := b.populateJobModalData(ctx, orgID, data)
+	agentLabels, err := populateModal(ctx, orgID, data)
 	if err != nil {
 		return err
 	}
@@ -124,6 +142,15 @@ func (b *Bot) jobAgentOptions(ctx context.Context, orgID string) (map[string]str
 	}
 	// Vault names override stale local names, matching the agents settings screen.
 	remoteNames := b.remoteAgentDisplayNames(ctx, orgID, activeBackend)
+	labels, options := buildJobAgentOptions(profiles, activeBackend, remoteNames)
+	return labels, options, nil
+}
+
+// buildJobAgentOptions turns the resolved agent profiles into the label map
+// and select options rendered by the job modal. Enabled/backend/blank-slug
+// filtering and the vault-name override live here as a pure function so the
+// selection logic is testable without a live agents store or sx vault.
+func buildJobAgentOptions(profiles []agents.Profile, activeBackend string, remoteNames map[string]string) (map[string]string, []settingsJobAgentOption) {
 	labels := map[string]string{"": "Default"}
 	options := []settingsJobAgentOption{{Slug: "", DisplayName: "Default"}}
 	for _, profile := range profiles {
@@ -145,7 +172,7 @@ func (b *Bot) jobAgentOptions(ctx context.Context, orgID string) (map[string]str
 		labels[profile.Slug] = label
 		options = append(options, settingsJobAgentOption{Slug: profile.Slug, DisplayName: label})
 	}
-	return labels, options, nil
+	return labels, options
 }
 
 func settingsJobFromJob(job jobs.Job, agentLabels map[string]string) settingsJobView {
@@ -192,11 +219,15 @@ func settingsJobFromJob(job jobs.Job, agentLabels map[string]string) settingsJob
 }
 
 func (b *Bot) settingsJobsByAgent(ctx context.Context, orgID string) (map[string][]settingsJobView, error) {
+	return settingsJobsByAgent(ctx, orgID, b.jobs)
+}
+
+func settingsJobsByAgent(ctx context.Context, orgID string, store jobListerStore) (map[string][]settingsJobView, error) {
 	out := map[string][]settingsJobView{}
-	if b.jobs == nil || !b.jobs.Enabled() {
+	if store == nil || !store.Enabled() {
 		return out, nil
 	}
-	rows, err := b.jobs.List(ctx, orgID)
+	rows, err := store.List(ctx, orgID)
 	if err != nil {
 		return nil, fmt.Errorf("load agent jobs: %w", err)
 	}
