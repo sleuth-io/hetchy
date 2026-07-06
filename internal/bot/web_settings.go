@@ -10,6 +10,7 @@ import (
 
 	"github.com/sleuth-io/hetchy/internal/apikeys"
 	"github.com/sleuth-io/hetchy/internal/auth"
+	"github.com/sleuth-io/hetchy/internal/db/sqlc"
 	"github.com/sleuth-io/hetchy/internal/githubapp"
 	"github.com/sleuth-io/hetchy/internal/orgcfg"
 	"github.com/sleuth-io/hetchy/internal/sxsync"
@@ -410,18 +411,32 @@ func formatSettingsTime(t time.Time) string {
 	return t.UTC().Format(time.RFC3339)
 }
 
+// githubInstallationLister is the narrow slice of *sqlc.Queries the
+// Integrations tab depends on. Extracting it (mirroring the jobListerStore
+// seam the Jobs tab uses) lets the installation/repo view assembly be
+// exercised with an in-memory fake instead of a live Postgres, which is the
+// only thing that kept loadIntegrationsView uncovered.
+type githubInstallationLister interface {
+	ListGithubInstallationsByOrg(ctx context.Context, orgID string) ([]sqlc.GithubAppInstallation, error)
+	ListGithubReposByInstallation(ctx context.Context, installationID int64) ([]sqlc.GithubRepo, error)
+}
+
 // loadIntegrationsView pulls the org's GitHub App installations and the
 // repos cached for each. Used by the settings page Integrations tab to
 // render the list + Manage links + default-repo dropdown source.
 func (b *Bot) loadIntegrationsView(ctx context.Context, orgID string) ([]integrationInstallation, []integrationRepo, error) {
-	rows, err := b.store.Queries.ListGithubInstallationsByOrg(ctx, orgID)
+	return loadIntegrationsView(ctx, orgID, b.store.Queries)
+}
+
+func loadIntegrationsView(ctx context.Context, orgID string, store githubInstallationLister) ([]integrationInstallation, []integrationRepo, error) {
+	rows, err := store.ListGithubInstallationsByOrg(ctx, orgID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("list installations: %w", err)
 	}
 	out := make([]integrationInstallation, 0, len(rows))
 	allRepos := []integrationRepo{}
 	for _, row := range rows {
-		installRepos, err := b.store.Queries.ListGithubReposByInstallation(ctx, row.InstallationID)
+		installRepos, err := store.ListGithubReposByInstallation(ctx, row.InstallationID)
 		if err != nil {
 			return nil, nil, fmt.Errorf("list repos for install %d: %w", row.InstallationID, err)
 		}
