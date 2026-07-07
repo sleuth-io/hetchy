@@ -164,6 +164,18 @@ func (b *Bot) agentsHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
+	includeCatalog := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("scope")), "all")
+	out := buildAgentSummaries(profiles, remoteProfiles, activeBackend, jobsByAgent, includeCatalog)
+	writeJSON(w, out)
+}
+
+// buildAgentSummaries assembles the agents-list API payload from the resolved
+// local profiles, the sx vault's remote profiles, the active sx backend, and
+// the per-agent job summaries. Remote-state overlay, enabled/backend
+// filtering, and optional catalog appending live here as a pure function so
+// the assembly is testable without a live agents store, sx vault, or jobs DB
+// (the only things that kept the agentsHandler GET path uncovered).
+func buildAgentSummaries(profiles, remoteProfiles []agents.Profile, activeBackend string, jobsByAgent map[string][]agentJobSummary, includeCatalog bool) []agentSummary {
 	remoteBySlug := make(map[string]agents.Profile, len(remoteProfiles))
 	for _, remote := range remoteProfiles {
 		slug := agents.NormalizeSlug(remote.Slug)
@@ -171,7 +183,6 @@ func (b *Bot) agentsHandler(w http.ResponseWriter, r *http.Request) {
 			remoteBySlug[slug] = remote
 		}
 	}
-	includeCatalog := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("scope")), "all")
 	out := make([]agentSummary, 0, len(profiles))
 	seen := make(map[string]struct{}, len(profiles))
 	for _, a := range profiles {
@@ -195,7 +206,7 @@ func (b *Bot) agentsHandler(w http.ResponseWriter, r *http.Request) {
 			out = append(out, agentSummaryFromProfile(a, nil, true))
 		}
 	}
-	writeJSON(w, out)
+	return out
 }
 
 func mergeRemoteAgentProfiles(local, remote []agents.Profile) []agents.Profile {
@@ -253,11 +264,19 @@ func agentSummaryFromProfile(a agents.Profile, jobs []agentJobSummary, catalogOn
 }
 
 func (b *Bot) agentJobSummariesByAgent(ctx context.Context, orgID string) (map[string][]agentJobSummary, error) {
+	return agentJobSummariesByAgent(ctx, orgID, b.jobs)
+}
+
+// agentJobSummariesByAgent groups the org's jobs by their owning agent slug,
+// converting each to the API summary shape. It takes the narrow jobListerStore
+// seam (mirroring the settings Jobs tab) so grouping and the disabled/error
+// paths are testable with an in-memory fake instead of a live Postgres.
+func agentJobSummariesByAgent(ctx context.Context, orgID string, store jobListerStore) (map[string][]agentJobSummary, error) {
 	out := map[string][]agentJobSummary{}
-	if b.jobs == nil || !b.jobs.Enabled() {
+	if store == nil || !store.Enabled() {
 		return out, nil
 	}
-	rows, err := b.jobs.List(ctx, orgID)
+	rows, err := store.List(ctx, orgID)
 	if err != nil {
 		return nil, err
 	}
