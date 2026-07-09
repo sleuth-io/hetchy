@@ -164,6 +164,18 @@ func (b *Bot) agentsHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
+	includeCatalog := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("scope")), "all")
+	writeJSON(w, buildAgentSummaries(profiles, remoteProfiles, activeBackend, jobsByAgent, includeCatalog))
+}
+
+// buildAgentSummaries assembles the /api/v1/agents response from the merged
+// local+remote profiles. Disabled agents and agents bound to a different sx
+// backend are dropped; remote vault state is overlaid onto matching locals;
+// each visible agent gets its scheduled jobs attached. When includeCatalog is
+// set, built-in catalog agents not already visible are appended as
+// catalog-only entries. Kept as a pure function so the filtering/overlay/
+// catalog logic is testable without a live store or sx vault.
+func buildAgentSummaries(profiles, remoteProfiles []agents.Profile, activeBackend string, jobsByAgent map[string][]agentJobSummary, includeCatalog bool) []agentSummary {
 	remoteBySlug := make(map[string]agents.Profile, len(remoteProfiles))
 	for _, remote := range remoteProfiles {
 		slug := agents.NormalizeSlug(remote.Slug)
@@ -171,7 +183,6 @@ func (b *Bot) agentsHandler(w http.ResponseWriter, r *http.Request) {
 			remoteBySlug[slug] = remote
 		}
 	}
-	includeCatalog := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("scope")), "all")
 	out := make([]agentSummary, 0, len(profiles))
 	seen := make(map[string]struct{}, len(profiles))
 	for _, a := range profiles {
@@ -195,7 +206,7 @@ func (b *Bot) agentsHandler(w http.ResponseWriter, r *http.Request) {
 			out = append(out, agentSummaryFromProfile(a, nil, true))
 		}
 	}
-	writeJSON(w, out)
+	return out
 }
 
 func mergeRemoteAgentProfiles(local, remote []agents.Profile) []agents.Profile {
@@ -253,11 +264,19 @@ func agentSummaryFromProfile(a agents.Profile, jobs []agentJobSummary, catalogOn
 }
 
 func (b *Bot) agentJobSummariesByAgent(ctx context.Context, orgID string) (map[string][]agentJobSummary, error) {
+	return agentJobSummariesByAgent(ctx, orgID, b.jobs)
+}
+
+// agentJobSummariesByAgent groups an org's scheduled jobs by agent slug for
+// the /api/v1/agents response. Taking the narrow jobListerStore (mirroring the
+// Jobs settings tab seam) lets the grouping and the disabled/error paths be
+// exercised with an in-memory fake instead of a live Postgres.
+func agentJobSummariesByAgent(ctx context.Context, orgID string, store jobListerStore) (map[string][]agentJobSummary, error) {
 	out := map[string][]agentJobSummary{}
-	if b.jobs == nil || !b.jobs.Enabled() {
+	if store == nil || !store.Enabled() {
 		return out, nil
 	}
-	rows, err := b.jobs.List(ctx, orgID)
+	rows, err := store.List(ctx, orgID)
 	if err != nil {
 		return nil, err
 	}
