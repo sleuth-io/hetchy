@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -69,6 +70,26 @@ func (b *Bot) applySpecImprovements(ctx context.Context, sb *daytona.Sandbox, se
 		return s, s != ""
 	}
 
+	applySpecImprovementsFromReader(ctx, read, b.bootstrap, spec, repo.Slug, emit, b.log, time.Now().UTC())
+}
+
+// applySpecImprovementsFromReader holds the sandbox-independent half of
+// applySpecImprovements: given a `read(path) -> (content, present)`
+// closure it decides whether the agent asked to change the saved spec,
+// re-fetches the current spec to respect a mid-run Delete, patches only
+// the rewritten scripts, and notifies the user. Splitting it out lets
+// the whole patch/notify decision tree be exercised with an in-memory
+// read function and a fake store, without a live Daytona sandbox.
+func applySpecImprovementsFromReader(
+	ctx context.Context,
+	read func(path string) (string, bool),
+	store bootstrapStore,
+	spec *bootstrap.Spec,
+	repoSlug string,
+	emit blocks.Emitter,
+	log *slog.Logger,
+	now time.Time,
+) {
 	if note, ok := read(specImprovementsDir + "/none.txt"); ok {
 		// Agent considered improvements and decided none were warranted.
 		// Surface the reason in the chat so the user sees the agent did
@@ -92,7 +113,7 @@ func (b *Bot) applySpecImprovements(ctx context.Context, sb *daytona.Sandbox, se
 		// (model regression) or the model decided to skip the entire
 		// reflection. Logged at debug rather than warned so it doesn't
 		// noisily flag every task.
-		b.log.Debug("spec-improvements: no marker and no improvements; skipping", "repo", repo.Slug)
+		log.Debug("spec-improvements: no marker and no improvements; skipping", "repo", repoSlug)
 		return
 	}
 
@@ -105,14 +126,14 @@ func (b *Bot) applySpecImprovements(ctx context.Context, sb *daytona.Sandbox, se
 	// user's perspective looks like the Delete button doesn't work.
 	// ErrNotFound here is the legitimate "deleted during the run"
 	// signal; bail with a debug log.
-	if _, err := b.bootstrap.GetSpec(ctx, spec.InstallationID, spec.RepoID, spec.Path); err != nil {
+	if _, err := store.GetSpec(ctx, spec.InstallationID, spec.RepoID, spec.Path); err != nil {
 		if errors.Is(err, bootstrap.ErrNotFound) {
-			b.log.Debug("spec-improvements: spec deleted during run, skipping",
-				"repo", repo.Slug)
+			log.Debug("spec-improvements: spec deleted during run, skipping",
+				"repo", repoSlug)
 			return
 		}
-		b.log.Warn("spec-improvements: re-fetch spec",
-			"error", err, "repo", repo.Slug)
+		log.Warn("spec-improvements: re-fetch spec",
+			"error", err, "repo", repoSlug)
 		return
 	}
 
@@ -155,21 +176,21 @@ func (b *Bot) applySpecImprovements(ctx context.Context, sb *daytona.Sandbox, se
 	// original transcript. Re-truncate after the append so the
 	// column doesn't grow without bound across N improvements.
 	if reason != "" {
-		ts := time.Now().UTC().Format(time.RFC3339)
+		ts := now.Format(time.RFC3339)
 		entry := fmt.Sprintf("\n\n--- spec improvement at %s (changed: %s) ---\n%s\n",
 			ts, strings.Join(changed, ", "), reason)
 		patched.BootstrapLog = truncateLogTail(strings.TrimRight(patched.BootstrapLog, "\n") + entry)
 	}
 
-	if err := b.bootstrap.SaveSpec(ctx, &patched); err != nil {
-		b.log.Warn("spec-improvements: save", "error", err, "repo", repo.Slug)
+	if err := store.SaveSpec(ctx, &patched); err != nil {
+		log.Warn("spec-improvements: save", "error", err, "repo", repoSlug)
 		emit.Notify("Bootstrap spec — couldn't save improvements",
 			fmt.Sprintf("Agent suggested updates to %s but the save failed: `%v`. The PR is unaffected.", strings.Join(changed, ", "), err))
 		return
 	}
 
-	b.log.Info("spec-improvements: applied",
-		"repo", repo.Slug, "changed", strings.Join(changed, ","), "spec_version", patched.SpecVersion)
+	log.Info("spec-improvements: applied",
+		"repo", repoSlug, "changed", strings.Join(changed, ","), "spec_version", patched.SpecVersion)
 	body := fmt.Sprintf("Agent learned from this task and updated %s. Saved as spec v%d — the next task on this repo will use the improved scripts.",
 		humanList(changed), patched.SpecVersion)
 	if reason != "" {
