@@ -179,12 +179,22 @@ func TestLocalStoreRejectsTamperedSignedToken(t *testing.T) {
 		t.Fatalf("MintSlots: %v", err)
 	}
 	getURL, _ := url.Parse(slots[0].GetURL)
-	tampered := getURL.Path
-	if prefix, ok := strings.CutSuffix(tampered, "A"); ok {
-		tampered = prefix + "B"
-	} else {
-		tampered += "A"
+	// Mutate the first character of the signature segment. Flipping the final
+	// base64 character is unreliable: RawURLEncoding leaves "don't-care" low
+	// bits in the last character of a 256-bit HMAC, so some flips (e.g. A->B)
+	// decode to identical bytes and the signature still verifies. The first
+	// signature character always carries meaningful high bits, so mutating it
+	// is guaranteed to change the decoded HMAC and be rejected.
+	path := getURL.Path
+	dot := strings.LastIndex(path, ".")
+	if dot < 0 || dot+1 >= len(path) {
+		t.Fatalf("signed path %q has no signature segment", path)
 	}
+	repl := byte('A')
+	if path[dot+1] == 'A' {
+		repl = 'B'
+	}
+	tampered := path[:dot+1] + string(repl) + path[dot+2:]
 	req := httptest.NewRequest(http.MethodGet, tampered, nil)
 	rec := httptest.NewRecorder()
 	store.ServeHTTP(rec, req)
