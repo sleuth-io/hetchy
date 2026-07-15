@@ -158,6 +158,11 @@ type Bot struct {
 	// the OAuth handshake at a test server; empty in production.
 	linearTokenEndpointOverride  string
 	linearRevokeEndpointOverride string
+	// slackOAuthExchangeFn exchanges the OAuth authorization code for a
+	// bot token. Production hits Slack's oauth.v2.access endpoint; tests
+	// install a stub so the install-completion path can be exercised
+	// without a live Slack round-trip.
+	slackOAuthExchangeFn slackOAuthExchangeFunc
 	// cipher is reused for the OAuth state token (Slack install flow,
 	// GitHub App setup callback). AES-GCM gives confidentiality +
 	// tamper detection in a single step, so we don't need a separate

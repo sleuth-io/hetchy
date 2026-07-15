@@ -184,12 +184,7 @@ func (b *Bot) slackOAuthCallbackHandler(w http.ResponseWriter, r *http.Request) 
 		SameSite: http.SameSiteLaxMode,
 	})
 
-	resp, err := slack.GetOAuthV2ResponseContext(r.Context(), http.DefaultClient,
-		b.cfg.SlackClientID,
-		b.cfg.SlackClientSecret,
-		code,
-		b.cfg.SlackOAuthRedirectURI,
-	)
+	resp, err := b.exchangeSlackOAuthCode(r.Context(), code)
 	if err != nil {
 		// Don't echo the raw SDK error to the browser — it can leak
 		// internals (transport errors, library frames). Log server
@@ -322,6 +317,26 @@ func (b *Bot) slackDisconnectHandler(w http.ResponseWriter, r *http.Request) {
 		"actor", p.UserID,
 	)
 	http.Redirect(w, r, "/settings/org?tab=integrations&saved=slack_disconnected", http.StatusFound)
+}
+
+// slackOAuthExchangeFunc exchanges an OAuth authorization code for the
+// installing workspace's tokens. It mirrors the arguments of Slack's
+// oauth.v2.access call minus the HTTP client, which the default binds.
+type slackOAuthExchangeFunc func(ctx context.Context, code string) (*slack.OAuthV2Response, error)
+
+// exchangeSlackOAuthCode completes the OAuth code→token exchange,
+// routing through the test seam when one is installed and otherwise
+// calling Slack directly.
+func (b *Bot) exchangeSlackOAuthCode(ctx context.Context, code string) (*slack.OAuthV2Response, error) {
+	if b.slackOAuthExchangeFn != nil {
+		return b.slackOAuthExchangeFn(ctx, code)
+	}
+	return slack.GetOAuthV2ResponseContext(ctx, http.DefaultClient,
+		b.cfg.SlackClientID,
+		b.cfg.SlackClientSecret,
+		code,
+		b.cfg.SlackOAuthRedirectURI,
+	)
 }
 
 func (b *Bot) slackOAuthConfigured() bool {
