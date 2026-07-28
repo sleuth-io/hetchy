@@ -262,8 +262,9 @@ are generated from commit subjects by `scripts/release-notes.sh`, with optional
 curated notes at `docs/releases/<tag>.md`.
 
 Compose now names its image `${HETCHY_IMAGE}:${HETCHY_VERSION}`, defaulting to
-`:dev`. Self-hosters pin a release with `HETCHY_VERSION=v0.1.0` and
-`docker compose pull` instead of building from a checkout.
+`:dev` with `pull_policy: build` so the build-from-checkout path is unchanged.
+Self-hosters pin a release with `HETCHY_VERSION=v0.1.0` and
+`docker compose up -d --pull always` instead of building.
 
 Remaining before the first tag:
 

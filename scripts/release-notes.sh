@@ -73,7 +73,7 @@ printf '```bash\n'
 printf 'docker pull %s:%s\n' "$image" "$tag"
 printf '```\n\n'
 printf 'Pin a self-hosted deployment to this release by setting `HETCHY_VERSION=%s`\n' "$tag"
-printf 'in `.env`, then running `docker compose pull && docker compose up -d`.\n'
+printf 'in `.env`, then running `docker compose up -d --pull always`.\n'
 
 if [[ -n "$previous" ]]; then
   printf '\n**Full Changelog**: https://github.com/%s/compare/%s...%s\n' "$repo" "$previous" "$tag"

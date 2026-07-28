@@ -29,6 +29,7 @@ services:
   # Shares the hetchy image: same binary, different command.
   migration:
     image: ${HETCHY_IMAGE:-ghcr.io/sleuth-io/hetchy}:${HETCHY_VERSION:-dev}
+    pull_policy: ${HETCHY_PULL_POLICY:-build}
     build:
       context: .
       dockerfile: Dockerfile
@@ -49,12 +50,14 @@ services:
 
   # Main hetchy bot service.
   #
-  # `docker compose up --build` builds from this checkout and tags the result
-  # :dev, which never collides with a published tag. To run a published
-  # release instead, set HETCHY_VERSION=v0.1.0 in .env and run
-  # `docker compose pull && docker compose up -d`.
+  # `docker compose up` builds from this checkout and tags the result :dev,
+  # which never collides with a published tag. pull_policy defaults to build so
+  # a first run does not try (and fail) to pull a :dev image that was never
+  # published. To run a published release instead, set HETCHY_VERSION=v0.1.0 in
+  # .env and run `docker compose up -d --pull always`.
   hetchy:
     image: ${HETCHY_IMAGE:-ghcr.io/sleuth-io/hetchy}:${HETCHY_VERSION:-dev}
+    pull_policy: ${HETCHY_PULL_POLICY:-build}
     build:
       context: .
       dockerfile: Dockerfile

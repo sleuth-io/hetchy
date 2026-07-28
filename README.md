@@ -101,8 +101,7 @@ release tag in `.env` and pull the prebuilt image:
 
 ```bash
 HETCHY_VERSION=v0.1.0   # in .env
-docker compose pull
-docker compose up -d
+docker compose up -d --pull always
 ```
 
 See [Releases](https://github.com/sleuth-io/hetchy/releases) for available tags

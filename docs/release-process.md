@@ -71,18 +71,21 @@ Self-hosters pin a version in `.env`:
 HETCHY_VERSION=v0.1.0
 ```
 
-Then pull and start, instead of building from source:
+Then start with `--pull always`, which fetches the published image instead of
+building from source:
 
 ```bash
-docker compose pull
-docker compose up -d
+docker compose up -d --pull always
 ```
 
 Compose runs migrations from the same image before starting the web process.
-Leaving `HETCHY_VERSION=dev` keeps the existing build-from-checkout behavior of
-`docker compose up --build`.
 
-`HETCHY_IMAGE` overrides the registry path for forks or private mirrors.
+Leaving `HETCHY_VERSION=dev` keeps the build-from-checkout behavior: services
+default to `pull_policy: build`, so a plain `docker compose up` builds rather
+than trying to pull a `:dev` tag that was never published. `--pull always`
+overrides that policy for the release path. `HETCHY_PULL_POLICY` overrides it
+permanently, and `HETCHY_IMAGE` overrides the registry path for forks or
+private mirrors.
 
 ## Prerequisites (Maintainers)
 
