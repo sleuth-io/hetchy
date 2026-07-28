@@ -93,4 +93,17 @@ private mirrors.
   with the automatic `GITHUB_TOKEN` and its `packages: write` permission.
 - The GHCR package must be public for self-hosters to pull it without
   authenticating. GitHub creates the package private on the first push; set it
-  to public once under the repository's Packages settings.
+  to public once at
+  `https://github.com/orgs/sleuth-io/packages/container/hetchy/settings`.
+  Repository visibility does not change package visibility — a public repo can
+  still have a private image.
+- The package links back to this repository through the
+  `org.opencontainers.image.source` label in the `Dockerfile`. Without it the
+  package page carries no README, provenance, or link home.
+
+Verify a published release is actually pullable by anyone:
+
+```bash
+docker logout ghcr.io
+docker pull ghcr.io/sleuth-io/hetchy:v0.1.0
+```
