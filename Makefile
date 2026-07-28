@@ -1,4 +1,4 @@
-.PHONY: help build install test coverage ci lint format clean tidy deps verify update-deps init prepush postpull bot logs dev services-up services-down services-logs snapshot push-snapshot oss-check release-notes db-up db-down db-status db-new check-migrations sqlc-generate pg-up pg-down pg-logs pg-psql pg-reset slack-app
+.PHONY: help build install test coverage ci lint lint-clean format clean tidy deps verify update-deps init prepush postpull bot logs dev services-up services-down services-logs snapshot push-snapshot oss-check release-notes db-up db-down db-status db-new check-migrations sqlc-generate pg-up pg-down pg-logs pg-psql pg-reset slack-app
 
 # Default target
 help: ## Show this help message
@@ -66,6 +66,19 @@ ci: ## Run the same read-only checks CI does (gofmt, vet, lint, test -v, build)
 	@echo "✓ all CI checks passed"
 
 lint: ## Run linters
+	@echo "Running linters..."
+	@go tool golangci-lint run
+
+# golangci-lint caches per-package analysis facts. A run that is interrupted or
+# starved of memory (say, alongside a Docker build) can cache incomplete facts,
+# after which staticcheck reports phantom findings that reproduce on every
+# later run and do not reproduce in CI. The giveaway is a burst of SA5011
+# "possible nil pointer dereference" hits on `if x == nil { t.Fatal(...) }`
+# patterns in test files: the analyzer has lost the fact that t.Fatal does not
+# return. Clear the cache and re-run before believing those results.
+lint-clean: ## Clear the golangci-lint cache, then lint (use when findings look bogus)
+	@echo "Clearing golangci-lint cache..."
+	@go tool golangci-lint cache clean
 	@echo "Running linters..."
 	@go tool golangci-lint run
 

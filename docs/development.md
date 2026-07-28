@@ -120,6 +120,7 @@ The bot opens a pool at startup if `DATABASE_URL` is set; otherwise it runs with
 | `make install` | Install to ~/.local/bin |
 | `make test` | Run tests |
 | `make lint` | Run linters |
+| `make lint-clean` | Clear the golangci-lint cache, then lint |
 | `make format` | Format code |
 | `make bot` | Run with live-reload + log mirroring (logs to `/tmp/hetchy.log`) |
 | `make web` | Run web UI only |
@@ -141,6 +142,35 @@ The bot opens a pool at startup if `DATABASE_URL` is set; otherwise it runs with
 | `make db-new` | Scaffold a new migration |
 | `make db-status` | Show current migration version |
 | `make sqlc-generate` | Regenerate internal/db/sqlc from queries |
+
+## Phantom Lint Failures
+
+golangci-lint caches per-package analysis facts. A lint run that is interrupted
+or starved of memory — running one alongside a Docker build will do it — can
+cache incomplete facts. Every later run then reuses them and reports findings
+that are not real and that CI does not reproduce.
+
+The signature is a burst of staticcheck `SA5011` "possible nil pointer
+dereference" hits in test files, on the ordinary pattern:
+
+```go
+if got == nil {
+    t.Fatal("expected a value")
+}
+if got.Field != want { // <- flagged
+```
+
+That code is correct. The analyzer has lost the fact that `t.Fatal` does not
+return, which it only knows by analyzing the `testing` package.
+
+Before believing findings like these, clear the cache and run again:
+
+```bash
+make lint-clean
+```
+
+If the findings disappear, they were cache artifacts. If they survive a clean
+run, they are real.
 
 ## Contributing
 
