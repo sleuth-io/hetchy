@@ -46,6 +46,11 @@ func TestCheckpointScriptStoresToVolumeNotGit(t *testing.T) {
 	if !strings.Contains(sandboxCheckpointScript, "ls-files -z --cached --others --exclude-standard") {
 		t.Fatal("checkpoint snapshot must enumerate files via git ls-files --exclude-standard (honor .gitignore)")
 	}
+	// A tracked file deleted mid-turn is still listed by --cached; tar must not
+	// abort the whole snapshot when it can't stat one vanished path.
+	if !strings.Contains(sandboxCheckpointScript, "--ignore-failed-read") {
+		t.Fatal("checkpoint tar must pass --ignore-failed-read so a deleted/vanished path doesn't lose the snapshot")
+	}
 	for _, secret := range []string{".env", ".npmrc", "cargo/credentials", "cargo/credentials\\.toml"} {
 		if !strings.Contains(sandboxCheckpointScript, secret) {
 			t.Fatalf("checkpoint snapshot must still exclude secret path %q", secret)

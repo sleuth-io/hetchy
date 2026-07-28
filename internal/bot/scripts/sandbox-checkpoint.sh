@@ -76,7 +76,12 @@ hetchy_checkpoint_once() {
     rm -f "$tmp" "$list" 2>/dev/null || true
     return 1
   fi
-  if ! tar -C "$workdir" --null --no-recursion -T "$list" -czf "$tmp" >/dev/null 2>&1; then
+  # --ignore-failed-read: the agent is modifying the tree concurrently, and
+  # `git ls-files --cached` lists index entries regardless of on-disk presence,
+  # so a path in $list may be gone by the time tar stats it (e.g. the agent
+  # deleted a tracked file mid-turn). Without this one vanished path aborts the
+  # whole snapshot; with it, tar skips it and still archives everything present.
+  if ! tar -C "$workdir" --ignore-failed-read --null --no-recursion -T "$list" -czf "$tmp" >/dev/null 2>&1; then
     rm -f "$tmp" "$list" 2>/dev/null || true
     return 1
   fi
