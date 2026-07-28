@@ -5,14 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/sleuth-io/hetchy/internal/blocks"
 )
 
 func parseAutoMergeAssessmentFromBlocks(bs []blocks.Block) (*autoMergeAssessment, error) {
-	for i := len(bs) - 1; i >= 0; i-- {
-		text := bs[i].Body
+	for _, b := range slices.Backward(bs) {
+		text := b.Body
 		if text == "" {
 			continue
 		}
