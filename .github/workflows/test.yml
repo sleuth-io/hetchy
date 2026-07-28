@@ -7,6 +7,8 @@ on:
   pull_request:
     branches:
       - main
+  # Release tags run these same checks before any artifact is published.
+  workflow_call:
 
 jobs:
   test:

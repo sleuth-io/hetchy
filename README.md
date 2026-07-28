@@ -96,6 +96,18 @@ Compose starts Postgres, runs migrations, and starts the Hetchy web process.
 Open `http://localhost:8080`, sign up with email/password, and create your first
 organization.
 
+To run a published release instead of building from this checkout, set a
+release tag in `.env` and pull the prebuilt image:
+
+```bash
+HETCHY_VERSION=v0.1.0   # in .env
+docker compose pull
+docker compose up -d
+```
+
+See [Releases](https://github.com/sleuth-io/hetchy/releases) for available tags
+and [docs/release-process.md](docs/release-process.md) for how releases are cut.
+
 ### 5. Connect Your First Organization
 
 After signup, go to **Organization settings -> Integrations**.
@@ -224,6 +236,7 @@ docker compose --env-file .env.example config
 
 - [Deployment guide](docs/deployment.md)
 - [Development guide](docs/development.md)
+- [Release process](docs/release-process.md)
 - [GitHub PAT setup](docs/github-pat-setup.md)
 - [Daytona setup](docs/daytona-setup.md)
 - [Slack setup](docs/slack-setup.md)

@@ -25,7 +25,10 @@ services:
 
   # One-shot migration runner. Bumps schema before the hetchy service
   # starts (see hetchy.depends_on.migration.condition: service_completed_successfully).
+  #
+  # Shares the hetchy image: same binary, different command.
   migration:
+    image: ${HETCHY_IMAGE:-ghcr.io/sleuth-io/hetchy}:${HETCHY_VERSION:-dev}
     build:
       context: .
       dockerfile: Dockerfile
@@ -45,7 +48,13 @@ services:
       DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/hetchy?sslmode=disable}
 
   # Main hetchy bot service.
+  #
+  # `docker compose up --build` builds from this checkout and tags the result
+  # :dev, which never collides with a published tag. To run a published
+  # release instead, set HETCHY_VERSION=v0.1.0 in .env and run
+  # `docker compose pull && docker compose up -d`.
   hetchy:
+    image: ${HETCHY_IMAGE:-ghcr.io/sleuth-io/hetchy}:${HETCHY_VERSION:-dev}
     build:
       context: .
       dockerfile: Dockerfile

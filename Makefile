@@ -1,4 +1,4 @@
-.PHONY: help build install test coverage ci lint format clean tidy deps verify update-deps init prepush postpull bot logs dev services-up services-down services-logs snapshot push-snapshot oss-check db-up db-down db-status db-new check-migrations sqlc-generate pg-up pg-down pg-logs pg-psql pg-reset slack-app
+.PHONY: help build install test coverage ci lint format clean tidy deps verify update-deps init prepush postpull bot logs dev services-up services-down services-logs snapshot push-snapshot oss-check release-notes db-up db-down db-status db-new check-migrations sqlc-generate pg-up pg-down pg-logs pg-psql pg-reset slack-app
 
 # Default target
 help: ## Show this help message
@@ -215,6 +215,14 @@ push-snapshot: ## Ensure the content-addressed Daytona sandbox snapshot exists
 
 oss-check: ## Check self-host env, Docker, Compose, Daytona auth, and snapshot
 	@./scripts/oss-check.sh
+
+# Releases --------------------------------------------------------------------
+# Pushing a v* tag runs .github/workflows/release.yml, which tests, pushes a
+# multi-arch image to GHCR, and publishes the GitHub release. See
+# docs/release-process.md.
+release-notes: ## Preview the notes a tag would publish (usage: make release-notes TAG=v0.1.0)
+	@if [ -z "$(TAG)" ]; then echo "usage: make release-notes TAG=v0.1.0"; exit 1; fi
+	@./scripts/release-notes.sh "$(TAG)"
 
 # Slack app provisioning ------------------------------------------------------
 # Each developer gets a personal Slack app for local Socket Mode dev work, so

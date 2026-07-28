@@ -57,7 +57,8 @@ Recommended path from here:
 | Artifacts | Done for v1 | Compose defaults to local filesystem artifact storage; S3 remains optional when `HETCHY_ARTIFACT_DIR` is empty. | MinIO/S3-compatible endpoint support can wait. |
 | Auth without WorkOS | Done | `HETCHY_AUTH_MODE=local` adds local username/password signup/login, local users/orgs/memberships/sessions, invite links, org switching, and password changes while preserving WorkOS mode. | Document and self-host test the local-auth path. |
 | Docker Compose self-host | Done first pass | Compose defaults to local auth, bundled Postgres, and self-host env values. | Validate `docker compose --env-file .env.example config` and a clean startup. |
-| Repo hygiene | Done first pass | License, contributing, security, code of conduct, issue/PR templates, sandbox workflow guard, internal scratch doc cleanup, and root screenshot cleanup are done. | Guard `claude-pr-review.yml` in a separate PR because self-modifying review workflow PRs skip Claude review. |
+| Repo hygiene | Done | License, contributing, security, code of conduct, issue/PR templates, sandbox workflow guard, Claude review workflow guard, internal scratch doc cleanup, and root screenshot cleanup are done. | Decide whether `doppler.yaml` and the Makefile's Doppler-based dev targets should stay. |
+| Versioned releases | Done | Pushing a `v*` tag runs CI, publishes a multi-arch GHCR image, and creates a GitHub Release. `HETCHY_VERSION` pins a Compose deployment to a released image. | Cut `v0.1.0` after the clean-checkout smoke test passes, and make the GHCR package public. |
 
 ---
 
@@ -204,7 +205,7 @@ Before flipping public, only maintainer review remains:
 | Add `SECURITY.md` | Done | High |
 | Add `CODE_OF_CONDUCT.md` | Done | Medium |
 | Guard sandbox workflow (`build-sandbox.yml`) for missing secrets | Done | High |
-| Guard Claude review workflow (`claude-pr-review.yml`) for forks/missing secrets | Deferred | High |
+| Guard Claude review workflow (`claude-pr-review.yml`) for forks/missing secrets | Done | High |
 | Add issue/PR templates | Done | Medium |
 | Rewrite `.env.example` as canonical self-host config | Done | High |
 | Rewrite README around self-host quick start | Done | High |
@@ -250,7 +251,31 @@ and `HETCHY_PR_STATE_POLL_LIMIT`. The loop only selects stale open/unknown PRs
 whose repository is backed by a synthetic PAT installation. The one-shot
 `--backfill-pr-states` command remains available for manual repair.
 
-### 6. Local Docker Executor
+### 6. Versioned Releases
+
+Status: **done; first tag pending**
+
+Pushing a `v*` tag runs `.github/workflows/release.yml`, which reuses the `main`
+test workflow, builds a multi-arch (`linux/amd64`, `linux/arm64`) image, pushes
+it to `ghcr.io/sleuth-io/hetchy`, and publishes a GitHub Release. Release notes
+are generated from commit subjects by `scripts/release-notes.sh`, with optional
+curated notes at `docs/releases/<tag>.md`.
+
+Compose now names its image `${HETCHY_IMAGE}:${HETCHY_VERSION}`, defaulting to
+`:dev`. Self-hosters pin a release with `HETCHY_VERSION=v0.1.0` and
+`docker compose pull` instead of building from a checkout.
+
+Remaining before the first tag:
+
+- Run the clean-checkout smoke test (item 1) so `v0.1.0` ships something proven.
+- Optionally write `docs/releases/v0.1.0.md`; the generated changelog for a
+  first release covers all history and is not useful on its own.
+- After the first push, make the GHCR package public so self-hosters can pull
+  without authenticating.
+
+See `docs/release-process.md`.
+
+### 7. Local Docker Executor
 
 Status: **post-launch / community-sized project**
 
@@ -273,8 +298,9 @@ Status: **complete first pass**
 - License/security/contributing files are in place.
 - Historical research/prototype scratch docs are removed.
 - The sandbox snapshot GitHub Action is guarded.
-- The Claude review workflow guard is deferred to a separate PR because changing
-  the review workflow in this PR causes the review action to skip validation.
+- The Claude review workflow is guarded: fork pull requests and repositories
+  without `CLAUDE_CODE_OAUTH_TOKEN` skip the review job cleanly instead of
+  failing, and a missing skills-vault key degrades to a review without skills.
 - Root screenshot was removed; ignored local scratch files remain ignored.
 
 ### Phase 1 - Local Multi-Org Auth

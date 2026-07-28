@@ -5,7 +5,48 @@ on:
     types: [opened, synchronize]
 
 jobs:
+  # Pull requests from forks run without repository secrets, and public forks
+  # of Hetchy have no Claude subscription of their own. Decide up front whether
+  # the review can run at all so those PRs skip cleanly instead of failing.
+  guard:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      review: ${{ steps.check.outputs.review }}
+      skills: ${{ steps.check.outputs.skills }}
+    env:
+      HAS_CLAUDE_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+      HAS_SKILLS_KEY: ${{ secrets.SKILLS_SITE_API_KEY != '' }}
+      IS_FORK: ${{ github.event.pull_request.head.repo.fork }}
+    steps:
+      - id: check
+        run: |
+          if [ "$IS_FORK" = "true" ]; then
+            echo "Skipping Claude review: pull request is from a fork, so repository secrets are unavailable."
+            echo "review=false" >> "$GITHUB_OUTPUT"
+            echo "skills=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$HAS_CLAUDE_TOKEN" != "true" ]; then
+            echo "Skipping Claude review: CLAUDE_CODE_OAUTH_TOKEN is not configured."
+            echo "review=false" >> "$GITHUB_OUTPUT"
+            echo "skills=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "review=true" >> "$GITHUB_OUTPUT"
+          # Skills are a bonus. Without a vault key the review still runs
+          # against CLAUDE.md standards alone.
+          if [ "$HAS_SKILLS_KEY" = "true" ]; then
+            echo "skills=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Skills vault key is not configured; reviewing without installed skills."
+            echo "skills=false" >> "$GITHUB_OUTPUT"
+          fi
+
   review:
+    needs: guard
+    if: needs.guard.outputs.review == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -19,17 +60,20 @@ jobs:
           fetch-depth: 0
 
       - name: Install sx
+        if: needs.guard.outputs.skills == 'true'
         run: |
           curl -fsSL https://raw.githubusercontent.com/sleuth-io/sx/main/install.sh | bash
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Setup sx config
+        if: needs.guard.outputs.skills == 'true'
         run: |
           mkdir -p "$HOME/.config/sx"
           mkdir -p "$HOME/.claude"
           printf '%s\n' '{' '  "type": "sleuth",' '  "repositoryUrl": "https://app.skills.new",' '  "authToken": "${{ secrets.SKILLS_SITE_API_KEY }}"' '}' > "$HOME/.config/sx/config.json"
 
       - name: Install skills
+        if: needs.guard.outputs.skills == 'true'
         run: sx install
 
       - name: Discover installed Claude skills

@@ -1,5 +1,6 @@
-# Build stage
-FROM golang:1.25.6-alpine AS builder
+# Build stage. Pinned to the build machine's architecture so multi-arch
+# releases cross-compile with Go instead of emulating the target under QEMU.
+FROM --platform=$BUILDPLATFORM golang:1.25.6-alpine AS builder
 
 WORKDIR /build
 
@@ -22,8 +23,11 @@ ARG VERSION=dev
 ARG COMMIT=none
 ARG DATE=unknown
 ARG SANDBOX_VERSION=
+# TARGETARCH is populated by BuildKit. It is empty for a classic non-BuildKit
+# build, where the build is native anyway and Go's default is correct.
+ARG TARGETARCH
 RUN sandbox_version="${SANDBOX_VERSION:-$(./scripts/sandbox-version.sh)}" && \
-    CGO_ENABLED=0 GOOS=linux go build \
+    CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build \
     -ldflags "-X github.com/sleuth-io/hetchy/internal/buildinfo.Version=${VERSION} \
               -X github.com/sleuth-io/hetchy/internal/buildinfo.Commit=${COMMIT} \
               -X github.com/sleuth-io/hetchy/internal/buildinfo.Date=${DATE} \
