@@ -6,6 +6,10 @@ placed above the generated commit changelog in the published GitHub Release.
 
 Tags without a matching file publish the generated sections alone.
 
+The first release is a special case: with no previous tag to diff against, the
+changelog would be every commit in the repository's history, so it prints
+`Initial release.` instead. Curated notes carry that release.
+
 Good things to put here:
 
 - The headline change, in a sentence.

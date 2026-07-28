@@ -62,7 +62,11 @@ changelog="$(
 )"
 
 printf '## What'\''s Changed\n\n'
-if [[ -n "$changelog" ]]; then
+if [[ -z "$previous" ]]; then
+  # First release. Enumerating every commit since the repository began is
+  # noise, not a changelog — the curated notes carry this one.
+  printf 'Initial release.\n'
+elif [[ -n "$changelog" ]]; then
   printf '%s\n' "$changelog"
 else
   printf '_No user-facing changes._\n'
