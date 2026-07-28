@@ -156,6 +156,12 @@ hetchy_configure_git_auth
 hetchy_prepare_repo_workdir
 cd "${SF_WORKDIR}"
 
+# Reconstruct-and-resume: when this run is a recovery of a lost sandbox,
+# restore the interrupted work from its WIP checkpoint snapshot on the shared
+# volume before anything else runs. No-op for normal runs
+# (HETCHY_RESTORE_CHECKPOINT_KEY unset).
+hetchy_maybe_restore_checkpoint
+
 echo "[hetchy] verifying claude"
 which claude
 
@@ -456,6 +462,12 @@ if [[ -n "$agent_persona_file" ]]; then
 else
   cp /tmp/sf-prompt-base.txt /tmp/sf-prompt.txt
 fi
+
+# Start the background WIP checkpointer just before the agent runs so its
+# working-tree changes are periodically snapshotted to the shared cache volume
+# that survives sandbox loss. No-op unless HETCHY_CHECKPOINT_INTERVAL_SECONDS > 0.
+hetchy_start_checkpoint_loop
+
 if [[ -n "${HETCHY_CODEX_MODEL:-}" ]]; then
   echo "[hetchy] verifying codex"
   which codex
@@ -497,3 +509,8 @@ else
     run_claude_with_watchdog /tmp/sf-prompt.txt
   fi
 fi
+
+# Agent finished normally (a non-zero exit above aborts under `set -e` before
+# reaching here, intentionally leaving the WIP snapshot for recovery). Stop the
+# checkpointer and delete the now-superseded WIP snapshot. No-op when disabled.
+hetchy_stop_checkpoint_loop

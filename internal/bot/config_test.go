@@ -153,6 +153,77 @@ func TestLoadConfig_TrustedProxy(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_CheckpointDefaultsOn(t *testing.T) {
+	clearEnv(t, "AUTH_BYPASS", "HETCHY_CHECKPOINT_INTERVAL_SECONDS")
+	setEnv(t, requiredEnv())
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.CheckpointIntervalSeconds != defaultCheckpointIntervalSeconds {
+		t.Fatalf("CheckpointIntervalSeconds should default to %d, got %d",
+			defaultCheckpointIntervalSeconds, cfg.CheckpointIntervalSeconds)
+	}
+}
+
+// An empty value is treated the same as unset, so a deployment that ships the
+// bare `HETCHY_CHECKPOINT_INTERVAL_SECONDS=` line from .env.example still gets
+// checkpointing.
+func TestLoadConfig_CheckpointEmptyTakesDefault(t *testing.T) {
+	clearEnv(t, "AUTH_BYPASS")
+	setEnv(t, requiredEnv())
+	t.Setenv("HETCHY_CHECKPOINT_INTERVAL_SECONDS", "")
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.CheckpointIntervalSeconds != defaultCheckpointIntervalSeconds {
+		t.Fatalf("CheckpointIntervalSeconds = %d, want default %d",
+			cfg.CheckpointIntervalSeconds, defaultCheckpointIntervalSeconds)
+	}
+}
+
+func TestLoadConfig_CheckpointOverrides(t *testing.T) {
+	clearEnv(t, "AUTH_BYPASS")
+	setEnv(t, requiredEnv())
+	t.Setenv("HETCHY_CHECKPOINT_INTERVAL_SECONDS", "120")
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.CheckpointIntervalSeconds != 120 {
+		t.Fatalf("CheckpointIntervalSeconds = %d", cfg.CheckpointIntervalSeconds)
+	}
+}
+
+// An explicit 0 is the opt-out.
+func TestLoadConfig_CheckpointExplicitZeroDisables(t *testing.T) {
+	clearEnv(t, "AUTH_BYPASS")
+	setEnv(t, requiredEnv())
+	t.Setenv("HETCHY_CHECKPOINT_INTERVAL_SECONDS", "0")
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.CheckpointIntervalSeconds != 0 {
+		t.Fatalf("explicit 0 should disable checkpointing, got %d", cfg.CheckpointIntervalSeconds)
+	}
+}
+
+func TestLoadConfig_CheckpointIntervalRejectsNegative(t *testing.T) {
+	clearEnv(t, "AUTH_BYPASS")
+	setEnv(t, requiredEnv())
+	t.Setenv("HETCHY_CHECKPOINT_INTERVAL_SECONDS", "-5")
+
+	if _, err := LoadConfig(); err == nil {
+		t.Fatal("negative checkpoint interval should be rejected")
+	}
+}
+
 func TestLoadConfig_ArtifactAndPRStatePollOverrides(t *testing.T) {
 	clearEnv(t, "AUTH_BYPASS")
 	setEnv(t, requiredEnv())

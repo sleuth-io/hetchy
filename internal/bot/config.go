@@ -73,6 +73,20 @@ type Config struct {
 	PRStatePollIntervalSeconds int
 	// PRStatePollLimit caps how many stale PAT-backed PRs one tick refreshes.
 	PRStatePollLimit int
+	// CheckpointIntervalSeconds controls the in-sandbox WIP checkpointer that
+	// periodically snapshots an active run's working tree to a `.tar.gz`
+	// archive on the shared Daytona cache volume so the work survives sandbox
+	// loss. Defaults to defaultCheckpointIntervalSeconds; 0 disables it. Each
+	// tick's snapshot has a small runtime cost and only runs when the cache
+	// volume is mounted; snapshots never leave the sandbox/volume, so no repo
+	// CI is triggered.
+	//
+	// Reconstruct-and-resume recovery is always on: when an active run's
+	// sandbox is permanently gone, recovery creates a fresh sandbox, restores
+	// the latest WIP checkpoint, and re-drives the agent instead of failing the
+	// run. With checkpointing disabled there is nothing to restore and it
+	// degrades to a from-scratch re-run.
+	CheckpointIntervalSeconds int
 
 	WorkOSAPIKey          string
 	WorkOSClientID        string
@@ -202,6 +216,12 @@ const (
 	defaultPRStatePollLimit           = 100
 )
 
+// defaultCheckpointIntervalSeconds is how often an active run snapshots its
+// working tree to the shared cache volume when the interval is not configured.
+// 30s keeps at most half a minute of agent work at risk when a sandbox is lost,
+// which is the point of checkpointing. Set the env var to 0 to disable.
+const defaultCheckpointIntervalSeconds = 30
+
 // loadJobDispatchConfig reads the in-process scheduled-job dispatcher
 // settings. Interval 0 disables the loop (external-cron deployments);
 // limit and concurrency must stay positive.
@@ -254,6 +274,22 @@ func loadPRStatePollConfig() (interval, limit int, err error) {
 		limit = n
 	}
 	return interval, limit, nil
+}
+
+// loadCheckpointConfig reads the WIP-checkpoint interval. An unset or empty
+// value takes defaultCheckpointIntervalSeconds; an explicit 0 disables
+// checkpointing. Reconstruct-and-resume recovery is unconditional and needs no
+// setting of its own — without a checkpoint it re-runs from scratch.
+func loadCheckpointConfig() (interval int, err error) {
+	interval = defaultCheckpointIntervalSeconds
+	if v := strings.TrimSpace(os.Getenv("HETCHY_CHECKPOINT_INTERVAL_SECONDS")); v != "" {
+		n, perr := strconv.Atoi(v)
+		if perr != nil || n < 0 {
+			return 0, fmt.Errorf("HETCHY_CHECKPOINT_INTERVAL_SECONDS must be a non-negative integer, 0 to disable (got %q)", v)
+		}
+		interval = n
+	}
+	return interval, nil
 }
 
 func loadAuthModeEnv() (string, error) {
@@ -431,6 +467,10 @@ func LoadConfig() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	checkpointInterval, err := loadCheckpointConfig()
+	if err != nil {
+		return Config{}, err
+	}
 	sxRuntime, err := loadSXRuntimeConfig(env)
 	if err != nil {
 		return Config{}, err
@@ -454,6 +494,7 @@ func LoadConfig() (Config, error) {
 		JobDispatchConcurrency:      jobConcurrency,
 		PRStatePollIntervalSeconds:  prStatePollInterval,
 		PRStatePollLimit:            prStatePollLimit,
+		CheckpointIntervalSeconds:   checkpointInterval,
 		WorkOSAPIKey:                strings.TrimSpace(os.Getenv("WORKOS_API_KEY")),
 		WorkOSClientID:              strings.TrimSpace(os.Getenv("WORKOS_CLIENT_ID")),
 		WorkOSCookiePassword:        strings.TrimSpace(os.Getenv("WORKOS_COOKIE_PASSWORD")),

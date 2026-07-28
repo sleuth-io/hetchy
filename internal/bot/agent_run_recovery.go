@@ -63,11 +63,11 @@ func (b *Bot) recoverAgentRunReady(ctx context.Context, run runstore.Run, ready 
 
 	sb, err := b.getSandbox(ctx, run.SandboxID)
 	if err != nil {
-		b.handleRecoverySetupError(ctx, run, live, "Agent failed", "The interrupted sandbox no longer exists, so this run cannot be recovered.", err)
+		b.handleRecoverySandboxGone(ctx, run, live, "Agent failed", "The interrupted sandbox no longer exists, so this run cannot be recovered.", err)
 		return
 	}
 	if err := b.ensureSandboxStarted(ctx, sb); err != nil {
-		b.handleRecoverySetupError(ctx, run, live, "Agent failed", "The interrupted sandbox could not be restarted because it no longer exists.", err)
+		b.handleRecoverySandboxGone(ctx, run, live, "Agent failed", "The interrupted sandbox could not be restarted because it no longer exists.", err)
 		return
 	}
 	b.log.Info("agent run recovery connected to Daytona command logs",
