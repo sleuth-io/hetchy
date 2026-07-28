@@ -50,6 +50,30 @@ RUN mkdir -p /data/hetchy/artifacts && \
 
 WORKDIR /app
 
+# OCI image metadata. `image.source` is what links the GHCR package back to
+# this repository — without it the package page shows no README, no provenance,
+# and no link home. The rest give `docker inspect` the version and commit a
+# published image was built from.
+#
+# Build args are per-stage, so the ones the labels stamp are re-declared here.
+# This block sits as late as possible on purpose: VERSION/COMMIT/DATE change on
+# every release, and anything after a step whose cache key depends on them is
+# rebuilt. Below this line only the binary COPY remains, which changes every
+# release anyway; above it, apk/adduser/mkdir keep hitting cache.
+ARG VERSION=dev
+ARG COMMIT=none
+ARG DATE=unknown
+
+LABEL org.opencontainers.image.source="https://github.com/sleuth-io/hetchy" \
+      org.opencontainers.image.url="https://github.com/sleuth-io/hetchy" \
+      org.opencontainers.image.documentation="https://github.com/sleuth-io/hetchy#readme" \
+      org.opencontainers.image.title="Hetchy" \
+      org.opencontainers.image.description="Runs coding agents in isolated sandboxes, streams their work, and opens reviewable PRs with attached evidence." \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${COMMIT}" \
+      org.opencontainers.image.created="${DATE}"
+
 # Copy binary from builder
 COPY --from=builder /build/hetchy .
 

@@ -3,6 +3,7 @@ package bot
 import (
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -114,9 +115,9 @@ func appDataActivityFromEvents(run runstore.Run, events []runActivityEvent) stri
 	summary := summarizeAppDataEvents(events)
 	blocks := summary.blocks
 	blockOrder := summary.order
-	for i := len(events) - 1; i >= 0; i-- {
-		payload := events[i].payload
-		switch events[i].name {
+	for _, ev := range slices.Backward(events) {
+		payload := ev.payload
+		switch ev.name {
 		case "heartbeat":
 			if text := compactActivityText(payload.Title, payload.Delta); text != "" && activityLineIsUseful(text) {
 				return text
@@ -135,8 +136,8 @@ func appDataActivityFromEvents(run runstore.Run, events []runActivityEvent) stri
 			}
 		}
 	}
-	for i := len(blockOrder) - 1; i >= 0; i-- {
-		if line := activityTextForBlock(blocks[blockOrder[i]]); line != "" {
+	for _, id := range slices.Backward(blockOrder) {
+		if line := activityTextForBlock(blocks[id]); line != "" {
 			return line
 		}
 	}
@@ -303,9 +304,9 @@ func appDataCurrentStepFromEvents(run runstore.Run, events []runActivityEvent) s
 		return "Starting"
 	}
 	summary := summarizeAppDataEvents(events)
-	for i := len(events) - 1; i >= 0; i-- {
-		payload := events[i].payload
-		switch events[i].name {
+	for _, ev := range slices.Backward(events) {
+		payload := ev.payload
+		switch ev.name {
 		case "heartbeat":
 			if step := currentStepFromLifecycleText(compactActivityText(payload.Title, payload.Delta)); step != "" {
 				return step
