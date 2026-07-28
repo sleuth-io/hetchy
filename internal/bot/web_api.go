@@ -9,6 +9,7 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -601,10 +602,8 @@ func conversationTitle(rec convstore.Record) string {
 // present we return nil so the UI shows nothing rather than an empty
 // "Skills" row.
 func extractSXSkills(turns [][]blocks.Block) []string {
-	for i := len(turns) - 1; i >= 0; i-- {
-		turn := turns[i]
-		for j := len(turn) - 1; j >= 0; j-- {
-			block := turn[j]
+	for _, turn := range slices.Backward(turns) {
+		for _, block := range slices.Backward(turn) {
 			if block.Kind != blocks.KindNotify || block.Meta == nil {
 				continue
 			}
