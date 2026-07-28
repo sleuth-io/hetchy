@@ -131,20 +131,18 @@ func TestShouldReconstructLostSandbox(t *testing.T) {
 	noIDRun := runstore.Run{}
 
 	cases := []struct {
-		name    string
-		enabled bool
-		run     runstore.Run
-		err     error
-		want    bool
+		name string
+		run  runstore.Run
+		err  error
+		want bool
 	}{
-		{"enabled + permanent + eligible", true, run, permanent, true},
-		{"disabled", false, run, permanent, false},
-		{"transient error defers not reconstructs", true, run, transient, false},
-		{"ineligible run without id", true, noIDRun, permanent, false},
+		{"permanent + eligible", run, permanent, true},
+		{"transient error defers not reconstructs", run, transient, false},
+		{"ineligible run without id", noIDRun, permanent, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			b := &Bot{cfg: Config{MidTurnResumeEnabled: tc.enabled}}
+			b := &Bot{cfg: Config{}}
 			if got := b.shouldReconstructLostSandbox(tc.run, tc.err); got != tc.want {
 				t.Fatalf("shouldReconstructLostSandbox = %v, want %v", got, tc.want)
 			}
@@ -153,8 +151,7 @@ func TestShouldReconstructLostSandbox(t *testing.T) {
 }
 
 // TestReconstructRunAndResume drives the full sandbox-gone recovery path: a
-// permanent Daytona 404 with mid-turn resume enabled must create a fresh
-// sandbox, re-drive the agent in it carrying the run's checkpoint ref, and
+// permanent Daytona 404 must create a fresh sandbox, re-drive the agent in it carrying the run's checkpoint ref, and
 // finalize the run as succeeded — rather than failing it.
 func TestReconstructRunAndResume(t *testing.T) {
 	store := &fakeRunStore{enabled: true}
@@ -184,7 +181,7 @@ func TestReconstructRunAndResume(t *testing.T) {
 	var createdSandbox bool
 	var resumedInNewSandbox bool
 	b := &Bot{
-		cfg:          Config{MidTurnResumeEnabled: true},
+		cfg:          Config{},
 		log:          discardLogger(),
 		runs:         store,
 		convs:        convs,
@@ -233,13 +230,15 @@ func TestReconstructRunAndResume(t *testing.T) {
 	}
 }
 
-// TestRecoverSandboxGoneWithoutResumeFails confirms the default (flag off)
-// behavior is unchanged: a permanent sandbox-gone error fails the run.
-func TestRecoverSandboxGoneWithoutResumeFails(t *testing.T) {
+// TestRecoverSandboxGoneIneligibleRunFails confirms a run that cannot be
+// reconstructed still fails on a permanent sandbox-gone error. An empty run ID
+// means durable-run tracking is off, so there is no checkpoint key to restore
+// and nothing to resume.
+func TestRecoverSandboxGoneIneligibleRunFails(t *testing.T) {
 	store := &fakeRunStore{enabled: true}
 	convs := &fakeConversationStore{rec: convstore.Record{OrgID: "org_1", ThreadID: "thread_1"}}
 	run := runstore.Run{
-		ID:          "run_fail",
+		ID:          "",
 		OrgID:       "org_1",
 		ThreadID:    "thread_1",
 		RequestID:   "req-1",
@@ -252,7 +251,7 @@ func TestRecoverSandboxGoneWithoutResumeFails(t *testing.T) {
 	}
 	var createdSandbox bool
 	b := &Bot{
-		cfg:      Config{MidTurnResumeEnabled: false},
+		cfg:      Config{},
 		log:      discardLogger(),
 		runs:     store,
 		convs:    convs,
@@ -273,9 +272,9 @@ func TestRecoverSandboxGoneWithoutResumeFails(t *testing.T) {
 	b.recoverAgentRunReady(context.Background(), run, nil)
 
 	if createdSandbox {
-		t.Fatal("resume disabled must not create a replacement sandbox")
+		t.Fatal("ineligible run must not create a replacement sandbox")
 	}
 	if last := store.updateStates[len(store.updateStates)-1]; last.state != runstore.StateFailed {
-		t.Fatalf("resume disabled should fail the run, got %+v", last)
+		t.Fatalf("ineligible run should fail, got %+v", last)
 	}
 }

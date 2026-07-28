@@ -184,15 +184,15 @@ sandbox command, replays the log tail into a recovered emitter (suppressing
 already-persisted events), and finalizes: validating the PR, running auto-merge,
 projecting the conversation, and archiving the sandbox.
 
-**Mid-turn resume (optional, off by default).** When enabled
-(`HETCHY_CHECKPOINT_INTERVAL_SECONDS`, `HETCHY_MIDTURN_RESUME_ENABLED`), an
-active run periodically snapshots its working tree to a compressed archive on
-the shared Daytona cache volume. If the sandbox is *permanently* lost (a
-Daytona 404, not a transient outage), recovery builds a fresh sandbox,
-re-mounts the volume, restores the snapshot, and re-drives the agent — instead
-of failing the run. Without a snapshot it degrades to a clean from-scratch
-re-run. Snapshots never leave the sandbox/volume, so no repository CI is
-triggered.
+**Mid-turn resume (on by default).** An active run periodically snapshots its
+working tree to a compressed archive on the shared Daytona cache volume, every
+`HETCHY_CHECKPOINT_INTERVAL_SECONDS` (default 30; set 0 to disable). If the
+sandbox is *permanently* lost (a Daytona 404, not a transient outage), recovery
+builds a fresh sandbox, re-mounts the volume, restores the snapshot, and
+re-drives the agent — instead of failing the run. Reconstruct-and-resume is
+unconditional; without a snapshot it degrades to a clean from-scratch re-run.
+Snapshots never leave the sandbox/volume, so no repository CI is triggered, and
+they are deleted when the run completes normally.
 
 ## Streaming and reattach
 

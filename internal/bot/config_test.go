@@ -153,19 +153,35 @@ func TestLoadConfig_TrustedProxy(t *testing.T) {
 	}
 }
 
-func TestLoadConfig_CheckpointDefaultsDisabled(t *testing.T) {
-	clearEnv(t, "AUTH_BYPASS", "HETCHY_CHECKPOINT_INTERVAL_SECONDS", "HETCHY_MIDTURN_RESUME_ENABLED")
+func TestLoadConfig_CheckpointDefaultsOn(t *testing.T) {
+	clearEnv(t, "AUTH_BYPASS", "HETCHY_CHECKPOINT_INTERVAL_SECONDS")
 	setEnv(t, requiredEnv())
 
 	cfg, err := LoadConfig()
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
-	if cfg.CheckpointIntervalSeconds != 0 {
-		t.Fatalf("CheckpointIntervalSeconds should default to 0, got %d", cfg.CheckpointIntervalSeconds)
+	if cfg.CheckpointIntervalSeconds != defaultCheckpointIntervalSeconds {
+		t.Fatalf("CheckpointIntervalSeconds should default to %d, got %d",
+			defaultCheckpointIntervalSeconds, cfg.CheckpointIntervalSeconds)
 	}
-	if cfg.MidTurnResumeEnabled {
-		t.Fatal("MidTurnResumeEnabled should default to false")
+}
+
+// An empty value is treated the same as unset, so a deployment that ships the
+// bare `HETCHY_CHECKPOINT_INTERVAL_SECONDS=` line from .env.example still gets
+// checkpointing.
+func TestLoadConfig_CheckpointEmptyTakesDefault(t *testing.T) {
+	clearEnv(t, "AUTH_BYPASS")
+	setEnv(t, requiredEnv())
+	t.Setenv("HETCHY_CHECKPOINT_INTERVAL_SECONDS", "")
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.CheckpointIntervalSeconds != defaultCheckpointIntervalSeconds {
+		t.Fatalf("CheckpointIntervalSeconds = %d, want default %d",
+			cfg.CheckpointIntervalSeconds, defaultCheckpointIntervalSeconds)
 	}
 }
 
@@ -173,7 +189,6 @@ func TestLoadConfig_CheckpointOverrides(t *testing.T) {
 	clearEnv(t, "AUTH_BYPASS")
 	setEnv(t, requiredEnv())
 	t.Setenv("HETCHY_CHECKPOINT_INTERVAL_SECONDS", "120")
-	t.Setenv("HETCHY_MIDTURN_RESUME_ENABLED", "true")
 
 	cfg, err := LoadConfig()
 	if err != nil {
@@ -182,8 +197,20 @@ func TestLoadConfig_CheckpointOverrides(t *testing.T) {
 	if cfg.CheckpointIntervalSeconds != 120 {
 		t.Fatalf("CheckpointIntervalSeconds = %d", cfg.CheckpointIntervalSeconds)
 	}
-	if !cfg.MidTurnResumeEnabled {
-		t.Fatal("MidTurnResumeEnabled should be true")
+}
+
+// An explicit 0 is the opt-out.
+func TestLoadConfig_CheckpointExplicitZeroDisables(t *testing.T) {
+	clearEnv(t, "AUTH_BYPASS")
+	setEnv(t, requiredEnv())
+	t.Setenv("HETCHY_CHECKPOINT_INTERVAL_SECONDS", "0")
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.CheckpointIntervalSeconds != 0 {
+		t.Fatalf("explicit 0 should disable checkpointing, got %d", cfg.CheckpointIntervalSeconds)
 	}
 }
 
