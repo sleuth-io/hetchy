@@ -55,22 +55,32 @@ hetchy_checkpoint_once() {
   [ -d "$workdir" ] || return 1
   hetchy_checkpoint_volume_ready "$dir" || return 1
 
-  local archive tmp
+  local archive tmp list
   archive="$(hetchy_checkpoint_archive_path "$dir" "$key")"
   tmp="$(mktemp "${TMPDIR:-/tmp}/hetchy-wip.XXXXXX")" || return 1
+  list="$(mktemp "${TMPDIR:-/tmp}/hetchy-wip-list.XXXXXX")" || { rm -f "$tmp" 2>/dev/null || true; return 1; }
 
-  # Snapshot the working tree (tracked + untracked), excluding VCS internals and
-  # secret-bearing files — matching sandbox-repo-cache.sh's checkout archive.
-  if ! tar -C "$workdir" \
-      --exclude=./.git \
-      --exclude=./.env \
-      --exclude=./.npmrc \
-      --exclude=./cargo/credentials \
-      --exclude=./cargo/credentials.toml \
-      -czf "$tmp" . >/dev/null 2>&1; then
-    rm -f "$tmp" 2>/dev/null || true
+  # Enumerate what to snapshot with git so .gitignore is honored: tracked files
+  # plus non-ignored untracked files. This deliberately EXCLUDES the dependency
+  # and build dirs that setup writes into the tree (node_modules, target, .venv,
+  # dist, …) — a plain `tar .` would upload those (often hundreds of MB–GB) to
+  # the volume on every tick. Also drop the same root-level secret files the
+  # repo-cache archive excludes, in case they are not gitignored. A repo whose
+  # sandbox is reconstructed re-runs setup, so dropped build/dep dirs are rebuilt
+  # rather than restored.
+  if ! git -C "$workdir" ls-files -z --cached --others --exclude-standard 2>/dev/null \
+      | grep -zvE '^(\.env|\.npmrc|cargo/credentials|cargo/credentials\.toml)$' > "$list"; then
+    : # grep -z exits non-zero when nothing survives the filter; the -s check handles it
+  fi
+  if [ ! -s "$list" ]; then
+    rm -f "$tmp" "$list" 2>/dev/null || true
     return 1
   fi
+  if ! tar -C "$workdir" --null --no-recursion -T "$list" -czf "$tmp" >/dev/null 2>&1; then
+    rm -f "$tmp" "$list" 2>/dev/null || true
+    return 1
+  fi
+  rm -f "$list" 2>/dev/null || true
 
   # Publish the whole object under the shared cache lock. mountpoint-s3 makes an
   # overwriting `cp` a full-object PUT, matching the repo-checkout save path.

@@ -41,15 +41,14 @@ func TestCheckpointScriptStoresToVolumeNotGit(t *testing.T) {
 	if !strings.Contains(sandboxCheckpointScript, "hetchy_repo_cache_with_lock") {
 		t.Fatal("checkpoint should publish under the shared cache lock")
 	}
-	for _, excl := range []string{
-		"--exclude=./.git",
-		"--exclude=./.env",
-		"--exclude=./.npmrc",
-		"--exclude=./cargo/credentials",
-		"--exclude=./cargo/credentials.toml",
-	} {
-		if !strings.Contains(sandboxCheckpointScript, excl) {
-			t.Fatalf("checkpoint snapshot must pass tar %q", excl)
+	// The snapshot must honor .gitignore (via git ls-files --exclude-standard) so
+	// dependency/build dirs are never uploaded, and must still drop secret files.
+	if !strings.Contains(sandboxCheckpointScript, "ls-files -z --cached --others --exclude-standard") {
+		t.Fatal("checkpoint snapshot must enumerate files via git ls-files --exclude-standard (honor .gitignore)")
+	}
+	for _, secret := range []string{".env", ".npmrc", "cargo/credentials", "cargo/credentials\\.toml"} {
+		if !strings.Contains(sandboxCheckpointScript, secret) {
+			t.Fatalf("checkpoint snapshot must still exclude secret path %q", secret)
 		}
 	}
 }
