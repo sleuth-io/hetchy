@@ -1,8 +1,14 @@
 # SX Skills Setup
 
-Hetchy uses SX to install agent personas and scoped skills into sandboxes. This
-is optional for basic operation, but it improves agent behavior and lets an
-organization maintain its own skills vault.
+Hetchy uses [SX](https://github.com/sleuth-io/sx) to install agent personas and
+scoped skills into sandboxes. This is optional for basic operation, but it
+improves agent behavior and lets an organization maintain its own skills vault.
+
+SX is a package manager for AI assets — skills, rules, agents, commands, hooks,
+and MCP configs — with its own CLI and desktop app for authoring and publishing.
+This page covers the Hetchy side: which vault a run reads from and how to
+configure it. For the authoring workflow and how the two projects fit together,
+see [sx + hetchy](https://github.com/sleuth-io/sx/blob/main/docs/hetchy.md).
 
 ## Public Vault
 
