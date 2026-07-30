@@ -129,8 +129,10 @@ Optional:
   Compose and requires a public Hetchy origin for Daytona uploads. S3 is the
   better option for private or local-only instances. See
   [artifact storage](docs/artifacts-storage.md).
-- **SX skills vault** - use the default public vault, a fork, or disable it.
-  See [SX setup](docs/sx-setup.md).
+- **SX skills vault** - use the default public vault, a fork, your org's own
+  [sx](https://github.com/sleuth-io/sx) vault, or disable it. See
+  [SX setup](docs/sx-setup.md) and
+  [where the skills come from](#where-the-skills-come-from).
 - **Billing/Stripe** - optional and disabled when Stripe env vars are empty.
   See [Stripe billing setup](docs/stripe-billing-setup.md).
 
@@ -144,6 +146,32 @@ Optional:
    skills.
 5. It streams progress back to the user, commits the result, opens a pull
    request, and supports follow-up instructions on the same PR.
+
+## Where The Skills Come From
+
+Step 4 above — "the configured agent profile and skills" — is
+[**sx**](https://github.com/sleuth-io/sx), a package manager for AI assets:
+skills, rules, agents, commands, hooks, and MCP configs, versioned once and
+installed into any AI client.
+
+Hetchy installs those assets into every sandbox before the agent starts, so an
+agent working on your repository already knows your conventions instead of
+guessing at them. Two sources feed it:
+
+- A **public vault** for the deployment. Empty `HETCHY_SX_PUBLIC_VAULT_URL` uses
+  Hetchy's own; point it at a fork or any public Git vault to use your own, or
+  set `disabled` to skip it.
+- A **per-organization vault** for private assets. An org admin adds an SX key
+  under **Organization settings -> Integrations**, and that org's runs install
+  from its own Skills.new vault, encrypted at rest.
+
+The useful part is the loop: author a skill once with `sx`, publish it, and every
+later Hetchy run picks it up — no image rebuild, no redeploy. Changing how your
+agents behave becomes a publish, not a deployment.
+
+See [SX setup](docs/sx-setup.md) for configuration, or
+[sx + hetchy](https://github.com/sleuth-io/sx/blob/main/docs/hetchy.md) for the
+workflow end to end.
 
 ## Configuration
 
