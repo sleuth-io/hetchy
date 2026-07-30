@@ -63,12 +63,12 @@ func TestValidateReportedPRAcceptsExpectedBranch(t *testing.T) {
 			return nil, fmt.Errorf("lookup args = (%q, %q, %q, %d)", token, owner, repo, number)
 		}
 		return &github.PullRequest{
-			HTMLURL: github.String("https://github.com/owner/repo/pull/42"),
+			HTMLURL: new("https://github.com/owner/repo/pull/42"),
 			Head: &github.PullRequestBranch{
-				Ref:  github.String("feature/sf-abc"),
-				Repo: &github.Repository{FullName: github.String("owner/repo")},
+				Ref:  new("feature/sf-abc"),
+				Repo: &github.Repository{FullName: new("owner/repo")},
 			},
-			Base: &github.PullRequestBranch{Ref: github.String("main")},
+			Base: &github.PullRequestBranch{Ref: new("main")},
 		}, nil
 	})
 
@@ -88,12 +88,12 @@ func TestValidateReportedPRAcceptsExpectedBranch(t *testing.T) {
 func TestValidateReportedPRRejectsWrongBranch(t *testing.T) {
 	withLookupGitHubPullRequest(t, func(context.Context, string, string, string, int) (*github.PullRequest, error) {
 		return &github.PullRequest{
-			HTMLURL: github.String("https://github.com/owner/repo/pull/42"),
+			HTMLURL: new("https://github.com/owner/repo/pull/42"),
 			Head: &github.PullRequestBranch{
-				Ref:  github.String("feature/sf-other"),
-				Repo: &github.Repository{FullName: github.String("owner/repo")},
+				Ref:  new("feature/sf-other"),
+				Repo: &github.Repository{FullName: new("owner/repo")},
 			},
-			Base: &github.PullRequestBranch{Ref: github.String("main")},
+			Base: &github.PullRequestBranch{Ref: new("main")},
 		}, nil
 	})
 
@@ -116,12 +116,12 @@ func TestValidateReportedPRRejectsWrongBranch(t *testing.T) {
 func TestValidateReportedPRRejectsWrongBase(t *testing.T) {
 	withLookupGitHubPullRequest(t, func(context.Context, string, string, string, int) (*github.PullRequest, error) {
 		return &github.PullRequest{
-			HTMLURL: github.String("https://github.com/owner/repo/pull/42"),
+			HTMLURL: new("https://github.com/owner/repo/pull/42"),
 			Head: &github.PullRequestBranch{
-				Ref:  github.String("feature/sf-abc"),
-				Repo: &github.Repository{FullName: github.String("owner/repo")},
+				Ref:  new("feature/sf-abc"),
+				Repo: &github.Repository{FullName: new("owner/repo")},
 			},
-			Base: &github.PullRequestBranch{Ref: github.String("other-base")},
+			Base: &github.PullRequestBranch{Ref: new("other-base")},
 		}, nil
 	})
 

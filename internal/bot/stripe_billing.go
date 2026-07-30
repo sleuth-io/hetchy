@@ -286,9 +286,9 @@ func (b *Bot) billingTopupHandler(w http.ResponseWriter, r *http.Request) {
 func stripeTopupLineItem(priceID string, quantity int) *stripe.CheckoutSessionCreateLineItemParams {
 	return &stripe.CheckoutSessionCreateLineItemParams{
 		Price:    stripe.String(priceID),
-		Quantity: stripe.Int64(int64(quantity)),
+		Quantity: new(int64(quantity)),
 		AdjustableQuantity: &stripe.CheckoutSessionCreateLineItemAdjustableQuantityParams{
-			Enabled: stripe.Bool(true),
+			Enabled: new(true),
 			Minimum: stripe.Int64(1),
 			Maximum: stripe.Int64(100),
 		},
@@ -491,7 +491,7 @@ func (s stripeAutoTopupper) PurchaseTopupUnit(ctx context.Context, account billi
 		Customer:                    stripe.String(account.StripeCustomerID),
 		CollectionMethod:            stripe.String(string(stripe.InvoiceCollectionMethodChargeAutomatically)),
 		PendingInvoiceItemsBehavior: stripe.String("exclude"),
-		AutoAdvance:                 stripe.Bool(false),
+		AutoAdvance:                 new(false),
 		Metadata: hetchyStripeMetadata(map[string]string{
 			"kind":    stripeCheckoutKindTopup,
 			"org_id":  account.OrgID,
@@ -523,7 +523,7 @@ func (s stripeAutoTopupper) PurchaseTopupUnit(ctx context.Context, account billi
 		Params: stripe.Params{
 			IdempotencyKey: stripe.String("hetchy-auto-topup-finalize-" + idempotencySuffix),
 		},
-		AutoAdvance: stripe.Bool(false),
+		AutoAdvance: new(false),
 	})
 	if err != nil {
 		return "", err

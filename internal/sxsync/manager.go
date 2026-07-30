@@ -11,7 +11,7 @@ import (
 
 	"github.com/google/go-github/v66/github"
 	"github.com/jackc/pgx/v5"
-	sxlib "github.com/sleuth-io/sx/pkg/sxvault"
+	sxlib "github.com/sleuth-io/sx/v2/pkg/sxvault"
 
 	"github.com/sleuth-io/hetchy/internal/agents"
 	"github.com/sleuth-io/hetchy/internal/db"
@@ -217,9 +217,9 @@ func (m *Manager) CreateGitVaultRepo(ctx context.Context, orgID string, installa
 		ownerForCreate = ""
 	}
 	created, _, err := client.Repositories.Create(ctx, ownerForCreate, &github.Repository{
-		Name:     github.String(repoName),
-		Private:  github.Bool(true),
-		AutoInit: github.Bool(false),
+		Name:     new(repoName),
+		Private:  new(true),
+		AutoInit: new(false),
 	})
 	if err != nil {
 		return GitVaultView{}, fmt.Errorf("create github repository: %w", err)

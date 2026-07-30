@@ -261,14 +261,14 @@ func TestDecodeJobAPIRequestRejectsInvalidJSON(t *testing.T) {
 func TestJobAPIRequestToInputOverridesCurrentJob(t *testing.T) {
 	enabled := false
 	req := jobAPIRequest{
-		Name:                   ptrString("New name"),
-		Definition:             ptrString("New definition"),
-		AgentSlug:              ptrString("maintainer"),
-		PrimaryOwner:           ptrString("acme"),
-		PrimaryRepo:            ptrString("api"),
+		Name:                   new("New name"),
+		Definition:             new("New definition"),
+		AgentSlug:              new("maintainer"),
+		PrimaryOwner:           new("acme"),
+		PrimaryRepo:            new("api"),
 		AdditionalRepositories: []string{"acme/web", "acme/docs"},
-		CronSchedule:           ptrString("0 */4 * * *"),
-		Timezone:               ptrString("America/New_York"),
+		CronSchedule:           new("0 */4 * * *"),
+		Timezone:               new("America/New_York"),
 		Enabled:                &enabled,
 	}
 	got, err := req.toInput(jobs.Job{
@@ -306,7 +306,7 @@ func TestJobAPIRequestToInputOverridesCurrentJob(t *testing.T) {
 }
 
 func TestJobAPIRequestToInputRejectsInvalidRepositoryStrings(t *testing.T) {
-	req := jobAPIRequest{PrimaryRepository: ptrString("not-a-repo")}
+	req := jobAPIRequest{PrimaryRepository: new("not-a-repo")}
 	if _, err := req.toInput(jobs.Job{}); err == nil || !strings.Contains(err.Error(), "primary_repository") {
 		t.Fatalf("invalid primary_repository error = %v", err)
 	}

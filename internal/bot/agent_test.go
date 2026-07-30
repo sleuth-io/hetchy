@@ -1682,14 +1682,14 @@ func stubPRLookup(t *testing.T, fullName, headBranch, baseBranch, htmlURL string
 	old := lookupGitHubPullRequest
 	lookupGitHubPullRequest = func(context.Context, string, string, string, int) (*github.PullRequest, error) {
 		pr := &github.PullRequest{
-			HTMLURL: github.String(htmlURL),
+			HTMLURL: new(htmlURL),
 			Head: &github.PullRequestBranch{
-				Ref:  github.String(headBranch),
-				Repo: &github.Repository{FullName: github.String(fullName)},
+				Ref:  new(headBranch),
+				Repo: &github.Repository{FullName: new(fullName)},
 			},
 		}
 		if baseBranch != "" {
-			pr.Base = &github.PullRequestBranch{Ref: github.String(baseBranch)}
+			pr.Base = &github.PullRequestBranch{Ref: new(baseBranch)}
 		}
 		return pr, nil
 	}

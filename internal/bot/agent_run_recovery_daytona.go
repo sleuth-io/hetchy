@@ -49,12 +49,10 @@ func (b *Bot) deferRecoveryForRetry(run runstore.Run, reason string, err error) 
 }
 
 func isPermanentRecoverySandboxError(err error) bool {
-	var notFound *sdkerrors.DaytonaNotFoundError
-	if errors.As(err, &notFound) {
+	if _, ok := errors.AsType[*sdkerrors.DaytonaNotFoundError](err); ok {
 		return true
 	}
-	var daytonaErr *sdkerrors.DaytonaError
-	if errors.As(err, &daytonaErr) {
+	if daytonaErr, ok := errors.AsType[*sdkerrors.DaytonaError](err); ok {
 		return daytonaErr.StatusCode == http.StatusNotFound ||
 			(daytonaErr.StatusCode == 0 && strings.Contains(daytonaErr.Message, "Sandbox failed to start"))
 	}

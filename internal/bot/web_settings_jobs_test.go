@@ -230,11 +230,11 @@ func TestSettingsJobFromJobFormatsView(t *testing.T) {
 func TestJobAPIRequestToInputValidatesStructuredAdditionalRepos(t *testing.T) {
 	repo := "acme/api"
 	req := jobAPIRequest{
-		Name:              ptrString("Dependency sweep"),
-		Definition:        ptrString("Check dependencies."),
+		Name:              new("Dependency sweep"),
+		Definition:        new("Check dependencies."),
 		PrimaryRepository: &repo,
-		CronSchedule:      ptrString("0 9 * * 1"),
-		Timezone:          ptrString("UTC"),
+		CronSchedule:      new("0 9 * * 1"),
+		Timezone:          new("UTC"),
 		AdditionalRepos: []jobs.RepoRef{
 			{Owner: " acme ", Name: " web "},
 		},
@@ -272,7 +272,7 @@ func TestJobAPIRequestToInputDefaultsAndPreservesEnabled(t *testing.T) {
 }
 
 func TestJobAPIRequestToInputPreservesPartialEditFields(t *testing.T) {
-	got, err := (jobAPIRequest{Name: ptrString("Renamed")}).toInput(jobs.Job{
+	got, err := (jobAPIRequest{Name: new("Renamed")}).toInput(jobs.Job{
 		ID:           "job_123",
 		Name:         "Old name",
 		Definition:   "Keep definition",
@@ -584,5 +584,3 @@ func TestOrgHasOpenAICredentials(t *testing.T) {
 		})
 	}
 }
-
-func ptrString(s string) *string { return &s }

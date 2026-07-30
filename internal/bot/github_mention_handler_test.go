@@ -177,9 +177,9 @@ func TestHandleGithubMentionForkPRRejectsBeforeAck(t *testing.T) {
 		Directive:         "fix this",
 		Source:            "issue_comment",
 		PullRequest: &github.PullRequest{
-			Number: github.Int(7),
-			Head:   &github.PullRequestBranch{Ref: github.String("feature/x"), Repo: &github.Repository{FullName: github.String("fork/repo")}},
-			Base:   &github.PullRequestBranch{Repo: &github.Repository{FullName: github.String("acme/repo")}},
+			Number: new(7),
+			Head:   &github.PullRequestBranch{Ref: new("feature/x"), Repo: &github.Repository{FullName: new("fork/repo")}},
+			Base:   &github.PullRequestBranch{Repo: &github.Repository{FullName: new("acme/repo")}},
 		},
 	})
 

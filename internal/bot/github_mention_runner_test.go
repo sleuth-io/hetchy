@@ -59,15 +59,15 @@ func TestRunGithubExternalPRUpdatePreparedSetupFailures(t *testing.T) {
 		{
 			name:    "missing credentials",
 			oc:      orgcfg.Config{OrgID: "org1"},
-			pr:      &github.PullRequest{Number: github.Int(7)},
+			pr:      &github.PullRequest{Number: new(7)},
 			wantErr: "Missing Claude credentials",
 		},
 		{
 			name: "missing head branch",
 			oc:   orgcfg.Config{OrgID: "org1", AnthropicAPIKey: "sk-ant"},
 			pr: &github.PullRequest{
-				Number: github.Int(7),
-				Base:   &github.PullRequestBranch{Repo: &github.Repository{FullName: github.String("acme/repo")}},
+				Number: new(7),
+				Base:   &github.PullRequestBranch{Repo: &github.Repository{FullName: new("acme/repo")}},
 			},
 			wantErr:    "Pull request branch unavailable",
 			wantUpsert: true,
@@ -150,8 +150,8 @@ func TestRunGithubExternalPRUpdateWithAgentSandboxCreateFailure(t *testing.T) {
 	recorder := blocks.NewRecorder(20)
 	emit := newCaptureEmitter()
 	pr := &github.PullRequest{
-		Head: &github.PullRequestBranch{Ref: github.String("feature/x"), Repo: &github.Repository{FullName: github.String("acme/repo")}},
-		Base: &github.PullRequestBranch{Ref: github.String("main"), Repo: &github.Repository{FullName: github.String("acme/repo")}},
+		Head: &github.PullRequestBranch{Ref: new("feature/x"), Repo: &github.Repository{FullName: new("acme/repo")}},
+		Base: &github.PullRequestBranch{Ref: new("main"), Repo: &github.Repository{FullName: new("acme/repo")}},
 	}
 	b.runGithubExternalPRUpdateWithAgent(context.Background(),
 		orgcfg.Config{OrgID: "org1", AnthropicAPIKey: "sk-ant"},
@@ -212,8 +212,8 @@ func TestRunGithubExternalPRUpdateWithAgentSuccessUpdatesExistingPullRequest(t *
 	recorder := blocks.NewRecorder(20)
 	emit := newCaptureEmitter()
 	pr := &github.PullRequest{
-		Head: &github.PullRequestBranch{Ref: github.String("feature/x"), Repo: &github.Repository{FullName: github.String("acme/repo")}},
-		Base: &github.PullRequestBranch{Ref: github.String("main"), Repo: &github.Repository{FullName: github.String("acme/repo")}},
+		Head: &github.PullRequestBranch{Ref: new("feature/x"), Repo: &github.Repository{FullName: new("acme/repo")}},
+		Base: &github.PullRequestBranch{Ref: new("main"), Repo: &github.Repository{FullName: new("acme/repo")}},
 	}
 	b.runGithubExternalPRUpdateWithAgent(context.Background(),
 		orgcfg.Config{OrgID: "org1", AnthropicAPIKey: "sk-ant"},

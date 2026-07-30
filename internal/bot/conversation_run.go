@@ -516,10 +516,9 @@ func (b *Bot) tryReplaceFailedFollowUpSandbox(ctx context.Context, oc orgcfg.Con
 
 func (b *Bot) handleFollowUpSandboxResumeError(ctx context.Context, sb *daytona.Sandbox, rec convstore.Record, text, requestID string, recorder *blocks.Recorder, err error, emit blocks.Emitter) {
 	b.log.Error("sandbox resume failed", "sandbox", sb.ID, "request_id", requestID, "error", err)
-	var timeoutErr *sdkerrors.DaytonaTimeoutError
 	title := "Sandbox resume failed"
 	msg := fmt.Sprintf("Could not start sandbox `%s`. Try again, or open a fresh chat.", sb.ID)
-	if errors.As(err, &timeoutErr) {
+	if _, ok := errors.AsType[*sdkerrors.DaytonaTimeoutError](err); ok {
 		title = "Sandbox slow to start"
 		msg = fmt.Sprintf("Sandbox `%s` is taking unusually long to start. Wait a moment and reload, or open a fresh chat if it persists.", sb.ID)
 	}

@@ -1212,8 +1212,8 @@ func TestFromRunRowSetsDefaults(t *testing.T) {
 		ID:             "r",
 		OrgID:          "o",
 		ThreadID:       "t",
-		JobID:          strPtr("job-1"),
-		JobExecutionID: strPtr("exec-1"),
+		JobID:          new("job-1"),
+		JobExecutionID: new("exec-1"),
 	}
 	run := fromRunRow(row)
 	if run.JobID != "job-1" || run.JobExecutionID != "exec-1" {
@@ -1223,5 +1223,3 @@ func TestFromRunRowSetsDefaults(t *testing.T) {
 		t.Errorf("fromRunRow trigger default: got %q", run.TriggerSource)
 	}
 }
-
-func strPtr(s string) *string { return &s }

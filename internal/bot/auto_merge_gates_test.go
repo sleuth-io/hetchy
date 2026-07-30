@@ -56,7 +56,7 @@ func TestEvaluateAutoMergeServerGateBlocksUnsafeEvidence(t *testing.T) {
 		{
 			name: "dependency file",
 			mutate: func(a *autoMergeAssessment) []*github.CommitFile {
-				return []*github.CommitFile{{Filename: stringPtr("go.mod"), Changes: intPtr(1)}}
+				return []*github.CommitFile{{Filename: new("go.mod"), Changes: new(1)}}
 			},
 			want: "dependency manifest or lockfile changed: go.mod",
 		},
@@ -164,13 +164,13 @@ func TestEvaluateAutoMergeServerGateAllowsLowRiskHighConfidence(t *testing.T) {
 
 func TestAutoMergeFileRiskReasonsDetectsDangerousPaths(t *testing.T) {
 	files := []*github.CommitFile{
-		{Filename: stringPtr("db/migrations/001.sql"), Changes: intPtr(1)},
-		{Filename: stringPtr("docs/user_migration_guide.md"), Changes: intPtr(1)},
-		{Filename: stringPtr(".github/workflows/test.yml"), Changes: intPtr(1)},
-		{Filename: stringPtr("internal/auth/session.go"), Changes: intPtr(1)},
-		{Filename: stringPtr("internal/billing/stripe.go"), Changes: intPtr(1)},
-		{Filename: stringPtr("internal/foo_test.go"), Status: stringPtr("removed"), Changes: intPtr(1)},
-		{Filename: stringPtr("internal/large.go"), Changes: intPtr(autoMergeMaxChanges + 1)},
+		{Filename: new("db/migrations/001.sql"), Changes: new(1)},
+		{Filename: new("docs/user_migration_guide.md"), Changes: new(1)},
+		{Filename: new(".github/workflows/test.yml"), Changes: new(1)},
+		{Filename: new("internal/auth/session.go"), Changes: new(1)},
+		{Filename: new("internal/billing/stripe.go"), Changes: new(1)},
+		{Filename: new("internal/foo_test.go"), Status: new("removed"), Changes: new(1)},
+		{Filename: new("internal/large.go"), Changes: new(autoMergeMaxChanges + 1)},
 	}
 	got := strings.Join(autoMergeFileRiskReasons(files), "\n")
 	for _, want := range []string{
@@ -196,9 +196,9 @@ func TestEvaluateAutoMergeGitHubGateBlocksFailedChecksBeforeWaiting(t *testing.T
 		PR:         openCleanPR("abc123"),
 		Protection: &github.Protection{RequiredStatusChecks: &github.RequiredStatusChecks{Contexts: &requiredContexts}},
 		CheckRuns: []*github.CheckRun{{
-			Name:       stringPtr("ci"),
-			Status:     stringPtr("completed"),
-			Conclusion: stringPtr("failure"),
+			Name:       new("ci"),
+			Status:     new("completed"),
+			Conclusion: new("failure"),
 		}},
 	}, "abc123")
 	if got.State != autoMergeStateHumanReview {
@@ -213,9 +213,9 @@ func TestEvaluateAutoMergeGitHubGateIgnoresOptionalFailedCheck(t *testing.T) {
 	got := evaluateAutoMergeGitHubGate(autoMergeGitHubSnapshot{
 		PR: openCleanPR("abc123"),
 		CheckRuns: []*github.CheckRun{{
-			Name:       stringPtr("optional-benchmark"),
-			Status:     stringPtr("completed"),
-			Conclusion: stringPtr("failure"),
+			Name:       new("optional-benchmark"),
+			Status:     new("completed"),
+			Conclusion: new("failure"),
 		}},
 	}, "abc123")
 	if got.State != autoMergeStateSafeToMerge || !got.Passed {
@@ -252,7 +252,7 @@ func TestEvaluateAutoMergeGitHubGateStates(t *testing.T) {
 			name: "already merged",
 			snapshot: autoMergeGitHubSnapshot{PR: func() *github.PullRequest {
 				pr := openCleanPR("abc123")
-				pr.Merged = boolPtr(true)
+				pr.Merged = new(true)
 				return pr
 			}()},
 			head:      "abc123",
@@ -264,7 +264,7 @@ func TestEvaluateAutoMergeGitHubGateStates(t *testing.T) {
 			name: "closed",
 			snapshot: autoMergeGitHubSnapshot{PR: func() *github.PullRequest {
 				pr := openCleanPR("abc123")
-				pr.State = stringPtr("closed")
+				pr.State = new("closed")
 				return pr
 			}()},
 			head:      "abc123",
@@ -275,7 +275,7 @@ func TestEvaluateAutoMergeGitHubGateStates(t *testing.T) {
 			name: "draft",
 			snapshot: autoMergeGitHubSnapshot{PR: func() *github.PullRequest {
 				pr := openCleanPR("abc123")
-				pr.Draft = boolPtr(true)
+				pr.Draft = new(true)
 				return pr
 			}()},
 			head:      "abc123",
@@ -286,7 +286,7 @@ func TestEvaluateAutoMergeGitHubGateStates(t *testing.T) {
 			name: "dirty",
 			snapshot: autoMergeGitHubSnapshot{PR: func() *github.PullRequest {
 				pr := openCleanPR("abc123")
-				pr.MergeableState = stringPtr("dirty")
+				pr.MergeableState = new("dirty")
 				return pr
 			}()},
 			head:      "abc123",
@@ -297,7 +297,7 @@ func TestEvaluateAutoMergeGitHubGateStates(t *testing.T) {
 			name: "unknown mergeability",
 			snapshot: autoMergeGitHubSnapshot{PR: func() *github.PullRequest {
 				pr := openCleanPR("abc123")
-				pr.MergeableState = stringPtr("unknown")
+				pr.MergeableState = new("unknown")
 				return pr
 			}()},
 			head:      "abc123",
@@ -310,7 +310,7 @@ func TestEvaluateAutoMergeGitHubGateStates(t *testing.T) {
 				PR:         openCleanPR("abc123"),
 				Protection: &github.Protection{RequiredStatusChecks: &github.RequiredStatusChecks{Contexts: &requiredContexts}},
 				CombinedStatus: &github.CombinedStatus{
-					Statuses: []*github.RepoStatus{{Context: stringPtr("ci"), State: stringPtr("failure")}},
+					Statuses: []*github.RepoStatus{{Context: new("ci"), State: new("failure")}},
 				},
 			},
 			head:      "abc123",
@@ -323,7 +323,7 @@ func TestEvaluateAutoMergeGitHubGateStates(t *testing.T) {
 				PR:         openCleanPR("abc123"),
 				Protection: &github.Protection{RequiredStatusChecks: &github.RequiredStatusChecks{Contexts: &requiredContexts}},
 				CombinedStatus: &github.CombinedStatus{
-					Statuses: []*github.RepoStatus{{Context: stringPtr("ci"), State: stringPtr("pending")}},
+					Statuses: []*github.RepoStatus{{Context: new("ci"), State: new("pending")}},
 				},
 			},
 			head:      "abc123",
@@ -335,7 +335,7 @@ func TestEvaluateAutoMergeGitHubGateStates(t *testing.T) {
 			snapshot: autoMergeGitHubSnapshot{
 				PR:         openCleanPR("abc123"),
 				Protection: &github.Protection{RequiredStatusChecks: &github.RequiredStatusChecks{Contexts: &requiredContexts}},
-				CheckRuns:  []*github.CheckRun{{Name: stringPtr("ci"), Status: stringPtr("in_progress")}},
+				CheckRuns:  []*github.CheckRun{{Name: new("ci"), Status: new("in_progress")}},
 			},
 			head:      "abc123",
 			wantState: autoMergeStateWaitingChecks,
@@ -345,7 +345,7 @@ func TestEvaluateAutoMergeGitHubGateStates(t *testing.T) {
 			name: "optional check still running",
 			snapshot: autoMergeGitHubSnapshot{
 				PR:        openCleanPR("abc123"),
-				CheckRuns: []*github.CheckRun{{Name: stringPtr("coverage-uploader"), Status: stringPtr("in_progress")}},
+				CheckRuns: []*github.CheckRun{{Name: new("coverage-uploader"), Status: new("in_progress")}},
 			},
 			head:      "abc123",
 			wantState: autoMergeStateSafeToMerge,
@@ -369,8 +369,8 @@ func TestEvaluateAutoMergeGitHubGateStates(t *testing.T) {
 				Protection: &github.Protection{RequiredPullRequestReviews: &github.PullRequestReviewsEnforcement{RequiredApprovingReviewCount: 2}},
 				Reviews: []*github.PullRequestReview{{
 					ID:          int64Ptr(1),
-					State:       stringPtr("APPROVED"),
-					User:        &github.User{Login: stringPtr("alice")},
+					State:       new("APPROVED"),
+					User:        &github.User{Login: new("alice")},
 					SubmittedAt: &github.Timestamp{Time: now},
 				}},
 			},
@@ -384,8 +384,8 @@ func TestEvaluateAutoMergeGitHubGateStates(t *testing.T) {
 				PR: openCleanPR("abc123"),
 				Reviews: []*github.PullRequestReview{{
 					ID:          int64Ptr(1),
-					State:       stringPtr("CHANGES_REQUESTED"),
-					User:        &github.User{Login: stringPtr("alice")},
+					State:       new("CHANGES_REQUESTED"),
+					User:        &github.User{Login: new("alice")},
 					SubmittedAt: &github.Timestamp{Time: now},
 				}},
 			},
@@ -397,7 +397,7 @@ func TestEvaluateAutoMergeGitHubGateStates(t *testing.T) {
 			name: "blocked",
 			snapshot: autoMergeGitHubSnapshot{PR: func() *github.PullRequest {
 				pr := openCleanPR("abc123")
-				pr.MergeableState = stringPtr("blocked")
+				pr.MergeableState = new("blocked")
 				return pr
 			}()},
 			head:      "abc123",
@@ -408,7 +408,7 @@ func TestEvaluateAutoMergeGitHubGateStates(t *testing.T) {
 			name: "behind",
 			snapshot: autoMergeGitHubSnapshot{PR: func() *github.PullRequest {
 				pr := openCleanPR("abc123")
-				pr.MergeableState = stringPtr("behind")
+				pr.MergeableState = new("behind")
 				return pr
 			}()},
 			head:      "abc123",
@@ -420,11 +420,11 @@ func TestEvaluateAutoMergeGitHubGateStates(t *testing.T) {
 			snapshot: autoMergeGitHubSnapshot{
 				PR:             openCleanPR("abc123"),
 				Protection:     &github.Protection{RequiredStatusChecks: &github.RequiredStatusChecks{Contexts: &requiredContexts}, RequiredPullRequestReviews: &github.PullRequestReviewsEnforcement{RequiredApprovingReviewCount: 1}},
-				CombinedStatus: &github.CombinedStatus{State: stringPtr("success"), Statuses: []*github.RepoStatus{{Context: stringPtr("ci"), State: stringPtr("success")}}},
+				CombinedStatus: &github.CombinedStatus{State: new("success"), Statuses: []*github.RepoStatus{{Context: new("ci"), State: new("success")}}},
 				Reviews: []*github.PullRequestReview{{
 					ID:          int64Ptr(1),
-					State:       stringPtr("APPROVED"),
-					User:        &github.User{Login: stringPtr("alice")},
+					State:       new("APPROVED"),
+					User:        &github.User{Login: new("alice")},
 					SubmittedAt: &github.Timestamp{Time: now},
 				}},
 			},

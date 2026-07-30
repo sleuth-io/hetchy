@@ -393,16 +393,13 @@ func (b *Bot) handleFollowUpRunError(ctx context.Context, sb *daytona.Sandbox, r
 // that timed out is genuinely slow — retrying would just add another full
 // timeout on top of the one already spent.
 func isTransientError(err error) bool {
-	var timeoutErr *sdkerrors.DaytonaTimeoutError
-	if errors.As(err, &timeoutErr) {
+	if _, ok := errors.AsType[*sdkerrors.DaytonaTimeoutError](err); ok {
 		return false
 	}
-	var rateLimitErr *sdkerrors.DaytonaRateLimitError
-	if errors.As(err, &rateLimitErr) {
+	if _, ok := errors.AsType[*sdkerrors.DaytonaRateLimitError](err); ok {
 		return true
 	}
-	var dayErr *sdkerrors.DaytonaError
-	if errors.As(err, &dayErr) {
+	if dayErr, ok := errors.AsType[*sdkerrors.DaytonaError](err); ok {
 		return dayErr.StatusCode == 0 ||
 			dayErr.StatusCode == http.StatusTooManyRequests ||
 			(dayErr.StatusCode >= 500 && dayErr.StatusCode < 600)
@@ -427,8 +424,7 @@ func isFollowUpSandboxReplacementError(sb *daytona.Sandbox, err error) bool {
 	if sb != nil && (sb.State == apiclient.SANDBOXSTATE_ERROR || sb.State == apiclient.SANDBOXSTATE_BUILD_FAILED) {
 		return true
 	}
-	var dayErr *sdkerrors.DaytonaError
-	if errors.As(err, &dayErr) {
+	if dayErr, ok := errors.AsType[*sdkerrors.DaytonaError](err); ok {
 		msg := strings.ToLower(dayErr.Message)
 		return strings.Contains(msg, "sandbox is in an errored state") ||
 			strings.Contains(msg, "sandbox failed to start")

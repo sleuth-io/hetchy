@@ -182,8 +182,7 @@ func (s *LocalStore) handlePut(w http.ResponseWriter, r *http.Request, rawToken 
 
 	limited := http.MaxBytesReader(w, r.Body, MaxLocalArtifactBytes)
 	if _, err := io.Copy(tmp, limited); err != nil {
-		var maxErr *http.MaxBytesError
-		if errors.As(err, &maxErr) {
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			http.Error(w, "artifact too large", http.StatusRequestEntityTooLarge)
 			return
 		}

@@ -1274,12 +1274,12 @@ func TestParseRequestedRepo(t *testing.T) {
 		wantOK    bool
 	}{
 		{name: "nil pointer", in: nil, wantOK: false},
-		{name: "empty string", in: ptr(""), wantOK: false},
-		{name: "whitespace only", in: ptr("   "), wantOK: false},
-		{name: "plain slug", in: ptr("team/api"), wantOwner: "team", wantName: "api", wantOK: true},
-		{name: "trailing whitespace", in: ptr("  team/api  "), wantOwner: "team", wantName: "api", wantOK: true},
-		{name: "github URL", in: ptr("https://github.com/team/api"), wantOwner: "team", wantName: "api", wantOK: true},
-		{name: "single token", in: ptr("api"), wantOK: false},
+		{name: "empty string", in: new(""), wantOK: false},
+		{name: "whitespace only", in: new("   "), wantOK: false},
+		{name: "plain slug", in: new("team/api"), wantOwner: "team", wantName: "api", wantOK: true},
+		{name: "trailing whitespace", in: new("  team/api  "), wantOwner: "team", wantName: "api", wantOK: true},
+		{name: "github URL", in: new("https://github.com/team/api"), wantOwner: "team", wantName: "api", wantOK: true},
+		{name: "single token", in: new("api"), wantOK: false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1291,8 +1291,6 @@ func TestParseRequestedRepo(t *testing.T) {
 		})
 	}
 }
-
-func ptr(s string) *string { return &s }
 
 func TestChatPersisterSavesProgressWithFakeStore(t *testing.T) {
 	convs := &fakeConversationStore{}

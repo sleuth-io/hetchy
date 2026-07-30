@@ -12,8 +12,8 @@ func TestConversationPRStateFromGitHub(t *testing.T) {
 	closedAt := github.Timestamp{Time: time.Date(2026, 6, 2, 12, 1, 0, 0, time.UTC)}
 
 	got := conversationPRStateFromGitHub(&github.PullRequest{
-		State:    github.String("closed"),
-		Merged:   github.Bool(false),
+		State:    new("closed"),
+		Merged:   new(false),
 		MergedAt: &mergedAt,
 		ClosedAt: &closedAt,
 	})
@@ -21,7 +21,7 @@ func TestConversationPRStateFromGitHub(t *testing.T) {
 		t.Fatalf("merged PR state = %+v", got)
 	}
 
-	got = conversationPRStateFromGitHub(&github.PullRequest{State: github.String("open")})
+	got = conversationPRStateFromGitHub(&github.PullRequest{State: new("open")})
 	if got.State != githubPRStateOpen || got.Merged || !got.MergedAt.IsZero() || !got.ClosedAt.IsZero() {
 		t.Fatalf("open PR state = %+v", got)
 	}
