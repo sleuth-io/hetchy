@@ -77,8 +77,24 @@ func TestComposeForwardsArtifactUploadEnv(t *testing.T) {
 			t.Errorf("docker-compose.yml does not forward %s to the hetchy service", key)
 		}
 	}
-	if want := "HETCHY_PUBLIC_BASE_URL: ${HETCHY_PUBLIC_BASE_URL:-http://localhost:8080}"; !strings.Contains(compose, want) {
-		t.Errorf("docker-compose.yml does not provide self-host public URL default")
+	// The self-host defaults for these two must derive from WEB_PORT, not a
+	// hardcoded 8080. The container always listens on 8080 and cannot see the
+	// host port, so anything built from its own bind port names the wrong port
+	// as soon as an operator moves WEB_PORT off the default — and these feed
+	// the app's self-referential URLs.
+	for _, want := range []string{
+		"HETCHY_PUBLIC_BASE_URL: ${HETCHY_PUBLIC_BASE_URL:-http://localhost:${WEB_PORT:-8080}}",
+		"LOGOUT_RETURN_TO: ${LOGOUT_RETURN_TO:-http://localhost:${WEB_PORT:-8080}/}",
+	} {
+		if !strings.Contains(compose, want) {
+			t.Errorf("docker-compose.yml is missing a host-port-aware default:\n  want: %s", want)
+		}
+	}
+
+	// And the app's own listen port stays pinned, so the published mapping's
+	// target always matches what the process binds.
+	if want := "WEB_PORT: 8080"; !strings.Contains(compose, want) {
+		t.Errorf("docker-compose.yml must pin the container's WEB_PORT to 8080, not forward the host value")
 	}
 }
 
