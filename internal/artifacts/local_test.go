@@ -454,3 +454,67 @@ type errReader struct {
 func (r errReader) Read([]byte) (int, error) {
 	return 0, r.err
 }
+
+// A GET for a slot that was minted but never uploaded must 404 rather than 500:
+// the sandbox mints slots up front and only some get written, so a missing file
+// is an ordinary outcome, not a server fault.
+func TestLocalStoreGetMissingArtifactIsNotFound(t *testing.T) {
+	store, err := NewLocal(t.TempDir(), "https://app.example.test", strings.Repeat("s", 32))
+	if err != nil {
+		t.Fatalf("NewLocal: %v", err)
+	}
+	slots, err := store.MintSlots(context.Background(), "org_1/42/req_1", MintRequest{
+		Kind:        KindScreenshot,
+		ContentType: ContentTypePNG,
+		Count:       1,
+	})
+	if err != nil {
+		t.Fatalf("MintSlots: %v", err)
+	}
+	getURL, err := url.Parse(slots[0].GetURL)
+	if err != nil {
+		t.Fatalf("parse GetURL: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	store.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, getURL.Path+"?"+getURL.RawQuery, nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("GET of an unwritten artifact = %d body=%q, want 404", rec.Code, rec.Body.String())
+	}
+}
+
+// pathForKey is the boundary that keeps a token's key from escaping the artifact
+// root. The token is signed, so this only bites if signing is ever compromised —
+// which is exactly when it has to hold.
+func TestPathForKeyRejectsEscapes(t *testing.T) {
+	root := t.TempDir()
+	store, err := NewLocal(root, "https://app.example.test", strings.Repeat("s", 32))
+	if err != nil {
+		t.Fatalf("NewLocal: %v", err)
+	}
+
+	for _, key := range []string{
+		"../outside.png",
+		"org/../../outside.png",
+		"/absolute.png",
+		`..\windows.png`,
+		"",
+		"   ",
+		".",
+	} {
+		t.Run(key, func(t *testing.T) {
+			if _, err := store.pathForKey(key); err == nil {
+				t.Fatalf("pathForKey(%q) returned no error; the key escapes the artifact root", key)
+			}
+		})
+	}
+
+	// A legitimate key still resolves, and lands under the root.
+	got, err := store.pathForKey("org_1/run_1/shot.png")
+	if err != nil {
+		t.Fatalf("pathForKey on a valid key: %v", err)
+	}
+	if !strings.HasPrefix(got, root) {
+		t.Fatalf("resolved path %q is outside the root %q", got, root)
+	}
+}
