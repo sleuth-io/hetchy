@@ -4,7 +4,6 @@ services:
   # colliding with another local Postgres.
   postgres:
     image: postgres:16-alpine
-    container_name: hetchy-postgres
     restart: unless-stopped
     ports:
       # Default 5433 so we don't collide with other dev Postgres on 5432.
@@ -38,7 +37,6 @@ services:
         COMMIT: ${COMMIT:-none}
         DATE: ${DATE:-unknown}
         SANDBOX_VERSION: ${SANDBOX_VERSION:-}
-    container_name: migration
     restart: "no"
     command: "--migrate"
     depends_on:
@@ -66,9 +64,10 @@ services:
         COMMIT: ${COMMIT:-none}
         DATE: ${DATE:-unknown}
         SANDBOX_VERSION: ${SANDBOX_VERSION:-}
-    container_name: hetchy
     restart: unless-stopped
     ports:
+      # Host side only. The container always listens on 8080 — see the note on
+      # WEB_PORT below.
       - "${WEB_PORT:-8080}:8080"
     depends_on:
       postgres:
@@ -169,7 +168,13 @@ services:
       DATABASE_MAX_CONNS: ${DATABASE_MAX_CONNS:-}
 
       # Web UI configuration.
-      WEB_PORT: ${WEB_PORT:-8080}
+      #
+      # Deliberately fixed at 8080 rather than ${WEB_PORT}. WEB_PORT selects the
+      # HOST port in the mapping above; feeding it to the app as well made the
+      # app listen on that port inside the container while the mapping still
+      # targeted 8080, so any WEB_PORT other than 8080 left the app silently
+      # unreachable.
+      WEB_PORT: 8080
     volumes:
       - hetchy-artifacts-data:/data/hetchy/artifacts
     healthcheck:
