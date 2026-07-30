@@ -37,8 +37,7 @@ func endTurnMatched(t *testing.T, transcript string) bool {
 		`grep '"stop_reason":"end_turn"' "$1" | grep -v '"isSidechain":true' | grep -q .`,
 		"bash", transcript)
 	if err := cmd.Run(); err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
+		if _, ok := errors.AsType[*exec.ExitError](err); ok {
 			return false
 		}
 		t.Fatalf("bash filter: %v", err)

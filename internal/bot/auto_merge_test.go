@@ -565,20 +565,17 @@ func safeAutoMergeJSON(head string) string {
 
 func openCleanPR(head string) *github.PullRequest {
 	return &github.PullRequest{
-		State:          stringPtr("open"),
-		Draft:          boolPtr(false),
-		Merged:         boolPtr(false),
-		MergeableState: stringPtr("clean"),
-		Mergeable:      boolPtr(true),
-		Head:           &github.PullRequestBranch{SHA: stringPtr(head)},
+		State:          new("open"),
+		Draft:          new(false),
+		Merged:         new(false),
+		MergeableState: new("clean"),
+		Mergeable:      new(true),
+		Head:           &github.PullRequestBranch{SHA: new(head)},
 	}
 }
 
-func intPtr(v int) *int { return &v }
-
-func int64Ptr(v int64) *int64 { return &v }
-
-func boolPtr(v bool) *bool { return &v }
+//go:fix inline
+func int64Ptr(v int64) *int64 { return new(v) }
 
 func autoMergeGitHubTestClient(t *testing.T, handler http.Handler) (*github.Client, func()) {
 	t.Helper()

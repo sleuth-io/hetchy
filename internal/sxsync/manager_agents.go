@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
-	sxlib "github.com/sleuth-io/sx/pkg/sxvault"
+	sxlib "github.com/sleuth-io/sx/v2/pkg/sxvault"
 
 	"github.com/sleuth-io/hetchy/internal/agents"
 	"github.com/sleuth-io/hetchy/internal/db/sqlc"

@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/daytonaio/daytona/libs/sdk-go/pkg/daytona"
-	sxlib "github.com/sleuth-io/sx/pkg/sxvault"
+	sxlib "github.com/sleuth-io/sx/v2/pkg/sxvault"
 
 	"github.com/sleuth-io/hetchy/internal/agents"
 	"github.com/sleuth-io/hetchy/internal/blocks"

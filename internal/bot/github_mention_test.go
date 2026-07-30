@@ -204,12 +204,12 @@ func TestResolveGithubMentionRouteIssuePinsRequestedRepo(t *testing.T) {
 func TestGithubPRHelpers(t *testing.T) {
 	pr := &github.PullRequest{
 		Head: &github.PullRequestBranch{
-			Ref:  github.String("feature/comment-request"),
-			Repo: &github.Repository{FullName: github.String("acme/repo")},
+			Ref:  new("feature/comment-request"),
+			Repo: &github.Repository{FullName: new("acme/repo")},
 		},
 		Base: &github.PullRequestBranch{
-			Ref:  github.String("main"),
-			Repo: &github.Repository{FullName: github.String("acme/repo")},
+			Ref:  new("main"),
+			Repo: &github.Repository{FullName: new("acme/repo")},
 		},
 	}
 	if got := githubPRHeadRef(pr); got != "feature/comment-request" {

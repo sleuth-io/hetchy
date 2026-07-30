@@ -15,7 +15,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/Masterminds/semver/v3"
-	sxlib "github.com/sleuth-io/sx/pkg/sxvault"
+	sxlib "github.com/sleuth-io/sx/v2/pkg/sxvault"
 )
 
 // maxSkillZipResponseBytes caps the size of a single response body we'll

@@ -28,8 +28,8 @@ func TestGithubMentionHelpersFormatURLsIDsAndText(t *testing.T) {
 	}
 
 	pr := &github.PullRequest{
-		Head: &github.PullRequestBranch{Ref: github.String("feature/x"), Repo: &github.Repository{FullName: github.String("acme/repo")}},
-		Base: &github.PullRequestBranch{Ref: github.String("main"), Repo: &github.Repository{FullName: github.String("acme/repo")}},
+		Head: &github.PullRequestBranch{Ref: new("feature/x"), Repo: &github.Repository{FullName: new("acme/repo")}},
+		Base: &github.PullRequestBranch{Ref: new("main"), Repo: &github.Repository{FullName: new("acme/repo")}},
 	}
 	ev := githubMentionEvent{
 		AuthorLogin:    "alice",

@@ -272,8 +272,7 @@ func sanitizeDaytonaNamePart(s string) string {
 }
 
 func isDaytonaNotFound(err error) bool {
-	var notFound *sdkerrors.DaytonaNotFoundError
-	if errors.As(err, &notFound) {
+	if _, ok := errors.AsType[*sdkerrors.DaytonaNotFoundError](err); ok {
 		return true
 	}
 	var daytonaErr *sdkerrors.DaytonaError

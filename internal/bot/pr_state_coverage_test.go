@@ -142,13 +142,13 @@ func TestConversationPRStateFromGitHubEdgeCases(t *testing.T) {
 	}
 
 	// Unknown state strings collapse to empty so callers don't persist junk.
-	got := conversationPRStateFromGitHub(&github.PullRequest{State: github.String("draft")})
+	got := conversationPRStateFromGitHub(&github.PullRequest{State: new("draft")})
 	if got.State != "" {
 		t.Fatalf("unknown state = %q, want empty", got.State)
 	}
 
 	// Merged via the boolean flag even when MergedAt is absent.
-	got = conversationPRStateFromGitHub(&github.PullRequest{State: github.String("closed"), Merged: github.Bool(true)})
+	got = conversationPRStateFromGitHub(&github.PullRequest{State: new("closed"), Merged: new(true)})
 	if !got.Merged || got.State != githubPRStateClosed {
 		t.Fatalf("flag-merged state = %+v", got)
 	}

@@ -8,7 +8,7 @@ import (
 	"slices"
 	"strings"
 
-	sxlib "github.com/sleuth-io/sx/pkg/sxvault"
+	sxlib "github.com/sleuth-io/sx/v2/pkg/sxvault"
 
 	"github.com/sleuth-io/hetchy/internal/agents"
 )

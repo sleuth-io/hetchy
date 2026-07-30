@@ -220,8 +220,6 @@ func shortSHA(sha string) string {
 	return sha[:7]
 }
 
-func stringPtr(s string) *string { return &s }
-
 func githubHTTPStatus(resp *github.Response, err error) int {
 	if resp != nil && resp.Response != nil {
 		return resp.StatusCode

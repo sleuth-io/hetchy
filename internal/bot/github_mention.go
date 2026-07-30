@@ -521,7 +521,7 @@ func (b *Bot) postGithubMentionComment(ctx context.Context, client *github.Clien
 		return nil
 	}
 	body = truncateGitHubComment(body)
-	_, _, err := client.Issues.CreateComment(ctx, owner, repo, number, &github.IssueComment{Body: github.String(body)})
+	_, _, err := client.Issues.CreateComment(ctx, owner, repo, number, &github.IssueComment{Body: new(body)})
 	return err
 }
 

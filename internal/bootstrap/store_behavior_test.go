@@ -43,7 +43,7 @@ func TestStoreSaveSpecPersistsValidatedSpecContract(t *testing.T) {
 	assertBootstrapArg(t, call.args, 3, int32(3))
 	assertBootstrapArg(t, call.args, 4, CurrentBootstrapGeneration)
 	assertBootstrapArg(t, call.args, 5, "node")
-	assertBootstrapArg(t, call.args, 9, stringPtr("npm run stop"))
+	assertBootstrapArg(t, call.args, 9, new("npm run stop"))
 	assertBootstrapJSON(t, call.args, 11, []Service{})
 	assertBootstrapJSON(t, call.args, 12, []Secret{})
 	assertBootstrapJSON(t, call.args, 13, []string{})
@@ -56,7 +56,7 @@ func TestStoreSaveSpecPersistsValidatedSpecContract(t *testing.T) {
 	}
 	assertBootstrapArg(t, call.args, 19, int32(2))
 	assertBootstrapArg(t, call.args, 20, int32(1))
-	assertBootstrapArg(t, call.args, 21, stringPtr("boot ok"))
+	assertBootstrapArg(t, call.args, 21, new("boot ok"))
 }
 
 func TestStoreSaveSpecDoesNotStampUnvalidatedStatuses(t *testing.T) {
@@ -97,7 +97,7 @@ func TestStoreSaveFailingSpecRequiresFailingStatusAndUsesFailingUpsert(t *testin
 	call := fake.onlyQueryRowCall(t, "UpsertFailingRepoSetupSpec")
 	assertBootstrapArg(t, call.args, 0, int64(11))
 	assertBootstrapArg(t, call.args, 17, string(StatusFailing))
-	assertBootstrapArg(t, call.args, 18, stringPtr("boot ok"))
+	assertBootstrapArg(t, call.args, 18, new("boot ok"))
 	if fake.queryRowCallCount("UpsertRepoSetupSpec") != 0 {
 		t.Fatal("SaveFailingSpec should use the failing upsert, not the success-path upsert")
 	}
@@ -604,8 +604,4 @@ func mustBootstrapJSON(t *testing.T, v any) []byte {
 		t.Fatalf("json.Marshal: %v", err)
 	}
 	return data
-}
-
-func stringPtr(s string) *string {
-	return &s
 }

@@ -60,7 +60,7 @@ func (b *Bot) switchStripeSubscriptionPlan(ctx context.Context, orgID string, ac
 		}
 		if scheduleID != "" {
 			if _, err := client.V1SubscriptionSchedules.Release(ctx, scheduleID, &stripe.SubscriptionScheduleReleaseParams{
-				PreserveCancelDate: stripe.Bool(false),
+				PreserveCancelDate: new(false),
 			}); err != nil {
 				return stripePlanSwitchNoop, fmt.Errorf("release pending subscription schedule: %w", err)
 			}
@@ -118,7 +118,7 @@ func stripeResumeSubscriptionParams(sub *stripe.Subscription) *stripe.Subscripti
 		params.AddUnsetField(stripe.SubscriptionUpdateParamsUnsetFieldCancelAt)
 		return params
 	}
-	params.CancelAtPeriodEnd = stripe.Bool(false)
+	params.CancelAtPeriodEnd = new(false)
 	return params
 }
 
@@ -267,13 +267,13 @@ func stripeDowngradeScheduleParams(scheduleID, orgID string, acct billing.Accoun
 		}),
 		Phases: []*stripe.SubscriptionScheduleUpdatePhaseParams{
 			{
-				StartDate:         stripe.Int64(periodStart),
-				EndDate:           stripe.Int64(periodEnd),
+				StartDate:         new(periodStart),
+				EndDate:           new(periodEnd),
 				ProrationBehavior: stripe.String("none"),
 				Metadata:          paidSubscriptionMetadata(orgID, currentPlan),
 				Items: []*stripe.SubscriptionScheduleUpdatePhaseItemParams{{
 					Price:    stripe.String(currentPriceID),
-					Quantity: stripe.Int64(quantity),
+					Quantity: new(quantity),
 				}},
 			},
 			{

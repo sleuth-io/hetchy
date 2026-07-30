@@ -56,7 +56,7 @@ func (e *githubMentionEmitter) post(body string) {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), githubMentionAckDeadline)
 		defer cancel()
-		_, _, err := e.client.Issues.CreateComment(ctx, e.owner, e.repo, e.number, &github.IssueComment{Body: github.String(truncateGitHubComment(body))})
+		_, _, err := e.client.Issues.CreateComment(ctx, e.owner, e.repo, e.number, &github.IssueComment{Body: new(truncateGitHubComment(body))})
 		if err != nil && e.log != nil {
 			e.log.Warn("github mention: terminal comment failed", "repo", e.owner+"/"+e.repo, "subject", e.number, "error", err)
 		}

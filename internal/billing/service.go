@@ -126,8 +126,7 @@ func (s *Service) maybeAutoTopup(ctx context.Context, account Account, reserveCr
 	orgID := account.OrgID
 	updated, err := s.store.AutoTopup(ctx, orgID, reserveCredits, purchase)
 	if err != nil {
-		var paymentErr autoTopupPaymentError
-		if errors.As(err, &paymentErr) {
+		if paymentErr, ok := errors.AsType[autoTopupPaymentError](err); ok {
 			_ = s.store.SetLastPaymentError(ctx, orgID, paymentErr.err.Error())
 		}
 		return Account{}, err

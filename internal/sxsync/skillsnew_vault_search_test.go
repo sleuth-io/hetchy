@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	sxlib "github.com/sleuth-io/sx/pkg/sxvault"
+	sxlib "github.com/sleuth-io/sx/v2/pkg/sxvault"
 )
 
 // skillsNewMockServer is the test double for the "Durable Run Store and
