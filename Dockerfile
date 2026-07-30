@@ -1,6 +1,6 @@
 # Build stage. Pinned to the build machine's architecture so multi-arch
 # releases cross-compile with Go instead of emulating the target under QEMU.
-FROM --platform=$BUILDPLATFORM golang:1.25.6-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS builder
 
 WORKDIR /build
 
