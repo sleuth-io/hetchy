@@ -167,8 +167,11 @@ services:
 
       # Database — defaults to the bundled postgres service. Override
       # DATABASE_URL to point at Supabase or another instance.
-      # Nested ${...} in default values is unsupported by Docker Compose interpolation,
-      # so defaults are hardcoded to match the postgres service's own defaults above.
+      # Spelled out rather than composed from the POSTGRES_* values above. Nested
+      # ${...} inside a default does work — HETCHY_PUBLIC_BASE_URL below relies on
+      # it — but deriving this one would silently change the connection string for
+      # anyone who sets POSTGRES_PASSWORD while pointing DATABASE_URL at an
+      # external database. Keep the two in step by hand.
       DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/hetchy?sslmode=disable}
       # Optional pgx pool ceiling. Empty leaves the pgx default
       # (max(4, NumCPU)). See internal/db/db.go for sizing guidance.

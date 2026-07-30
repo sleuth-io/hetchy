@@ -2,6 +2,8 @@ package bot
 
 import (
 	"os"
+	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -340,5 +342,56 @@ func TestTruthyEnv(t *testing.T) {
 				t.Fatalf("truthyEnv(%q) = true", value)
 			}
 		})
+	}
+}
+
+// TestComposeResolvesHostPortIntoURLs asserts what Compose actually produces,
+// not what the file says. The defaults for the app's self-referential URLs use
+// nested ${...} interpolation, and asserting the literal text would pass even if
+// Compose failed to resolve it — leaving the app advertising a port nobody can
+// reach, which is the bug these defaults exist to prevent.
+func TestComposeResolvesHostPortIntoURLs(t *testing.T) {
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Skip("docker not available")
+	}
+
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatalf("resolve repo root: %v", err)
+	}
+
+	cmd := exec.Command("docker", "compose", "--env-file", ".env.example", "config")
+	cmd.Dir = root
+	// A non-default host port, which is the case that used to break.
+	cmd.Env = append(os.Environ(), "WEB_PORT=19191")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Skipf("docker compose config unavailable: %v", err)
+	}
+	rendered := string(out)
+
+	for _, want := range []string{
+		"HETCHY_PUBLIC_BASE_URL: http://localhost:19191",
+		"LOGOUT_RETURN_TO: http://localhost:19191/",
+		// The container still binds 8080; only the host side moves.
+		`WEB_PORT: "8080"`,
+		`published: "19191"`,
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Errorf("resolved compose config is missing %q", want)
+		}
+	}
+
+	// An explicit origin must still win, so a deployment behind a real hostname
+	// is unaffected by the derivation.
+	cmd = exec.Command("docker", "compose", "--env-file", ".env.example", "config")
+	cmd.Dir = root
+	cmd.Env = append(os.Environ(), "WEB_PORT=19191", "HETCHY_PUBLIC_BASE_URL=https://hetchy.example.com")
+	out, err = cmd.CombinedOutput()
+	if err != nil {
+		t.Skipf("docker compose config unavailable: %v", err)
+	}
+	if !strings.Contains(string(out), "HETCHY_PUBLIC_BASE_URL: https://hetchy.example.com") {
+		t.Error("an explicit HETCHY_PUBLIC_BASE_URL should override the WEB_PORT-derived default")
 	}
 }
