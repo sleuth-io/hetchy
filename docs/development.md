@@ -111,6 +111,30 @@ make db-status               # show current version
 
 The bot opens a pool at startup if `DATABASE_URL` is set; otherwise it runs without a database. A starter `health_checks` table and queries ship as an example — feel free to delete the migration and queries once you have your own schema.
 
+## Running A Second Stack
+
+Compose namespaces containers per project, so a throwaway instance can run
+beside your normal one — useful for testing a released image without disturbing
+what you have running.
+
+Give it its own project name and its own host ports:
+
+```bash
+COMPOSE_PROJECT_NAME=hetchy-test \
+  WEB_PORT=18080 POSTGRES_HOST_PORT=15433 \
+  docker compose up -d
+```
+
+`WEB_PORT` is the host port only; the container always listens on 8080. Leave
+`HETCHY_PUBLIC_BASE_URL` unset and Compose derives it from `WEB_PORT`, so the
+app's self-referential links point at the port you actually reach it on.
+
+Tear it down, volumes included, with the same project name:
+
+```bash
+COMPOSE_PROJECT_NAME=hetchy-test docker compose down -v
+```
+
 ## Makefile Targets
 
 | Target | Description |

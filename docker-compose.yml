@@ -4,7 +4,6 @@ services:
   # colliding with another local Postgres.
   postgres:
     image: postgres:16-alpine
-    container_name: hetchy-postgres
     restart: unless-stopped
     ports:
       # Default 5433 so we don't collide with other dev Postgres on 5432.
@@ -38,7 +37,6 @@ services:
         COMMIT: ${COMMIT:-none}
         DATE: ${DATE:-unknown}
         SANDBOX_VERSION: ${SANDBOX_VERSION:-}
-    container_name: migration
     restart: "no"
     command: "--migrate"
     depends_on:
@@ -66,9 +64,10 @@ services:
         COMMIT: ${COMMIT:-none}
         DATE: ${DATE:-unknown}
         SANDBOX_VERSION: ${SANDBOX_VERSION:-}
-    container_name: hetchy
     restart: unless-stopped
     ports:
+      # Host side only. The container always listens on 8080 — see the note on
+      # WEB_PORT below.
       - "${WEB_PORT:-8080}:8080"
     depends_on:
       postgres:
@@ -78,7 +77,11 @@ services:
     environment:
       # Runtime mode and public URL.
       HETCHY_ENV: ${HETCHY_ENV:-prod}
-      HETCHY_PUBLIC_BASE_URL: ${HETCHY_PUBLIC_BASE_URL:-http://localhost:8080}
+      # Defaults track WEB_PORT. The container cannot infer the host port — it
+      # always listens on 8080 — so anything the app derives from its own bind
+      # port would name the wrong port once WEB_PORT is changed. Compose knows
+      # both sides, so it supplies the externally reachable origin here.
+      HETCHY_PUBLIC_BASE_URL: ${HETCHY_PUBLIC_BASE_URL:-http://localhost:${WEB_PORT:-8080}}
 
       # Auth. Self-hosted deployments use local username/password auth by
       # default. Hosted deployments can set HETCHY_AUTH_MODE=workos and fill
@@ -129,7 +132,10 @@ services:
       WORKOS_COOKIE_PASSWORD: ${WORKOS_COOKIE_PASSWORD:-}
       WORKOS_REDIRECT_URI: ${WORKOS_REDIRECT_URI:-}
       WORKOS_WEBHOOK_SECRET: ${WORKOS_WEBHOOK_SECRET:-}
-      LOGOUT_RETURN_TO: ${LOGOUT_RETURN_TO:-}
+      # Same reasoning as HETCHY_PUBLIC_BASE_URL: left empty, the app would
+      # build this from its in-container port and send post-logout redirects to
+      # the wrong place.
+      LOGOUT_RETURN_TO: ${LOGOUT_RETURN_TO:-http://localhost:${WEB_PORT:-8080}/}
       SECRETS_ENCRYPTION_KEY: ${SECRETS_ENCRYPTION_KEY:-}
 
       # Stripe billing.
@@ -161,15 +167,24 @@ services:
 
       # Database — defaults to the bundled postgres service. Override
       # DATABASE_URL to point at Supabase or another instance.
-      # Nested ${...} in default values is unsupported by Docker Compose interpolation,
-      # so defaults are hardcoded to match the postgres service's own defaults above.
+      # Spelled out rather than composed from the POSTGRES_* values above. Nested
+      # ${...} inside a default does work — HETCHY_PUBLIC_BASE_URL below relies on
+      # it — but deriving this one would silently change the connection string for
+      # anyone who sets POSTGRES_PASSWORD while pointing DATABASE_URL at an
+      # external database. Keep the two in step by hand.
       DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/hetchy?sslmode=disable}
       # Optional pgx pool ceiling. Empty leaves the pgx default
       # (max(4, NumCPU)). See internal/db/db.go for sizing guidance.
       DATABASE_MAX_CONNS: ${DATABASE_MAX_CONNS:-}
 
       # Web UI configuration.
-      WEB_PORT: ${WEB_PORT:-8080}
+      #
+      # Deliberately fixed at 8080 rather than ${WEB_PORT}. WEB_PORT selects the
+      # HOST port in the mapping above; feeding it to the app as well made the
+      # app listen on that port inside the container while the mapping still
+      # targeted 8080, so any WEB_PORT other than 8080 left the app silently
+      # unreachable.
+      WEB_PORT: 8080
     volumes:
       - hetchy-artifacts-data:/data/hetchy/artifacts
     healthcheck:
