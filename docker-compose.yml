@@ -77,7 +77,11 @@ services:
     environment:
       # Runtime mode and public URL.
       HETCHY_ENV: ${HETCHY_ENV:-prod}
-      HETCHY_PUBLIC_BASE_URL: ${HETCHY_PUBLIC_BASE_URL:-http://localhost:8080}
+      # Defaults track WEB_PORT. The container cannot infer the host port — it
+      # always listens on 8080 — so anything the app derives from its own bind
+      # port would name the wrong port once WEB_PORT is changed. Compose knows
+      # both sides, so it supplies the externally reachable origin here.
+      HETCHY_PUBLIC_BASE_URL: ${HETCHY_PUBLIC_BASE_URL:-http://localhost:${WEB_PORT:-8080}}
 
       # Auth. Self-hosted deployments use local username/password auth by
       # default. Hosted deployments can set HETCHY_AUTH_MODE=workos and fill
@@ -128,7 +132,10 @@ services:
       WORKOS_COOKIE_PASSWORD: ${WORKOS_COOKIE_PASSWORD:-}
       WORKOS_REDIRECT_URI: ${WORKOS_REDIRECT_URI:-}
       WORKOS_WEBHOOK_SECRET: ${WORKOS_WEBHOOK_SECRET:-}
-      LOGOUT_RETURN_TO: ${LOGOUT_RETURN_TO:-}
+      # Same reasoning as HETCHY_PUBLIC_BASE_URL: left empty, the app would
+      # build this from its in-container port and send post-logout redirects to
+      # the wrong place.
+      LOGOUT_RETURN_TO: ${LOGOUT_RETURN_TO:-http://localhost:${WEB_PORT:-8080}/}
       SECRETS_ENCRYPTION_KEY: ${SECRETS_ENCRYPTION_KEY:-}
 
       # Stripe billing.
