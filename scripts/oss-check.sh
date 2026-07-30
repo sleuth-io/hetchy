@@ -39,6 +39,7 @@ load_env() {
   for key in \
     HETCHY_AUTH_MODE \
     HETCHY_PUBLIC_BASE_URL \
+    WEB_PORT \
     SECRETS_ENCRYPTION_KEY \
     DATABASE_URL \
     DAYTONA_API_URL \
@@ -173,10 +174,13 @@ else
   fail "DATABASE_URL is missing"
 fi
 
+# Left unset, Compose derives this from WEB_PORT, so an unset value is the
+# normal case rather than a misconfiguration. Mirror that derivation here so the
+# check reports the origin the app will actually use.
 if [[ -n "${HETCHY_PUBLIC_BASE_URL:-}" ]]; then
-  pass "HETCHY_PUBLIC_BASE_URL is configured"
+  pass "HETCHY_PUBLIC_BASE_URL is set to ${HETCHY_PUBLIC_BASE_URL}"
 else
-  fail "HETCHY_PUBLIC_BASE_URL is missing"
+  pass "HETCHY_PUBLIC_BASE_URL derives from WEB_PORT: http://localhost:${WEB_PORT:-8080}"
 fi
 
 if [[ -n "${DAYTONA_API_URL:-}" ]]; then
